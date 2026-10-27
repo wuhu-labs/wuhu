@@ -131,7 +131,7 @@ private final class SessionCLIHarness: Sendable {
     )
     let tokens = ExecTokens(spaceURL: "http://space")
     let connection = MainConnection()
-    let workers = WorkerRegistry(tokens: tokens)
+    let workers = WorkerRegistry(tokens: tokens, machines: nil)
     let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { _ in config }
     workers.announce(workers.mint().id, endpoint: worker)
     let service = SessionService(sessions: store, worker: workers)

@@ -123,7 +123,7 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
         group: .shared, title: "worker", kind: .agent, createdBy: "fixture", model: .init(provider: "offline", model: "small", effort: "low"),
       )
       let metric = InferenceMetric(
-        id: "attempt-1", timestamp: Date(timeIntervalSince1970: 1_700_000_000), session: session, provider: "offline", model: "small",
+        id: "attempt-1", timestamp: Date(timeIntervalSince1970: 1_700_000_000), payer: .session(session), provider: "offline", model: "small",
         effort: "low", outcome: .ok, durationMs: 123,
       )
       try await space.recordInference(InferenceRecord(metric))

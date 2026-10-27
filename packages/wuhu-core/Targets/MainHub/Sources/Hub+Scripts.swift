@@ -8,7 +8,8 @@ import SpaceTools
 extension Hub {
   nonisolated public func announceScriptRestart() async {
     do {
-      for owner in try await space.takeScriptExecOwners() {
+      // An observer's firing is interrupted by the restart, and owns no queue to tell.
+      for owner in try await space.takeScriptExecOwners() where !Observer.isMember(owner.session) {
         var text = "script.\(owner.script) was killed by a server restart"
         if !owner.live.isEmpty {
           let ids = owner.live.map(\.rawValue).joined(separator: ", ")

@@ -9,6 +9,7 @@ import struct MainHub.WorkerID
 import struct OperationProtocol.OperationError
 import SessionDomain
 import struct SpaceContract.GroupID
+import struct SpaceCore.Observer
 import Synchronization
 
 final class ExecTokens: Sendable {
@@ -82,6 +83,29 @@ final class ExecTokens: Sendable {
     return sessions.withLock { held in
       var found: SessionID?
       for (session, token) in held where execTokenEqual(token, presented) { found = session }
+      return found
+    }
+  }
+
+  // An observer's token for one firing: minted when the firing goes to a
+  // worker, revoked when it comes back.
+  private let firings = Mutex<[[UInt8]: Observer]>([:])
+
+  func firingToken(_ observer: Observer) -> String {
+    let token = Self.randomToken()
+    firings.withLock { $0[Array(token.utf8)] = observer }
+    return token
+  }
+
+  func revokeFiring(_ token: String) {
+    _ = firings.withLock { $0.removeValue(forKey: Array(token.utf8)) }
+  }
+
+  func observer(ofBearer bearer: String) -> Observer? {
+    let presented = Array(bearer.utf8)
+    return firings.withLock { held in
+      var found: Observer?
+      for (token, observer) in held where execTokenEqual(token, presented) { found = observer }
       return found
     }
   }

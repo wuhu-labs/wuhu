@@ -44,7 +44,7 @@ private func makeExecSpace() throws -> Space {
     let terminal = try await space.claimExec(machine: machine, caller: "caller", toolCallID: .init("terminal"))
     let foreign = try await space.claimExec(machine: machine, caller: "peer", toolCallID: .init("foreign"))
     let plain = try await space.mintExec(machine: machine, caller: "caller")
-    let script = try await space.mintScriptExec(machine: machine, session: "caller", script: "script")
+    let script = try await space.mintScriptExec(machine: machine, caller: "caller", script: "script")
     try await space.writer.write { db in
       try db.execute(sql: "UPDATE machine_execs SET tool_end_owed = 1")
     }
@@ -145,15 +145,15 @@ private func makeExecSpace() throws -> Space {
     let machine = try await space.addMachine(name: "box").id
     let session = "aaaaaaaa-0000-0000-0000-000000000001"
 
-    let running = try await space.mintScriptExec(machine: machine, session: session, script: "s1")
+    let running = try await space.mintScriptExec(machine: machine, caller: session, script: "s1")
     #expect(running.caller == session)
     #expect(running.toolCallID == nil)
     #expect(try await space.execRecord(running.id) == running)
-    let finished = try await space.mintScriptExec(machine: machine, session: session, script: "s1")
+    let finished = try await space.mintScriptExec(machine: machine, caller: session, script: "s1")
     try await space.finishExec(finished.id, .exited(code: 0))
-    let released = try await space.mintScriptExec(machine: machine, session: session, script: "s2")
-    try await space.releaseScriptExecs(script: "s2", session: session)
-    let other = try await space.mintScriptExec(machine: machine, session: "bbbbbbbb", script: "s3")
+    let released = try await space.mintScriptExec(machine: machine, caller: session, script: "s2")
+    try await space.releaseScriptExecs(script: "s2", caller: session)
+    let other = try await space.mintScriptExec(machine: machine, caller: "bbbbbbbb", script: "s3")
 
     let owners = try await space.takeScriptExecOwners()
     #expect(owners == [

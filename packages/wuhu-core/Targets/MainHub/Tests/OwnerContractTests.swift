@@ -117,10 +117,10 @@ extension HubOwnerContractTests {
     let (space, _, session) = try await contract.fixture()
     let owner = Hub(space: space)
     let machine = try await space.addMachine(name: "box").id
-    let running = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: "running")
-    let finished = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: "running")
+    let running = try await space.mintScriptExec(machine: machine, caller: session.rawValue, script: "running")
+    let finished = try await space.mintScriptExec(machine: machine, caller: session.rawValue, script: "running")
     try await space.finishExec(finished.id, .exited(code: 0))
-    let other = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: "finished")
+    let other = try await space.mintScriptExec(machine: machine, caller: session.rawValue, script: "finished")
     try await space.finishExec(other.id, .exited(code: 0))
     await owner.announceScriptRestart()
     let queued = try await owner.hydrate(session).undrained.map(\.input)

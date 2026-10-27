@@ -8,14 +8,18 @@ import ServerTelemetry
 import struct InferenceKit.InferenceMetric
 import struct InferenceKit.InferenceMetricsSink
 import Logging
+import struct SpaceContract.GroupID
 import struct SpaceCore.InferenceRecord
 import class SpaceCore.Space
 
 func inferenceMetricsSink(space: Space, writer: InferenceMetricsWriter, logger: Logger) -> InferenceMetricsSink {
   InferenceMetricsSink { metric in
     if ServerTracing.enabled {
-      let group = try? await space.sessions.record(metric.session).group.rawValue
-      let span = ServerSpan(.inference, session: metric.session.rawValue, group: group, start: metric.timestamp)
+      let group: String? = switch metric.payer {
+      case let .session(session): try? await space.sessions.record(session).group.rawValue
+      case let .observer(group, _): group
+      }
+      let span = ServerSpan(.inference, session: metric.session?.rawValue, group: group, start: metric.timestamp)
       var attributes: [SpanAttribute: String] = [.provider: metric.provider, .model: metric.model, .effort: metric.effort, .outcome: metric.outcome.rawValue]
       attributes[.ttftMs] = metric.ttftMs.map(String.init)
       attributes[.errorCode] = metric.errorKind
@@ -30,11 +34,11 @@ func inferenceMetricsSink(space: Space, writer: InferenceMetricsWriter, logger: 
     do {
       try await space.recordInference(InferenceRecord(metric))
     } catch {
-      logger.error("inference database write failed", metadata: ["session": "\(metric.session.rawValue)", "error": "\(error)"])
+      logger.error("inference database write failed", metadata: ["payer": "\(metric.payer)", "error": "\(error)"])
     }
     guard metric.outcome != .ok else { return }
     logger.notice("inference attempt failed", metadata: [
-      "session": "\(metric.session.rawValue)",
+      "payer": "\(metric.payer)",
       "provider": "\(metric.provider)",
       "model": "\(metric.model)",
       "outcome": "\(metric.outcome.rawValue)",
@@ -48,13 +52,22 @@ func inferenceMetricsSink(space: Space, writer: InferenceMetricsWriter, logger: 
 extension InferenceRecord {
   init(_ metric: InferenceMetric) {
     self.init(
-      id: metric.id, session: metric.session, at: metric.timestamp,
+      id: metric.id, payer: metric.payer.record, at: metric.timestamp,
       provider: metric.provider, model: metric.model, servedModel: metric.servedModel, effort: metric.effort,
       input: metric.usage?.uncachedInputTokens, cacheRead: metric.usage?.cacheReadTokens,
       cacheWrite: metric.usage?.cacheWriteTokens, output: metric.usage?.outputTokens,
       reasoning: metric.usage?.reasoningTokens, outcome: metric.outcome.rawValue, error: metric.errorKind,
       durationMs: metric.durationMs, ttftMs: metric.ttftMs,
     )
+  }
+}
+
+extension InferenceMetric.Payer {
+  fileprivate var record: InferenceRecord.Payer {
+    switch self {
+    case let .session(session): .session(session)
+    case let .observer(group, firing): .observer(group: GroupID(rawValue: group), firing: firing)
+    }
   }
 }
 

@@ -85,7 +85,7 @@ public extension SpaceToolContext {
     do {
       let target = try await spaceTarget(address)
       try await refuseWrite(target.path, in: target.group)
-      let (revision, token) = try await space.checkout(target.path, rev: Rev(rev), in: target.group, acting: principal.group, ifMatch: ifMatch.map(Wire.token), createOnly: createOnly)
+      let (revision, token) = try await space.checkout(target.path, rev: Rev(rev), in: target.group, acting: principal.group, attribution: attribution, ifMatch: ifMatch.map(Wire.token), createOnly: createOnly)
       return Wire.object([("rev", .integer(revision.value)), ("token", .string(Wire.string(token)))])
     } catch let SpaceError.alreadyExists(path) where createOnly {
       throw .failed(code: .conflict, message: "already exists: \(path)", hint: "Choose another path; create-only operations never replace an existing entry.")

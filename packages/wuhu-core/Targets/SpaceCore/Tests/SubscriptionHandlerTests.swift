@@ -26,7 +26,7 @@ import Testing
   func begin(_ store: SessionStore, _ slot: ArmedSubscription, marker: String? = nil) async throws -> SubscriptionHandlerAttempt {
     let incarnation = try #require(slot.slot.handlerIncarnation)
     return try #require(try await store.beginSubscriptionHandler(
-      slot.session, subscriptionID: slot.slot.id, incarnation: incarnation, marker: marker,
+      slot.owner, subscriptionID: slot.slot.id, incarnation: incarnation, marker: marker,
     ))
   }
 
@@ -72,7 +72,7 @@ import Testing
       #expect(observationToken(advanced) == initialCallback)
       #expect(advanced.slot.handlerIncarnation == slot.slot.handlerIncarnation)
       #expect(try await store.hydrate(id).undrained.count == 1)
-      #expect(try await store.beginSubscriptionHandler(id, subscriptionID: slot.slot.id, incarnation: try #require(slot.slot.handlerIncarnation), marker: "first") == nil)
+      #expect(try await store.beginSubscriptionHandler(.session(id), subscriptionID: slot.slot.id, incarnation: try #require(slot.slot.handlerIncarnation), marker: "first") == nil)
       #expect(try await !store.finishSubscriptionHandler(attempt, result: .success(stateJSON: "null", advance: .observed(marker: "again"), wakes: [wake(slot, "duplicate")])))
       #expect(try await store.hydrate(id).undrained.count == 1)
       let next = try await begin(store, advanced, marker: "second")
@@ -112,12 +112,12 @@ import Testing
       let id = try await owner(store)
       let slot = try await arm(store, id)
       let attempt = try await begin(store, slot)
-      try await store.cancelSubscription(id, subscriptionID: slot.slot.id)
+      try await store.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
       #expect(try await !store.finishSubscriptionHandler(attempt, result: .failure(error: "late", notification: wake(slot, "late"))))
       let replacement = try await arm(store, id)
       #expect(replacement.slot.handlerIncarnation != slot.slot.handlerIncarnation)
       #expect(observationToken(replacement) != observationToken(slot))
-      #expect(try await store.beginSubscriptionHandler(id, subscriptionID: slot.slot.id, incarnation: try #require(slot.slot.handlerIncarnation)) == nil)
+      #expect(try await store.beginSubscriptionHandler(.session(id), subscriptionID: slot.slot.id, incarnation: try #require(slot.slot.handlerIncarnation)) == nil)
       #expect(try await !store.finishSubscriptionHandler(attempt, result: .success(stateJSON: "1", advance: .retire, wakes: [wake(slot, "late")])))
       #expect(try await store.armedSubscriptions(id) == [replacement])
       #expect(try await store.hydrate(id).undrained.isEmpty)
@@ -140,9 +140,9 @@ import Testing
       }
       #expect(try await store.hydrate(id).undrained.isEmpty)
       #expect(try await store.armedSubscriptions(id).first?.slot.handlerStateJSON == nil)
-      #expect(try await store.finishSubscriptionHandler(attempt, result: .failure(error: "retry", notification: wake(slot, "retry"), advance: .reschedule(fixedDate.addingTimeInterval(60)))))
+      #expect(try await store.finishSubscriptionHandler(attempt, result: .failure(error: "retry", notification: wake(slot, "retry"))))
       let failed = try #require(try await store.armedSubscriptions(id).first)
-      #expect(failed.nextFireAt == fixedDate.addingTimeInterval(60))
+      #expect(failed.nextFireAt == fixedDate)
       #expect(failed.slot.handlerStateJSON == nil)
       let retry = try await begin(store, failed)
       #expect(try await store.finishSubscriptionHandler(retry, result: .success(stateJSON: "null", advance: .retire, wakes: [wake(slot, "done")])))
@@ -176,7 +176,7 @@ import Testing
       #expect(try await !reopened.sessions.finishSubscriptionHandler(inFlight, result: .success(stateJSON: "6", advance: .observed(marker: "pending"), wakes: [wake(slot, "stale")])))
       _ = try await reopened.sessions.finishSubscriptionHandler(replay, result: .failure(error: "still offline", notification: wake(slot, "still offline")))
       #expect(try await reopened.sessions.hydrate(id).undrained.count == 1)
-      try await reopened.sessions.cancelSubscription(id, subscriptionID: slot.slot.id)
+      try await reopened.sessions.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
       #expect(try await Space.open(file: file).sessions.armedSubscriptions(id).isEmpty)
     }
   }
@@ -202,7 +202,7 @@ import Testing
       #expect(archived.slot.handlerStateJSON == "1")
       #expect(archived.slot.handlerIncarnation == slot.slot.handlerIncarnation)
       #expect(archived.slot.handlerAttemptID == nil)
-      #expect(try await space.sessions.beginSubscriptionHandler(id, subscriptionID: slot.slot.id, incarnation: late.incarnation) == nil)
+      #expect(try await space.sessions.beginSubscriptionHandler(.session(id), subscriptionID: slot.slot.id, incarnation: late.incarnation) == nil)
       try await space.sessions.unarchive(id)
       #expect(try await !space.sessions.finishSubscriptionHandler(late, result: .success(stateJSON: "2", advance: .observed(marker: "late"), wakes: [wake(slot, "late")])))
       let resumed = try await begin(space.sessions, archived)

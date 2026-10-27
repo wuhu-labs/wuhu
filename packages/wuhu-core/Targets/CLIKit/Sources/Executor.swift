@@ -354,6 +354,12 @@ struct Executor {
       try await self.groupGrant(group: group, role: role, subject: subject)
     case let .groupRevoke(group, subject):
       try await self.groupRevoke(group: group, subject: subject)
+    case let .groupObservers(group):
+      try await self.groupObservers(group)
+    case let .groupObserverCreate(group, input):
+      try await self.groupObserverCreate(group, input)
+    case let .groupObserverCancel(group, name):
+      try await self.groupObserverCancel(group, name: name)
     }
     return 0
   }

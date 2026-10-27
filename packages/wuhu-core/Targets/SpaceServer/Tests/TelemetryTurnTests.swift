@@ -38,7 +38,7 @@ import WuhuAI
         return ToolOutcome(payload: .exec(.init(output: "secret output", exitCode: 0)))
       }, inference: { request in
         let attempt = attempts.withLock { count in count += 1; return count }
-        await metrics.record(.init(timestamp: Date(), session: request.sessionID, provider: "test", model: "model", effort: "high", outcome: .ok, ttftMs: 10, durationMs: 20, usage: .init(inputTokens: 5, outputTokens: 3, totalTokens: 8)))
+        await metrics.record(.init(timestamp: Date(), payer: .session(request.sessionID), provider: "test", model: "model", effort: "high", outcome: .ok, ttftMs: 10, durationMs: 20, usage: .init(inputTokens: 5, outputTokens: 3, totalTokens: 8)))
         let blocks: [ContentBlock] = attempt == 1 ? [.toolCall(.init(id: "call", name: "exec", arguments: .init(.object(["machine": "devbox", "command": "secret command"]))))] : [.text("secret response")]
         return .init(message: .init(content: blocks), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 5, outputTokens: 3, totalTokens: 8)))
       }, compact: { _, _ in .init(summary: "") }, budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) })

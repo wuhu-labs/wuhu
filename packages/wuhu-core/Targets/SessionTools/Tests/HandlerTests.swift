@@ -23,13 +23,17 @@ private func handlerNotifications(_ space: Space, _ session: SessionID) async th
   }
 }
 
-private func withHandlerFiring(
+func withHandlerFiring(
   _ space: Space,
+  owner: Hub? = nil,
+  configure: (inout SubscriptionFiring) -> Void = { _ in },
   _ body: (SessionExecution, Hub) async throws -> Void,
 ) async throws {
-  let owner = Hub(space: space)
-  let worker = await firingWorker(owner)
-  let firing = SubscriptionFiring(space: space, worker: worker)
+  let owner = owner ?? Hub(space: space)
+  let (worker, registry) = await firingWorkers(owner)
+  var configured = SubscriptionFiring(space: space, worker: registry)
+  configure(&configured)
+  let firing = configured
   try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { await whenCancelled { await worker.shutdown() } }
     group.addTask { await firing.run() }
@@ -174,7 +178,7 @@ private func withHandlerFiring(
       let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
-          do { _ = try await rig.scripts.runHandler(path: "/cpu.js", session: rig.session, tools: tools) }
+          do { _ = try await rig.scripts.runHandler(path: "/cpu.js", actor: .session(rig.session), tools: tools) }
           catch is CancellationError { return }
         }
         try await until("CPU handler started") { (try? await rig.space.fs(.shared).stat("/started.md")) != nil }
@@ -190,7 +194,7 @@ private func withHandlerFiring(
       try await rig.write("/timeout.js", "export default async ({wake}) => { wake('discard'); await sleep(120000); return 1; }")
       do {
         _ = try await rig.advancing {
-          try await rig.scripts.runHandler(path: "/timeout.js", session: rig.session, tools: tools)
+          try await rig.scripts.runHandler(path: "/timeout.js", actor: .session(rig.session), tools: tools)
         }
         Issue.record("timeout succeeded")
       } catch { #expect(String(describing: error).contains("60")) }
@@ -198,7 +202,7 @@ private func withHandlerFiring(
       try await rig.write("/undefined.js", "export default () => undefined;")
       try await rig.write("/oversize.js", "export default () => 'x'.repeat(20000);")
       for path in ["/undefined.js", "/oversize.js"] {
-        await #expect(throws: (any Error).self) { try await rig.scripts.runHandler(path: path, session: rig.session, tools: tools) }
+        await #expect(throws: (any Error).self) { try await rig.scripts.runHandler(path: path, actor: .session(rig.session), tools: tools) }
       }
     }
   }
@@ -209,7 +213,7 @@ private func withHandlerFiring(
       import {sendMessage} from 'wuhu:session';
       export default async () => { return await sendMessage({message:'handler answered'}); };
       """)
-      let result = try await rig.scripts.runHandler(path: "/post.js", session: rig.session, tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
+      let result = try await rig.scripts.runHandler(path: "/post.js", actor: .session(rig.session), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       let posted = try #require(JSONValue.parse(result.stateJSON)?.object)
       #expect(posted["conversationId"] == .string(rig.session.rawValue))
       let page = try await rig.evaluate("import {conversation} from 'wuhu:space'; result((await conversation(import.meta.session)).messages.map(m=>m.text));")
@@ -276,7 +280,7 @@ private func withHandlerFiring(
       }
       """)
       let rows = try await rig.space.query("SELECT 'release?' AS text", as: try await rig.space.principal(of: rig.session))
-      let result = try await rig.scripts.runHandler(path: "/handler.js", session: rig.session, rows: rows, stateJSON: "{\"cursor\":10}", tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
+      let result = try await rig.scripts.runHandler(path: "/handler.js", actor: .session(rig.session), rows: rows, stateJSON: "{\"cursor\":10}", tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
       #expect(JSONValue.parse(result.stateJSON) == .object(["cursor": 11]))
       #expect(result.wakes == ["release digest"])
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
@@ -288,7 +292,7 @@ private func withHandlerFiring(
     try await withRig { rig in
       try await rig.write("/throws.js", "export default ({wake}) => { wake('must not deliver'); throw Error('boom'); }")
       await #expect(throws: (any Error).self) {
-        try await rig.scripts.runHandler(path: "/throws.js", session: rig.session, tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
+        try await rig.scripts.runHandler(path: "/throws.js", actor: .session(rig.session), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       }
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
     }
@@ -391,9 +395,9 @@ private func withHandlerFiring(
       let worker = await firingWorker(owner)
       let streams = Box(0)
       var firing = SubscriptionFiring(space: space, worker: worker)
-      firing.observationStream = { space, session, sql in
+      firing.observationStream = { space, principal, sql in
         streams.withLock { $0 += 1 }
-        return await space.observeQuery(sql, throttle: .zero, as: try await space.principal(of: session))
+        return await space.observeQuery(sql, throttle: .zero, as: principal)
       }
       let runner = firing
       try await withThrowingTaskGroup(of: Void.self) { group in

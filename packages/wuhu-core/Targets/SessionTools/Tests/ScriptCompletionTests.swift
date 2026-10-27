@@ -194,7 +194,7 @@ data: {}
         throw new Error('expected signing failure')
       }
       """#)
-      let result = try await rig.scripts.runHandler(path: "/signing-handler.js", session: rig.session, stateJSON: "null", tools: tools)
+      let result = try await rig.scripts.runHandler(path: "/signing-handler.js", actor: .session(rig.session), stateJSON: "null", tools: tools)
       #expect(JSONValue.parse(result.stateJSON) == .object([
         "typed": .bool(true), "name": .string("CompletionError"), "code": .string("oidcSigningFailed"), "provider": .string("offline"),
         "message": .string("OIDC signing failed for provider offline; no fallback was attempted."),
@@ -219,7 +219,7 @@ data: {}
         return "fixture-token"
       }, oidcBindingIdentity: { _, _ in "completion-oidc-fixture" }))
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
-      #expect(try await tools.complete(rig.session, request) == #"{"relevant":true}"#)
+      #expect(try await tools.complete(.session(rig.session), request) == #"{"relevant":true}"#)
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT session, provider, input, outcome FROM inferences'))[0])"#)
       #expect(record == .object(["session": .string(rig.session.rawValue), "provider": .string("offline"), "input": .integer(10), "outcome": .string("ok")]))
     }
@@ -256,7 +256,7 @@ data: {}
       try await rig.write("/models.json", completionModels)
       let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
-      await #expect(throws: CancellationError.self) { try await tools.complete(rig.session, request) }
+      await #expect(throws: CancellationError.self) { try await tools.complete(.session(rig.session), request) }
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
       #expect(record.object?["outcome"] == .string("cancelled"))
       #expect(record.object?["session"] == .string(rig.session.rawValue))
@@ -280,7 +280,7 @@ data: {}
       }
       """#)
       let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
-      let result = try await rig.scripts.runHandler(path: "/complete-handler.js", session: rig.session, stateJSON: #"{"cursor":4}"#, tools: tools)
+      let result = try await rig.scripts.runHandler(path: "/complete-handler.js", actor: .session(rig.session), stateJSON: #"{"cursor":4}"#, tools: tools)
       let state = try #require(JSONValue.parse(result.stateJSON)?.object)
       #expect(state["session"] == .string(rig.session.rawValue))
       #expect(state["text"] == .string(#"{"relevant":true}"#))

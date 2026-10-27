@@ -10,6 +10,7 @@ import MachineChannel
 import enum MinimalAgent.AgentLog
 import enum MinimalAgent.MinimalAgent
 import SpaceClient
+import struct SpaceContract.ObserverInput
 import struct SpaceContract.RequestTermsInput
 import enum SpaceContract.SessionToolExecutor
 import struct SpaceContract.ToolError
@@ -359,6 +360,9 @@ enum Command: Equatable {
   case groupSecrets(String, scope: String)
   case groupGrant(group: String, role: String, subject: String)
   case groupRevoke(group: String, subject: String)
+  case groupObservers(String)
+  case groupObserverCreate(group: String, ObserverInput)
+  case groupObserverCancel(group: String, name: String)
   case machineScope(machine: String, scope: String)
 }
 

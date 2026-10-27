@@ -32,10 +32,11 @@ struct CompletionError: Error {
 
 extension ScriptAI {
   func installCompletion(in engine: JSEngine) {
-    engine.define("__wuhu_complete", promising: { [session, tools] arguments in
+    engine.define("__wuhu_complete", promising: { [actor, tools, execution] arguments in
       do {
         let request = try CompletionRequest(input: arguments.first, options: arguments[safe: 1])
-        return .object(["ok": .string(try await tools.complete(session, request))])
+        let text = try await execution.outsideLifetime { try await tools.complete(actor, request) }
+        return .object(["ok": .string(text)])
       } catch is CancellationError {
         throw CancellationError()
       } catch let error as CompletionError {
@@ -110,10 +111,10 @@ struct CompletionRequest {
 }
 
 extension ToolExecutor {
-  func complete(_ session: SessionID, _ request: CompletionRequest) async throws -> String {
+  func complete(_ actor: ScriptActor, _ request: CompletionRequest) async throws -> String {
     let catalog: ProviderCatalog
     do {
-      catalog = try await self.catalog(session, includeGroups: true)
+      catalog = try await self.catalog(actor, includeGroups: true)
     } catch is CancellationError {
       throw CancellationError()
     } catch let refused as SpaceClient.TransportFailure where refused.errorCode == .forbidden {
@@ -144,6 +145,21 @@ extension ToolExecutor {
     else { throw CompletionError(code: .providerNotConfigured, message: "The requested provider needs an HTTP(S) baseURL without embedded credentials.") }
     if request.schema != nil, request.provider == "deepseek", catalog.document.providers[request.provider]?.dialect == .anthropic {
       throw CompletionError(code: .unsupportedSchema, message: "DeepSeek's Anthropic dialect does not support JSON schema output.")
+    }
+    let session: SessionID
+    let payer: InferenceMetric.Payer
+    switch actor {
+    case let .session(caller): session = caller; payer = .session(caller)
+    case let .observer(observer, _):
+      // OIDC tokens are minted for a session; an observer has none to sign as.
+      guard catalog.document.providers[request.provider]?.auth != .oidc else {
+        throw CompletionError(code: .providerNotConfigured, message: "An observer's complete() needs a provider with key authentication; OIDC providers sign as a session.")
+      }
+      // Only the prompt cache key reads this: the observer's member name keys
+      // its cache the way a session id keys a session's.
+      session = SessionID(observer.member)
+      guard let firing = observer.firing else { preconditionFailure("an observer runs its handler only in a firing") }
+      payer = .observer(group: observer.group.rawValue, firing: firing)
     }
     let resolved: ResolvedModel
     do { resolved = try await catalog.resolve(specifier, session: session) }
@@ -190,7 +206,7 @@ extension ToolExecutor {
     let outcome = InferenceMetric.classify(failure)
     let metric = InferenceMetric(
       timestamp: timestamp,
-      session: session,
+      payer: payer,
       provider: specifier.provider,
       model: specifier.model,
       servedModel: servedModel,
@@ -202,7 +218,7 @@ extension ToolExecutor {
       durationMs: started.duration(to: clock.now).completionMilliseconds,
       usage: usage,
     )
-    try await report(metric)
+    try await report(metric, as: actor)
     if let failure {
       if case .cancelled = failure { throw CancellationError() }
       throw CompletionError(code: .inferenceFailed, message: "The requested model's inference failed; no fallback was attempted.")

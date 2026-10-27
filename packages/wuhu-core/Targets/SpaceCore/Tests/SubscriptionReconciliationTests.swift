@@ -83,7 +83,7 @@ import Testing
         observer: .observe(sql: "SELECT 1"), deadline: .requestDeadline(fixedDate),
       ])
       _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "snapshot", snapshot: snapshot, runningWork: []), kept: nil)
-      try await store.cancelSubscription(id, subscriptionID: removed)
+      try await store.cancelSubscription(.session(id), subscriptionID: removed)
       let subscriptions = try await store.hydrate(id).transcript.kernel.environment.tools.subscriptions
       #expect(subscriptions == [kept: .timer(.cron("* * * * *")), observer: .observe(sql: "SELECT 1"), deadline: .requestDeadline(fixedDate)])
       #expect(try await store.registeredSubscriptions(id).ids == [kept, observer])
@@ -109,7 +109,7 @@ import Testing
       try await reopened.sessions.unarchive(id)
       #expect(try await reopened.sessions.armedSubscriptions(id) == [slot])
       #expect(try await reopened.sessions.hydrate(id).undrained.isEmpty)
-      try await reopened.sessions.cancelSubscription(id, subscriptionID: slot.slot.id)
+      try await reopened.sessions.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
       #expect(try await space.sessions.armedSubscriptions(id).isEmpty)
     }
   }
@@ -124,7 +124,7 @@ import Testing
       let task = Task {
         do {
           for try await snapshot in registrations {
-            if let first = snapshot.first { await lifecycle.append(first.archived) }
+            if let first = snapshot.first { await lifecycle.append(first.orphaned) }
           }
         } catch { Issue.record(error) }
       }
@@ -135,7 +135,7 @@ import Testing
       try await store.unarchive(id)
       let snapshots = try await awaitItems(lifecycle, atLeast: 3)
       #expect(snapshots == [false, true, false])
-      #expect(try await store.subscriptionRegistrations().first?.archived == false)
+      #expect(try await store.subscriptionRegistrations().first?.orphaned == false)
       #expect(try await store.armedSubscriptions(id).count == 1)
     }
   }
@@ -148,15 +148,15 @@ import Testing
       let slot = try await store.armSubscription(id, slot: .init(
         id: .init("timer"), kind: .timer(.oneShot(fixedDate), message: "tick"), handler: handler ? "/timer.js" : nil,
       ), nextFireAt: fixedDate)
-      #expect(try await !store.retireArchivedSubscription(id, subscriptionID: slot.slot.id))
+      #expect(try await !store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
       #expect(try await store.armedSubscriptions(id) == [slot])
       _ = try await store.archive(id, grace: .seconds(100))
       try await store.unarchive(id)
-      #expect(try await !store.retireArchivedSubscription(id, subscriptionID: slot.slot.id))
+      #expect(try await !store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
       #expect(try await store.armedSubscriptions(id) == [slot])
       _ = try await store.archive(id, grace: .seconds(100))
-      #expect(try await store.retireArchivedSubscription(id, subscriptionID: slot.slot.id))
-      #expect(try await !store.retireArchivedSubscription(id, subscriptionID: slot.slot.id))
+      #expect(try await store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
+      #expect(try await !store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
       try await store.unarchive(id)
       #expect(try await store.armedSubscriptions(id).isEmpty)
       #expect(try await store.hydrate(id).undrained.isEmpty)
@@ -193,7 +193,7 @@ import Testing
       let hydrated = try await space.sessions.hydrate(id).transcript.kernel
       #expect(hydrated.handlerSubscriptions == [.init("handler"), .init("observer")])
       #expect(hydrated.environment.tools.handlerSubscriptions == hydrated.handlerSubscriptions)
-      try await space.sessions.cancelSubscription(id, subscriptionID: .init("handler"))
+      try await space.sessions.cancelSubscription(.session(id), subscriptionID: .init("handler"))
       let registrations = try await space.sessions.registeredSubscriptions(id)
       #expect(registrations.ids == [.init("plain"), .init("observer")])
       #expect(registrations.handlers == [.init("observer")])

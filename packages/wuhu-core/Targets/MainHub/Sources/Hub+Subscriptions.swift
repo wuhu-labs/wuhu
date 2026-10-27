@@ -43,6 +43,7 @@ extension Hub {
     return try await store.armSubscription(
       session,
       slot: .init(id: subscriptionID, kind: .observe(sql: arguments.sql, throttleSeconds: throttle), handler: try handlerPath(arguments.handler)),
+      name: try subscriptionName(arguments.name),
       marker: rowsMarker(baseline),
       answering: ToolReceipt(session: session, callID: callID, payload: payload),
     )
@@ -68,6 +69,7 @@ extension Hub {
     return try await store.armSubscription(
       session,
       slot: .init(id: subscriptionID, kind: .timer(schedule, message: arguments.message), handler: try handlerPath(arguments.handler)),
+      name: try subscriptionName(arguments.name),
       nextFireAt: nextFireAt,
       answering: ToolReceipt(session: session, callID: callID, payload: payload),
     )
@@ -101,8 +103,15 @@ extension Hub {
   }
 }
 
-private func handlerPath(_ path: String?) throws -> String? {
+func handlerPath(_ path: String?) throws -> String? {
   guard let path else { return nil }
   let resolved = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
   return path.hasPrefix("/") ? String(resolved.dropFirst("wuhu:".count)) : resolved
+}
+
+func subscriptionName(_ name: String?) throws -> String? {
+  guard let name else { return nil }
+  guard !name.isEmpty, name.utf8.count <= 64, !name.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
+  else { throw ToolProblem("a subscription name is 1 to 64 bytes with no control characters", code: "invalidArgument") }
+  return name
 }

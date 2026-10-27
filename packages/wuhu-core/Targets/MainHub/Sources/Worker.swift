@@ -72,19 +72,35 @@ public struct ScriptHandlerInvocation: Sendable {
     case timer(Date)
   }
 
+  /// Whom the handler runs as: its session, or its group's observer in this
+  /// firing.
+  public enum Runner: Hashable, Sendable {
+    case session(SessionID)
+    case observer(Observer)
+  }
+
   public let id: UUID
   public let path: String
-  public let session: SessionID
+  public let runner: Runner
   public let input: Input
   public let stateJSON: String?
+  /// What an observer's handler calls main with, minted for this firing
+  /// alone by whoever hands the invocation to a worker.
+  public var token: String?
 
-  public init(id: UUID, path: String, session: SessionID, input: Input, stateJSON: String?) {
+  public init(id: UUID, path: String, runner: Runner, input: Input, stateJSON: String?, token: String? = nil) {
     self.id = id
     self.path = path
-    self.session = session
+    self.runner = runner
     self.input = input
     self.stateJSON = stateJSON
+    self.token = token
   }
+
+  /// The id the handler's script runs under, and owns its machine processes by.
+  public var scriptID: String { Self.scriptID(id) }
+
+  public static func scriptID(_ id: UUID) -> String { "handler-" + id.uuidString.lowercased() }
 }
 
 /// A file run as a space script by its session, from the CLI (`wuhu script`).

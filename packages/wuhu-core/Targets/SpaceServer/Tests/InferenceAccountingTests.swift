@@ -24,7 +24,7 @@ import WuhuAI
     let writer = InferenceMetricsWriter(folder: folder.url, logger: logger)
     let sink = inferenceMetricsSink(space: space, writer: writer, logger: logger)
     let metric = InferenceMetric(
-      timestamp: Date(timeIntervalSince1970: 0), session: session, provider: model.provider,
+      timestamp: Date(timeIntervalSince1970: 0), payer: .session(session), provider: model.provider,
       model: model.model, servedModel: "api-served", effort: model.effort, outcome: .ok,
       ttftMs: 80, durationMs: 1200,
       usage: .init(inputTokens: 224_721, outputTokens: 1000, cacheReadTokens: 222_976, reasoningTokens: 750, totalTokens: 225_721),

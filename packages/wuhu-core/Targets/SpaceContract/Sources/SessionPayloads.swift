@@ -92,6 +92,7 @@ public struct SubscriptionInput: Codable, Equatable, Sendable {
   public let observe: SubscriptionObserveInput?
   public let timer: SubscriptionTimerInput?
   public let handler: String?
+  public let name: String?
 }
 
 @Contract

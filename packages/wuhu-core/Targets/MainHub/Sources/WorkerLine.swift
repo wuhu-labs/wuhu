@@ -6,6 +6,7 @@
 import enum InferenceKit.AttemptEvent
 import protocol MachineChannel.FrameTransport
 import SessionDomain
+import struct SpaceContract.GroupID
 import enum SpaceContract.ScriptOutput
 import struct SpaceContract.UsageWindow
 import SpaceCore
@@ -43,6 +44,15 @@ enum WorkerCall: Codable, Sendable {
   case runningWork(session: SessionID)
   case run(ScriptRun)
   case shutdown
+
+  // A script or a firing stops when main stops waiting; every other call
+  // finishes what it started.
+  var cancellable: Bool {
+    switch self {
+    case .run, .fire: true
+    case .deliver, .revoke, .activity, .runningWork, .shutdown: false
+    }
+  }
 }
 
 // A call's outputs all cross before its reply; a cancel for a call that is
@@ -121,16 +131,26 @@ struct WireInvocation: Codable, Sendable {
     case timer(Double)
   }
 
+  enum Runner: Codable, Sendable {
+    case session(SessionID)
+    case observer(group: String, name: String, firing: String?, token: String)
+  }
+
   var id: UUID
   var path: String
-  var session: SessionID
+  var runner: Runner
   var input: Input
   var stateJSON: String?
 
   init(_ invocation: ScriptHandlerInvocation) {
     id = invocation.id
     path = invocation.path
-    session = invocation.session
+    switch invocation.runner {
+    case let .session(id): runner = .session(id)
+    case let .observer(observer):
+      guard let token = invocation.token else { preconditionFailure("an observer's firing crosses to a worker with its token") }
+      runner = .observer(group: observer.group.rawValue, name: observer.name, firing: observer.firing, token: token)
+    }
     stateJSON = invocation.stateJSON
     input = switch invocation.input {
     case let .rows(rows): .rows(columns: rows.columns, decltypes: rows.decltypes, rows: rows.rows.map { $0.map(WireCell.init) })
@@ -143,7 +163,14 @@ struct WireInvocation: Codable, Sendable {
     case let .rows(columns, decltypes, rows): .rows(Rows(columns: columns, decltypes: decltypes, rows: rows.map { $0.map(\.cell) }))
     case let .timer(seconds): .timer(Date(timeIntervalSince1970: seconds))
     }
-    return ScriptHandlerInvocation(id: id, path: path, session: session, input: input, stateJSON: stateJSON)
+    let runner: ScriptHandlerInvocation.Runner
+    let token: String?
+    switch self.runner {
+    case let .session(id): runner = .session(id); token = nil
+    case let .observer(group, name, firing, minted):
+      runner = .observer(Observer(group: GroupID(rawValue: group), name: name, firing: firing)); token = minted
+    }
+    return ScriptHandlerInvocation(id: id, path: path, runner: runner, input: input, stateJSON: stateJSON, token: token)
   }
 }
 
@@ -286,10 +313,10 @@ public final class WorkerClient: Worker, Sendable {
         }
         guard open else { return continuation.resume(throwing: WorkerLineSevered()) }
         send.yield(.call(id: id, call))
-        if output != nil, Task.isCancelled { send.yield(.cancel(id: id)) }
+        if call.cancellable, Task.isCancelled { send.yield(.cancel(id: id)) }
       }
     } onCancel: {
-      if output != nil { send.yield(.cancel(id: id)) }
+      if call.cancellable { send.yield(.cancel(id: id)) }
     }
     if case let .failed(error) = reply { throw error.error }
     return reply

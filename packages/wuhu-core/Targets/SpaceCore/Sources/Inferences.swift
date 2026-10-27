@@ -4,12 +4,20 @@
   import Foundation
 #endif
 import struct SessionDomain.SessionID
+import struct SpaceContract.GroupID
 import StructuredQueries
 import StructuredQueriesSQLite
 
 public struct InferenceRecord: Sendable {
+  /// Who an attempt is billed to.
+  public enum Payer: Sendable {
+    case session(SessionID)
+    /// A group observer's handler, in one firing.
+    case observer(group: GroupID, firing: String)
+  }
+
   public let id: String
-  public let session: SessionID
+  public let payer: Payer
   public let at: Date
   public let provider: String
   public let model: String
@@ -27,7 +35,7 @@ public struct InferenceRecord: Sendable {
 
   public init(
     id: String,
-    session: SessionID,
+    payer: Payer,
     at: Date,
     provider: String,
     model: String,
@@ -44,7 +52,7 @@ public struct InferenceRecord: Sendable {
     ttftMs: Int64? = nil,
   ) {
     self.id = id
-    self.session = session
+    self.payer = payer
     self.at = at
     self.provider = provider
     self.model = model
@@ -65,7 +73,7 @@ public struct InferenceRecord: Sendable {
 @Table("inferences")
 struct InferenceRow {
   @Column("id", primaryKey: true) var id: String
-  @Column("session") var session: String
+  @Column("session") var session: String?
   @Column("at") var at: String
   @Column("provider") var provider: String
   @Column("model") var model: String
@@ -81,16 +89,20 @@ struct InferenceRow {
   @Column("duration_ms") var durationMs: Int64?
   @Column("ttft_ms") var ttftMs: Int64?
   @Column("grp") var grp: String
+  @Column("firing") var firing: String?
 }
 
 extension Space {
   public func recordInference(_ inference: InferenceRecord) async throws {
     try await writer.write { db in
-      let session = try Sessions.record(inference.session.rawValue, in: db)
+      let (session, group, firing): (String?, GroupID, String?) = switch inference.payer {
+      case let .session(session): (session.rawValue, try Sessions.record(session.rawValue, in: db).group, nil)
+      case let .observer(group, firing): (nil, group, firing)
+      }
       try InferenceRow.insert {
         InferenceRow(
           id: inference.id,
-          session: inference.session.rawValue,
+          session: session,
           at: SQLiteDateFormat.string(from: inference.at),
           provider: inference.provider,
           model: inference.model,
@@ -105,7 +117,8 @@ extension Space {
           error: inference.error,
           durationMs: inference.durationMs,
           ttftMs: inference.ttftMs,
-          grp: session.group.rawValue,
+          grp: group.rawValue,
+          firing: firing,
         )
       } onConflict: { $0.id }.execute(db)
     }

@@ -207,7 +207,7 @@ extension SessionRuntime {
     )
     // The loop, the kernel pieces and the tools reach main as a worker does:
     // through its routes, with the worker's token. `toolOwner` serves them.
-    let workers = WorkerRegistry(tokens: tokens)
+    let workers = WorkerRegistry(tokens: tokens, machines: hub)
     // A main taking over from the one before it in this process stopped no
     // script: they run on in the workers.
     let startup: (@Sendable () async -> Void)? = takingOver ? nil : { @Sendable in
@@ -302,7 +302,7 @@ extension SessionRuntime {
   ) -> ToolExecutor {
     let tokens = ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
-    let workers = WorkerRegistry(tokens: tokens)
+    let workers = WorkerRegistry(tokens: tokens, machines: hub)
     let credential = workers.mint()
     let executor = ToolExecutor(
       owner: MainClient(connection: connection, credential: { credential.token }), main: connection, credential: { tokens.sessionToken($0) },

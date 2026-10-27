@@ -238,6 +238,9 @@ public enum SpaceServer {
       addSessionLogRoutes(&router, space: space, runtime: sessions) { request in
         try await requestPrincipal(request, space: space, date: clock)
       }
+      addObserverRoutes(&router, space: space, hub: sessions.owner) { request in
+        try await requestPrincipal(request, space: space, date: clock)
+      }
     }
     if let webApp = webContent.webApp {
       router.get("/*") { request, _ in

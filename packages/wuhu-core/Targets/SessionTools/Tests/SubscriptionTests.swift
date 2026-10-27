@@ -301,10 +301,10 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       let writer = await space.writer
       try await writer.write { db in
         try db.execute(sql: """
-        CREATE TRIGGER stuck_due AFTER UPDATE OF next_fire_at ON session_subscriptions
+        CREATE TRIGGER stuck_due AFTER UPDATE OF next_fire_at ON subscription_slots
         BEGIN
-          UPDATE session_subscriptions SET next_fire_at = OLD.next_fire_at
-          WHERE session_id = NEW.session_id AND subscription_id = NEW.subscription_id;
+          UPDATE subscription_slots SET next_fire_at = OLD.next_fire_at
+          WHERE owner_kind = NEW.owner_kind AND owner = NEW.owner AND subscription_id = NEW.subscription_id;
         END;
         """)
       }
@@ -595,7 +595,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       // or a cancel retried after it committed.
       var stale = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       _ = try await stale.run("timer", .object(["message": "y", "in_seconds": 600]), id: "tc-t2")
-      try await space.sessions.cancelSubscription(session, subscriptionID: .timer(.init("tc-t2")))
+      try await space.sessions.cancelSubscription(.session(session), subscriptionID: .timer(.init("tc-t2")))
       let ended = try await stale.run(
         "cancel", .object(["id": .string(SubscriptionID.timer(.init("tc-t2")).rawValue)]),
       )
@@ -616,6 +616,20 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       }
       #expect(a.subscriptionID == b.subscriptionID)
       #expect(try await space.sessions.armedSubscriptions().count == 1, "the retry re-arms the same slot")
+    }
+  }
+
+  @Test func aSubscriptionIsNamedAfterItsHandlerUnlessNamed() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      _ = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "handler": "/h/nightly.js"]), id: "tc-default")
+      _ = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "handler": "/h/nightly.js", "name": "evening"]), id: "tc-named")
+      _ = try await world.run("observe", .object(["sql": "SELECT 1", "handler": "/h/nightly.js", "name": "rows"]), id: "tc-observed")
+      let names = try await space.sessions.armedSubscriptions().compactMap(\.name).sorted()
+      #expect(names == ["evening", "nightly", "rows"])
+      let empty = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "name": ""]), id: "tc-empty")
+      #expect(try failure(empty).code == "invalidArgument")
     }
   }
 
@@ -685,7 +699,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
         let statements = executed.value
         return (
           statements.filter { $0 == sql }.count,
-          statements.filter { $0.hasPrefix("SELECT * FROM session_subscriptions") }.count,
+          statements.filter { $0.hasPrefix("SELECT") && $0.contains("FROM \"subscription_slots\"") }.count,
         )
       }
 

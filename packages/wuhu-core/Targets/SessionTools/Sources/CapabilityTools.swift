@@ -82,8 +82,8 @@ extension ToolExecutor {
   }
 
   /// A settings document (`/models.json` and its companions); nil when absent.
-  func settingsDocument(_ session: SessionID, _ path: String) async throws -> Data? {
-    do { return try await client(session).file(GroupID.settings.address(path)).data }
+  func settingsDocument(_ actor: ScriptActor, _ path: String) async throws -> Data? {
+    do { return try await client(actor).file(GroupID.settings.address(path)).data }
     catch let failure as SpaceClient.ToolFailure where failure.error.code == .notFound { return nil }
   }
 

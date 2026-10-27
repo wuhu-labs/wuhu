@@ -737,7 +737,7 @@ import struct WuhuAI.ToolArguments
       var rig = try await ExecJobRig()
       let peer = try await makeSession(rig.space, name: "peer")
       let plain = try await rig.space.mintExec(machine: rig.machine, caller: rig.session.rawValue)
-      let script = try await rig.space.mintScriptExec(machine: rig.machine, session: rig.session.rawValue, script: .init("script"))
+      let script = try await rig.space.mintScriptExec(machine: rig.machine, caller: rig.session.rawValue, script: .init("script"))
       let foreign = try await rig.space.claimExec(machine: rig.machine, caller: peer.rawValue, toolCallID: .init("tc-peer"))
       for id in [plain.id, script.id, foreign.record.id] {
         let refused = try await rig.world.run("cancel", .object(["id": .string(execHandle(id))]))

@@ -119,10 +119,12 @@ final class ScriptExecution: Sendable {
     var console = ScriptConsole()
     var deliveries: [Delivery] = []
     var delivering = false
+    var completing = 0
+    var credit: Duration = .zero
   }
 
   let id: String
-  let session: SessionID
+  let actor: ScriptActor
   let source: String
   let lifetime: Duration
   /// Main's API as the session: what the bindings touch the space through.
@@ -142,10 +144,12 @@ final class ScriptExecution: Sendable {
   private let abort: AsyncStream<String>.Continuation
   private let outbox: AsyncStream<ScriptPost>
   private let post: AsyncStream<ScriptPost>.Continuation
+  private let credits: AsyncStream<Void>
+  private let credited: AsyncStream<Void>.Continuation
 
   init(
     id: String,
-    session: SessionID,
+    actor: ScriptActor,
     source: String,
     lifetime: Duration,
     client: SpaceClient,
@@ -155,7 +159,7 @@ final class ScriptExecution: Sendable {
     arguments: [String] = [],
   ) {
     self.id = id
-    self.session = session
+    self.actor = actor
     self.source = source
     self.lifetime = lifetime
     self.client = client
@@ -171,6 +175,7 @@ final class ScriptExecution: Sendable {
     (controls, control) = AsyncStream.makeStream()
     (aborts, abort) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     (outbox, post) = AsyncStream.makeStream()
+    (credits, credited) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
   }
 
   private var handler: ScriptHandlerContext? {
@@ -308,7 +313,7 @@ final class ScriptExecution: Sendable {
     guard ServerTracing.enabled else { return await runBody(owner: owner) }
     let group = (try? await client.api(.get, "/v1/context") as ScriptContext)?.group
     await ServerTracing.$context.withValue(traceContext) {
-      let span = ServerSpan(.script, session: session.rawValue, group: group)
+      let span = ServerSpan(.script, session: actor.session?.rawValue, group: group)
       await ServerTracing.$context.withValue(span.context) {
         await runBody(owner: owner)
         let outcome = state.withLock { state in
@@ -382,13 +387,13 @@ final class ScriptExecution: Sendable {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)
       try engine.defineModule("wuhu:space", source: spaceModule + spaceFilesModule)
       try engine.defineModule("wuhu:secret", source: secretModule)
-      try ScriptAI(session: session, tools: tools).install(in: engine)
-      try ScriptSessions(session: session, tools: tools).install(in: engine)
+      try ScriptAI(actor: actor, tools: tools, execution: self).install(in: engine)
+      try ScriptSessions(actor: actor, tools: tools).install(in: engine)
       try engine.execute(scriptPrelude, name: "<prelude>")
       if let handler { try handler.install(in: engine) }
       try engine.defineModule("wuhu:machine", source: machineModule)
       let modules = scriptModules(client: client, snapshot: try await ScriptModuleSnapshot.load(client), typedErrors: handler != nil)
-      var meta: OrderedDictionary<String, JSONValue> = ["session": .string(session.rawValue)]
+      var meta: OrderedDictionary<String, JSONValue> = ["session": actor.session.map { .string($0.rawValue) } ?? .null]
       if case .command = kind { meta["args"] = .array(arguments.map(JSONValue.string)) }
       try await engine.run(module: source, name: "script", meta: meta, loader: modules)
       return .released
@@ -406,8 +411,18 @@ final class ScriptExecution: Sendable {
     let control = control
     return await withTaskGroup(of: Void.self) { timers in
       defer { timers.cancelAll() }
-      timers.addTask { [lifetime] in
-        guard (try? await clock.sleep(for: lifetime)) != nil else { return }
+      timers.addTask { [lifetime, credits] in
+        var deadline = lifetime
+        var slept = Duration.zero
+        var credit = credits.makeAsyncIterator()
+        while true {
+          guard (try? await clock.sleep(for: deadline - slept)) != nil else { return }
+          slept = deadline
+          let (earned, completing) = self.state.withLock { ($0.credit, $0.completing) }
+          if lifetime + earned > slept { deadline = lifetime + earned; continue }
+          guard completing > 0 else { break }
+          guard await credit.next() != nil else { return }
+        }
         self.state.withLock { if $0.stop == nil { $0.stop = .lifetime(lifetime) } }
         control.yield(self.handler == nil ? .abort(.lifetime(lifetime)) : .kill(.lifetime(lifetime)))
       }
@@ -443,11 +458,28 @@ final class ScriptExecution: Sendable {
       case let .update(update), let .failure(update): text = update
       case let .result(result): text = "result of \(scriptHandle(id)):\n" + result
       }
+      // A handler answers with its result, never a message.
+      guard let session = actor.session else { preconditionFailure("an observer's handler posted script output") }
       await notify(owner, session, script: id, text)
     }
   }
 
   // MARK: Host functions
+
+  /// Runs `work` off a handler's lifetime: what it spends waiting is added
+  /// back to the handler's budget, so a slow model never kills a handler.
+  func outsideLifetime<T>(_ work: () async throws -> T) async throws -> T {
+    guard handler != nil else { return try await work() }
+    @Dependency(\.continuousClock) var clock
+    state.withLock { $0.completing += 1 }
+    var outcome: Result<T, any Error> = .failure(CancellationError())
+    let spent = await clock.measure {
+      do { outcome = .success(try await work()) } catch { outcome = .failure(error) }
+    }
+    state.withLock { $0.completing -= 1; $0.credit += spent }
+    credited.yield()
+    return try outcome.get()
+  }
 
   func handlerResult() throws -> ScriptHandlerResult {
     try Task.checkCancellation()

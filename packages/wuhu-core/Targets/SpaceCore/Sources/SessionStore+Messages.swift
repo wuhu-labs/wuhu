@@ -58,7 +58,7 @@ extension SessionStore {
       ) {
         switch principal.actor {
         case let .person(_, account): guard account.rawValue == owner else { return false }
-        case .session, .anonymous: guard principal.group == group else { return false }
+        case .session, .observer, .anonymous: guard principal.group == group else { return false }
         }
       }
       if group == principal.group { return true }
@@ -209,13 +209,13 @@ extension SessionStore {
         sql: """
         INSERT INTO messages
           (id, conversation_id, sender_id, sender_session_id, sender_timezone,
-           reply_target, kind, request_id, content, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           reply_target, kind, request_id, content, created_at, firing)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         arguments: [
           messageID.rawValue, conversation.id.rawValue, sender.id, senderSession?.rawValue,
           sender.timeZone.identifier, replyTarget?.rawValue, kind.rawValue, requestID?.rawValue,
-          try Sessions.encode(content), now,
+          try Sessions.encode(content), now, poster.firing,
         ],
       )
       if let device = sender.device {
@@ -292,6 +292,10 @@ struct Poster {
   var actor: Actor?
   var persona: String
   var group: GroupID
+
+  var firing: String? {
+    if case let .observer(observer)? = actor { observer.firing } else { nil }
+  }
 
   func isAdmin(of group: GroupID, in db: Database) throws -> Bool {
     switch actor {

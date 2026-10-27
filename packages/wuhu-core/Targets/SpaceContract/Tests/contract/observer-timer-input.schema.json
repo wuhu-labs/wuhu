@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ObserverTimerInput","type":"object","properties":{"inSeconds":{"type":["number","null"]},"cron":{"type":["string","null"]}},"required":[],"additionalProperties":false}

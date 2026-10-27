@@ -50,7 +50,7 @@ extension Hub {
     case let (nil, nil, .session(session)):
       return .box(session)
     case (nil, nil, _):
-      throw ToolProblem("send_message: a person has no box; name a conversation or session")
+      throw ToolProblem("send_message: only a session has a box; name a conversation or session")
     case let (id?, nil, _):
       return .conversation(ConversationID(id))
     case let (nil, other?, .session):
@@ -68,7 +68,7 @@ extension Hub {
     switch target {
     case let .conversation(conversation): id = conversation
     case let .box(session): id = ConversationID(session.rawValue)
-    default: preconditionFailure("a page posts into a conversation or a box, never \(target)")
+    default: preconditionFailure("a page or an observer posts into a conversation or a box, never \(target)")
     }
     guard let conversation = try? await store.conversation(id), conversation.group != group else { return }
     throw outsidePageGroup(group, "posts")
@@ -84,7 +84,7 @@ extension Hub {
   }
 
   nonisolated public func request(
-    _ session: SessionID,
+    _ caller: Caller,
     _ callID: ToolCallID,
     _ arguments: RequestArguments,
   ) async throws -> ToolResultPayload {
@@ -96,11 +96,14 @@ extension Hub {
     let stall = try stallSeconds(arguments.stallSeconds)
     let terms = try arguments.terms.terms()
     let task = SessionID(arguments.task)
-    let messageID = MessageID(UUID.deterministic("request", session.rawValue, callID.rawValue).uuidString.lowercased())
+    guard deadline == nil || caller.session != nil else {
+      throw ToolProblem("deadline_seconds needs a session to tell; an observer's request has none")
+    }
+    let messageID = MessageID(UUID.deterministic("request", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
     do {
       let delivery = try await store.openRequest(
         on: task,
-        from: .session(session),
+        from: caller,
         messageID: messageID,
         text: arguments.message,
         deadline: deadline,
@@ -110,7 +113,7 @@ extension Hub {
       let existing = delivery.message.id != messageID
       return .request(.init(
         requestID: delivery.message.requestID!,
-        task: existing ? try await store.keyedRequest(by: .session(session), terms)!.task : task,
+        task: existing ? try await store.keyedRequest(by: caller, terms)!.task : task,
         conversationID: delivery.message.conversation,
         deadline: existing ? nil : delivery.message.deadline,
         existing: existing ? true : nil,
@@ -187,7 +190,7 @@ extension Hub {
     replyTarget: MessageID?,
     uploads: [AttachmentUpload],
   ) async throws -> MessageDelivery {
-    if case let .page(person) = caller { try await confine(target, to: person.group) }
+    if let group = caller.confinement { try await confine(target, to: group) }
     do {
       return try await store.post(
         target,
@@ -197,7 +200,7 @@ extension Hub {
         replyTarget: replyTarget,
         content: MessageContent(text: text),
         uploads: uploads,
-        acting: caller.person?.principal,
+        acting: caller.principal,
       )
     } catch let error as SessionStoreError {
       throw problem(error)
@@ -208,6 +211,7 @@ extension Hub {
     switch caller {
     case let .session(session): try await space.principal(of: session)
     case let .page(person): person.principal
+    case let .observer(observer): observer.principal
     }
   }
 
@@ -220,9 +224,9 @@ extension Hub {
     var located: [(reference: String, address: Address, size: Int)] = []
     for reference in references {
       let address = try await resolve(reference, as: principal)
-      if case let .page(person) = caller {
-        guard case let .space(_, group) = address, (group ?? principal.group) == person.group else {
-          throw outsidePageGroup(person.group, "attaches files")
+      if let confinement = caller.confinement {
+        guard case let .space(_, group) = address, (group ?? principal.group) == confinement else {
+          throw outsidePageGroup(confinement, "attaches files")
         }
       }
       let size: Int

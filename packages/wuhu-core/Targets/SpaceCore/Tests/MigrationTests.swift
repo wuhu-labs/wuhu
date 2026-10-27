@@ -33,8 +33,8 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     #expect(throws: DatabaseError.self) { try Space(writer: database) }
-    // The five already-applied migrations stay applied.
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 5)
+    // The six already-applied migrations stay applied.
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 6)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await database.write { db in
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
@@ -95,7 +95,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 5)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 6)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
   }
@@ -330,7 +330,7 @@ import Testing
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM message_devices") } == 0)
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM personas") } == 0)
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM join_tokens") } == 0)
-    #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT subscription_id FROM session_subscriptions ORDER BY 1") } == ["timer.keep"])
+    #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT subscription_id FROM subscription_slots ORDER BY 1") } == ["timer.keep"])
     #expect(try await reopened.read { db in
       try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'ac_wrap00001'")
     } == 0)
@@ -358,7 +358,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "006", "007", "008", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "998", "999"])
     try await original.close()
   }
 }

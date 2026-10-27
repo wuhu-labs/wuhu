@@ -13,10 +13,12 @@ import struct SpaceContract.GroupID
 import let SpaceContract.ownerIdentity
 import SpaceCore
 
-/// Who stands behind a request: a session's exec token, a verified person, or
-/// an unauthenticated caller (the --dev seat, or a public route).
+/// Who stands behind a request: a session's exec token, an observer's firing
+/// token, a verified person, or an unauthenticated caller (the --dev seat, or
+/// a public route).
 enum RequestCredential: Sendable {
   case session(SessionID, group: GroupID)
+  case observer(Observer)
   case person(ActingCredential)
   case anonymous
 }
@@ -31,9 +33,14 @@ enum PrincipalVerdict: Sendable {
 /// refused. The --dev seat acts anywhere that exists.
 func principal(for request: Request, credential: RequestCredential, space: Space) async throws -> PrincipalVerdict {
   let named = request.headers[GroupHeader.name]
-  if case let .session(session, group) = credential {
-    if let refused = try await groupMismatch(request, session: session, group: group, space: space) { return .refused(refused) }
+  switch credential {
+  case let .session(session, group):
+    if let refused = try await groupMismatch(request, by: "session \(session.rawValue)", group: group, space: space) { return .refused(refused) }
     return .principal(Principal(actor: .session(session), group: group))
+  case let .observer(observer):
+    if let refused = try await groupMismatch(request, by: "observer \(observer.member)", group: observer.group, space: space) { return .refused(refused) }
+    return .principal(observer.principal)
+  case .person, .anonymous: break
   }
   let actor: Actor
   switch try await speaker(of: credential, speaking: queryValues(of: request.url)["identity"], in: space) {
@@ -67,6 +74,7 @@ enum CredentialVerdict: Sendable {
 /// the gated session, else the bearer.
 func requestCredential(_ request: Request, space: Space, date: DateGenerator) async throws -> CredentialVerdict {
   if let gated = SessionPrincipal.current { return .credential(.session(gated.session, group: gated.group)) }
+  if let observer = ObserverPrincipal.current { return .credential(.observer(observer)) }
   switch try await bearerVerdict(request: request, space: space, now: date.now) {
   case let .rejected(response): return .refused(response)
   case let .verified(credential): return .credential(.person(credential))
@@ -87,15 +95,16 @@ func requestPrincipal(_ request: Request, space: Space, date: DateGenerator) asy
 /// header's, else `shared`.
 func namedGroup(_ request: Request) -> GroupID {
   if let gated = SessionPrincipal.current { return gated.group }
+  if let observer = ObserverPrincipal.current { return observer.group }
   return request.headers[GroupHeader.name].map(GroupID.init(rawValue:)) ?? .shared
 }
 
-/// A session naming another group than its own.
-func groupMismatch(_ request: Request, session: SessionID, group: GroupID, space: Space) async throws -> Response? {
+/// A session or observer naming another group than its own.
+func groupMismatch(_ request: Request, by member: String, group: GroupID, space: Space) async throws -> Response? {
   guard let named = request.headers[GroupHeader.name], try await space.resolveGroup(named) != group else { return nil }
   return errorResponse(
     .forbidden, code: "groupMismatch",
-    message: "session \(session.rawValue) acts in its own group \(group.rawValue) only, not \(named)",
+    message: "\(member) acts in its own group \(group.rawValue) only, not \(named)",
   )
 }
 
@@ -112,6 +121,8 @@ private func speaker(of credential: RequestCredential, speaking claimed: String?
   switch credential {
   case let .session(session, _):
     return .actor(.session(session))
+  case let .observer(observer):
+    return .actor(.observer(observer))
   case let .person(acting):
     if claimed == nil, acting.key.capabilities.isDisjoint(with: [.device, .seat]) {
       return .actor(try await person(acting.key.account, in: space))
@@ -141,7 +152,7 @@ extension Person {
   /// owner identity. A session is no person.
   init?(_ principal: Principal) {
     switch principal.actor {
-    case .session: return nil
+    case .session, .observer: return nil
     case let .person(persona, account): self.init(persona: persona, account: account, group: principal.group)
     case .anonymous: self.init(persona: ownerIdentity, account: nil, group: principal.group)
     }

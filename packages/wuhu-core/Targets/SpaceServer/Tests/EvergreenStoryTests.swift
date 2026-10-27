@@ -325,7 +325,7 @@ private final class Story: Sendable {
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
     )
-    workers = WorkerRegistry(tokens: tokens)
+    workers = WorkerRegistry(tokens: tokens, machines: nil)
     service = SessionService(sessions: store, worker: workers)
     let runtime = SessionRuntime(
       space: space, service: service, workers: workers, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: MainConnection(),

@@ -165,6 +165,10 @@ enum GroupAccess {
     switch actor {
     case .anonymous:
       return nil
+    case let .observer(observer):
+      // An observer writes only its own group, whatever that group may write elsewhere.
+      let role = snapshot.role(from: observer.group.rawValue, in: group.rawValue)
+      return group == observer.group ? role : role.map { min($0, .read) }
     case let .session(id):
       guard let session = try sessionRow(id, in: db) else { return nil }
       return snapshot.role(of: session, in: group.rawValue)
@@ -189,6 +193,8 @@ enum GroupAccess {
     switch actor {
     case .anonymous:
       return try reach(of: acting, in: db)
+    case let .observer(observer):
+      return try reach(of: observer.group, in: db)
     case let .session(id):
       guard let session = try sessionRow(id, in: db) else { return [] }
       return Set(snapshot.all.filter { snapshot.role(of: session, in: $0.rawValue) != nil })

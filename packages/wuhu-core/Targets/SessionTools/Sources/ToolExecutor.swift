@@ -62,7 +62,11 @@ public struct ToolExecutor: Sendable {
   /// Main's API as `session`; with `toolCall`, every request names the tool
   /// call it runs for, and main answers a repeat with its first response.
   func client(_ session: SessionID, toolCall: String? = nil) async throws -> SpaceClient {
-    let token = try await credential(session)
+    try await client(.session(session), toolCall: toolCall)
+  }
+
+  func client(_ actor: ScriptActor, toolCall: String? = nil) async throws -> SpaceClient {
+    let token = try await bearer(actor)
     let main = main
     return SpaceClient(space: "http://main", fetch: FetchClient { request in
       var request = request
@@ -104,10 +108,10 @@ public struct ToolExecutor: Sendable {
       case .observe: return try await observe(session, call.id, decoded(ObserveArguments.self, call))
       case .timer: return try await timer(session, call.id, decoded(TimerArguments.self, call))
       case .sendMessage:
-        return try await sendMessage(session, call.id, decoded(SendMessageArguments.self, call), user: call.arguments.json.object?["user"])
-      case .request: return try await request(session, call.id, decoded(RequestArguments.self, call))
+        return try await sendMessage(.session(session), call.id, decoded(SendMessageArguments.self, call), user: call.arguments.json.object?["user"])
+      case .request: return try await request(.session(session), call.id, decoded(RequestArguments.self, call))
       case .report: return try await report(session, call.id, decoded(ReportArguments.self, call))
-      case .createSession: return try await createSession(session, call.id, decoded(CreateSessionArguments.self, call))
+      case .createSession: return try await createSession(.session(session), call.id, decoded(CreateSessionArguments.self, call))
       case .setTitle: return try await setTitle(session, call.id, decoded(SetTitleArguments.self, call))
       case .manipulateUI: return try await manipulateUI(session, call.id, decoded(ManipulateUIArguments.self, call))
       case .exec: return try await exec(session, ToolCallID(call.id), decoded(ExecArguments.self, call))

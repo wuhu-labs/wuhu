@@ -14,6 +14,9 @@ import StructuredQueriesSQLite
 public enum Actor: Hashable, Sendable {
   case session(SessionID)
   case person(persona: String, account: AccountID)
+  /// A group observer: its group's own role, as a session acting there that is
+  /// not its root.
+  case observer(Observer)
   case anonymous
 }
 
@@ -36,6 +39,7 @@ public struct Principal: Hashable, Sendable {
     switch actor {
     case let .session(id): id.rawValue
     case let .person(persona, _): persona
+    case let .observer(observer): observer.member
     case .anonymous: nil
     }
   }
@@ -134,6 +138,8 @@ extension Space {
       switch principal.actor {
       case .anonymous:
         return try GroupAccess.reach(of: principal.group, in: db)
+      case let .observer(observer):
+        return (snapshot.role(from: observer.group.rawValue, in: observer.group.rawValue) ?? .read) >= .write ? [observer.group] : []
       case let .session(id):
         guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }
         return Set(snapshot.all.filter { (snapshot.role(of: session, in: $0.rawValue) ?? .read) >= .write })
@@ -155,7 +161,7 @@ extension Space {
     try await writer.read { db in
       let snapshot = try GroupAccess.Snapshot(db)
       switch actor {
-      case .anonymous:
+      case .anonymous, .observer:
         return []
       case let .session(id):
         guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }

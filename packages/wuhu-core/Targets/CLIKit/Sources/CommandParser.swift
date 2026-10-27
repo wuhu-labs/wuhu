@@ -454,6 +454,39 @@ extension Command {
     return Self.verbHelp[verb] ?? Self.usage
   }
 
+  private static func parseGroupObserver(_ parser: inout ArgumentCursor) throws -> Self {
+    let subcommand = try parser.required("list|create|cancel", verb: "group observer")
+    let verb = "group observer \(subcommand)"
+    let group = try parser.required("group", verb: verb)
+    switch subcommand {
+    case "list":
+      try parser.finish(verb: verb)
+      return .groupObservers(group)
+    case "cancel":
+      let name = try parser.required("name", verb: verb)
+      try parser.finish(verb: verb)
+      return .groupObserverCancel(group: group, name: name)
+    case "create":
+      let handler = try parser.option("--handler", verb: verb)
+      let sql = try parser.option("--sql", verb: verb)
+      let throttle = try parser.doubleOption("--throttle", verb: verb)
+      let inSeconds = try parser.doubleOption("--in", verb: verb)
+      let cron = try parser.option("--cron", verb: verb)
+      let cap = try parser.intOption("--sessions-per-hour", verb: verb)
+      let name = try parser.required("name", verb: verb)
+      try parser.finish(verb: verb)
+      guard let handler else { throw UsageError(message: "\(verb): --handler <module> is required") }
+      let observe = sql.map { SubscriptionObserveInput(sql: $0, throttleSeconds: throttle) }
+      let timer = inSeconds == nil && cron == nil ? nil : ObserverTimerInput(inSeconds: inSeconds, cron: cron)
+      guard (observe == nil) != (timer == nil), throttle == nil || observe != nil else {
+        throw UsageError(message: "\(verb): pass exactly one of --sql [--throttle], --in and --cron")
+      }
+      return .groupObserverCreate(group: group, ObserverInput(name: name, handler: handler, observe: observe, timer: timer, sessionsPerHour: cap))
+    default:
+      throw UsageError(message: "group observer: unknown subcommand \(subcommand)")
+    }
+  }
+
   private static func parseAuth(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
       throw UsageError(message: "auth: missing <set|list|remove|login|logout>")
@@ -502,7 +535,7 @@ extension Command {
 
   private static func parseGroup(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
-      throw UsageError(message: "group: missing <list|use|current|show|open|close|secrets|grant|revoke>")
+      throw UsageError(message: "group: missing <list|use|current|show|open|close|secrets|grant|revoke|observer>")
     }
     switch subcommand {
     case "list":
@@ -559,6 +592,8 @@ extension Command {
       let subject = try parser.required("subject", verb: "group revoke")
       try parser.finish(verb: "group revoke")
       return .groupRevoke(group: id, subject: subject)
+    case "observer":
+      return try parseGroupObserver(&parser)
     default:
       throw UsageError(message: "group: unknown subcommand \(subcommand)")
     }
@@ -1719,6 +1754,19 @@ extension Command {
     acting elsewhere. a session's exec acts in its session's group and refuses
     --group and WUHU_GROUP unless WUHU_IDENTITY=wallet opts into the wallet's
     owner and space; wallet mode uses the same group selection as a terminal.
+    \(exitCodes)
+    """,
+    "group observer": """
+    usage: wuhu group observer list <group>
+           wuhu group observer create <group> <name> --handler <module>
+             (--sql <query> [--throttle <s>] | --in <s> | --cron <expr>) [--sessions-per-hour <n>]
+           wuhu group observer cancel <group> <name>
+
+    a group observer runs its handler module as the group, on an observation
+    (each change of the query's rows) or a timer (once after --in seconds, or
+    on a five-field UTC cron). it needs write on the group to create or cancel,
+    read to list. sessions it creates count against --sessions-per-hour
+    (default 10); at the cap it pauses until created again under its name.
     \(exitCodes)
     """,
     "group create": """

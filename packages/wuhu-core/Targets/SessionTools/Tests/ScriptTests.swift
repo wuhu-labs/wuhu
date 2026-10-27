@@ -634,11 +634,11 @@ import struct WuhuAI.ToolCall
     try await withRig(prepare: { space, session in
       let box = try await space.addMachine(name: "box").id
       let other = try await makeSession(space, name: "other")
-      _ = try await space.mintScriptExec(machine: box, session: session.rawValue, script: "0badf00d")
-      let done = try await space.mintScriptExec(machine: box, session: session.rawValue, script: "0badf00d")
+      _ = try await space.mintScriptExec(machine: box, caller: session.rawValue, script: "0badf00d")
+      let done = try await space.mintScriptExec(machine: box, caller: session.rawValue, script: "0badf00d")
       try await space.finishExec(done.id, .exited(code: 0))
-      _ = try await space.mintScriptExec(machine: box, session: session.rawValue, script: "cafe0000")
-      _ = try await space.mintScriptExec(machine: box, session: other.rawValue, script: "feed0000")
+      _ = try await space.mintScriptExec(machine: box, caller: session.rawValue, script: "cafe0000")
+      _ = try await space.mintScriptExec(machine: box, caller: other.rawValue, script: "feed0000")
     }) { rig in
       try await rig.messages(2)
       rig.probe("owner rows left: \(try await rig.scriptExecRows())")

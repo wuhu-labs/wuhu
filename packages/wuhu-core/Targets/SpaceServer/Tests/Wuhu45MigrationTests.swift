@@ -97,19 +97,19 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "machine_v2_key_check", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_trace", "machine_v2_problem_index", "machine_v2_incidents", "machine_v2_retention", "machine_v2_maintenance", "aliases", "session_command_tokens", "session_cache_warming", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_api_receipts", "session_blobs", "group_roles", "session_prompts", "requests"]
+    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "machine_v2_key_check", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_trace", "machine_v2_problem_index", "machine_v2_incidents", "machine_v2_retention", "machine_v2_maintenance", "aliases", "session_command_tokens", "session_cache_warming", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_api_receipts", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
-    let dropped: Set = ["session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions"]
+    let dropped: Set = ["session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions"]
     let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)
     let expectedKeys = Set(expected.keys).subtracting(later)
     #expect(
       migratedKeys == expectedKeys,
       "migrated only: \(migratedKeys.subtracting(expectedKeys).sorted()); fresh only: \(expectedKeys.subtracting(migratedKeys).sorted())",
     )
-    // `groups`, `accounts`, `machines` and `messages` are reshaped by the next
-    // migrations; the reopened comparison below pins their columns.
+    // `groups`, `accounts`, `machines`, `messages` and `sessions` are reshaped
+    // by the next migrations; the reopened comparison below pins their columns.
     for (table, lines) in expected.sorted(by: { $0.key < $1.key })
-      where !later.contains(table) && !["groups", "accounts", "machines", "messages"].contains(table)
+      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions"].contains(table)
     {
       #expect(migrated[table] == lines.filter { line in
         !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)

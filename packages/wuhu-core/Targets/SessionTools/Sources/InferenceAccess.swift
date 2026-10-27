@@ -67,8 +67,16 @@ extension ToolExecutor {
     includeGroups: Bool,
     receiveCodexResponseHeaders: @escaping @Sendable (String, [String: String]) async -> Void = { _, _ in },
   ) async throws -> ProviderCatalog {
-    guard let models = try await settingsDocument(session, ModelsDocument.spacePath) else { throw SpaceError.notFound(ModelsDocument.spacePath) }
-    let groups = includeGroups ? try await settingsDocument(session, ModelsDocument.groupPath) : nil
+    try await catalog(.session(session), includeGroups: includeGroups, receiveCodexResponseHeaders: receiveCodexResponseHeaders)
+  }
+
+  func catalog(
+    _ actor: ScriptActor,
+    includeGroups: Bool,
+    receiveCodexResponseHeaders: @escaping @Sendable (String, [String: String]) async -> Void = { _, _ in },
+  ) async throws -> ProviderCatalog {
+    guard let models = try await settingsDocument(actor, ModelsDocument.spacePath) else { throw SpaceError.notFound(ModelsDocument.spacePath) }
+    let groups = includeGroups ? try await settingsDocument(actor, ModelsDocument.groupPath) : nil
     return access.catalog(try ModelsDocument(json: models, groupsJSON: groups), receiveCodexResponseHeaders: receiveCodexResponseHeaders)
   }
 
@@ -84,6 +92,11 @@ extension ToolExecutor {
 
   /// One inference attempt, reported to main for the session that ran it (`POST /v1/inferences`).
   public func report(_ metric: InferenceMetric) async throws {
+    guard let session = metric.session else { preconditionFailure("the loop's inferences are its session's") }
+    try await report(metric, as: .session(session))
+  }
+
+  func report(_ metric: InferenceMetric, as actor: ScriptActor) async throws {
     let input = InferenceReportInput(
       id: metric.id, timestamp: metric.timestamp.timeIntervalSince1970, provider: metric.provider, model: metric.model,
       servedModel: metric.servedModel, effort: metric.effort, outcome: metric.outcome.rawValue,
@@ -95,6 +108,6 @@ extension ToolExecutor {
         )
       },
     )
-    let _: JSONValue = try await client(metric.session).api(.post, "/v1/inferences", body: try JSONValueEncoder().encode(input))
+    let _: JSONValue = try await client(actor).api(.post, "/v1/inferences", body: try JSONValueEncoder().encode(input))
   }
 }

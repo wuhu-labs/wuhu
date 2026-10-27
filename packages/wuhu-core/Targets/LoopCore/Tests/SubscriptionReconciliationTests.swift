@@ -55,7 +55,7 @@ import WuhuAI
         let armed = try #require(await sessions.armedSubscriptions(id).first)
         let incarnation = try #require(armed.slot.handlerIncarnation)
         let attempt = try #require(await sessions.beginSubscriptionHandler(
-          id, subscriptionID: timerID, incarnation: incarnation,
+          .session(id), subscriptionID: timerID, incarnation: incarnation,
         ))
         #expect(try await sessions.finishSubscriptionHandler(attempt, result: .success(stateJSON: "null", advance: .retire, wakes: [])))
         #expect(try await sessions.queueHead(id) == tail)

@@ -89,7 +89,7 @@ final class ScriptMachineBindings: Sendable {
   // MARK: Machines and files
 
   private func machines() async throws -> JSONValue {
-    .array(try await tools.machines(as: execution.session).map { machine in
+    .array(try await tools.machines(as: execution.actor).map { machine in
       .object([
         "id": .string(machine.id.rawValue),
         "name": machine.name.map(JSONValue.string) ?? .null,
@@ -111,7 +111,7 @@ final class ScriptMachineBindings: Sendable {
       return path
     }
     func address(_ path: String) -> String { Address.machine(machine, path).rendered }
-    let main = try await tools.client(execution.session)
+    let main = try await tools.client(execution.actor)
     func machineCall<Output>(_ run: () async throws -> Output) async throws -> Output {
       do {
         return try await run()
@@ -318,7 +318,7 @@ final class ScriptMachineBindings: Sendable {
   }
 
   private func attachedMachine(_ reference: String) async throws -> MachineID {
-    guard let machine = try await tools.machine(reference, as: execution.session) else {
+    guard let machine = try await tools.machine(reference, as: execution.actor) else {
       throw ScriptError("no machine named \(reference)")
     }
     guard machine.attached else { throw ScriptError("machine \(reference) is not attached") }

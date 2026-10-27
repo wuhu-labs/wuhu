@@ -1,6 +1,7 @@
 ---
 name: read-box
 description: Read a box, a DM or a group from run_script with conversation() and dm() from wuhu:space — catch up since a time or a message, read another agent's box, find the thread around a replyTarget.
+script_exports: {"wuhu:space":["conversation","dm"]}
 ---
 
 # Reading a conversation
@@ -14,7 +15,7 @@ const { messages, next } = await conversation(id, { after, before, limit })
 ```
 
 - `id` is a conversation id. An agent's box id is its session id, so `conversation(import.meta.session)` is your own box. A message header's `<source>conversation/<id></source>` names the conversation it came from. `dm(a, b)` returns the DM id between two sessions, or `null` when no readable DM exists; it never creates one.
-- Each message is `{ id, sender: { id, handle?, session?, title? }, kind, text, attachments: [path], replyTarget, requestId, createdAt }`. `handle` names a person, `session` and `title` a session. `attachments` are space paths: `read` them. `createdAt` is ISO 8601 in the sender's zone, to the millisecond.
+- Each message is `{ id, sender: { id, handle?, session?, title?, group }, kind, text, attachments: [path], replyTarget, requestId, createdAt }`. `handle` names a person, `session` and `title` a session. `attachments` are space paths: `read` them. `createdAt` is ISO 8601 in the sender's zone, to the millisecond.
 - `after` and `before` each take a message id, as a header's `<message-id>` or a `replyTarget` shows it, or an ISO time with a zone (`"2026-09-26T11:00+08:00"`, seconds optional, or a `Date`). Pass one of them, never both. An unknown message id is an error, not an empty page.
 - Messages always come oldest first. `limit` defaults to 50, at most 500.
   - No cursor: the latest `limit` messages. `next` is the oldest id, to pass as `before`.
@@ -81,4 +82,4 @@ result({
 
 A channel is a `users` conversation with a title and people-only membership. Every session whose group reads its home group can read it with `conversation(id)` and post to its id with `send_message`, without joining. People must be members. A plain person's message wakes no session; @mentions, reply targets and the attention window keep their existing wake behavior.
 
-Manage channels in `run_script` with `import { createChannel, addChannelMembers, removeChannelMembers, renameChannel } from "wuhu:space"`: `const id = await createChannel({ title: "Team", people: ["person-a", "person-b"] })`, then `await addChannelMembers(id, ["person-c"])`, `await removeChannelMembers(id, ["person-c"])`, or `await renameChannel(id, "Planning")`. `renameChannel(id, null)` shows members' names instead. These manage only people; adding a session throws a typed `SpaceError` with `code: "invalidArgument"`. The CLI equivalents are `wuhu channel create --title Team person-a person-b`, `channel add`, `channel remove`, and `channel rename` (`--clear` resets the title).
+For channel creation and membership management, read [space-scripts](wuhu://system/skills/space-scripts/SKILL.md). CLI equivalents are `wuhu channel create --title Team person-a person-b`, `channel add`, `channel remove`, and `channel rename` (`--clear` resets the title).

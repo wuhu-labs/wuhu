@@ -409,7 +409,7 @@ final class ScriptedExecMachine: Sendable {
       guard reachable else { throw MainUnavailable() }
       return tokens.sessionToken($0)
     }, access: access, scripts: scripts, execJobs: jobs)
-    let workers = WorkerRegistry(tokens: tokens)
+    let workers = WorkerRegistry(tokens: tokens, machines: nil)
     workers.announce(workers.mint().id, endpoint: ToolOnlyWorker())
     let fallback = FetchClient.inProcess(SessionRuntime.bindMain(
       owner: owner, workers: workers, tokens: tokens, connection: connection,
@@ -423,7 +423,7 @@ final class ScriptedExecMachine: Sendable {
         if request.method == .post {
           let input = try await request.json(ExecMintInput.self)
           if let script = input.script {
-            let record = try await space.mintScriptExec(machine: input.machine, session: session.rawValue, script: script)
+            let record = try await space.mintScriptExec(machine: input.machine, caller: session.rawValue, script: script)
             return try Response.json(ExecMintOutput(id: record.id))
           }
           let callID = try #require(request.headers["wuhu-tool-call"])

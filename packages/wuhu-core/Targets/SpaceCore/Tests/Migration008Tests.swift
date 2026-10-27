@@ -16,7 +16,7 @@ import Testing
 
   // Six requests: answered, on an archived task, past its deadline, before
   // its deadline, without one, and with its stall alert fired. Then the
-  // schema goes back to before 008.
+  // schema goes back to before 008 (and 009, which builds on it).
   private func before008(_ database: DatabaseQueue) async throws -> Space {
     let space = try Space(writer: database)
     let store = space.sessions
@@ -37,7 +37,19 @@ import Testing
     }
     try await database.write { db in
       try db.execute(sql: """
-      DELETE FROM grdb_migrations WHERE identifier = '008';
+      DELETE FROM grdb_migrations WHERE identifier IN ('008', '009');
+      CREATE TABLE "session_subscriptions" (
+        "session_id" TEXT NOT NULL, "subscription_id" TEXT NOT NULL, "payload" TEXT NOT NULL, "next_fire_at" TEXT,
+        "marker" TEXT, "last_fired_at" TEXT, "armed_at" TEXT NOT NULL, PRIMARY KEY ("session_id", "subscription_id")
+      );
+      INSERT INTO session_subscriptions SELECT owner, subscription_id, payload, next_fire_at, marker, last_fired_at, armed_at FROM subscription_slots;
+      DROP TABLE subscription_slots;
+      DROP TABLE subscription_firings;
+      DROP INDEX sessions_by_firing;
+      DROP INDEX messages_by_firing;
+      DROP INDEX revision_actors_by_via;
+      ALTER TABLE sessions DROP COLUMN firing;
+      ALTER TABLE messages DROP COLUMN firing;
       DROP TABLE requests;
       ALTER TABLE messages ADD COLUMN deadline_at TEXT;
       UPDATE messages SET deadline_at = '2000-01-01T00:00:00.000Z' WHERE id = 'late';

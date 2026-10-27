@@ -15,7 +15,7 @@ extension Space {
   public func instantiate(
     template templatePath: SpacePath, of templateGroup: GroupID,
     in destination: SpacePath?, of destinationGroup: GroupID,
-    acting: GroupID,
+    acting: GroupID, attribution: RevisionAttribution? = nil,
   ) async throws -> SpacePath {
     let group = destination == nil ? templateGroup : destinationGroup
     let templatePath = try await MachineFolders.stored(templatePath, mutating: false, in: writer)
@@ -42,7 +42,7 @@ extension Space {
       {
         throw SpaceError.alreadyExists(target.rawValue)
       }
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
       try Substrate.writeFile(target, group: group, blob: blob, rev: rev, mtime: mtime, in: db)
       pending += [MutationEvent(group: group, path: target.rawValue, rev: Int(rev), kind: .write, entry: .file)]
       return target

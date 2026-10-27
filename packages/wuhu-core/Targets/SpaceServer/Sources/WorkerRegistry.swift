@@ -46,9 +46,12 @@ public final class WorkerRegistry: Worker, Sendable {
   private let state = Mutex(State())
   private let minted = Mutex(0)
   private let tokens: ExecTokens
+  private let machines: MachineHub?
 
-  init(tokens: ExecTokens) {
+  /// `machines` ends what an observer's firing left running there.
+  init(tokens: ExecTokens, machines: MachineHub?) {
     self.tokens = tokens
+    self.machines = machines
   }
 
   /// A worker's credential, minted before it announces: its line to main
@@ -184,7 +187,36 @@ public final class WorkerRegistry: Worker, Sendable {
   }
 
   public func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
-    try await line(of: invocation.session).fire(invocation)
+    switch invocation.runner {
+    case let .session(session):
+      return try await line(of: session).fire(invocation)
+    case let .observer(observer):
+      // An observer holds no session, so any worker runs its firing.
+      guard let line = state.withLock({ state in state.leastLoaded().flatMap { state.lines[$0] } }) else { throw NoWorkerError() }
+      let token = tokens.firingToken(observer)
+      defer { tokens.revokeFiring(token) }
+      var invocation = invocation
+      invocation.token = token
+      // A cancelled firing loses its credential at once, before its worker
+      // stops it; so main, not the worker, ends the processes its script runs.
+      let release = { [machines] in
+        guard let machines else { return }
+        let (script, caller) = (invocation.scriptID, observer.member)
+        await Task { await machines.releaseScript(script, caller: caller) }.value
+      }
+      do {
+        let result = try await withTaskCancellationHandler {
+          try await line.fire(invocation)
+        } onCancel: { [tokens] in
+          tokens.revokeFiring(token)
+        }
+        await release()
+        return result
+      } catch {
+        await release()
+        throw error
+      }
+    }
   }
 
   public func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {

@@ -504,6 +504,38 @@
         "no_files_written"
       ],
       "judge": "PASS only if the answer uses createSession from wuhu:session (or the create_session tool) with expectsReply and request: {kind, key, schema}, a key that varies by day (e.g. a date), and a JSON Schema for {verdict, notes}; says a re-run returns the existing session/request with existing: true and posts or creates nothing; and reads the verdict from the request's row in the requests table (its result column) or the final report. Fail if it dedupes by hand (searching sessions by title, a marker file, a table of its own), invents an API, or calls tools."
+    },
+    {
+      "id": "script-skill-discovery",
+      "issue": 454,
+      "title": "Discovers table and session script APIs through skills",
+      "prompt": "Use run_script for both operations: create {sb}/discovery.table with a string column title and insert exactly one row with title Skill discovery; then create an idle child task titled bench-{tag}-script-child, without a message or request. Start from the run_script description to find the module documentation; read the relevant system skills before using either API. Do not use create_session or a machine CLI. Reply with the table path and child id.",
+      "required": [
+        "table_created",
+        "child_created",
+        "script_apis_used",
+        "skill_reads"
+      ],
+      "skills": {
+        "space-scripts": true,
+        "sessions": true
+      },
+      "judge": "PASS only if the transcript reads space-scripts and sessions before using the documented APIs from run_script, creates the table with its one requested row, and creates exactly one idle child task through wuhu:session. The user prompt supplies no import names or signatures: discovery must follow the tool description into skills. Fail a create_session tool call, machine CLI workaround, guessed API, or a claim without effects."
+    },
+    {
+      "id": "group-observer",
+      "issue": 441,
+      "title": "Arms a group observer that outlives the session",
+      "prompt": "Whenever a doc under {sb}/drafts/ gets status: review, a new agent here should start reviewing that doc. This belongs to the group, not to you: it has to keep working after you and this chat are archived. Call it bench-{tag}-review.",
+      "required": [
+        "group_observer_armed",
+        "handler_creates_session",
+        "skill_reads"
+      ],
+      "skills": {
+        "sessions": true
+      },
+      "judge": "PASS only if a group observer named bench-{tag}-review was armed with createObserver from wuhu:session (or wuhu group observer create): an observe whose SQL reads docs under {sb}/drafts/ with status review, and a handler module in the group's files (not the session home) whose default export calls createSession for each newly seen doc, keeping what it has seen in its returned state rather than relying on wake(). The reply says the observer's name and how to stop it (cancelObserver or wuhu group observer cancel). Fail a session-owned observe or timer, a polling loop, a handler that wakes the subject instead of creating the agent, or invented APIs."
     }
   ]
 }

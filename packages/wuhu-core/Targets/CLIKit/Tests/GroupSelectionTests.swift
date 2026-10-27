@@ -17,6 +17,9 @@ import struct MachineContract.ExecStart
 import Scratch
 import struct SpaceClient.ExecSession
 import struct SpaceClient.SpaceClient
+import struct SpaceContract.ObserverInput
+import struct SpaceContract.ObserverTimerInput
+import struct SpaceContract.SubscriptionObserveInput
 import Testing
 
 @Suite(.deterministicDependencies) struct GroupSelectionTests {
@@ -382,6 +385,31 @@ import Testing
     #expect(try Command.parse(["group", "show", "studio"]) == .groupShow("studio"))
     #expect(throws: UsageError.self) { try Command.parse(["group", "grant", "studio", "team", "own"]) }
     #expect(throws: UsageError.self) { try Command.parse(["group", "secrets", "studio", "none"]) }
+  }
+
+  @Test func groupObserverVerbsTakeExactlyOneTrigger() throws {
+    #expect(try Command.parse(["group", "observer", "list", "studio"]) == .groupObservers("studio"))
+    #expect(try Command.parse(["group", "observer", "cancel", "studio", "triage"]) == .groupObserverCancel(group: "studio", name: "triage"))
+    #expect(
+      try Command.parse(["group", "observer", "create", "studio", "triage", "--handler", "/triage.js", "--sql", "SELECT 1", "--throttle", "5", "--sessions-per-hour", "3"])
+        == .groupObserverCreate(group: "studio", ObserverInput(
+          name: "triage", handler: "/triage.js", observe: SubscriptionObserveInput(sql: "SELECT 1", throttleSeconds: 5), timer: nil, sessionsPerHour: 3,
+        )),
+    )
+    #expect(
+      try Command.parse(["group", "observer", "create", "studio", "nightly", "--handler", "/n.js", "--cron", "0 3 * * *"])
+        == .groupObserverCreate(group: "studio", ObserverInput(
+          name: "nightly", handler: "/n.js", observe: nil, timer: ObserverTimerInput(inSeconds: nil, cron: "0 3 * * *"), sessionsPerHour: nil,
+        )),
+    )
+    for refused in [
+      ["group", "observer", "create", "studio", "x", "--sql", "SELECT 1"],
+      ["group", "observer", "create", "studio", "x", "--handler", "/x.js"],
+      ["group", "observer", "create", "studio", "x", "--handler", "/x.js", "--sql", "SELECT 1", "--cron", "* * * * *"],
+      ["group", "observer", "create", "studio", "x", "--handler", "/x.js", "--in", "5", "--throttle", "1"],
+    ] {
+      #expect(throws: UsageError.self) { try Command.parse(refused) }
+    }
   }
 
   @Test func machineAddAcceptsEitherGroupFlagPosition() throws {

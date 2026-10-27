@@ -7,7 +7,7 @@ extension SpaceToolContext {
   func createTable(_ address: String, header: SpaceContract.TableHeader) async throws -> JSONValue {
     let target = try await spaceTarget(address)
     try await refuseWrite(target.path, in: target.group)
-    let rev = try await space.createTable(target.path, header: checkedHeader(header), in: target.group, acting: principal.group)
+    let rev = try await space.createTable(target.path, header: checkedHeader(header), in: target.group, acting: principal.group, attribution: attribution)
     return tableWrite(rev)
   }
 
@@ -34,7 +34,7 @@ extension SpaceToolContext {
     try await refuseWrite(target.path, in: target.group)
     let header = try checkedHeader(header)
     do {
-      return try await tableWrite(space.alterTable(target.path, header: header, in: target.group, acting: principal.group, ifMatch: Wire.token(ifMatch), allowDropColumns: allowDropColumns))
+      return try await tableWrite(space.alterTable(target.path, header: header, in: target.group, acting: principal.group, attribution: attribution, ifMatch: Wire.token(ifMatch), allowDropColumns: allowDropColumns))
     } catch SpaceError.versionMismatch {
       let current = try? await space.tableSchema(target.path, in: target.group).token
       throw ToolRunError.failed(code: .conflict, message: "version mismatch: \(address)", hint: Wire.staleHint, token: current.map(Wire.string))
@@ -52,7 +52,7 @@ extension SpaceToolContext {
     var target: (group: GroupID, path: SpacePath, qualified: Bool)?
     if let destination { target = try await spaceTarget(destination) }
     try await refuseWrite(target?.path ?? template.path.parent, in: target?.group ?? template.group)
-    let created = try await space.instantiate(template: template.path, of: template.group, in: target?.path, of: target?.group ?? template.group, acting: principal.group)
+    let created = try await space.instantiate(template: template.path, of: template.group, in: target?.path, of: target?.group ?? template.group, acting: principal.group, attribution: attribution)
     let group = target?.group ?? template.group
     let qualified = target?.qualified ?? template.qualified
     return ["path": .string(qualified ? FSResolver.address(created.rawValue, inGroup: group.rawValue) : created.rawValue)]

@@ -24,8 +24,11 @@
   "wuhu:session": [
     "archive",
     "cancel",
+    "cancelObserver",
+    "createObserver",
     "createSession",
     "interrupt",
+    "observers",
     "request",
     "resume",
     "sendMessage",

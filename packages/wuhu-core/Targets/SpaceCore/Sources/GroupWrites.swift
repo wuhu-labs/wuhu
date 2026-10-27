@@ -58,6 +58,8 @@ extension Space {
       true
     case .session:
       try await role(of: creator, in: requested) == .admin
+    case .observer:
+      requested == creator.group
     }
     guard admitted else { throw SpaceError.groupForbidden(requested.rawValue) }
     return requested

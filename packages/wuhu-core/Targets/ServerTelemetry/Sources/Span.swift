@@ -13,6 +13,7 @@ public enum SpanAttribute: String, Codable, Sendable {
   case count
   case machineReference = "machine.reference", machine = "machine.id", version = "machine.version", kind, exitCode = "exit.code", verdict
   case sourceSHA256 = "script.source.sha256"
+  case subscription = "subscription.id", firing = "firing.id", observer = "observer.name"
 }
 
 public struct TraceContext: Codable, Equatable, Sendable {
@@ -28,7 +29,7 @@ public struct TraceContext: Codable, Equatable, Sendable {
 
 public enum SpanName: String, Codable, Sendable {
   case turn = "agent.turn", inference = "inference", tool = "tool.call"
-  case machine = "machine.operation", script = "script.run"
+  case machine = "machine.operation", script = "script.run", firing = "subscription.firing"
 }
 
 public struct FinishedSpan: Codable, Equatable, Sendable {

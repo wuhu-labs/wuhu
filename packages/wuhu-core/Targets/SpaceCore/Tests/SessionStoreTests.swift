@@ -454,9 +454,9 @@ struct SessionStoreTests {
       try await writer.write { db in
         try db.execute(
           sql: """
-          INSERT INTO session_subscriptions
-            (session_id, subscription_id, payload, marker, armed_at)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO subscription_slots
+            (owner_kind, owner, subscription_id, status, payload, marker, armed_at)
+          VALUES ('session', ?, ?, 'armed', ?, ?, ?)
           """,
           arguments: [
             session.rawValue, slot.id.rawValue, try Sessions.encode(slot), "A", "2026-09-19T00:00:00.000Z",
@@ -500,7 +500,7 @@ struct SessionStoreTests {
       #expect(Set(delivered.map(\.id)).count == 3)
 
       let cancelled = try await armed()
-      try await store.cancelSubscription(session, subscriptionID: slot.id)
+      try await store.cancelSubscription(.session(session), subscriptionID: slot.id)
       #expect(!(await fire(observationToken(cancelled), marker: "C", text: "late")))
       _ = try await store.armSubscription(session, slot: slot, marker: "B")
       #expect(!(await fire(observationToken(cancelled), marker: "C", text: "old arming")))

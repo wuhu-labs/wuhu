@@ -15,11 +15,18 @@ public struct InferenceMetric: Sendable, Equatable {
     case cancelled
   }
 
+  /// Who an attempt is billed to.
+  public enum Payer: Hashable, Sendable {
+    case session(SessionID)
+    /// A group observer's handler, in one firing.
+    case observer(group: String, firing: String)
+  }
+
   /// The attempt, minted where the inference ran: a report that reaches the
   /// server twice records once.
   public var id: String
   public var timestamp: Date
-  public var session: SessionID
+  public var payer: Payer
   public var provider: String
   public var model: String
   public var servedModel: String?
@@ -34,7 +41,7 @@ public struct InferenceMetric: Sendable, Equatable {
   public init(
     id: String = UUID().uuidString.lowercased(),
     timestamp: Date,
-    session: SessionID,
+    payer: Payer,
     provider: String,
     model: String,
     servedModel: String? = nil,
@@ -48,7 +55,7 @@ public struct InferenceMetric: Sendable, Equatable {
   ) {
     self.id = id
     self.timestamp = timestamp
-    self.session = session
+    self.payer = payer
     self.provider = provider
     self.model = model
     self.servedModel = servedModel
@@ -61,10 +68,17 @@ public struct InferenceMetric: Sendable, Equatable {
     self.usage = usage
   }
 
+  public var session: SessionID? {
+    if case let .session(session) = payer { session } else { nil }
+  }
+
   public func jsonLine() -> String {
     var object: OrderedDictionary<String, JSONValue> = [:]
     object["ts"] = .string(timestamp.ISO8601Format())
-    object["session"] = .string(session.rawValue)
+    switch payer {
+    case let .session(session): object["session"] = .string(session.rawValue)
+    case let .observer(group, firing): object["group"] = .string(group); object["firing"] = .string(firing)
+    }
     object["provider"] = .string(provider)
     object["model"] = .string(model)
     object["effort"] = .string(effort)

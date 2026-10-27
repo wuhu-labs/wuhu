@@ -447,7 +447,7 @@ private func humanAdmits(_ principal: Principal, of group: GroupID, space: Space
   switch principal.actor {
   case .anonymous: true
   case let .person(_, account): try await space.isHumanAdmin(account, of: group)
-  case .session: false
+  case .session, .observer: false
   }
 }
 

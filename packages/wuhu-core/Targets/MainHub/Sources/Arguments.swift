@@ -29,33 +29,37 @@ public struct ExecArguments: Decodable, Sendable {
 
 public struct ObserveArguments: Decodable, Sendable {
   public var handler: String?
+  public var name: String?
   public var sql: String
   public var throttleSeconds: Double?
 
-  public init(sql: String, throttleSeconds: Double? = nil, handler: String? = nil) {
-    self.sql = sql; self.throttleSeconds = throttleSeconds; self.handler = handler
+  public init(sql: String, throttleSeconds: Double? = nil, handler: String? = nil, name: String? = nil) {
+    self.sql = sql; self.throttleSeconds = throttleSeconds; self.handler = handler; self.name = name
   }
 
   enum CodingKeys: String, CodingKey {
     case sql
     case handler
+    case name
     case throttleSeconds = "throttle_seconds"
   }
 }
 
 public struct TimerArguments: Decodable, Sendable {
   public var handler: String?
+  public var name: String?
   public var message: String
   public var inSeconds: Double?
   public var cron: String?
 
-  public init(message: String, inSeconds: Double? = nil, cron: String? = nil, handler: String? = nil) {
-    self.message = message; self.inSeconds = inSeconds; self.cron = cron; self.handler = handler
+  public init(message: String, inSeconds: Double? = nil, cron: String? = nil, handler: String? = nil, name: String? = nil) {
+    self.message = message; self.inSeconds = inSeconds; self.cron = cron; self.handler = handler; self.name = name
   }
 
   enum CodingKeys: String, CodingKey {
     case message
     case handler
+    case name
     case inSeconds = "in_seconds"
     case cron
   }

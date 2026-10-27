@@ -102,8 +102,9 @@ public struct RowCommit: Equatable, Sendable {
   }
 }
 
-/// Who a revision acts for when a page wrote it: the viewer (nil for the --dev
-/// seat) and the page's path in its group.
+/// Who a revision acts for when a page or an observer wrote it: the viewer
+/// (nil for the --dev seat) and the page's path in its group, or the observer
+/// and `firing:<id>`.
 public struct RevisionAttribution: Equatable, Sendable {
   public let actor: String?
   public let via: String
@@ -112,6 +113,13 @@ public struct RevisionAttribution: Equatable, Sendable {
     self.actor = actor
     self.via = via
   }
+
+  public init?(firing observer: Observer) {
+    guard let firing = observer.firing else { return nil }
+    self.init(actor: observer.member, via: Self.firingVia(firing))
+  }
+
+  static func firingVia(_ firing: String) -> String { "firing:\(firing)" }
 }
 
 public enum Cell: Equatable, Sendable {

@@ -63,6 +63,9 @@ extension Hub {
         try await admit(person)
         creator = nil
         principal = person.principal
+      case let .observer(observer):
+        creator = nil
+        principal = observer.principal
       }
     } catch let error as SessionStoreError {
       throw problem(error)
@@ -174,7 +177,10 @@ extension Hub {
         cloneOwed: template != nil,
         modelRoute: route,
         request: expectsReply ? (RequestID(messageID.rawValue), requester, order.message!, terms) : nil,
+        observer: caller.observer,
       )
+    } catch let refusal as ObserverRefusal {
+      throw ToolProblem(refusal.description, code: refusal.code)
     } catch let taken as RequestKeyTaken {
       return try await existingSpawn((taken.existing, try await store.keyedRequest(by: caller, terms)!.task))
     } catch let foreign as ForeignReceipt {
@@ -274,5 +280,5 @@ extension Hub {
 }
 
 func outsidePageGroup(_ group: GroupID, _ verb: String) -> ToolProblem {
-  ToolProblem("a page \(verb) only in its own group \(group.rawValue)", code: "outsidePageGroup")
+  ToolProblem("a page or an observer \(verb) only in its own group \(group.rawValue)", code: "outsidePageGroup")
 }

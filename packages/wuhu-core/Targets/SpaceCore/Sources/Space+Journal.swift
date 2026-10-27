@@ -20,8 +20,9 @@ extension Space {
   /// Across groups the move is a delete in `group` and a create in `destinationGroup`, in one revision recorded for `acting`.
   public func move(
     _ path: String, in group: GroupID, to destination: String, in destinationGroup: GroupID, replacing: Bool, acting: GroupID,
+    attribution: RevisionAttribution? = nil,
   ) async throws {
-    try await live(group, acting: acting).move(
+    try await live(group, acting: acting, attribution: attribution).move(
       MachineFolders.stored(path, mutating: true, in: writer),
       to: MachineFolders.stored(destination, mutating: true, in: writer),
       in: destinationGroup,
@@ -29,8 +30,8 @@ extension Space {
     )
   }
 
-  public func writeFile(_ path: SpacePath, data: Data, in group: GroupID, acting: GroupID, ifMatch: VersionToken?, createOnly: Bool) async throws -> VersionToken {
-    try await live(group, acting: acting).write(MachineFolders.stored(path, mutating: true, in: writer).rawValue, data, ifMatch: ifMatch, createOnly: createOnly)
+  public func writeFile(_ path: SpacePath, data: Data, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, ifMatch: VersionToken?, createOnly: Bool) async throws -> VersionToken {
+    try await live(group, acting: acting, attribution: attribution).write(MachineFolders.stored(path, mutating: true, in: writer).rawValue, data, ifMatch: ifMatch, createOnly: createOnly)
   }
 
   public func removeEmptyDirectory(_ path: SpacePath, in group: GroupID, acting: GroupID) async throws -> Bool {
@@ -93,7 +94,7 @@ extension Space {
     }
   }
 
-  public func checkout(_ path: SpacePath, rev target: Rev, in group: GroupID, acting: GroupID, ifMatch: VersionToken? = nil, createOnly: Bool = false) async throws -> (Rev, VersionToken) {
+  public func checkout(_ path: SpacePath, rev target: Rev, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, ifMatch: VersionToken? = nil, createOnly: Bool = false) async throws -> (Rev, VersionToken) {
     let path = try await MachineFolders.stored(path, mutating: true, in: writer)
     guard !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
@@ -110,7 +111,7 @@ extension Space {
       if let resolved, resolved.kind == "file", let liveHead, liveHead.kind == "file", resolved.blobHash == liveHead.blobHash {
         return (Rev(Int(liveHead.rev)), VersionToken(rev: Int(liveHead.rev)))
       }
-      let newRev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
+      let newRev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
       let token = VersionToken(rev: Int(newRev))
       let fromRev = String(target.value)
       switch resolved?.kind {

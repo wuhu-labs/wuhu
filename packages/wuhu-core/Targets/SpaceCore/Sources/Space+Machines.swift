@@ -88,6 +88,9 @@ public struct ExecRecord: Equatable, Sendable, Codable {
   public init(id: ExecID, machine: MachineID, streamID: Int, command: String, caller: String?, toolCallID: ToolCallID?, startedAt: Date, terminal: ExecTerminalState?, killDelivered: Bool, group: GroupID, toolSpec: String? = nil, toolEndOwed: Bool = false) {
     self.id = id; self.machine = machine; self.streamID = streamID; self.command = command; self.caller = caller; self.toolCallID = toolCallID; self.startedAt = startedAt; self.terminal = terminal; self.killDelivered = killDelivered; self.group = group; self.toolSpec = toolSpec; self.toolEndOwed = toolEndOwed
   }
+
+  /// The session that minted it: nil for an observer's, whose caller is its member.
+  public var session: SessionID? { caller.flatMap { Observer.isMember($0) ? nil : SessionID(rawValue: $0) } }
 }
 
 public struct ExecClaim: Equatable, Sendable {
@@ -358,15 +361,17 @@ extension Space {
 
   // The owner row commits with the exec row, so no process exists that a boot
   // after a crash could not attribute to its script.
-  public func mintScriptExec(machine: MachineID, session: String, script: String) async throws -> ExecRecord {
+  /// `caller` is a session's id or an observer's member; `group` homes the
+  /// exec where it acts, nil by `execGroup`.
+  public func mintScriptExec(machine: MachineID, caller: String, script: String, group home: GroupID? = nil) async throws -> ExecRecord {
     let id = ExecID(rawValue: "ex_" + randomSuffix(ExecID.suffixLength))
     let startedAt = dateGen.now
     let started = SQLiteDateFormat.string(from: startedAt)
     let (streamID, group) = try await writer.write { db in
-      let group = try Self.execGroup(machine, caller: session, in: db)
-      let streamID = try Self.insertExec(id, machine: machine, caller: session, toolCallID: nil, startedAt: started, group: group, in: db)
+      let group = try home?.rawValue ?? Self.execGroup(machine, caller: caller, in: db)
+      let streamID = try Self.insertExec(id, machine: machine, caller: caller, toolCallID: nil, startedAt: started, group: group, in: db)
       try ScriptExecRow.insert {
-        ScriptExecRow(execID: id.rawValue, scriptID: script, sessionID: session, grp: group)
+        ScriptExecRow(execID: id.rawValue, scriptID: script, sessionID: caller, grp: group)
       }.execute(db)
       return (streamID, group)
     }
@@ -375,7 +380,7 @@ extension Space {
       machine: machine,
       streamID: Int(streamID),
       command: "",
-      caller: session,
+      caller: caller,
       toolCallID: nil,
       startedAt: startedAt,
       terminal: nil,
@@ -384,9 +389,22 @@ extension Space {
     )
   }
 
-  public func releaseScriptExecs(script: String, session: String) async throws {
+  public func liveScriptExecs(script: String, caller: String) async throws -> [ExecID] {
+    try await writer.read { db in
+      try String.fetchAll(
+        db,
+        sql: """
+        SELECT e.id FROM machine_execs e JOIN script_execs s ON s.exec_id = e.id
+        WHERE s.script_id = ? AND s.session_id = ? AND e.terminal_state IS NULL ORDER BY e.started_at, e.id
+        """,
+        arguments: [script, caller],
+      ).map(ExecID.init(rawValue:))
+    }
+  }
+
+  public func releaseScriptExecs(script: String, caller: String) async throws {
     try await writer.write { db in
-      try ScriptExecRow.where { $0.scriptID.eq(script) && $0.sessionID.eq(session) }.delete().execute(db)
+      try ScriptExecRow.where { $0.scriptID.eq(script) && $0.sessionID.eq(caller) }.delete().execute(db)
     }
   }
 

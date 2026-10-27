@@ -11,7 +11,7 @@ import Testing
 @Suite(.deterministicDependencies) struct InferenceStoreTests {
   private func record(_ session: SessionID, id: String, failed: Bool = false) -> InferenceRecord {
     InferenceRecord(
-      id: id, session: session, at: fixedDate,
+      id: id, payer: .session(session), at: fixedDate,
       provider: "codex", model: "configured", servedModel: failed ? nil : "served", effort: "high",
       input: failed ? nil : 30, cacheRead: failed ? nil : 200, cacheWrite: failed ? nil : 0,
       output: failed ? nil : 80, reasoning: failed ? nil : 60,
@@ -26,8 +26,8 @@ import Testing
     try await space.recordInference(record(session, id: "ok"))
     try await space.recordInference(record(session, id: "failed", failed: true))
     let expected: [[Cell]] = [
-      [.text("failed"), .text(session.rawValue), .text("2023-11-14T22:13:20.000Z"), .text("codex"), .text("configured"), .null, .text("high"), .null, .null, .null, .null, .null, .text("timeout"), .text("idleTimeout"), .integer(1200), .null],
-      [.text("ok"), .text(session.rawValue), .text("2023-11-14T22:13:20.000Z"), .text("codex"), .text("configured"), .text("served"), .text("high"), .integer(30), .integer(200), .integer(0), .integer(80), .integer(60), .text("ok"), .null, .integer(1200), .integer(100)],
+      [.text("failed"), .text(session.rawValue), .text("2023-11-14T22:13:20.000Z"), .text("codex"), .text("configured"), .null, .text("high"), .null, .null, .null, .null, .null, .text("timeout"), .text("idleTimeout"), .integer(1200), .null, .null],
+      [.text("ok"), .text(session.rawValue), .text("2023-11-14T22:13:20.000Z"), .text("codex"), .text("configured"), .text("served"), .text("high"), .integer(30), .integer(200), .integer(0), .integer(80), .integer(60), .text("ok"), .null, .integer(1200), .integer(100), .null],
     ]
     #expect(try await space.query("SELECT * FROM inferences ORDER BY id").rows == expected)
     _ = try await space.sessions.restart(session)

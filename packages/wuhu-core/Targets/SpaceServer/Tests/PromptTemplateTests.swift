@@ -29,11 +29,26 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
       )
       let agentPrompt = try await sessionPrompt(space: space, session: agent).prompt
       let taskPrompt = try await sessionPrompt(space: space, session: task).prompt
+      #expect(!agentPrompt.contains("\n\n\n"))
+      #expect(!taskPrompt.contains("\n\n\n"))
+      #expect(agentPrompt.contains("It is context for what they mean"))
+      #expect(taskPrompt.contains("It is context for what they mean"))
       let marker = "\n\nfrom wuhu://system/SESSION.md:\n\n"
       let agentSplit = try #require(agentPrompt.range(of: marker))
       let taskSplit = try #require(taskPrompt.range(of: marker))
       #expect(agentPrompt.hasPrefix("from wuhu://system/AGENTS.md:\n\n# Working in a Wuhu space\n\nYou are a session inside a Wuhu space"))
-      #expect(agentPrompt[..<agentSplit.lowerBound] == taskPrompt[..<taskSplit.lowerBound], "everything before SESSION.md is shared")
+      for agentOnly in ["## Messages", "## Replies", "- devices —", "manipulate_ui", "<cache-warming-notice>", "Reply discipline, before anything else:", "You are an agent: a persistent identity"] {
+        #expect(agentPrompt.contains(agentOnly), "agent lost \(agentOnly)")
+        #expect(!taskPrompt.contains(agentOnly), "task received \(agentOnly)")
+      }
+      for taskOnly in ["You are a task: one asker, one brief.", "An observation is not certain to fire"] {
+        #expect(taskPrompt.contains(taskOnly), "task lost \(taskOnly)")
+        #expect(!agentPrompt.contains(taskOnly), "agent received \(taskOnly)")
+      }
+      for shared in ["## Scratch files", "## Files and revisions", "## Group access", "## Skills"] {
+        #expect(agentPrompt.contains(shared))
+        #expect(taskPrompt.contains(shared))
+      }
       #expect(agentPrompt[..<agentSplit.lowerBound].hasSuffix("- writing-style — Shape a reply for someone reading on a phone — outcome first, each layer shorter than the last, anything over ~15 lines becomes a file with a pointer; what a finished task, a proposal, a \"which one?\" and a document hand-over look like. (wuhu://system/skills/writing-style/SKILL.md)"))
 
       let home = "Your home in the space is /_/sessions/{id}/. Keep your AGENTS.md (standing instructions) and any notes you want to survive compaction there; a skill of yours is /_/sessions/{id}/.agents/skills/<name>/SKILL.md. Instructions resolve top-down — the system, your group's root, then yours; nothing comes from the session that created you. This prompt renders the space's files and your home's as of the start of this generation, and again after each compaction or Start over: an edit in between, yours included, reaches it only then."

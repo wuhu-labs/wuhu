@@ -122,4 +122,6 @@ Upgrade installation and version-directory pruning share the execution image sto
 
 ## Group creation and aliases
 
+`wuhu group observer list <group>`, `wuhu group observer cancel <group> <name>` and `wuhu group observer create <group> <name> --handler <module> (--sql <sql> [--throttle <s>] | --in <s> | --cron <expr>) [--sessions-per-hour <n>]` arm, list and cancel a group's observers (`/v1/group/:id/observers`); exactly one trigger, else a usage error.
+
 `wuhu group create <alias>` creates an open group owned/administered by the calling human member; sessions must use the script API instead. `wuhu group rename <id-or-alias> <alias>` changes a group's alias as its admin. `group show` includes the current alias; `group list` prints ids from a single discovery request. Group selections and addresses accept aliases and permanent ids. Retired aliases keep resolving. Aliases use lowercase letters, digits and underscores, never hyphens. Machine names likewise permit underscores; hostname-derived defaults replace hyphens with underscores.

@@ -5,6 +5,8 @@ description: Watch something on a machine from run_script — a log, a build, a 
 
 # Monitoring a machine from run_script
 
+Read [machine-scripts](wuhu://system/skills/machine-scripts/SKILL.md) for the machine and Process contracts, and [script-runtime](wuhu://system/skills/script-runtime/SKILL.md) for cancellable sleep.
+
 A monitor is a `run_script` module that starts a process on a machine with `wuhu:machine`'s `spawn`, answers the tool call at once, and then sends you one `update()` per event. Each update reaches you later as a message, so you stop polling: the space wakes you when something happens.
 
 The shape is always the same:
@@ -29,7 +31,6 @@ for await (const { stream, text } of p.lines()) {
 
 - `tail -n0 -F` starts at the end and follows the file across rotation.
 - `grep --line-buffered` matters: without it grep holds its output in a 4 KiB buffer when writing to a pipe, and lines arrive late and in clumps.
-- `p.lines()` yields `{ stream: "out" | "err", text }`, one per line, the line ending and a trailing `\r` removed. Raw bytes: `for await (const { stream, data } of p)`. A process has one reader; a second `lines()` or iteration throws.
 - Pass `max_lifetime_seconds` to `run_script` for anything that should outlive the default hour. When the lifetime runs out, the script and its processes are killed and you get a notice.
 - A job that has to outlive the script, or run past exec's 4-hour cap, is started detached by `exec`, not held in one: `setsid nohup make test > /tmp/test.log 2>&1 & echo $!` returns the PID at once, and this monitor tails `/tmp/test.log`. A plain `exec` is killed after 30 minutes by default, and its `max_lifetime_seconds` goes no higher than 4 hours.
 
@@ -60,8 +61,6 @@ await flusher;
 flush();
 ```
 
-`sleep(ms, { signal })` rejects when that signal aborts, so the flusher stops the moment the reader is done instead of keeping the script alive another 5 s.
-
 ## Run until exit, then give a verdict
 
 ```js
@@ -86,16 +85,6 @@ update(
 );
 ```
 
-`wait()` resolves with `{ code, signal }`: `code` is the exit status, or `null` when a signal ended the process. A command that cannot start at all (bad `cwd`, a secret the machine's group lacks) exits 127 with a `wuhu:` line on stderr.
-
 ## Stopping
 
-- `cancel` with the script id (`script.…`, also listed under `running:` in `<session-state>`) aborts `signal`, the global `AbortSignal` every script has. Pending reads reject with an `AbortError`, the script ends, and every process it spawned is killed (TERM, then KILL after 5 s). Nothing extra to write: the processes never outlive the script.
-- To stop on your own terms, `p.kill()` the process; the read loop then ends when its output does. Use `signal` for your own waits: `signal.addEventListener("abort", ...)`, or pass it to `fetch` and `sleep`.
-- A server restart kills running scripts too. Their processes are killed about a minute after the server comes back, and you get "script.X was killed by a server restart". Re-run the monitor if you still need it.
-
-## Limits
-
-- At most 8 spawned processes per script at once.
-- Output is flow-controlled, never dropped: each process has a 1 MiB window, and a script that reads slowly stalls its process rather than losing lines. Leaving a `for await` loop early (`break`, `return`, a throw) is the one exception: the rest of that process's output is dropped unread, since a process has only one reader.
-- `secrets: { VAR: "SECRET_NAME" }` passes a secret of the machine's group (not yours) as an environment variable, masked as `***` in the output. `wuhu:secret` placeholders are refused in commands, `env` and stdin: only `fetch` fills one in.
+Cancel the script id (`script.…` in `<session-state>`) to stop the monitor and its processes. A detached job is separate: keep its PID and stop it explicitly if the job, not just the monitor, should end. Re-run a monitor after a server restart if it is still needed.

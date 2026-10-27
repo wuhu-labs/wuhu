@@ -124,7 +124,7 @@ final class IdentityHarness: Sendable {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
     )
     let connection = MainConnection()
-    let workers = WorkerRegistry(tokens: tokens)
+    let workers = WorkerRegistry(tokens: tokens, machines: nil)
     let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { _ in config }
     workers.announce(workers.mint().id, endpoint: worker)
     let service = SessionService(sessions: self.store, worker: workers)

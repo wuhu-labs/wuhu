@@ -14,7 +14,7 @@ import Testing
     else {
       Issue.record("timer parameter schema is missing"); return
     }
-    #expect(Set(properties.keys) == ["message", "in_seconds", "cron", "handler"])
+    #expect(Set(properties.keys) == ["message", "in_seconds", "cron", "handler", "name"])
     #expect(properties["cron"]?.object?["type"] == "string")
     #expect(schema["required"] == .array(["message"]))
     #expect(schema["additionalProperties"] == false)

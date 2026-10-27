@@ -39,7 +39,7 @@ private final class Line: Worker, Sendable {
   }
 
   @Test func aSessionGoesToTheLeastLoadedWorkerOnFirstContactAndStaysThere() async throws {
-    let registry = WorkerRegistry(tokens: tokens)
+    let registry = WorkerRegistry(tokens: tokens, machines: nil)
     let a = Line(), b = Line()
     let first = announced(registry, a), second = announced(registry, b)
     try await registry.deliver(s1, .wake)
@@ -49,12 +49,12 @@ private final class Line: Worker, Sendable {
     #expect(registry.worker(of: s1) == first.id && registry.worker(of: s2) == second.id && registry.worker(of: s3) == first.id)
     #expect(a.delivered.withLock { $0.map(\.0) } == [s1, s3, s1])
     #expect(b.wakes == [s2])
-    _ = try await registry.fire(.init(id: UUID(), path: "/h.js", session: s2, input: .timer(Date()), stateJSON: nil))
+    _ = try await registry.fire(.init(id: UUID(), path: "/h.js", runner: .session(s2), input: .timer(Date()), stateJSON: nil))
     #expect(tokens.worker(ofBearer: first.token) == first.id && tokens.worker(ofBearer: second.token) == second.id)
   }
 
   @Test func aWorkerAnnouncedAgainKeepsItsSessionsOnItsNewLine() async throws {
-    let registry = WorkerRegistry(tokens: tokens)
+    let registry = WorkerRegistry(tokens: tokens, machines: nil)
     let old = Line(), new = Line()
     let credential = announced(registry, old)
     try await registry.deliver(s1, .wake)
@@ -66,7 +66,7 @@ private final class Line: Worker, Sendable {
   }
 
   @Test func anArchivedSessionLeavesItsWorkerAndNoWorkerRefusesAVerb() async throws {
-    let registry = WorkerRegistry(tokens: tokens)
+    let registry = WorkerRegistry(tokens: tokens, machines: nil)
     await #expect(throws: NoWorkerError.self) { try await registry.deliver(s1, .wake) }
     let line = Line()
     _ = announced(registry, line)
@@ -77,7 +77,7 @@ private final class Line: Worker, Sendable {
 
   @Test func drainHandsEachSessionOffOnceAndEndsTheWorkersToken() async throws {
     try await withSessionDeps {
-      let registry = WorkerRegistry(tokens: tokens)
+      let registry = WorkerRegistry(tokens: tokens, machines: nil)
       let a = Line(), b = Line()
       let first = announced(registry, a), second = announced(registry, b)
       try await registry.deliver(s1, .wake)
@@ -96,7 +96,7 @@ private final class Line: Worker, Sendable {
 
   @Test func drainWithNoOtherWorkerLeavesTheSessionsForTheNextAnnounce() async throws {
     try await withSessionDeps {
-      let registry = WorkerRegistry(tokens: tokens)
+      let registry = WorkerRegistry(tokens: tokens, machines: nil)
       let a = Line(), b = Line()
       let first = announced(registry, a)
       try await registry.deliver(s1, .wake)
@@ -111,7 +111,7 @@ private final class Line: Worker, Sendable {
   // Main reboots in place: the main it becomes knows the workers the one
   // before minted, by their tokens, and mints after them.
   @Test func aMainTakingOverKnowsTheWorkersOfTheOneBefore() async throws {
-    let before = WorkerRegistry(tokens: tokens)
+    let before = WorkerRegistry(tokens: tokens, machines: nil)
     let a = Line()
     let first = announced(before, a)
     try await before.deliver(s1, .wake)
@@ -121,7 +121,7 @@ private final class Line: Worker, Sendable {
 
     let after = ExecTokens(spaceURL: "http://main")
     after.restore(tokens.table()) { _ in { true } }
-    let registry = WorkerRegistry(tokens: after)
+    let registry = WorkerRegistry(tokens: after, machines: nil)
     registry.restore(mintedCount: before.mintedCount)
     #expect(after.worker(ofBearer: first.token) == first.id && after.session(ofBearer: session) == s1)
     let b = Line()
@@ -132,7 +132,7 @@ private final class Line: Worker, Sendable {
   }
 
   @Test func aWorkerGoneUnaskedLeavesItsSessionsToTheNextVerb() async throws {
-    let registry = WorkerRegistry(tokens: tokens)
+    let registry = WorkerRegistry(tokens: tokens, machines: nil)
     let a = Line(), b = Line()
     let first = announced(registry, a)
     try await registry.deliver(s1, .wake)
@@ -144,7 +144,7 @@ private final class Line: Worker, Sendable {
   }
 
   @Test func waitingForAWorkerEndsWhenItAnnouncesOrTheWaitIsCancelled() async throws {
-    let registry = WorkerRegistry(tokens: tokens)
+    let registry = WorkerRegistry(tokens: tokens, machines: nil)
     let credential = registry.mint()
     let waiting = Task { await registry.announcement(of: credential.id) }
     registry.announce(credential.id, endpoint: Line())

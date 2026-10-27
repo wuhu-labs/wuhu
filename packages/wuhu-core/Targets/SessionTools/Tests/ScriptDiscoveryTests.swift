@@ -102,6 +102,10 @@ import Testing
 
   @Test func rosterIsTheServerDeclaration() async throws {
     try await withRig { rig in
+      let rosters = try await rig.evaluate("import {toolRoster} from 'wuhu:session';result(await toolRoster())")
+      let tools = rosters.object?["rosters"]?.array?.flatMap { $0.object?["tools"]?.array ?? [] } ?? []
+      let script = try #require(tools.first { $0.object?["name"] == "run_script" })
+      #expect(try #require(script.object?["description"]?.stringValue).count < 1500)
       #expect(try await rig.evaluate("import {toolRoster} from 'wuhu:session';result(await toolRoster())") == JSONValueEncoder().encode(sessionToolRosters()))
       let context = try await rig.evaluate("import {context} from 'wuhu:space';result(await context())")
       #expect(context.object?["contentHost"] == "https://shared.localhost")

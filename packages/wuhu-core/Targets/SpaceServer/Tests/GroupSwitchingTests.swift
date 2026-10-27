@@ -360,7 +360,7 @@ extension GroupSwitchingTests {
         try await harness.store.unarchive(id)
         #expect(try await warmer.allows(otherID) == false)
         now.withLock { $0 = $0.addingTimeInterval(1) }
-        try await harness.space.recordInference(.init(id: "recovered-account", session: otherID, at: now.withLock { $0 }, provider: "testing", model: "test-model", effort: "high", outcome: "ok"))
+        try await harness.space.recordInference(.init(id: "recovered-account", payer: .session(otherID), at: now.withLock { $0 }, provider: "testing", model: "test-model", effort: "high", outcome: "ok"))
         #expect(try await warmer.allows(otherID))
         #expect(try await warmer.allows(id))
         now.withLock { $0 = $0.addingTimeInterval(1) }

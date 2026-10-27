@@ -9,22 +9,25 @@ import SpaceTools
 let scriptImageConcurrency = 4
 
 struct ScriptAI {
-  let session: SessionID
+  let actor: ScriptActor
   let tools: ToolExecutor
+  let execution: ScriptExecution
 
   func install(in engine: JSEngine) throws {
     installCompletion(in: engine)
     let claims = MachineWriteClaims()
-    engine.define("__wuhu_capability", promising: { [session, tools] arguments in
+    engine.define("__wuhu_capability", promising: { [actor, tools] arguments in
       try await capabilityAnswer {
+        let session = try capabilitySession(actor)
         guard case let .string(kind)? = arguments.first else {
           throw CapabilityError(.invalidArgument, "capability needs a capability kind.")
         }
         return try await tools.capability(session, kind)
       }
     })
-    engine.define("__wuhu_generate_image", promising: { [session, tools] arguments in
+    engine.define("__wuhu_generate_image", promising: { [actor, tools] arguments in
       try await capabilityAnswer {
+        let session = try capabilitySession(actor)
         guard case let .string(prompt)? = arguments.first,
               case let .string(destination)? = arguments[safe: 1]?.object?["destination"]
         else {
@@ -43,14 +46,16 @@ struct ScriptAI {
         return .object(["path": .string(image.path), "mimeType": .string("image/png"), "bytes": .integer(image.bytes), "width": .integer(image.width), "height": .integer(image.height)])
       }
     })
-    engine.define("__wuhu_transcribe", promising: { [session, tools] arguments in
+    engine.define("__wuhu_transcribe", promising: { [actor, tools] arguments in
       try await capabilityAnswer {
+        let session = try capabilitySession(actor)
         guard case let .string(audio)? = arguments.first else { throw CapabilityError(.invalidArgument, "transcribe needs a private audio path.") }
         return try await tools.transcribe(session, audio: audio, options: capabilityOptions(arguments[safe: 1], allowed: ["provider", "model", "language", "timestamps", "diarize"]))
       }
     })
-    engine.define("__wuhu_web_search", promising: { [session, tools] arguments in
+    engine.define("__wuhu_web_search", promising: { [actor, tools] arguments in
       try await capabilityAnswer {
+        let session = try capabilitySession(actor)
         guard case let .string(query)? = arguments.first else { throw CapabilityError(.invalidArgument, "webSearch needs a query.") }
         return try await tools.search(session, query, options: capabilityOptions(arguments[safe: 1], allowed: ["provider", "count"]))
       }
@@ -58,6 +63,13 @@ struct ScriptAI {
     try engine.defineModule("wuhu:ai", source: aiModule)
     try engine.defineModule("wuhu:web_search", source: webSearchModule)
   }
+}
+
+private func capabilitySession(_ actor: ScriptActor) throws -> SessionID {
+  guard let session = actor.session else {
+    throw CapabilityError(.invalidArgument, "Capabilities run as a session; an observer handler has complete() only.")
+  }
+  return session
 }
 
 private func capabilityOptions(_ value: JSONValue?, allowed: Set<String>) throws -> CapabilityOptions {

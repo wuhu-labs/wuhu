@@ -31,6 +31,7 @@ private final class Recorder: Worker, Sendable {
 
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
     try note("fire \(invocation.path)")
+    if invocation.path == "/hold.js" { try await hold() }
     guard case let .rows(rows) = invocation.input else { return ScriptHandlerResult(stateJSON: "timer", wakes: []) }
     return ScriptHandlerResult(stateJSON: "\(rows.rows)", wakes: rows.columns)
   }
@@ -41,6 +42,10 @@ private final class Recorder: Worker, Sendable {
     try note("run \(script.source)")
     for argument in script.arguments { output(.update(text: argument)) }
     guard script.source == "hold" else { return output(.result(text: script.source)) }
+    try await hold()
+  }
+
+  private func hold() async throws {
     let (never, _) = AsyncStream<Void>.makeStream()
     for await _ in never {}
     asked.withLock { $0.append("cancelled") }
@@ -76,9 +81,9 @@ private final class Recorder: Worker, Sendable {
       try await client.deliver(SessionID("a"), .wake)
       #expect(try await client.revoke(SessionID("a"), policy: .handOff))
       let rows = Rows(columns: ["n", "b"], decltypes: ["INTEGER", nil], rows: [[.integer(7), .blob([1, 2])], [.real(0.5), .null]])
-      let handled = try await client.fire(.init(id: UUID(), path: "/h.js", session: SessionID("a"), input: .rows(rows), stateJSON: nil))
+      let handled = try await client.fire(.init(id: UUID(), path: "/h.js", runner: .session(SessionID("a")), input: .rows(rows), stateJSON: nil))
       #expect(handled.stateJSON == "\(rows.rows)" && handled.wakes == ["n", "b"])
-      let timer = try await client.fire(.init(id: UUID(), path: "/t.js", session: SessionID("a"), input: .timer(Date(timeIntervalSince1970: 5)), stateJSON: "{}"))
+      let timer = try await client.fire(.init(id: UUID(), path: "/t.js", runner: .session(SessionID("a")), input: .timer(Date(timeIntervalSince1970: 5)), stateJSON: "{}"))
       #expect(timer.stateJSON == "timer")
       #expect(await client.activity().scripts == [ScriptRunID("s1"): SessionID("a")])
       #expect(try await client.runningWork(SessionID("a")) == ["exec.1", "script.s1"])
@@ -110,15 +115,21 @@ private final class Recorder: Worker, Sendable {
     #expect(heard.withLock { $0 } == [.update(text: "one"), .update(text: "two"), .result(text: "done")])
   }
 
-  @Test func cancellingARunOnMainCancelsItOnTheWorker() async throws {
+  @Test(arguments: [false, true]) func cancellingARunOrAFiringOnMainCancelsItOnTheWorker(firing: Bool) async throws {
     let worker = Recorder()
     try await line(worker) { client in
-      let running = Task { try await client.run(ScriptRun(session: SessionID("a"), source: "hold", arguments: [])) { _ in } }
+      let running = Task {
+        if firing {
+          _ = try await client.fire(.init(id: UUID(), path: "/hold.js", runner: .session(SessionID("a")), input: .timer(Date(timeIntervalSince1970: 5)), stateJSON: nil))
+        } else {
+          try await client.run(ScriptRun(session: SessionID("a"), source: "hold", arguments: [])) { _ in }
+        }
+      }
       while worker.asked.withLock({ $0.isEmpty }) { await Task.yield() }
       running.cancel()
       await #expect(throws: CancellationError.self) { try await running.value }
     }
-    #expect(worker.asked.withLock { $0 } == ["run hold", "cancelled"])
+    #expect(worker.asked.withLock { $0 } == [firing ? "fire /hold.js" : "run hold", "cancelled"])
   }
 
   @Test(arguments: [

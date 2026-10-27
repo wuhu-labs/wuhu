@@ -64,7 +64,7 @@ public extension SpaceToolContext {
         let path = try spacePath(target.path)
         try await SpaceView.requireReadable(group, by: principal.group, actor: principal.actor, path: path.rawValue, in: space)
         try await refuseWrite(path, in: group)
-        token = try await space.writeFile(path, data: data, in: group, acting: principal.group, ifMatch: ifMatch.map(Wire.token), createOnly: createOnly)
+        token = try await space.writeFile(path, data: data, in: group, acting: principal.group, attribution: attribution, ifMatch: ifMatch.map(Wire.token), createOnly: createOnly)
       } else {
         // A machine agent has no create-only write: the check is a stat
         // before it, with the window that leaves. (The system backend

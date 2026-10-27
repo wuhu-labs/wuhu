@@ -248,7 +248,7 @@ private func lifetimeExecutor(space: Space, hub: MachineHub, ready: LifetimeOutp
   let tokens = ExecTokens(spaceURL: "http://main")
   let connection = MainConnection()
   let executor = ToolExecutor(owner: owner, main: connection, credential: { tokens.sessionToken($0) })
-  let workers = WorkerRegistry(tokens: tokens)
+  let workers = WorkerRegistry(tokens: tokens, machines: hub)
   workers.announce(workers.mint().id, endpoint: ToolOnlyWorker())
   SessionRuntime.bindMain(owner: owner, workers: workers, tokens: tokens, connection: connection, hub: hub)
   connection.bindDial { url, _ in

@@ -30,7 +30,7 @@ import Testing
       let attempt = try await tests.begin(store, observation)
       _ = try await store.finishSubscriptionHandler(attempt, result: .failure(error: "module missing", notification: tests.wake(observation, "module missing")))
       #expect(try await space.query("SELECT last_fired_at, last_error FROM subscriptions WHERE id = 'watch'").rows == [[.text(SQLiteDateFormat.string(from: fixedDate)), .text("module missing")]])
-      for sql in ["SELECT * FROM session_subscriptions", "SELECT * FROM main.session_subscriptions", "SELECT * FROM main.subscriptions"] {
+      for sql in ["SELECT * FROM subscription_slots", "SELECT * FROM main.subscription_slots", "SELECT * FROM main.subscriptions"] {
         await #expect(throws: SpaceError.self) { _ = try await space.query(sql) }
       }
     }
@@ -63,7 +63,7 @@ import Testing
         _ = try await space.query("SELECT * FROM \"wuhu://bob.localspace/subscriptions\"", as: reader)
       }
       await #expect(throws: SpaceError.self) {
-        _ = try await space.query("WITH subscriptions AS (SELECT * FROM main.session_subscriptions) SELECT * FROM subscriptions", as: reader)
+        _ = try await space.query("WITH subscriptions AS (SELECT * FROM main.subscription_slots) SELECT * FROM subscriptions", as: reader)
       }
     }
   }
@@ -84,7 +84,7 @@ import Testing
       _ = try await awaitItems(collected, atLeast: 3)
       _ = try await space.sessions.finishSubscriptionHandler(attempt, result: .failure(error: "boom", notification: tests.wake(slot, "boom")))
       _ = try await awaitItems(collected, atLeast: 4)
-      try await space.sessions.cancelSubscription(id, subscriptionID: slot.slot.id)
+      try await space.sessions.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
       let snapshots = try await awaitItems(collected, atLeast: 5)
       try #require(snapshots.count == 5)
       #expect(snapshots.first?.rows.isEmpty == true)

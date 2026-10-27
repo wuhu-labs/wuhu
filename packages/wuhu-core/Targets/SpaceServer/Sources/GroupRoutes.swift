@@ -28,6 +28,7 @@ func addGroupRoutes(
     case let .credential(credential):
       principal = switch credential {
       case let .session(id, group): Principal(actor: .session(id), group: group)
+      case let .observer(observer): observer.principal
       case let .person(acting): Principal(actor: .person(persona: "", account: acting.key.account), group: .shared)
       case .anonymous: .shared(.anonymous)
       }
@@ -51,6 +52,8 @@ func addGroupRoutes(
       owner = try await space.persona(named: persona)?.account ?? AccountID(rawValue: named)
     case .credential(.anonymous):
       return errorResponse(.forbidden, code: "memberRequired", message: "a live space member must own the group")
+    case .credential(.observer):
+      return errorResponse(.forbidden, code: "forbidden", message: "an observer creates no group")
     case let .refused(response): return response
     }
     do {

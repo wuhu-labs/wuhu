@@ -238,6 +238,20 @@ public actor MachineHub {
     return attached
   }
 
+  /// Kills what `script` still runs for `caller`, then forgets its owner rows:
+  /// main's half of a script's end, for a script that can no longer reach main
+  /// itself (a cancelled firing's token is already revoked).
+  public func releaseScript(_ script: String, caller: String) async {
+    do {
+      for exec in try await space.liveScriptExecs(script: script, caller: caller) {
+        do { try await kill(exec) } catch { Logger(label: "wuhu.exec").error("could not kill script \(script)'s exec \(exec.rawValue): \(error)") }
+      }
+      try await space.releaseScriptExecs(script: script, caller: caller)
+    } catch {
+      Logger(label: "wuhu.exec").error("could not release script \(script)'s machine processes: \(error)")
+    }
+  }
+
   // The row turns `cancelled` before the kill frame goes out, and the real exit
   // still settles it. Recording first is what makes the kill stick: a start
   // relayed after this point is refused, and one already in flight is followed
@@ -623,10 +637,10 @@ public actor MachineHub {
     var env = Self.withoutReserved(start.env)?.entries ?? [:]
     var values = values?.entries
     let session: ExecSessionCredential?
-    if let caller = record.caller, let tokens {
+    if let caller = record.session, let tokens {
       let now = date.now
-      session = tokens.credential(session: SessionID(rawValue: caller), exec: start.id, timeout: start.timeout, now: now)
-      let minting = tokens.idTokens.environment(spaceURL: tokens.spaceURL, session: SessionID(rawValue: caller), machine: record.machine, exec: start.id, timeout: start.timeout, now: now)
+      session = tokens.credential(session: caller, exec: start.id, timeout: start.timeout, now: now)
+      let minting = tokens.idTokens.environment(spaceURL: tokens.spaceURL, session: caller, machine: record.machine, exec: start.id, timeout: start.timeout, now: now)
       env[SessionExecEnvironment.idTokenURL] = minting.url
       // An agent that takes secret values masks them in the exec's output;
       // an older one gets the capability in plain env.

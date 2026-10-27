@@ -145,7 +145,7 @@ extension SpaceToolbox {
     try await context.refuseWrite(context.spacePath(source.path), in: sourceGroup)
     try await context.refuseWrite(context.spacePath(destination.path), in: destinationGroup)
     try await context.space.move(
-      source.path, in: sourceGroup, to: destination.path, in: destinationGroup, replacing: input.replace == true, acting: acting,
+      source.path, in: sourceGroup, to: destination.path, in: destinationGroup, replacing: input.replace == true, acting: acting, attribution: context.attribution,
     )
     let (from, to) = (source.path, destination.path)
     let entries = try await context.space.history(try context.spacePath(to), in: destinationGroup)

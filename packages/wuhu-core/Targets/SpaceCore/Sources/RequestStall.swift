@@ -119,10 +119,7 @@ extension SessionStore {
       let armed = try armedSubscription(row)
       guard case let .requestStall(clock) = armed.slot.kind else { return false }
       func retire() throws {
-        try db.execute(
-          sql: "DELETE FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-          arguments: [key, subscriptionID.rawValue],
-        )
+        try Self.deleteSubscription(key, subscriptionID, in: db)
       }
       guard try Sessions.record(clock.task.rawValue, in: db).lifecycle == .live,
             let request = try RequestRow.find(clock.request, in: db), request.requestStatus.isOpen
@@ -221,7 +218,7 @@ extension Sessions {
       waits.append(try SQLiteDateFormat.date(from: job))
     }
     var until: Date?
-    for timer in try SubscriptionRow.where({ $0.sessionID.eq(task) }).fetchAll(db) {
+    for timer in try SubscriptionRow.of(.session(clock.task)).fetchAll(db) {
       guard case .timer(.oneShot, _) = try Sessions.decode(SubscriptionSlot.self, from: timer.payload).kind,
             let due = try timer.nextFireAt.map(SQLiteDateFormat.date(from:)), due > now
       else { continue }

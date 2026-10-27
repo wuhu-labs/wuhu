@@ -67,7 +67,7 @@ import Testing
     func inference(on session: SessionID, at seconds: TimeInterval) async throws {
       at(seconds)
       try await rig.space.recordInference(InferenceRecord(
-        id: "inf-\(Int(seconds))", session: session, at: now, provider: "test", model: "test", effort: "medium",
+        id: "inf-\(Int(seconds))", payer: .session(session), at: now, provider: "test", model: "test", effort: "medium",
         outcome: "ok", durationMs: 1000,
       ))
     }
@@ -209,7 +209,7 @@ import Testing
     try await replay()
     #expect(try await rig.due() == time(600), "the clock runs from the request's post, not from the replay")
 
-    try await rig.store.cancelSubscription(rig.parent, subscriptionID: .stall(rig.request))
+    try await rig.store.cancelSubscription(.session(rig.parent), subscriptionID: .stall(rig.request))
     try await replay()
     #expect(try await rig.slot() == nil)
 

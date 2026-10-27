@@ -49,6 +49,7 @@ struct RequestRow {
   @Column(primaryKey: true) var id: String
   @Column("grp") var group: String
   var requester: String
+  var firing: String?
   var task: String
   var kind: String?
   var key: String?
@@ -120,7 +121,7 @@ extension SessionStore {
     guard try RequestRow.find(id, in: db) == nil else { return }
     try RequestRow.insert {
       RequestRow(
-        id: id.rawValue, group: group.rawValue, requester: requester.name, task: task.rawValue,
+        id: id.rawValue, group: group.rawValue, requester: requester.name, firing: requester.firing, task: task.rawValue,
         kind: terms.kind, key: terms.key, status: RequestStatus.open.rawValue, brief: brief,
         schema: terms.schema?.jsonString(sortedKeys: true), fields: terms.fields?.jsonString(sortedKeys: true),
         result: nil, refusals: "[]", deadlineAt: deadline.map(SQLiteDateFormat.string(from:)), createdAt: now, updatedAt: now,
@@ -142,6 +143,7 @@ extension SessionStore {
     switch caller {
     case let .session(id): try Sessions.group(of: id.rawValue, in: db)
     case let .page(person): person.group
+    case let .observer(observer): observer.group
     }
   }
 
@@ -173,6 +175,10 @@ extension SessionStore {
         guard record.parent == nil, record.createdBy == person.persona, record.group == person.group else {
           throw SessionStoreError.notTheParent(key)
         }
+      case let .observer(observer):
+        guard record.parent == nil, record.createdBy == observer.member, record.group == observer.group else {
+          throw SessionStoreError.notTheParent(key)
+        }
       }
       // A retry of a request that already posted replays it: that request is
       // the open one, not a second.
@@ -195,7 +201,7 @@ extension SessionStore {
         kind: .request,
         requestID: request,
         content: MessageContent(text: text),
-        acting: requester.person?.principal,
+        acting: requester.principal,
         alongside: { message, db in
           let now = SQLiteDateFormat.string(from: message.createdAt)
           try Self.insertRequest(request, group: group, requester: requester, task: task, brief: text, terms: terms, deadline: deadline, now: now, in: db)

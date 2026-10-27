@@ -208,3 +208,13 @@ _Afterwards:_ `{sb}/ask.html` imports `createSession` and `sendMessage` from `wu
 _Prompt:_ "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {verdict, notes} you can read off without parsing prose. In at most four sentences, name the exact call, what it returns on the re-run, and where you read the verdict."
 
 _Afterwards:_ the reply names `createSession` (or `create_session`) with `expectsReply` and `request: { kind, key, schema }`, a per-day key, `existing: true` on the re-run, and the `requests` table's `result` as where the verdict lands. No tool calls, no files.
+
+## Script skill discovery
+
+`script-skill-discovery` starts with no API names in the user prompt: follow the run_script description to space-scripts and sessions, create a table with one row, and create an idle child using both script modules. Required checks cover actual rows, child state, module use and skill reads; the judge checks read-before-use order. The old pinned benchmark release does not carry the slim description: use a release containing this change for a scored run, not dev.118. The offline `--smoke` mode checks transport/seeding only, not model discovery.
+
+## group-observer
+
+_Prompt:_ "Whenever a doc under {sb}/drafts/ gets status: review, a new agent here should start reviewing that doc. This belongs to the group, not to you: it has to keep working after you and this chat are archived. Call it bench-{tag}-review."
+
+_Afterwards:_ `subscriptions` has a group observer (`session_id` null) named `bench-{tag}-review`, an `observe` over `docs` under `{sb}/drafts/` with status `review`, whose handler module lives in the group's files and calls `createSession` for each new doc, deduped by its returned state. The reply names it and says how to cancel it. A session-owned observe is a fail.

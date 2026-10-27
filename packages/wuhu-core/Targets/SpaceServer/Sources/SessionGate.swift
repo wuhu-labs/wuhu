@@ -24,8 +24,6 @@ import struct MainHub.SendMessageArguments
 import struct MainHub.SetTitleArguments
 import struct MainHub.TimerArguments
 import protocol MainHub.Worker
-import struct OperationProtocol.ErrorEnvelope
-import struct OperationProtocol.OperationError
 import Serve
 import ServeRouting
 import ServeSSE
@@ -77,6 +75,7 @@ func sessionGate(
     credentials: credentials, identity: identity, metrics: metrics, routed: routed,
   ).upgradingHandler
   let workerRoutes = workerRouter(owner: owner, runtime: runtime).upgradingHandler
+  let observerRoutes = observerRouter(space: space, hub: hub, machines: machines, owner: owner, metrics: metrics, routed: routed).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix) else {
@@ -87,10 +86,17 @@ func sessionGate(
       return .response(response)
     case .worker:
       return try await workerRoutes(request)
+    case let .observer(observer):
+      if let refused = try await groupMismatch(request, by: "observer \(observer.member)", group: observer.group, space: space) {
+        return .response(refused)
+      }
+      return try await ObserverPrincipal.$current.withValue(observer) {
+        try await observerRoutes(request)
+      }
     case let .session(holder):
       // An exec token acts in its session's group; naming another is refused
       // here, whatever the route.
-      if let refused = try await groupMismatch(request, session: holder.session, group: holder.group, space: space) {
+      if let refused = try await groupMismatch(request, by: "session \(holder.session.rawValue)", group: holder.group, space: space) {
         return .response(refused)
       }
       return try await SessionPrincipal.$current.withValue(holder) {
@@ -104,6 +110,8 @@ enum SessionVerdict {
   case session(GatedSession)
   /// The worker's own token: the loop's routes, never a session's.
   case worker
+  /// A firing's token: the observer's few verbs, as its group.
+  case observer(Observer)
   case refused(Response)
 }
 
@@ -119,6 +127,7 @@ func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
 
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
   if tokens.worker(ofBearer: bearer) != nil { return .worker }
+  if let observer = tokens.observer(ofBearer: bearer) { return .observer(observer) }
   let session: SessionID
   var boundGroup: GroupID?
   var exec = true
@@ -248,6 +257,9 @@ private func sessionRouter(
   }
   router.get("/v1/groups", use: forward)
   router.get("/v1/group/:id", use: forward)
+  router.get("/v1/group/:id/observers", use: forward)
+  router.post("/v1/group/:id/observers", use: forward)
+  router.delete("/v1/group/:id/observers/:name", use: forward)
   router.post("/v1/groups") { request, parameters in
     guard !principal().exec else {
       return errorResponse(.forbidden, code: "unauthorized", message: "sessions create groups only through createGroup in run_script")
@@ -289,42 +301,8 @@ private func sessionRouter(
       return identityFailure(error)
     }
   }
-  // The roster is the hub's (its refusal when the server has no machine
-  // backend, its attach state); the API's shape adds each machine's group.
-  router.get("/v1/machine") { _, _ in
-    let payload = try await answered { try await owner.machineRoster(principal().session) }
-    guard case let .machines(roster) = payload else { return hubRefusal(payload) }
-    let groups = Dictionary(uniqueKeysWithValues: try await space.machines(usableFrom: principal().group).map { ($0.id.rawValue, $0.group.rawValue) })
-    return try Response.json(roster.machines.compactMap { listing in
-      groups[listing.id].map { MachineStatus(id: MachineID(rawValue: listing.id), name: listing.name, group: $0, attached: listing.attached) }
-    })
-  }
-  router.get("/v1/machine/:id/status") { _, parameters in
-    guard let raw = parameters["id"], let record = try await space.resolveMachine(raw, usableFrom: principal().group) else {
-      return errorResponse(.notFound, code: "notFound", message: "unknown machine")
-    }
-    let payload = try await answered { try await owner.machineRoster(principal().session) }
-    guard case let .machines(roster) = payload else { return hubRefusal(payload) }
-    guard let listing = roster.machines.first(where: { $0.id == record.id.rawValue }) else {
-      return errorResponse(.notFound, code: "notFound", message: "unknown machine")
-    }
-    return try Response.json(MachineStatus(id: record.id, name: record.name, group: record.group.rawValue, attached: listing.attached, scope: record.scope.rawValue))
-  }
-  // A directory on a machine, which only a machine has; a file's parents the
-  // byte route makes itself.
-  router.post("/v1/machine/:id/mkdir") { request, parameters in
-    let id = MachineID(rawValue: parameters["id"] ?? "")
-    guard case let .object(fields)? = JSONValue.parse(try await request.body?.text() ?? ""),
-          case let .string(path)? = fields["path"], path.hasPrefix("/")
-    else { return errorResponse(.badRequest, code: "invalidArgument", message: "mkdir takes an absolute path on the machine") }
-    guard try await space.resolveMachine(id.rawValue, usableFrom: principal().group) != nil else {
-      return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(id.rawValue)")
-    }
-    switch try await MachineSeam.$caller.withValue(principal().session) { try await machines.vfs(id, .mkdir(path: path)) } {
-    case .ok: return jsonResponse(.object([:]))
-    case let .error(error): return jsonResponse(machineFailure(error).payload, status: .unprocessableContent)
-    default: return errorResponse(.unprocessableContent, code: "internal", message: "machine returned an unexpected mkdir result for \(path)")
-    }
+  addMachineRoutes(to: &router, space: space, hub: hub, owner: owner, machines: machines, routed: routed) {
+    .session(principal().session, group: principal().group)
   }
   // A machine the byte route reaches sees the session as its caller.
   router.get("/v1/f/*") { request, parameters in
@@ -384,31 +362,13 @@ private func sessionRouter(
       return sessionErrorResponse(error)
     }
   }
-  // One inference the worker ran for the caller, into the server's metrics,
-  // once per attempt id however often it is reported. Only the worker reports;
-  // an exec's token would let any command bill its session.
+  // Only the worker reports; an exec's token would let any command bill its
+  // session.
   router.post("/v1/inferences") { request, _ in
     guard !principal().exec else {
       return errorResponse(.forbidden, code: "unauthorized", message: "an inference is reported by the session's worker, never from an exec")
     }
-    let input = try await request.json(InferenceReportInput.self)
-    guard let outcome = InferenceMetric.Outcome(rawValue: input.outcome) else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "unknown inference outcome: \(input.outcome)")
-    }
-    let usage = input.usage.map { [$0.inputTokens, $0.outputTokens, $0.cacheReadTokens, $0.cacheWriteTokens, $0.reasoningTokens ?? 0, $0.totalTokens] } ?? []
-    guard !input.id.isEmpty, input.timestamp.isFinite, ([input.durationMs, input.ttftMs ?? 0, input.status ?? 0] + usage).allSatisfy({ $0 >= 0 }) else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "an inference report names its attempt and counts nothing negative")
-    }
-    await metrics.record(InferenceMetric(
-      id: input.id, timestamp: Date(timeIntervalSince1970: input.timestamp), session: principal().session,
-      provider: input.provider, model: input.model, servedModel: input.servedModel, effort: input.effort,
-      outcome: outcome, errorKind: input.errorKind, status: input.status,
-      ttftMs: input.ttftMs.map(Int64.init), durationMs: Int64(input.durationMs),
-      usage: input.usage.map {
-        Usage(inputTokens: $0.inputTokens, outputTokens: $0.outputTokens, cacheReadTokens: $0.cacheReadTokens, cacheWriteTokens: $0.cacheWriteTokens, reasoningTokens: $0.reasoningTokens, totalTokens: $0.totalTokens)
-      },
-    ))
-    return jsonResponse(.object([:]))
+    return try await inferenceReport(request, payer: .session(principal().session), metrics: metrics)
   }
   router.get("/v1/observe") { request, _ in
     await observeResponse(space: space, url: request.url, principal: Principal(actor: .session(principal().session), group: principal().group))
@@ -446,36 +406,6 @@ private func sessionRouter(
     }
   }
 
-  router.post("/v1/exec") { request, _ in
-    let input = try await request.json(ExecMintInput.self)
-    do {
-      guard try await space.resolveMachine(input.machine.rawValue, usableFrom: principal().group) != nil else {
-        return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
-      }
-      try await hub.requireExecKind(input.machine)
-      let record: ExecRecord
-      if let script = input.script {
-        // A run_script execution's process: owned by the script, released when it ends.
-        record = try await space.mintScriptExec(machine: input.machine, session: principal().session.rawValue, script: script)
-        await hub.noteMinted(record)
-      } else if let callID = request.headers[ToolCallHeader.name] {
-        let claim = try await space.claimExec(
-          machine: input.machine, caller: principal().session.rawValue,
-          toolCallID: ToolCallID(rawValue: callID), spec: input.spec?.jsonString(),
-        )
-        record = claim.record
-        if !claim.rejoined { await hub.noteMinted(record) }
-      } else {
-        record = try await space.mintExec(machine: input.machine, caller: principal().session.rawValue)
-        await hub.noteMinted(record)
-      }
-      return try Response.json(ExecMintOutput(id: record.id))
-    } catch let error as OperationError {
-      return try Response.json(ErrorEnvelope(error), status: .unprocessableContent)
-    } catch is SpaceError {
-      return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
-    }
-  }
   // The session's worker runs the file; the stream closing kills it.
   router.post("/v1/scripts") { request, _ in
     let input = try await request.json(ScriptRunInput.self)
@@ -495,28 +425,6 @@ private func sessionRouter(
     }
     return .sse(events)
   }
-  router.delete("/v1/script-execs/:script") { _, parameters in
-    guard let script = parameters["script"], !script.isEmpty else {
-      return errorResponse(.notFound, code: "notFound", message: "unknown script")
-    }
-    try await space.releaseScriptExecs(script: script, session: principal().session.rawValue)
-    return try Response.json([String: String]())
-  }
-  router.get("/v1/exec") { _, _ in
-    let context = SpaceToolContext(space: space, principal: Principal(actor: .session(principal().session), group: principal().group))
-    return try Response.json(try await context.ownExecs())
-  }
-  router.get("/v1/exec/:id") { request, parameters in
-    guard await ownsExec(parameters, space: space) else { return unknownExec(parameters) }
-    return try await forward(request, parameters)
-  }
-  router.post("/v1/exec/:id/kill") { request, parameters in
-    guard await ownsExec(parameters, space: space) else { return unknownExec(parameters) }
-    if let id = parameters["id"], let record = try await space.execRecord(ExecID(rawValue: id)), record.terminal != nil {
-      return errorResponse(.unprocessableContent, code: "alreadyEnded", message: "exec has already ended")
-    }
-    return try await forward(request, parameters)
-  }
   for (action, owed) in [("detach", true), ("delivered", false)] {
     router.post("/v1/exec/:id/\(action)") { _, parameters in
       guard let raw = parameters["id"], ExecID.isValid(raw),
@@ -525,45 +433,13 @@ private func sessionRouter(
       return try Response.json(JSONValue.object([:]))
     }
   }
-  router.webSocket("/v1/exec/:id") { request, parameters in
-    guard await ownsExec(parameters, space: space) else { return .response(unknownExec(parameters)) }
-    return try await routed(request)
-  }
 
   router.post("/v1/session") { request, _ in
-    let arguments: CreateSessionArguments
-    do {
-      arguments = try CreateSessionArguments(body: try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes))
-    } catch {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-create body: \(error)")
-    }
-    return try await createSessionResponse(owner, as: .session(principal().session), callID(request), arguments) { created in
-      try await sessionCreateOutput(created, store: store)
-    }
+    try await postSession(request, as: .session(principal().session), callID: callID(request), owner: owner)
   }
 
   router.post("/v1/session/:id/request") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    let input: SessionRequestInput
-    do {
-      input = try await request.json(SessionRequestInput.self)
-    } catch {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-request body: \(error)")
-    }
-    let payload = try await answered {
-      try await owner.request(principal().session, callID(request), RequestArguments(
-        task: id.rawValue, message: input.message, deadlineSeconds: input.deadlineSeconds, stallSeconds: input.stallSeconds,
-        terms: RequestTermsArguments(kind: input.kind, key: input.key, schema: input.schema, fields: input.fields),
-      ))
-    }
-    guard case let .request(opened) = payload else { return hubRefusal(payload) }
-    return try Response.json(SessionRequestOutput(
-      requestId: opened.requestID.rawValue,
-      task: opened.task.rawValue,
-      conversationId: opened.conversationID.rawValue,
-      deadline: opened.deadline?.timeIntervalSince1970,
-      existing: opened.existing,
-    ))
+    try await postRequest(request, parameters, as: .session(principal().session), callID: callID(request), owner: owner)
   }
 
   router.post("/v1/request/:id/report") { request, parameters in
@@ -625,11 +501,11 @@ private func sessionRouter(
     switch (input.observe, input.timer) {
     case let (observe?, nil):
       payload = try await answered {
-        try await owner.observe(principal().session, callID(request), ObserveArguments(sql: observe.sql, throttleSeconds: observe.throttleSeconds, handler: input.handler))
+        try await owner.observe(principal().session, callID(request), ObserveArguments(sql: observe.sql, throttleSeconds: observe.throttleSeconds, handler: input.handler, name: input.name))
       }
     case let (nil, timer?):
       payload = try await answered {
-        try await owner.timer(principal().session, callID(request), TimerArguments(message: timer.message, inSeconds: timer.inSeconds, cron: timer.cron, handler: input.handler))
+        try await owner.timer(principal().session, callID(request), TimerArguments(message: timer.message, inSeconds: timer.inSeconds, cron: timer.cron, handler: input.handler, name: input.name))
       }
     default:
       return errorResponse(.badRequest, code: "invalidArgument", message: "a subscription is exactly one of observe and timer")
@@ -663,36 +539,7 @@ private func sessionRouter(
   }
 
   router.post("/v1/conversation/message") { request, _ in
-    let contentType = request.headers[.contentType] ?? request.body?.contentType ?? ""
-    guard MultipartReader.boundary(of: contentType) == nil else {
-      return errorResponse(
-        .badRequest,
-        code: "invalidArgument",
-        message: "a session's exec uploads no files; name space files in attachments instead",
-      )
-    }
-    let input: ConversationPostInput
-    let body: JSONValue
-    do {
-      body = try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes)
-      input = try JSONValueDecoder().decode(ConversationPostInput.self, from: body)
-    } catch {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a conversation-post body: \(error)")
-    }
-    if case let .object(fields) = body, fields["viewing"] != nil {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "viewing is set only on a person's message, never by a session")
-    }
-    if case let .object(fields) = body, fields["user"] != nil {
-      return errorResponse(.unprocessableContent, code: "refused", message: SessionStoreError.humanAgentDirectMessageExplanation)
-    }
-    let arguments = SendMessageArguments(
-      message: input.message, conversation: input.conversation, session: input.session, replyTarget: input.replyTarget, attachments: input.attachments,
-    )
-    return try await sendMessageResponse(owner, as: .session(principal().session), callID(request), arguments) { sent in
-      try Response.json(ConversationPostOutput(
-        messageId: sent.messageID.rawValue, conversationId: sent.conversationID.rawValue, n: Int(sent.n), delivered: [],
-      ))
-    }
+    try await postMessage(request, as: .session(principal().session), callID: callID(request), owner: owner)
   }
   return router
 }
@@ -717,7 +564,7 @@ private func subscriptionOutput(_ payload: ToolResultPayload) -> SubscriptionOut
 
 // The file tools a session has, each with the argument fields that name what it
 // changes; a read names nothing to check.
-private let sessionToolFields: [String: [String]] = [
+let sessionToolFields: [String: [String]] = [
   "read": [], "ls": [], "stat": [], "grep": [], "find": [], "history": [], "query": [],
   "write": ["path"], "edit": ["path"], "rm": ["path"], "mv": ["from", "to"], "checkout": ["path"],
   "table.schema": [], "table.create": ["path"], "table.alter": ["path"], "table.mutate": ["path"], "table.rows": ["path"], "new": ["in"],
@@ -761,9 +608,25 @@ private func foreignHomeRefusal(_ addresses: [String], space: Space) async -> Re
   return nil
 }
 
-private func ownsExec(_ parameters: RouteParameters, space: Space) async -> Bool {
-  guard let raw = parameters["id"], ExecID.isValid(raw),
-        let _ = try? await SpaceToolContext(space: space, principal: Principal(actor: .session(principal().session), group: principal().group)).ownExecStatus(raw)
-  else { return false }
-  return true
+// One inference a worker ran, into the server's metrics, once per attempt id
+// however often it is reported.
+func inferenceReport(_ request: Request, payer: InferenceMetric.Payer, metrics: InferenceMetricsSink) async throws -> Response {
+  let input = try await request.json(InferenceReportInput.self)
+  guard let outcome = InferenceMetric.Outcome(rawValue: input.outcome) else {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "unknown inference outcome: \(input.outcome)")
+  }
+  let usage = input.usage.map { [$0.inputTokens, $0.outputTokens, $0.cacheReadTokens, $0.cacheWriteTokens, $0.reasoningTokens ?? 0, $0.totalTokens] } ?? []
+  guard !input.id.isEmpty, input.timestamp.isFinite, ([input.durationMs, input.ttftMs ?? 0, input.status ?? 0] + usage).allSatisfy({ $0 >= 0 }) else {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "an inference report names its attempt and counts nothing negative")
+  }
+  await metrics.record(InferenceMetric(
+    id: input.id, timestamp: Date(timeIntervalSince1970: input.timestamp), payer: payer,
+    provider: input.provider, model: input.model, servedModel: input.servedModel, effort: input.effort,
+    outcome: outcome, errorKind: input.errorKind, status: input.status,
+    ttftMs: input.ttftMs.map(Int64.init), durationMs: Int64(input.durationMs),
+    usage: input.usage.map {
+      Usage(inputTokens: $0.inputTokens, outputTokens: $0.outputTokens, cacheReadTokens: $0.cacheReadTokens, cacheWriteTokens: $0.cacheWriteTokens, reasoningTokens: $0.reasoningTokens, totalTokens: $0.totalTokens)
+    },
+  ))
+  return jsonResponse(.object([:]))
 }

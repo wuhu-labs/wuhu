@@ -61,9 +61,7 @@ extension SessionStore {
       try Sessions.discardCommand(key, in: db)
       try CacheWarmingRow.reset(key, in: db)
       var subscriptions: [SubscriptionID: Subscription] = [:]
-      for armed in try Row.fetchAll(
-        db, sql: "SELECT * FROM session_subscriptions WHERE session_id = ?", arguments: [key],
-      ).map(self.armedSubscription) {
+      for armed in try SubscriptionRow.of(.session(id)).fetchAll(db).map(self.armedSubscription) {
         switch armed.slot.kind {
         case let .observe(sql, _): subscriptions[armed.slot.id] = .observe(sql: sql)
         case let .timer(schedule, _): subscriptions[armed.slot.id] = .timer(schedule)

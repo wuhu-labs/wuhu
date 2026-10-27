@@ -30,7 +30,7 @@ func kernelInference(
   @Dependency(\.date) var date
   let metrics = InferenceMetricsSink { metric in
     do { try await executor.report(metric) }
-    catch { Logger(label: "wuhu.inference").error("inference report failed", metadata: ["session": "\(metric.session.rawValue)", "error": "\(error)"]) }
+    catch { Logger(label: "wuhu.inference").error("inference report failed", metadata: ["session": "\(metric.jsonLine())", "error": "\(error)"]) }
   }
   return { request in
     let record: SessionRecord

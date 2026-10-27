@@ -37,7 +37,7 @@ extension ToolExecutor {
     guard arguments.cwd.hasPrefix("/"), !arguments.machine.contains("/") else {
       throw ToolProblem("exec takes a machine name or id and an absolute cwd on it, got machine \(arguments.machine), cwd \(arguments.cwd)")
     }
-    guard let machine = try await machine(arguments.machine, as: session) else {
+    guard let machine = try await machine(arguments.machine, as: .session(session)) else {
       throw ToolProblem("unknown machine: \(arguments.machine)")
     }
     let cwd = try Addressing.normalize(arguments.cwd)

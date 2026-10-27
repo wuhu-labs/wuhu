@@ -14,6 +14,12 @@ func whenCancelled(_ then: @Sendable () async -> Void) async {
 
 // The loop worker with main bound in process, as the kernel wires it.
 func firingWorker(_ owner: Hub) async -> SessionExecution {
+  await firingWorkers(owner).worker
+}
+
+// The worker and the registry in front of it: a firing that reaches main's
+// API as an observer goes through the registry, which mints its token.
+func firingWorkers(_ owner: Hub) async -> (worker: SessionExecution, registry: WorkerRegistry) {
   let tokens = ExecTokens(spaceURL: "http://main")
   let connection = MainConnection()
   let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { tools in
@@ -24,8 +30,8 @@ func firingWorker(_ owner: Hub) async -> SessionExecution {
       budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
     )
   }
-  let workers = WorkerRegistry(tokens: tokens)
+  let workers = WorkerRegistry(tokens: tokens, machines: nil)
   workers.announce(workers.mint().id, endpoint: worker)
   SessionRuntime.bindMain(owner: owner, workers: workers, tokens: tokens, connection: connection)
-  return worker
+  return (worker, workers)
 }

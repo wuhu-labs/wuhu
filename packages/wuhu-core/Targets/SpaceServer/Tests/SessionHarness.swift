@@ -114,7 +114,7 @@ struct SessionHarness {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: cacheUsage),
     )
     let connection = MainConnection()
-    let workers = WorkerRegistry(tokens: tokens)
+    let workers = WorkerRegistry(tokens: tokens, machines: hub)
     let credential = workers.mint()
     let main: any Main = MainClient(connection: connection, credential: { credential.token })
     let worker = await SessionExecution(main: main, connection: connection, credential: { tokens.sessionToken($0) }, access: access) { _ in config }

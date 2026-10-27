@@ -31,6 +31,9 @@ extension SessionStore {
     )
   }
 
+  /// An `observer` records its firing on the session and is admitted under
+  /// its hourly cap in the write that creates it; a replayed receipt is not
+  /// admitted again.
   @discardableResult
   public func createSession(
     group: GroupID,
@@ -45,6 +48,7 @@ extension SessionStore {
     cloneOwed: Bool = false,
     modelRoute: SessionModelRoute? = nil,
     request: (id: RequestID, requester: Caller, brief: String, terms: RequestTerms)? = nil,
+    observer: Observer? = nil,
   ) async throws -> SessionID {
     @Dependency(\.uuid) var uuid
     let title = try Self.usableTitle(title)
@@ -55,15 +59,16 @@ extension SessionStore {
     let storedExecutor = try Sessions.concreteExecutor(executor, route: modelRoute)
     let head = snapshot.map { GenerationHead(id: uuid(), timestamp: nowDate, summary: "", snapshot: $0, runningWork: []) }
     let minted = Allocations.mintSecretCandidate(rng)
-    return try await writer.write { db in
+    let made = try await writer.write { db -> Result<SessionID, ObserverRefusal> in
       if let receipt,
          let recorded = try Sessions.receipt(receipt.holder.receiptHolder, toolCallID: receipt.callID.rawValue, in: db)
       {
         guard case let .createSession(result) = recorded else {
           throw ForeignReceipt(toolCallID: receipt.callID)
         }
-        return result.sessionID
+        return .success(result.sessionID)
       }
+      if let observer, let refusal = try Self.admit(observer, now: nowDate, in: db) { return .failure(refusal) }
       if let parent {
         let parentRecord = try Sessions.record(parent.rawValue, in: db)
         guard parentRecord.lifecycle == .live, !self.archiveReservations.contains(parent) else {
@@ -80,13 +85,13 @@ extension SessionStore {
         sql: """
         INSERT INTO sessions (
           id, allocation, kind, parent, title, tags, created_by, executor, executor_config,
-          created_at, last_activity_at, hold, work, lifecycle, run_state, grp
+          created_at, last_activity_at, hold, work, lifecycle, run_state, grp, firing
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'normal', 'no_work', 'live', 'no_run', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'normal', 'no_work', 'live', 'no_run', ?, ?)
         """,
         arguments: [
           name, allocation, kind.rawValue, parent?.rawValue, title, tagsJSON, createdBy,
-          storedExecutor.kind, storedExecutor.configJSON, now, now, group.rawValue,
+          storedExecutor.kind, storedExecutor.configJSON, now, now, group.rawValue, observer?.firing,
         ],
       )
       try Sessions.writeModelRoute(name, route: modelRoute, in: db)
@@ -122,8 +127,9 @@ extension SessionStore {
           in: db,
         )
       }
-      return id
+      return .success(id)
     }
+    return try made.get()
   }
 
   public func enqueue(_ id: SessionID, input: QueueInput) async throws -> Int {
@@ -323,6 +329,9 @@ extension SessionStore {
           db, sql: "SELECT EXISTS (SELECT 1 FROM personas WHERE name = ? AND account_id = ?)",
           arguments: [record.createdBy, account.rawValue],
         ) == true || admin
+      case let .observer(observer):
+        label = observer.member
+        allowed = record.createdBy == observer.member || admin
       case .anonymous:
         label = "anonymous"
         allowed = true
@@ -431,9 +440,9 @@ extension SessionStore {
     let deadline = nowDate.addingTimeInterval(grace.timeInterval)
     try await writer.write { db in
       _ = try Sessions.record(key, in: db)
-      try SubscriptionRow.update {
+      try SubscriptionRow.of(.session(id)).update {
         $0.payload = #sql("json_remove(\($0.payload), '$.handlerAttemptID')", as: String.self)
-      }.where { $0.sessionID.eq(key) }.execute(db)
+      }.execute(db)
       try db.execute(
         sql: """
         UPDATE sessions SET lifecycle = 'archived', grace_expires_at = ?, last_activity_at = ?,

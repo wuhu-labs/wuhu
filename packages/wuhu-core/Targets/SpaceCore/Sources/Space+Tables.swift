@@ -24,13 +24,13 @@ extension Space {
     return rev
   }
 
-  public func alterTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID, ifMatch: VersionToken? = nil, allowDropColumns: Bool = true) async throws -> Rev {
+  public func alterTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, ifMatch: VersionToken? = nil, allowDropColumns: Bool = true) async throws -> Rev {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let broadcast = broadcast
     let rev = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       let old = try Tables.currentHeader(path, group: group, in: db)
       try LiveFS.checkIfMatch(ifMatch, head: Substrate.head(path, group: group, in: db), path: path)
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
       if !allowDropColumns, !Set(old.columns.map(\.name)).isSubset(of: Set(header.columns.map(\.name))) {
         throw SpaceError.invalidTableHeader("omitting a column requires allowDropColumns: true")
       }

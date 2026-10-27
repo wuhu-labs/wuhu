@@ -66,7 +66,7 @@ struct ExecRelayState: Codable, Equatable, Sendable {
     return next
   }
 
-  private enum CodingKeys: String, CodingKey { case session, person, anonymous, stopAt, cut }
+  private enum CodingKeys: String, CodingKey { case session, person, observer, anonymous, stopAt, cut }
 
   init(from decoder: any Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -74,6 +74,8 @@ struct ExecRelayState: Codable, Equatable, Sendable {
       holder = .session(SessionID(rawValue: session))
     } else if let account = try c.decodeIfPresent(String.self, forKey: .person) {
       holder = .person(AccountID(rawValue: account))
+    } else if let member = try c.decodeIfPresent(String.self, forKey: .observer) {
+      holder = .observer(member)
     } else if try c.decodeIfPresent(Bool.self, forKey: .anonymous) == true {
       holder = .anonymous
     } else {
@@ -88,6 +90,7 @@ struct ExecRelayState: Codable, Equatable, Sendable {
     switch holder {
     case let .session(id): try c.encode(id.rawValue, forKey: .session)
     case let .person(account): try c.encode(account.rawValue, forKey: .person)
+    case let .observer(member): try c.encode(member, forKey: .observer)
     case .anonymous: try c.encode(true, forKey: .anonymous)
     }
     try c.encodeIfPresent(stopAt, forKey: .stopAt)
@@ -122,7 +125,7 @@ extension MachineV2Service {
   /// The actor an exec's endpoint belongs to: the session that minted it, else whoever sent its start, else whoever is attached. One
   /// actor at a time, so no other actor can type into or read the exec; the owner may always reconnect.
   private func holder(_ record: ExecRecord) -> ExecLeg? {
-    if let caller = record.caller { return .session(SessionID(rawValue: caller)) }
+    if let caller = record.caller { return record.session.map(ExecLeg.session) ?? .observer(caller) }
     guard let entry = execEndpoints[record.id.rawValue] else { return nil }
     return entry.starter.sender ?? entry.callers.values.first
   }
@@ -660,10 +663,11 @@ extension Space {
   }
 }
 
-/// Who is on an exec's caller socket: a session, a person (any persona of one account), or the --dev seat.
+/// Who is on an exec's caller socket: a session, a person (any persona of one account), an observer (by its member), or the --dev seat.
 public enum ExecLeg: Hashable, Sendable {
   case session(SessionID)
   case person(AccountID)
+  case observer(String)
   case anonymous
 
   public init(_ actor: SpaceCore.Actor) {
@@ -671,6 +675,7 @@ public enum ExecLeg: Hashable, Sendable {
     case let .session(id): self = .session(id)
     case let .person(_, account): self = .person(account)
     case .anonymous: self = .anonymous
+    case let .observer(observer): self = .observer(observer.member)
     }
   }
 

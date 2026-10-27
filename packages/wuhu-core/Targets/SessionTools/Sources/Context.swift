@@ -57,20 +57,20 @@ extension ToolExecutor {
   }
 
   /// The machines the session may use, as main lists them.
-  func machines(as session: SessionID) async throws -> [MachineStatus] {
-    try await client(session).api(.get, "/v1/machine")
+  func machines(as actor: ScriptActor) async throws -> [MachineStatus] {
+    try await client(actor).api(.get, "/v1/machine")
   }
 
   /// The usable machine `reference` names: its id, or the name a human gave the box.
-  func machine(_ reference: String, as session: SessionID) async throws -> MachineStatus? {
-    do { return try await client(session).api(.get, "/v1/machine/" + pathSegment(reference) + "/status") }
+  func machine(_ reference: String, as actor: ScriptActor) async throws -> MachineStatus? {
+    do { return try await client(actor).api(.get, "/v1/machine/" + pathSegment(reference) + "/status") }
     catch let error as SpaceClient.ToolFailure where error.error.code == .notFound { return nil }
   }
 
   // A machines:// host is the id or the name a human gave the box.
   func machineID(_ host: String, as session: SessionID) async -> MachineID? {
     if MachineID.isValid(host) { return MachineID(rawValue: host) }
-    return try? await machine(host, as: session)?.id
+    return try? await machine(host, as: .session(session))?.id
   }
 
   func deliverContext(_ session: SessionID, touching address: Address?, state: ToolExecutionState) async -> ScopeContext? {

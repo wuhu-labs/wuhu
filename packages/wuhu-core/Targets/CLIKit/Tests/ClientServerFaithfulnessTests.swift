@@ -46,6 +46,19 @@ struct ClientServerFaithfulnessTests {
     #expect(await harness.stdout.text.contains(groups))
   }
 
+  @Test func systemFilesAreDiscoverableThroughTheCLI() async throws {
+    let listing = try ServerHarness()
+    #expect(await listing.run(["ls", "wuhu://system/"]) == 0)
+    #expect(await listing.stdout.text.contains("skills"))
+    let finding = try ServerHarness()
+    #expect(await finding.run(["find", "**/SKILL.md", "wuhu://system/"]) == 0)
+    #expect(await finding.stdout.text.contains("wuhu://system/skills/space-scripts/SKILL.md"))
+    let searching = try ServerHarness()
+    #expect(await searching.run(["grep", "createTable", "wuhu://system/"]) == 0)
+    #expect(await searching.stdout.text.contains("wuhu://system/skills/space-scripts/SKILL.md:"))
+    #expect(await searching.stderr.text.isEmpty)
+  }
+
   @Test func everyVerbRunsAgainstRealSpaceServer() async throws {
     let harness = try ServerHarness()
 

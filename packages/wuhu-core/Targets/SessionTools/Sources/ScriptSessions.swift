@@ -17,6 +17,7 @@ import JSONValue
 import OrderedCollections
 import QuickJSKit
 import SessionDomain
+import struct SpaceClient.SpaceClient
 import SpaceCore
 import SpaceTools
 
@@ -26,11 +27,11 @@ import SpaceTools
 // group. Every call is checked when it runs, against the script's session as
 // it stands then.
 struct ScriptSessions {
-  let session: SessionID
+  let actor: ScriptActor
   let tools: ToolExecutor
 
   func install(in engine: JSEngine) throws {
-    engine.define("__wuhu_session_create", promising: { [session, tools] arguments in
+    engine.define("__wuhu_session_create", promising: { [actor, tools] arguments in
       try await scripted {
         guard case let .object(options)? = arguments.first else {
           throw ToolProblem("createSession wants an options object: { title, kind, topLevel, ... }")
@@ -47,7 +48,7 @@ struct ScriptSessions {
         }
         let reply: ToolResultPayload
         do {
-          reply = try await tools.createSession(session, callID, createArguments(.object(options)))
+          reply = try await tools.createSession(actor, callID, createArguments(.object(options)))
         } catch let problem as ToolProblem {
           throw ToolProblem(scriptNamed(problem.message), code: problem.code)
         } catch let incomplete as IncompleteCreate {
@@ -66,19 +67,19 @@ struct ScriptSessions {
         return .object(made)
       }
     })
-    engine.define("__wuhu_session_send", promising: { [session, tools] arguments in
+    engine.define("__wuhu_session_send", promising: { [actor, tools] arguments in
       try await scripted {
         guard case let .object(options)? = arguments.first else { throw ToolProblem("sendMessage wants an options object") }
         let allowed: Set<String> = ["message", "conversation", "session", "reply_target", "attachments"]
         guard Set(options.keys).isSubset(of: allowed) else { throw ToolProblem("sendMessage: unsupported options") }
         let input = try JSONDecoder().decode(SendMessageArguments.self, from: Data(JSONValue.object(options).jsonString().utf8))
         @Dependency(\.uuid) var uuid
-        let reply = try await tools.sendMessage(session, "script:\(uuid().uuidString.lowercased())", input)
+        let reply = try await tools.sendMessage(actor, "script:\(uuid().uuidString.lowercased())", input)
         guard case let .sendMessage(sent) = reply else { preconditionFailure("send_message returned \(reply)") }
         return .object(["messageId": .string(sent.messageID.rawValue), "conversationId": .string(sent.conversationID.rawValue)])
       }
     })
-    engine.define("__wuhu_session_request", promising: { [session, tools] arguments in
+    engine.define("__wuhu_session_request", promising: { [actor, tools] arguments in
       try await scripted {
         guard case let .string(task)? = arguments[safe: 0], case let .string(message)? = arguments[safe: 1] else {
           throw ToolProblem("request(id, message, { deadlineSeconds, stallSeconds, kind, key, schema, fields }) wants a session id and a message")
@@ -92,7 +93,7 @@ struct ScriptSessions {
         }
         @Dependency(\.uuid) var uuid
         let result = try await tools.request(
-          session,
+          actor,
           "script:\(uuid().uuidString.lowercased())",
           RequestArguments(
             task: task, message: message, deadlineSeconds: seconds(arguments[safe: 2]), stallSeconds: seconds(arguments[safe: 3]),
@@ -110,8 +111,9 @@ struct ScriptSessions {
         return .object(answer)
       }
     })
-    engine.define("__wuhu_session_tags", promising: { [session, tools] arguments in
+    engine.define("__wuhu_session_tags", promising: { [actor, tools] arguments in
       try await scripted {
+        let session = try ownSession(actor)
         guard case let .string(target)? = arguments[safe: 0], case let .array(values)? = arguments[safe: 1] else {
           throw ToolProblem("setTags(id, tags) wants a session id and an array of strings")
         }
@@ -125,8 +127,9 @@ struct ScriptSessions {
         return .null
       }
     })
-    engine.define("__wuhu_session_control", promising: { [session, tools] arguments in
+    engine.define("__wuhu_session_control", promising: { [actor, tools] arguments in
       try await scripted {
+        let session = try ownSession(actor)
         guard case let .string(verb)? = arguments[safe: 0], ["archive", "unarchive", "interrupt", "resume"].contains(verb),
               case let .string(target)? = arguments[safe: 1]
         else {
@@ -144,8 +147,9 @@ struct ScriptSessions {
         return .null
       }
     })
-    engine.define("__wuhu_session_cancel", promising: { [session, tools] arguments in
+    engine.define("__wuhu_session_cancel", promising: { [actor, tools] arguments in
       try await scripted {
+        let session = try ownSession(actor)
         guard case let .string(id)? = arguments.first else { throw ToolProblem("cancel(id) wants an id", code: "invalidArgument") }
         switch try await tools.cancel(session, id: id) {
         case let .failure(failure):
@@ -155,8 +159,38 @@ struct ScriptSessions {
         }
       }
     })
+    engine.define("__wuhu_session_observer", promising: { [actor, tools] arguments in
+      try await scripted {
+        let session = try ownSession(actor)
+        guard case let .string(verb)? = arguments[safe: 0], case let .string(group)? = arguments[safe: 1], !group.isEmpty else {
+          throw ToolProblem("\(verbName(arguments[safe: 0])) wants a group id or alias", code: "invalidArgument")
+        }
+        let path = "/v1/group/\(pathSegment(group))/observers"
+        do {
+          switch (verb, arguments[safe: 2]) {
+          case let ("createObserver", options?):
+            return try await tools.client(session).api(.post, path, body: options)
+          case let ("cancelObserver", .string(name)?):
+            return try await tools.client(session).api(.delete, "\(path)/\(pathSegment(name))")
+          case ("observers", _):
+            let listed: JSONValue = try await tools.client(session).api(.get, path)
+            guard case let .object(fields) = listed, let observers = fields["observers"] else { throw ToolProblem("observers: the server answered \(listed.jsonString())") }
+            return observers
+          default:
+            throw ToolProblem("\(verb) wants \(verb == "cancelObserver" ? "an observer name" : "an options object")", code: "invalidArgument")
+          }
+        } catch let failure as SpaceClient.ToolFailure {
+          throw ToolProblem(failure.error.message, code: failure.error.code.rawValue)
+        }
+      }
+    })
     try engine.defineModule("wuhu:session", source: sessionModule)
   }
+}
+
+private func ownSession(_ actor: ScriptActor) throws -> SessionID {
+  guard let session = actor.session else { throw ToolProblem("an observer has createSession, sendMessage and request; the other verbs act on a session's own tree", code: "invalidArgument") }
+  return session
 }
 
 private func verbName(_ value: JSONValue?) -> String {
@@ -217,6 +251,7 @@ const send = __wuhu_session_send
 const retag = __wuhu_session_tags
 const act = __wuhu_session_control
 const stop = __wuhu_session_cancel
+const observer = __wuhu_session_observer
 
 export async function toolRoster() {
   const reply = await discover("toolRoster")
@@ -278,6 +313,21 @@ export async function interrupt(id) {
 
 export async function resume(id) {
   await act("resume", String(id))
+}
+
+export async function createObserver(group, options) {
+  if (options === null || typeof options !== "object") {
+    throw new TypeError("createObserver(group, { name, handler, observe: { sql, throttleSeconds } | timer: { inSeconds | cron }, sessionsPerHour })")
+  }
+  return answered(await observer("createObserver", String(group), options))
+}
+
+export async function cancelObserver(group, name) {
+  return answered(await observer("cancelObserver", String(group), String(name)))
+}
+
+export async function observers(group) {
+  return answered(await observer("observers", String(group)))
 }
 
 export async function cancel(id) {

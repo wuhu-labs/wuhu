@@ -1,5 +1,6 @@
 import func MainHub.resolveScriptModule
 import struct MainHub.ScriptError
+import struct MainHub.ScriptHandlerInvocation
 import struct MainHub.ScriptHandlerResult
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -90,7 +91,7 @@ extension Scripts {
   public func runHandler(
     id: UUID = UUID(),
     path: String,
-    session: SessionID,
+    actor: ScriptActor,
     rows: Rows? = nil,
     fireTime: Date? = nil,
     stateJSON: String? = nil,
@@ -99,10 +100,10 @@ extension Scripts {
     let context = try ScriptHandlerContext(rows: rows, fireTime: fireTime, stateJSON: stateJSON)
     let module = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
     let quoted = JSONValue.string(module).jsonString()
-    let client = try await tools.client(session)
+    let client = try await tools.client(actor)
     let execution = ScriptExecution(
-      id: "handler-" + id.uuidString.lowercased(),
-      session: session,
+      id: ScriptHandlerInvocation.scriptID(id),
+      actor: actor,
       source: "import handler from \(quoted); await __handler_invoke(handler); delete globalThis.__handler_invoke;",
       lifetime: .seconds(60),
       client: client,

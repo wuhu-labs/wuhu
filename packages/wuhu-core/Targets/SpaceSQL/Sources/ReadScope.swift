@@ -44,9 +44,9 @@ public struct ViewCatalog: Sendable {
 
   static let inducedTables: Set<String> = [
     "docs", "links", "doc_custom_attrs", "sessions", "session_model_routes", "session_model_route_history", "inferences", "conversations", "conversation_members",
-    "messages", "notifications", "watermarks", "devices", "device_commands", "machine_v2_trace", "requests",
+    "messages", "notifications", "watermarks", "devices", "device_commands", "machine_v2_trace", "requests", "subscription_firings",
   ]
-  static let groupedTables: Set<String> = ["docs", "links", "doc_custom_attrs", "sessions", "session_model_routes", "session_model_route_history", "inferences", "conversations", "notifications", "machine_v2_trace", "requests"]
+  static let groupedTables: Set<String> = ["docs", "links", "doc_custom_attrs", "sessions", "session_model_routes", "session_model_route_history", "inferences", "conversations", "notifications", "machine_v2_trace", "requests", "subscription_firings"]
   // SQLite reports a table-valued function as a read of a table by its name;
   // these two read nothing but their own arguments.
   static let tableFunctions: Set<String> = ["json_each", "json_tree"]
@@ -108,30 +108,33 @@ public struct ViewCatalog: Sendable {
         let path = String(table[table.index(after: colon)...])
         if group == acting { views.append(View(name: path, table: table)) }
         if readable.contains(group) { views.append(View(name: "wuhu://\(group).localspace\(path)", table: table)) }
-      } else if table == "session_subscriptions" {
-        func subscriptions(_ name: String, groupFilter: String, includeGroup: Bool = false) -> View {
+      } else if table == "subscription_slots" {
+        // A session's slot acts in its session's group, an observer in its own.
+        func subscriptions(_ name: String, groupFilter: String) -> View {
           View(
             name: name, table: table,
             select: """
-            SELECT \(includeGroup ? "se.grp AS grp," : "") su.subscription_id AS id, su.session_id AS session_id,
+            SELECT * FROM (SELECT CASE su.owner_kind WHEN 'group' THEN su.owner ELSE se.grp END AS grp,
+              su.subscription_id AS id, su.name AS name, CASE su.owner_kind WHEN 'session' THEN su.owner END AS session_id,
               CASE WHEN json_type(su.payload, '$.kind.observe') IS NOT NULL THEN 'observe' ELSE 'timer' END AS kind,
               json_extract(su.payload, '$.kind.observe.sql') AS sql,
               COALESCE(json_extract(su.payload, '$.kind.timer._0.cron._0'),
                 strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(su.payload, '$.kind.timer._0.oneShot._0') + 978307200, 'unixepoch')) AS schedule,
-              json_extract(su.payload, '$.handler') AS handler,
+              json_extract(su.payload, '$.handler') AS handler, su.status AS status, su.sessions_per_hour AS sessions_per_hour,
               su.armed_at AS armed_at, su.last_fired_at AS last_fired_at,
               json_extract(su.payload, '$.lastError') AS last_error
-            FROM \(s)."session_subscriptions" su JOIN \(s)."sessions" se ON se.id = su.session_id
-            WHERE \(groupFilter) AND (json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.timer') IS NOT NULL)
+            FROM \(s)."subscription_slots" su LEFT JOIN \(s)."sessions" se ON su.owner_kind = 'session' AND se.id = su.owner
+            WHERE json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.timer') IS NOT NULL)
+            WHERE \(groupFilter)
             """,
             joins: ["sessions"],
           )
         }
-        views.append(subscriptions("subscriptions", groupFilter: "se.grp = \(literal(acting))"))
+        views.append(subscriptions("subscriptions", groupFilter: "grp = \(literal(acting))"))
         for group in readable.sorted() {
-          views.append(subscriptions("wuhu://\(group).localspace/subscriptions", groupFilter: "se.grp = \(literal(group))"))
+          views.append(subscriptions("wuhu://\(group).localspace/subscriptions", groupFilter: "grp = \(literal(group))"))
         }
-        views.append(subscriptions("wuhu://*.localspace/subscriptions", groupFilter: "se.\(everyReadable)", includeGroup: true))
+        views.append(subscriptions("wuhu://*.localspace/subscriptions", groupFilter: everyReadable))
       } else if groupedTables.contains(table) {
         let own = columns.filter { $0 != "grp" }
         let unqualified = switch table {

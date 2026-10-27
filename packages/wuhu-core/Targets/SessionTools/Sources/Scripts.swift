@@ -49,7 +49,7 @@ public final class Scripts: Sendable {
     let client = try await tools.client(session)
     let execution = ScriptExecution(
       id: id,
-      session: session,
+      actor: .session(session),
       source: source,
       lifetime: lifetime,
       client: client,
@@ -61,7 +61,7 @@ public final class Scripts: Sendable {
     do {
       try scope.run("script \(id)") {
         await execution.run(owner: self.owner)
-        self.ended.withLock { $0.record(execution.id, session: execution.session) }
+        self.ended.withLock { $0.record(execution.id, session: session) }
         _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
       }
     } catch {
@@ -80,7 +80,7 @@ public final class Scripts: Sendable {
     let client = try await tools.client(script.session)
     let execution = ScriptExecution(
       id: newScriptID(),
-      session: script.session,
+      actor: .session(script.session),
       source: script.source,
       lifetime: .seconds(ToolLifetimes.scriptDefault),
       client: client,
@@ -102,26 +102,26 @@ public final class Scripts: Sendable {
   }
 
   func execution(_ id: String, of session: SessionID) -> ScriptExecution? {
-    running.withLock { $0[id] }.flatMap { $0.session == session ? $0 : nil }
+    running.withLock { $0[id] }.flatMap { $0.actor.session == session ? $0 : nil }
   }
 
   /// The cancel ids of `session`'s run_script executions running here.
   public func running(of session: SessionID) -> [String] {
-    running.withLock { $0.values.filter { $0.session == session }.map { scriptHandle($0.id) } }.sorted()
+    running.withLock { $0.values.filter { $0.actor.session == session }.map { scriptHandle($0.id) } }.sorted()
   }
 
   /// Asks every run_script execution of `session` to stop, as archive does
   /// without waiting: a script may be the one archiving its own
   /// session, and each ends within the stop grace regardless.
   public func stopScripts(of session: SessionID) {
-    for execution in running.withLock({ $0.values.filter { $0.session == session } }) {
+    for execution in running.withLock({ $0.values.filter { $0.actor.session == session } }) {
       execution.requestStop()
     }
   }
 
   public var activity: WorkerActivity {
     WorkerActivity(
-      scripts: running.withLock { Dictionary(uniqueKeysWithValues: $0.map { (ScriptRunID($0.key), $0.value.session) }) },
+      scripts: running.withLock { Dictionary(uniqueKeysWithValues: $0.map { (ScriptRunID($0.key), $0.value.actor.session!) }) },
     )
   }
 

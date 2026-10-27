@@ -354,7 +354,7 @@ import Testing
       let gone = try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone")
       #expect(gone.0 == .ok)
       let goneID = try #require(JSONValue.parse(gone.1)?.object?["id"]?.stringValue)
-      try await t.harness.store.cancelSubscription(t.parent, subscriptionID: SubscriptionID(goneID))
+      try await t.harness.store.cancelSubscription(.session(t.parent), subscriptionID: SubscriptionID(goneID))
       #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone") == gone)
       #expect(try await t.harness.store.armedSubscriptions(t.parent).allSatisfy { $0.slot.id.rawValue != goneID })
 
@@ -525,7 +525,7 @@ import Testing
       let machine = try #require(try await t.harness.space.machine(named: "box"))
       let own = try await t.harness.space.claimExec(machine: machine.id, caller: t.parent.rawValue, toolCallID: ToolCallID("own"))
       let foreign = try await t.harness.space.claimExec(machine: machine.id, caller: t.child.rawValue, toolCallID: ToolCallID("foreign"))
-      let script = try await t.harness.space.mintScriptExec(machine: machine.id, session: t.parent.rawValue, script: "script")
+      let script = try await t.harness.space.mintScriptExec(machine: machine.id, caller: t.parent.rawValue, script: "script")
       for action in ["detach", "delivered"] {
         for id in [foreign.record.id, script.id, t.exec] {
           #expect(try await t.harness.post("/v1/exec/\(id.rawValue)/\(action)", .null, bearer: t.token).status == .notFound)

@@ -3,8 +3,11 @@ import JSONValue
 import struct MainHub.CreateSessionArguments
 import class MainHub.Hub
 import struct MainHub.IncompleteSession
+import struct MainHub.RequestArguments
+import struct MainHub.RequestTermsArguments
 import struct MainHub.SendMessageArguments
 import Serve
+import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -79,3 +82,70 @@ func hubRefusal(_ payload: ToolResultPayload) -> Response {
 }
 
 private let forbiddingCodes: Set<String> = ["groupForbidden", "taskInput", "outsidePageGroup"]
+
+// The verbs a session and an observer share, as their gates serve them.
+
+func postSession(_ request: Request, as caller: Caller, callID: ToolCallID, owner: Hub) async throws -> Response {
+  let arguments: CreateSessionArguments
+  do {
+    arguments = try CreateSessionArguments(body: try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes))
+  } catch {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-create body: \(error)")
+  }
+  return try await createSessionResponse(owner, as: caller, callID, arguments) { created in
+    try await sessionCreateOutput(created, store: owner.space.sessions)
+  }
+}
+
+func postRequest(_ request: Request, _ parameters: RouteParameters, as caller: Caller, callID: ToolCallID, owner: Hub) async throws -> Response {
+  guard let id = sessionID(parameters) else { return unknownSession(parameters) }
+  let input: SessionRequestInput
+  do {
+    input = try await request.json(SessionRequestInput.self)
+  } catch {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-request body: \(error)")
+  }
+  let payload = try await owner.answering(as: caller) {
+    try await owner.request(caller, callID, RequestArguments(
+      task: id.rawValue, message: input.message, deadlineSeconds: input.deadlineSeconds, stallSeconds: input.stallSeconds,
+      terms: RequestTermsArguments(kind: input.kind, key: input.key, schema: input.schema, fields: input.fields),
+    ))
+  }
+  guard case let .request(opened) = payload else { return hubRefusal(payload) }
+  return try Response.json(SessionRequestOutput(
+    requestId: opened.requestID.rawValue,
+    task: opened.task.rawValue,
+    conversationId: opened.conversationID.rawValue,
+    deadline: opened.deadline?.timeIntervalSince1970,
+    existing: opened.existing,
+  ))
+}
+
+func postMessage(_ request: Request, as caller: Caller, callID: ToolCallID, owner: Hub) async throws -> Response {
+  let contentType = request.headers[.contentType] ?? request.body?.contentType ?? ""
+  guard MultipartReader.boundary(of: contentType) == nil else {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "a session's exec uploads no files; name space files in attachments instead")
+  }
+  let input: ConversationPostInput
+  let body: JSONValue
+  do {
+    body = try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes)
+    input = try JSONValueDecoder().decode(ConversationPostInput.self, from: body)
+  } catch {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "expected a conversation-post body: \(error)")
+  }
+  if case let .object(fields) = body, fields["viewing"] != nil {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "viewing is set only on a person's message, never by a session")
+  }
+  if case let .object(fields) = body, fields["user"] != nil {
+    return errorResponse(.unprocessableContent, code: "refused", message: SessionStoreError.humanAgentDirectMessageExplanation)
+  }
+  let arguments = SendMessageArguments(
+    message: input.message, conversation: input.conversation, session: input.session, replyTarget: input.replyTarget, attachments: input.attachments,
+  )
+  return try await sendMessageResponse(owner, as: caller, callID, arguments) { sent in
+    try Response.json(ConversationPostOutput(
+      messageId: sent.messageID.rawValue, conversationId: sent.conversationID.rawValue, n: Int(sent.n), delivered: [],
+    ))
+  }
+}

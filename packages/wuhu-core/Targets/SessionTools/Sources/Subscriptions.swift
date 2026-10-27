@@ -20,7 +20,8 @@ extension ToolExecutor {
     observe["throttleSeconds"] = arguments.throttleSeconds.map(JSONValue.number)
     var body: OrderedDictionary<String, JSONValue> = ["observe": .object(observe)]
     body["handler"] = arguments.handler.map(JSONValue.string)
-    let armed: SubscriptionOutput = try await verb(session, call, .post, "/v1/subscription", body: .object(body))
+    body["name"] = arguments.name.map(JSONValue.string)
+    let armed: SubscriptionOutput = try await verb(.session(session), call, .post, "/v1/subscription", body: .object(body))
     return .observe(.init(subscriptionID: SubscriptionID(armed.id), sql: arguments.sql))
   }
 
@@ -30,7 +31,8 @@ extension ToolExecutor {
     timer["cron"] = arguments.cron.map(JSONValue.string)
     var body: OrderedDictionary<String, JSONValue> = ["timer": .object(timer)]
     body["handler"] = arguments.handler.map(JSONValue.string)
-    let armed: SubscriptionOutput = try await verb(session, call, .post, "/v1/subscription", body: .object(body))
+    body["name"] = arguments.name.map(JSONValue.string)
+    let armed: SubscriptionOutput = try await verb(.session(session), call, .post, "/v1/subscription", body: .object(body))
     let schedule: TimerSchedule = switch (armed.cron, armed.fireAt) {
     case let (cron?, _): .cron(cron)
     case let (nil, fireAt?): .oneShot(Date(timeIntervalSince1970: fireAt))
@@ -40,7 +42,7 @@ extension ToolExecutor {
   }
 
   func cancelSubscription(_ session: SessionID, _ call: String, _ id: String) async throws -> ToolResultPayload {
-    let ended: SubscriptionOutput = try await verb(session, call, .delete, "/v1/subscription/\(id)")
+    let ended: SubscriptionOutput = try await verb(.session(session), call, .delete, "/v1/subscription/\(id)")
     return switch ended.kind {
     case .observe: .cancelObservation(.init(subscriptionID: SubscriptionID(ended.id)))
     case .timer: .cancelTimer(.init(subscriptionID: SubscriptionID(ended.id)))

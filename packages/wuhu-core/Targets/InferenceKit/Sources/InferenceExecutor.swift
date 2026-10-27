@@ -197,7 +197,7 @@ public struct InferenceExecutor: Sendable {
     let derived = cancelled ? (outcome: InferenceMetric.Outcome.cancelled, kind: String?.none, status: Int?.none) : InferenceMetric.classify(error)
     return InferenceMetric(
       timestamp: timestamp,
-      session: session,
+      payer: .session(session),
       provider: model.specifier.provider,
       model: model.specifier.model,
       servedModel: servedModel,

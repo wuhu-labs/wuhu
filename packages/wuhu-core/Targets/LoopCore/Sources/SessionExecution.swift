@@ -93,8 +93,15 @@ public struct SessionExecution: Worker {
     case let .rows(value): rows = value; fireTime = nil
     case let .timer(value): rows = nil; fireTime = value
     }
+    let actor: ScriptActor
+    switch invocation.runner {
+    case let .session(session): actor = .session(session)
+    case let .observer(observer):
+      guard let token = invocation.token else { preconditionFailure("an observer's firing reached the worker without its token") }
+      actor = .observer(observer, token: token)
+    }
     return try await scripts.runHandler(
-      id: invocation.id, path: invocation.path, session: invocation.session,
+      id: invocation.id, path: invocation.path, actor: actor,
       rows: rows, fireTime: fireTime, stateJSON: invocation.stateJSON, tools: tools,
     )
   }
