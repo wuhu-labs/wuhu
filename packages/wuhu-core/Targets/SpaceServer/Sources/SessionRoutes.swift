@@ -371,16 +371,14 @@ func addSessionRoutes(
     guard let id = sessionID(parameters) else { return unknownSession(parameters) }
     if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
     do {
-      // What the session's prompt holds: the system files first, then the
-      // space's and its home's as of its prompt revision.
+      // What the session's prompt holds, in its order, as of its prompt revision.
       let home = try await space.sessionHome(id, at: try await store.promptRevision(id))
-      let system = SystemFiles.instructions
+      let layers = [SystemFiles.instructions, home.groupLayer, SystemFiles.session, home.home]
+      let listed = InstructionScope.listings(layers, for: PromptSession(try await store.record(id))).joined()
       return try Response.json(SessionHomeOutput(
         home: home.path,
-        chain: system.sections.map(\.path) + home.chain,
-        skills: (system.skills + home.skills).map {
-          SessionHomeSkill(name: $0.name, description: $0.description, path: $0.path)
-        },
+        chain: layers.flatMap { $0.sections.map(\.path) },
+        skills: listed.map { SessionHomeSkill(name: $0.name, description: $0.description, path: $0.path) },
       ))
     } catch {
       return sessionErrorResponse(error)
@@ -834,8 +832,6 @@ func sessionErrorResponse(_ error: any Error) -> Response {
         code: "taskInput",
         message: "session \(key) is a task and takes no messages from people",
       )
-    case let .noParent(key):
-      return errorResponse(.conflict, code: "conflict", message: "session \(key) has no parent")
     case let .notTheParent(key):
       return errorResponse(.forbidden, code: "forbidden", message: "only the parent of session \(key) may open a request on it")
     case let .tooDeep(parent):
@@ -860,6 +856,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
       return errorResponse(.conflict, code: "conflict", message: "request \(id) is still open")
     case let .unknownRequest(id):
       return errorResponse(.notFound, code: "notFound", message: "no open request \(id)")
+    case let .reportRefused(id, violations, left):
+      return errorResponse(.unprocessableContent, code: "invalidArgument", message: SessionStoreError.reportRefusal(id, violations: violations, left: left))
     case let .unusableTitle(title):
       return errorResponse(
         .unprocessableContent,

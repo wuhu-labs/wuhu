@@ -51,7 +51,7 @@ externalPackages:
     products: [ControlledTime, WuhuRecordReplay, FetchExchangeRecording, DeterministicDependencies]
   wuhu-json:
     path: ../wuhu-json
-    products: [JSONValue]
+    products: [JSONValue, JSONSchema]
   quickjs-kit:
     path: ../quickjs-kit
     products: [QuickJSKit]

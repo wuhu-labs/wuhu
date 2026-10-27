@@ -12,6 +12,7 @@ public enum SpanAttribute: String, Codable, Sendable {
   case tool = "tool.name", errorCode = "error.code", bytesIn = "bytes.in", bytesOut = "bytes.out"
   case count
   case machineReference = "machine.reference", machine = "machine.id", version = "machine.version", kind, exitCode = "exit.code", verdict
+  case sourceSHA256 = "script.source.sha256"
 }
 
 public struct TraceContext: Codable, Equatable, Sendable {

@@ -125,6 +125,11 @@ public struct SessionHydration: Hashable, Sendable, Codable {
 public enum SessionStoreError: Error, Equatable, Sendable {
   public static let humanAgentDirectMessageExplanation = "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID."
 
+  public static func reportRefusal(_ id: String, violations: [String], left: Int) -> String {
+    "final report refused: request \(id) wants JSON matching its schema; " + violations.joined(separator: "; ")
+      + (left > 0 ? ". Fix it and report again; \(left) more refusal\(left == 1 ? "" : "s") fail the request." : ". The request has failed.")
+  }
+
   case modelRouteInvalid(group: String, member: String)
   case unknownSession(String)
   case archiveGraceExpired(String)
@@ -139,10 +144,12 @@ public enum SessionStoreError: Error, Equatable, Sendable {
   case humanAgentDirectMessage
   case taskHasNoBox(String)
   case taskTakesNoHumanInput(String)
-  case noParent(String)
   case notTheParent(String)
   case requestAlreadyOpen(String)
   case unknownRequest(String)
+  // A final that broke the request's schema; `left` refusals remain, and at
+  // zero the request has failed.
+  case reportRefused(String, violations: [String], left: Int)
   case unusableTitle(String)
   // The would-be parent, already at the depth limit.
   case tooDeep(String)
@@ -207,32 +214,19 @@ extension SessionStore {
     }
   }
 
-  /// Failure handling runs in the read snapshot: collect errors here and handle them after the scan, without reentering the store. Returning skips the failed session; throwing aborts the scan.
-  public func bootSessions(
-    onFailure: @escaping @Sendable (SessionID, any Error) throws -> Void = { _, error in throw error },
-  ) async throws -> [SessionID] {
+  public func bootSessions() async throws -> [SessionID] {
     try await writer.read { db in
-      try Row.fetchAll(
+      try String.fetchAll(
         db,
         sql: """
-        SELECT id, NOT (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)
-          OR id IN (SELECT caller FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1)) AS parked
-        FROM sessions
+        SELECT id FROM sessions
         WHERE lifecycle = 'live' AND executor = 'kernel'
-          AND (work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR work = 'no_work')
+          AND (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)
+            OR (work = 'no_work' AND (id IN (SELECT caller FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1)
+              OR id IN (SELECT task FROM requests WHERE status NOT IN ('done', 'failed')))))
         ORDER BY allocation
         """,
-      ).compactMap { row -> SessionID? in
-        let key: String = row["id"]
-        let id = SessionID(key)
-        do {
-          guard row["parked"] as Bool else { return id }
-          return try Sessions.settleState(key, in: db).openRequests.isEmpty ? nil : id
-        } catch {
-          try onFailure(id, error)
-          return nil
-        }
-      }
+      ).map { SessionID($0) }
     }
   }
 
@@ -296,8 +290,8 @@ extension SessionStore {
     }
   }
 
-  public func receipt(_ id: SessionID, toolCallID: ToolCallID) async throws -> ToolResultPayload? {
-    let key = id.rawValue
+  public func receipt(_ holder: Caller, toolCallID: ToolCallID) async throws -> ToolResultPayload? {
+    let key = holder.receiptHolder
     return try await writer.read { db in
       try Sessions.receipt(key, toolCallID: toolCallID.rawValue, in: db)
     }

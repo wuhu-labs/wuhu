@@ -80,7 +80,7 @@ import Testing
       let store = try makeSpace().sessions
       let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let task = try await store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      _ = try await store.openRequest(on: task, from: parent, messageID: .init("r1"), text: "existing duty", deadline: nil)
+      _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("r1"), text: "existing duty", deadline: nil)
       _ = try await store.drainQueue(task)
       _ = try await store.enqueue(task, input: SessionFix.message("queued", message: "queued", owesReply: true))
       try await store.markInterrupted(task)
@@ -99,7 +99,7 @@ import Testing
       #expect(try await store.transcript(task).environment.settle.owedConversations.contains(.init("ch1")))
       _ = try await store.report(task, request: .init("r1"), kind: .final, messageID: .init("f1"), text: "done")
       #expect(try await store.settleState(task).openRequests.isEmpty)
-      _ = try await store.openRequest(on: task, from: parent, messageID: .init("r2"), text: "new duty", deadline: nil)
+      _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("r2"), text: "new duty", deadline: nil)
       _ = try await store.drainQueue(task)
       #expect(try await store.settleState(task).openRequests[.init("r2")] != nil)
       _ = try await store.report(task, request: .init("r2"), kind: .final, messageID: .init("f2"), text: "done again")
@@ -210,7 +210,7 @@ import Testing
       let store = try makeSpace().sessions
       let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let task = try await store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      _ = try await store.openRequest(on: task, from: parent, messageID: .init("parked"), text: "still owed", deadline: fixedDate.addingTimeInterval(3600))
+      _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("parked"), text: "still owed", deadline: fixedDate.addingTimeInterval(3600))
       _ = try await store.drainQueue(task)
       for _ in 0 ..< 3 {
         _ = try await store.enqueue(task, input: .notification(.init(id: UUID(), timestamp: fixedDate, kind: .parkReminder, subscriptionID: .park(.init("parked")), requestID: .init("parked"), content: .init(text: "park reminder"))))

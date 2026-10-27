@@ -15,6 +15,10 @@ Unknown server error codes remain transport failures rather than decoding as a k
 
 `input` is `.closed` (half-closed at once), `.stream(AsyncStream)` (half-closed on EOF) or `.caller`: the caller drives stdin with `sendStdin(_:)`, which waits for the machine's window, and `closeStdin()`. `acknowledge(through:)` and `kill()` forward to the caller leg; any of these made before `run` has dialed waits for it.
 
+## Scripts
+
+`runScript(_:)` posts a `ScriptRunInput` to `POST /v1/scripts` with a session credential and yields the run's `ScriptOutput`s as they arrive, closed by `end`. A sequence that finishes without `end` is a run that did not end (the server or the connection went away); dropping the sequence closes the connection, which cancels the run.
+
 ## Worker media
 
 `media(_:)` reads a transcript media URL through the worker-only `/v1/media` route. Both blob and space-file references use this route; exec credentials are refused. Ordinary `file(_:)` reads remain subject to the caller’s current file access.

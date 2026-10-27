@@ -42,7 +42,7 @@ extension SessionStore {
       if let transition { try Sessions.commitRouteTransition(key, transition: transition, in: db) }
       try Sessions.writeGeneration(key, generation: runtime.generation + 1, transcript: transcript, in: db)
       try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
-      try PromptRevisions.advance(key, in: db)
+      try SessionPrompts.advance(key, in: db)
       return transcript
     }
   }

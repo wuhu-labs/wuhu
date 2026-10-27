@@ -105,7 +105,7 @@ private func rendered(_ path: String) -> String {
       machineFS.put("/work/copy/README.md", "readme", mtime: 1)
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space))
       let first = try #require(try await readContext(&world, "/work/repo/pkg/main.swift"))
-      #expect(first.text.contains("<AGENTS.md from=\"\(rendered("/work/repo/pkg/AGENTS.md"))\">\n\(skillMarkdown)"))
+      #expect(first.text.contains("<AGENTS.md from=\"\(rendered("/work/repo/pkg/AGENTS.md"))\">\n# Lint\n"), "an AGENTS.md renders without its frontmatter")
       #expect(first.text.contains("Body that must never be inlined"))
       let second = try #require(try await readContext(&world, "/work/copy/README.md"))
       #expect(second.text.contains("identical to \(rendered("/work/repo/pkg/AGENTS.md"))"))

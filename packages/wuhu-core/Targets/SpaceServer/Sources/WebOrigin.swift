@@ -8,6 +8,7 @@ import Crypto
 import Fetch
 import HTTPTypes
 import JSONValue
+import class MainHub.Hub
 import Serve
 import struct SessionDomain.ConversationID
 import struct SpaceContract.GroupID
@@ -27,6 +28,7 @@ func webResponse(
   views: [String: Data],
   shell: [String: Data]?,
   pageFetch: PageFetchHandler? = nil,
+  hub: Hub? = nil,
   request: Request,
 ) async throws -> Response {
   let resolved = try await space.resolveGroup(group.rawValue)
@@ -61,6 +63,7 @@ func webResponse(
       views: views,
       shell: shell,
       pageFetch: pageFetch,
+      hub: hub,
       request: request,
     )
   } else {
@@ -202,10 +205,14 @@ private func routedWebResponse(
   views: [String: Data],
   shell: [String: Data]?,
   pageFetch: PageFetchHandler?,
+  hub: Hub?,
   request: Request,
 ) async throws -> Response {
   if request.url.path == "/_/space/fetch" {
     return await pageFetchResponse(space: space, caller: caller, proxy: pageFetch, request: request)
+  }
+  if request.url.path == "/_/space/session" || request.url.path == "/_/space/message" {
+    return try await pageSessionResponse(space: space, caller: caller, dev: dev, hub: hub, request: request)
   }
   if request.url.path == "/_/session" {
     switch request.method {

@@ -131,7 +131,7 @@ import Testing
         SessionHomeOutput.self,
         from: try #require(JSONValue.parse(try await harness.get("/v1/session/\(agent.id)/home").text())),
       )
-      #expect(frozen.chain == ["wuhu://system/AGENTS.md", "/AGENTS.md"], "the view shows the prompt's revision, not the latest")
+      #expect(frozen.chain == ["wuhu://system/AGENTS.md", "/AGENTS.md", "wuhu://system/SESSION.md"], "the view shows the prompt's revision, not the latest")
       try await harness.store.markInterrupted(SessionID(agent.id))
       try await harness.store.restart(SessionID(agent.id))
 
@@ -140,7 +140,7 @@ import Testing
       let home = try JSONValueDecoder().decode(SessionHomeOutput.self, from: try #require(JSONValue.parse(try await response.text())))
       #expect(home == SessionHomeOutput(
         home: "/_/sessions/\(agent.id)",
-        chain: ["wuhu://system/AGENTS.md", "/AGENTS.md", "/_/sessions/\(agent.id)/AGENTS.md"],
+        chain: ["wuhu://system/AGENTS.md", "/AGENTS.md", "wuhu://system/SESSION.md", "/_/sessions/\(agent.id)/AGENTS.md"],
         skills: SystemFiles.instructions.skills.map { .init(name: $0.name, description: $0.description, path: $0.path) }
           + [.init(name: "review", description: "Review things", path: "/.agents/skills/review/SKILL.md")],
       ))

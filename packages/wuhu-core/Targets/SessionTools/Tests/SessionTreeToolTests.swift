@@ -97,6 +97,50 @@ struct SessionTreeToolTests {
     }
   }
 
+  @Test func aKeyedRequestIsMadeOnceAndASchemaGuardsItsFinal() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let parent = try await makeSession(space, name: "parent")
+      var world = ToolWorld(executor: creating(space), session: parent)
+      let brief: ToolArguments = .object([
+        "title": "reviewer", "expects_reply": .bool(true), "message": "review #7",
+        "request": .object([
+          "kind": "review", "key": "pr-7", "fields": .object(["pr": .number(7)]),
+          "schema": .object(["type": "object", "required": .array(["verdict"])]),
+        ]),
+      ])
+      let first = try created(try await world.run("create_session", brief))
+      #expect(first.existing == nil)
+      let again = try created(try await world.run("create_session", brief))
+      #expect(again.existing == true)
+      #expect(again.sessionID == first.sessionID)
+      #expect(again.requestID == first.requestID)
+
+      let other = try created(try await world.run("create_session", .object(["title": "other"])))
+      let keyed = try await world.run("request", .object([
+        "task": .string(other.sessionID.rawValue), "message": "review #7 too", "kind": "review", "key": "pr-7",
+      ]))
+      guard case let .request(existing) = keyed else { throw Mismatch("expected a request, got \(keyed)") }
+      #expect(existing.existing == true)
+      #expect(existing.task == first.sessionID)
+      #expect(existing.requestID == first.requestID)
+      let bad = try await world.run("request", .object(["task": .string(other.sessionID.rawValue), "message": "m", "key": "k"]))
+      #expect(try failureMessage(bad).contains("a key needs a kind"))
+
+      let request = try #require(first.requestID)
+      _ = try await space.sessions.drainQueue(first.sessionID)
+      var child = ToolWorld(executor: creating(space), session: first.sessionID)
+      let refused = try await child.run("report", .object(["request_id": .string(request.rawValue), "kind": "final", "content": "lgtm"]))
+      #expect(try failureMessage(refused).contains("2 more refusals fail the request"))
+      let report = try await child.run("report", .object([
+        "request_id": .string(request.rawValue), "kind": "final", "content": #"{"verdict":"pass"}"#,
+      ]))
+      guard case .report = report else { throw Mismatch("expected a report, got \(report)") }
+      let rows = try await space.query("SELECT status, result, fields FROM requests", as: .shared(.anonymous)).rows
+      #expect(rows == [[.text("done"), .text(#"{"verdict":"pass"}"#), .text(#"{"pr":7}"#)]])
+    }
+  }
+
   @Test func anAgentTemplateMakesAnAgentAndAnExplicitKindWins() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
@@ -236,7 +280,7 @@ struct SessionTreeToolTests {
 
       await space.failTemplateClones("the disk is full")
       let failed = try failureMessage(try await world.run("create_session", arguments, id: "call-1"))
-      let half = try created(try #require(try await space.sessions.receipt(parent, toolCallID: ToolCallID("call-1"))))
+      let half = try created(try #require(try await space.sessions.receipt(.session(parent), toolCallID: ToolCallID("call-1"))))
       #expect(failed == "create_session: session \(half.sessionID.rawValue) was created, but internal: the disk is full")
       #expect(half.cloneOwed == true)
       #expect(try await directMessages(space, to: half.sessionID).isEmpty, "no brief before the home is ready")
@@ -250,8 +294,45 @@ struct SessionTreeToolTests {
       #expect(finished.requestID != nil)
       let home = SessionHome.path(of: half.sessionID) + "/AGENTS.md"
       #expect(try await space.fs(.shared).read(home).1 == Data("write code".utf8))
-      #expect(try created(try #require(try await space.sessions.receipt(parent, toolCallID: ToolCallID("call-1")))).cloneOwed == nil)
+      #expect(try created(try #require(try await space.sessions.receipt(.session(parent), toolCallID: ToolCallID("call-1")))).cloneOwed == nil)
       #expect(try await directMessages(space, to: half.sessionID).count == 1)
+    }
+  }
+
+  @Test func aKeyedCreateHalfMadeIsFinishedOnlyByItsOwnRetry() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      _ = try await space.fs(.shared).write("/templates/coder/template.json", Data(#"{"kind":"task"}"#.utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/templates/coder/AGENTS.md", Data("write code".utf8), ifMatch: nil)
+      let parent = try await makeSession(space, name: "parent")
+      var world = ToolWorld(executor: creating(space), session: parent)
+      let arguments: ToolArguments = .object([
+        "title": "coder", "template": "coder", "expects_reply": .bool(true), "message": "go",
+        "request": .object(["kind": "review", "key": "pr-7"]),
+      ])
+
+      await space.failTemplateClones("the disk is full")
+      let failed = try failureMessage(try await world.run("create_session", arguments, id: "call-1"))
+      let half = try created(try #require(try await space.sessions.receipt(.session(parent), toolCallID: ToolCallID("call-1"))))
+      #expect(failed == "create_session: session \(half.sessionID.rawValue) was created, but internal: the disk is full")
+
+      await space.failTemplateClones(nil)
+      let other = try failureMessage(try await world.run("create_session", arguments, id: "call-2"))
+      #expect(other.contains("session \(half.sessionID.rawValue) was created, but its request"))
+      #expect(other.contains("retry the call that created it"))
+      #expect(try await directMessages(space, to: half.sessionID).isEmpty)
+
+      let finished = try created(try await world.retry("create_session", arguments, id: "call-1"))
+      #expect(finished.sessionID == half.sessionID)
+      #expect(finished.existing == nil)
+      #expect(try await directMessages(space, to: half.sessionID).map(\.kind) == [.request])
+      let rows = try await space.query("SELECT task, status FROM requests", as: .shared(.anonymous)).rows
+      #expect(rows == [[.text(half.sessionID.rawValue), .text("open")]])
+
+      let later = try created(try await world.run("create_session", arguments, id: "call-3"))
+      #expect(later.existing == true)
+      #expect(later.sessionID == half.sessionID)
+      #expect(later.requestID == finished.requestID)
     }
   }
 }

@@ -10,6 +10,7 @@ import enum JSONValue.JSONValue
 import Logging
 import protocol MainHub.Main
 import func MainHub.runningJSON
+import struct MainHub.ScriptRun
 import struct MainHub.ScriptRunID
 import func MainHub.seconds
 import enum MainHub.ToolLifetimes
@@ -17,6 +18,7 @@ import struct MainHub.ToolProblem
 import enum MainHub.WaitCut
 import struct MainHub.WorkerActivity
 import SessionDomain
+import enum SpaceContract.ScriptOutput
 import SpaceCore
 import Synchronization
 import TaskLifetime
@@ -43,8 +45,7 @@ public final class Scripts: Sendable {
   }
 
   func start(_ source: String, session: SessionID, lifetime: Duration, tools: ToolExecutor) async throws -> ScriptExecution {
-    @Dependency(\.uuid) var uuid
-    let id = String(uuid().uuidString.lowercased().prefix(8))
+    let id = newScriptID()
     let client = try await tools.client(session)
     let execution = ScriptExecution(
       id: id,
@@ -68,6 +69,36 @@ public final class Scripts: Sendable {
       throw ToolProblem("this worker is stopping; run_script did not start")
     }
     return execution
+  }
+
+  /// Runs `script` for its caller alone: not in the session's running work,
+  /// and killed when the call is cancelled or the scope closes. The run, its
+  /// cleanup included, lives in the scope, so a cancelled caller still waits
+  /// for its machine processes to be killed and released; `end` follows its
+  /// span, as the caller's last word.
+  public func run(_ script: ScriptRun, tools: ToolExecutor, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
+    let client = try await tools.client(script.session)
+    let execution = ScriptExecution(
+      id: newScriptID(),
+      session: script.session,
+      source: script.source,
+      lifetime: .seconds(ToolLifetimes.scriptDefault),
+      client: client,
+      secrets: ScriptSecrets(client: client),
+      tools: tools,
+      kind: .command { output($0.output) },
+      arguments: script.arguments,
+    )
+    let run: Task<Void, Never>
+    do { run = try scope.run("script \(execution.id)") { await execution.run(owner: self.owner) } }
+    catch { throw ToolProblem("this worker is stopping; the script did not start") }
+    await withTaskCancellationHandler {
+      await run.value
+    } onCancel: {
+      execution.killForCancellation()
+    }
+    try Task.checkCancellation()
+    output(.end)
   }
 
   func execution(_ id: String, of session: SessionID) -> ScriptExecution? {
@@ -107,6 +138,11 @@ public final class Scripts: Sendable {
     }
     return .script(.init(output: output))
   }
+}
+
+private func newScriptID() -> String {
+  @Dependency(\.uuid) var uuid
+  return String(uuid().uuidString.lowercased().prefix(8))
 }
 
 struct RunScriptArguments: Decodable {

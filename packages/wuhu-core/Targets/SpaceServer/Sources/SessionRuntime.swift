@@ -8,11 +8,13 @@ import protocol MainHub.Main
 import enum MainHub.RevocationPolicy
 import struct MainHub.ScriptHandlerInvocation
 import struct MainHub.ScriptHandlerResult
+import struct MainHub.ScriptRun
 import class MainHub.SessionService
 import struct MainHub.SubscriptionFiring
 import protocol MainHub.Worker
 import struct MainHub.WorkerActivity
 import enum MainHub.WorkerInput
+import enum SpaceContract.ScriptOutput
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -260,6 +262,7 @@ struct ToolOnlyWorker: Worker {
   func deliver(_ session: SessionID, _ input: WorkerInput) async throws {}
   func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { true }
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { preconditionFailure("no loops run behind a tool-only worker") }
+  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws { preconditionFailure("no scripts run behind a tool-only worker") }
   func activity() async -> WorkerActivity { WorkerActivity(scripts: [:]) }
   func runningWork(_ session: SessionID) async throws -> [String] { [] }
   func shutdown() async {}
@@ -419,11 +422,6 @@ extension ToolResultPayload {
     case .failure: "failure"
     }
   }
-}
-
-// A kernel session's prompt, frozen at its prompt revision.
-func systemPrompt(space: Space, record: SessionRecord) async throws -> String {
-  kernelPrompt(for: record, home: try await space.sessionHome(record.id, at: try await space.sessions.activatePromptRevision(record.id)))
 }
 
 private func machineOperationFailure(_ error: OperationError) -> ToolRunError {

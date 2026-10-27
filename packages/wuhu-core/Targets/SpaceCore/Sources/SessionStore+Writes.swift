@@ -23,7 +23,7 @@ extension SessionStore {
     createdBy: String,
     model: ModelSpecifier,
     snapshot: StateSnapshot? = nil,
-    receipt: (session: SessionID, callID: ToolCallID)? = nil,
+    receipt: (holder: Caller, callID: ToolCallID)? = nil,
   ) async throws -> SessionID {
     try await createSession(
       group: group, title: title, kind: kind, tags: tags, createdBy: createdBy, executor: .kernel(model),
@@ -41,9 +41,10 @@ extension SessionStore {
     createdBy: String,
     executor: SessionExecutor,
     snapshot: StateSnapshot? = nil,
-    receipt: (session: SessionID, callID: ToolCallID)? = nil,
+    receipt: (holder: Caller, callID: ToolCallID)? = nil,
     cloneOwed: Bool = false,
     modelRoute: SessionModelRoute? = nil,
+    request: (id: RequestID, requester: Caller, brief: String, terms: RequestTerms)? = nil,
   ) async throws -> SessionID {
     @Dependency(\.uuid) var uuid
     let title = try Self.usableTitle(title)
@@ -56,7 +57,7 @@ extension SessionStore {
     let minted = Allocations.mintSecretCandidate(rng)
     return try await writer.write { db in
       if let receipt,
-         let recorded = try Sessions.receipt(receipt.session.rawValue, toolCallID: receipt.callID.rawValue, in: db)
+         let recorded = try Sessions.receipt(receipt.holder.receiptHolder, toolCallID: receipt.callID.rawValue, in: db)
       {
         guard case let .createSession(result) = recorded else {
           throw ForeignReceipt(toolCallID: receipt.callID)
@@ -99,7 +100,7 @@ extension SessionStore {
         sql: "INSERT INTO session_runtime (session_id, generation, queue_tail) VALUES (?, 0, 0)",
         arguments: [name],
       )
-      try PromptRevisions.advance(name, in: db)
+      try SessionPrompts.advance(name, in: db)
       // Mirrors writeCompaction's convention: a generation head counts as
       // carried, so kept_count covers it.
       try Sessions.openGeneration(name, generation: 0, keptCount: head == nil ? 0 : 1, in: db)
@@ -107,9 +108,12 @@ extension SessionStore {
         try Sessions.append(name, generation: 0, items: [TranscriptItem.generationHead(head)], in: db)
       }
       let id = SessionID(name)
+      if let request {
+        try Self.insertRequest(request.id, group: group, requester: request.requester, task: id, brief: request.brief, terms: request.terms, deadline: nil, now: now, in: db)
+      }
       if let receipt {
         try Sessions.recordReceipt(
-          receipt.session.rawValue,
+          receipt.holder.receiptHolder,
           toolCallID: receipt.callID.rawValue,
           payload: try Sessions.encode(ToolResultPayload.createSession(
             .init(sessionID: id, title: title, cloneOwed: cloneOwed ? true : nil, modelGroup: modelRoute?.group, member: modelRoute?.member, provider: modelRoute?.specifier.provider, model: modelRoute?.specifier.model),
@@ -223,7 +227,7 @@ extension SessionStore {
       let generation = runtime.generation + 1
       try Sessions.writeGeneration(key, generation: generation, transcript: compacted, in: db)
       try Sessions.refreshWork(key, transcript: compacted, now: now, in: db)
-      try PromptRevisions.advance(key, in: db)
+      try SessionPrompts.advance(key, in: db)
       return compacted
     }
   }
@@ -460,8 +464,8 @@ extension SessionStore {
 
   // The template's files reached the home: a replay of this creation no
   // longer clones them.
-  public func settleClone(_ id: SessionID, toolCallID: ToolCallID) async throws {
-    let key = id.rawValue
+  public func settleClone(_ holder: Caller, toolCallID: ToolCallID) async throws {
+    let key = holder.receiptHolder
     try await writer.write { db in
       guard case var .createSession(result)? = try Sessions.receipt(key, toolCallID: toolCallID.rawValue, in: db),
             result.cloneOwed == true

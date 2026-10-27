@@ -18,7 +18,7 @@ import Testing
       )
       let request = RequestID("r1")
       _ = try await space.sessions.openRequest(
-        on: task, from: parent, messageID: MessageID(request.rawValue), text: "watch CI", deadline: nil, stallSeconds: 600,
+        on: task, from: .session(parent), messageID: MessageID(request.rawValue), text: "watch CI", deadline: nil, stallSeconds: 600,
       )
       let owner = Hub(space: space)
       let worker = await firingWorker(owner)

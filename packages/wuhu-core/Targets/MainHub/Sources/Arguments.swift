@@ -1,4 +1,6 @@
 import enum JSONValue.JSONValue
+import class JSONValue.JSONValueDecoder
+import struct SpaceContract.SessionCreateInput
 
 public struct ExecArguments: Decodable, Sendable {
   public var machine: String
@@ -90,12 +92,15 @@ public struct CreateSessionArguments: Decodable, Sendable {
   public var expectsReply: Bool?
   public var message: String?
   public var stallSeconds: Double?
+  public var request: RequestTermsArguments?
 
   public init(
     title: String, kind: String? = nil, executor: String? = nil, topLevel: Bool? = nil, group: String? = nil,
     provider: String? = nil, model: String? = nil, modelGroup: String? = nil, effort: String? = nil,
     tags: [String]? = nil, template: String? = nil, expectsReply: Bool? = nil, message: String? = nil, stallSeconds: Double? = nil,
+    request: RequestTermsArguments? = nil,
   ) {
+    self.request = request
     self.title = title; self.kind = kind; self.executor = executor; self.topLevel = topLevel; self.group = group
     self.provider = provider; self.model = model; self.modelGroup = modelGroup; self.effort = effort
     self.tags = tags; self.template = template; self.expectsReply = expectsReply; self.message = message; self.stallSeconds = stallSeconds
@@ -116,6 +121,24 @@ public struct CreateSessionArguments: Decodable, Sendable {
     case expectsReply = "expects_reply"
     case message
     case stallSeconds = "stall_seconds"
+    case request
+  }
+}
+
+extension CreateSessionArguments {
+  /// A create as the HTTP API, `wuhu:session` and a page's `wuhu:space` send
+  /// it: SessionCreateInput's fields, with `kind` as written, so an odd one is
+  /// the hub's answer rather than a decoding failure.
+  public init(body: JSONValue) throws {
+    var fields = body.object ?? [:]
+    let kind = fields.removeValue(forKey: "kind")?.stringValue
+    let input = try JSONValueDecoder().decode(SessionCreateInput.self, from: .object(fields))
+    self.init(
+      title: input.title, kind: kind, executor: input.executor, topLevel: input.topLevel, group: input.group,
+      provider: input.provider, model: input.model, modelGroup: input.modelGroup, effort: input.effort,
+      tags: input.tags, template: input.template, expectsReply: input.expectsReply, message: input.message, stallSeconds: input.stallSeconds,
+      request: input.request.map { RequestTermsArguments(kind: $0.kind, key: $0.key, schema: $0.schema, fields: $0.fields) },
+    )
   }
 }
 

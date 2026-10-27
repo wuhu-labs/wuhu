@@ -30,7 +30,7 @@ import Testing
       }
       #expect(try await space.currentRevision() == 0)
       await #expect(throws: SpaceError.notFound("/failed.md")) { _ = try await space.readText("/failed.md") }
-      #expect(try await store.receipt(session, toolCallID: ToolCallID("failed")) == nil)
+      #expect(try await store.receipt(.session(session), toolCallID: ToolCallID("failed")) == nil)
       // This successful non-filesystem transaction must not fire an orphaned emission.
       try await space.writer.write { db in try db.execute(sql: "DROP TRIGGER fail_receipt") }
       await settle()

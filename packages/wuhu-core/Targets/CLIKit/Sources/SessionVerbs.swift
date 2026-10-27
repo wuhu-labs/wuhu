@@ -188,7 +188,7 @@ extension Executor {
     await self.runner.stdout(output.id + "\n")
   }
 
-  mutating func sessionRequest(id: String, message: String, deadline: Double?, stall: Double?) async throws {
+  mutating func sessionRequest(id: String, message: String, deadline: Double?, stall: Double?, terms: RequestTermsInput) async throws {
     let task = try sessionKey(id)
     guard self.session != nil else {
       throw UsageError(message: "session request: only a session opens requests, from its own exec (WUHU_EXEC=1)")
@@ -197,10 +197,15 @@ extension Executor {
     var body: JSONValue = .object(["message": .string(message)])
     body.set("deadlineSeconds", deadline.map(JSONValue.number))
     body.set("stallSeconds", stall.map(JSONValue.number))
+    body.set("kind", terms.kind.map(JSONValue.string))
+    body.set("key", terms.key.map(JSONValue.string))
+    body.set("schema", terms.schema)
+    body.set("fields", terms.fields)
     let output: SessionRequestOutput = try await self.authenticated(space).api(
       .post, "/v1/session/\(task)/request", body: body,
     )
-    await self.runner.stdout("requested \(output.requestId) in \(output.conversationId)\n")
+    let verb = output.existing == true ? "existing" : "requested"
+    await self.runner.stdout("\(verb) \(output.requestId) in \(output.conversationId)\n")
   }
 
   mutating func sessionAction(_ verb: SessionActionVerb, id: String, force: Bool) async throws {

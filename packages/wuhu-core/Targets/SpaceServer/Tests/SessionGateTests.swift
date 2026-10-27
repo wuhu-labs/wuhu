@@ -266,7 +266,7 @@ import Testing
       let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: .shared))
       let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
       let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
-      _ = try await t.harness.store.openRequest(on: t.child, from: t.parent, messageID: .init("ask-1"), text: "work", deadline: nil)
+      _ = try await t.harness.store.openRequest(on: t.child, from: .session(t.parent), messageID: .init("ask-1"), text: "work", deadline: nil)
       // The request is open on the child once it has taken the message.
       _ = try await t.harness.store.drainQueue(t.child)
       let reported = try await t.harness.call(

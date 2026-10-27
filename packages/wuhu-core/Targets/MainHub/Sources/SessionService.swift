@@ -60,19 +60,12 @@ public final class SessionService: Sendable {
       }
       let signals = sessions.workSignals()
       let boot: [SessionID]
-      let failures = Mutex<[(SessionID, any Error)]>([])
       do {
-        boot = try await sessions.bootSessions { id, error in
-          failures.withLock { $0.append((id, error)) }
-        }
+        boot = try await sessions.bootSessions()
       } catch {
         guard !Task.isCancelled else { return }
         log.error("boot session scan failed", metadata: ["error": "\(error)"])
         boot = []
-      }
-      for (id, error) in failures.withLock({ $0 }) {
-        guard !Task.isCancelled else { return }
-        await failSession(id, error: error, phase: "boot eligibility")
       }
       for id in boot {
         guard !Task.isCancelled else { return }
@@ -255,9 +248,7 @@ public final class SessionService: Sendable {
         if subtree.allSatisfy({ checked.contains($0.id) }) { break }
       }
       guard busy.isEmpty else { throw SubtreeArchiveBusy(sessions: busy) }
-      if force {
-        for record in subtree { try await sessions.closeRequestsForArchive(record.id) }
-      }
+      for record in subtree { try await sessions.closeRequestsForArchive(record.id) }
       for member in subtree {
         let record = try await sessions.record(member.id)
         if inactive.contains(record.id), !record.executor.isRetired { throw SessionError.archiveReservationLost }

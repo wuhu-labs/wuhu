@@ -4,6 +4,7 @@ swiftToolsVersion: "6.2"
 packageName: WuhuJSON
 products:
   - JSONValue
+  - JSONSchema
 # Floors match arcroom's (the lowest consumer); the sources are pure Swift.
 platforms:
   iOS: "18.4"

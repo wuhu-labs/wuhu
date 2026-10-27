@@ -200,13 +200,13 @@ private func status(of code: ErrorCode) -> Status {
 
 /// An admitted page write: who is viewing, the JSON body, and the context
 /// that acts as the page's group minus admin, attributed via the page.
-private struct PageWrite {
+struct PageWrite {
   let viewer: AccountID?
   let body: OrderedDictionary<String, JSONValue>
   let context: SpaceToolContext
 }
 
-private enum WriteAdmission {
+enum WriteAdmission {
   case admitted(PageWrite)
   case refused(Response)
 }
@@ -216,7 +216,7 @@ private let maximumPageWriteBytes = 4 << 20
 // A write is a JSON POST from the page's own origin, which a form or a
 // cross-site script cannot forge, with a live read session: --public-read
 // admits no visitor to write, and --dev admits its seat.
-private func writeAdmission(space: Space, caller: WebCaller, dev: Bool, request: Request) async throws -> WriteAdmission {
+func writeAdmission(space: Space, caller: WebCaller, dev: Bool, request: Request) async throws -> WriteAdmission {
   let mediaType = request.headers[.contentType]?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
   guard mediaType == "application/json" else {
     return .refused(errorResponse(.unsupportedMediaType, code: "invalidArgument", message: "page writes take an application/json body"))

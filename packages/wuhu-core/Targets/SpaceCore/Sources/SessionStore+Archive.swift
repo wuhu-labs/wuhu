@@ -63,25 +63,22 @@ extension SessionStore {
   }
 
   public func closeRequestsForArchive(_ id: SessionID) async throws {
-    let hydration = try await hydrate(id)
-    var state = try await settleState(id)
-    for queued in hydration.undrained {
-      if let event = queued.input.settleEvent { state.apply(event) }
+    let (record, open) = try await writer.read { db in
+      try (Sessions.record(id.rawValue, in: db), RequestRow.open(task: id.rawValue, in: db).map { ($0, try $0.replyTarget(in: db)) })
     }
-    for open in state.openRequests.values.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
+    for (row, target) in open {
       _ = try await post(
-        .conversation(open.conversation),
-        messageID: MessageID(UUID.deterministic("archived-before-reporting", id.rawValue, open.id.rawValue).uuidString.lowercased()),
+        target,
+        messageID: MessageID(UUID.deterministic("archived-before-reporting", id.rawValue, row.id).uuidString.lowercased()),
         sender: Sender(id: id.rawValue, timeZone: TimeZone(identifier: "UTC")!),
         senderSession: id,
         kind: .final,
-        requestID: open.id,
-        content: MessageContent(text: "session \(id.rawValue) (\(hydration.record.title)) was archived before reporting on request \(open.id.rawValue)"),
+        requestID: RequestID(row.id),
+        content: MessageContent(text: "session \(id.rawValue) (\(record.title)) was archived before reporting on request \(row.id)"),
+        alongside: { message, db in
+          try Self.close(row, as: .failed, result: nil, now: SQLiteDateFormat.string(from: message.createdAt), in: db)
+        },
       )
-      if let parent = hydration.record.parent {
-        try await cancelSubscription(parent, subscriptionID: .deadline(open.id))
-        try await cancelSubscription(parent, subscriptionID: .stall(open.id))
-      }
     }
   }
 }

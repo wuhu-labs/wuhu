@@ -1,0 +1,6 @@
+name: JSONSchema
+kind: library
+sources: Sources
+dependencies:
+  - JSONValue
+tests: {}

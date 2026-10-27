@@ -448,6 +448,62 @@
         "sidebars": true
       },
       "judge": "PASS only if a /.sidebars/bench-{tag}*.sidebar.jsx file default-exports a function returning one <Sidebar name=...> whose children are PageCards for the agents (queried from sessions, not hardcoded) and <Widget src=\"/.widgets/...widget.jsx\"> placements, one with size='small'; the widgets are separate /.widgets/bench-{tag}*.widget.jsx files that query docs and return one catalog card each (Figure for the count, List with rows linking via to for the docs), the small one declaring export const sizes including 'small'. Fail a JSON sidebar or widget, inline widget markup in the sidebar, invented elements or props, writes or handlers in a widget. The reply must name Settings → Groups as where the person chooses which sidebars show."
+    },
+    {
+      "id": "prompt-templates",
+      "issue": 439,
+      "title": "Writes session-conditional instructions as prompt templates",
+      "prompt": "Draft instructions for my group, without touching /AGENTS.md. Write {sb}/AGENTS.md: task sessions must hear \"report progress after every PR\", agents must not see that line, and every session should see the titles of the docs under {sb}/runbooks/ as of when its prompt starts. Then write a skill {sb}/.agents/skills/review/SKILL.md (a checklist for reviewing a PR) that only sessions tagged review get listed.",
+      "required": [
+        "task_section",
+        "runbook_query",
+        "skill_when"
+      ],
+      "judge": "PASS only if {sb}/AGENTS.md puts the progress line inside {{#session.task}}…{{/session.task}} (or an inverted {{^session.agent}} section), lists the runbooks through a wuhu_queries frontmatter query over docs filtered to {sb}/runbooks/ rendered with a {{#name}}…{{/name}} section rather than a hardcoded list, and {sb}/.agents/skills/review/SKILL.md has name and description frontmatter plus wuhu_when with tags review. Fail edits to /AGENTS.md, invented template syntax (if/else, helpers, JavaScript), or a skill condition written into its prose instead of its frontmatter."
+    },
+    {
+      "id": "shebang-script",
+      "issue": 444,
+      "title": "Runs a shebang space script from an exec",
+      "setup": "shebang-script",
+      "requires": [
+        "script"
+      ],
+      "prompt": "On {machine} there's a little tool at {script}. Run it there with {fx}/jobs as its argument and tell me exactly what it printed, one line. Don't create or edit files.",
+      "required": [
+        "ran_script",
+        "printed_result",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the subject ran {script} on {machine} from an exec (directly, since its first line is #!/usr/bin/env -S wuhu script, or as wuhu script {script} ...) with {fx}/jobs as its argument, and the one-line reply quotes the notes=… stamp=… line the script printed. Fail if it reads the file and reimplements it in run_script, counts the notes itself, invents the output, or creates or edits files."
+    },
+    {
+      "id": "agent-page",
+      "issue": 442,
+      "title": "A page starts and messages an agent as its viewer",
+      "prompt": "Make me a page at {sb}/ask.html with a text box and a button. Pressing the button starts a new agent here titled with the first few words of the text, hands it the whole text as its first message, and then lets me send that agent follow-ups from the same page.",
+      "required": [
+        "page_exists",
+        "imports_session_verbs",
+        "no_legacy_api",
+        "skill_reads"
+      ],
+      "skills": {
+        "space-html-pages": true,
+        "sessions": false
+      },
+      "judge": "PASS only if {sb}/ask.html imports createSession and sendMessage from wuhu:space (not wuhu:session, not a fetch to /v1 or /_/space/*), calls createSession with a title and the text as message without naming another group or kind task, and sends follow-ups with sendMessage({ session: id, message }); a rejected call surfaces its error to the person. Fail made-up APIs or a page that only works from run_script."
+    },
+    {
+      "id": "keyed-request",
+      "issue": 440,
+      "title": "Makes a delegated request once, with a schema on its final",
+      "prompt": "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {\"verdict\": \"ok\" | \"fix\", \"notes\": string} you can read off without parsing prose. In at most four sentences, name the exact call with its options, what it returns on the re-run, and where you read the verdict afterwards. Do not call tools or create anything for this smoke.",
+      "required": [
+        "keyed_request",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the answer uses createSession from wuhu:session (or the create_session tool) with expectsReply and request: {kind, key, schema}, a key that varies by day (e.g. a date), and a JSON Schema for {verdict, notes}; says a re-run returns the existing session/request with existing: true and posts or creates nothing; and reads the verdict from the request's row in the requests table (its result column) or the final report. Fail if it dedupes by hand (searching sessions by title, a marker file, a table of its own), invents an API, or calls tools."
     }
   ]
 }

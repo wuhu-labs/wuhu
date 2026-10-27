@@ -125,14 +125,16 @@ extension SessionStore {
         )
       }
       guard try Sessions.record(clock.task.rawValue, in: db).lifecycle == .live,
-            try !Sessions.requestClosed(clock.request, in: db)
+            let request = try RequestRow.find(clock.request, in: db), request.requestStatus.isOpen
       else {
         try retire()
         return false
       }
       let sight = try Sessions.stallSight(clock, now: now, liveScripts: liveScripts, in: db)
       let step = clock.step(sight, now: now)
-      if step.alerts {
+      // A person's request moves its row only; nobody's input takes an alert.
+      let alerts = step.alerts && request.requester == key
+      if alerts {
         let notification = SystemNotification(
           id: UUID.deterministic("stall", key, clock.request.rawValue, SQLiteDateFormat.string(from: step.clock.anchor)),
           timestamp: now,
@@ -143,6 +145,12 @@ extension SessionStore {
         )
         _ = try Sessions.enqueue(key, input: .notification(notification), nowDate: now, in: db)
       }
+      let nowText = SQLiteDateFormat.string(from: now)
+      if step.clock.alerted {
+        try RequestRow.setStatus(clock.request, from: [.open], to: .stalled, now: nowText, in: db)
+      } else {
+        try RequestRow.setStatus(clock.request, from: [.stalled], to: .open, now: nowText, in: db)
+      }
       var slot = armed.slot
       slot.kind = .requestStall(step.clock)
       var advanced = row
@@ -150,21 +158,13 @@ extension SessionStore {
       advanced.nextFireAt = SQLiteDateFormat.string(from: step.next)
       if step.alerts { advanced.lastFiredAt = SQLiteDateFormat.string(from: now) }
       try SubscriptionRow.save(advanced, in: db)
-      return step.alerts
+      return alerts
     }
     if alerted { signals.post(parent) }
   }
 }
 
 extension Sessions {
-  static func requestClosed(_ request: RequestID, in db: Database) throws -> Bool {
-    try Bool.fetchOne(
-      db,
-      sql: "SELECT EXISTS (SELECT 1 FROM messages WHERE request_id = ? AND kind = 'final')",
-      arguments: [request.rawValue],
-    ) ?? false
-  }
-
   // Progress is read over the task and every session under it; waits only on
   // the task itself, since its open request on a child already covers that
   // child's work.
@@ -231,8 +231,7 @@ extension Sessions {
     if let asked = try String.fetchOne(
       db,
       sql: """
-      SELECT MIN(r.created_at) FROM messages r WHERE r.sender_session_id = ? AND r.kind = 'request'
-        AND NOT EXISTS (SELECT 1 FROM messages f WHERE f.request_id = r.request_id AND f.kind = 'final')
+      SELECT MIN(created_at) FROM requests WHERE requester = ? AND status IN ('open', 'stalled', 'overdue')
       """,
       arguments: [task],
     ) {

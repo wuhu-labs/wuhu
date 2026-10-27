@@ -7,6 +7,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import struct SpaceContract.GroupID
+import struct SpaceContract.PromptSession
 @testable import SpaceCore
 @testable import SpaceServer
 import Testing
@@ -79,15 +80,18 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
         }
       },
       names: { _ in ["deploy"] },
+      renderer: InstructionRenderer(
+        session: PromptSession(id: "s", title: "t", kind: .agent, model: nil, tags: [], home: "/_/sessions/s"), rev: nil,
+      ) { _, _ throws(InstructionSourceFailure) in throw InstructionSourceFailure("no tools") },
     )
     var delivery = ContextDelivery(alreadyLoaded: [:])
-    let first = await reader.load(.space("/_/machines/first", in: nil), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    let first = await reader.load([(.space("/_/machines/first", in: nil), .machineNotes)], delivery: &delivery).joined(separator: "\n")
     #expect(first.contains("- deploy — Before the edit."))
     #expect(reads.value == 1)
-    let next = await reader.load(.space("/_/machines/next", in: nil), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    let next = await reader.load([(.space("/_/machines/next", in: nil), .machineNotes)], delivery: &delivery).joined(separator: "\n")
     #expect(next.contains("- deploy — After the edit."))
     #expect(!next.contains("identical"))
-    let third = await reader.load(.space("/_/machines/third", in: nil), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    let third = await reader.load([(.space("/_/machines/third", in: nil), .machineNotes)], delivery: &delivery).joined(separator: "\n")
     #expect(third.contains("- deploy — identical to /_/machines/next/.agents/skills/deploy/SKILL.md (loaded earlier)"))
   }
 
@@ -125,6 +129,55 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
 
       #expect(try await touch(&world, "machines://studio/work/loose/a.txt").isEmpty)
       #expect(try await touch(&world, "machines://studio/tmp/b.txt").isEmpty)
+    }
+  }
+
+  @Test func notesAndRepositoriesRenderForTheSessionAndListOnlyTheSkillsItMatches() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let folder = "/_/machines/\(try await space.addMachine(name: "studio").id.rawValue)"
+      let notes = "{{#session.agent}}Hello {{session.title}}.{{/session.agent}}\n{{> extra.md}}\n{{> /shared/house.md}}\n{{> nowhere.md}}\n"
+      _ = try await space.fs(.shared).write("\(folder)/AGENTS.md", Data(notes.utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("\(folder)/extra.md", Data("notes extra\n".utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/shared/house.md", Data("house rules\n".utf8), ifMatch: nil)
+      for (name, when) in [("tasks", "kind: task"), ("agents", "kind: agent"), ("deepseek", "model: deepseek/*"), ("broken", "kind: robot")] {
+        let skill = "---\ndescription: For \(name).\nwuhu_when: {\(when)}\n---\n"
+        _ = try await space.fs(.shared).write("\(folder)/.agents/skills/\(name)/SKILL.md", Data(skill.utf8), ifMatch: nil)
+      }
+      let machineFS = box()
+      machineFS.put("/work/repo/AGENTS.md", "repo for {{session.title}}\n{{> docs/part.md}}\n", mtime: 2)
+      machineFS.put("/work/repo/docs/part.md", "repo part\n", mtime: 1)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "studio hand"))
+
+      let notice = try await touch(&world, "machines://studio/work/repo/README.md")
+      #expect(notice.contains("<AGENTS.md from=\"\(folder)/AGENTS.md\">\nHello studio hand.\nnotes extra\nhouse rules\n(template error in \(folder)/AGENTS.md: partial nowhere.md: "), "\(notice)")
+      #expect(notice.contains("\nrepo for studio hand\nrepo part\n"), "\(notice)")
+      #expect(!notice.contains("For tasks."))
+      #expect(notice.contains("- agents — For agents."))
+      #expect(notice.contains("- deepseek — For deepseek."))
+      #expect(notice.contains("- broken — For broken. (wuhu_when error: wuhu_when.kind is task or agent)"))
+    }
+  }
+
+  @Test func aNearerFolderSkillHidesAFartherOneOfTheSameNameAfterFiltering() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      _ = try await space.addMachine(name: "studio")
+      try await writeNotes(space, "studio")
+      let machineFS = box()
+      machineFS.put("/work/repo/.agents/skills/deploy/SKILL.md", "---\nname: deploy\ndescription: Root deploy.\n---\n", mtime: 1)
+      machineFS.put("/work/repo/.agents/skills/lint/SKILL.md", "---\nname: lint\ndescription: Root lint.\n---\n", mtime: 1)
+      machineFS.put("/work/repo/app/.agents/skills/deploy/SKILL.md", "---\nname: deploy\ndescription: App deploy.\n---\n", mtime: 1)
+      machineFS.put("/work/repo/app/.agents/skills/lint/SKILL.md", "---\nname: lint\ndescription: App lint.\nwuhu_when: {kind: task}\n---\n", mtime: 1)
+      machineFS.put("/work/repo/app/main.swift", "app", mtime: 1)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space))
+
+      let notice = try await touch(&world, "machines://studio/work/repo/app/main.swift")
+      #expect(notice.contains("- deploy — App deploy. (machines://"), "\(notice)")
+      #expect(!notice.contains("Root deploy."), "the repository root's deploy is farther")
+      #expect(!notice.contains("Ship it to the fleet."), "so is the machine's")
+      #expect(notice.contains("- lint — Root lint."), "a nearer skill filtered out by wuhu_when lets the farther one show")
+      #expect(!notice.contains("App lint."))
     }
   }
 

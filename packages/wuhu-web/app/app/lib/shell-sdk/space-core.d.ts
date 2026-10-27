@@ -170,11 +170,13 @@ export class SpaceError extends Error {
   constructor(
     code: string,
     message: string,
-    details?: { hint?: string; token?: string },
+    details?: { hint?: string; token?: string; id?: string },
   )
   code: string
   hint?: string
   token?: string
+  /** The session an `incompleteSession` create made. */
+  id?: string
 }
 
 export function failure(body: unknown, fallback?: string): SpaceError

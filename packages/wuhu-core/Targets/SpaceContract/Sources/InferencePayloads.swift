@@ -1,30 +1,23 @@
 import Contract
 import JSONValue
 
-// One AGENTS.md (or skill file) as the prompt renders it, at the session's
-// prompt revision.
+// What a prompt template knows of its session, as of the generation's start.
 @Contract
-public struct PromptSection: Codable, Equatable, Sendable {
-  public let path: String
-  public let text: String
+public struct PromptSession: Codable, Equatable, Sendable {
+  public let id: String
+  public let title: String
+  public let kind: SessionKindPayload
+  public let model: String?
+  public let tags: [String]
+  public let home: String
 }
 
-// One scope of a session's prompt: its instruction sections and skills.
-@Contract
-public struct PromptScope: Codable, Equatable, Sendable {
-  public let sections: [PromptSection]
-  public let skills: [SessionHomeSkill]
-}
-
-// The caller's prompt home, frozen at its prompt revision: its group's root
-// and its own home. The kernel lays these out after the fixed text it carries
-// itself.
+// The caller's system prompt, rendered once for its generation, and the
+// session its templates saw.
 @Contract
 public struct SessionPromptOutput: Codable, Equatable, Sendable {
-  public let home: String
-  public let group: String
-  public let groupLayer: PromptScope
-  public let homeLayer: PromptScope
+  public let prompt: String
+  public let session: PromptSession
 }
 
 @Contract

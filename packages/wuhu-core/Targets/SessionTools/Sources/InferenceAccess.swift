@@ -72,13 +72,9 @@ extension ToolExecutor {
     return access.catalog(try ModelsDocument(json: models, groupsJSON: groups), receiveCodexResponseHeaders: receiveCodexResponseHeaders)
   }
 
-  /// The session's prompt home, frozen at its prompt revision (`GET /v1/prompt`).
-  public func promptHome(_ session: SessionID) async throws -> SessionHome {
-    let output: SessionPromptOutput = try await client(session).api(.get, "/v1/prompt")
-    return SessionHome(
-      path: output.home, group: GroupID(rawValue: output.group),
-      groupLayer: scope(output.groupLayer), home: scope(output.homeLayer),
-    )
+  /// The session's prompt for its generation (`GET /v1/prompt`).
+  public func prompt(_ session: SessionID) async throws -> SessionPromptOutput {
+    try await client(session).api(.get, "/v1/prompt")
   }
 
   /// Media a transcript of `session` names, read as the session.
@@ -101,11 +97,4 @@ extension ToolExecutor {
     )
     let _: JSONValue = try await client(metric.session).api(.post, "/v1/inferences", body: try JSONValueEncoder().encode(input))
   }
-}
-
-private func scope(_ scope: PromptScope) -> InstructionScope {
-  InstructionScope(
-    sections: scope.sections.map { SessionHome.Section(path: $0.path, text: $0.text) },
-    skills: scope.skills.map { SessionHome.Skill(name: $0.name, description: $0.description, path: $0.path) },
-  )
 }

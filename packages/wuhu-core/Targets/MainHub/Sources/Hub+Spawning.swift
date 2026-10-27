@@ -11,29 +11,71 @@ import SpaceCore
 import SpaceTools
 
 extension Hub {
-  // One creation path for create_session and wuhu:session. A replay of the
-  // same (caller, call id) returns the first session. It clones the template
-  // only if the first call never finished cloning it, and hands over the
-  // message only if it was never handed over, so a retry finishes a half-made
-  // session or fails the same way again.
-  nonisolated public func spawn(_ caller: SessionID, _ callID: ToolCallID, _ order: SpawnOrder) async throws -> Spawned {
-    guard !order.expectsReply || order.message != nil else {
+  // One creation path for create_session, wuhu:session and a page. A replay of the same (caller, call id) returns the first
+  // session. It clones the template only if the first call never finished
+  // cloning it, and hands over the message only if it was never handed over,
+  // so a retry finishes a half-made session or fails the same way again.
+  nonisolated public func createSession(
+    _ caller: Caller,
+    _ callID: ToolCallID,
+    _ arguments: CreateSessionArguments,
+  ) async throws -> ToolResultPayload {
+    let spawned: Spawned
+    do {
+      spawned = try await spawn(caller, callID, arguments)
+    } catch let problem as ToolProblem {
+      throw ToolProblem("create_session: \(problem.message)", code: problem.code)
+    }
+    if let unfinished = spawned.unfinished {
+      throw IncompleteSession(id: spawned.id, message: "create_session: session \(spawned.id.rawValue) was created, but \(unfinished)")
+    }
+    return .createSession(.init(
+      sessionID: spawned.id, title: spawned.title, requestID: spawned.requestID, existing: spawned.existing ? true : nil,
+      modelGroup: spawned.modelGroup, member: spawned.member, provider: spawned.provider, model: spawned.model,
+    ))
+  }
+
+  nonisolated private func spawn(_ caller: Caller, _ callID: ToolCallID, _ order: CreateSessionArguments) async throws -> Spawned {
+    let expectsReply = order.expectsReply ?? false
+    guard !expectsReply || order.message != nil else {
       throw ToolProblem("expects_reply wants a message: it is create plus one request")
     }
-    guard order.expectsReply || order.stallSeconds == nil else {
+    guard expectsReply || order.stallSeconds == nil else {
       throw ToolProblem("stall_seconds needs expects_reply: it belongs to the request")
+    }
+    let terms = try order.request?.terms() ?? .none
+    guard expectsReply || terms == .none else {
+      throw ToolProblem("request needs expects_reply: it describes the request")
     }
     let stall = try stallSeconds(order.stallSeconds)
     let title: String
-    let creator: SessionRecord
+    // The creating session's record; a person's sessions are all top-level.
+    let creator: SessionRecord?
+    let principal: Principal
     do {
       title = try SessionStore.usableTitle(order.title)
-      creator = try await store.record(caller)
+      switch caller {
+      case let .session(id):
+        let record = try await store.record(id)
+        creator = record
+        principal = Principal(actor: .session(id), group: record.group)
+      case let .page(person):
+        try await admit(person)
+        creator = nil
+        principal = person.principal
+      }
     } catch let error as SessionStoreError {
       throw problem(error)
     }
+    let topLevel = creator == nil || order.topLevel == true
+    let parent = topLevel ? nil : creator?.id
     let recorded = try await store.receipt(caller, toolCallID: callID)
     let replayed = recorded != nil
+    // A replay finishes its own create below; another call with a taken key
+    // answers the session that holds it.
+    if !replayed, let existing = try await store.keyedRequest(by: caller, terms) {
+      return try await existingSpawn(existing)
+    }
     var params = SessionCreationParams(
       executor: order.executor,
       modelGroup: order.modelGroup,
@@ -47,22 +89,24 @@ extension Hub {
     var template: SessionTemplate?
     do {
       if let name = order.template {
-        let resolved = try await space.sessionTemplate(named: name, in: creator.group)
+        let resolved = try await space.sessionTemplate(named: name, in: principal.group)
         params = params.merged(over: resolved.params)
         template = resolved
       }
-      kind = try order.kind.map(sessionKind) ?? template?.kind ?? (order.topLevel ? .agent : .task)
-      if order.group != nil, !order.topLevel {
+      kind = try order.kind.map(sessionKind) ?? template?.kind ?? (topLevel ? .agent : .task)
+      if order.group != nil, !topLevel {
         throw ToolProblem("only a top-level agent takes group; a child lives in its creator's group")
       }
-      if order.topLevel {
-        guard creator.kind == .agent else {
+      if topLevel {
+        if let creator, creator.kind != .agent {
           throw ToolProblem("only an agent may create a top-level session; a task creates children only")
         }
         guard kind == .agent else {
-          throw ToolProblem("a top-level session is an agent; kind task is refused")
+          throw creator == nil
+            ? ToolProblem("a person creates agents only; a task is created by its parent session", code: "taskInput")
+            : ToolProblem("a top-level session is an agent; kind task is refused")
         }
-        guard !order.expectsReply else {
+        guard !expectsReply || creator == nil else {
           throw ToolProblem("a top-level session has no parent to report to; expects_reply is refused")
         }
       }
@@ -72,7 +116,7 @@ extension Hub {
         guard let resolveModelExecutor else {
           throw ToolProblem("creating sessions is not available on this server")
         }
-        params = params.merged(over: try await callerDefaults(caller, params: params))
+        if let creator { params = params.merged(over: try await callerDefaults(creator.id, params: params)) }
         executor = try await SessionExecutor.resolve(params, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup)
       }
     } catch let problem as ToolProblem {
@@ -93,8 +137,12 @@ extension Hub {
         guard let resolved = try await space.resolveGroup(spelling) else { throw SpaceError.notFound(spelling) }
         requested = resolved
       } else { requested = nil }
-      group = try await space.homeGroup(requested, creator: Principal(actor: .session(caller), group: creator.group))
+      if case let .page(person) = caller, let requested, requested != person.group {
+        throw outsidePageGroup(person.group, "creates sessions")
+      }
+      group = try await space.homeGroup(requested, creator: principal)
     } catch let error as SpaceError {
+      if case .groupForbidden = error { throw ToolProblem(renderedFailure(Wire.failure(error)), code: "groupForbidden") }
       throw ToolProblem(renderedFailure(Wire.failure(error)))
     }
     let cloneOwed: Bool = if case let .createSession(first)? = recorded {
@@ -102,6 +150,9 @@ extension Hub {
     } else {
       !replayed && template != nil
     }
+    let messageID = MessageID(UUID.deterministic("request", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
+    // A child answers its parent; a person's agent answers the person.
+    let requester: Caller = parent.map(Caller.session) ?? caller
     let id: SessionID
     do {
       let route: SessionModelRoute?
@@ -114,15 +165,18 @@ extension Hub {
         group: group,
         title: title,
         kind: kind,
-        parent: order.topLevel ? nil : caller,
+        parent: parent,
         tags: params.tags ?? [],
-        createdBy: caller.rawValue,
+        createdBy: caller.name,
         executor: executor,
         snapshot: .init(),
-        receipt: (session: caller, callID: callID),
+        receipt: (holder: caller, callID: callID),
         cloneOwed: template != nil,
         modelRoute: route,
+        request: expectsReply ? (RequestID(messageID.rawValue), requester, order.message!, terms) : nil,
       )
+    } catch let taken as RequestKeyTaken {
+      return try await existingSpawn((taken.existing, try await store.keyedRequest(by: caller, terms)!.task))
     } catch let foreign as ForeignReceipt {
       throw ToolProblem(
         "tool call \(foreign.toolCallID.rawValue) already holds a receipt from another tool; no session was created",
@@ -133,20 +187,19 @@ extension Hub {
       throw ToolProblem(error.description, code: error.code)
     }
     var spawned = Spawned(id: id, title: title)
-    let messageID = MessageID(UUID.deterministic("request", caller.rawValue, callID.rawValue).uuidString.lowercased())
     do {
       if let template, cloneOwed {
         try await space.applySessionTemplate(template, to: id)
         try await store.settleClone(caller, toolCallID: callID)
       }
       if let message = order.message {
-        if order.expectsReply {
-          let delivery = try await store.openRequest(on: id, from: caller, messageID: messageID, text: message, deadline: nil, stallSeconds: stall)
+        if expectsReply {
+          let delivery = try await store.openRequest(on: id, from: requester, messageID: messageID, text: message, deadline: nil, stallSeconds: stall, terms: terms)
           spawned.requestID = delivery.message.requestID
         } else if try await store.message(messageID) == nil {
-          _ = try await deliver(
-            .dm(with: id.rawValue), session: caller, messageID: messageID, text: message, replyTarget: nil, uploads: [],
-          )
+          // A session primes the new one in private; a person has only its box.
+          let target: ConversationTarget = creator == nil ? .box(id) : .dm(with: id.rawValue)
+          _ = try await deliver(target, as: caller, messageID: messageID, text: message, replyTarget: nil, uploads: [])
         }
       }
       // A replay answers what the first call made, request included.
@@ -173,10 +226,53 @@ extension Hub {
     return spawned
   }
 
+  // The session a taken key names. Its request not yet posted means the call
+  // that made it never finished; only that call's retry can.
+  nonisolated private func existingSpawn(_ existing: (request: RequestID, task: SessionID)) async throws -> Spawned {
+    var spawned = Spawned(id: existing.task, title: try await store.record(existing.task).title, requestID: existing.request)
+    spawned.existing = true
+    if try await store.message(MessageID(existing.request.rawValue)) == nil {
+      spawned.unfinished = "its request \(existing.request.rawValue) was never handed over; retry the call that created it"
+    }
+    return spawned
+  }
+
   nonisolated private func sessionKind(_ raw: String) throws -> SessionKind {
     guard let kind = SessionKind(rawValue: raw) else {
       throw ToolProblem("kind is task or agent; got \(raw)")
     }
     return kind
   }
+}
+
+// The session a creation made; `unfinished` says what failed after it existed
+// (its template not cloned, its message not handed over).
+private struct Spawned {
+  var id: SessionID
+  var title: String
+  var requestID: RequestID?
+  var existing = false
+  var modelGroup: String?
+  var member: String?
+  var provider: String?
+  var model: String?
+  var unfinished: String?
+}
+
+// A page borrows its viewer's rights, so it acts only inside its own group.
+extension Hub {
+  // A page acts with its viewer's authority, and only where the viewer writes
+  // the page's group.
+  nonisolated func admit(_ person: Person) async throws {
+    if let account = person.account, try await space.isGuest(account) {
+      throw ToolProblem("a guest's page creates no sessions and posts no messages", code: "groupForbidden")
+    }
+    guard try await space.writableGroups(for: person.principal).contains(person.group) else {
+      throw ToolProblem("the viewer does not write group \(person.group.rawValue)", code: "groupForbidden")
+    }
+  }
+}
+
+func outsidePageGroup(_ group: GroupID, _ verb: String) -> ToolProblem {
+  ToolProblem("a page \(verb) only in its own group \(group.rawValue)", code: "outsidePageGroup")
 }

@@ -10,6 +10,7 @@ import MachineChannel
 import enum MinimalAgent.AgentLog
 import enum MinimalAgent.MinimalAgent
 import SpaceClient
+import struct SpaceContract.RequestTermsInput
 import enum SpaceContract.SessionToolExecutor
 import struct SpaceContract.ToolError
 import Synchronization
@@ -268,6 +269,7 @@ enum Command: Equatable {
   case read(path: String, rev: Int?, lines: String?)
   case write(path: String, body: String, force: Bool)
   case cat(path: String)
+  case script(file: String, arguments: [String])
   case transcribe(file: String, language: String?, provider: String? = nil, model: String? = nil, timestamps: String? = nil, diarize: Bool = false, json: Bool = false)
   case webSearch(query: String, provider: String?, count: Int?)
   case image(prompt: String, images: [String], destination: String, provider: String?, model: String?, quality: String?, size: String?)
@@ -337,7 +339,7 @@ enum Command: Equatable {
   case send(SendCommand)
   case inbox
   case sessionCreate(SessionCreateCommand)
-  case sessionRequest(id: String, message: String, deadline: Double?, stall: Double?)
+  case sessionRequest(id: String, message: String, deadline: Double?, stall: Double?, terms: RequestTermsInput)
   case sessionAction(SessionActionVerb, id: String, force: Bool = false)
   case sessionCompact(id: String, instructions: String?)
   case sessionRename(id: String, title: String)

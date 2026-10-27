@@ -11,7 +11,9 @@ public let ownerIdentity: String = "owner"
 // group places a top-level agent: default the caller's (acting) group, and it
 // must be one that group reads. From a session, `message` is the brief: with
 // expectsReply it opens a request on the new child (stallSeconds belongs to
-// that request), without it is a DM from the creator.
+// that request), without it is a DM from the creator. `request` carries that
+// request's terms; with a key, a create whose key is taken creates nothing and
+// answers the session that holds it, `existing` true.
 @Contract
 public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let title: String
@@ -29,23 +31,43 @@ public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let message: String?
   public let expectsReply: Bool?
   public let stallSeconds: Double?
+  public let request: RequestTermsInput?
+}
+
+// A request's row terms. kind defaults to "task"; key is unique per group and
+// kind; schema is a JSON Schema a final report's content must satisfy as JSON;
+// fields is a JSON object kept on the row.
+@Contract
+public struct RequestTermsInput: Codable, Equatable, Sendable {
+  public let kind: String?
+  public let key: String?
+  public let schema: JSONValue?
+  public let fields: JSONValue?
 }
 
 // A session's exec opening a request on one of that session's tasks, as the
-// request tool does.
+// request tool does, with the same terms flat on the body.
 @Contract
 public struct SessionRequestInput: Codable, Equatable, Sendable {
   public let message: String
   public let deadlineSeconds: Double?
   public let stallSeconds: Double?
+  public let kind: String?
+  public let key: String?
+  public let schema: JSONValue?
+  public let fields: JSONValue?
 }
 
 // `deadline` is the request's deadline as unix seconds, when it has one.
+// `existing` is true when the key was taken: the answer names the request that
+// holds it, and nothing was posted.
 @Contract
 public struct SessionRequestOutput: Codable, Equatable, Sendable {
   public let requestId: String
+  public let task: String
   public let conversationId: String
   public let deadline: Double?
+  public let existing: Bool?
 }
 
 // A session answering a request open on it: progress keeps it open, final
@@ -149,6 +171,7 @@ public struct SessionCreateOutput: Codable, Equatable, Sendable {
   public let title: String
   public let requestId: String?
   public let member: String?
+  public let existing: Bool?
 }
 
 @Contract

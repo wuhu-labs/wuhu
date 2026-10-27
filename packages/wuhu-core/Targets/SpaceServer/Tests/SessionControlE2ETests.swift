@@ -109,7 +109,7 @@ import Testing
       })
       let root = try await harness.createSession(title: "root")
       let child = try await harness.store.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-      _ = try await harness.store.openRequest(on: child, from: root, messageID: .init("http-request"), text: "queued", deadline: nil)
+      _ = try await harness.store.openRequest(on: child, from: .session(root), messageID: .init("http-request"), text: "queued", deadline: nil)
       for body in [JSONValue.null, .object([:]), .object(["force": .bool(false)])] {
         let response = try await harness.post("/v1/session/\(root.rawValue)/archive", body)
         #expect(response.status == .conflict)
@@ -141,7 +141,7 @@ import Testing
       let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)
       let topLevel = try await harness.store.createSession(group: .shared, title: "independent", kind: .agent, createdBy: child.rawValue, executor: model)
       try await harness.store.markInterrupted(root)
-      let delivery = try await harness.store.openRequest(on: root, from: caller, messageID: .init("script-request"), text: "work", deadline: nil)
+      let delivery = try await harness.store.openRequest(on: root, from: .session(caller), messageID: .init("script-request"), text: "work", deadline: nil)
       func script(_ options: String) async throws -> String {
         let result = try await callResult(harness, caller.rawValue, tool: "run_script", .object([
           "source": .string("import { archive } from \"wuhu:session\"; result(await archive(\"\(root.rawValue)\"\(options)).then(() => \"done\", e => e.message))"),

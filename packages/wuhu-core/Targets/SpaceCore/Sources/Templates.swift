@@ -87,7 +87,7 @@ enum Templates {
     return folders ? "\(year)/\(month)/\(day)\(time).md" : "\(year)-\(month)-\(day)\(time).md"
   }
 
-  private static func splitFrontmatter(_ content: String) -> (yaml: String?, body: String) {
+  static func splitFrontmatter(_ content: String) -> (yaml: String?, body: String) {
     let stripped = content.hasPrefix("\u{FEFF}") ? String(content.dropFirst()) : content
     let normalized = stripped.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false)

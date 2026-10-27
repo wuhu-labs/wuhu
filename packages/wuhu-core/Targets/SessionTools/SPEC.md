@@ -36,6 +36,8 @@ A request deadline is delivered to the parent queue and the owner notification f
 
 `request` and `create_session` take `stall_seconds`: absent means 1800, `0` arms nothing, and a value between 0 and 1 is refused. On `create_session` it needs `expects_reply`. Scripts pass `stallSeconds` to `request(id, message, { deadlineSeconds, stallSeconds })` and `createSession`. The firing registry runs a stall slot's due time through `checkRequestStall`, passing the sessions with a `run_script` execution running in the `Scripts` it was built with (handler firings excluded), and the check writes its own next due time; `cancel` refuses a stall slot like a deadline. `Scripts.stopScripts(of:)` asks each of a session's `run_script` executions to stop without waiting for it; each ends within the stop grace.
 
+`request` takes the request terms `kind`, `key`, `schema` and `fields` flat, `create_session` under `request` (with `expects_reply`), and scripts pass them the same way. Bad terms (a key without a kind, an empty kind or key, an invalid schema, non-object fields) are `invalidArgument` before anything is written. A taken key answers `existing: true` with the holding request and task, posting and creating nothing; the `report` tool refuses a final that breaks the schema with the violations and the refusals left.
+
 ## Machine exec receipt and retention
 
 The ordinary exec tool withholds output ACKs until its receipt is durably stored, preserving byte-zero crash replay. It keeps the caller leg alive through receipt storage, sends a terminal ACK covering the whole received output, then closes the leg. A failure before receipt storage sends no terminal ACK. A received output-cut marker is included in the result text; the exit code remains the process's real status.

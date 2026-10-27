@@ -48,7 +48,7 @@ struct MachineReceiptRecoveryTests {
         #expect(result.output == payload)
         #expect(dropped.committed != nil)
         await jobs.close()
-        #expect(try await space.sessions.receipt(session, toolCallID: .init("post-exit")) == nil)
+        #expect(try await space.sessions.receipt(.session(session), toolCallID: .init("post-exit")) == nil)
         let claim = try await space.claimExec(machine: machine, caller: session.rawValue, toolCallID: .init("post-exit"))
         #expect(claim.record.terminal == .exited(code: 0))
       }

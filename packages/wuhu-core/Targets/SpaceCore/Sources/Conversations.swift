@@ -194,6 +194,7 @@ enum Conversations {
   static let selection = """
   SELECT m.*, (SELECT device_id FROM message_devices WHERE message_id = m.id) AS device_id,
     (SELECT path FROM message_viewing WHERE message_id = m.id) AS viewing,
+    (SELECT deadline_at FROM requests WHERE id = m.request_id AND m.kind = 'request') AS deadline_at,
     \(senderGroupSQL) AS sender_grp FROM messages m
   """
 

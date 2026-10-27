@@ -5,7 +5,7 @@ import SpaceFS
 import Testing
 
 @Suite struct SystemFilesTests {
-  @Test func theBinaryCarriesTheSystemAgentsAndFourteenSkills() {
+  @Test func theBinaryCarriesTheSystemAgentsSessionAndFourteenSkills() {
     #expect(SystemFiles.files["/AGENTS.md"] != nil)
     #expect(SystemFiles.instructions.skills.map(\.name) == [
       "avatar", "data-organization", "data-views", "image", "monitor", "observe-group-channel", "read-box", "sessions", "sidebars", "space-html-pages", "transcription", "web-search", "widgets", "writing-style",
@@ -13,9 +13,8 @@ import Testing
     #expect(SystemFiles.instructions.skills.allSatisfy { !$0.description.isEmpty })
     #expect(SystemFiles.instructions.skills.first?.path == "wuhu://system/skills/avatar/SKILL.md")
     #expect(SystemFiles.instructions.sections.map(\.path) == ["wuhu://system/AGENTS.md"])
-    #expect(SystemFiles.rendered.hasPrefix("from wuhu://system/AGENTS.md:\n\n# Working in a Wuhu space"))
-    #expect(SystemFiles.rendered.contains("- monitor — "))
-    #expect(SystemFiles.rendered.contains("- observe-group-channel — "))
+    #expect(SystemFiles.instructions.sections.first?.text.hasPrefix("# Working in a Wuhu space") == true)
+    #expect(SystemFiles.session.sections.map(\.path) == ["wuhu://system/SESSION.md"])
   }
 
   @Test func theSystemAgentsTeachesNoRetiredVerbs() throws {

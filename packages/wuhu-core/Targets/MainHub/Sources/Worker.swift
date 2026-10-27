@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import SessionDomain
+import enum SpaceContract.ScriptOutput
 import SpaceCore
 
 /// How main knows a worker: minted by main with the worker's credential,
@@ -86,12 +87,28 @@ public struct ScriptHandlerInvocation: Sendable {
   }
 }
 
+/// A file run as a space script by its session, from the CLI (`wuhu script`).
+public struct ScriptRun: Sendable, Codable, Equatable {
+  public let session: SessionID
+  public let source: String
+  public let arguments: [String]
+
+  public init(session: SessionID, source: String, arguments: [String]) {
+    self.session = session
+    self.source = source
+    self.arguments = arguments
+  }
+}
+
 /// What main asks of a worker. A worker runs from when it is made until
 /// `shutdown`; main never runs it, and never executes a tool.
 public protocol Worker: Sendable {
   func deliver(_ session: SessionID, _ input: WorkerInput) async throws
   func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult
+  /// Runs `script` until it ends, `output` taking what it says as it says it;
+  /// cancelling the call kills it.
+  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws
   func activity() async -> WorkerActivity
   /// The cancel ids of what runs for the session outside its loop
   /// (`script.<id>`, `exec.<id>`), as a Start over lists them.

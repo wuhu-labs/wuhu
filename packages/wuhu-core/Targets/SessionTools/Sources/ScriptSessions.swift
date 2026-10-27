@@ -3,6 +3,7 @@ import struct MainHub.CreateSessionArguments
 import struct MainHub.IncompleteSession
 import func MainHub.renderedFailure
 import struct MainHub.RequestArguments
+import struct MainHub.RequestTermsArguments
 import struct MainHub.ScriptError
 import func MainHub.seconds
 import struct MainHub.SendMessageArguments
@@ -28,54 +29,25 @@ struct ScriptSessions {
   let session: SessionID
   let tools: ToolExecutor
 
-  private struct CreateOptions: Decodable {
-    var executor: String?
-    var title: String
-    var kind: String?
-    var topLevel: Bool?
-    var group: String?
-    var provider: String?
-    var model: String?
-    var modelGroup: String? = nil
-    var effort: String?
-    var template: String?
-    var tags: [String]?
-    var message: String?
-    var expectsReply: Bool?
-    var stallSeconds: Double?
-    var key: String?
-  }
-
   func install(in engine: JSEngine) throws {
     engine.define("__wuhu_session_create", promising: { [session, tools] arguments in
       try await scripted {
-        let options = try decoded(CreateOptions.self, arguments.first)
+        guard case let .object(options)? = arguments.first else {
+          throw ToolProblem("createSession wants an options object: { title, kind, topLevel, ... }")
+        }
         let callID: String
-        if let key = options.key {
-          guard !key.isEmpty else { throw ToolProblem("createSession: key is a non-empty string") }
+        switch options["key"] {
+        case let .string(key)? where !key.isEmpty:
           callID = "script-key:\(key)"
-        } else {
+        case nil, .null?:
           @Dependency(\.uuid) var uuid
           callID = "script:\(uuid().uuidString.lowercased())"
+        default:
+          throw ToolProblem("createSession: key is a non-empty string")
         }
         let reply: ToolResultPayload
         do {
-          reply = try await tools.createSession(session, callID, CreateSessionArguments(
-            title: options.title,
-            kind: options.kind,
-            executor: options.executor,
-            topLevel: options.topLevel,
-            group: options.group,
-            provider: options.provider,
-            model: options.model,
-            modelGroup: options.modelGroup,
-            effort: options.effort,
-            tags: options.tags,
-            template: options.template,
-            expectsReply: options.expectsReply,
-            message: options.message,
-            stallSeconds: options.stallSeconds,
-          ))
+          reply = try await tools.createSession(session, callID, createArguments(.object(options)))
         } catch let problem as ToolProblem {
           throw ToolProblem(scriptNamed(problem.message), code: problem.code)
         } catch let incomplete as IncompleteCreate {
@@ -90,6 +62,7 @@ struct ScriptSessions {
         if let requestID = spawned.requestID {
           made["requestId"] = .string(requestID.rawValue)
         }
+        if spawned.existing == true { made["existing"] = .bool(true) }
         return .object(made)
       }
     })
@@ -108,7 +81,7 @@ struct ScriptSessions {
     engine.define("__wuhu_session_request", promising: { [session, tools] arguments in
       try await scripted {
         guard case let .string(task)? = arguments[safe: 0], case let .string(message)? = arguments[safe: 1] else {
-          throw ToolProblem("request(id, message, { deadlineSeconds, stallSeconds }) wants a session id and a message")
+          throw ToolProblem("request(id, message, { deadlineSeconds, stallSeconds, kind, key, schema, fields }) wants a session id and a message")
         }
         func seconds(_ value: JSONValue?) -> Double? {
           switch value {
@@ -121,12 +94,20 @@ struct ScriptSessions {
         let result = try await tools.request(
           session,
           "script:\(uuid().uuidString.lowercased())",
-          RequestArguments(task: task, message: message, deadlineSeconds: seconds(arguments[safe: 2]), stallSeconds: seconds(arguments[safe: 3])),
+          RequestArguments(
+            task: task, message: message, deadlineSeconds: seconds(arguments[safe: 2]), stallSeconds: seconds(arguments[safe: 3]),
+            terms: try decoded(RequestTermsArguments.self, arguments[safe: 4], in: "request"),
+          ),
         )
         guard case let .request(opened) = result else {
           preconditionFailure("request answered with \(result)")
         }
-        return .object(["requestId": .string(opened.requestID.rawValue)])
+        var answer: OrderedDictionary<String, JSONValue> = ["requestId": .string(opened.requestID.rawValue)]
+        if opened.existing == true {
+          answer["existing"] = .bool(true)
+          answer["task"] = .string(opened.task.rawValue)
+        }
+        return .object(answer)
       }
     })
     engine.define("__wuhu_session_tags", promising: { [session, tools] arguments in
@@ -187,18 +168,26 @@ private func scriptNamed(_ message: String) -> String {
   message.hasPrefix("create_session: ") ? "createSession: " + message.dropFirst("create_session: ".count) : message
 }
 
-private func decoded<T: Decodable>(_ type: T.Type, _ value: JSONValue?) throws -> T {
+private func createArguments(_ options: JSONValue) throws -> CreateSessionArguments {
+  try decoding(in: "createSession") { try CreateSessionArguments(body: options) }
+}
+
+private func decoded<T: Decodable>(_ type: T.Type, _ value: JSONValue?, in verb: String) throws -> T {
   guard let value, case .object = value else {
-    throw ToolProblem("createSession wants an options object: { title, kind, topLevel, ... }")
+    throw ToolProblem("\(verb) wants an options object")
   }
+  return try decoding(in: verb) { try JSONValueDecoder().decode(type, from: value) }
+}
+
+private func decoding<T>(in verb: String, _ body: () throws -> T) throws -> T {
   do {
-    return try JSONDecoder().decode(type, from: JSONEncoder().encode(value))
+    return try body()
   } catch let DecodingError.keyNotFound(key, _) {
-    throw ToolProblem("createSession needs \(key.stringValue)")
+    throw ToolProblem("\(verb) needs \(key.stringValue)")
   } catch let DecodingError.typeMismatch(_, context) {
-    throw ToolProblem("createSession: \(context.codingPath.map(\.stringValue).joined(separator: ".")) has the wrong type")
+    throw ToolProblem("\(verb): \(context.codingPath.map(\.stringValue).joined(separator: ".")) has the wrong type")
   } catch {
-    throw ToolProblem("createSession: malformed options: \(error)")
+    throw ToolProblem("\(verb): malformed options: \(error)")
   }
 }
 
@@ -237,7 +226,7 @@ export async function toolRoster() {
 
 export async function createSession(options) {
   if (options === null || typeof options !== "object") {
-    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, key }")
+    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, key, request }")
   }
   const made = await create(options)
   if (made.error !== undefined) {
@@ -247,7 +236,7 @@ export async function createSession(options) {
     throw error
   }
   const result = made.requestId === undefined ? { id: made.id } : { id: made.id, requestId: made.requestId }
-  for (const key of ["modelGroup", "member", "provider", "model"]) {
+  for (const key of ["existing", "modelGroup", "member", "provider", "model"]) {
     if (made[key] !== undefined) result[key] = made[key]
   }
   return result
@@ -266,8 +255,8 @@ export async function sendMessage(options) {
   return answered(await send(options))
 }
 
-export async function request(id, message, { deadlineSeconds, stallSeconds } = {}) {
-  return answered(await ask(String(id), String(message), deadlineSeconds ?? null, stallSeconds ?? null))
+export async function request(id, message, { deadlineSeconds, stallSeconds, kind, key, schema, fields } = {}) {
+  return answered(await ask(String(id), String(message), deadlineSeconds ?? null, stallSeconds ?? null, { kind, key, schema, fields }))
 }
 
 export async function setTags(id, tags) {

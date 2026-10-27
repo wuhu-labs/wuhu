@@ -5,6 +5,7 @@
 #endif
 import MainHub
 import SessionDomain
+import enum SpaceContract.ScriptOutput
 import Synchronization
 
 /// What a worker presents on its line to main: the id main knows it by and
@@ -184,6 +185,10 @@ public final class WorkerRegistry: Worker, Sendable {
 
   public func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
     try await line(of: invocation.session).fire(invocation)
+  }
+
+  public func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
+    try await line(of: script.session).run(script, output: output)
   }
 
   public func runningWork(_ session: SessionID) async throws -> [String] {

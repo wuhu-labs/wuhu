@@ -24,6 +24,7 @@ import MainHub
 import SessionDomain
 import SessionTools
 import struct SpaceClient.SpaceClient
+import enum SpaceContract.ScriptOutput
 import Synchronization
 
 /// A worker in a process of its own: what `wuhu` runs when main starts it
@@ -151,6 +152,7 @@ private final class ShutdownWatch: Worker {
   func deliver(_ session: SessionID, _ input: WorkerInput) async throws { try await execution.deliver(session, input) }
   func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { try await execution.revoke(session, policy: policy) }
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { try await execution.fire(invocation) }
+  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws { try await execution.run(script, output: output) }
   func activity() async -> WorkerActivity { await execution.activity() }
   func runningWork(_ session: SessionID) async throws -> [String] { try await execution.runningWork(session) }
   func shutdown() async {

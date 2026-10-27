@@ -82,7 +82,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       guard case let .observe(observation) = try await world.run("observe", .object(["sql": "SELECT n FROM \"/restart.table\"", "throttle_seconds": 1])) else { throw Mismatch("observe failed") }
       _ = try await world.run("timer", .object(["message": "cron survives", "cron": "* * * * *"]))
       _ = try await world.run("timer", .object(["message": "once survives", "in_seconds": 120]))
-      _ = try await space.sessions.openRequest(on: child, from: session, messageID: .init("restart-duty"), text: "still owed", deadline: anchor.addingTimeInterval(120))
+      _ = try await space.sessions.openRequest(on: child, from: .session(session), messageID: .init("restart-duty"), text: "still owed", deadline: anchor.addingTimeInterval(120))
       _ = try await space.sessions.drainQueue(child)
       _ = try await space.sessions.enqueue(session, input: .message(.init(id: UUID(), messageID: .init("queued"), conversationID: .init("ch1"), sender: .init(id: "morgan", timeZone: TimeZone(identifier: "UTC")!), timestamp: anchor, content: .init(text: "queued before Start over"))))
       try await space.sessions.markInterrupted(session)

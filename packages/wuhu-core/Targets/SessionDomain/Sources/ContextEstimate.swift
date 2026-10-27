@@ -178,7 +178,7 @@ extension ToolResultPayload {
     case let .sendMessage(result):
       "posted \(result.messageID.rawValue) to conversation \(result.conversationID.rawValue)"
     case let .request(result):
-      "opened request \(result.requestID.rawValue) on \(result.task.rawValue)"
+      "\(result.existing == true ? "found" : "opened") request \(result.requestID.rawValue) on \(result.task.rawValue)"
     case let .report(result):
       "reported \(result.kind.rawValue) on request \(result.requestID.rawValue)"
     case let .createSession(result):

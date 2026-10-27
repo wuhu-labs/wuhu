@@ -23,6 +23,15 @@ extension Command {
     if verb == "exec" {
       return try parseExec(parser.remaining)
     }
+    // Everything after the file is the script's, as a shebang passes it.
+    if verb == "script" {
+      let arguments = parser.remaining
+      guard let file = arguments.first, file != "--help", file != "-h" else {
+        if arguments.isEmpty { throw UsageError(message: Self.verbHelp["script"]!) }
+        return .help(Self.verbHelp["script"]!)
+      }
+      return .script(file: file, arguments: Array(arguments.dropFirst()))
+    }
     if parser.hasHelp {
       return .help(Self.help(for: verb, parser: parser))
     }
@@ -588,10 +597,17 @@ extension Command {
     case "request":
       let deadline = try parser.doubleOption("--deadline", verb: "session request")
       let stall = try parser.doubleOption("--stall", verb: "session request")
+      let kind = try parser.option("--kind", verb: "session request")
+      let key = try parser.option("--key", verb: "session request")
+      let schema = try parser.option("--schema", verb: "session request").map { try Self.jsonArgument($0, flag: "--schema", verb: "session request") }
+      let fields = try parser.option("--fields", verb: "session request").map { try Self.jsonArgument($0, flag: "--fields", verb: "session request") }
       let id = try parser.required("session-id", verb: "session request")
       let message = try parser.required("message", verb: "session request")
       try parser.finish(verb: "session request")
-      return .sessionRequest(id: id, message: message, deadline: deadline, stall: stall)
+      return .sessionRequest(
+        id: id, message: message, deadline: deadline, stall: stall,
+        terms: RequestTermsInput(kind: kind, key: key, schema: schema, fields: fields),
+      )
     case "restart":
       let provider = try parser.option("--provider", verb: "session restart")
       let model = try parser.option("--model", verb: "session restart")
@@ -957,6 +973,11 @@ extension Command {
     }
   }
 
+  private static func jsonArgument(_ text: String, flag: String, verb: String) throws -> JSONValue {
+    guard let value = JSONValue.parse(text) else { throw UsageError(message: "\(verb): \(flag) wants JSON") }
+    return value
+  }
+
   private static func contractArgument<T: Decodable>(_ type: T.Type, _ text: String, verb: String) throws -> JSONValue {
     guard let value = JSONValue.parse(text) else {
       throw UsageError(message: "\(verb): invalid JSON")
@@ -985,6 +1006,7 @@ extension Command {
     write     write --body text to a path
     cat       write a path's raw bytes to stdout
     put       write raw stdin bytes to a path
+    script    run a local file as a space script, as this exec's session
     transcribe  transcribe an audio file through the space's provider
     web-search search the public web through the space's provider
     image      generate or edit an image; create-only local output
@@ -1758,6 +1780,20 @@ extension Command {
       64      usage error
       1       runtime error
     """,
+    "script": """
+    usage: wuhu script <file> [<argument>...]
+
+    runs <file> on the server as a space script, as run_script runs its
+    source, as the session whose exec this is (WUHU_EXEC=1); a terminal
+    caller is refused. The arguments are the script's import.meta.args.
+    Each update() and the result() print to stdout as they come. A first
+    line of #!/usr/bin/env -S wuhu script makes the file run from a shell.
+
+    exit codes:
+      0  the script called result() and ended cleanly
+      1  it failed, before or after its result, or never called result()
+      64 usage error
+    """,
     "skill": """
     usage: wuhu skill <export>
 
@@ -1900,7 +1936,7 @@ extension Command {
 
     subcommands:
       create [--kind agent|task] [--top-level] [--executor E] [--provider P --model M | --model-group G] [--effort E] [--template NAME] [--extra JSON] [--tag T]... <title>
-      request [--deadline SECONDS] [--stall SECONDS] <session-id> <message>
+      request [--deadline SECONDS] [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
                                from a session's exec: open a request on a
                                child it created, which owes it a final report
       restart [--executor E] [--provider P] [--model M] [--model-group G] [--effort E] [--extra JSON] [--message TEXT] <session-id>
@@ -1958,15 +1994,19 @@ extension Command {
     \(exitCodes)
     """,
     "session request": """
-    usage: wuhu session request [--deadline SECONDS] [--stall SECONDS] <session-id> <message>
+    usage: wuhu session request [--deadline SECONDS] [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
 
     only from a session's exec (WUHU_EXEC=1): opens a request on a child the
     session created, posting <message> into their DM. the child owes a final
     report; --deadline notifies the session if none arrives in time. --stall
     (default 1800, 0 for off) notifies it once the child and its descendants
     show no progress for that long while not waiting on a script, exec,
-    one-shot timer or request of their own. prints the request id and the
-    DM's conversation id.
+    one-shot timer or request of their own. the request is a row of the
+    requests table: --kind sorts it, --key (needs --kind) names it, unique per
+    group and kind, and a key already taken posts nothing and prints the request
+    holding it, marked existing. --schema is a JSON Schema the final report's
+    content must satisfy as JSON; --fields a JSON object kept on the row.
+    prints the request id and the DM's conversation id.
     \(exitCodes)
     """,
     "session restart": """

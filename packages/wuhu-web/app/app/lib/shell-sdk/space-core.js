@@ -27,6 +27,7 @@ export class SpaceError extends Error {
     this.code = code
     if (details.hint != null) this.hint = details.hint
     if (details.token != null) this.token = details.token
+    if (details.id != null) this.id = details.id
   }
 }
 

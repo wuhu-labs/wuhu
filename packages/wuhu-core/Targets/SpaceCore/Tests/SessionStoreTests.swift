@@ -384,16 +384,16 @@ struct SessionStoreTests {
       let store = try makeSpace().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let callID = ToolCallID("k-write-1")
-      #expect(try await store.receipt(sid, toolCallID: callID) == nil)
+      #expect(try await store.receipt(.session(sid), toolCallID: callID) == nil)
 
       let recorded = ToolResultPayload.write(.init(path: "/notes.md", revision: .journal(7)))
       try await store.recordReceipt(sid, toolCallID: callID, payload: recorded)
-      #expect(try await store.receipt(sid, toolCallID: callID) == recorded)
+      #expect(try await store.receipt(.session(sid), toolCallID: callID) == recorded)
 
       try await store.recordReceipt(
         sid, toolCallID: callID, payload: .failure(.init(message: "retry must not overwrite")),
       )
-      #expect(try await store.receipt(sid, toolCallID: callID) == recorded)
+      #expect(try await store.receipt(.session(sid), toolCallID: callID) == recorded)
     }
   }
 
@@ -409,7 +409,7 @@ struct SessionStoreTests {
         _ = try await store.createSession(
           group: .shared,
           title: "child", kind: .task, createdBy: sid.rawValue, model: .test,
-          receipt: (session: sid, callID: callID),
+          receipt: (holder: .session(sid), callID: callID),
         )
       }
     }

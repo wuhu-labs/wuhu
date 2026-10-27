@@ -25,7 +25,7 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
 }
 
 @Suite(.deterministicDependencies) struct InferenceRouteTests {
-  @Test func promptIsFrozenAtTheSessionsPromptRevision() async throws {
+  @Test func promptIsRenderedOnceAtTheSessionsPromptRevision() async throws {
     try await withSessionDeps {
       let tokens = ExecTokens(spaceURL: "https://space.test:5530")
       let harness = try await SessionHarness(execTokens: tokens)
@@ -35,10 +35,12 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
       let first = try await harness.get("/v1/prompt", bearer: token)
       #expect(first.status == .ok)
       let prompt = try JSONDecoder().decode(SessionPromptOutput.self, from: try await first.body.data())
-      #expect(prompt.home == "/_/sessions/\(session.rawValue)")
-      #expect(prompt.group == "shared")
-      #expect(prompt.groupLayer.sections == [PromptSection(path: "/AGENTS.md", text: "frozen guidance")], "\(prompt)")
+      #expect(prompt.session == PromptSession(
+        id: session.rawValue, title: "worker", kind: .agent, model: "testing/test-model", tags: [], home: "/_/sessions/\(session.rawValue)",
+      ))
+      #expect(prompt.prompt.contains("from /AGENTS.md:\n\nfrozen guidance"), "\(prompt.prompt)")
       _ = try await fs.write("/AGENTS.md", Data("later edit".utf8), ifMatch: guidance)
+      _ = try await harness.store.setTitle(session, to: "renamed")
       let second = try await harness.get("/v1/prompt", bearer: token)
       #expect(try JSONDecoder().decode(SessionPromptOutput.self, from: try await second.body.data()) == prompt)
     }

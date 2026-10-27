@@ -51,6 +51,8 @@ Set `WUHU_IDENTITY=wallet` in exec's `env` to use the wallet found from cwd up, 
 
 `wuhu id-token --audience <origin> [--json]` prints a 60-second OIDC token for this exec (claims `space`, `group`, `session`, `machine`, `exec`; `sub` is `<group>/<session>`) for a service that trusts this space's issuer, such as the build pool. It presents only the exec's `WUHU_ID_TOKEN_REQUEST` at `WUHU_ID_TOKEN_URL`, both set by the server, and fails outside a session's exec.
 
+`wuhu script <file> [args…]` runs a local file as a space script on the server, as this session: the same runtime and API as `run_script`, with the arguments after the file in `import.meta.args`. Its `result` and then each `update` print to stdout as they come; it exits 0 only when the script called `result()` and ended without failing, otherwise 1 with the reason on stderr (a connection that drops before the run ends is a failure too). A first line `#!/usr/bin/env -S wuhu script` makes the file a space script that also runs straight from the shell (`./tool.js a b`); the run's span records the source's sha256. A wallet (terminal) caller is refused.
+
 Outside a session's exec (a person's terminal) nothing of this applies.
 
 ## Files
@@ -296,7 +298,7 @@ wuhu session create --provider anthropic --model claude-sonnet-5 [--effort high]
 wuhu session create --model-group work [--effort high] "Title"
 wuhu session restart --model-group work <session-id>  # Start over with fresh group placement
 wuhu session inspect <session-id>   # requested target, active route, placement reason/evidence (JSON)
-wuhu session request [--deadline SECS] <child-id> "message"   # a session's exec only
+wuhu session request [--deadline SECS] [--kind K --key K] [--schema JSON] [--fields JSON] <child-id> "message"   # a session's exec only
 wuhu send <session-id> "message" [--wait [--timeout SECS]] [--viewing PATH]
 wuhu session log <session-id>       # channel view (default, every executor)
 wuhu session log --direct|-v|-vv [--limit N] [--before REF] <session-id>

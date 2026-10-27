@@ -10,6 +10,7 @@ import Serve
 import struct SessionDomain.SessionID
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupID
+import let SpaceContract.ownerIdentity
 import SpaceCore
 
 /// Who stands behind a request: a session's exec token, a verified person, or
@@ -133,4 +134,16 @@ func webPrincipal(_ viewer: AccountID?, group: GroupID, space: Space) async thro
 
 private func person(_ account: AccountID, in space: Space) async throws -> Actor {
   .person(persona: try await space.persona(account: account)?.name ?? account.rawValue, account: account)
+}
+
+extension Person {
+  /// The person a principal names, in its group; the --dev seat speaks as the
+  /// owner identity. A session is no person.
+  init?(_ principal: Principal) {
+    switch principal.actor {
+    case .session: return nil
+    case let .person(persona, account): self.init(persona: persona, account: account, group: principal.group)
+    case .anonymous: self.init(persona: ownerIdentity, account: nil, group: principal.group)
+    }
+  }
 }

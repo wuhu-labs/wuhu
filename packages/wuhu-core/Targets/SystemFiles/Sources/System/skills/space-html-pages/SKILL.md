@@ -11,7 +11,7 @@ Any HTML file in the space is a real page on its group's host. Discover it throu
 
 ## Data: `wuhu:space`
 
-A page imports `wuhu:space`, the shared data subset of `run_script`, with the same query/observe/watch/find/grep/mutateRows/readAttributes/patchAttributes names, shapes and values. The script-only table/schema/template/file/conversation exports are not page exports. The proxied `fetch` export below is page-only; run_script keeps its ambient native fetch. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
+A page imports `wuhu:space`, the shared data subset of `run_script`, with the same query/observe/watch/find/grep/mutateRows/readAttributes/patchAttributes names, shapes and values. The script-only table/schema/template/file/conversation exports are not page exports. The proxied `fetch`, `createSession` and `sendMessage` exports below are page-only; run_script keeps its ambient native fetch. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
 
 - `query` — one shot, resolves to an array of row objects. Bind values with a tagged template or `query(sql, params)`; never splice them into the SQL. Table names are quoted paths (`"/tasks.table"`); induced tables (`docs`, `links`, `sessions`, ...) work too.
 - `observe` — live: an async iterable of whole snapshots, the current rows first, then new rows after every commit that changes them.
@@ -45,6 +45,21 @@ Prefer `observe` over query-then-poll: its first snapshot replaces the initial q
 A page acts as an ordinary member of the group it lives in, as the person viewing it. A hostless path means that group; `wuhu://<group>.localspace/<path>` reaches another group it can read or write. A page writes its own group's `/AGENTS.md` and skills like any member, but no other group's, and never the settings group: only a space admin writes that. Writes are online only and never queued.
 
 `/_/query` and `/_/observe` are deprecated: they still serve existing pages their old untyped `{columns, rows}` shape, but new pages use `wuhu:space`.
+
+## Agents: `createSession` and `sendMessage`
+
+The page-only `import { createSession, sendMessage } from "wuhu:space"` start and talk to agents as the person viewing the page, with `wuhu:session`'s option and result shapes. Both stay inside the page's own group: `createSession` makes a top-level agent there (a `group` naming any other is refused), and `sendMessage` posts only into that group's conversations and session boxes, attaching only that group's files. Anything outside rejects with `code: "outsidePageGroup"`; a guest viewer, or one who only reads the group, is refused with `groupForbidden`. A create that made the session but not its message rejects with `code: "incompleteSession"` and the session's `id`; the same call with the same `key` finishes it.
+
+- `createSession({ title, provider, model, modelGroup, effort, template, tags, message, key, expectsReply, stallSeconds, request })` → `{ id, requestId?, existing?, modelGroup?, member?, provider?, model? }`. `message` lands in the new agent's box as the viewer. The same `key` from the same viewer returns the first session instead of making another, so a retried click is safe. A task needs a parent session, so a page creates agents only. With `expectsReply`, `message` opens a request on the agent: a row of the `requests` table whose `requester` is the viewer, with `request: { kind, key, schema, fields }` as on `wuhu:session`; the agent's reports, final included, arrive in its box, so a page watches `requests` or the box for the answer. A `request.key` the group already used returns that request's agent with `existing: true`.
+- `sendMessage({ message, conversation | session, reply_target, attachments })` → `{ messageId, conversationId }`: `session` posts into that agent's box, `conversation` into a channel. Attachments are space paths; a page reaches no machine.
+
+```html
+<script type="module">
+  import { createSession, sendMessage } from "wuhu:space";
+  const { id } = await createSession({ title: "Triage", message: "Triage today's inbox", key: "triage-today" });
+  await sendMessage({ session: id, message: "Start with the oldest" });
+</script>
+```
 
 ## Outside backends: proxied `fetch`
 

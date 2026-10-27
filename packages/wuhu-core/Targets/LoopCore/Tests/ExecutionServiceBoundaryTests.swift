@@ -9,6 +9,7 @@ import class MainHub.SessionService
 import struct MainHub.UnfulfilledError
 import SessionDomain
 import SessionTools
+import enum SpaceContract.ScriptOutput
 import SpaceCore
 import Synchronization
 import Testing
@@ -237,6 +238,7 @@ private final class Unannounced: Worker, Sendable {
 
   func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { try await execution.revoke(session, policy: policy) }
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { try await execution.fire(invocation) }
+  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws { try await execution.run(script, output: output) }
   func activity() async -> WorkerActivity { await execution.activity() }
   func runningWork(_ session: SessionID) async throws -> [String] { try await execution.runningWork(session) }
   func shutdown() async { await execution.shutdown() }

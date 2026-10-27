@@ -1,6 +1,7 @@
 import Foundation
 import SessionDomain
 import struct SpaceContract.GroupID
+import struct SpaceContract.PromptSession
 import SpaceFS
 
 // One folder's instructions: its AGENTS.md, if any, and the skills under its
@@ -17,17 +18,29 @@ public struct InstructionScope: Hashable, Sendable {
 
   public static let empty: InstructionScope = InstructionScope(sections: [], skills: [])
 
-  /// The sections, then the skills list under `skillsHeading`; nothing when
-  /// the scope is empty.
-  public func rendered(skillsHeading: String) -> [String] {
-    var parts = sections.map { section in
-      "from \(section.path):\n\n\(section.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+  /// The sections rendered for `renderer`'s session, then `listing` under
+  /// `heading`; nothing when both are empty.
+  public func rendered(listing: [SessionHome.Skill], under heading: String, by renderer: InstructionRenderer) async -> [String] {
+    var parts: [String] = []
+    for section in sections {
+      let text = await renderer.render(section.text, path: section.path)
+      parts.append("from \(section.path):\n\n\(text.trimmingCharacters(in: .whitespacesAndNewlines))")
     }
-    if !skills.isEmpty {
-      let lines = skills.map { "- \($0.name) — \($0.description) (\($0.path))" }
-      parts.append(skillsHeading + "\n" + lines.joined(separator: "\n"))
+    if !listing.isEmpty {
+      parts.append(heading + "\n" + listing.map(\.listing).joined(separator: "\n"))
     }
     return parts
+  }
+
+  /// What each of `layers` (farthest first) lists for `session`: `wuhu_when`
+  /// filters first, then a name a nearer layer lists hides the farther skill.
+  public static func listings(_ layers: [InstructionScope], for session: PromptSession) -> [[SessionHome.Skill]] {
+    var nearer: Set<String> = []
+    return layers.reversed().map { layer in
+      let shown = layer.skills.filter { $0.condition.shows(session) && !nearer.contains($0.name) }
+      nearer.formUnion(shown.map(\.name))
+      return shown
+    }.reversed()
   }
 
   // A skill's one-line description is its frontmatter `description:` when the
@@ -75,11 +88,19 @@ public struct SessionHome: Hashable, Sendable {
     public let name: String
     public let description: String
     public let path: String
+    public let condition: SkillCondition
 
-    public init(name: String, description: String, path: String) {
+    public init(name: String, markdown: String, path: String) {
       self.name = name
-      self.description = description
+      description = InstructionScope.skillDescription(markdown)
       self.path = path
+      condition = SkillCondition(skill: markdown)
+    }
+
+    /// Its line in a skills listing.
+    public var listing: String {
+      guard case let .malformed(message) = condition else { return "- \(name) — \(description) (\(path))" }
+      return "- \(name) — \(description) (\(path)) (wuhu_when error: \(message))"
     }
   }
 
@@ -115,29 +136,11 @@ public struct SessionHome: Hashable, Sendable {
   public var skills: [Skill] { groupLayer.skills + home.skills }
   public var chain: [String] { sections.map(\.path) }
 
-  /// The group's AGENTS.md and skills; empty in a group that has neither.
-  public var groupRendered: String {
-    groupLayer.rendered(
-      skillsHeading: group == .shared
-        ? "Space skills (call read on the path before using one):"
-        : "Group skills (call read on the path before using one):",
-    )
-    .joined(separator: "\n\n")
-  }
-
-  /// The home paragraph, the home AGENTS.md and the home skills: the end of
-  /// the session part of the prompt.
-  public var rendered: String {
-    let order = "the system, your group's root, then yours"
-    let paragraph = """
-    Your home in the space is \(path)/. Keep your AGENTS.md (standing instructions) and any \
-    notes you want to survive compaction there; a skill of yours is \(path)/\(Self.skillsFolder)/<name>/SKILL.md. \
-    Instructions resolve top-down — \(order); nothing comes from the session that \
-    created you. This prompt renders the space's files and your home's as of when this session started, and again \
-    after each compaction or Start over: an edit in between, yours included, reaches it only then.
-    """
-    return ([paragraph] + home.rendered(skillsHeading: "Your skills (call read on the path before using one):"))
-      .joined(separator: "\n\n")
+  /// The skills heading of the group's layer.
+  public var groupSkillsHeading: String {
+    group == .shared
+      ? "Space skills (call read on the path before using one):"
+      : "Group skills (call read on the path before using one):"
   }
 }
 
@@ -173,7 +176,7 @@ extension InstructionScope {
     for entry in try await fs.entriesIfPresent(root) where entry.kind == .directory {
       let path = "\(root)/\(entry.name)/SKILL.md"
       guard let text = try await fs.textIfPresent(path) else { continue }
-      skills.append(.init(name: entry.name, description: skillDescription(text), path: path))
+      skills.append(.init(name: entry.name, markdown: text, path: path))
     }
     return InstructionScope(sections: sections, skills: skills)
   }

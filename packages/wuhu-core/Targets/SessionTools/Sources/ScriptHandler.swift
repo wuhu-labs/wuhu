@@ -108,13 +108,9 @@ extension Scripts {
       client: client,
       secrets: ScriptSecrets(client: client),
       tools: tools,
-      handler: context,
+      kind: .handler(context),
     )
-    await withTaskCancellationHandler {
-      await execution.run(owner: owner)
-    } onCancel: {
-      execution.cancelHandler()
-    }
+    await execution.run(owner: owner)
     let result = try execution.handlerResult()
     return result
   }

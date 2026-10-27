@@ -18,6 +18,7 @@ import JSONValue
 import Logging
 import MachineChannel
 import MachineContract
+import class MainHub.Hub
 import NIOCore
 import OrderedCollections
 import Serve
@@ -262,6 +263,7 @@ public enum SpaceServer {
     }
     let content = contentHandler(
       space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, webContent: webContent, pageFetch: pageFetch,
+      hub: sessions?.owner,
     )
     let api: UpgradingHandler = dev ? gated(routed) : gated(walled(routed: routed, space: space, webContent: webContent, keyStreams: keyStreams))
     // The worker's tools reach main through this API, in process, as the
@@ -329,6 +331,7 @@ public enum SpaceServer {
     publicRead: Bool,
     webContent: WebContent,
     pageFetch: PageFetchHandler? = nil,
+    hub: Hub? = nil,
   ) -> @Sendable (GroupID, Request) async throws -> Response {
     @Dependency(\.date) var dateGen
     return { group, request in
@@ -343,6 +346,7 @@ public enum SpaceServer {
         views: webContent.views,
         shell: webContent.scripts.isEmpty ? nil : webContent.scripts,
         pageFetch: pageFetch,
+        hub: hub,
         request: request,
       )
     }

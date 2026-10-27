@@ -50,7 +50,7 @@ import struct WuhuAI.ToolArguments
         #expect(result.output == "hello\n")
         #expect(result.exitCode == 0)
         #expect(!result.reaped)
-        #expect(try await space.sessions.receipt(session, toolCallID: .init("tc-exec")) == nil)
+        #expect(try await space.sessions.receipt(.session(session), toolCallID: .init("tc-exec")) == nil)
         let retried = try await executor.execute(session: session, call: .init(
           id: "tc-exec", name: "exec", arguments: .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "echo hello"]),
         ), state: .init())
@@ -102,7 +102,7 @@ import struct WuhuAI.ToolArguments
         // exists, and the process keeps running.
         attempt.cancel()
         _ = try? await attempt.value
-        #expect(try await space.sessions.receipt(session, toolCallID: .init("tc-exec")) == nil)
+        #expect(try await space.sessions.receipt(.session(session), toolCallID: .init("tc-exec")) == nil)
 
         gate.open()
         let retried = try await world.retry("exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "long run"]), id: "tc-exec")
@@ -210,7 +210,7 @@ import struct WuhuAI.ToolArguments
       #expect(failure.message.contains("TOKEN"))
       #expect(!failure.message.contains("plain"))
       #expect(scripted.startCount.value == 0)
-      #expect(try await space.sessions.receipt(session, toolCallID: .init("tc-exec")) == nil)
+      #expect(try await space.sessions.receipt(.session(session), toolCallID: .init("tc-exec")) == nil)
     }
   }
 

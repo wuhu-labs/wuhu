@@ -46,12 +46,12 @@ public actor Hub: Main {
 
   nonisolated var store: SessionStore { space.sessions }
 
-  /// A session verb's answer as the model reads it: `body` runs as `session`
-  /// (a machine it reaches sees the session as its caller) and whatever it
-  /// throws of the typed kinds becomes a tool failure.
-  nonisolated public func answering(as session: SessionID, _ body: @Sendable () async throws -> ToolResultPayload) async throws -> ToolResultPayload {
+  /// A verb's answer as the model reads it: `body` runs as `caller` (a
+  /// machine it reaches sees a session caller) and whatever it throws of the
+  /// typed kinds becomes a tool failure.
+  nonisolated public func answering(as caller: Caller, _ body: @Sendable () async throws -> ToolResultPayload) async throws -> ToolResultPayload {
     do {
-      return try await MachineSeam.$caller.withValue(session, operation: body)
+      return try await MachineSeam.$caller.withValue(caller.session, operation: body)
     } catch let error as ExecutorUnavailableError {
       return .failure(.init(message: error.description, code: "executorNoLongerSupported"))
     } catch let error as CapabilityError {

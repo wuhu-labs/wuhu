@@ -14,18 +14,21 @@ import MachineContract
 import struct MainHub.CancelArguments
 import struct MainHub.CreateSessionArguments
 import class MainHub.Hub
-import struct MainHub.IncompleteSession
 import struct MainHub.ManipulateUIArguments
 import struct MainHub.ObserveArguments
 import struct MainHub.ReportArguments
 import struct MainHub.RequestArguments
+import struct MainHub.RequestTermsArguments
+import struct MainHub.ScriptRun
 import struct MainHub.SendMessageArguments
 import struct MainHub.SetTitleArguments
 import struct MainHub.TimerArguments
+import protocol MainHub.Worker
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import Serve
 import ServeRouting
+import ServeSSE
 import SessionDomain
 import SessionTools
 import SpaceContract
@@ -33,6 +36,7 @@ import SpaceCore
 import SpaceFS
 import SpaceTools
 import SystemFiles
+import TaskLifetime
 import struct WuhuAI.Usage
 
 let sessionRefusalMessage = "not available to a session"
@@ -68,7 +72,10 @@ func sessionGate(
   routed: @escaping UpgradingHandler,
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
-  let gated = sessionRouter(space: space, hub: hub, machines: machines, owner: owner, credentials: credentials, identity: identity, metrics: metrics, routed: routed).upgradingHandler
+  let gated = sessionRouter(
+    space: space, hub: hub, machines: machines, owner: owner, workers: runtime.workers, streams: runtime.streamScope,
+    credentials: credentials, identity: identity, metrics: metrics, routed: routed,
+  ).upgradingHandler
   let workerRoutes = workerRouter(owner: owner, runtime: runtime).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
@@ -164,6 +171,8 @@ private func sessionRouter(
   hub: MachineHub,
   machines: MachineSeam,
   owner: Hub,
+  workers: any Worker,
+  streams: TaskScope,
   credentials: CredentialResolver,
   identity: IdentityController?,
   metrics: InferenceMetricsSink,
@@ -209,7 +218,7 @@ private func sessionRouter(
   // A session verb runs on the hub as the session, and answers as the tool
   // would: a typed failure is a 422 carrying its code.
   let answered: @Sendable (@Sendable () async throws -> ToolResultPayload) async throws -> ToolResultPayload = { body in
-    try await owner.answering(as: principal().session, body)
+    try await owner.answering(as: .session(principal().session), body)
   }
 
   var router = Router()
@@ -284,7 +293,7 @@ private func sessionRouter(
   // backend, its attach state); the API's shape adds each machine's group.
   router.get("/v1/machine") { _, _ in
     let payload = try await answered { try await owner.machineRoster(principal().session) }
-    guard case let .machines(roster) = payload else { return toolRefusal(payload) }
+    guard case let .machines(roster) = payload else { return hubRefusal(payload) }
     let groups = Dictionary(uniqueKeysWithValues: try await space.machines(usableFrom: principal().group).map { ($0.id.rawValue, $0.group.rawValue) })
     return try Response.json(roster.machines.compactMap { listing in
       groups[listing.id].map { MachineStatus(id: MachineID(rawValue: listing.id), name: listing.name, group: $0, attached: listing.attached) }
@@ -295,7 +304,7 @@ private func sessionRouter(
       return errorResponse(.notFound, code: "notFound", message: "unknown machine")
     }
     let payload = try await answered { try await owner.machineRoster(principal().session) }
-    guard case let .machines(roster) = payload else { return toolRefusal(payload) }
+    guard case let .machines(roster) = payload else { return hubRefusal(payload) }
     guard let listing = roster.machines.first(where: { $0.id == record.id.rawValue }) else {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine")
     }
@@ -347,16 +356,10 @@ private func sessionRouter(
     }
     return jsonResponse(JSONValue.parse(receipt.body) ?? .null, status: Status(code: receipt.status))
   }
-  // The caller's prompt home, frozen at its prompt revision: the first read
-  // fixes the revision, every later one reads the same files.
+  // The caller's prompt for its generation, rendered by the first read.
   router.get("/v1/prompt") { _, _ in
-    let session = principal().session
     do {
-      let home = try await space.sessionHome(session, at: try await store.activatePromptRevision(session))
-      return try Response.json(SessionPromptOutput(
-        home: home.path, group: home.group.rawValue,
-        groupLayer: promptScope(home.groupLayer), homeLayer: promptScope(home.home),
-      ))
+      return try Response.json(try await sessionPrompt(space: space, session: principal().session))
     } catch {
       return sessionErrorResponse(error)
     }
@@ -473,6 +476,25 @@ private func sessionRouter(
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
     }
   }
+  // The session's worker runs the file; the stream closing kills it.
+  router.post("/v1/scripts") { request, _ in
+    let input = try await request.json(ScriptRunInput.self)
+    let script = ScriptRun(session: principal().session, source: input.source, arguments: input.arguments)
+    let events = AsyncStream<SSEEvent> { continuation in
+      let say: @Sendable (ScriptOutput) -> Void = { output in
+        if let event = try? SSEEvent.json(output) { continuation.yield(event) }
+      }
+      let task = try? streams.run("wuhu-script") {
+        do { try await workers.run(script, output: say) }
+        catch is CancellationError {}
+        catch { say(.failure(message: "the script did not run to its end: \(error)")) }
+        continuation.finish()
+      }
+      if task == nil { continuation.finish() }
+      continuation.onTermination = { _ in task?.cancel() }
+    }
+    return .sse(events)
+  }
   router.delete("/v1/script-execs/:script") { _, parameters in
     guard let script = parameters["script"], !script.isEmpty else {
       return errorResponse(.notFound, code: "notFound", message: "unknown script")
@@ -509,57 +531,14 @@ private func sessionRouter(
   }
 
   router.post("/v1/session") { request, _ in
-    // The kind reaches the hub as written: an odd one is the hub's answer, not
-    // a decoding failure here.
-    let input: SessionCreateInput
-    let kind: String?
+    let arguments: CreateSessionArguments
     do {
-      var body = try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes)
-      kind = body.object?["kind"]?.stringValue
-      if var fields = body.object { fields.removeValue(forKey: "kind"); body = .object(fields) }
-      input = try JSONValueDecoder().decode(SessionCreateInput.self, from: body)
+      arguments = try CreateSessionArguments(body: try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes))
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-create body: \(error)")
     }
-    let payload: ToolResultPayload
-    do {
-      payload = try await answered {
-        try await owner.createSession(principal().session, callID(request), CreateSessionArguments(
-          title: input.title, kind: kind, executor: input.executor, topLevel: input.topLevel, group: input.group,
-          provider: input.provider, model: input.model, modelGroup: input.modelGroup, effort: input.effort,
-          tags: input.tags, template: input.template, expectsReply: input.expectsReply, message: input.message, stallSeconds: input.stallSeconds,
-        ))
-      }
-    } catch let incomplete as IncompleteSession {
-      // The session exists: the failure names it.
-      return jsonResponse(
-        .object(["code": .string(IncompleteSession.code), "message": .string(incomplete.message), "id": .string(incomplete.id.rawValue)]),
-        status: .unprocessableContent,
-      )
-    }
-    guard case let .createSession(created) = payload else { return toolRefusal(payload) }
-    do {
-      let record = try await store.record(created.sessionID)
-      let (model, effort): (String?, String?) = switch record.executor {
-      case .kernel(let specifier): (specifier.model, specifier.effort)
-      case let .modelGroup(_, effort): (try await store.modelRoute(record.id)?.specifier.model, effort)
-      case .retired: (nil, nil)
-      }
-      return try Response.json(SessionCreateOutput(
-        id: record.id.rawValue,
-        executor: record.executor.kind,
-        model: model,
-        provider: await activeModelSpecifier(record, store: store)?.provider,
-        modelGroup: { if case let .modelGroup(id, _) = record.executor { id } else { nil } }(),
-        effort: effort,
-        kind: record.kind == .agent ? .agent : .task,
-        parent: record.parent?.rawValue,
-        title: created.title,
-        requestId: created.requestID?.rawValue,
-        member: created.member,
-      ))
-    } catch {
-      return sessionErrorResponse(error)
+    return try await createSessionResponse(owner, as: .session(principal().session), callID(request), arguments) { created in
+      try await sessionCreateOutput(created, store: store)
     }
   }
 
@@ -574,13 +553,16 @@ private func sessionRouter(
     let payload = try await answered {
       try await owner.request(principal().session, callID(request), RequestArguments(
         task: id.rawValue, message: input.message, deadlineSeconds: input.deadlineSeconds, stallSeconds: input.stallSeconds,
+        terms: RequestTermsArguments(kind: input.kind, key: input.key, schema: input.schema, fields: input.fields),
       ))
     }
-    guard case let .request(opened) = payload else { return toolRefusal(payload) }
+    guard case let .request(opened) = payload else { return hubRefusal(payload) }
     return try Response.json(SessionRequestOutput(
       requestId: opened.requestID.rawValue,
+      task: opened.task.rawValue,
       conversationId: opened.conversationID.rawValue,
       deadline: opened.deadline?.timeIntervalSince1970,
+      existing: opened.existing,
     ))
   }
 
@@ -597,7 +579,7 @@ private func sessionRouter(
     let payload = try await answered {
       try await owner.report(principal().session, callID(request), ReportArguments(requestID: id, kind: input.kind.rawValue, content: input.content))
     }
-    guard case let .report(reported) = payload else { return toolRefusal(payload) }
+    guard case let .report(reported) = payload else { return hubRefusal(payload) }
     return try Response.json(RequestReportOutput(messageId: reported.messageID.rawValue, conversationId: reported.conversationID.rawValue))
   }
 
@@ -611,7 +593,7 @@ private func sessionRouter(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-title body: \(error)")
     }
     let payload = try await answered { try await owner.setTitle(principal().session, callID(request), SetTitleArguments(title: input.title)) }
-    guard case let .setTitle(titled) = payload else { return toolRefusal(payload) }
+    guard case let .setTitle(titled) = payload else { return hubRefusal(payload) }
     return try Response.json(SessionTitleOutput(title: titled.title))
   }
 
@@ -626,7 +608,7 @@ private func sessionRouter(
     let payload = try await answered {
       try await owner.manipulateUI(principal().session, callID(request), ManipulateUIArguments(device: device, payload: input.payload))
     }
-    guard case let .manipulateUI(issued) = payload else { return toolRefusal(payload) }
+    guard case let .manipulateUI(issued) = payload else { return hubRefusal(payload) }
     return try Response.json(DeviceCommandOutput(n: Int(issued.n)))
   }
 
@@ -652,7 +634,7 @@ private func sessionRouter(
     default:
       return errorResponse(.badRequest, code: "invalidArgument", message: "a subscription is exactly one of observe and timer")
     }
-    guard let output = subscriptionOutput(payload) else { return toolRefusal(payload) }
+    guard let output = subscriptionOutput(payload) else { return hubRefusal(payload) }
     return try Response.json(output)
   }
   router.delete("/v1/subscription/:id") { request, parameters in
@@ -660,7 +642,7 @@ private func sessionRouter(
       return errorResponse(.notFound, code: "notFound", message: "unknown subscription")
     }
     let payload = try await answered { try await owner.cancel(principal().session, callID(request), CancelArguments(id: id)) }
-    guard let output = subscriptionOutput(payload) else { return toolRefusal(payload) }
+    guard let output = subscriptionOutput(payload) else { return hubRefusal(payload) }
     return try Response.json(output)
   }
 
@@ -703,18 +685,14 @@ private func sessionRouter(
     if case let .object(fields) = body, fields["user"] != nil {
       return errorResponse(.unprocessableContent, code: "refused", message: SessionStoreError.humanAgentDirectMessageExplanation)
     }
-    let payload = try await answered {
-      try await owner.sendMessage(principal().session, callID(request), SendMessageArguments(
-        message: input.message, conversation: input.conversation, session: input.session, replyTarget: input.replyTarget, attachments: input.attachments,
+    let arguments = SendMessageArguments(
+      message: input.message, conversation: input.conversation, session: input.session, replyTarget: input.replyTarget, attachments: input.attachments,
+    )
+    return try await sendMessageResponse(owner, as: .session(principal().session), callID(request), arguments) { sent in
+      try Response.json(ConversationPostOutput(
+        messageId: sent.messageID.rawValue, conversationId: sent.conversationID.rawValue, n: Int(sent.n), delivered: [],
       ))
     }
-    guard case let .sendMessage(sent) = payload else { return toolRefusal(payload) }
-    return try Response.json(ConversationPostOutput(
-      messageId: sent.messageID.rawValue,
-      conversationId: sent.conversationID.rawValue,
-      n: Int(sent.n),
-      delivered: [],
-    ))
   }
   return router
 }
@@ -788,17 +766,4 @@ private func ownsExec(_ parameters: RouteParameters, space: Space) async -> Bool
         let _ = try? await SpaceToolContext(space: space, principal: Principal(actor: .session(principal().session), group: principal().group)).ownExecStatus(raw)
   else { return false }
   return true
-}
-
-private func toolRefusal(_ payload: ToolResultPayload) -> Response {
-  let message = if case let .failure(failure) = payload { failure.message } else { "unexpected tool result" }
-  let code = if case let .failure(failure) = payload { failure.code ?? "refused" } else { "refused" }
-  return errorResponse(.unprocessableContent, code: code, message: message)
-}
-
-private func promptScope(_ scope: InstructionScope) -> PromptScope {
-  PromptScope(
-    sections: scope.sections.map { PromptSection(path: $0.path, text: $0.text) },
-    skills: scope.skills.map { SessionHomeSkill(name: $0.name, description: $0.description, path: $0.path) },
-  )
 }

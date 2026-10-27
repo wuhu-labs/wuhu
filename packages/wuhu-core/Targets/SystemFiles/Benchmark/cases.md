@@ -184,3 +184,27 @@ _Afterwards:_ `{sb}/welcome.html` exists, its head carries `<meta name="wuhu-lay
 _Prompt:_ "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}. Tell me where to hide this sidebar later."
 
 _Afterwards:_ `/.sidebars/bench-{tag}….sidebar.jsx` returns a `<Sidebar>` of `PageCard`s from a `sessions` query and two `<Widget src>` placements, one `size='small'`; the widgets are their own `/.widgets/bench-{tag}….widget.jsx` files that `query` and return one card each, the small one declaring `export const sizes` with `small`. No JSON sidebar or widget. The reply names Settings → Groups to choose which sidebars show.
+
+## prompt-templates
+
+_Prompt:_ "Draft instructions for my group, without touching /AGENTS.md. Write {sb}/AGENTS.md: task sessions must hear "report progress after every PR", agents must not see that line, and every session should see the titles of the docs under {sb}/runbooks/ as of when its prompt starts. Then write a skill {sb}/.agents/skills/review/SKILL.md (a checklist for reviewing a PR) that only sessions tagged review get listed."
+
+_Afterwards:_ `{sb}/AGENTS.md` wraps the progress line in a `session.task` (or inverted `session.agent`) section and lists the runbooks from a `wuhu_queries` frontmatter query over `docs`; the review skill's frontmatter carries `wuhu_when` with `tags: review`. `/AGENTS.md` is untouched. Scored runs need a release whose system files carry prompt templates.
+
+## shebang-script
+
+_Prompt:_ "On {machine} there's a little tool at {script}. Run it there with {fx}/jobs as its argument and tell me exactly what it printed, one line. Don't create or edit files." The setup puts an executable `count-notes.js` on the machine whose first line is `#!/usr/bin/env -S wuhu script`; it finds the notes under its argument with `wuhu:space` and prints `notes=<n> stamp=<k>`, a stamp only the space's answer gives.
+
+_Afterwards:_ deterministic checks require an exec running the script, the reply carrying the exact line, and no files written. The judge fails reimplementing the script in `run_script`, counting by hand or inventing the line. The case runs only when the pinned release has `wuhu script`.
+
+## agent-page
+
+_Prompt:_ "Make me a page at {sb}/ask.html with a text box and a button. Pressing the button starts a new agent here titled with the first few words of the text, hands it the whole text as its first message, and then lets me send that agent follow-ups from the same page."
+
+_Afterwards:_ `{sb}/ask.html` imports `createSession` and `sendMessage` from `wuhu:space`, creates a top-level agent in the page's own group with the text as `message`, posts follow-ups into its box with `sendMessage({ session })`, shows a refusal's error, and uses no `/v1/`, `/_/query` or `wuhu:session`.
+
+## keyed-request
+
+_Prompt:_ "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {verdict, notes} you can read off without parsing prose. In at most four sentences, name the exact call, what it returns on the re-run, and where you read the verdict."
+
+_Afterwards:_ the reply names `createSession` (or `create_session`) with `expectsReply` and `request: { kind, key, schema }`, a per-day key, `existing: true` on the re-run, and the `requests` table's `result` as where the verdict lands. No tool calls, no files.

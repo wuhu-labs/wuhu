@@ -8,10 +8,12 @@ import struct MainHub.ScriptHandlerResult
 import struct MainHub.ScriptRunID
 import func MainHub.seconds
 import enum MainHub.WaitCut
+import OrderedCollections
 import QuickJSKit
 import ServerTelemetry
 import SessionDomain
 import struct SpaceClient.SpaceClient
+import enum SpaceContract.ScriptOutput
 import SpaceCore
 import Synchronization
 import TaskLifetime
@@ -54,6 +56,30 @@ enum ScriptEnding: Sendable, Equatable {
   case killed(ScriptStop)
 }
 
+enum ScriptKind: Sendable {
+  /// run_script: the call takes the answer until it detaches, the session's
+  /// inbox the rest.
+  case call
+  /// `wuhu script`: everything goes to its caller.
+  case command(@Sendable (ScriptPost) -> Void)
+  case handler(ScriptHandlerContext)
+}
+
+/// What a running script says, in order; its caller hears the end separately.
+enum ScriptPost: Sendable {
+  case update(String)
+  case result(String)
+  case failure(String)
+
+  var output: ScriptOutput {
+    switch self {
+    case let .update(text): .update(text: text)
+    case let .result(text): .result(text: text)
+    case let .failure(message): .failure(message: message)
+    }
+  }
+}
+
 enum ScriptAnswer: Sendable, Equatable {
   case result(String)
   case failure(String)
@@ -74,13 +100,13 @@ final class ScriptExecution: Sendable {
 
   private enum Delivery {
     case answer(AsyncStream<ScriptAnswer>.Continuation, ScriptAnswer)
-    case post(String)
+    case post(ScriptPost)
     case ended([AsyncStream<ScriptEnding>.Continuation], ScriptEnding)
     case finishPost
   }
 
   private struct State {
-    var waiter = Waiter.pending(nil)
+    var waiter: Waiter
     var answer: ScriptAnswer?
     var resulted = false
     var stop: ScriptStop?
@@ -103,18 +129,19 @@ final class ScriptExecution: Sendable {
   let client: SpaceClient
   let secrets: ScriptSecrets
   let tools: ToolExecutor
-  let handler: ScriptHandlerContext?
+  let kind: ScriptKind
+  let arguments: [String]
   let buffers = Mutex(ScriptBuffers())
   let processes = ScriptProcesses()
   private let traceContext = ServerTracing.enabled ? ServerTracing.context : nil
   private let interrupter = JSEngine.Interrupter()
-  private let state = Mutex(State())
+  private let state: Mutex<State>
   private let controls: AsyncStream<Control>
   private let control: AsyncStream<Control>.Continuation
   private let aborts: AsyncStream<String>
   private let abort: AsyncStream<String>.Continuation
-  private let outbox: AsyncStream<String>
-  private let post: AsyncStream<String>.Continuation
+  private let outbox: AsyncStream<ScriptPost>
+  private let post: AsyncStream<ScriptPost>.Continuation
 
   init(
     id: String,
@@ -124,7 +151,8 @@ final class ScriptExecution: Sendable {
     client: SpaceClient,
     secrets: ScriptSecrets,
     tools: ToolExecutor,
-    handler: ScriptHandlerContext? = nil,
+    kind: ScriptKind = .call,
+    arguments: [String] = [],
   ) {
     self.id = id
     self.session = session
@@ -133,10 +161,20 @@ final class ScriptExecution: Sendable {
     self.client = client
     self.secrets = secrets
     self.tools = tools
-    self.handler = handler
+    self.kind = kind
+    self.arguments = arguments
+    if case .command = kind {
+      state = Mutex(State(waiter: .detached))
+    } else {
+      state = Mutex(State(waiter: .pending(nil)))
+    }
     (controls, control) = AsyncStream.makeStream()
     (aborts, abort) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     (outbox, post) = AsyncStream.makeStream()
+  }
+
+  private var handler: ScriptHandlerContext? {
+    if case let .handler(context) = kind { context } else { nil }
   }
 
   // MARK: The caller's side
@@ -240,7 +278,7 @@ final class ScriptExecution: Sendable {
     if !ended { control.yield(.abort(.requested)) }
   }
 
-  func cancelHandler() {
+  func killForCancellation() {
     kill(.cancelled)
     state.withLock { $0.killed = .cancelled }
     interrupter.interrupt()
@@ -256,7 +294,17 @@ final class ScriptExecution: Sendable {
 
   // MARK: The engine's side
 
+  /// Cancelling the task that runs it kills it: a busy script never reaches
+  /// a suspension point, so only the interrupter ends it.
   func run(owner: any Main) async {
+    await withTaskCancellationHandler {
+      await traced(owner: owner)
+    } onCancel: {
+      killForCancellation()
+    }
+  }
+
+  private func traced(owner: any Main) async {
     guard ServerTracing.enabled else { return await runBody(owner: owner) }
     let group = (try? await client.api(.get, "/v1/context") as ScriptContext)?.group
     await ServerTracing.$context.withValue(traceContext) {
@@ -271,7 +319,12 @@ final class ScriptExecution: Sendable {
           case nil: "error"
           }
         }
-        span.finish([.outcome: outcome, .kind: handler == nil ? "run_script" : "handler"])
+        let kind = switch kind {
+        case .call: "run_script"
+        case .command: "wuhu_script"
+        case .handler: "handler"
+        }
+        span.finish([.outcome: outcome, .kind: kind, .sourceSHA256: sha256Hex(source)])
       }
     }
   }
@@ -335,7 +388,9 @@ final class ScriptExecution: Sendable {
       if let handler { try handler.install(in: engine) }
       try engine.defineModule("wuhu:machine", source: machineModule)
       let modules = scriptModules(client: client, snapshot: try await ScriptModuleSnapshot.load(client), typedErrors: handler != nil)
-      try await engine.run(module: source, name: "script", meta: ["session": .string(session.rawValue)], loader: modules)
+      var meta: OrderedDictionary<String, JSONValue> = ["session": .string(session.rawValue)]
+      if case .command = kind { meta["args"] = .array(arguments.map(JSONValue.string)) }
+      try await engine.run(module: source, name: "script", meta: meta, loader: modules)
       return .released
     } catch let JSError.exception(message, stack, _) {
       let trace = (stack ?? "").split(separator: "\n").map(String.init)
@@ -378,7 +433,16 @@ final class ScriptExecution: Sendable {
   }
 
   private func deliver(to owner: any Main) async {
-    for await text in outbox {
+    for await output in outbox {
+      if case let .command(say) = kind {
+        say(output)
+        continue
+      }
+      let text: String
+      switch output {
+      case let .update(update), let .failure(update): text = update
+      case let .result(result): text = "result of \(scriptHandle(id)):\n" + result
+      }
       await notify(owner, session, script: id, text)
     }
   }
@@ -413,7 +477,7 @@ final class ScriptExecution: Sendable {
 
   func recordUpdate(_ text: String) throws {
     guard handler == nil else { throw ScriptError("handlers use wake(text); update() is only for run_script") }
-    state.withLock { $0.deliveries.append(.post(text)) }
+    state.withLock { $0.deliveries.append(.post(.update(text))) }
     drain()
   }
 
@@ -430,9 +494,9 @@ final class ScriptExecution: Sendable {
       state.waiter = .taken
       switch answer {
       case let .result(text):
-        state.deliveries.append(.post("result of \(scriptHandle(id)):\n" + text))
+        state.deliveries.append(.post(.result(text)))
       case let .failure(message):
-        state.deliveries.append(.post(message))
+        state.deliveries.append(.post(.failure(message)))
       case .detached:
         break
       }
@@ -454,7 +518,7 @@ final class ScriptExecution: Sendable {
           produce(.failure("\(scriptHandle(id)) " + ending.withoutResult + tail), in: &state)
         }
       } else if ending != .released, !stopped {
-        state.deliveries.append(.post("\(scriptHandle(id)) failed after its result: " + ending.afterResult + tail))
+        state.deliveries.append(.post(.failure("\(scriptHandle(id)) failed after its result: " + ending.afterResult + tail)))
       }
       state.deliveries.append(.ended(state.endWaiters, ending))
       state.endWaiters = []

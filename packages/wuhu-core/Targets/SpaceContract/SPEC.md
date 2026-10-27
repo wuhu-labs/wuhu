@@ -214,8 +214,12 @@ server-local.
 - **`SessionRequestInput` / `SessionRequestOutput`** (`POST
   /v1/session/:id/request`, session token only): the `request` tool on a
   child of the calling session. `deadlineSeconds` and `stallSeconds` are the
-  tool's `deadline_seconds` and `stall_seconds`; the answer carries the
-  request id and the DM it was posted in.
+  tool's `deadline_seconds` and `stall_seconds`, and `kind`, `key`,
+  `schema` and `fields` its request terms (`RequestTermsInput`, which
+  `SessionCreateInput.request` carries for `expectsReply`); the answer
+  carries the request id, its task and the DM it was posted in, with
+  `existing: true` when the key was already taken and nothing was posted.
+- **`ScriptRunInput` / `ScriptOutput`** (`POST /v1/scripts`, session token only, SSE): `wuhu script` runs `source` as the session's space script with `arguments` as `import.meta.args`. Each event is one `ScriptOutput` (`update`/`result` with `text`, `failure` with `message`) in the order the run said them, closed by `end` once the run has ended; a run that succeeded says `result` once and no `failure`, and a stream without `end` is a run that did not end.
 - **`SessionTagsInput`** (`POST /v1/session/:id/tags`): `tags` replaces the
   session's whole tag list; an empty array clears it. Allowed on any
   lifecycle. The answer is the stored list as `{"tags": [...]}`.

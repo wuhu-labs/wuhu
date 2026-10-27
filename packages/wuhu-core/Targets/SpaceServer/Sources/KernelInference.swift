@@ -102,7 +102,7 @@ func kernelInference(
       let inferenceExecutor = InferenceExecutor(
         session: request.sessionID,
         model: resolved,
-        systemPrompt: try await systemPrompt(executor: executor, record: record),
+        systemPrompt: try await executor.prompt(request.sessionID).prompt,
         tools: SessionToolExecutor.kernel.tools,
         compactToolName: KernelToolset.compactToolName,
         hub: attempts,

@@ -11,7 +11,10 @@ import SpaceClient
 import struct SpaceContract.GroupID
 import struct SpaceContract.ListOutput
 import struct SpaceContract.ReadOutput
+import struct SpaceCore.InstructionRenderer
 import struct SpaceCore.InstructionScope
+import struct SpaceCore.InstructionSourceFailure
+import enum SpaceCore.SkillCondition
 import struct WuhuAI.ToolArguments
 import struct WuhuAI.ToolCall
 
@@ -71,20 +74,30 @@ extension ToolExecutor {
   }
 
   func deliverContext(_ session: SessionID, touching address: Address?, state: ToolExecutionState) async -> ScopeContext? {
-    guard case let .machine(machine, folder)? = address, let main = try? await client(session) else { return nil }
+    guard case let .machine(machine, folder)? = address, let main = try? await client(session),
+          let promptSession = try? await prompt(session).session
+    else { return nil }
     let files = ContextFiles(main: main)
     guard let folders = await files.newFolders(machine, down: folder, recorded: state.folderRoots) else { return nil }
     var delivery = ContextDelivery(alreadyLoaded: state.deliveredContext)
-    var sections: [String] = []
-    let instructions = ContextInstructions(read: { await files.readIfPresent($0) }, names: { await files.directoryNames(in: $0) })
+    let sections: [String]
+    let instructions = ContextInstructions(
+      read: { await files.readIfPresent($0) },
+      names: { await files.directoryNames(in: $0) },
+      renderer: InstructionRenderer(session: promptSession, rev: nil) { name, input throws(InstructionSourceFailure) in
+        try await files.tool(name, input)
+      },
+    )
+    var scopes: [(Address, ContextInstructions.SkillStyle)] = []
     if !state.folderRoots.keys.contains(where: { $0.hasPrefix(Address.machine(machine, "/").rendered) }),
        let notes = await files.machineNotes(machine)
     {
-      sections += await instructions.load(notes, style: .machineNotes, delivery: &delivery)
+      scopes.append((notes, .machineNotes))
     }
     for (directory, root) in folders where root != nil {
-      sections += await instructions.load(.machine(machine, directory), style: .repository, delivery: &delivery)
+      scopes.append((.machine(machine, directory), .repository))
     }
+    sections = await instructions.load(scopes, delivery: &delivery)
     return ScopeContext(
       folders: Dictionary(uniqueKeysWithValues: folders.map { directory, root in
         (Address.machine(machine, directory).rendered, root.map { Address.machine(machine, $0).rendered })
@@ -114,6 +127,16 @@ private struct ContextFiles: Sendable {
   func readIfPresent(_ address: Address) async -> String? {
     let output: ReadOutput? = try? await main.tool("read", .object(["path": .string(address.rendered)]))
     return output?.content
+  }
+
+  func tool(_ name: String, _ input: JSONValue) async throws(InstructionSourceFailure) -> JSONValue {
+    do {
+      return try await main.tool(name, input)
+    } catch let failure as SpaceClient.ToolFailure {
+      throw InstructionSourceFailure(failure.error.message)
+    } catch {
+      throw InstructionSourceFailure("\(error)")
+    }
   }
 
   func directoryNames(in directory: Address) async -> [String]? {
@@ -180,30 +203,61 @@ struct ContextInstructions {
 
   var read: @Sendable (Address) async -> String?
   var names: @Sendable (Address) async -> [String]?
+  var renderer: InstructionRenderer
 
-  func load(_ folder: Address, style: SkillStyle, delivery: inout ContextDelivery) async -> [String] {
-    var sections: [String] = []
-    let agents = folder.appending("AGENTS.md")
-    if let text = await read(agents) {
-      if let first = delivery.firstSource(of: text, kind: .fullText, from: agents.rendered) {
-        sections.append("\(agents.rendered) is identical to \(first) (loaded earlier)")
-      } else {
-        sections.append(agentsSection(from: agents.rendered, text))
-      }
+  private struct Skill {
+    var name: String
+    var description: String
+    var path: String
+    var markdown: String
+  }
+
+  /// Each folder's AGENTS.md rendered for the session and the skills it lists
+  /// for the session, `folders` farthest first: `wuhu_when` filters, then a
+  /// name a nearer folder lists hides the farther skill.
+  func load(_ folders: [(Address, SkillStyle)], delivery: inout ContextDelivery) async -> [String] {
+    var loaded: [(agents: (path: String, text: String)?, skills: [Skill])] = []
+    for (folder, style) in folders {
+      let agents = folder.appending("AGENTS.md")
+      let text = await read(agents).map { (agents.rendered, $0) }
+      loaded.append((text, await skills(in: folder, style: style)))
     }
-    if let skills = await skillsIndex(in: folder, style: style, delivery: &delivery) {
-      sections.append(skills)
+    var nearer: Set<String> = []
+    for index in loaded.indices.reversed() {
+      loaded[index].skills.removeAll { nearer.contains($0.name) }
+      nearer.formUnion(loaded[index].skills.map(\.name))
+    }
+    var sections: [String] = []
+    for (agents, skills) in loaded {
+      if let (path, raw) = agents {
+        let text = await renderer.render(raw, path: path)
+        if let first = delivery.firstSource(of: text, kind: .fullText, from: path) {
+          sections.append("\(path) is identical to \(first) (loaded earlier)")
+        } else {
+          sections.append(agentsSection(from: path, text))
+        }
+      }
+      let lines = skills.map { skill in
+        if let first = delivery.firstSource(of: skill.markdown, kind: .skillListing, from: skill.path) {
+          skillLine(skill.name, "identical to \(first) (loaded earlier)", skill.path)
+        } else {
+          skillLine(skill.name, skill.description, skill.path)
+        }
+      }
+      if let listing = skillsListing(lines) { sections.append(listing) }
     }
     return sections
   }
 
-  private func skillsIndex(in folder: Address, style: SkillStyle, delivery: inout ContextDelivery) async -> String? {
-    guard let names = await names(folder.appending(skillsDirectory)) else { return nil }
-    var skills: [String] = []
+  private func skills(in folder: Address, style: SkillStyle) async -> [Skill] {
+    guard let names = await names(folder.appending(skillsDirectory)) else { return [] }
+    var skills: [Skill] = []
     for name in names.sorted() {
       let skill = folder.appending("\(skillsDirectory)/\(name)/SKILL.md")
       guard let markdown = await read(skill) else { continue }
-      let descriptor: (name: String, description: String)
+      let condition = SkillCondition(skill: markdown)
+      guard condition.shows(renderer.session) else { continue }
+      var descriptor: (name: String, description: String)
       switch style {
       case .machineNotes:
         descriptor = (name, InstructionScope.skillDescription(markdown))
@@ -211,13 +265,12 @@ struct ContextInstructions {
         let front = frontmatter(of: markdown)
         descriptor = (front["name"] ?? name, front["description"] ?? "")
       }
-      if let first = delivery.firstSource(of: markdown, kind: .skillListing, from: skill.rendered) {
-        skills.append(skillLine(descriptor.name, "identical to \(first) (loaded earlier)", skill.rendered))
-      } else {
-        skills.append(skillLine(descriptor.name, descriptor.description, skill.rendered))
+      if case let .malformed(message) = condition {
+        descriptor.description += " (wuhu_when error: \(message))"
       }
+      skills.append(Skill(name: descriptor.name, description: descriptor.description, path: skill.rendered, markdown: markdown))
     }
-    return skillsListing(skills)
+    return skills
   }
 
   private func agentsSection(from path: String, _ text: String) -> String {
@@ -271,7 +324,7 @@ struct ContextDelivery {
   var delivered: [String: String] = [:]
 
   mutating func firstSource(of text: String, kind: Kind, from path: String) -> String? {
-    let digest = SHA256.hash(data: Array(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    let digest = sha256Hex(text)
     let hash = kind.rawValue + ":" + digest
     if let first = alreadyLoaded[hash] {
       return first
@@ -280,4 +333,8 @@ struct ContextDelivery {
     delivered[hash] = path
     return nil
   }
+}
+
+func sha256Hex(_ text: String) -> String {
+  SHA256.hash(data: Array(text.utf8)).map { String(format: "%02x", $0) }.joined()
 }

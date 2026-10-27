@@ -41,18 +41,21 @@ extension Space {
   }
 
   /// The group a new top-level agent lands in: `requested`, else the
-  /// creator's. A person may place one where they write; a session only where
-  /// its group administers — never by landing in an open group it merely
-  /// writes. The settings group takes no sessions.
+  /// creator's. A person may place one where they write, their acting group
+  /// included; a session in its own group, or only where its group
+  /// administers — never by landing in an open group it merely writes. The
+  /// settings group takes no sessions.
   public func homeGroup(_ requested: GroupID?, creator: Principal) async throws -> GroupID {
     guard requested != .settings, creator.group != .settings else { throw SpaceError.groupForbidden(GroupID.settings.rawValue) }
-    guard let requested, requested != creator.group else { return creator.group }
+    let requested = requested ?? creator.group
     guard try await groupExists(requested) else { throw SpaceError.groupForbidden(requested.rawValue) }
     let admitted: Bool = switch creator.actor {
     case .anonymous:
       true
     case .person:
       try await role(of: creator, in: requested).map { $0 >= .write } == true
+    case .session where requested == creator.group:
+      true
     case .session:
       try await role(of: creator, in: requested) == .admin
     }

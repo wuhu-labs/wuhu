@@ -425,8 +425,8 @@ private func until(
       let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)
       busyID.withLock { $0 = leaf }
       try await harness.store.markInterrupted(root)
-      let delivery = try await harness.store.openRequest(on: root, from: requester, messageID: .init("cli-request"), text: "work", deadline: nil)
-      _ = try await harness.store.openRequest(on: leaf, from: child, messageID: .init("cli-leaf-request"), text: "start", deadline: nil)
+      let delivery = try await harness.store.openRequest(on: root, from: .session(requester), messageID: .init("cli-request"), text: "work", deadline: nil)
+      _ = try await harness.store.openRequest(on: leaf, from: .session(child), messageID: .init("cli-leaf-request"), text: "start", deadline: nil)
       try await until("signup running") { entered.withLock { $0 } }
       #expect(await harness.run(["session", "archive", root.rawValue]) == 1)
       #expect(await harness.stderr.text.contains("\(leaf.rawValue) (signup)"))

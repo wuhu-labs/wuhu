@@ -10,6 +10,7 @@ import struct MainHub.IncompleteSession
 import struct MainHub.ManipulateUIArguments
 import struct MainHub.ReportArguments
 import struct MainHub.RequestArguments
+import struct MainHub.RequestTermsArguments
 import struct MainHub.SendMessageArguments
 import struct MainHub.SetTitleArguments
 import struct MainHub.ToolProblem
@@ -48,10 +49,11 @@ extension ToolExecutor {
     var body: OrderedDictionary<String, JSONValue> = ["message": .string(arguments.message)]
     body["deadlineSeconds"] = arguments.deadlineSeconds.map(JSONValue.number)
     body["stallSeconds"] = arguments.stallSeconds.map(JSONValue.number)
+    body.merge(arguments.terms.body) { $1 }
     let opened: SessionRequestOutput = try await verb(session, call, .post, "/v1/session/\(arguments.task)/request", body: .object(body))
     return .request(.init(
-      requestID: RequestID(opened.requestId), task: SessionID(arguments.task), conversationID: ConversationID(opened.conversationId),
-      deadline: opened.deadline.map { Date(timeIntervalSince1970: $0) },
+      requestID: RequestID(opened.requestId), task: SessionID(opened.task), conversationID: ConversationID(opened.conversationId),
+      deadline: opened.deadline.map { Date(timeIntervalSince1970: $0) }, existing: opened.existing,
     ))
   }
 
@@ -83,6 +85,7 @@ extension ToolExecutor {
     body["expectsReply"] = arguments.expectsReply.map(JSONValue.bool)
     body["message"] = arguments.message.map(JSONValue.string)
     body["stallSeconds"] = arguments.stallSeconds.map(JSONValue.number)
+    body["request"] = arguments.request.map { .object($0.body) }
     let created: SessionCreateOutput = try await verb(session, call, .post, "/v1/session", body: .object(body)) { fields in
       guard fields.object?["code"]?.stringValue == IncompleteSession.code, let id = fields.object?["id"]?.stringValue else { return nil }
       return IncompleteCreate(id: id, message: fields.object?["message"]?.stringValue ?? "session \(id) was created, but not finished")
@@ -90,7 +93,7 @@ extension ToolExecutor {
     // A routed session reports the member it landed on; a concrete one
     // reports nothing beyond what was asked.
     return .createSession(.init(
-      sessionID: SessionID(created.id), title: created.title, requestID: created.requestId.map { RequestID($0) },
+      sessionID: SessionID(created.id), title: created.title, requestID: created.requestId.map { RequestID($0) }, existing: created.existing,
       modelGroup: created.modelGroup, member: created.member,
       provider: created.modelGroup == nil ? nil : created.provider, model: created.modelGroup == nil ? nil : created.model,
     ))
@@ -135,5 +138,16 @@ extension ToolExecutor {
     }
     guard let fields else { throw ToolProblem("HTTP \(response.status.code): invalid JSON response") }
     return try JSONValueDecoder().decode(Output.self, from: fields)
+  }
+}
+
+extension RequestTermsArguments {
+  fileprivate var body: OrderedDictionary<String, JSONValue> {
+    var body: OrderedDictionary<String, JSONValue> = [:]
+    body["kind"] = kind.map(JSONValue.string)
+    body["key"] = key.map(JSONValue.string)
+    body["schema"] = schema
+    body["fields"] = fields
+    return body
   }
 }

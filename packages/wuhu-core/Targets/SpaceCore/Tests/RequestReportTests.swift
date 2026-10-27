@@ -26,7 +26,7 @@ import Testing
 
     func request(_ id: String, deadline: Date? = nil) async throws -> MessageDelivery {
       try await store.openRequest(
-        on: task, from: parent, messageID: MessageID(id), text: "do the thing", deadline: deadline,
+        on: task, from: .session(parent), messageID: MessageID(id), text: "do the thing", deadline: deadline,
       )
     }
 
@@ -63,7 +63,7 @@ import Testing
     )
     await #expect(throws: SessionStoreError.notTheParent(pair.task.rawValue)) {
       _ = try await pair.store.openRequest(
-        on: pair.task, from: stranger, messageID: MessageID("r1"), text: "hi", deadline: nil,
+        on: pair.task, from: .session(stranger), messageID: MessageID("r1"), text: "hi", deadline: nil,
       )
     }
   }

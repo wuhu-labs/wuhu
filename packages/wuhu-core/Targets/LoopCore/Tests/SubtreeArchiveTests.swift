@@ -161,8 +161,8 @@ import Testing
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
       let rootRequest = MessageID("root-request")
       let childRequest = MessageID("child-request")
-      let rootDelivery = try await sessions.openRequest(on: root, from: requester, messageID: rootRequest, text: "work", deadline: anchor.addingTimeInterval(60))
-      let childDelivery = try await sessions.openRequest(on: child, from: root, messageID: childRequest, text: "work", deadline: anchor.addingTimeInterval(60))
+      let rootDelivery = try await sessions.openRequest(on: root, from: .session(requester), messageID: rootRequest, text: "work", deadline: anchor.addingTimeInterval(60))
+      let childDelivery = try await sessions.openRequest(on: child, from: .session(root), messageID: childRequest, text: "work", deadline: anchor.addingTimeInterval(60))
       try await sessions.markInterrupted(root)
       try await sessions.markInterrupted(child)
       let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig())
@@ -185,6 +185,29 @@ import Testing
         })
         #expect(try await sessions.armedSubscriptions(requester).isEmpty)
         #expect(try await sessions.armedSubscriptions(root).isEmpty)
+      } catch {
+        await service.shutdown()
+        throw error
+      }
+      await service.shutdown()
+    }
+  }
+
+  @Test func aPlainArchiveOfAStoppedChildFailsItsOpenRequest() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "owner")
+      let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: requester, createdBy: requester.rawValue, executor: .kernel(.test))
+      let delivery = try await sessions.openRequest(on: child, from: .session(requester), messageID: MessageID("r1"), text: "work", deadline: nil)
+      try await sessions.markInterrupted(child)
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig())
+      do {
+        try await service.archive(child)
+        let messages = try await sessions.messages(conversation: delivery.message.conversation)
+        #expect(messages.contains { $0.kind == .final && $0.requestID == RequestID("r1") })
+        let rows = try await space.query("SELECT status FROM requests WHERE id = 'r1'", as: .shared(.anonymous))
+        #expect(rows.rows == [[.text("failed")]])
       } catch {
         await service.shutdown()
         throw error

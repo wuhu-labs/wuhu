@@ -84,8 +84,7 @@ public enum Addressing {
 extension Hub {
   /// A group the session does not read has no files for it: the address
   /// fails exactly as a missing path does.
-  nonisolated func resolve(_ raw: String, as session: SessionID) async throws -> Address {
-    let principal = try await space.principal(of: session)
+  nonisolated func resolve(_ raw: String, as principal: Principal) async throws -> Address {
     let acting = principal.group
     let address = try Addressing.parse(await naming(raw))
     if case let .space(path, group) = address, try await !space.sessions.readsFile(path, in: group ?? acting, as: principal) {

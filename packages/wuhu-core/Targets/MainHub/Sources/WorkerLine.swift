@@ -6,6 +6,7 @@
 import enum InferenceKit.AttemptEvent
 import protocol MachineChannel.FrameTransport
 import SessionDomain
+import enum SpaceContract.ScriptOutput
 import struct SpaceContract.UsageWindow
 import SpaceCore
 import Synchronization
@@ -40,11 +41,16 @@ enum WorkerCall: Codable, Sendable {
   case fire(WireInvocation)
   case activity
   case runningWork(session: SessionID)
+  case run(ScriptRun)
   case shutdown
 }
 
+// A call's outputs all cross before its reply; a cancel for a call that is
+// not running is dropped.
 enum WorkerLineMessage: Codable, Sendable {
   case call(id: Int, WorkerCall)
+  case cancel(id: Int)
+  case output(id: Int, ScriptOutput)
   case reply(id: Int, WorkerReply)
   case notice(WorkerNotice)
 }
@@ -215,52 +221,75 @@ enum WireError: Codable, Sendable {
 /// `run` reads the worker's replies until the line closes; a call still
 /// waiting then fails with `WorkerLineSevered`, as does any call after.
 public final class WorkerClient: Worker, Sendable {
+  private struct Waiting {
+    let reply: CheckedContinuation<WorkerReply, any Error>
+    let output: (@Sendable (ScriptOutput) -> Void)?
+  }
+
   private struct State {
     var next = 0
-    var waiting: [Int: CheckedContinuation<WorkerReply, any Error>] = [:]
+    var waiting: [Int: Waiting] = [:]
     var closed = false
   }
 
   private let transport: any FrameTransport
   private let state = Mutex(State())
   private let onNotice: @Sendable (WorkerNotice) -> Void
+  private let outbound: AsyncStream<WorkerLineMessage>
+  private let send: AsyncStream<WorkerLineMessage>.Continuation
 
   public init(transport: any FrameTransport, onNotice: @escaping @Sendable (WorkerNotice) -> Void = { _ in }) {
     self.transport = transport
     self.onNotice = onNotice
+    (outbound, send) = AsyncStream.makeStream()
   }
 
   public func run() async {
-    for await frame in transport.inbound {
-      switch try? JSONDecoder().decode(WorkerLineMessage.self, from: Data(frame)) {
-      case let .reply(id, reply)?: state.withLock { $0.waiting.removeValue(forKey: id) }?.resume(returning: reply)
-      case let .notice(notice)?: onNotice(notice)
-      case .call?, nil: continue
+    await withDiscardingTaskGroup { group in
+      group.addTask { [outbound, transport] in
+        for await message in outbound {
+          guard let frame = try? JSONEncoder().encode(message) else { continue }
+          do { try await transport.send(Array(frame)) } catch { return transport.close() }
+        }
       }
+      for await frame in transport.inbound {
+        switch try? JSONDecoder().decode(WorkerLineMessage.self, from: Data(frame)) {
+        case let .reply(id, reply)?: state.withLock { $0.waiting.removeValue(forKey: id) }?.reply.resume(returning: reply)
+        case let .output(id, output)?: state.withLock { $0.waiting[id]?.output }?(output)
+        case let .notice(notice)?: onNotice(notice)
+        case .call?, .cancel?, nil: continue
+        }
+      }
+      send.finish()
     }
     let waiting = state.withLock { state in
       state.closed = true
       defer { state.waiting = [:] }
       return Array(state.waiting.values)
     }
-    for call in waiting { call.resume(throwing: WorkerLineSevered()) }
+    for call in waiting { call.reply.resume(throwing: WorkerLineSevered()) }
   }
 
   public func close() { transport.close() }
 
-  private func ask(_ call: WorkerCall) async throws -> WorkerReply {
-    let reply: WorkerReply = try await withCheckedThrowingContinuation { continuation in
-      let id = state.withLock { state -> Int? in
-        guard !state.closed else { return nil }
-        state.next += 1
-        state.waiting[state.next] = continuation
-        return state.next
+  private func ask(_ call: WorkerCall, output: (@Sendable (ScriptOutput) -> Void)? = nil) async throws -> WorkerReply {
+    let id = state.withLock { state in
+      state.next += 1
+      return state.next
+    }
+    let reply: WorkerReply = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let open = state.withLock { state in
+          guard !state.closed else { return false }
+          state.waiting[id] = Waiting(reply: continuation, output: output)
+          return true
+        }
+        guard open else { return continuation.resume(throwing: WorkerLineSevered()) }
+        send.yield(.call(id: id, call))
+        if output != nil, Task.isCancelled { send.yield(.cancel(id: id)) }
       }
-      guard let id else { return continuation.resume(throwing: WorkerLineSevered()) }
-      Task {
-        do { try await transport.send(Array(JSONEncoder().encode(WorkerLineMessage.call(id: id, call)))) }
-        catch { state.withLock { $0.waiting.removeValue(forKey: id) }?.resume(throwing: WorkerLineSevered()) }
-      }
+    } onCancel: {
+      if output != nil { send.yield(.cancel(id: id)) }
     }
     if case let .failed(error) = reply { throw error.error }
     return reply
@@ -294,6 +323,11 @@ public final class WorkerClient: Worker, Sendable {
     return WorkerActivity(scripts: Dictionary(scripts.map { (ScriptRunID($0.script), $0.session) }) { _, last in last })
   }
 
+  public func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
+    let reply = try await ask(.run(script), output: output)
+    guard case .done = reply else { throw UnexpectedReply(reply: reply) }
+  }
+
   public func runningWork(_ session: SessionID) async throws -> [String] {
     let reply = try await ask(.runningWork(session: session))
     guard case let .running(handles) = reply else { throw UnexpectedReply(reply: reply) }
@@ -319,21 +353,60 @@ public func serveWorkerLine(_ worker: any Worker, on transport: any FrameTranspo
         }
       }
     }
+    let cancels = Mutex<[Int: AsyncStream<Void>.Continuation]>([:])
     for await frame in transport.inbound {
-      guard case let .call(id, call)? = try? JSONDecoder().decode(WorkerLineMessage.self, from: Data(frame)) else { continue }
-      group.addTask {
-        let reply: WorkerReply
-        do { reply = try await answer(call, with: worker) } catch { reply = .failed(WireError(error)) }
-        guard let frame = try? JSONEncoder().encode(WorkerLineMessage.reply(id: id, reply)) else { return }
-        try? await transport.send(Array(frame))
+      switch try? JSONDecoder().decode(WorkerLineMessage.self, from: Data(frame)) {
+      case let .call(id, call)?:
+        let (cancelled, cancel) = AsyncStream<Void>.makeStream()
+        cancels.withLock { $0[id] = cancel }
+        group.addTask {
+          // A cancelled call still replies: main waits for its reply.
+          let reply = await withTaskGroup(of: WorkerReply?.self, returning: WorkerReply.self) { race in
+            race.addTask {
+              do { return try await answer(call, with: worker) { output in await send(.output(id: id, output), on: transport) } }
+              catch { return .failed(WireError(error)) }
+            }
+            race.addTask {
+              for await _ in cancelled {}
+              return nil
+            }
+            while let finished = await race.next() {
+              race.cancelAll()
+              if let finished { return finished }
+            }
+            preconditionFailure("the answer always replies")
+          }
+          cancels.withLock { _ = $0.removeValue(forKey: id) }
+          await send(.reply(id: id, reply), on: transport)
+        }
+      case let .cancel(id)?:
+        cancels.withLock { $0[id] }?.finish()
+      case .reply?, .output?, .notice?, nil:
+        continue
       }
     }
     group.cancelAll()
   }
 }
 
-private func answer(_ call: WorkerCall, with worker: any Worker) async throws -> WorkerReply {
+private func send(_ message: WorkerLineMessage, on transport: any FrameTransport) async {
+  guard let frame = try? JSONEncoder().encode(message) else { return }
+  try? await transport.send(Array(frame))
+}
+
+private func answer(
+  _ call: WorkerCall, with worker: any Worker, output: @escaping @Sendable (ScriptOutput) async -> Void,
+) async throws -> WorkerReply {
   switch call {
+  case let .run(script):
+    let (outputs, sink) = AsyncStream<ScriptOutput>.makeStream()
+    async let sent: Void = { for await item in outputs { await output(item) } }()
+    let ran: Result<Void, any Error>
+    do { ran = .success(try await worker.run(script) { sink.yield($0) }) } catch { ran = .failure(error) }
+    sink.finish()
+    await sent
+    try ran.get()
+    return .done
   case let .deliver(session, input):
     try await worker.deliver(session, input)
     return .done

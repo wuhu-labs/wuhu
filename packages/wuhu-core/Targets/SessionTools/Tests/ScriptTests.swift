@@ -14,11 +14,13 @@ import struct MachineContract.MachineID
 import class MainHub.Hub
 import func MainHub.resolveScriptModule
 import struct MainHub.ScriptError
+import struct MainHub.ScriptRun
 import OrderedCollections
 import Scratch
 import SessionDomain
 @testable import SessionTools
 import struct SpaceContract.GroupID
+import enum SpaceContract.ScriptOutput
 @testable import SpaceCore
 import struct SpaceFS.SpacePath
 @testable import SpaceServer
@@ -586,6 +588,48 @@ import struct WuhuAI.ToolCall
     }
   }
 
+  @Test func aCommandWhoseCallerLeavesKillsItsProcessAndReleasesItsRows() async throws {
+    let world = MachineWorld()
+    try await withRig(world: world) { rig in
+      try await world.attach("box", in: rig.space)
+      let (said, say) = AsyncStream<ScriptOutput>.makeStream()
+      try await rig.advancing {
+        await withTaskGroup(of: Void.self) { group in
+          group.addTask {
+            try? await rig.command("""
+            import { machine } from "wuhu:machine"
+            const sleeper = await machine("box").spawn("sleep")
+            result(`spawned ${sleeper.id}`)
+            await sleeper.wait()
+            """) { say.yield($0) }
+          }
+          for await output in said {
+            if case .result = output { break }
+          }
+          group.cancelAll()
+        }
+      }
+      #expect(world.execs.kills.value.count == 1)
+      #expect(try await rig.scriptExecRows() == 0)
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1))) func closingKillsBusyScripts() async throws {
+    try await withRig { rig in
+      let busy = #"result("started"); while (true) {}"#
+      #expect(try await rig.evaluate(busy) == .string("started"))
+      let (said, say) = AsyncStream<ScriptOutput>.makeStream()
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { try await rig.command(busy) { say.yield($0) } }
+        for await output in said {
+          if case .result = output { break }
+        }
+        await rig.scripts.close()
+        try await group.waitForAll()
+      }
+    }
+  }
+
   @Test func aRestartTellsEachOwnerItsScriptIsGone() async throws {
     try await withRig(prepare: { space, session in
       let box = try await space.addMachine(name: "box").id
@@ -661,6 +705,11 @@ final class ScriptRig: Sendable {
     var arguments = options
     arguments["source"] = .string(try fixture(name + ".js"))
     record("run_script", try await call("run_script", arguments))
+  }
+
+  /// Runs `source` as `wuhu script` runs a file: for this caller alone.
+  func command(_ source: String, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
+    try await scripts.run(ScriptRun(session: session, source: source, arguments: []), tools: executor, output: output)
   }
 
   func evaluate(_ source: String) async throws -> JSONValue {

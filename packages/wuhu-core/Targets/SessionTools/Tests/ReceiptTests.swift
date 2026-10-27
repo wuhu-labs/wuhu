@@ -95,7 +95,7 @@ import struct WuhuAI.ToolArguments
       #expect(message.contains("create_session"))
       #expect(message.contains("call_0"))
 
-      #expect(try await space.sessions.receipt(session, toolCallID: .init("call_0")) == foreign)
+      #expect(try await space.sessions.receipt(.session(session), toolCallID: .init("call_0")) == foreign)
       let helpers = try await space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.anonymous))
       #expect(helpers.rows.isEmpty)
 

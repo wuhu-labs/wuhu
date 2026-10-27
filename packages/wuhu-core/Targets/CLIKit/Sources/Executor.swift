@@ -111,6 +111,8 @@ struct Executor {
       await self.runner.stdout(revPrefix(output.rev) + "token \(output.token)\n")
     case let .transcribe(file, language, provider, model, timestamps, diarize, json):
       try await self.transcribe(file: file, language: language, provider: provider, model: model, timestamps: timestamps, diarize: diarize, json: json)
+    case let .script(file, arguments):
+      try await self.script(file: file, arguments: arguments)
     case let .webSearch(query, provider, count):
       try await self.webSearch(query: query, provider: provider, count: count)
     case let .image(prompt, images, destination, provider, model, quality, size):
@@ -312,8 +314,8 @@ struct Executor {
       try await self.inbox()
     case let .sessionCreate(command):
       try await self.sessionCreate(command)
-    case let .sessionRequest(id, message, deadline, stall):
-      try await self.sessionRequest(id: id, message: message, deadline: deadline, stall: stall)
+    case let .sessionRequest(id, message, deadline, stall, terms):
+      try await self.sessionRequest(id: id, message: message, deadline: deadline, stall: stall, terms: terms)
     case let .sessionAction(verb, id, force):
       try await self.sessionAction(verb, id: id, force: force)
     case let .sessionCompact(id, instructions):

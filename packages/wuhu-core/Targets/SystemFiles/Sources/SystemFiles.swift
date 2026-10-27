@@ -24,12 +24,9 @@ public enum SystemFiles {
 
   public static let vfs: any SpaceVFS = SystemVFS(files: files)
 
-  /// Part 2 of the system prompt, as one scope: the system AGENTS.md and the
-  /// system skills, with their `wuhu://system/` addresses.
+  /// The system AGENTS.md and the system skills, with their `wuhu://system/`
+  /// addresses: the head of every prompt.
   public static let instructions: InstructionScope = {
-    let sections = files["/AGENTS.md"].map {
-      [SessionHome.Section(path: address("/AGENTS.md"), text: String(decoding: $0, as: UTF8.self))]
-    } ?? []
     let skills = files.keys
       .compactMap { path -> (name: String, path: String)? in
         let components = path.split(separator: "/")
@@ -37,24 +34,23 @@ public enum SystemFiles {
         return (String(components[1]), path)
       }
       .sorted { $0.name < $1.name }
-      .map { skill in
-        SessionHome.Skill(
-          name: skill.name,
-          description: InstructionScope.skillDescription(String(decoding: files[skill.path]!, as: UTF8.self)),
-          path: address(skill.path),
-        )
-      }
-    return InstructionScope(sections: sections, skills: skills)
+      .map { SessionHome.Skill(name: $0.name, markdown: text($0.path)!, path: address($0.path)) }
+    return InstructionScope(sections: section("/AGENTS.md"), skills: skills)
   }()
 
-  static let skillsHeading: String = """
-  System skills (call read on the path before using one). A skill with the same name in the space, a machine, \
-  a repository or your home replaces the system one:
-  """
+  /// The system SESSION.md: who this session is, rendered after the group's
+  /// layer so everything before it is shared by every session of the group.
+  public static let session: InstructionScope = InstructionScope(sections: section("/SESSION.md"), skills: [])
 
-  /// Part 2 of the system prompt.
-  public static let rendered: String = instructions.rendered(skillsHeading: skillsHeading)
-    .joined(separator: "\n\n")
+  public static let skillsHeading: String = "System skills (call read on the path before using one):"
+
+  private static func text(_ path: String) -> String? {
+    files[path].map { String(decoding: $0, as: UTF8.self) }
+  }
+
+  private static func section(_ path: String) -> [SessionHome.Section] {
+    text(path).map { [SessionHome.Section(path: address(path), text: $0)] } ?? []
+  }
 
   #if WUHU_EMBEDDED
     private static let embedded: [String: Data] = Dictionary(

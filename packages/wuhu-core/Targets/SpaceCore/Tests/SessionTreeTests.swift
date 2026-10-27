@@ -31,7 +31,7 @@ import Testing
     let parent = try await root(rig.store)
     let agent = try await child(rig.store, of: parent, kind: .agent)
     let request = try await rig.store.openRequest(
-      on: agent, from: parent, messageID: MessageID("r1"), text: "look into it", deadline: nil,
+      on: agent, from: .session(parent), messageID: MessageID("r1"), text: "look into it", deadline: nil,
     )
     #expect(request.enqueued == [agent])
     _ = try await rig.store.drainQueue(agent)
@@ -46,7 +46,7 @@ import Testing
   @Test func `a root cannot report`() async throws {
     let rig = try MovingClockSpace()
     let agent = try await root(rig.store)
-    await #expect(throws: SessionStoreError.noParent(agent.rawValue)) {
+    await #expect(throws: SessionStoreError.unknownRequest("r1")) {
       _ = try await rig.store.report(agent, request: RequestID("r1"), kind: .final, messageID: MessageID("f1"), text: "x")
     }
   }
@@ -55,14 +55,14 @@ import Testing
     let rig = try MovingClockSpace()
     let parent = try await root(rig.store)
     let task = try await child(rig.store, of: parent)
-    _ = try await rig.store.openRequest(on: task, from: parent, messageID: MessageID("r1"), text: "go", deadline: nil)
+    _ = try await rig.store.openRequest(on: task, from: .session(parent), messageID: MessageID("r1"), text: "go", deadline: nil)
     _ = try await rig.store.drainQueue(task)
     let replay = try await rig.store.openRequest(
-      on: task, from: parent, messageID: MessageID("r1"), text: "go", deadline: nil,
+      on: task, from: .session(parent), messageID: MessageID("r1"), text: "go", deadline: nil,
     )
     #expect(replay.replayed)
     await #expect(throws: SessionStoreError.requestAlreadyOpen("r1")) {
-      _ = try await rig.store.openRequest(on: task, from: parent, messageID: MessageID("r2"), text: "go", deadline: nil)
+      _ = try await rig.store.openRequest(on: task, from: .session(parent), messageID: MessageID("r2"), text: "go", deadline: nil)
     }
   }
 

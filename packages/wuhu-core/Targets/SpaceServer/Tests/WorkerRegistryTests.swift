@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Foundation
 import MainHub
 import SessionDomain
+import enum SpaceContract.ScriptOutput
 @testable import SpaceServer
 import Synchronization
 import Testing
@@ -19,6 +20,7 @@ private final class Line: Worker, Sendable {
   }
 
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { ScriptHandlerResult(stateJSON: "null", wakes: []) }
+  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {}
   func activity() async -> WorkerActivity { WorkerActivity(scripts: [:]) }
   func runningWork(_ session: SessionID) async throws -> [String] { [] }
   func shutdown() async {}

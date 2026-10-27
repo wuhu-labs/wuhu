@@ -296,10 +296,11 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "parked", kind: kind, createdBy: "morgan", model: .test)
+      let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
+      let sid = try await sessions.createSession(group: .shared, title: "parked", kind: kind, parent: parent, createdBy: "morgan", executor: .kernel(.test))
       let first = InferenceScript([Fix.replying("parking"), Fix.replying("waiting")])
-      try await runService(space, makeConfig(inference: { try await first($0) })) { service in
-        _ = try await service.enqueue(item: Self.request, to: sid)
+      try await runService(space, makeConfig(inference: { try await first($0) })) { _ in
+        _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it", deadline: nil)
         try await until("first parent parks") { try await sessions.settledWork(sid) && first.count == 2 }
         try await time.asleep("first parent reminder", dueIn: 60)
       }
@@ -319,8 +320,9 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .task, createdBy: "morgan", model: .test)
-      _ = try await sessions.enqueue(sid, input: Self.request)
+      let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
+      _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it", deadline: nil)
       _ = try await sessions.drainQueue(sid)
       _ = try await sessions.appendAssistant(sid, attemptID: UUID(), message: .init(content: [.text("stopped")]), metadata: Fix.reply("").metadata)
       try await sessions.restart(sid)

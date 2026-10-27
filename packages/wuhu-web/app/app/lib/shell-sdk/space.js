@@ -194,6 +194,31 @@ export const {
 } = createSpace(httpTransport)
 export { SpaceError }
 
+// The viewer's own agents, kept to this page's group: wuhu:session's
+// createSession and sendMessage, minus what only a session has.
+export async function createSession(options) {
+  const made = await send('session', options)
+  const result = { id: made.id }
+  for (
+    const key of [
+      'requestId',
+      'existing',
+      'modelGroup',
+      'member',
+      'provider',
+      'model',
+    ]
+  ) {
+    if (made[key] != null) result[key] = made[key]
+  }
+  return result
+}
+
+export async function sendMessage(options) {
+  const { messageId, conversationId } = await send('message', options)
+  return { messageId, conversationId }
+}
+
 export async function fetch(input, init = {}) {
   const target = new Request(input, init)
   const headers = Object.fromEntries(target.headers)

@@ -48,7 +48,7 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
 
         // The production firing sees the script as a wait.
         let first = RequestID("stall-before-archive")
-        _ = try await harness.store.openRequest(on: task, from: parent, messageID: MessageID(first.rawValue), text: "watch", deadline: nil, stallSeconds: 1)
+        _ = try await harness.store.openRequest(on: task, from: .session(parent), messageID: MessageID(first.rawValue), text: "watch", deadline: nil, stallSeconds: 1)
         try await ContinuousClock().sleep(for: .seconds(3))
         #expect(try await stallAlerts(space, to: parent, for: first) == 0)
 
@@ -57,7 +57,7 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
         try await harness.runtime.service.unarchive(task)
 
         let second = RequestID("stall-after-unarchive")
-        _ = try await harness.store.openRequest(on: task, from: parent, messageID: MessageID(second.rawValue), text: "again", deadline: nil, stallSeconds: 1)
+        _ = try await harness.store.openRequest(on: task, from: .session(parent), messageID: MessageID(second.rawValue), text: "again", deadline: nil, stallSeconds: 1)
         try await until("the new request's stall alert") { try await stallAlerts(space, to: parent, for: second) == 1 }
       }
     }

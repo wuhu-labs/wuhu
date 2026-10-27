@@ -47,7 +47,7 @@ import WuhuAI
       let outside = try await sessions.createSession(group: .shared, title: "outside", kind: .agent, createdBy: "owner", model: .test)
       try await sessions.markInterrupted(root)
       try await sessions.markInterrupted(child)
-      let delivery = try await sessions.openRequest(on: child, from: root, messageID: .init("reserved-request"), text: "work", deadline: nil)
+      let delivery = try await sessions.openRequest(on: child, from: .session(root), messageID: .init("reserved-request"), text: "work", deadline: nil)
       let writing = Box(false)
       let outsideRan = Box(false)
       let enqueued = Box(false)

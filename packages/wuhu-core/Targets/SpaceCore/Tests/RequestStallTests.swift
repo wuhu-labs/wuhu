@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import GRDB
 import struct MachineContract.ExecID
 import SessionDomain
 @testable import SpaceCore
@@ -28,7 +29,7 @@ import Testing
         group: .shared, title: "task", kind: .task, parent: parent, createdBy: parent.rawValue, executor: .kernel(.test),
       )
       _ = try await rig.store.openRequest(
-        on: task, from: parent, messageID: MessageID(request.rawValue), text: "do the thing", deadline: nil, stallSeconds: stall,
+        on: task, from: .session(parent), messageID: MessageID(request.rawValue), text: "do the thing", deadline: nil, stallSeconds: stall,
       )
     }
 
@@ -42,6 +43,10 @@ import Testing
 
     func slot() async throws -> ArmedSubscription? {
       try await store.armedSubscriptions(parent).first { $0.slot.id == .stall(request) }
+    }
+
+    func status() async throws -> String? {
+      try await store.writer.read { try String.fetchOne($0, sql: "SELECT status FROM requests WHERE id = ?", arguments: [request.rawValue]) }
     }
 
     func due() async throws -> Date? {
@@ -77,8 +82,10 @@ import Testing
     #expect(try await rig.check(300).isEmpty)
     #expect(try await rig.due() == time(600))
 
+    #expect(try await rig.status() == "open")
     let alerts = try await rig.check(600)
     #expect(alerts.count == 1)
+    #expect(try await rig.status() == "stalled")
     #expect(alerts.first?.requestID == rig.request)
     #expect(alerts.first?.subscriptionID == .stall(rig.request))
     #expect(alerts.first?.content.text.contains("The task is idle.") == true)
@@ -92,6 +99,7 @@ import Testing
     )
     try await rig.inference(on: grandchild, at: 1900)
     #expect(try await rig.check(1950).isEmpty)
+    #expect(try await rig.status() == "open")
     #expect(try await rig.due() == time(2501))
     #expect(try await rig.check(2501).count == 1)
     #expect(try await rig.check(3200).isEmpty)
@@ -165,8 +173,10 @@ import Testing
   @Test func `an inference open past the stall alerts as unknown`() async throws {
     let rig = try await Rig()
     _ = try await rig.store.drainQueue(rig.task)
+    #expect(try await rig.status() == "open")
     let alerts = try await rig.check(600)
     #expect(alerts.count == 1)
+    #expect(try await rig.status() == "stalled")
     #expect(alerts.first?.content.text.contains("unknown: inference open since") == true)
   }
 
@@ -191,7 +201,7 @@ import Testing
     let rig = try await Rig()
     func replay() async throws {
       _ = try await rig.store.openRequest(
-        on: rig.task, from: rig.parent, messageID: MessageID(rig.request.rawValue), text: "do the thing", deadline: nil,
+        on: rig.task, from: .session(rig.parent), messageID: MessageID(rig.request.rawValue), text: "do the thing", deadline: nil,
         stallSeconds: 600,
       )
     }

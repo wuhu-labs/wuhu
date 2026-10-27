@@ -114,7 +114,7 @@ extension SessionStore {
         """,
         arguments: [now, key],
       )
-      try PromptRevisions.advance(key, in: db)
+      try SessionPrompts.advance(key, in: db)
       let queueHead = try Sessions.queueHead(key, tail: queue.tail, in: db)
       let hasQueuedInput = queueHead > queue.tail
       if hasQueuedInput { try Sessions.markHasWork(key, now: now, in: db) }

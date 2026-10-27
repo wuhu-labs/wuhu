@@ -184,6 +184,18 @@ import Testing
     }
   }
 
+  @Test func aPersonPlacesAnAgentOnlyWhereTheyWriteTheirActingGroupIncluded() async throws {
+    let rig = try await makeRig()
+    let reader = try await rig.space.addAccount(kind: .human, name: "reader").id
+    try await rig.space.setGrant(.account, reader.rawValue, role: .read, in: Self.bob, by: .anonymous, acting: Self.bob)
+    let person = Principal(actor: .person(persona: "reader", account: reader), group: Self.bob)
+    await #expect(throws: SpaceError.groupForbidden(Self.bob.rawValue)) {
+      _ = try await rig.space.homeGroup(nil, creator: person)
+    }
+    try await rig.space.setGrant(.account, reader.rawValue, role: .write, in: Self.bob, by: .anonymous, acting: Self.bob)
+    #expect(try await rig.space.homeGroup(nil, creator: person) == Self.bob)
+  }
+
   @Test func instructionWritesTakeTheGroupsOwnSessions() async throws {
     let rig = try await makeRig()
     let agents = try path("/AGENTS.md")
@@ -221,16 +233,14 @@ import Testing
     _ = try await rig.space.fs(Self.alice).write("/.agents/skills/mine/SKILL.md", bytes("---\ndescription: Mine.\n---\n"), ifMatch: nil)
 
     let home = try await rig.space.sessionHome(rig.p)
-    #expect(home.groupRendered.contains("from /AGENTS.md:\n\nAlice rules."))
-    #expect(home.groupRendered.contains("(/.agents/skills/mine/SKILL.md)"))
-    #expect(!home.groupRendered.contains("Shared rules."))
-    #expect(!home.groupRendered.contains("deploy"))
-    #expect(home.rendered.contains("the system, your group's root, then yours"))
+    #expect(home.groupLayer.sections.map(\.text) == ["Alice rules.\n"])
+    #expect(home.groupLayer.skills.map(\.path) == ["/.agents/skills/mine/SKILL.md"])
+    #expect(home.groupSkillsHeading.hasPrefix("Group skills"))
 
     let shared = try await rig.space.sessionHome(rig.s)
-    #expect(shared.groupRendered.contains("from /AGENTS.md:\n\nShared rules."))
-    #expect(shared.groupRendered.contains("(/.agents/skills/deploy/SKILL.md)"))
-    #expect(shared.rendered.contains("the system, your group's root, then yours"))
+    #expect(shared.groupLayer.sections.map(\.text) == ["Shared rules.\n"])
+    #expect(shared.groupLayer.skills.map(\.path) == ["/.agents/skills/deploy/SKILL.md"])
+    #expect(shared.groupSkillsHeading.hasPrefix("Space skills"))
   }
 
   @Test func senderAdminIsAboutTheRecipientsGroup() async throws {

@@ -149,7 +149,6 @@ extension SessionStore {
     senderSession: SessionID? = nil,
     kind: MessageKind = .message,
     requestID: RequestID? = nil,
-    deadline: Date? = nil,
     replyTarget: MessageID? = nil,
     viewing: Viewing? = nil,
     content: MessageContent,
@@ -210,13 +209,13 @@ extension SessionStore {
         sql: """
         INSERT INTO messages
           (id, conversation_id, sender_id, sender_session_id, sender_timezone,
-           reply_target, kind, request_id, deadline_at, content, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           reply_target, kind, request_id, content, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         arguments: [
           messageID.rawValue, conversation.id.rawValue, sender.id, senderSession?.rawValue,
           sender.timeZone.identifier, replyTarget?.rawValue, kind.rawValue, requestID?.rawValue,
-          deadline.map(SQLiteDateFormat.string(from:)), try Sessions.encode(content), now,
+          try Sessions.encode(content), now,
         ],
       )
       if let device = sender.device {
@@ -232,9 +231,10 @@ extension SessionStore {
         sql: "INSERT OR IGNORE INTO message_groups (message_id, grp) VALUES (?, ?)",
         arguments: [messageID.rawValue, poster.group.rawValue],
       )
+      // Read again after `alongside`: a request's deadline lives on its row.
+      try alongside?(Conversations.message(id: messageID.rawValue, in: db)!, db)
       let record = try Conversations.message(id: messageID.rawValue, in: db)!
       let enqueued = try deliver(record, conversation: conversation, poster: poster, nowDate: nowDate, now: now, in: db)
-      try alongside?(record, db)
       if let written {
         pending += written.attachments.map {
           MutationEvent(group: conversation.group, path: $0.path, rev: Int(written.rev), kind: .write, entry: .file)

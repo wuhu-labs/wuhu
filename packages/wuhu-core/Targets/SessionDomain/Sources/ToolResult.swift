@@ -393,12 +393,16 @@ public struct RequestResult: Hashable, Sendable, Codable {
   public var task: SessionID
   public var conversationID: ConversationID
   public var deadline: Date?
+  // True when a keyed create found the request that already holds its key;
+  // nothing was posted, and its clocks stay with whoever opened it.
+  public var existing: Bool?
 
-  public init(requestID: RequestID, task: SessionID, conversationID: ConversationID, deadline: Date? = nil) {
+  public init(requestID: RequestID, task: SessionID, conversationID: ConversationID, deadline: Date? = nil, existing: Bool? = nil) {
     self.requestID = requestID
     self.task = task
     self.conversationID = conversationID
     self.deadline = deadline
+    self.existing = existing
   }
 }
 
@@ -424,12 +428,16 @@ public struct CreateSessionResult: Hashable, Sendable, Codable {
   public var sessionID: SessionID
   public var title: String
   public var requestID: RequestID?
+  // True when a keyed create found the request that already holds its key:
+  // the session and request named are that request's, and nothing was made.
+  public var existing: Bool?
   // Only on the receipt recorded with the new session: true while its
   // template's files are still owed to its home, so a replay of the same call
   // clones them instead of answering with a half-made session.
   public var cloneOwed: Bool?
 
-  public init(sessionID: SessionID, title: String, requestID: RequestID? = nil, cloneOwed: Bool? = nil, modelGroup: String? = nil, member: String? = nil, provider: String? = nil, model: String? = nil) {
+  public init(sessionID: SessionID, title: String, requestID: RequestID? = nil, existing: Bool? = nil, cloneOwed: Bool? = nil, modelGroup: String? = nil, member: String? = nil, provider: String? = nil, model: String? = nil) {
+    self.existing = existing
     self.sessionID = sessionID
     self.title = title
     self.requestID = requestID

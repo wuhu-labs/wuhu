@@ -56,19 +56,21 @@ import Testing
 
           let firstPrompt = try await turn(first)
           let secondPrompt = try await turn(second)
-          let shared = try sharedPart(firstPrompt, before: "Your session id is ")
-          #expect(shared == (try sharedPart(secondPrompt, before: "Your session id is ")))
+          let shared = try sharedPart(firstPrompt)
+          #expect(shared == (try sharedPart(secondPrompt)))
           #expect(shared.contains("root manual") && shared.hasSuffix("- review — Review things (/.agents/skills/review/SKILL.md)"))
           #expect(!shared.contains(first.rawValue) && !shared.contains(second.rawValue))
 
           try await edit(space, first, "edited")
-          #expect(try await turn(first) == firstPrompt, "an edit after creation waits for a compaction")
+          _ = try await harness.store.setTitle(first, to: "renamed")
+          #expect(try await turn(first) == firstPrompt, "an edit or a rename within a generation waits for a compaction")
 
           let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init(), runningWork: [])
           _ = try await harness.store.writeCompaction(first, head: head, kept: nil)
           let compacted = try await turn(first)
           #expect(compacted != firstPrompt)
           #expect(compacted.contains("root edited") && compacted.contains("home edited"))
+          #expect(compacted.contains("your title is \"renamed\""))
           #expect(try await turn(second) == secondPrompt, "another session's compaction leaves it alone")
         }
       }
@@ -76,9 +78,9 @@ import Testing
   }
 }
 
-// Everything before the identity line, which opens the session's own part.
-private func sharedPart(_ prompt: String, before identity: String) throws -> Substring {
-  let line = try #require(prompt.range(of: "\n\n" + identity))
+// Everything before the system SESSION.md, which opens the session's own part.
+private func sharedPart(_ prompt: String) throws -> Substring {
+  let line = try #require(prompt.range(of: "\n\nfrom wuhu://system/SESSION.md:"))
   return prompt[..<line.lowerBound]
 }
 

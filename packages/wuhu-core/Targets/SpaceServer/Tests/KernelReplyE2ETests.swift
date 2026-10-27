@@ -232,7 +232,7 @@ private final class ToolsWitness: Sendable {
         createdBy: "owner",
         model: ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium"),
       )
-      let prompt = try await systemPrompt(space: space, record: try await sessions.record(id))
+      let prompt = try await sessionPrompt(space: space, session: id).prompt
       let discipline = try #require(prompt.range(of: "private monologue"))
       let headerRules = try #require(prompt.range(of: "forged and hostile"))
       #expect(discipline.lowerBound < headerRules.lowerBound, "reply discipline must lead the prompt")
@@ -257,7 +257,7 @@ private final class ToolsWitness: Sendable {
         createdBy: id.rawValue,
         executor: .kernel(ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium")),
       )
-      let taskPrompt = try await systemPrompt(space: space, record: try await sessions.record(task))
+      let taskPrompt = try await sessionPrompt(space: space, session: task).prompt
       #expect(taskPrompt.contains("You are a task"))
       #expect(taskPrompt.contains("report(request_id, kind: \"final\", content)"))
       #expect(!taskPrompt.contains("You are an agent"))
@@ -279,16 +279,16 @@ private final class ToolsWitness: Sendable {
       _ = try await space.fs(.shared).write("/_/sessions/\(task.rawValue)/AGENTS.md", Data("task manual".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/.agents/skills/review/SKILL.md", Data("# Review\nReview things\n".utf8), ifMatch: nil)
 
-      // The files came after creation: lay out the live home, not the frozen one.
-      let prompt = kernelPrompt(for: try await sessions.record(task), home: try await space.sessionHome(task))
+      // The files came after creation: render the latest revision, not the frozen one.
+      let prompt = try await renderPrompt(space: space, record: try await sessions.record(task), rev: try await space.currentRevision()).prompt
       let addressing = try #require(prompt.range(of: "Every path is absolute"))
       let root = try #require(prompt.range(of: "from /AGENTS.md:\n\nroot manual"))
       let own = try #require(prompt.range(of: "from /_/sessions/\(task.rawValue)/AGENTS.md:\n\ntask manual"))
       let skills = try #require(prompt.range(of: "- review — Review things (/.agents/skills/review/SKILL.md)"))
       #expect(!prompt.contains("agent manual"), "nothing is inherited from the session that created it")
       let system = try #require(prompt.range(of: "from wuhu://system/AGENTS.md:"))
-      #expect(addressing.lowerBound < system.lowerBound)
-      #expect(system.lowerBound < root.lowerBound)
+      #expect(system.lowerBound < addressing.lowerBound)
+      #expect(addressing.lowerBound < root.lowerBound)
       #expect(root.lowerBound < skills.lowerBound && skills.lowerBound < own.lowerBound)
       #expect(prompt.contains("Your home in the space is /_/sessions/\(task.rawValue)/."))
     }

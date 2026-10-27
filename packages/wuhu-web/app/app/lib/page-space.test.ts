@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from 'jsr:@std/assert@1'
 import {
+  createSession,
   fetch as spaceFetch,
   find,
   grep,
@@ -8,6 +9,7 @@ import {
   patchAttributes,
   query,
   readAttributes,
+  sendMessage,
   SpaceError,
   watch,
 } from './shell-sdk/space.js'
@@ -105,6 +107,100 @@ Deno.test('writes post JSON naming the page, and read attributes by path', async
     set: { status: 'done' },
     remove: ['draft'],
     ifMatch: 't1',
+    page: '/apps/tasks.html',
+  })
+})
+
+Deno.test('createSession and sendMessage post as the page and answer wuhu:session shapes', async () => {
+  const sent = page([
+    () =>
+      json({
+        id: 'calm-sea-fox',
+        executor: 'kernel',
+        kind: 'agent',
+        title: 'helper',
+        model: 'm',
+      }),
+    () =>
+      json({
+        messageId: 'm1',
+        conversationId: 'calm-sea-fox',
+        n: 2,
+        delivered: [],
+      }),
+    () =>
+      json({
+        code: 'outsidePageGroup',
+        message: 'a page creates sessions only in its own group home',
+      }, 403),
+    () =>
+      json({
+        code: 'incompleteSession',
+        message: 'session calm-sea-fox was created, but its message was not',
+        id: 'calm-sea-fox',
+      }, 422),
+  ])
+  assertEquals(
+    await createSession({ title: 'helper', message: 'start', key: 'helper' }),
+    { id: 'calm-sea-fox', model: 'm' },
+  )
+  assertEquals(
+    await sendMessage({ session: 'calm-sea-fox', message: 'more' }),
+    { messageId: 'm1', conversationId: 'calm-sea-fox' },
+  )
+  assertEquals(sent[0]!.url.href, `${origin}/_/space/session`)
+  assertEquals(JSON.parse(sent[0]!.init!.body as string), {
+    title: 'helper',
+    message: 'start',
+    key: 'helper',
+    page: '/apps/tasks.html',
+  })
+  assertEquals(sent[1]!.url.href, `${origin}/_/space/message`)
+  assertEquals(JSON.parse(sent[1]!.init!.body as string), {
+    session: 'calm-sea-fox',
+    message: 'more',
+    page: '/apps/tasks.html',
+  })
+  const refused = await assertRejects(
+    () => createSession({ title: 'x', group: 'shared' }),
+    SpaceError,
+  )
+  assertEquals(refused.code, 'outsidePageGroup')
+  const incomplete = await assertRejects(
+    () => createSession({ title: 'x', message: 'start', key: 'x' }),
+    SpaceError,
+  )
+  assertEquals([incomplete.code, incomplete.id], [
+    'incompleteSession',
+    'calm-sea-fox',
+  ])
+})
+
+Deno.test('createSession with expectsReply answers the request it opened', async () => {
+  const sent = page([
+    () =>
+      json({
+        id: 'calm-sea-fox',
+        executor: 'kernel',
+        kind: 'agent',
+        title: 'triage',
+        requestId: 'r1',
+        existing: true,
+      }),
+  ])
+  const options = {
+    title: 'triage',
+    message: 'triage #7',
+    expectsReply: true,
+    request: { kind: 'triage', key: 'issue-7' },
+  }
+  assertEquals(await createSession(options), {
+    id: 'calm-sea-fox',
+    requestId: 'r1',
+    existing: true,
+  })
+  assertEquals(JSON.parse(sent[0]!.init!.body as string), {
+    ...options,
     page: '/apps/tasks.html',
   })
 })

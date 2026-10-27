@@ -7,48 +7,71 @@ import Dependencies
 import enum InferenceKit.CatalogError
 import SessionDomain
 import struct SpaceContract.AttachmentTally
+import struct SpaceContract.GroupID
 import SpaceCore
 import SpaceTools
 import SystemFiles
 
 extension Hub {
   nonisolated public func sendMessage(
-    _ session: SessionID,
+    _ caller: Caller,
     _ callID: ToolCallID,
     _ arguments: SendMessageArguments,
   ) async throws -> ToolResultPayload {
-    // Scoped like every receipt key: (session id, kernel tool call id).
-    let messageID = MessageID(UUID.deterministic("post", session.rawValue, callID.rawValue).uuidString.lowercased())
+    if case let .page(person) = caller { try await admit(person) }
+    // Scoped like every receipt key: (caller, kernel tool call id).
+    let messageID = MessageID(UUID.deterministic("post", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
     // A retry of a send that already committed must not read its attachments
     // again: the machine may be gone by now, and a failure here would make the
     // model send the message twice.
     if let posted = try await store.message(messageID) {
       let delivery = try await deliver(
-        .conversation(posted.conversation), session: session, messageID: messageID,
+        .conversation(posted.conversation), as: caller, messageID: messageID,
         text: arguments.message, replyTarget: arguments.replyTarget.map { MessageID($0) }, uploads: [],
       )
       return sendReceipt(delivery.message)
     }
-    let target: ConversationTarget
-    switch (arguments.conversation, arguments.session) {
-    case (nil, nil):
-      target = .box(session)
-    case let (id?, nil):
-      target = .conversation(ConversationID(id))
-    case let (nil, other?):
-      target = try await dm(to: SessionID(other))
-    default:
-      throw ToolProblem("send_message wants at most one of conversation or session")
-    }
+    let target = try await target(of: arguments, for: caller)
     let delivery = try await deliver(
       target,
-      session: session,
+      as: caller,
       messageID: messageID,
       text: arguments.message,
       replyTarget: arguments.replyTarget.map { MessageID($0) },
-      uploads: attachmentUploads(arguments.attachments ?? [], by: session),
+      uploads: attachmentUploads(arguments.attachments ?? [], by: caller),
     )
     return sendReceipt(delivery.message)
+  }
+
+  // A session's own box by default, another session in private; a person has
+  // no box, and reaches a session through its box.
+  nonisolated private func target(of arguments: SendMessageArguments, for caller: Caller) async throws -> ConversationTarget {
+    switch (arguments.conversation, arguments.session, caller) {
+    case let (nil, nil, .session(session)):
+      return .box(session)
+    case (nil, nil, _):
+      throw ToolProblem("send_message: a person has no box; name a conversation or session")
+    case let (id?, nil, _):
+      return .conversation(ConversationID(id))
+    case let (nil, other?, .session):
+      return try await dm(to: SessionID(other))
+    case let (nil, other?, _):
+      return .box(SessionID(other))
+    default:
+      throw ToolProblem("send_message wants at most one of conversation or session")
+    }
+  }
+
+  // A conversation that does not exist is left to the post to refuse.
+  nonisolated private func confine(_ target: ConversationTarget, to group: GroupID) async throws {
+    let id: ConversationID
+    switch target {
+    case let .conversation(conversation): id = conversation
+    case let .box(session): id = ConversationID(session.rawValue)
+    default: preconditionFailure("a page posts into a conversation or a box, never \(target)")
+    }
+    guard let conversation = try? await store.conversation(id), conversation.group != group else { return }
+    throw outsidePageGroup(group, "posts")
   }
 
   nonisolated private func sendReceipt(_ message: MessageRecord) -> ToolResultPayload {
@@ -71,21 +94,26 @@ extension Hub {
       return date.now.addingTimeInterval(seconds)
     }
     let stall = try stallSeconds(arguments.stallSeconds)
+    let terms = try arguments.terms.terms()
     let task = SessionID(arguments.task)
+    let messageID = MessageID(UUID.deterministic("request", session.rawValue, callID.rawValue).uuidString.lowercased())
     do {
       let delivery = try await store.openRequest(
         on: task,
-        from: session,
-        messageID: MessageID(UUID.deterministic("request", session.rawValue, callID.rawValue).uuidString.lowercased()),
+        from: .session(session),
+        messageID: messageID,
         text: arguments.message,
         deadline: deadline,
         stallSeconds: stall,
+        terms: terms,
       )
+      let existing = delivery.message.id != messageID
       return .request(.init(
         requestID: delivery.message.requestID!,
-        task: task,
+        task: existing ? try await store.keyedRequest(by: .session(session), terms)!.task : task,
         conversationID: delivery.message.conversation,
-        deadline: delivery.message.deadline,
+        deadline: existing ? nil : delivery.message.deadline,
+        existing: existing ? true : nil,
       ))
     } catch let error as SessionStoreError {
       throw problem(error)
@@ -153,35 +181,50 @@ extension Hub {
 
   nonisolated func deliver(
     _ target: ConversationTarget,
-    session: SessionID,
+    as caller: Caller,
     messageID: MessageID,
     text: String,
     replyTarget: MessageID?,
     uploads: [AttachmentUpload],
   ) async throws -> MessageDelivery {
+    if case let .page(person) = caller { try await confine(target, to: person.group) }
     do {
       return try await store.post(
         target,
         messageID: messageID,
-        sender: Sender(id: session.rawValue, timeZone: TimeZone(identifier: "UTC")!),
-        senderSession: session,
+        sender: Sender(id: caller.name, timeZone: TimeZone(identifier: "UTC")!),
+        senderSession: caller.session,
         replyTarget: replyTarget,
         content: MessageContent(text: text),
         uploads: uploads,
+        acting: caller.person?.principal,
       )
     } catch let error as SessionStoreError {
       throw problem(error)
     }
   }
 
+  nonisolated private func principal(of caller: Caller) async throws -> Principal {
+    switch caller {
+    case let .session(session): try await space.principal(of: session)
+    case let .page(person): person.principal
+    }
+  }
+
   // Sizes are checked before any bytes are read, so an over-limit list fails
   // without pulling a file off a machine.
-  nonisolated private func attachmentUploads(_ references: [String], by session: SessionID) async throws -> [AttachmentUpload] {
-    let context = SpaceToolContext(space: space, principal: try await space.principal(of: session))
+  nonisolated private func attachmentUploads(_ references: [String], by caller: Caller) async throws -> [AttachmentUpload] {
+    let principal = try await principal(of: caller)
+    let context = SpaceToolContext(space: space, principal: principal)
     var tally = AttachmentTally()
     var located: [(reference: String, address: Address, size: Int)] = []
     for reference in references {
-      let address = try await resolve(reference, as: session)
+      let address = try await resolve(reference, as: principal)
+      if case let .page(person) = caller {
+        guard case let .space(_, group) = address, (group ?? principal.group) == person.group else {
+          throw outsidePageGroup(person.group, "attaches files")
+        }
+      }
       let size: Int
       switch address {
       case let .space(path, group):
@@ -244,14 +287,14 @@ extension Hub {
       ToolProblem("session \(key) is a task and has no box; name a conversation or session")
     case let .taskTakesNoHumanInput(key):
       ToolProblem("session \(key) is a task and takes no messages from people")
-    case let .noParent(key):
-      ToolProblem("session \(key) has no parent and cannot report")
     case let .notTheParent(key):
       ToolProblem("only the parent of session \(key) may open a request on it")
     case let .requestAlreadyOpen(id):
       ToolProblem("request \(id) is still open; wait for its final report before requesting again")
     case let .unknownRequest(id):
       ToolProblem("no open request \(id)")
+    case let .reportRefused(id, violations, left):
+      ToolProblem(SessionStoreError.reportRefusal(id, violations: violations, left: left), code: "invalidArgument")
     case let .archiveGraceExpired(key):
       ToolProblem("session \(key) is archived and no longer accepts messages")
     case let .requestDeadlineWithoutFireDate(id):
@@ -271,40 +314,5 @@ extension Hub {
     case let .mayNotArchive(target, actor):
       ToolProblem("\(actor) may not archive or unarchive session \(target): only the session itself, its creator and admins of its group may")
     }
-  }
-
-  nonisolated public func createSession(
-    _ session: SessionID,
-    _ callID: ToolCallID,
-    _ arguments: CreateSessionArguments,
-  ) async throws -> ToolResultPayload {
-    let spawned: Spawned
-    do {
-      spawned = try await spawn(session, callID, SpawnOrder(
-        executor: arguments.executor,
-        title: arguments.title,
-        kind: arguments.kind,
-        topLevel: arguments.topLevel ?? false,
-        group: arguments.group,
-        provider: arguments.provider,
-        model: arguments.model,
-        modelGroup: arguments.modelGroup,
-        effort: arguments.effort,
-        tags: arguments.tags,
-        template: arguments.template,
-        expectsReply: arguments.expectsReply ?? false,
-        message: arguments.message,
-        stallSeconds: arguments.stallSeconds,
-      ))
-    } catch let problem as ToolProblem {
-      throw ToolProblem("create_session: \(problem.message)", code: problem.code)
-    }
-    if let unfinished = spawned.unfinished {
-      throw IncompleteSession(id: spawned.id, message: "create_session: session \(spawned.id.rawValue) was created, but \(unfinished)")
-    }
-    return .createSession(.init(
-      sessionID: spawned.id, title: spawned.title, requestID: spawned.requestID,
-      modelGroup: spawned.modelGroup, member: spawned.member, provider: spawned.provider, model: spawned.model,
-    ))
   }
 }

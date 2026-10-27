@@ -44,9 +44,9 @@ public struct ViewCatalog: Sendable {
 
   static let inducedTables: Set<String> = [
     "docs", "links", "doc_custom_attrs", "sessions", "session_model_routes", "session_model_route_history", "inferences", "conversations", "conversation_members",
-    "messages", "notifications", "watermarks", "devices", "device_commands", "machine_v2_trace",
+    "messages", "notifications", "watermarks", "devices", "device_commands", "machine_v2_trace", "requests",
   ]
-  static let groupedTables: Set<String> = ["docs", "links", "doc_custom_attrs", "sessions", "session_model_routes", "session_model_route_history", "inferences", "conversations", "notifications", "machine_v2_trace"]
+  static let groupedTables: Set<String> = ["docs", "links", "doc_custom_attrs", "sessions", "session_model_routes", "session_model_route_history", "inferences", "conversations", "notifications", "machine_v2_trace", "requests"]
   // SQLite reports a table-valued function as a read of a table by its name;
   // these two read nothing but their own arguments.
   static let tableFunctions: Set<String> = ["json_each", "json_tree"]

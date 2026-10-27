@@ -11,6 +11,7 @@ dependencies:
   - ServerTelemetry
 
   - SessionDomain
+  - SpaceContract
   - SpaceCore
   - WuhuAI
   - Fetch
@@ -28,6 +29,7 @@ tests:
 
     - OrderedCollections
     - SessionDomain
+    - SpaceContract
     - SpaceCore
     - WuhuAI
     - Fetch

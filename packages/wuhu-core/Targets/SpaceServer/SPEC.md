@@ -107,6 +107,7 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
   - `GET /_/space/attributes?path=` runs `attributes.read`.
   - `GET /_/space/find?glob=[&path=][&matchLimit=][&hidden=][&noIgnore=][&step=]` and `GET /_/space/grep?pattern=[&path=][&matchLimit=][&hidden=][&noIgnore=][&step=]` run the `find` and `grep` tools as the page's group, answering their output: `{paths, cursor?, scanned, skipped}` and `{matches: [{path, line, text}], cursor?, scanned, skipped}`, `cursor` present exactly when more results remain. A missing glob or pattern, a limit that is not an integer, or a flag other than `true`/`false` is 400 `invalidArgument`; the tool's own refusals keep their codes (a bad regex or cursor 400, an unread group or missing path 404, a `machines://` path 503 `unavailable`, since a page has no machine seam). Other methods are 405.
 - Writes are `POST /_/space/rows` `{path, ops, page}` → `{rev, ids}` and `POST /_/space/attributes` `{path, set?, remove?, ifMatch, page}` → `{token}`. `ops` are `{insert: {col: cell}}`, `{update: id, set: {col: cell}}` or `{delete: id}`, applied in one revision; `ids` are the inserted rows' ids in order. A call touching one row id twice is refused as `invalidArgument` (an update's untouched fields come from the row before the call, so two ops on one row cannot fold). The patch is `attributes.patch`'s. Admission, in order: a `Content-Type` other than `application/json` is 415; an `Origin` that is not this host's own content origin (the request's scheme and host), or a `Sec-Fetch-Site` other than `same-origin`, is 403 `crossOrigin`; no live read session for the host's group is 401 (`--public-read` admits no visitor to write; `--dev` writes as its seat, with no actor); a body past 4 MiB is 413, one that is not a JSON object 400; `page` must be the writing page's `location.pathname` — absolute and hostless, percent-decoded, a trailing slash dropped — else 400. `page` is the page's own claim; what keeps active message content from running as a page is the attachment download policy above, not `page`. Other methods on these routes are 405.
+- `POST /_/space/session` (wuhu:session's createSession options plus `key`, `page`) → the `POST /v1/session` output, and `POST /_/space/message` (`{message, conversation | session, reply_target?, attachments?, page}`) → `{messageId, conversationId, n, delivered: []}`, take the write admission above and act as the viewer (the `--dev` seat as `owner`), through the hub's one create and post path. Bound: the viewer's authority intersected with the host's group, at every step. A page creates sessions only in that group, posts (its create's first message included) only into that group's conversations and boxes, and attaches only that group's files; anything else is 403 `outsidePageGroup`. A guest viewer, or one who does not write the group, is 403 `groupForbidden`; a task 403 `taskInput` (a person creates agents only); an incomplete create 422 `{code: incompleteSession, message, id}`; other refusals are 422 with their code, a server without sessions 404. `key` makes a create idempotent per viewer and group: a key never replays across groups. With `expectsReply` the create opens a request on the new agent whose `requester` is the viewer's persona: the request and the agent's reports post in the agent's box, and `request.key` is unique in the group as for a session's request.
 - A page acts as its host's group minus admin, whoever views it: an
   admin-only target (the group's instruction layer, e.g. shared's
   `AGENTS.md`) is refused as `unauthorized` even for an admin viewer, and so
@@ -144,11 +145,12 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
   `group` without a top-level agent is refused. A template name resolves in
   the creator's group, or `wuhu://<group>.localspace/templates/<name>` in a
   readable one; `GET /v1/templates` lists the acting group's.
-- Instructions, in prompt order: the system files; the session's own group
-  (`/AGENTS.md` and the skills under `/.agents/skills/`, hostless); the home.
-  No group's instructions reach another group's sessions. The scopes are read
-  as of the session's prompt revision, so an edit reaches a live session only
-  at its next compaction or Start over, never mid-generation. A machine's
+- Instructions, in prompt order: the system AGENTS.md and skills; the session's own group
+  (`/AGENTS.md` and the skills under `/.agents/skills/`, hostless); the system SESSION.md; the home.
+  No group's instructions reach another group's sessions. Each AGENTS.md renders as a Mustache
+  template for the session; the scopes are read as of the session's prompt revision and the
+  rendered prompt is stored per generation, so an edit, a rename or a model switch reaches a live
+  session only at its next compaction or Start over, never mid-generation. A machine's
   notes come from the machine's group, qualified when that is not the
   session's. Automatic machine/repository notices deduplicate exact file text across all paths and machines within one generation, replacing repeated AGENTS.md text or skill listings with a one-line reference to the first loaded path. Compaction and Start over reset this history; same-generation restart preserves it.
 - Writing a group's `/AGENTS.md` or anything under `/.agents/skills/` takes a
@@ -353,8 +355,8 @@ code the `create_session` and `request` tools run:
 ```js
 import { createSession, request, setTags, archive, unarchive, interrupt, resume } from "wuhu:session"
 await createSession({ title, kind, topLevel, provider, model, effort, template,
-                      tags, message, expectsReply, stallSeconds, key }) // { id, requestId? }
-await request(id, message, { deadlineSeconds, stallSeconds }) // { requestId }
+                      tags, message, expectsReply, stallSeconds, request, key }) // { id, requestId?, existing? }
+await request(id, message, { deadlineSeconds, stallSeconds, kind, key, schema, fields }) // { requestId, existing?, task? }
 await setTags(id, tags)                                   // replaces the list
 await archive(id, { force: true }); await unarchive(id); await interrupt(id); await resume(id)
 ```
@@ -603,6 +605,7 @@ An exec whose registry row has a `caller` session — the exec tool's claim, a
   - `POST /v1/session/:id/{interrupt, resume, tags}` pass the
     self/ancestor check first (403 with the reason otherwise);
     `archive` and `unarchive` pass the archive rule above.
+  - `POST /v1/scripts` (`ScriptRunInput` → SSE of `ScriptOutput`) is `wuhu script`: the session's worker runs `source` as a space script with `import.meta.args` = `arguments`, under `run_script`'s lifetime and API, and each `result`, `update` and `failure` is one event in order, closed by `end` once the run has ended; a stream that stops without `end` is a run that did not end. Closing the stream cancels the run. The run's span carries `script.kind: wuhu_script` and `script.source.sha256`; no script-run row exists in the space, so the span is the record.
   - `POST /v1/exec` mints an exec owned by the session (which gets its own
     token) on a machine its group reads (404 otherwise); `GET /v1/exec` lists its own live execs; `GET /v1/exec/:id`,
     `POST /v1/exec/:id/kill` and the WS caller leg answer only for its own

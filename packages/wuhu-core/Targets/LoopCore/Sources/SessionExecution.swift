@@ -2,11 +2,13 @@ import protocol MainHub.Main
 import enum MainHub.RevocationPolicy
 import struct MainHub.ScriptHandlerInvocation
 import struct MainHub.ScriptHandlerResult
+import struct MainHub.ScriptRun
 import func MainHub.withCallback
 import protocol MainHub.Worker
 import struct MainHub.WorkerActivity
 import enum MainHub.WorkerInput
 import SessionTools
+import enum SpaceContract.ScriptOutput
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -95,6 +97,10 @@ public struct SessionExecution: Worker {
       id: invocation.id, path: invocation.path, session: invocation.session,
       rows: rows, fireTime: fireTime, stateJSON: invocation.stateJSON, tools: tools,
     )
+  }
+
+  public func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
+    try await scripts.run(script, tools: tools, output: output)
   }
 
   public func activity() async -> WorkerActivity { scripts.activity }

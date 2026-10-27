@@ -126,7 +126,7 @@ struct ScriptSessionTests {
     ) { rig in
       try await rig.run("sessions-clone")
       try await rig.run("sessions-clone")
-      let receipt = try #require(try await space.sessions.receipt(rig.session, toolCallID: ToolCallID("script-key:coder")))
+      let receipt = try #require(try await space.sessions.receipt(.session(rig.session), toolCallID: ToolCallID("script-key:coder")))
       guard case let .createSession(first) = receipt else { throw Mismatch("expected a create receipt, got \(receipt)") }
       let home = SessionHome.path(of: first.sessionID) + "/AGENTS.md"
       let cloned = (try? await space.fs(.shared).read(home)) != nil
@@ -135,7 +135,8 @@ struct ScriptSessionTests {
       await space.failTemplateClones(nil)
       try await rig.run("sessions-clone")
       guard case let .createSession(settled)? = try await space.sessions.receipt(
-        rig.session, toolCallID: ToolCallID("script-key:coder"),
+        .session(rig.session),
+        toolCallID: ToolCallID("script-key:coder"),
       ) else { throw Mismatch("the receipt is gone") }
       let clone = String(decoding: try await space.fs(.shared).read(home).1, as: UTF8.self)
       rig.probe("owed: \(settled.cloneOwed == true), home: \(clone)")

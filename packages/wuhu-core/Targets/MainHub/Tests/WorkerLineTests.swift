@@ -35,6 +35,18 @@ private final class Recorder: Worker, Sendable {
     return ScriptHandlerResult(stateJSON: "\(rows.rows)", wakes: rows.columns)
   }
 
+  // Says each argument as an update and its source as the result; a source
+  // of "hold" runs until it is cancelled.
+  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
+    try note("run \(script.source)")
+    for argument in script.arguments { output(.update(text: argument)) }
+    guard script.source == "hold" else { return output(.result(text: script.source)) }
+    let (never, _) = AsyncStream<Void>.makeStream()
+    for await _ in never {}
+    asked.withLock { $0.append("cancelled") }
+    throw CancellationError()
+  }
+
   func activity() async -> WorkerActivity { WorkerActivity(scripts: [ScriptRunID("s1"): SessionID("a")]) }
   func runningWork(_ session: SessionID) async throws -> [String] {
     try note("running \(session.rawValue)")
@@ -86,6 +98,27 @@ private final class Recorder: Worker, Sendable {
       worker.gate.1.yield(())
       #expect(try await settled == false)
     }
+  }
+
+  @Test func aRunsOutputsCrossInOrderBeforeItsReply() async throws {
+    let heard = Mutex<[ScriptOutput]>([])
+    try await line(Recorder()) { client in
+      try await client.run(ScriptRun(session: SessionID("a"), source: "done", arguments: ["one", "two"])) { output in
+        heard.withLock { $0.append(output) }
+      }
+    }
+    #expect(heard.withLock { $0 } == [.update(text: "one"), .update(text: "two"), .result(text: "done")])
+  }
+
+  @Test func cancellingARunOnMainCancelsItOnTheWorker() async throws {
+    let worker = Recorder()
+    try await line(worker) { client in
+      let running = Task { try await client.run(ScriptRun(session: SessionID("a"), source: "hold", arguments: [])) { _ in } }
+      while worker.asked.withLock({ $0.isEmpty }) { await Task.yield() }
+      running.cancel()
+      await #expect(throws: CancellationError.self) { try await running.value }
+    }
+    #expect(worker.asked.withLock { $0 } == ["run hold", "cancelled"])
   }
 
   @Test(arguments: [

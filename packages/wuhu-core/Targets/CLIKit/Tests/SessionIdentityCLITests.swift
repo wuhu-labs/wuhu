@@ -36,7 +36,7 @@ private let identityModelsJSON = """
 }
 """
 
-private func withIdentityDeps<R>(_ body: () async throws -> R) async rethrows -> R {
+func withIdentityDeps<R>(_ body: () async throws -> R) async rethrows -> R {
   try await withDependencies {
     $0.date = DateGenerator { Date() }
     $0.uuid = UUIDGenerator { UUID() }
@@ -63,7 +63,7 @@ private actor Output {
 // The CLI as a session's exec runs it: WUHU_EXEC=1 and a token the real
 // handler minted, with the cwd's wallet pinned to another space so that any
 // read of it shows up as traffic to the wrong host.
-private final class IdentityHarness: Sendable {
+final class IdentityHarness: Sendable {
   static let sessionSpace = "https://space.test:5530"
 
   let space: Space
@@ -73,9 +73,9 @@ private final class IdentityHarness: Sendable {
   let cwd: URL
   let wallet: URL
   let fetch: FetchClient
-  let hosts = HostLog()
-  let stdout = Output()
-  let stderr = Output()
+  fileprivate let hosts = HostLog()
+  private let stdout = Output()
+  private let stderr = Output()
   let parent: SessionID
   let child: SessionID
   let stranger: SessionID
@@ -168,11 +168,13 @@ private final class IdentityHarness: Sendable {
     return env
   }
 
-  func run(_ arguments: [String], environment: [String: String]) async -> (code: Int32, stdout: String, stderr: String, hosts: [String]) {
+  func run(
+    _ arguments: [String], environment: [String: String], fetch: FetchClient? = nil,
+  ) async -> (code: Int32, stdout: String, stderr: String, hosts: [String]) {
     self.hosts.list.withLock { $0 = [] }
     let runner = CommandRunner(
-      fetch: self.fetch,
-      observeFetch: self.fetch,
+      fetch: fetch ?? self.fetch,
+      observeFetch: fetch ?? self.fetch,
       stdin: { "" },
       stdout: { [stdout] text in await stdout.append(text) },
       stderr: { [stderr] text in await stderr.append(text) },
@@ -366,9 +368,15 @@ private final class IdentityHarness: Sendable {
       #expect(record.kind == .task)
       #expect(record.parent == h.parent)
 
-      let requested = await h.asSession(["session", "request", "--deadline", "600", id.rawValue, "do the thing"])
+      let keyed = ["session", "request", "--deadline", "600", "--kind", "build", "--key", "build-1", "--fields", #"{"pr":7}"#, id.rawValue, "do the thing"]
+      let requested = await h.asSession(keyed)
       #expect(requested.code == 0, "\(requested.stderr)")
       #expect(requested.stdout.hasPrefix("requested "))
+      let again = await h.asSession(keyed)
+      #expect(again.code == 0, "\(again.stderr)")
+      #expect(again.stdout == requested.stdout.replacingOccurrences(of: "requested ", with: "existing "))
+      let badSchema = await h.asSession(["session", "request", "--schema", "{", id.rawValue, "x"])
+      #expect(badSchema.code == 64)
       let stranger = await h.asSession(["session", "request", h.stranger.rawValue, "do the thing"])
       #expect(stranger.code == 1)
 
