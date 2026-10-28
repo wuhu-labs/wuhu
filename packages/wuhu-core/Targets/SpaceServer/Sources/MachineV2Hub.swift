@@ -62,6 +62,12 @@ actor MachineV2Hub {
     let replaced = credential.machines.compactMap { routes[$0] }
     for machine in credential.machines { routes[machine] = Route(connection: connection, credential: credential, client: client, streams: streams, abort: abort) }
     for route in replaced { route.abort() }
+    do { try await authorize(credential) }
+    catch {
+      remove(connection)
+      abort()
+      throw error
+    }
     return connection
   }
 

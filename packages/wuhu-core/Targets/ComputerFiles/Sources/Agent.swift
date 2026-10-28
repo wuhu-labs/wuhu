@@ -24,10 +24,6 @@ public struct AdmittedStart: Sendable {
   public let caller: StartRequest.Caller?
 }
 
-public enum ExternalDeparture: Sendable {
-  case pending, drained, leaseExpired([UUID])
-}
-
 /// What an external backend holds against the shared budget: each operation it routes, by id, with its buffer reservation, and
 /// the receipts and bytes it holds for operations it cannot name yet.
 public struct ExternalUsage: Sendable, Equatable {
@@ -39,30 +35,26 @@ public struct ExternalUsage: Sendable, Equatable {
   }
 }
 
-/// A kind whose operations live outside this process (exec workers). The agent charges `reservation` per start against the shared admission budget, routes every request for an id the backend `owns`, or that no in-process kind holds, to `handler`, and drains it on leave. `ComputerAgent.init` validates the descriptor like an in-process kind and requires `0 ... bufferBytes` for the reservation; `usage()` must report nonnegative counts, or the start or describe fails `supervisorUnavailable`.
+/// A kind whose operations live outside this process (exec workers). The agent charges `reservation` per start against the shared admission budget, routes every request for an id the backend `owns`, or that no in-process kind holds, to `handler`. `ComputerAgent.init` validates the descriptor like an in-process kind and requires `0 ... bufferBytes` for the reservation; `usage()` must report nonnegative counts, or the start or describe fails `supervisorUnavailable`.
 public struct ExternalKind: Sendable {
   let descriptor: KindDescriptor
   let reservation: Int
   let handler: Handler
   let usage: @Sendable () async throws -> ExternalUsage
   let owns: @Sendable (UUID) async -> Bool
-  let leave: @Sendable () async throws -> Void
-  let departure: @Sendable () async throws -> ExternalDeparture
   public init(
     descriptor: KindDescriptor,
     reservation: Int,
     handler: @escaping Handler,
     usage: @escaping @Sendable () async throws -> ExternalUsage,
     owns: @escaping @Sendable (UUID) async -> Bool,
-    leave: @escaping @Sendable () async throws -> Void,
-    departure: @escaping @Sendable () async throws -> ExternalDeparture,
   ) {
     self.descriptor = descriptor; self.reservation = reservation; self.handler = handler; self.usage = usage
-    self.owns = owns; self.leave = leave; self.departure = departure
+    self.owns = owns
   }
 }
 
-/// One machine over file kinds on `files`, extra in-process `kinds` and an optional external kind, behind one authorization gate and one admission budget. `leave()` completes only after the server's `?leaveAck=true` describe, bounded by one lease.
+/// One machine over file kinds on `files`, extra in-process `kinds` and an optional external kind, behind one authorization gate and one admission budget.
 public actor ComputerAgent {
   let machine: String
   let runtime: OperationAgent
@@ -78,12 +70,7 @@ public actor ComputerAgent {
   /// Counts answered admitted starts; a usage probe that overlapped a change here may have missed a start that just left
   /// `pending`, so it is taken again.
   var startsReturned = 0
-  var leaving = false
-  public private(set) var leaveAcknowledged = false
-  var drainCompleted = false
-  var departureLoss: OperationError?
-  var leaveExpired = false
-  var leaveDeadline: Duration?
+  var closed = false
   let audit: (@Sendable (AdmittedStart) -> Void)?
   let abandonedEffects: @Sendable () -> Int
 
@@ -105,54 +92,7 @@ public actor ComputerAgent {
 
   public nonisolated var handler: Handler { { await self.handle($0) } }
   public func run() async { await runtime.run() }
-  public func shutdown() async { await runtime.shutdown() }
-
-  public func leave() async throws {
-    if !leaving { leaving = true; leaveDeadline = clock.now() + .milliseconds(OperationLimits().leaseMs) }
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { try await self.drain() }
-      let remaining = max(.zero, leaveDeadline! - clock.now())
-      group.addTask {
-        try await self.clock.sleep(remaining)
-        throw await self.expireLeave()
-      }
-      defer { group.cancelAll() }
-      _ = try await group.next()
-    }
-  }
-
-  func expireLeave() -> OperationError {
-    leaveExpired = true
-    return departureLoss ?? OperationError(.requestDeadline, message: drainCompleted ? "leaveUnacknowledged" : "drainFailed")
-  }
-
-  func drain() async throws {
-    await runtime.leave()
-    while !pending.isEmpty { try await clock.sleep(.milliseconds(10)); try Task.checkCancellation() }
-    try await external?.leave()
-    while !drainCompleted {
-      if try await settled() { drainCompleted = true; break }
-      try await clock.sleep(.milliseconds(10)); try Task.checkCancellation()
-    }
-    while !leaveAcknowledged {
-      guard !leaveExpired else { throw OperationError(.requestDeadline, message: "leaveUnacknowledged") }
-      try await clock.sleep(.milliseconds(10)); try Task.checkCancellation()
-    }
-  }
-
-  func settled() async throws -> Bool {
-    let evidence = try await external?.departure() ?? .drained
-    guard await runtime.departureSettled() else { return false }
-    switch evidence {
-    case .pending: return false
-    case .drained: return true
-    case let .leaseExpired(ids):
-      leaveExpired = true
-      let error = OperationError(.requestDeadline, message: "leaveUnacknowledged", operation: ids.first, details: ["reason": "legacyLeaseExpired", "operations": .array(ids.map { .string($0.uuidString) })])
-      departureLoss = error
-      throw error
-    }
-  }
+  public func shutdown() async { closed = true; await runtime.shutdown() }
 
   func handle(_ request: Request) async -> Response {
     var response: Response
@@ -201,33 +141,24 @@ public actor ComputerAgent {
     let path = request.url.path.split(separator: "/").map(String.init)
     guard path.count >= 4, Array(path.prefix(3)) == ["machine", "v2", "machines"], path[3] == machine else { throw OperationError(.machineNotAuthorized) }
     if path.count == 4, request.method == .get {
-      let ack = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name == "leaveAck" && $0.value == "true" } == true
-      let expired = leaveExpired || (leaveDeadline.map { clock.now() >= $0 } ?? false)
-      if leaving, !expired, pending.isEmpty, try await settled() {
-        drainCompleted = true
-        if ack { leaveAcknowledged = true }
-        throw OperationError(.leaving)
-      }
-      guard !ack else { throw OperationError(.invalidInput) }
-      guard !expired else { throw departureLoss ?? OperationError(.requestDeadline, message: drainCompleted ? "leaveUnacknowledged" : "drainFailed") }
       _ = try await externalUsage()
-      return try .json(MachineDescription(instance: instance, acceptingStarts: !leaving, limits: .init(), kinds: kinds))
+      return try .json(MachineDescription(instance: instance, acceptingStarts: !closed, limits: .init(), kinds: kinds))
     }
     guard path.count >= 6, path[4] == "operations", let id = UUID(uuidString: path[5]) else { throw OperationError(.unknownOperation) }
     if request.method == .post, path.count == 6 {
-      guard !leaving else { throw OperationError(.leaving) }
+      guard !closed else { throw OperationError(.leaving) }
       guard pending[id] == nil, await runtime.inspect(id) == nil, !(await owned(id)) else { throw OperationError(.operationExists) }
       let start = try await request.json(StartRequest.self, upTo: OperationLimits().inputBytes)
       guard let kind = kinds.first(where: { $0.name == start.kind }) else { throw OperationError(.unknownKind) }
       let target = kind.name == external?.descriptor.name ? external : nil
       let reserve = target?.reservation ?? (kind.inputChannels + kind.outputChannels).reduce(0) { $0 + $1.windowBytes }
-      guard !leaving else { throw OperationError(.leaving) }
+      guard !closed else { throw OperationError(.leaving) }
       guard pending[id] == nil, !admitting.contains(id) else { throw OperationError(.operationExists) }
       admitting.insert(id)
       defer { admitting.remove(id) }
       guard await runtime.inspect(id) == nil, !(await owned(id)) else { throw OperationError(.operationExists) }
       let (a, b) = try await admissionUsage()
-      guard !leaving else { throw OperationError(.leaving) }
+      guard !closed else { throw OperationError(.leaving) }
       // Checked against the starts already admitted plus this one. An external start the backend already routes is in both
       // maps; it counts once, at the larger reservation.
       let ids = Set(a.operations.keys).union(pending.keys).union([id])

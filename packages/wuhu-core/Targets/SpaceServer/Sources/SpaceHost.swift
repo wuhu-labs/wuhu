@@ -191,7 +191,6 @@ public actor SpaceHost {
         do { try processWorkers?.start() } catch { logger.error("could not start a worker", metadata: ["error": "\(error)"]) }
         await withTaskGroup(of: Void.self) { group in
           group.addTask { await serverIdentity.run() }
-          group.addTask { await hub.run() }
           group.addTask {
             do { try await v2Service.run() }
             catch is CancellationError {}
@@ -205,6 +204,7 @@ public actor SpaceHost {
       }, shutdownBody: { handingOver in
         await keyStreams.close()
         await releases.close()
+        await hub.callerScope.close()
         await v2Service.shutdown()
         // Handing over, main has already let go of its workers: they run on.
         await sessions.service.shutdown()

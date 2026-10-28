@@ -27,7 +27,7 @@ import Testing
     let bytes = key.withUnsafeBytes { Data($0) }
     #expect(bytes.count == 32)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    let record = Self.record()
+    let record = Self.record(machine: try await space.addMachineV2(name: "disk").machine.id.rawValue)
     _ = try await store.claim(.init(scope: "dead-script", key: "one"), record: record)
     let reopened = try Space.open(file: database)
     let next = try await MachineV2KeyStore.loadOrCreate(directory: directory, space: reopened)
@@ -56,7 +56,7 @@ import Testing
     let space = try Space.inMemory()
     let key = SymmetricKey(size: .bits256)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    let record = Self.record()
+    let record = Self.record(machine: try await space.addMachineV2(name: "disk").machine.id.rawValue)
     _ = try await store.claim(.init(scope: "prior-slice", key: "one"), record: record)
     await #expect(throws: OperationError.self) { try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space) }
     let path = "/" + MachineV2KeyStore.filename
@@ -94,8 +94,8 @@ import Testing
     #expect(try Data(contentsOf: target) == bytes)
   }
 
-  private static func record() -> ClientRecord {
-    .init(id: UUID(), correlation: UUID(), machine: "test", start: .init(kind: "read.v1", input: ["path": "/private"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
+  private static func record(machine: String) -> ClientRecord {
+    .init(id: UUID(), correlation: UUID(), machine: machine, start: .init(kind: "read.v1", input: ["path": "/private"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
   }
 }
 

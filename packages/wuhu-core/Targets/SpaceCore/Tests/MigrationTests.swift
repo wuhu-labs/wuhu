@@ -17,7 +17,7 @@ import Testing
   private func baseline(_ database: DatabaseQueue) async throws -> Space {
     let space = try Space(writer: database)
     _ = try await space.addAccount(kind: .human, name: "Kept")
-    let machine = try await space.addMachine(name: "box").id
+    let machine = try await space.addMachineV2(name: "box").machine.id
     let exec = try await space.claimExec(machine: machine, caller: "caller", toolCallID: .init("call"))
     try await database.write { db in
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005')")
@@ -35,8 +35,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     #expect(throws: DatabaseError.self) { try Space(writer: database) }
-    // The eight already-applied migrations stay applied.
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 8)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await database.write { db in
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
@@ -97,7 +96,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 8)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
   }
@@ -283,6 +282,7 @@ import Testing
         ('ac_mach00001', 'machine', 'box', '2026-01-01T00:00:00.000Z'),
         ('ac_wrap00001', 'contractor', 'wrapper', '2026-01-01T00:00:00.000Z');
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_00000001', 'ac_mach00001', 'box', '2026-01-01T00:00:00.000Z', 'shared');
+      INSERT INTO machine_v2_members (machine_id, grp, created_at) VALUES ('mc_00000001', 'shared', '2026-01-01T00:00:00.000Z');
       INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('wrapper-key', 'ac_wrap00001', 'exec-machine contractor', '2026-01-01T00:00:00.000Z');
       INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('kept-key', 'ac_kept00001', 'device', '2026-01-01T00:00:00.000Z');
       INSERT INTO group_members (grp, account_id, joined_at) VALUES ('shared', 'ac_wrap00001', '2026-01-01T00:00:00.000Z');
@@ -384,7 +384,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "998", "999"])
     try await original.close()
   }
 

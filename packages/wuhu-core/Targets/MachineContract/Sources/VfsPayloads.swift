@@ -33,12 +33,6 @@ public enum VFSOp: Codable, Equatable, Sendable {
 }
 
 @Contract
-public struct VFSRequest: Codable, Equatable, Sendable {
-  public let id: Int
-  public let op: VFSOp
-}
-
-@Contract
 public enum VFSResult: Codable, Equatable, Sendable {
   case entry(entry: MachineEntry)
   case entries(entries: [MachineEntry])
@@ -46,10 +40,4 @@ public enum VFSResult: Codable, Equatable, Sendable {
   case written(token: String)
   case ok
   case error(error: MachineError)
-}
-
-@Contract
-public struct VFSResponse: Codable, Equatable, Sendable {
-  public let id: Int
-  public let result: VFSResult
 }

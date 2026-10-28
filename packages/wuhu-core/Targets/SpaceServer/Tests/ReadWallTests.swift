@@ -4,8 +4,10 @@ import FetchSSE
 import Foundation
 import HTTPTypes
 import JSONValue
+import Serve
+import ServeTesting
 import SpaceCore
-import SpaceServer
+@testable import SpaceServer
 import Testing
 
 @Suite(.deterministicDependencies) struct ReadWallTests {
@@ -88,10 +90,10 @@ import Testing
       (.post, "/v1/persona"),
       (.post, "/v1/enroll"),
       (.post, "/v1/enroll/revoke"),
-      (.post, "/v1/machine"),
+      (.post, "/v1/machine-v2"),
       (.get, "/v1/machine"),
-      (.post, "/v1/machine/m1/rotate"),
       (.post, "/v1/machine/m1/revoke"),
+      (.delete, "/v1/machine/m1"),
       (.post, "/v1/exec"),
       (.get, "/v1/exec"),
       (.post, "/v1/session"),
@@ -107,7 +109,7 @@ import Testing
 
     let serverInfo = try await harness.get(harness.api, "/v1/server")
     #expect(serverInfo.status == .ok)
-    let machineChallenge = try await harness.get(harness.api, "/v1/machine/challenge")
+    let machineChallenge = try await harness.get(harness.api, "/v1/machine-v2/challenge")
     #expect(machineChallenge.status == .ok)
     let shareLoginChallenge = try await harness.get(harness.api, "/v1/enroll/share-login/challenge")
     #expect(shareLoginChallenge.status == .ok)
@@ -117,8 +119,19 @@ import Testing
       "pubkey": "k", "challenge": "slc_bogus", "signature": "sig",
     ]))
     #expect((try await json(shareLogin)).code == "keyInvalid")
-    let connect = try await harness.api(Request(url: URL(string: "http://space/v1/machine/connect")!))
-    #expect(connect.status.code == 426)
+    let handler = SpaceServer.configuredHandler(space: harness.space, hub: MachineHub(space: harness.space), dev: false, machineV2Hub: MachineV2Hub(space: harness.space))
+    var headers = RequestHeaders()
+    headers.set("connection", "Upgrade")
+    headers.set("upgrade", "websocket")
+    headers.set("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+    headers.set("sec-websocket-version", "13")
+    let request = Request(url: URL(string: "http://space/v1/machine-v2/connect")!, headers: headers)
+    guard case let .response(connect) = try await ServeTesting.upgrade(handler, request) else {
+      Issue.record("a v2 connect without its tunnel subprotocol was upgraded")
+      return
+    }
+    #expect(connect.status == .badRequest)
+    #expect((try await json(connect)).code == "unsupportedSubprotocol")
   }
 
   @Test func theEmbeddedSPAChromeStaysReachableForLogin() async throws {

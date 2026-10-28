@@ -16,21 +16,16 @@ import Testing
 // without (a server on --cert/--key) drops the pin for system trust. A link
 // without one to a server system trust rejects enrolls through the pin.
 @Suite(.deterministicDependencies, .serialized) struct ReenrollTrustTests {
-  enum Verb: CaseIterable {
-    case login
-    case machineJoin
-  }
-
   static let stalePin = "sha256:" + String(repeating: "a", count: 64)
 
-  @Test(arguments: Verb.allCases)
-  func anEnrollmentWithoutAFingerprintDropsAStalePinForSystemTrust(verb: Verb) async throws {
+  @Test
+  func anEnrollmentWithoutAFingerprintDropsAStalePinForSystemTrust() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving { server in
       let key = "127.0.0.1:\(server.port)"
       try rig.trust.record(Self.stalePin, forHost: key)
-      let (arguments, stdin) = try await Self.enrollment(verb, rig: rig, server: server, fingerprint: nil)
+      let (arguments, stdin) = try await Self.enrollment(rig: rig, server: server, fingerprint: nil)
       let io = CLIIO(stdin: stdin)
       let system = RequestLog()
       let code = await withDependencies {
@@ -45,14 +40,14 @@ import Testing
     }
   }
 
-  @Test(arguments: Verb.allCases)
-  func anEnrollmentWithAFingerprintRepinsToIt(verb: Verb) async throws {
+  @Test
+  func anEnrollmentWithAFingerprintRepinsToIt() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving { server in
       let key = "127.0.0.1:\(server.port)"
       try rig.trust.record(Self.stalePin, forHost: key)
-      let (arguments, stdin) = try await Self.enrollment(verb, rig: rig, server: server, fingerprint: server.fingerprint)
+      let (arguments, stdin) = try await Self.enrollment(rig: rig, server: server, fingerprint: server.fingerprint)
       let io = CLIIO(stdin: stdin)
       #expect(await rig.run(arguments, io: io) == 0)
       #expect(try rig.trust.pin(forHost: key) == server.fingerprint)
@@ -60,14 +55,14 @@ import Testing
     }
   }
 
-  @Test(arguments: Verb.allCases)
-  func anEnrollmentWithoutAFingerprintThatSystemTrustRejectsGoesThroughThePin(verb: Verb) async throws {
+  @Test
+  func anEnrollmentWithoutAFingerprintThatSystemTrustRejectsGoesThroughThePin() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving { server in
       let key = "127.0.0.1:\(server.port)"
       try rig.trust.record(server.fingerprint, forHost: key)
-      let (arguments, stdin) = try await Self.enrollment(verb, rig: rig, server: server, fingerprint: nil)
+      let (arguments, stdin) = try await Self.enrollment(rig: rig, server: server, fingerprint: nil)
       let io = CLIIO(stdin: stdin)
       let code = await withDependencies {
         $0[ServerTrustProbe.self] = Self.probe(systemTrusts: false)
@@ -80,26 +75,16 @@ import Testing
     }
   }
 
-  // Mints a one-time enrollment for `verb` and returns the argv and stdin that consume it.
   static func enrollment(
-    _ verb: Verb, rig: EnrollRig, server: BoundServer, fingerprint: String?,
+    rig: EnrollRig, server: BoundServer, fingerprint: String?,
   ) async throws -> (arguments: [String], stdin: String) {
     let base = "https://127.0.0.1:\(server.port)"
-    switch verb {
-    case .login:
-      let account = try await rig.space.addAccount(kind: .human, name: "alice")
-      let minted = try await rig.space.mintJoinToken(
-        account: account.id, capabilities: [.device], createdBy: nil, lifetime: 600,
-      )
-      let pin = fingerprint.map { "&fp=\($0)" } ?? ""
-      return (["login"], "\(base)/_/enroll#token=\(minted.token.rawValue)&space=\(server.space)\(pin)\n")
-    case .machineJoin:
-      let machine = try await rig.space.addMachine(name: "box")
-      let minted = try await rig.space.mintJoinToken(
-        account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600,
-      )
-      return (["machine", "join", base] + (fingerprint.map { [$0] } ?? []), minted.token.rawValue + "\n")
-    }
+    let account = try await rig.space.addAccount(kind: .human, name: "alice")
+    let minted = try await rig.space.mintJoinToken(
+      account: account.id, capabilities: [.device], createdBy: nil, lifetime: 600,
+    )
+    let pin = fingerprint.map { "&fp=\($0)" } ?? ""
+    return (["login"], "\(base)/_/enroll#token=\(minted.token.rawValue)&space=\(server.space)\(pin)\n")
   }
 
   static func probe(systemTrusts: Bool) -> ServerTrustProbe {

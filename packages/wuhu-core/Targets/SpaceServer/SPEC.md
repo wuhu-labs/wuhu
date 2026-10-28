@@ -17,10 +17,7 @@
 
 `POST /v1/conversation/message` refuses opening or posting into a person–session DM, including a post by a person to an existing DM id. Person requests receive HTTP 403 with code `humanAgentDM`; session identities (including script HTTP requests) cannot post into any `.dmUser` conversation or pass `user`, including explicit JSON `null`, and receive the typed tool refusal through the session gate (HTTP 422, code `refused`). The message is exactly: "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID." No post is rerouted to a box. Existing person–session DM history remains readable with the existing authorization; no migration or deletion occurs. People’s person–person DM posts, session–session DMs, box posts and their notifications, requests and reports are unchanged.
 
-The HTTP/WebSocket projection of one Space over wuhu-serve. Tools and observe
-are the space surface; this file pins the machine-domain surface added in M4:
-the registry routes, the two WebSocket endpoints, and the relay + grace
-semantics layered over MachineContract/MachineChannel.
+The HTTP/WebSocket projection of one Space over wuhu-serve. Machines use the v2 fetch tunnel and durable operations; exec callers retain the MachineContract/MachineChannel protocol and shared registry/admin routes.
 
 ## Machine registry (space sqlite, SpaceCore arm)
 
@@ -32,12 +29,7 @@ semantics layered over MachineContract/MachineChannel.
   store. Rotate and revoke reset the machine account's credentials (keys,
   read sessions, outstanding join tokens) and kick any live hub leg; rotate then
   mints a fresh one-time join token to re-enroll the box.
-- `machine_execs` — the exec registry: exec id (`ex_<8>`, server-minted),
-  machine, **relay stream id**, command summary, caller, tool-call id, opaque tool spec and owed-end flag,
-  started-at, terminal state (`NULL` = live; `exited:N` / `signaled:N` /
-  `cancelled` / `machine-lost`), kill-delivered flag. The stream id is
-  allocated per machine at mint (max+1) and persisted so the id the machine
-  agent's channel learned stays valid across server restarts.
+- `machine_execs` — the shared exec registry: server-minted exec id (`ex_<8>`), machine, command summary, caller, tool-call id, opaque tool spec and owed-end flag, start time and terminal state. Remote execution and recovery are owned by durable v2 operation records.
 - `script_execs` — owner rows for execs a `run_script` execution started
   (exec id, script id, session). The row commits with its `machine_execs` row
   and is deleted when the script ends, so a row still present at boot names a
@@ -175,7 +167,7 @@ A page imports `wuhu:space` for data or `wuhu:device` for device feedback; the i
 
 ## Certificate pinning
 
-What the server hands out for a client to enroll with — `EnrollMintOutput`, `ShareLoginOutput`, `MachineAddOutput` and `MachineRotateOutput` — carries a `fingerprint` only when `serve` runs the certificate it generated into `<folder>/tls`. With `--cert`/`--key`, self-signed or not, it is absent everywhere and clients check the certificate against their system trust store. `serve` records the certificate's fingerprint and which kind it is in the deployment record, so the offline `wuhu user invite` follows the same rule; a record written by a server from before the kind was recorded reads as unknown and yields no `fp` until the next boot rewrites it. Re-enrolling replaces a client's pin: a CLI `login` or `machine join` with an `fp` records it over the old one, and one without drops the host's pin once the server passes system trust, which is how a client pinned under the old rule moves to system trust. When system trust rejects the server, an existing pin carries the enrollment and stays.
+What the server hands out for a client to enroll with — `EnrollMintOutput`, `ShareLoginOutput`, `MachineAddOutput` and `MachineRotateOutput` — carries a `fingerprint` only when `serve` runs the certificate it generated into `<folder>/tls`. With `--cert`/`--key`, self-signed or not, it is absent everywhere and clients check the certificate against their system trust store. `serve` records the certificate's fingerprint and which kind it is in the deployment record, so the offline `wuhu user invite` follows the same rule; a record written by a server from before the kind was recorded reads as unknown and yields no `fp` until the next boot rewrites it. Re-enrolling replaces a client's pin: a CLI `login` or `machine-v2 join` with an `fp` records it over the old one, and one without drops the host's pin once the server passes system trust, which is how a client pinned under the old rule moves to system trust. When system trust rejects the server, an existing pin carries the enrollment and stays.
 
 ## Bearer assertions
 
@@ -217,40 +209,13 @@ Removing a key ends what it holds open. A streamed response (no `Content-Length`
   409, `unauthorized` → 403, `unsupported` → 415, `provider_auth` → 502,
   …) instead of the tools route's flat 422; 401 stays the credential's.
 - `POST /v1/transcribe` · `GET /v1/transcribe` — private speech to text and availability probe, resolved through shared `/capabilities.json` rather than credential priority. POST retains raw audio Content-Type/body; the capability routes section below defines options, rich metadata, bounds and typed errors. Both sit under `/v1` and the API wall gates them.
-- `GET /v1/machine/challenge` — mints a one-shot connect challenge: burned at
-  the first take, dead after a short lifetime, bounded in count under a
-  flood. Open in non-dev mode; it feeds the connect handshake.
-- `GET /v1/machine/connect` (WS) — the machine agent's dial-in. The box
-  presents pubkey, challenge, and a raw signature (Ed25519 or P-256 r||s, per
-  the pubkey label's algorithm tag — see SpaceContract's SPEC) over the
-  domain-separated challenge payload in the `MachineConnect` upgrade request
-  headers, verified **before the upgrade is accepted**: the challenge must
-  take (one-shot, unexpired), the signature must verify under the algorithm
-  the presented pubkey's label names, and the pubkey must resolve through the
-  live key row to a machine.
-  A missing, malformed, replayed, expired, or revoked handshake — including a
-  key row that no longer decodes — is refused with 401 and no frame ever
-  flows. This route stays open in non-dev mode: the handshake is its
-  credential.
-- Revocation reaches LIVE connections, not just future dials: revoke/rotate
-  kick the hub leg synchronously, and each machine session runs a watchdog
-  that re-resolves the live key row every `keyRecheck` (default 30s, hub
-  clock) and severs the leg the moment the pubkey stops resolving — covering
-  key rows removed outside the machine routes, even on an idle connection.
-- **WebSocket routes bypass router middlewares** (a wuhu-serve design
-  decision: `Middleware` wraps plain `Handler`s and cannot express upgrades).
-  Both WS routes therefore self-gate — connect via the signature handshake,
-  `/v1/exec/:id` via the registry lookup — and any future auth middleware
-  will NOT cover them: auth for a WS endpoint must live in its route handler.
-- `POST /v1/machine` (add: optional name and group → id + one-time join token, shown once; the
-  box consumes it at `POST /v1/enroll/consume`, enrolling its own key) ·
-  `GET /v1/machine` (list with `attached`) · `POST /v1/machine/:id/rotate`
-  (kick + fresh join token) · `POST /v1/machine/:id/revoke` (kick) ·
-  `PUT /v1/machine/:id/name` `{name}` (rename) ·
-  `PUT /v1/machine/:id/group` `{group}` (move).
+- `POST /v1/machine-v2` registers a named machine and returns its id, one-time token, optional generated-certificate fingerprint and confirmed group. A public-key request enrolls directly and can link the person's device; a device link without a public key is refused. `POST /v1/machine-v2/enroll` consumes a machine-v2 token and enrolls the box's key.
+- `GET /v1/machine-v2/challenge` mints a bounded, expiring one-shot challenge. `GET /v1/machine-v2/connect` requires `wuhu-fetch-tunnel.v1` and verifies the key-signed challenge plus addressed machine ids before upgrade. Missing, malformed or replayed handshakes are 401 `keyInvalid`; definitive authorization refusal is 401 `machineNotAuthorized`, while an authorization outage is retryable 503 `machineAuthUnavailable`. The handshake is the machine's credential, independent of the person API wall.
+- WebSocket routes self-gate because upgrades bypass plain-handler middleware. The machine tunnel verifies its signed handshake; the exec caller endpoint verifies its principal, registry access and actor ownership before admission.
+- Shared record/admin routes remain `GET /v1/machine` (list with attachment), `POST /v1/machine/:id/rotate` (kick and fresh v2 token), `POST /v1/machine/:id/revoke` (kick), `PUT /v1/machine/:id/name` (rename), `PUT /v1/machine/:id/group` (move), and `PUT /v1/machine/:id/scope`. Legacy machine registration, connect and challenge routes are removed.
 - Every space has a hidden `settings` group holding `/models.json`, `/model-groups.json`, `/capabilities.json` and `/machine-v2-upgrade.json`; the server reads them from there and nowhere else, and migration 003 deleted `shared`'s copies. Every group reads it, and only a space admin writes any of its files or takes it as a session's home. It is never listed by `GET /v1/groups`.
 - `group_roles` is the one access table: `(subject_kind, subject, grp, role)`, where `subject_kind` is `account` or `group`, `role` is `read`, `write` or `admin` (ordered), and an open group (`groups.visibility`) needs no row. A person's role in a group is the best of its account's row, its acting group's row, an open group's `write`, and space admin; a session's is its own group's `write` plus its group's row, with a live top-level agent `admin` of its own group. Space admin is `admin` in `group_roles` for the settings group and administers every group but another person's own; an account's `admin` flag (`GET /v1/accounts`, `AccountPayload`) is that rule. Guests (`accounts.guest`) read only their account's rows and create no sessions. A personal group (`groups.personal_account`) belongs to one person, is listed only to that person, reads as nothing to anyone else (an entry naming it is refused), and grants nothing beyond itself. `GET /v1/group/:id` returns `{id, alias, open, secrets, personal, entries}` to anyone who reads the group; `PUT /v1/group/:id` `{alias?, open?, secrets?}` and `PUT`/`DELETE /v1/group/:id/access` change visibility, the secrets switch and the list for a group admin only.
-- A machine belongs to one group (`machines.grp`). Without a body `group`, a new machine joins the acting group; with one, that group. Either way the caller must administer it (`403 adminRequired`); no personal-group default. A body `group` must exist (`404 unknownGroup`). Both registration routes follow this policy and echo the actual group in `MachineAddOutput.group`; `wuhu machine add --group G` and the global `wuhu --group G machine add` send only the registration target in the body, not the acting-group header. The CLI checks the echo when an explicit target was requested; environment and folder group settings do not set a registration target. A route that names a
+- A machine belongs to one group (`machines.grp`). Without a body `group`, a new machine joins the acting group; with one, that group. Either way the caller must administer it (`403 adminRequired`); no personal-group default. A body `group` must exist (`404 unknownGroup`). V2 registration follows this policy and echoes the actual group in `MachineAddOutput.group`; `wuhu machine-v2 add --name N --group G` and the global `wuhu --group G machine-v2 add --name N` send only the registration target in the body, not the acting-group header. The CLI checks the echo when an explicit target was requested; environment and folder group settings do not set a registration target. A route that names a
   machine or an exec, the listing and `POST /v1/exec` see only machines in a
   group the acting group reads, 404 otherwise. Using one takes its
   `machines.scope`: `owner` admits the machine's own group alone,
@@ -269,22 +234,8 @@ Removing a key ends what it holds open. A streamed response (no `Content-Length`
 - `POST /v1/exec` — mint: `{machine}` → `{id}`. Writes the registry row
   (command fills in at exec-start) and starts the caller grace, so a minted
   but never-driven exec expires instead of lingering live.
-- `GET /v1/exec/:id` (WS) — the caller leg. Mint first, then dial with the
-  exec id; the same dial with the same id is the resume path. A terminal exec
-  still admits the dial so a caller that blipped across the exit can drain the
-  machine-retained tail byte-exactly; see the drain grace below.
-- `GET /v1/exec` (ps: live registry rows) · `GET /v1/exec/:id` (plain HTTP:
-  status of any known exec, `state` carrying the terminal outcome — the M6
-  CLI distinguishes machine-lost from an ordinary blip with this) ·
-  `POST /v1/exec/:id/kill` (no-op on terminal rows; otherwise the row turns
-  `cancelled` first and the kill frame follows, so the real exit still
-  settles it to `exited:N` / `signaled:N`. Recording first makes the kill
-  stick against a racing start: a start relayed after it is refused, and a
-  start already in flight is followed by a second kill frame, since the agent
-  drops a kill for a stream it has not started. If the machine is detached,
-  any connected caller leg is closed — no exit event will ever come, the
-  registry carries the outcome — and the kill is delivered on the machine's
-  next connect).
+- `GET /v1/exec/:id` (WS) admits the authorized exec caller. Reconnect uses the same exec id and cursor; terminal draining depends on retained endpoint/operation state, not permission to replay a completed command.
+- `GET /v1/exec` lists live registry rows; plain `GET /v1/exec/:id` returns the persisted state of a known exec. `POST /v1/exec/:id/kill` is a no-op for terminal rows; otherwise the v2 service records kill intent, stops an admitted operation as `callerCancelled` and records cancellation. A start racing that intent is stopped too. The remote native status remains distinct from cancellation intent.
 - Group secrets: `PUT /v1/secret/:name` `{value}` (create or replace) ·
   `DELETE /v1/secret/:name` · `GET /v1/secret` → `{names}`, all on the acting
   group's store; `?group=` names another only when that group's
@@ -433,177 +384,31 @@ p.write(data); p.end(); p.kill(); await p.wait() // { code, signal }
   TERM then KILL) and `DELETE /v1/script-execs/:script` drops the session's
   owner rows for that script. A script that spawns and awaits nothing ends at
   once and takes its processes along.
-- Machine loss: after the machine grace a process's reads and `wait()` throw
-  ("machine X was lost while process ex_… ran; it gets killed if the machine
-  comes back"). The script does not re-dial, so the hub kills the process
-  when the machine reconnects (see *Grace*).
-- Server restart: executions live in one process, so a restart kills every
-  script. At boot the server reads the owner rows left behind, tells each
-  owning session once ("script X was killed by a server restart; the machine
-  processes it left running (ex_…) get killed about a minute after the
-  restart, or when their machine reconnects if it is away then"), and deletes
-  them. A graceful stop leaves the rows in place too: its kills are cut short
-  by the shutdown. The processes themselves go
-  through the boot caller grace: `reaped` and killed about 60 s after boot,
-  or on their machine's next connect. Nothing resumes.
-- Accepted leaks: a process the agent cannot see (the agent crashed and
-  restarted while it ran, or it daemonized out of its process group) survives
-  the kill.
+- Machine loss and server restart end the script's in-process execution, not prove that its OS processes exited. Durable operation recovery abandons operations with no surviving owner; a live shared exec waits for its caller grace. Script owner rows identify processes left by interrupted scripts so the server can notify the session and release them. Remote stop and supervisor evidence determine the actual process outcome; reconnect does not authorize a fresh start.
 
 ## Exec flow
 
-1. Caller mints an exec id over HTTP, then dials `/v1/exec/:id`.
-2. The caller leg is a full `ChannelEndpoint`: it sends `exec-start` (carrying
-   the minted id — idempotent on the machine, so a blip during start cannot
-   double-spawn), streams stdin, and consumes cursor-stamped output.
-3. The hub relays frames between the caller leg and the machine leg by
-   rewriting the envelope's stream id (caller-chosen ↔ registry-allocated) and
-   never touching bodies — except `exec-start`, which it re-encodes with the
-   session names owned (see *Session execs act as their session*) and its
-   `secrets` resolved (see *Exec secrets come from the machine's group*). Acks are end-to-end; the server holds **no durable
-   stream state** — replay buffers live at the two endpoints.
-4. Stream-0 routing is asymmetric: a caller `hello` is forwarded to the
-   machine (triggering its un-acked replay), a machine `hello` is broadcast to
-   that machine's caller legs (triggering theirs); VFS/search responses
-   resolve server round trips by request id and are never relayed to callers.
-   The server's own in-flight VFS/search round trips fail (`severed`) when the
-   machine leg unbinds or rebinds — at bind, not on `hello`, so a round trip
-   issued on the new binding that races the in-flight hello frame survives it.
-5. `exec-exit` passing through marks the registry row terminal (a real exit
-   also settles a row previously `cancelled` or `machine-lost`).
+1. Caller mints an exec id over HTTP, then dials `/v1/exec/:id` with its principal.
+2. A server-owned `ChannelEndpoint` accepts the caller's `exec-start` and stdin and emits cursor-stamped stdout/stderr and the terminal event. The v2 service opens `exec.v1` under a stable operation owner for that exec id, rather than forwarding caller frames to an agent channel.
+3. The operation store persists input/output progress and consumer state. Stdin is acknowledged only once durable; retained output is released only once the caller acknowledges it. Recovery resumes the same operation and cursors, not a new command.
+4. The relay records the operation's terminal evidence in the shared exec registry. Caller cancellation, timeout, output truncation and remote process status retain the distinctions documented under *Machine tool transport routing*.
 
 ## Exec secrets come from the machine's group
 
-Every exec surface — the exec tool, `run_script`'s `m.exec`/`m.spawn`,
-`POST /v1/exec` with its WS caller leg, `wuhu exec --secret` — carries
-`secrets` as `ENV_NAME → SECRET_NAME`, and the hub resolves it when it relays
-the `exec-start`, so all of them behave alike.
+Every exec surface carries secret names as `ENV_NAME → SECRET_NAME`. At operation admission the server resolves them from the machine's current owning group's secret store, not the caller's group, and sends `secretValues` in the `exec.v1` input. The supervisor injects and masks these values; they are not written as plaintext registry fields or diagnostics. Missing stores or names refuse the start before spawn, with a diagnostic and exit 127. There is no agent-local vault or capability-negotiated legacy secret lane.
 
-- **Whose store.** NAME is looked up in the group store of the group the
-  machine belongs to (`machines.grp`) when the start is first relayed. The
-  calling session's or person's group plays no part, and a machine moved to
-  another group uses that group's store from its next start on. The values come from
-  the same `$WUHU_CONFIG_DIR/secrets/<space-id>/<group>.json` stores that
-  `wuhu secret` and `wuhu:secret` manage.
-- **Capability.** The machine connect upgrade carries
-  `x-wuhu-machine-capabilities` (MachineContract). A machine leg bound with
-  `group-secrets` in it gets the start re-encoded with `secrets` removed and
-  `secretValues` (`ENV_NAME → value`) added; the agent injects and masks them
-  and writes nothing to disk. The values live only in that frame and in the
-  hub's memory for the exec's lifetime; they are never logged, stored in the
-  registry, or put in an error.
-- **Resolved once.** Only the first relay of an exec id resolves. A caller
-  replaying the start after a blip gets it relayed with the values of that
-  first relay and is never refused, even when the machine has since moved or
-  the secret is gone: a running exec keeps its environment. The values are
-  dropped at the exec's exit or when its caller grace runs out; a server
-  restart forgets them, so a start replayed across one resolves afresh.
-- **Refusal before spawn.** A name the machine's group lacks, a store that
-  cannot be read, a server started without a config directory (no stores at
-  all), or a machine no longer enrolled refuses the exec: the start never
-  reaches the agent, the registry row turns `exited:127`, and the caller leg
-  gets what a failed spawn gives — one stderr chunk `wuhu: no secret NAME in
-  group GROUP\n` (or the matching reason) at cursor 0 and `exec-exit` with
-  `exited(code: 127)`. A caller replaying that start after a blip gets the
-  same refusal again. Several unknown names report the lexically first.
-- **Old agents.** A machine leg bound without `group-secrets` (an agent from
-  before the header) gets the start with `secrets` names as they came and no
-  `secretValues`, and resolves them in its own `vault.json` as it always did;
-  the server sends such an agent no value. It stays that way until the agent
-  is upgraded and reconnects.
-- A `wuhu:secret` placeholder is never a secret name: `run_script` refuses one
-  in an exec's command, env or stdin before minting.
+A resumed operation retains its admitted input and environment rather than resolving a new start under a moved group or changed secret. A `wuhu:secret` placeholder is not a secret name: scripts refuse one in command, env or stdin before minting.
 
 ## Session execs act as their session
 
-An exec whose registry row has a `caller` session — the exec tool's claim, a
-`run_script` spawn, or a `POST /v1/exec` made with a session token — runs the
-`wuhu` CLI as that session, not as the wallet on the box.
+An exec started by its record's caller session receives that session's credential, so the nested `wuhu` CLI acts as the session rather than the box's wallet. A person starting an exec does not inherit session authority merely from its registry row.
 
-- **Token.** When the hub relays that exec's `exec-start` it attaches
-  `session: {token, spaceURL}` (`ExecSessionCredential`). `ExecTokens` mints
-  the token (`wst_` + 64 hex, from 32 random bytes) bound to {session, exec,
-  expiry}; a replayed start for the same exec reuses it. Expiry is the start's
-  `timeout`, capped at 24 h (24 h when there is none). The token is revoked on
-  `exec-exit` or when its exec row is found in a state it never comes back
-  from (`exited`, `signaled`, `cancelled`, `reaped`). `machine-lost` is not
-  one: the exec resumes when its machine reconnects, so the token keeps
-  working. The table lives in memory only, so a server restart invalidates
-  every token. `spaceURL` is `--origin`, else `https://<host>:<port>`.
-- **V2 execs.** Script bindings inject a server-owned `sessionCredential: {token, spaceURL, expiresAt}` before `exec.v1` admission. The bearer is bound to session, original group and script-scoped operation owner; retries retain the same credential and immutable expiry (invocation timeout, capped by script lifetime and 24 hours). The supervisor exports `WUHU_TOKEN_EXPIRES_AT` as Unix epoch seconds as well as the three identity names, overwrites caller values and masks the token on output. The session gate checks the durable operation on each request: missing, terminal, unknown, stopped or shut-down operation state is unauthorized. Group changes and session archive refuse authority. Expiry is HTTP 401 `credentialExpired`; the CLI also reports this typed error from the expiry environment before traffic, never falling back to anonymous/wallet. Credentials are not renewed. The in-memory v2 issuer retains bounded expired tombstones for another 24 hours, and checks existing durable credential ownership after tombstone pruning so an expired retry cannot mint a replacement; server restart invalidates all bearers. No database schema changes are needed.
-- **Owned names.** On every relayed start, of any caller, the hub strips
+- **Credentials.** Script bindings and the shared exec relay inject a server-owned `sessionCredential: {token, spaceURL, expiresAt}` before `exec.v1` admission. The bearer is bound to session, original group and operation owner; retries retain the same credential and immutable expiry (invocation timeout, capped by script lifetime and 24 hours). The supervisor exports `WUHU_TOKEN_EXPIRES_AT` as Unix epoch seconds as well as the three identity names, overwrites caller values and masks the token on output. The session gate checks the durable operation on each request: missing, terminal, unknown, stopped or shut-down operation state is unauthorized. Group changes and session archive refuse authority. Expiry is HTTP 401 `credentialExpired`; the CLI also reports this typed error from the expiry environment before traffic, never falling back to anonymous/wallet. Credentials are not renewed. The in-memory v2 issuer retains bounded expired tombstones for another 24 hours, and checks existing durable credential ownership after tombstone pruning so an expired retry cannot mint a replacement; server restart invalidates all bearers. No database schema changes are needed.
+- **Owned names.** On every operation start, server-owned identity names are protected: the supervisor strips
   `WUHU_EXEC`, `WUHU_TOKEN`, `WUHU_SPACE_URL`, `WUHU_TOKEN_EXPIRES_AT`, `WUHU_ID_TOKEN_URL` and `WUHU_ID_TOKEN_REQUEST` from `env` and `secrets`;
   only the credential sets them.
-- **ID-token capability.** With the credential, a session's exec (v1 hub, or a v2 start sent by the record's caller session) gets `WUHU_ID_TOKEN_URL` (`<spaceURL>/v1/id-token`) in `env` and `WUHU_ID_TOKEN_REQUEST` (`wit_` + 64 hex) in `secretValues`, so the agent masks it; a v1 agent without `group-secrets` gets it in `env`. The grant binds session, machine and exec, lives in memory with the exec token's life (timeout capped at 24 h), is stable per exec, and is revoked with the exec token, when a v2 relay ends and when the exec's machine is lost (a v1 exec that resumes afterwards no longer mints). Grants are memory-only: after a restart none survives, and a new one is a new capability. See Server identity for the route. The hub never touches `WUHU_IDENTITY`; the
-  agent drops one it inherited itself (MachineAgent SPEC).
-- **The gate.** A request whose bearer starts `wst_` goes to the session
-  gate in front of the API wall (dev or not). An unknown or expired token, or
-  one whose exec has ended, is 401 with the reason; an archived session is
-  403. A valid token runs the request as the session under the rules its own
-  tools keep:
-  - group: the session's own. A `wuhu-group` header naming another group is 403 `groupMismatch`, before any route.
-  - files: `GET /v1/f/*`, `PUT /v1/f/*`, and `POST /v1/tools/{read, ls, stat,
-    grep, find, history, query, write, edit, rm, mv, checkout, table.create,
-    table.alter, table.mutate, new}`. Writes keep the session home rule
-    (another session's `/_/sessions/<id>/`, or the session's own in another
-    group, is refused, 422): the checked
-    address is `path`, both of `mv`'s, and for `new` its `in`, else its
-    template's (the instance lands next to it; the template is only read).
-    A `wuhu-tool-call` header on `POST /v1/tools/*` is the call's idempotency
-    key: the first 2xx answer is recorded under (session, id) and a repeat
-    with the same id gets that answer back without running the tool again,
-    which is how a worker's write or edit retried after a crash never fails
-    as stale. `read` with `image: true` of an image path (png, jpg, gif, webp;
-    not under `wuhu://system/`) checks the bytes against the name, bounds them at
-    `ImageMedia.maxReadBytes`, stores them in the blob store and answers
-    `ReadOutput.image` (`{mimeType, blob, byteCount, width?, height?}`) with
-    a one-line `content`.
-    `GET /v1/observe`, `GET /v1/server`, `GET /v1/groups`.
-  - The session verbs run on the hub as the session; the `wuhu-tool-call`
-    header is their idempotency key too, owned by each verb: the answer is
-    looked up and recorded in the write that makes the effect (a slot armed
-    or cancelled, a device command, a title set, a session created) or the
-    effect's id is derived from the call (a message, a request, a report,
-    whose deadline and stall clocks commit with the request's message and
-    end with its final), so a repeat, or two runs of one call at once, gets
-    the first answer, a retried cancel is still "cancelled", and a retried
-    title never overwrites a later one; a refusal leaves no receipt and runs
-    again. An incomplete create (the
-    session exists, its template or brief did not land) is 422
-    `{code: incompleteSession, message, id}`, and the same call again
-    finishes it. `POST /v1/conversation/message` is
-    `send_message` (a post to a session is a DM from this session; `user` is
-    refused 422 as the tool refuses it; multipart attachments are refused),
-    answering `{delivered: []}`. `POST /v1/session` is `create_session`: a
-    child task by default on the session's own model, `kind: agent` for a
-    child agent, `topLevel: true` for a top-level agent (an agent only);
-    `kind` reaches the hub as written, so an odd one is the hub's 422; the
-    answer carries `title`, `requestId` and `member`. `POST
-    /v1/session/:id/request` (`SessionRequestInput` → `SessionRequestOutput`,
-    with `deadline`) is `request` on its child; `POST /v1/request/:id/report`
-    (`RequestReportInput` → `RequestReportOutput`) is `report`; `POST
-    /v1/session/:id/title` is `set_title`, for the session itself only
-    (another id is 404); `POST /v1/device/:id/command` is `manipulate_ui`
-    (top-level agents only); `POST /v1/subscription` (`SubscriptionInput`,
-    exactly one of `observe` and `timer`, else 400) arms the session's own
-    slot keyed by the tool call and `DELETE /v1/subscription/:id` is the
-    subscription half of `cancel` (an ended or foreign id is 422 `notFound`);
-    `GET /v1/templates` lists the templates `templates` lists; `GET
-    /v1/machine` renders the hub's roster (machines its group reads, the
-    hub's attach state; 422 when the server has no machine backend) as
-    `[MachineStatus]`. Tool refusals are 422 carrying the tool's code.
-  - `POST /v1/session/:id/{interrupt, resume, tags}` pass the
-    self/ancestor check first (403 with the reason otherwise);
-    `archive` and `unarchive` pass the archive rule above.
-  - `POST /v1/scripts` (`ScriptRunInput` → SSE of `ScriptOutput`) is `wuhu script`: the session's worker runs `source` as a space script with `import.meta.args` = `arguments`, under `run_script`'s lifetime and API, and each `result`, `update` and `failure` is one event in order, closed by `end` once the run has ended; a stream that stops without `end` is a run that did not end. Closing the stream cancels the run. The run's span carries `script.kind: wuhu_script` and `script.source.sha256`; no script-run row exists in the space, so the span is the record.
-  - `POST /v1/exec` mints an exec owned by the session (which gets its own
-    token) on a machine its group reads (404 otherwise); `GET /v1/exec` lists its own live execs; `GET /v1/exec/:id`,
-    `POST /v1/exec/:id/kill` and the WS caller leg answer only for its own
-    execs (404 otherwise).
-  - Everything else — users, accounts, keys, secrets, providers and
-    auth, machine add/rotate/revoke/name, devices, notifications, usage,
-    transcripts and logs, `sync` — is 403 with
-    exactly `not available to a session`.
+- **ID-token capability.** A start sent by the record's caller session receives `WUHU_ID_TOKEN_URL` (`<spaceURL>/v1/id-token`) in `env` and `WUHU_ID_TOKEN_REQUEST` (`wit_` + 64 hex) in `secretValues`, so the agent masks it. The grant binds session, machine and exec, has the exec credential's bounded lifetime, and is revoked when the relay ends or the machine is lost. Grants are memory-only and do not survive server restart. The supervisor drops inherited `WUHU_IDENTITY`; the CLI's explicit wallet opt-in remains separate from session authority.
+
 
 Resume of a session with unreadable stored transcript/history is refused with a conflict explaining that the data cannot be loaded and directing the caller to Start over. The HTTP and `wuhu:session` script surfaces both retain that guidance; readable errored sessions still resume normally.
 
@@ -613,54 +418,20 @@ Resume of a session with unreadable stored transcript/history is refused with a 
 
 ## Resume and restart
 
-Re-dial with the same exec id and the channel protocol heals byte-exactly:
-the reconnecting endpoint replays its un-acked tail and its `hello` makes the
-far side replay everything the relay dropped. A server restart is the double
-blip: the registry rows (id, machine, stream id, non-terminal state) are all
-the server needs; both legs re-dial the fresh process, stream ids come back
-from the registry, and the exec resumes from the caller's cursor — nothing
-but time is lost.
+Exec callers reconnect with the same id and channel cursor. The durable operation store owns the remote operation identity, admitted input, consumed output offsets and caller consumer state. Server startup resumes a group's live operations before exposing them; unavailable recovery remains typed and is retried, never replaced with a new spawn. Registry rows alone do not recreate remote execution.
 
-V2 output cut at its budget acknowledges the admitted prefix even when a machine poll coalesces it with discarded bytes. The channel consumption offsets are persisted before retained output is released, so a restart sends the exit and truncation at the same combined cursor the caller already holds. Replay skips each retained chunk's prefix below its channel's durable consumption offset, including when an acknowledgement covered only part of that chunk and no output was discarded.
+Output cut at its budget acknowledges the admitted prefix even when a machine poll coalesces it with discarded bytes. Channel consumption offsets are persisted before retained output is released, so restart sends exit and truncation at the same combined cursor. Replay skips each retained chunk's already-consumed prefix, including partial-chunk acknowledgements.
 
-## Grace (clock-injected, no wall-clock sleeps in tests)
+## Caller grace and operation lifetime
 
-- **Caller gone 60s** (from unbind, from mint, and from boot for live rows
-  without a caller): the exec is `cancelled`; if the machine is attached the
-  kill frame goes out now, otherwise it is delivered when the machine next
-  connects (`kill_delivered` dedupes across rebinds — a kill lost with a dying
-  leg is covered by the agent's own server-absence grace). A `machine-lost`
-  exec whose caller is gone too gets the same kill and keeps its verdict.
-- **Machine gone 60s**: every live exec of that machine with a connected
-  caller fails now: registry `machine-lost`, a stream-0 `control` error with
-  code `machineLost` to the caller (everything already delivered stays
-  delivered), then the caller leg is closed. The caller-side wrapper (M6)
-  composes `ExecEvent.failed` from that error. The grace is armed both when a
-  bound machine leg drops and when a caller binds while the machine is not
-  attached — a machine that never dialed in, or one still gone after an
-  earlier expiry, fails a fresh caller after one grace instead of silence.
-  The process may still be running on the box. Both exec tools and scripts stop waiting at `machine-lost`; neither treats it as confirmed process exit. When the machine returns, a `machine-lost` exec without a connected caller is killed.
-- **Machine silence 60s**: the logical machine relationship has a monotonic silence deadline, including while its socket appears attached. Only decoded inbound machine frames renew it; server-local caller reconnects and replacement machine sockets do not. An existing `stat("/")` VFS request every 20 seconds supplies liveness evidence from installed agents without changing the wire protocol, and at most one such probe is outstanding per socket. At expiry the hub detaches the machine, fails pending VFS/search calls with exactly `machine <machine> stopped responding`, and fails/closes its exec callers. Exec errors retain the warning that the remote process outcome is unknown. This deadline is independent of each remote process's runtime timeout and leaves byte ACKs and output replay unchanged. Binding, unbinding, and silence expiry are logged with the machine, socket generation, silence duration, last message type, and pending caller/request counts, without command text or secrets. Registry loss is recorded for all affected execs before error sends run concurrently; after a 100 ms best-effort error-send grace, the transport is aborted without flushing a close frame, failing pending writes and ending inbound. A backpressured caller cannot hold up another or keep the send task group waiting for an outbound flush. A caller rebound during loss accounting is failed on its current binding, including one accepted using a stale live registry record. A drain caller whose registry already records a terminal verdict other than `machine-lost` receives `execNotFound` with `exec <id> is finished and its stream is no longer replayable`; silence expiry never replaces its known verdict with an unknown process outcome.
-- **v1 replay scope and map lifetime**: a caller's first start on each binding establishes its stream mapping before requesting one replay scoped to its authorized exec id, including terminal drains whose start is not forwarded. The preceding caller hello is not forwarded, so no duplicate unmapped replay is requested. A pending terminal ACK can establish its authorized stream mapping without resending the start. Machine reconnect still resumes live caller legs. The hub discards an exec's caller generation/stream/machine maps, machine stream mapping, exit-delivery marker and resolved-secret state once its durable record is terminal and its caller is absent; late machine frames do not recreate terminal history maps. A caller-gone timer may still deliver a pending machine-lost kill from the durable registry after these maps are dropped. Refused execs retain their small diagnostic/exit result separately until a matching terminal ACK or ten minutes from refusal, so a post-exit/pre-receipt caller crash can still replay exit 127 and its diagnostic.
-- **Drain grace**: a caller bound to a terminal exec must receive the replayed
-  exit event within one grace; if it does not (the agent restarted, so the
-  retained stream is gone), it gets a stream-0 `control` error with code
-  `execNotFound` and the leg closes — the outcome stays readable via
-  `GET /v1/exec/:id`.
-- Reconnect within a grace rebinds socket-scoped timers; stale socket expiries are no-ops. The logical silence deadline survives socket replacement until actual machine evidence arrives.
-- **Accepted edge — agent restart mid-exec**: `exec-start` is relayed only
-  while the registry row is live (a replayed start for a finished exec is
-  dropped, so an agent that restarted and lost its per-id dedup state cannot
-  respawn a completed command). If the agent restarts while the exec is
-  *live*, a resuming caller's replayed start does spawn the command again on
-  the fresh agent — the same cost family as orphan-on-crash (ruling 8, no pid
-  ledger): agent death may double-run a live command, never a finished one.
+A minted exec without a start, or an active caller disconnected for 60 seconds, expires its caller grace. The service abandons an active operation as `callerGone`; kill intent stops it as `callerCancelled`. A completed caller endpoint is retained for ten minutes to drain its result. Reconnecting within caller grace resumes the existing operation.
+
+Machine liveness, retries, lease expiry and remote supervisor recovery belong to the v2 operation/tunnel protocol. Missing output (`offsetExpired` / `lostOutput`) is terminal evidence that cannot be repaired by polling. Unknown remote status is never described as confirmed process exit; detailed timeout, stop and output-cut behavior is below under *Machine tool transport routing*.
 
 ## Resolver arm (M5): fs tools over `machines://`
 
 `handler()` wires the tool context with a machine seam: `hub.vfs(machine:op:)`
-and `hub.search(machine:query:)` are round trips over the machine leg, the
-same pending-request plumbing (and severed-on-rebind semantics).
+and `hub.search(machine:query:)` open v2 operations through the machine owning group's `MachineOperations`.
 On a v2 machine every start a session caused carries `StartRequest.caller`
 `{session, title, group}`, read from the session record at start time: file
 tools and search take the session from `MachineSeam.caller` (set by
@@ -689,8 +460,7 @@ scope holds — machine fs is raw:
   directories.
 - grep/find run one FileSearch query on every backend: the space walks
   itself, a machines:// address runs it on the machine as `search.v1`
-  (machine v2 only: a v1 machine fails `unsupported`; an agent without
-  `search.v1` fails `unavailable`, agent too old, before starting). Same
+  (an agent without `search.v1` is refused before starting). Same
   walk order, hidden names, budgets and cursors, and every file read a range
   at a time whatever its size, so pages hold the same items across backends
   modulo the `machines://<id>` prefix (`SearchParityTests`). A cursor is bound
@@ -704,22 +474,7 @@ The content plane's tool context has no machine seam: machines:// addresses fail
 
 ## Frame size bound
 
-`serve()` binds its listener with a 16 MiB WebSocket frame ceiling (`ServeOptions.maximumWebSocketFrameBytes` = `MachineHub.maximumFrameBytes`; wuhu-serve's default is 1 MiB). Two machine-wire payloads travel as single frames that exceed the default on real sockets: an exec output chunk can be as large as the flow-control window (4 MiB default → ~5.6 MiB as base64 JSON), and a VFS `read` returns the whole file in one response frame. The ceiling is a memory guard against a hostile or buggy peer, not a tunable to chase file sizes.
-
-M5 resolved the open question **document-and-defer**: VFS reads are not paged
-at the wire level. The space design defers streaming reads too, and wire
-paging would be contract churn M6/M7 do not need. Instead the bound is
-enforced loudly at both ends:
-
-- The agent refuses to read a file over its 8 MiB read bound (`tooLarge`,
-  MachineAgent SPEC) — an oversized response frame is never produced, so a big
-  file on the box cannot sever the channel.
-- The hub refuses to send an outbound round-trip frame over the ceiling
-  (`MachineHubError.frameTooLarge` → tool error `invalidArgument`) — an
-  oversized `write` fails the one call, not the connection.
-
-In-process tests never hit the NIO decoder's ceiling — these two explicit
-gates are what make the failure mode reachable and tested.
+`serve()` sets `ServeOptions.maximumWebSocketFrameBytes` to `MachineHub.maximumFrameBytes` (16 MiB). This bounds incoming WebSocket frames, including the shared exec caller channel. Machine operations use the bounded v2 fetch tunnel and their operation-specific payload limits, not single-frame legacy VFS round trips. Oversized or missing data follows those typed operation contracts rather than selecting a different transport.
 
 ## Per-call inference accounting
 
@@ -852,13 +607,13 @@ Presence is one loop per member machine, under the group it is a member of: a ma
 
 ## Machine v2 production lifecycle
 
-`SpaceHost.open` attempts to provision/reopen an owner-private durable operation-store key outside the database and resumes live operations before admitting v2 script clients. `MachineV2Service` owns startup-error persistence, client gating and the structured run/shutdown lifecycle. A machine-v2 key or retained-record startup failure isolates v2 only: the host still opens v1, scripts, files and its other services. All v2 HTTP requests and script clients return the original typed failure (usually `storeUnavailable`); missing or wrong keys are never recreated, and encrypted operations never fall back to plaintext, MemoryOperationStore or v1. After a restart, an operation with no caller to return to is abandoned by persisted ID with no new start permission or retransmitted POST, and a live exec waits for its caller (see startup above). Confirmed detached presence survives restarts. Per-machine authentication loss stays in that machine's presence loop and drivers; key/store/trace configuration failures remain typed failures.
+`SpaceHost.open` attempts to provision/reopen an owner-private durable operation-store key outside the database and resumes live operations before admitting v2 script clients. `MachineV2Service` owns startup-error persistence, client gating and the structured run/shutdown lifecycle. A machine-v2 key or retained-record startup failure isolates v2 only: the host still opens scripts, space files and its other services. All v2 HTTP requests and script clients return the original typed failure (usually `storeUnavailable`); missing or wrong keys are never recreated, and encrypted operations never fall back to plaintext, MemoryOperationStore or another transport. After a restart, an operation with no caller to return to is abandoned by persisted ID with no new start permission or retransmitted POST, and a live exec waits for its caller (see startup above). Confirmed detached presence survives restarts. Per-machine authentication loss stays in that machine's presence loop and drivers; key/store/trace configuration failures remain typed failures.
 
-`POST /v1/machine-v2` accepts the same optional body `group` and registration-group policy as v1, requires a valid globally unique machine name, atomically creates the account, separately enrolled machine identity, explicit v2 membership and one-time token in a single space-writer transaction, and returns the ordinary token/fingerprint. An insertion failure leaves no half-created identity and the name remains retryable. `POST /v1/machine-v2/enroll` checks that membership inside the token/key claiming transaction before mutation; a v1 token remains usable and its credentials untouched on refusal. Consuming a machine account's token (`POST /v1/enroll/consume` and `POST /v1/machine-v2/enroll`, so also a rotate's re-key) leaves a receipt in the claiming transaction (a person's invite or share-login token stays strictly one-time): replaying the consumed token with the same pubkey returns the same key while that key lives and the token's original expiry has not passed; any other pubkey stays `401 tokenInvalid`, and a receipt dies with its key (rotation, revocation, removal). `GET /v1/machine-v2/:id` verifies membership either for a readable person/session principal or via a fresh signed v2 dial credential. Moving a machine updates only its v2 membership/presence ownership alongside the existing move transaction; read visibility is checked on every dispatch.
+`POST /v1/machine-v2` accepts optional body `group` under the registration-group policy above, requires a valid globally unique machine name, atomically creates the account, separately enrolled machine identity, explicit v2 membership and one-time token in a single space-writer transaction, and returns the ordinary token/fingerprint. An insertion failure leaves no half-created identity and the name remains retryable. `POST /v1/machine-v2/enroll` checks that membership inside the token/key claiming transaction before mutation; a token without v2 membership is refused without consuming it or mutating credentials. Consuming a machine account's token (`POST /v1/enroll/consume` and `POST /v1/machine-v2/enroll`, so also a rotate's re-key) leaves a receipt in the claiming transaction (a person's invite or share-login token stays strictly one-time): replaying the consumed token with the same pubkey returns the same key while that key lives and the token's original expiry has not passed; any other pubkey stays `401 tokenInvalid`, and a receipt dies with its key (rotation, revocation, removal). `GET /v1/machine-v2/:id` verifies membership either for a readable person/session principal or via a fresh signed v2 dial credential. Moving a machine updates only its v2 membership/presence ownership alongside the existing move transaction; read visibility is checked on every dispatch.
 
-With `pubkey` in the body, `POST /v1/machine-v2` is one-call enrollment for a machine that holds its own key (the Wuhu app): the name stays unique across v1 and v2 (`409 machineNameTaken`), the group follows the same registration policy, and one transaction creates the account, machine, v2 membership and live `exec-machine` key (created by the calling person) with no join token; the response is the `EnrollConsumeOutput` that token enrollment returns. A malformed key is `400 invalidArgument`, an already-enrolled key `409 keyTaken`. The call is idempotent for a retry: when the name is already held by a v2 machine in the same group whose live `exec-machine` key is this `pubkey` and was enrolled by the same calling person, the same transaction returns that machine and key unchanged (`200`, same body, re-applying any `device` link) instead of `409`. A different key, a different person, another group, or a key since rotated or revoked is still `409 machineNameTaken`; the dev seat (no person) never replays. Optional `device` links the machine to one of the caller's own devices in the same transaction; another account's or an unknown device is `404 unknownDevice` (the dev seat may name any device), a session naming a device is `403`, and `device` without `pubkey` is `400`. `POST /v1/machine-v2/:id/revoke` lets the machine drop its own credentials: it is authenticated only by fresh MachineV2Connect headers whose machine set is exactly `:id` and whose live key resolves to that machine, then, in one space-writer transaction, re-checks that the presenting key is a live exec-machine key of that machine's account and purges every credential of the account; the machine's live connection is kicked after the commit. A rotation therefore lands wholly before (the presenting key is dead: `401`) or wholly after, and a revoke signed before a rotation never deletes the replacement. The production wall admits it unauthenticated like the signed status GET. On every machine-key path (signed status, connect, self-revoke) only a definitive refusal is `401` (`keyInvalid` for a bad handshake, `machineNotAuthorized` for an unknown, revoked or misaddressed key); a store, hub or internal failure is `503`, either `machineAuthUnavailable` or the hub's startup-failure envelope, and a machine must retry rather than discard its key. Token and one-call enrollment map non-domain failures to the same `503 machineAuthUnavailable`. The machine row stays, so a person can re-enroll it through rotate.
+With `pubkey` in the body, `POST /v1/machine-v2` is one-call enrollment for a machine that holds its own key (the Wuhu app): the name stays globally unique (`409 machineNameTaken`), the group follows the same registration policy, and one transaction creates the account, machine, v2 membership and live `exec-machine` key (created by the calling person) with no join token; the response is the `EnrollConsumeOutput` that token enrollment returns. A malformed key is `400 invalidArgument`, an already-enrolled key `409 keyTaken`. The call is idempotent for a retry: when the name is already held by a v2 machine in the same group whose live `exec-machine` key is this `pubkey` and was enrolled by the same calling person, the same transaction returns that machine and key unchanged (`200`, same body, re-applying any `device` link) instead of `409`. A different key, a different person, another group, or a key since rotated or revoked is still `409 machineNameTaken`; the dev seat (no person) never replays. Optional `device` links the machine to one of the caller's own devices in the same transaction; another account's or an unknown device is `404 unknownDevice` (the dev seat may name any device), a session naming a device is `403`, and `device` without `pubkey` is `400`. `POST /v1/machine-v2/:id/revoke` lets the machine drop its own credentials: it is authenticated only by fresh MachineV2Connect headers whose machine set is exactly `:id` and whose live key resolves to that machine, then, in one space-writer transaction, re-checks that the presenting key is a live exec-machine key of that machine's account and purges every credential of the account; the machine's live connection is kicked after the commit. A rotation therefore lands wholly before (the presenting key is dead: `401`) or wholly after, and a revoke signed before a rotation never deletes the replacement. The production wall admits it unauthenticated like the signed status GET. On every machine-key path (signed status, connect, self-revoke) only a definitive refusal is `401` (`keyInvalid` for a bad handshake, `machineNotAuthorized` for an unknown, revoked or misaddressed key); a store, hub or internal failure is `503`, either `machineAuthUnavailable` or the hub's startup-failure envelope, and a machine must retry rather than discard its key. Token and one-call enrollment map non-domain failures to the same `503 machineAuthUnavailable`. The machine row stays, so a person can re-enroll it through rotate.
 
-`GET /v1/machine-v2/challenge` and the bounded `/v1/machine-v2/connect` upgrade authenticate by the new MachineV2Connect signing domain. Challenges are consumed once and never reused across a server incarnation. The signed allowed machine set is validated before upgrade and for every dispatched Fetch request, including current enrolled-key validity and caller group readability. Replacing a tunnel aborts outstanding exchanges; an old connection's teardown cannot remove the replacement. A missing live route is typed `machineUnavailable`, never a route through today's MachineHub. Persisted acknowledged goodbye reports `detached` with its actual `leftAt`; otherwise it reports `lost` with `silentSince` from the last answer, or membership registration if never answered. Missing owning-group evidence after a concurrent removal is `unknownMachine`, not synthesized silence. Rotation/revocation aborts the v2 connection too. Connection close alone never records detached presence.
+`GET /v1/machine-v2/challenge` and the bounded `/v1/machine-v2/connect` upgrade authenticate by the new MachineV2Connect signing domain. Challenges are consumed once and never reused across a server incarnation. The signed allowed machine set is validated before upgrade and for every dispatched Fetch request, including current enrolled-key validity and caller group readability. Replacing a tunnel aborts outstanding exchanges; an old connection's teardown cannot remove the replacement. A missing live route is typed `machineUnavailable`, never another transport route. Persisted acknowledged goodbye reports `detached` with its actual `leftAt`; otherwise it reports `lost` with `silentSince` from the last answer, or membership registration if never answered. Missing owning-group evidence after a concurrent removal is `unknownMachine`, not synthesized silence. Rotation/revocation aborts the machine connection. Connection close alone never records detached presence.
 
 ## Machine v2 agent upgrades
 
@@ -870,7 +625,6 @@ The target is the server's own stamped version unless `/machine-v2-upgrade.json`
 
 The skew window this serves: a server keeps working with agents of the previous release, whose descriptors it reads on every describe. Before starting an operation, `MachineOperations.open` refuses any top-level input field a kind's closed (`additionalProperties: false`) input schema does not declare, `409 kindUnavailable` with `reason: agentTooOld`, `inputs` and `started: false`, so an older agent never receives a field it would reject or silently ignore.
 
-Logical departure uses the ordinary describe GET. Only after a settled `leaving` reply does the machine's presence loop send `?leaveAck=true`; detached is persisted on that confirmed handshake, not a socket close or guessed delay. Failed acknowledgement is lost with `leaveHandshakeFailed`. The agent's local uninstall wait is bounded by one lease and explicitly reports an unacknowledged leave.
 
 ## Model group placement
 
@@ -903,9 +657,9 @@ The server queue has a fixed 1024-span capacity; full queues drop new spans with
 
 ## Machine tool transport routing
 
-MachineHub routes a registered v2 machine exclusively to its group's durable `MachineOperations`; a v1 registration still uses the original channel. This covers file and search seams, tool execs, script processes, attachments and all machines:// path consumers. A missing kind returns unknownKind naming the kind, never a v1 fallback. V2 execs reuse the current caller channel and ExecRecord surfaces while the operation protocol owns remote execution, bounded stdout/stderr, lease renewal, stop and credentials.
+MachineHub routes every machine exclusively to its group's durable `MachineOperations`. This covers file and search seams, tool execs, script processes, attachments and all machines:// path consumers. A missing kind returns unknownKind naming the kind, never a legacy transport fallback. V2 execs reuse the current caller channel and ExecRecord surfaces while the operation protocol owns remote execution, bounded stdout/stderr, lease renewal, stop and credentials.
 
-Attachment status for the roster and v2 GET comes from machine_v2_presence. GET /v1/machine-v2/:id also exposes state (attached/detached/lost), observedAt and reason, and `group`, the registration's current group as of the request, for a person/session reader and a signed machine alike. A machine reads its group back from this signed status after it connects and after every move; it treats `group` as optional, because a server older than the field omits it. Explicit group selection on v2 creation chooses the acting group; without one, person-created machines retain the personal-group default.
+Attachment status for the roster and v2 GET comes from machine_v2_presence. GET /v1/machine-v2/:id also exposes state (attached/detached/lost), observedAt and reason, and `group`, the registration's current group as of the request, for a person/session reader and a signed machine alike. A machine reads its group back from this signed status after it connects and after every move; it treats `group` as optional, because a server older than the field omits it. V2 creation uses the explicitly requested group, or the acting group when none is provided; either requires admin rights under the registration policy above.
 
 
 
@@ -946,3 +700,5 @@ Every group boundary resolves aliases to permanent ids before authorization: the
 `POST /v1/group/:id/observers` (`ObserverInput` → 201 `ObserverOutput`), `GET /v1/group/:id/observers` (`ObserversOutput`) and `DELETE /v1/group/:id/observers/:name` (`ObserverOutput`) arm, list and cancel a group's observers. Arming and cancelling need write on the group, listing read; the --dev seat does all three. A missing group is 404 `notFound`; the store's refusals map by code: `invalidArgument` 400 (also exactly-one-trigger and handler path problems), `conflict` 409, `notFound` 404. Session exec tokens reach these routes through the session gate as their session.
 
 A firing's token (`ExecTokens.firingToken`, minted by the worker registry when it hands the firing to a worker and revoked when the firing returns, or at once when it is cancelled) is the one credential an observer has: `RequestCredential.observer`. The gate routes it through `observerRouter`, an allowlist acting as the observer's principal in its group: discovery and group reads, `/v1/f/*`, `/v1/observe`, the conversation reads, the space tools that sessions have over `/v1/tools/:name`, secrets, the machine verbs a session's scripts share (`addMachineRoutes`: the machines its group may use, their directories, and execs minted for its handler's script, owned by `<name>@<group>`, homed in the group and given no session credential), `POST /v1/session` (top-level in its group, admitted under the observer's hourly cap), `POST /v1/session/:id/request`, `POST /v1/conversation/message` and `POST /v1/inferences` (billed to the group and firing). Naming another group by `wuhu-group` is 403 `groupMismatch`; everything else, the observer routes and an exec outside a script included, is 403. An observer never writes a session home. Since a cancelled firing's worker can no longer reach main, the registry itself (`MachineHub.releaseScript`) kills the execs the firing's script still runs and forgets their owner rows, whenever a firing ends.
+
+`DELETE /v1/machine/:id` accepts a machine name or id and no body. Only a human admin of its owner group (or the dev seat) may delete; sessions and observers are refused even when group admins. The atomic store delete removes identity, all names, credentials, v2 membership/presence and operation/channel/output state, unlinks devices, ends live exec records as machine-lost, and deletes notes in one revision. The existing v2 kick closes its live tunnel after commit; a crash before that kick cannot restore authorization or live operation reservations on restart. Remote supervisors retire when their agent receives definitive machineNotAuthorized on reconnect, otherwise their existing lease expires; deletion does not claim an acknowledged remote stop. A missing machine is 404 notFound and success is an empty JSON object. Revoke and rotate retain their existing semantics. There is no privileged run_script export: scripts act as sessions/observers, not human admins.

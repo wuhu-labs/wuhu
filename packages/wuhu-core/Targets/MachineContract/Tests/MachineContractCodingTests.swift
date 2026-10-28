@@ -156,11 +156,6 @@ struct MachineContractCodingTests {
       "id": "mc_a1b2c3d4", "group": "shared", "attached": true,
     ]))
   }
-
-  @Test func connectSignaturesAreDomainSeparated() {
-    let payload = MachineConnect.signingPayload(challenge: "mch_abc")
-    #expect(payload == Data("wuhu-machine-connect:mch_abc".utf8))
-  }
 }
 
 @Contract

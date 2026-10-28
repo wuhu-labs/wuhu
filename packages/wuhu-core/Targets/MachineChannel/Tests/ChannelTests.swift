@@ -108,6 +108,10 @@ struct ChannelTests {
         await withTaskGroup(of: Void.self) { inner in
           for await exec in machine.incomingExecs {
             inner.addTask {
+              if exec.start.id == execID(10) {
+                await exec.exit(.exited(code: 0))
+                return
+              }
               do {
                 for try await _ in exec.stdin {}
               } catch {
@@ -118,23 +122,51 @@ struct ChannelTests {
           }
         }
       }
-      group.addTask { await serveRequestsOK(machine) }
 
       try await raw.send(FrameCodec.encode(Frame(streamID: 5, opcode: .execStart, payload: makeStart(execID(9)))))
       try await raw.send(FrameCodec.encode(Frame(streamID: 5, opcode: .stdin, payload: ControlMessage.ping)))
-      try await raw.send(FrameCodec.encode(Frame(streamID: 0, opcode: .vfsRequest, payload: VFSRequest(id: 1, op: .stat(path: "/")))))
+      try await raw.send(FrameCodec.encode(Frame(streamID: 6, opcode: .execStart, payload: makeStart(execID(10)))))
 
-      var sawVFSResponse = false
-      var sawExit = false
+      var exits: [ExecID: MachineContract.ExitStatus] = [:]
       for await bytes in raw.inbound {
         let frame = try FrameCodec.decode(bytes)
-        if frame.opcode == .vfsResponse { sawVFSResponse = true }
-        if frame.opcode == .execExit { sawExit = true }
-        if sawVFSResponse, sawExit { break }
+        if frame.opcode == .execExit {
+          let exit = try frame.payload(ExecExit.self)
+          exits[exit.id] = exit.status
+        }
+        if exits.count == 2 { break }
       }
-      #expect(sawVFSResponse)
-      #expect(sawExit)
+      #expect(exits[execID(9)] == .exited(code: 1))
+      #expect(exits[execID(10)] == .exited(code: 0))
       #expect(stdinError.value)
+      group.cancelAll()
+    }
+  }
+
+  @Test func malformedFrameGetsControlErrorAndThePumpSurvives() async throws {
+    let endpoint = ChannelEndpoint()
+    let (raw, machine) = InMemoryTransport.pair()
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { await endpoint.run(machine) }
+      group.addTask {
+        for await exec in endpoint.incomingExecs {
+          await exec.exit(.exited(code: 0))
+        }
+      }
+      try await raw.send(Array("definitely not a frame".utf8))
+      try await raw.send(FrameCodec.encode(Frame(streamID: 1, opcode: .execStart, payload: makeStart(execID(1)))))
+      var protocolError: MachineError?
+      var exit: ExecExit?
+      for await bytes in raw.inbound {
+        let frame = try FrameCodec.decode(bytes)
+        if frame.opcode == .control, case let .error(error) = try frame.payload(ControlMessage.self) {
+          protocolError = error
+        }
+        if frame.opcode == .execExit { exit = try frame.payload(ExecExit.self) }
+        if protocolError != nil, exit != nil { break }
+      }
+      #expect(protocolError?.code == .protocolViolation)
+      #expect(exit?.status == .exited(code: 0))
       group.cancelAll()
     }
   }

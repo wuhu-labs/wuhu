@@ -19,7 +19,7 @@ private func worker(_ harness: SessionHarness, _ tokens: ExecTokens) async throw
 }
 
 private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session: SessionID) async throws -> String {
-  let machine = try await harness.space.addMachine(name: "box")
+  let machine = (try await harness.space.addMachineV2(name: "box")).machine
   let exec = try await harness.space.mintExec(machine: machine.id, caller: session.rawValue)
   return tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
 }

@@ -32,7 +32,7 @@ import Testing
     let harness = try await SessionHarness(dev: dev, origin: "https://space.test", execTokens: tokens, identityController: identity ? controller : nil)
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let session = try await harness.store.createSession(group: .shared, title: "coder", kind: .agent, createdBy: "owner", executor: model)
-    let machine = try await harness.space.addMachine(name: "box")
+    let machine = (try await harness.space.addMachineV2(name: "box")).machine
     let exec = try await harness.space.mintExec(machine: machine.id, caller: session.rawValue)
     let minting = tokens.idTokens.environment(spaceURL: tokens.spaceURL, session: session, machine: machine.id, exec: exec.id, timeout: 600, now: Date())
     #expect(minting.url == "https://space.test/v1/id-token")

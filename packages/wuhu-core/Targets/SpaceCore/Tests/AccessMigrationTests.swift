@@ -16,7 +16,8 @@ import Testing
       INSERT INTO accounts (id, kind, name, created_at) VALUES
         ('person', 'human', 'Person', '2026-01-01T00:00:00Z'),
         ('other', 'human', 'Other', '2026-01-01T00:00:00Z'),
-        ('removed', 'human', 'Removed', '2026-01-01T00:00:00Z');
+        ('removed', 'human', 'Removed', '2026-01-01T00:00:00Z'),
+        ('machine', 'machine', 'Box', '2026-01-01T00:00:00Z');
       UPDATE accounts SET removed_at = '2026-02-01T00:00:00Z' WHERE id = 'removed';
       INSERT INTO groups (id, created_at) VALUES
         ('personal', '2026-01-01T00:00:00Z'), ('team', '2026-01-02T00:00:00Z'),
@@ -34,7 +35,7 @@ import Testing
         ('ops', 'ops', 'admin', '2026-01-03T00:00:00Z', NULL),
         ('team', 'ops', 'read', '2026-01-02T00:00:00Z', NULL),
         ('personal', 'ops', 'read', '2026-01-01T00:00:00Z', NULL);
-      INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_box', 'person', 'box', '2026-01-01T00:00:00Z', 'shared');
+      INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_box', 'machine', 'box', '2026-01-01T00:00:00Z', 'shared');
       """)
       try Migration003.apply(db)
       try Migration004.apply(db)

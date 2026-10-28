@@ -21,11 +21,11 @@ public enum StoreContractFailure: Error, Equatable, Sendable { case violation(St
 /// What every `OperationStore` promises its driver: one claim per owner, cursors and pending input round-trip, output is
 /// appended one chunk at a time and trimmed by sequence, `live` lists exactly the records with work left, and a record set
 /// aside leaves `live` holding nothing.
-public func verifyOperationStoreContract(_ store: any OperationStore) async throws {
+public func verifyOperationStoreContract(_ store: any OperationStore, machine: String = "phone") async throws {
   let owner = OperationOwner(scope: "store-contract", key: UUID().uuidString)
   let descriptor = KindDescriptor("query.v1", inputSchema: [:], resultSchema: [:], inputChannels: [.init("stdin")], outputChannels: [.init("data")])
   let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [descriptor])
-  let first = ClientRecord(id: UUID(), correlation: UUID(), machine: "phone", start: .init(kind: descriptor.name, input: .null), description: description)
+  let first = ClientRecord(id: UUID(), correlation: UUID(), machine: machine, start: .init(kind: descriptor.name, input: .null), description: description)
   guard try await store.lookup(owner) == nil else { throw StoreContractFailure.violation("ownerLookup") }
   let claim = try await store.claim(owner, record: first)
   let again = try await store.claim(owner, record: first)
@@ -60,7 +60,7 @@ public func verifyOperationStoreContract(_ store: any OperationStore) async thro
   guard saved.retired, saved.output.isEmpty else { throw StoreContractFailure.violation("retire") }
   guard try await !store.live().map(\.id).contains(first.id) else { throw StoreContractFailure.violation("retiredNotLive") }
 
-  let other = ClientRecord(id: UUID(), correlation: UUID(), machine: "phone", start: .init(kind: descriptor.name, input: 2), description: description)
+  let other = ClientRecord(id: UUID(), correlation: UUID(), machine: machine, start: .init(kind: descriptor.name, input: 2), description: description)
   var kept = try await store.claim(OperationOwner(scope: "store-contract", key: UUID().uuidString), record: other).record
   let chunk = OutputChunk(sequence: 0, channel: "data", from: .init(rawValue: 0), payload: .init(data: Data([7])))
   kept.output = [chunk]; kept.committed["data"] = chunk.through; kept.nextSequence = 1

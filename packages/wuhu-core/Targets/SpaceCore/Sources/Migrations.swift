@@ -14,6 +14,7 @@ enum Migrations {
     migrator.registerMigration("009", foreignKeyChecks: .immediate, migrate: Migration009.apply)
     migrator.registerMigration("010", foreignKeyChecks: .immediate, migrate: Migration010.apply)
     migrator.registerMigration("011", foreignKeyChecks: .immediate, migrate: Migration011.apply)
+    migrator.registerMigration("012", foreignKeyChecks: .immediate, migrate: Migration012.apply)
     try writer.read { db in
       if try migrator.hasBeenSuperseded(db) {
         throw SpaceError.unknownMigrations(try migrator.appliedIdentifiers(db).subtracting(migrator.migrations).sorted())

@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(2)))
 struct IsolationTests {
-  @Test func stuckConsumerAndSpewingStreamLeaveControlAndOtherStreamsResponsive() async throws {
+  @Test func stuckConsumerAndSpewingStreamLeaveOtherStreamsResponsive() async throws {
     let caller = ChannelEndpoint()
     let machine = ChannelEndpoint()
     let (callerSide, machineSide) = InMemoryTransport.pair()
@@ -36,7 +36,6 @@ struct IsolationTests {
           }
         }
       }
-      group.addTask { await serveRequestsOK(machine) }
 
       let spew = await caller.startExec(makeStart(execID(1), command: ["spew"], window: 32))
       // Never consume spew.events; wait until the spewing producer is stalled
@@ -53,8 +52,6 @@ struct IsolationTests {
       #expect(collected.stdout == [9, 8, 7])
       #expect(collected.exit == .exited(code: 0))
 
-      let result = try await caller.vfs(.stat(path: "/"))
-      #expect(result == .ok)
       _ = spew
       group.cancelAll()
     }

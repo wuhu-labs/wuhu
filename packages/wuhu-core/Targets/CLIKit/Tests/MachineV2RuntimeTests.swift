@@ -18,11 +18,9 @@ import FetchTunnel
 import FetchWebSocket
 import enum JSONValue.JSONValue
 import enum MachineContract.MachineV2Connect
-import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
 import Scratch
 import ScratchTesting
-import class ServeNIO.ServeNIOServer
 import Synchronization
 import Testing
 
@@ -133,84 +131,7 @@ private actor EnrollmentEffects {
     }
   }
 
-  @Test func acknowledgedLeaveKeepsControlOwnerAliveButNeverRedials() async throws {
-    let calls = Mutex(0); let acknowledged = Mutex(false); let sleeps = Mutex(0)
-    let clock = OperationClock(now: { .zero }, sleep: { _ in
-      let count = sleeps.withLock { $0 += 1; return $0 }
-      if count >= 3 { throw CancellationError() }
-    })
-    do {
-      try await MachineV2Runtime.dialLoop(handler: { _ in .text("unused") }, leaveAcknowledged: { acknowledged.withLock { $0 } }, connect: {
-        calls.withLock { $0 += 1 }
-        return TunnelTransport(receive: { acknowledged.withLock { $0 = true }; return nil }, send: { _ in }, abort: {})
-      }, clock: clock)
-    } catch is CancellationError {}
-    #expect(acknowledged.withLock { $0 })
-    #expect(calls.withLock { $0 } == 1)
-    #expect(sleeps.withLock { $0 } == 3)
-  }
-
-  @Test func localLeaveDecodesBoundedJSONBooleanAndRejectsMalformedReceipts() async throws {
-    for literal in ["true", " \ttrue\r\n"] {
-      let response = Response(status: .ok, body: .bytes(Data(literal.utf8), contentType: "application/json"))
-      try await MachineV2Runtime.validateLeaveResponse(response)
-    }
-    for literal in ["false", "", "tru", "true false", "{\"left\":true}", "null"] {
-      do {
-        try await MachineV2Runtime.validateLeaveResponse(Response(status: .ok, body: .bytes(Data(literal.utf8))))
-        Issue.record("malformed or negative receipt accepted: \(literal)")
-      } catch let error as MachineV2RuntimeError { #expect(error.code == .drainFailed) }
-    }
-    let drain = try Response.json(ErrorEnvelope(.init(.requestDeadline, message: "drainFailed")), status: .badRequest)
-    do { try await MachineV2Runtime.validateLeaveResponse(drain); Issue.record("expected drain failure") }
-    catch let error as MachineV2RuntimeError { #expect(error.code == .drainFailed) }
-    let ack = try Response.json(ErrorEnvelope(.init(.requestDeadline, message: "leaveUnacknowledged")), status: .badRequest)
-    do { try await MachineV2Runtime.validateLeaveResponse(ack); Issue.record("expected ack failure") }
-    catch let error as MachineV2RuntimeError { #expect(error.code == .leaveUnacknowledged) }
-  }
-
-  @Test func productionLeaveUsesCompleteHTTPHeadAndDecodesActualUnixWireReplies() async throws {
-    if !LeakGuard.isChild {
-      let run = try await LeakGuard.run(filter: "productionLeaveUsesCompleteHTTPHeadAndDecodesActualUnixWireReplies", environment: ["TMPDIR": "/tmp"])
-      #expect(run.status == 0, "\(run.output)")
-      #expect(run.ran > 0, "\(run.output)")
-      #expect(run.leftovers == [], "\(run.output)")
-      return
-    }
-    let fixture = try fixture("leave"); defer { fixture.scratch.remove() }
-    let home = MachineV2Home(root: fixture.root, machine: "test")
-    try #require(home.socket.path.utf8.count < 104)
-    try home.prepare()
-    let calls = Mutex(0)
-    let server = try await ServeNIOServer.bind(unixDomainSocketPath: home.socket.path) { request in
-      #expect(request.method == .put)
-      #expect(request.url.path == "/leave")
-      #expect(request.headers["Host"] == "localhost")
-      #expect((try await request.body?.bytes(upTo: 32).count) ?? 0 == 0)
-      let index = calls.withLock { $0 += 1; return $0 }
-      switch index {
-      case 1: return try .json(true)
-      case 2: return try .json(false)
-      case 3: return try .json(ErrorEnvelope(.init(.requestDeadline, message: "drainFailed")), status: .badRequest)
-      default: return try .json(ErrorEnvelope(.init(.requestDeadline, message: "leaveUnacknowledged")), status: .badRequest)
-      }
-    }
-    #expect(chmod(home.socket.path, 0o600) == 0)
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await server.runUntilCancelled() }
-      do {
-        try await MachineV2Runtime.leave(home: home)
-        for expected in [MachineV2RuntimeError.Code.drainFailed, .drainFailed, .leaveUnacknowledged] {
-          do { try await MachineV2Runtime.leave(home: home); Issue.record("negative wire response accepted") }
-          catch let error as MachineV2RuntimeError { #expect(error.code == expected) }
-        }
-      } catch { await server.shutdown(); group.cancelAll(); throw error }
-      await server.shutdown(); group.cancelAll()
-    }
-    #expect(calls.withLock { $0 } == 4)
-  }
-
-  @Test func revocationRetiresRecordsAndEndsCleanlyForTheServiceManager() async throws {
+  @Test func revocationRetiresAndEndsCleanlyForTheServiceManager() async throws {
     let fixture = try fixture(); defer { fixture.scratch.remove() }
     let home = MachineV2Home(root: fixture.root, machine: "test")
     try home.prepare()
@@ -223,7 +144,6 @@ private actor EnrollmentEffects {
       #expect(MachineV2Runtime.exitStatus(for: failure) == 1)
     }
     #expect(retired.withLock { $0 } == 0)
-    #expect(!home.isRevoked)
     do {
       try await MachineV2Runtime.retiringOnRevoke(home: home, retire: { retired.withLock { $0 += 1 } }) { throw MachineV2RuntimeError(.revoked) }
       Issue.record("revocation swallowed")
@@ -232,11 +152,7 @@ private actor EnrollmentEffects {
       #expect(MachineV2Runtime.exitStatus(for: error) == 0)
     }
     #expect(retired.withLock { $0 } == 1)
-    #expect(home.isRevoked)
     #expect(MachineV2Runtime.exitStatus(for: CancellationError()) == 1)
-    try home.clearRevoked()
-    #expect(!home.isRevoked)
-    try home.clearRevoked()
   }
 
   /// Inside its job a revoked agent never trusts the loaded definition to keep a clean exit down: it stops the job, or
@@ -269,37 +185,39 @@ private actor EnrollmentEffects {
       #expect(!stops)
     }
     #expect(steps.withLock { $0 } == ["retire", "stop"] + (stops ? [] : ["park", "park", "park"]))
-    #expect(home.isRevoked)
     let log = try String(contentsOf: home.upgradeLog, encoding: .utf8)
     #expect(log.contains("revoked; stopping the service job"))
     #expect(log.contains("revoked; parked") == !stops)
   }
 
-  @Test func uninstallDrainsALiveAgentButNotARevokedOne() async throws {
+  @Test func selfRevokeSignsOnlyItsOwnMachine() async throws {
     let fixture = try fixture(); defer { fixture.scratch.remove() }
     let home = MachineV2Home(root: fixture.root, machine: "test")
-    try home.prepare()
-    do { try await MachineV2Runtime.leaveForUninstall(home: home); Issue.record("missing agent drained") }
-    catch let error as MachineV2RuntimeError { #expect(error.code == .drainFailed) }
-    try home.markRevoked()
-    try await MachineV2Runtime.leaveForUninstall(home: home)
-  }
-
-  /// A leave outlives the agent that acknowledged it: with it recorded, leaving again answers at once without an agent, and
-  /// joining again clears it.
-  @Test func aRecordedLeaveHoldsUntilTheMachineJoinsAgain() async throws {
-    let fixture = try fixture(); defer { fixture.scratch.remove() }
-    let home = MachineV2Home(root: fixture.root, machine: "test")
-    try home.prepare()
-    #expect(!home.hasLeft)
-    try home.markLeft()
-    #expect(home.hasLeft)
-    try await MachineV2Runtime.leave(home: home)
-    try await MachineV2Runtime.leaveForUninstall(home: home)
-    try home.save(.init(machine: "test", name: "box-v2", server: "https://example.test"), key: .init())
-    #expect(!home.hasLeft)
-    do { try await MachineV2Runtime.leave(home: home); Issue.record("missing agent drained") }
-    catch let error as MachineV2RuntimeError { #expect(error.code == .drainFailed) }
+    let key = Curve25519.Signing.PrivateKey()
+    try home.save(.init(machine: "test", name: "box", server: "https://example.test"), key: key)
+    let calls = Mutex<[String]>([])
+    let fetch = FetchClient { request in
+      calls.withLock { $0.append(request.url.path) }
+      if request.url.path == "/v1/machine-v2/challenge" { return try .json(["challenge": "one-shot"]) }
+      #expect(request.url.path == "/v1/machine-v2/test/revoke")
+      #expect(request.method == .post)
+      #expect(request.headers[MachineV2Connect.machinesHeader] == "test")
+      #expect(request.headers[MachineV2Connect.pubkeyHeader] == key.pubkeyLabel)
+      let signature = try #require(Data(base64Encoded: request.headers[MachineV2Connect.signatureHeader]!))
+      #expect(key.publicKey.isValidSignature(signature, for: MachineV2Connect.signingPayload(challenge: "one-shot", machines: ["test"])))
+      return .text("{}")
+    }
+    try await MachineV2Runtime.revoke(home: home, fetch: fetch)
+    let alreadyRevoked = FetchClient { request in
+      if request.url.path == "/v1/machine-v2/challenge" { return try .json(["challenge": "one-shot"]) }
+      return try .json(["code": "machineNotAuthorized"], status: .unauthorized)
+    }
+    try await MachineV2Runtime.revoke(home: home, fetch: alreadyRevoked)
+    #expect(calls.withLock { $0 } == ["/v1/machine-v2/challenge", "/v1/machine-v2/test/revoke"])
+    do {
+      try await MachineV2Runtime.revoke(home: home, fetch: FetchClient { _ in throw CancellationError() })
+      Issue.record("unavailable server reported success")
+    } catch let error as MachineV2RuntimeError { #expect(error.code == .serverUnavailable) }
   }
 
   @Test func refusedV1TokenNeverWritesEitherMachineHome() async throws {

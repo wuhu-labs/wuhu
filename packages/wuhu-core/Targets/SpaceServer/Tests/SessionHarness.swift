@@ -80,7 +80,7 @@ struct SessionHarness {
     secrets: SpaceSecretStores? = nil,
     cacheWarmingUsage: UsageBoard? = nil,
     metrics: InferenceMetricsSink = .noop,
-    machineV2: Bool = false,
+    machineV2: Bool = true,
     inference: @escaping @Sendable (LoopCore.InferenceRequest, AttemptHub) async throws -> LoopCore.InferenceReply = { _, _ in
       throw InferenceError.other(status: nil, body: "no inference scripted")
     },

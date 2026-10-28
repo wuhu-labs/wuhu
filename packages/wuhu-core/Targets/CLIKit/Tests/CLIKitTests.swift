@@ -18,25 +18,30 @@ import Testing
 @Suite(.deterministicDependencies)
 struct RequestMappingTests {
   @Test func v2AddUsesExplicitEndpointAndGroupWithoutChangingNames() async throws {
-    for (verb, endpoint) in [("machine-v2", "/v1/machine-v2"), ("machine", "/v1/machine")] {
-      for arguments in [["--group", "shared", verb, "add", "--name", "box"], [verb, "add", "--name", "box", "--group", "shared"]] {
-        let h = try Harness { request in
-          if request.url.path == "/v1/server" { return try .json(JSONValue.object(["features": ["groups"], "server": "https://space.test"])) }
-          return try .json(JSONValue.object(["id": "mc_aaaaaaaa", "token": "jt_once", "fingerprint": "sha256:test", "group": "shared"]))
-        }
-        #expect(await h.runner.run(arguments: arguments) == 0)
-        let sent = try #require(await h.recorder.requests.last)
-        #expect(sent.url.path == endpoint); #expect(sent.method == .post)
-        #expect(sent.headers["wuhu-group"] == nil)
-        #expect(try await requestBodyJSON(sent) == ["name": "box", "group": "shared"])
-        #expect(await h.stdout.text.contains("token jt_once"))
-        #expect(await h.stderr.text.contains("wuhu \(verb) join"))
+    for arguments in [["--group", "shared", "machine-v2", "add", "--name", "box"], ["machine-v2", "add", "--name", "box", "--group", "shared"]] {
+      let h = try Harness { request in
+        if request.url.path == "/v1/server" { return try .json(JSONValue.object(["features": ["groups"], "server": "https://space.test"])) }
+        return try .json(JSONValue.object(["id": "mc_aaaaaaaa", "token": "jt_once", "fingerprint": "sha256:test", "group": "shared"]))
       }
+      #expect(await h.runner.run(arguments: arguments) == 0)
+      let sent = try #require(await h.recorder.requests.last)
+      #expect(sent.url.path == "/v1/machine-v2"); #expect(sent.method == .post)
+      #expect(sent.headers["wuhu-group"] == nil)
+      #expect(try await requestBodyJSON(sent) == ["name": "box", "group": "shared"])
+      #expect(await h.stdout.text.contains("token jt_once"))
+      #expect(await h.stderr.text.contains("wuhu machine-v2 join"))
     }
     #expect(throws: UsageError.self) { try Command.parse(["machine-v2", "add"]) }
     #expect(try Command.parse(["machine-v2", "add", "--name", "box"]).isRefusedToSessions)
     #expect(throws: UsageError.self) { try Invocation.parse(["--group", "shared", "machine-v2", "add", "--name", "box", "--group", "shared"]) }
     #expect(try Invocation.parse(["machine-v2", "add", "--name", "box", "--group", "team_space"]).command == .machineV2Add(name: "box", group: "team_space"))
+  }
+
+  @Test func machineDeleteKeepsItsReferenceInOnePathSegment() async throws {
+    try await assertRequest(["machine", "delete", "../accounts/person"], response: [:]) { request in
+      #expect(request.method == .delete)
+      #expect(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.percentEncodedPath == "/v1/machine/%2E%2E%2Faccounts%2Fperson")
+    }
   }
 
   @Test func identityVerbsMapToReadOnlyDiscoveryAndHumanOnlySettings() async throws {
@@ -280,15 +285,18 @@ struct RequestMappingTests {
     }
   }
 
+  @Test(arguments: ["add", "join", "run"])
+  func legacyMachineEnrollmentVerbsAreRefused(verb: String) throws {
+    #expect(throws: UsageError.self) { try Command.parse(["machine", verb]) }
+  }
+
   @Test func namingVerbsParseIntoTheirCommands() throws {
     #expect(try Command.parse(["user", "profile"]) == .userProfile)
     #expect(try Command.parse(["user", "handle", "ali"]) == .userHandle(handle: "ali", displayName: nil))
-    #expect(
-      try Command.parse(["machine", "join", "https://box:1", "--name", "mini"])
-        == .machineJoin(server: "https://box:1", fingerprint: nil, name: "mini"),
-    )
     #expect(try Command.parse(["machine", "name", "mc_aaaaaaaa", "mini"]) == .machineName(machine: "mc_aaaaaaaa", name: "mini"))
     #expect(try Command.parse(["machine", "revoke", "mini"]) == .machineRevoke(id: "mini"))
+    #expect(try Command.parse(["machine", "delete", "mini"]) == .machineDelete(id: "mini"))
+    #expect(try Command.parse(["machine", "delete", "mini"]).isRefusedToSessions)
     #expect(parseMachineAddress("machines://mini/tmp") == MachineAddress(machine: "mini", path: "/tmp"))
     #expect(parseMachineAddress("machines://mc_aaaaaaaa") == MachineAddress(machine: "mc_aaaaaaaa", path: "/"))
     #expect(parseMachineAddress("machines:///tmp") == nil)

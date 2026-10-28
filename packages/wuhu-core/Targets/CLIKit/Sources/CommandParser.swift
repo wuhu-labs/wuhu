@@ -741,35 +741,9 @@ extension Command {
 
   private static func parseMachine(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
-      throw UsageError(message: "machine: missing <add|join|run|list|name|scope|rotate|revoke|move>")
+      throw UsageError(message: "machine: missing <list|name|scope|rotate|revoke|delete|move>")
     }
     switch subcommand {
-    case "add":
-      let name = try parser.option("--name", verb: "machine add")
-      let group = try parser.option("--group", verb: "machine add")
-      let scope = try parser.option("--scope", verb: "machine add")
-      try parser.finish(verb: "machine add")
-      guard scope == nil || scope == "owner" || scope == "reachable" else {
-        throw UsageError(message: "machine add: --scope is owner or reachable, not \(scope ?? "")")
-      }
-      return .machineAdd(name: name, group: group, scope: scope)
-    case "join":
-      let name = try parser.option("--name", verb: "machine join")
-      let server = try parser.required("server-url", verb: "machine join")
-      let fingerprint = parser.pop()
-      // Any other argument here — including the token pasted as the server —
-      // is almost certainly the join token; the generic errors echo it, and
-      // dialing it as a host would leak it in a DNS query.
-      guard !server.hasPrefix("jt_"), fingerprint.map(ServerTrust.isFingerprint) ?? true, parser.isFinished else {
-        throw UsageError(message: """
-        machine join: the token is read from stdin, never from arguments (wuhu machine join <server-url> [fingerprint] < token); \
-        the only argument after <server-url> is a sha256:<64 lowercase hex> fingerprint
-        """)
-      }
-      return .machineJoin(server: server, fingerprint: fingerprint, name: name)
-    case "run":
-      try parser.finish(verb: "machine run")
-      return .machineRun
     case "list":
       try parser.finish(verb: "machine list")
       return .machineList
@@ -782,6 +756,10 @@ extension Command {
       let id = try parser.required("machine", verb: "machine rotate")
       try parser.finish(verb: "machine rotate")
       return .machineRotate(id: id)
+    case "delete":
+      let id = try parser.required("machine", verb: "machine delete")
+      try parser.finish(verb: "machine delete")
+      return .machineDelete(id: id)
     case "revoke":
       let id = try parser.required("machine", verb: "machine revoke")
       try parser.finish(verb: "machine revoke")
@@ -1438,19 +1416,18 @@ extension Command {
     \(exitCodes)
     """,
     "machine": """
-    usage: wuhu machine <add|join|run|list|name|rotate|revoke|move> ...
+    usage: wuhu machine <list|name|scope|rotate|revoke|delete|move> ...
 
     a <machine> argument is the machine's name or its mc_ id.
 
     subcommands:
-      add [--name N]              mint a machine and its join token (shown once)
-      join <server-url> [fingerprint] [--name N] < token
-                                  enroll this box's own key via the stdin token and persist the agent config
-      run                         run the machine agent in the foreground (dial loop)
       list                        list machines with name and attachment state
       name <machine> <name>       rename a machine
+      scope <machine> <owner|reachable>
+                                  set who may use the machine
       rotate <machine>            kick the machine's key and mint a fresh join token
       revoke <machine>            kick the machine's key; it cannot connect until rotated
+      delete <machine>            permanently remove the machine, credentials and notes
       move <machine> --group G    move a machine to group G (admin of both groups)
     \(exitCodes)
     """,
@@ -1463,43 +1440,9 @@ extension Command {
            wuhu machine-v2 rollback|uninstall <machine-id>
 
     install and upgrade change only this v2 machine's private binary/service.
-    rollback explicitly restores its previous binary; uninstall drains first.
-    enrollment/run/leave/preflight are local runtime modes; machine v1 is unchanged.
-    \(exitCodes)
-    """,
-    "machine add": """
-    usage: wuhu machine add [--name N] [--group G]
-
-    mints a machine in the pinned space and prints its id, one-time join
-    token, and, when the server runs its generated certificate, that
-    certificate's fingerprint. the token is shown once and dies at first use.
-    --group G (also before the verb) selects only the registration target
-    and needs an admin of it, not membership. without that flag, uses your
-    personal group; environment and folder groups do not set the target.
-    a missing or different server group echo fails with an upgrade/move hint.
-    \(exitCodes)
-    """,
-    "machine join": """
-    usage: wuhu machine join <server-url> [fingerprint] [--name N] < token
-
-    the box claims --name, defaulting to its hostname; the server suffixes it
-    until free, so a second box named mini joins as mini-2.
-    generates this box's machine key, enrolls it by consuming the join token,
-    and persists the key and agent config under ~/.wuhu/machine. the token is
-    read from stdin (one trailing line ending is stripped), never from
-    arguments: argv leaks via ps. a fingerprint (printed by machine add) is
-    recorded into the user trust store before the first dial. without one, a
-    server that passes system trust drops any pin an earlier join recorded for
-    the host; one that does not is reached through that pin, which stays, and
-    with no pin the join fails.
-    start the agent with: wuhu machine run
-    \(exitCodes)
-    """,
-    "machine run": """
-    usage: wuhu machine run
-
-    runs the machine agent in the foreground: dials the joined server forever,
-    serves exec/fs/search, and logs to stderr. stop with ctrl-c.
+    rollback explicitly restores its previous binary; uninstall revokes and removes the service.
+    enrollment/run/leave/preflight are local runtime modes.
+    shared record administration uses wuhu machine.
     \(exitCodes)
     """,
     "device": """
@@ -1549,6 +1492,15 @@ extension Command {
 
     kicks the machine's enrolled key and drops any live connection;
     rotate re-enables it.
+    \(exitCodes)
+    """,
+    "machine delete": """
+    usage: wuhu machine delete <machine>
+
+    permanently removes the machine, its keys and join tokens, v2 presence,
+    operations and channel buffers, and notes folder in one revision. frees
+    its names, unlinks devices and drops any live connection. needs a human
+    admin of its group. revoke only kicks the key; rotate can re-enable it.
     \(exitCodes)
     """,
     "machine move": """

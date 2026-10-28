@@ -22,7 +22,7 @@ import Synchronization
 import Testing
 
 @Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(3))) struct MachineToolV2RoutingTests {
-  @Test func registeredTransportNotNameSelectsNormalFilesystemSearchAndExecPreflight() async throws {
+  @Test func normalFilesystemSearchAndExecPreflightUseOperations() async throws {
     let folder = try ScratchFolder("v2-normal-tools")
     let a = folder.url.appending(path: "z.txt")
     let b = folder.url.appending(path: "a.txt")
@@ -30,7 +30,6 @@ import Testing
     try Data("other".utf8).write(to: b)
     let space = try Space.inMemory()
     let (record, _) = try await space.addMachineV2(name: "normal_v2", group: .shared)
-    let legacy = try await space.addMachine(name: "legacy_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
@@ -65,10 +64,6 @@ import Testing
       }
       do { try await hub.requireExecKind(record.id); Issue.record("missing exec kind admitted") }
       catch let error as OperationError { #expect(error.code == .unknownKind); #expect(error.details?.object?["kind"] == "exec.v1") }
-      do { _ = try await hub.vfs(machine: legacy.id, op: .read(path: a.path)); Issue.record("legacy routed to v2 based on suffix") }
-      catch let error as MachineHubError { #expect(error == .machineUnattached(legacy.id)) }
-      do { _ = try await hub.search(machine: legacy.id, query: SearchQuery(mode: .find, pattern: "*", root: "/", scope: "test")); Issue.record("v1 machine searched") }
-      catch let error as MachineHubError { #expect(error == .searchNeedsV2(legacy.id)) }
       await agent.shutdown()
     }
     await service.shutdown()
@@ -112,7 +107,7 @@ import Testing
     await service.shutdown()
   }
 
-  @Test func v2UnavailableNeverFallsBackToV1() async throws {
+  @Test func unconfiguredOperationsServiceIsUnavailable() async throws {
     let space = try Space.inMemory()
     let (record, _) = try await space.addMachineV2(name: "offline_v2", group: .shared)
     let hub = MachineHub(space: space)

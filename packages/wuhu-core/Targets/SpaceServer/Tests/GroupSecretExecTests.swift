@@ -1,18 +1,24 @@
 import struct Credentials.SpaceSecretStores
 import Crypto
+import Dependencies
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+@testable import ExecSupervisor
+import Fetch
 import MachineChannel
 import MachineContract
+import OperationRuntime
 import Scratch
 import Serve
 import SpaceContract
 @testable import SpaceCore
-import SpaceServer
+@testable import SpaceServer
 import Testing
 
-// An exec's secrets resolve in the group of the machine it runs on, at the
-// moment it starts; the caller's group plays no part.
 @Suite(.deterministicDependencies) struct GroupSecretExecTests {
   @Test func twoMachinesInOneGroupUseOneSecretMasked() async throws {
     try await withSecretServer { rig in
@@ -31,8 +37,6 @@ import Testing
     }
   }
 
-  // The caller's group holds the name and reads the machine's group; the
-  // machine's group does not hold it, so nothing spawns.
   @Test func aMachineOfAnotherGroupFailsBeforeAnythingSpawns() async throws {
     try await withSecretServer { rig in
       try await rig.stores.group("shared").set("API_KEY", to: "hunter2-value")
@@ -42,11 +46,11 @@ import Testing
       let marker = rig.scratch.url.appendingPathComponent("spawned")
       try await rig.run(machines: [machine]) {
         let collected = try await rig.exec(on: machine, command: ["touch", marker.path])
-        #expect(String(decoding: collected.stderr, as: UTF8.self) == "wuhu: no secret API_KEY in group team\n")
-        #expect(collected.exit == .exited(code: 127))
+        #expect(String(decoding: collected.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group team\n")
+        #expect(collected.exit == .exited(code: 1))
         #expect(!FileManager.default.fileExists(atPath: marker.path))
         let record = try #require(try await rig.space.execRecord(collected.id))
-        #expect(record.terminal == .exited(code: 127))
+        #expect(record.terminal == .exited(code: 1))
       }
     }
   }
@@ -63,8 +67,8 @@ import Testing
 
         _ = try await rig.space.moveMachine(machine.id, to: team)
         let missing = try await rig.exec(on: machine, command: echo)
-        #expect(String(decoding: missing.stderr, as: UTF8.self) == "wuhu: no secret API_KEY in group team\n")
-        #expect(missing.exit == .exited(code: 127))
+        #expect(String(decoding: missing.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group team\n")
+        #expect(missing.exit == .exited(code: 1))
 
         try await rig.stores.group("team").set("API_KEY", to: "team-value")
         let after = try await rig.exec(on: machine, command: echo)
@@ -73,91 +77,39 @@ import Testing
     }
   }
 
-  // A running exec keeps the values its first start carried: after its machine
-  // moves and loses the secret, a blip of both legs makes the caller replay the
-  // start, and the replay neither refuses nor re-resolves it.
   @Test func aRunningExecKeepsItsSecretsAcrossAMoveAndABlip() async throws {
     try await withSecretServer { rig in
       try await rig.stores.group("shared").set("API_KEY", to: "hunter2-value")
       let team = try await rig.addGroup("team")
       let machine = try await rig.addMachine("builder")
-      let state = try ScratchFolder("group-secret-blip")
-      defer { state.remove() }
-      let dialer = AgentDialer()
       let host = EndpointHost()
-      try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await rig.server.run() }
-        group.addTask { await makeAgent(state: state).run(dial: dialer.dial) }
-        group.addTask { await host.run() }
-        let machineSocket = try await connectMachine(rig.server, key: machine.key)
-        dialer.offer(machineSocket)
-        try await awaitAttached(rig.server, machine.id)
-        let exec = try await mintExec(rig.server, machine: machine.id)
-        let caller = try await connectCaller(rig.server, exec: exec)
-        host.attach(caller)
-        let outgoing = await host.endpoint.startExec(rig.start(exec, command: [
-          "sh", "-c", #"printf 'ready\n'; read line; printf '%s %s\n' "$line" "$TOKEN""#,
-        ]))
-        var events = outgoing.events.makeAsyncIterator()
-        let ready = try await consumeOutput(&events, atLeast: 6)
-        #expect(ready == Array("ready\n".utf8))
+      try await rig.run(machines: [machine]) {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+          group.addTask { await host.run() }
+          let exec = try await mintExec(rig.server, machine: machine.id)
+          let caller = try await connectCaller(rig.server, exec: exec)
+          host.attach(caller)
+          let outgoing = await host.endpoint.startExec(rig.start(exec, command: [
+            "sh", "-c", #"printf 'ready\n'; read line; printf '%s %s\n' "$line" "$TOKEN""#,
+          ]))
+          var events = outgoing.events.makeAsyncIterator()
+          let ready = try await mixedExecOutput(&events, atLeast: 6)
+          #expect(ready == Array("ready\n".utf8))
 
-        _ = try await rig.space.moveMachine(machine.id, to: team)
-        machineSocket.close()
-        dialer.offer(try await connectMachine(rig.server, key: machine.key))
-        caller.close()
-        #expect(try await realPollUntil { host.completedRounds >= 1 })
-        host.attach(try await connectCaller(rig.server, exec: exec))
+          _ = try await rig.space.moveMachine(machine.id, to: team)
+          caller.close()
+          #expect(try await realPollUntil { host.completedRounds >= 1 })
+          host.attach(try await connectCaller(rig.server, exec: exec))
 
-        try await outgoing.sendStdin(Array("go\n".utf8))
-        await outgoing.closeStdin()
-        let (rest, exit) = try await drainToExit(&events)
-        #expect(String(decoding: rest, as: UTF8.self) == "go ***\n")
-        #expect(exit == .exited(code: 0))
-        let record = try await rig.space.execRecord(exec)
-        #expect(record?.terminal == .exited(code: 0))
-        group.cancelAll()
-      }
-    }
-  }
-
-  // An agent that announced group-secrets gets values and no names; one from
-  // before the header gets the names it resolves in its own vault, unchanged.
-  @Test(arguments: [true, false])
-  func theExecStartCarriesValuesOnlyToAnAgentThatAnnouncedGroupSecrets(announced: Bool) async throws {
-    try await withSecretServer { rig in
-      try await rig.stores.group("shared").set("API_KEY", to: "hunter2-value")
-      let machine = try await rig.addMachine("raw")
-      let host = EndpointHost()
-      try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await rig.server.run() }
-        group.addTask { await host.run() }
-        let socket = try await connectMachine(rig.server, key: machine.key, groupSecrets: announced)
-        try await socket.send(.binary(FrameCodec.encode(
-          Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
-        )))
-        try await awaitAttached(rig.server, machine.id)
-        let exec = try await mintExec(rig.server, machine: machine.id)
-        host.attach(try await connectCaller(rig.server, exec: exec))
-        _ = await host.endpoint.startExec(rig.start(exec, command: ["true"]))
-        var relayed: ExecStart?
-        for await message in socket.inbound {
-          guard case let .binary(bytes) = message, let frame = try? FrameCodec.decode(bytes),
-                frame.opcode == .execStart
-          else { continue }
-          relayed = try frame.payload(ExecStart.self)
-          break
+          try await outgoing.sendStdin(Array("go\n".utf8))
+          await outgoing.closeStdin()
+          let (rest, exit) = try await mixedExecExit(&events)
+          #expect(String(decoding: rest, as: UTF8.self) == "go ***\n")
+          #expect(exit == .exited(code: 0))
+          let record = try await rig.space.execRecord(exec)
+          #expect(record?.terminal == .exited(code: 0))
+          group.cancelAll()
         }
-        let start = try #require(relayed)
-        if announced {
-          #expect(start.secrets == nil)
-          #expect(start.secretValues == ["TOKEN": "hunter2-value"])
-        } else {
-          #expect(start.secrets == ["TOKEN": "API_KEY"])
-          #expect(start.secretValues == nil)
-        }
-        socket.close()
-        group.cancelAll()
       }
     }
   }
@@ -174,18 +126,11 @@ struct SecretRig: Sendable {
 
   struct Machine: Sendable {
     let id: MachineID
-    let key: Curve25519.Signing.PrivateKey
   }
 
   func addMachine(_ name: String) async throws -> Machine {
-    // Reachable: these tests move machines into other groups a shared-served
-    // dev seat still has to reach.
-    let response = try await server.http(
-      .post, "/v1/machine", json: .object(["name": .string(name), "scope": "reachable"]),
-    )
-    #expect(response.status == .ok)
-    let output = try await response.json(MachineAddOutput.self)
-    return Machine(id: output.id, key: try await enrollMachineKey(server, token: output.token))
+    let (machine, _) = try await space.addMachineV2(name: name, group: .shared, scope: .reachable)
+    return Machine(id: machine.id)
   }
 
   func addGroup(_ name: String) async throws -> GroupID {
@@ -215,24 +160,8 @@ struct SecretRig: Sendable {
     }
   }
 
-  // Every machine runs a real agent of its own while `body` runs.
   func run(machines: [Machine], _ body: @escaping @Sendable () async throws -> Void) async throws {
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await server.run() }
-      for (index, machine) in machines.enumerated() {
-        let state = try ScratchFolder("group-secret-agent-\(index)")
-        let dialer = AgentDialer()
-        group.addTask {
-          defer { state.remove() }
-          await makeAgent(state: state).run(dial: dialer.dial)
-        }
-        dialer.offer(try await connectMachine(server, key: machine.key))
-        try await awaitAttached(server, machine.id)
-      }
-      group.addTask { try await body() }
-      _ = try await group.next()
-      group.cancelAll()
-    }
+    try await withMixedExecAgents(server, machines: machines.map(\.id)) { _ in try await body() }
   }
 }
 
@@ -243,4 +172,71 @@ func withSecretServer(clock: any Clock<Duration> = ContinuousClock(), _ body: (S
   let space = try makeMachineSpace()
   let server = TestServer(space: space, clock: clock, secrets: stores)
   try await body(SecretRig(server: server, stores: stores, scratch: scratch))
+}
+
+func withMixedExecAgents(
+  _ server: TestServer, machines: [MachineID],
+  _ body: @escaping @Sendable (MachineV2Service) async throws -> Void,
+) async throws {
+  try await withDependencies {
+    $0.date = DateGenerator { Date() }
+    $0.continuousClock = ContinuousClock()
+  } operation: {
+    let agents = try Dictionary(uniqueKeysWithValues: machines.map { machine in
+      (machine.rawValue, try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in }))
+    })
+    let service = MachineV2Service(space: server.space, hub: MachineV2Hub(space: server.space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
+      let parts = request.url.pathComponents
+      let index = try #require(parts.firstIndex(of: "machines"))
+      let agent = try #require(agents[parts[index + 1]])
+      return try await agent.handler(request)
+    } })
+    await server.hub.configureV2(service)
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await server.run() }
+      tasks.addTask { try await service.run() }
+      for agent in agents.values { tasks.addTask { await agent.run() } }
+      defer { tasks.cancelAll() }
+      do {
+        try await body(service)
+      } catch {
+        for agent in agents.values { await agent.shutdown() }
+        await service.shutdown()
+        throw error
+      }
+      for agent in agents.values { await agent.shutdown() }
+      await service.shutdown()
+    }
+  }
+}
+
+private enum ExecStreamFailure: Error {
+  case machine(MachineError)
+}
+
+func mixedExecOutput(_ events: inout ExecEvents.Iterator, atLeast count: Int) async throws -> [UInt8] {
+  var output: [UInt8] = []
+  while output.count < count, let event = try await events.next() {
+    switch event {
+    case let .output(.stdout, _, bytes): output += bytes.bytes
+    case let .failed(error): throw ExecStreamFailure.machine(error)
+    case .exit: Issue.record("exec exited before its expected output"); return output
+    default: break
+    }
+  }
+  #expect(output.count >= count)
+  return output
+}
+
+func mixedExecExit(_ events: inout ExecEvents.Iterator) async throws -> ([UInt8], MachineContract.ExitStatus?) {
+  var output: [UInt8] = []
+  while let event = try await events.next() {
+    switch event {
+    case let .output(.stdout, _, bytes): output += bytes.bytes
+    case let .exit(status): return (output, status)
+    case let .failed(error): throw ExecStreamFailure.machine(error)
+    default: break
+    }
+  }
+  return (output, nil)
 }

@@ -245,7 +245,7 @@ import Testing
 
   @Test func machineAndContractorAccountsAreNotRemovableHere() async throws {
     let root = try await user(name: "root", admin: true)
-    let machine = try await harness.space.addMachine(name: "box")
+    let machine = (try await harness.space.addMachineV2(name: "box")).machine
     let refused = try await send(.delete, "/v1/accounts/\(machine.account.rawValue)", key: root.key)
     #expect(refused.status == .conflict)
     #expect((try await json(refused)).stringValue(at: "hint")?.contains("machine revoke") == true)

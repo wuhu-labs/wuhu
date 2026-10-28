@@ -71,11 +71,6 @@ import Testing
 
     func usage() async throws -> ExternalUsage { try await kind.usage() }
 
-    func departure() async throws -> ExternalDeparture {
-      try await kind.leave()
-      return try await kind.departure()
-    }
-
     /// The worker the agent launched most recently, once it has launched `count`.
     func launched(_ count: Int = 1) async throws -> UUID {
       try await until("\(count) workers launched") { launches.ids.count >= count }
@@ -137,14 +132,6 @@ import Testing
 
   func isWorkerLost(_ error: OperationError) -> Bool {
     error.code == .unknownOperation && error.details == ["outcome": "unknown", "reason": .string(UnknownOutcome.workerLost.rawValue)]
-  }
-
-  func expectDeparture(_ machine: Machine, lost expected: Set<UUID>) async throws {
-    switch try await machine.departure() {
-    case let .leaseExpired(lost): #expect(Set(lost) == expected)
-    case .drained: #expect(expected.isEmpty, "drained, expected lost \(expected)")
-    case .pending: Issue.record("departure still pending")
-    }
   }
 
   @Test func aStartGoesToTheCurrentWorkerWithItsNonceAndCallerAndItsPollsFollow() async throws {
@@ -237,7 +224,7 @@ import Testing
   }
 
   /// An inventory that cannot be read may name anything: that worker is charged the whole budget, every unrouted id is
-  /// unavailable and departure waits, until the inventory it writes for its hello is read.
+  /// unavailable until the inventory it writes for its hello is read.
   @Test func anUnreadableInventoryIsChargedTheWholeBudgetUntilTheWorkerLinks() async throws {
     let home = try MachineHome(); defer { home.remove() }
     let worker = try recovered(home)
@@ -248,7 +235,6 @@ import Testing
       let limits = OperationLimits()
       #expect(try await machine.usage() == ExternalUsage(receipts: limits.receipts, bufferBytes: limits.bufferBytes))
       #expect(try await machine.error(execRequest(UUID())).message == Unavailable.workerNotConnected.rawValue)
-      if case .pending = try await machine.departure() {} else { Issue.record("departure did not wait for the unreadable worker") }
       let held = UUID()
       _ = unlink(worker.path + "/operations.json")
       try WorkerDirectory.writeInventory(worker.path, .init(retained: [held], unsettled: [held]))
@@ -278,7 +264,7 @@ import Testing
   }
 
   /// The inventory is a snapshot: an operation that settles after it was written reaches the agent through its ordinary poll,
-  /// which releases its charge, and the departure drains.
+  /// which releases its charge.
   @Test func anOperationThatSettlesAfterTheInventoryReleasesItsChargeThroughItsPoll() async throws {
     let home = try MachineHome(); defer { home.remove() }
     let id = UUID(), token = UUID()
@@ -291,7 +277,6 @@ import Testing
       #expect(try await machine.usage() == ExternalUsage(operations: [id: 0]))
       #expect(try await machine.handle(ack(id, "stderr", token)).status.code == 200)
       #expect(try await machine.usage() == ExternalUsage())
-      try await expectDeparture(machine, lost: [])
     }
   }
 
@@ -318,12 +303,11 @@ import Testing
       for id in [recorded, forwarded] { #expect(isWorkerLost(try await machine.error(execRequest(id)))) }
       #expect(try await machine.error(execRequest(settled)).details == nil)
       try await machine.link(replacement, client())
-      try await expectDeparture(machine, lost: [recorded, forwarded])
     }
   }
 
   /// Workers that died or dropped operations while no agent ran leave that on disk; the agent that finds it keeps it in its
-  /// ledger, so every agent after it still reports it, until a turn-off after a reported departure.
+  /// ledger, so every agent after it still reports it.
   @Test func lossEvidenceSurvivesTwoAgentRestarts() async throws {
     let home = try MachineHome(); defer { home.remove() }
     let crashed = UUID(), dropped = UUID(), settled = UUID()
@@ -335,14 +319,12 @@ import Testing
     }
     try await machine(home) { machine in
       #expect(await machine.kind.owns(crashed))
-      #expect(isWorkerLost(try await machine.error(execRequest(crashed))))
-      try await expectDeparture(machine, lost: [crashed, dropped])
+      let error = try await machine.error(execRequest(crashed))
+      #expect(isWorkerLost(error))
     }
     try await machine(home) { machine in
-      try await expectDeparture(machine, lost: [crashed, dropped])
-      await machine.workers.retire(.turnedOff, deadline: .milliseconds(50))
+      _ = await machine.workers.retire(.turnedOff, deadline: .milliseconds(50))
     }
-    try await machine(home) { machine in try await expectDeparture(machine, lost: []) }
   }
 
   /// A worker that says it does not know an operation last seen unsettled dropped it; one seen settled was just released.
@@ -362,7 +344,6 @@ import Testing
       for id in [unsettled, settled] { #expect(try await machine.code(execRequest(id)) == .unknownOperation) }
       #expect(isWorkerLost(try await machine.error(execRequest(unsettled))))
       #expect(try await machine.error(execRequest(settled)).details == nil)
-      try await expectDeparture(machine, lost: [unsettled])
     }
   }
 
@@ -387,38 +368,6 @@ import Testing
       try await until("the expired operations are forgotten") { (try? await machine.usage().operations.isEmpty) == true }
       #expect(isWorkerLost(try await machine.error(execRequest(id))))
       #expect(try await machine.error(execRequest(settled)).details == nil)
-    }
-  }
-
-  /// Leaving is the agent's own state: no start is routed and every running operation gets the standard stop, an unlinked
-  /// owner's once it redials. Departure waits for the operations to settle.
-  @Test func aLeaveSendsTheStandardStopAndDepartureWaitsForSettlement() async throws {
-    let home = try MachineHome(); defer { home.remove() }
-    try await machine(home) { machine in
-      let id = UUID(), token = UUID()
-      let stops = Mutex<[(String, String)]>([])
-      let answer: @Sendable (Request) async throws -> Response = { request in
-        if request.method == .put, request.url.path.hasSuffix("/stop") {
-          let stop = try await request.json(StopRequest.self, upTo: 1024)
-          stops.withLock { $0.append((request.url.path, stop.reason)) }
-        }
-        return stops.withLock { $0.isEmpty } ? try snapshot(id) : try finished(id, token: token)
-      }
-      let worker = try await machine.launched()
-      let (generation, _) = try await machine.link(worker, client(answer))
-      #expect(try await machine.handle(start(id)).status.code == 201)
-      try await machine.unlink(worker, generation: generation)
-      try await machine.kind.leave()
-      #expect(try await machine.code(start(UUID())) == .leaving)
-      try await ContinuousClock().sleep(for: .milliseconds(300))
-      #expect(stops.withLock { $0.isEmpty }, "its owner is not linked")
-      if case .pending = try await machine.kind.departure() {} else { Issue.record("departure did not wait for the running exec") }
-      #expect(try await machine.link(worker, client(answer)).reply.current == false)
-      try await until("the stop reaches the relinked worker") { stops.withLock { !$0.isEmpty } }
-      #expect(stops.withLock { $0.map(\.0) } == ["/machine/v2/machines/test/operations/\(id.uuidString)/stop"])
-      #expect(stops.withLock { $0.map(\.1) } == [StopReason.leaving.rawValue])
-      for channel in ["stdout", "stderr"] { _ = try await machine.handle(ack(id, channel, token)) }
-      try await expectDeparture(machine, lost: [])
     }
   }
 
@@ -487,7 +436,7 @@ import Testing
   }
 
   /// Evidence that exists and cannot be read is never taken for none: a ledger that cannot be read fails recovery, and a dead
-  /// worker whose inventory cannot be read keeps its directory and fails the departure; an id no route names may be its.
+  /// worker whose inventory cannot be read keeps its directory; an id no route names may be its.
   @Test func unreadableLossEvidenceFailsRatherThanReadsAsNone() async throws {
     let home = try MachineHome(); defer { home.remove() }
     let dead = try recovered(home, alive: false)
@@ -497,7 +446,6 @@ import Testing
       #expect(access(dead.path, F_OK) == 0, "its directory stays as the evidence")
       let error = try await machine.error(execRequest(UUID()))
       #expect(error.details == ["outcome": "unknown", "reason": .string(UnknownOutcome.workerUnaccounted.rawValue)])
-      await #expect(throws: OperationError.self) { _ = try await machine.departure() }
     }
     WorkerDirectory.remove(dead.path)
     let ledger = home.workers + "/lost.json"

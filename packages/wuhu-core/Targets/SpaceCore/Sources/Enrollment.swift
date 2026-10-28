@@ -59,7 +59,7 @@ extension Space {
   /// One-call enrollment for a machine whose key already exists on the caller's
   /// side (the Wuhu app): the machine, its account, its v2 membership, its live
   /// key and an optional device link commit in one transaction, with no join
-  /// token in between. The name is unique across v1 and v2.
+  /// token in between. The name is globally unique.
   ///
   /// `enrolledBy`, when given, must own `device`; a device it does not own is
   /// reported as unknown.

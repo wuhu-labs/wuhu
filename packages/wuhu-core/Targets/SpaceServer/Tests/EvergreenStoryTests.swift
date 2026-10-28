@@ -2,13 +2,19 @@ import Crypto
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import ComputerFiles
+@testable import ExecSupervisor
 import InferenceKit
 import JSONValue
 import LoopCore
-import MachineAgent
 import MachineContract
 import MainHub
+import OperationRuntime
 import Scratch
 import Serve
 import ServeTesting
@@ -297,11 +303,10 @@ private final class Story: Sendable {
   let workers: WorkerRegistry
   let service: SessionService
   let hub: MachineHub
+  let machineV2Hub: MachineV2Hub
   let handler: UpgradingHandler
   let api: FetchClient
   let model = Model()
-  // What `running` hosts besides the service: the machine side of each
-  // WebSocket main accepted, and each machine agent.
   private let jobs: AsyncStream<@Sendable () async -> Void>
   private let host: AsyncStream<@Sendable () async -> Void>.Continuation
   private let scratch = Mutex<[ScratchFolder]>([])
@@ -317,6 +322,8 @@ private final class Story: Sendable {
     tokens = ExecTokens(spaceURL: "http://space")
     let hub = MachineHub(space: space, tokens: tokens)
     self.hub = hub
+    let machineV2Hub = MachineV2Hub(space: space)
+    self.machineV2Hub = machineV2Hub
     let usage = UsageBoard()
     let catalog = groupCatalog(space: space, access: InferenceAccess())
     let owner = Hub(
@@ -330,7 +337,7 @@ private final class Story: Sendable {
     let runtime = SessionRuntime(
       space: space, service: service, workers: workers, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: MainConnection(),
     )
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens)
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens, machineV2Hub: machineV2Hub)
     api = ServeTesting.client(upgrading: handler)
     (jobs, host) = AsyncStream.makeStream()
   }
@@ -380,34 +387,25 @@ private final class Story: Sendable {
     return StoryWorker(id: credential.id, line: execution, asked: asked)
   }
 
-  // A machine: a real agent in this process, enrolled and dialling main
-  // through its API, running `sh` in a folder of its own.
   func machine() async throws -> (id: MachineID, folder: String) {
-    let added: MachineAddOutput = try await call(.post, "/v1/machine", ["name": "box"])
+    let added: MachineAddOutput = try await call(.post, "/v1/machine-v2", ["name": "box"])
     let key = Curve25519.Signing.PrivateKey()
     let _: JSONValue = try await call(.post, "/v1/enroll/consume", ["token": .string(added.token), "pubkey": .string(key.pubkeyLabel)])
-    let challenge = (try await call(.get, "/v1/machine/challenge") as MachineChallengeOutput).challenge
-    let signature = try key.signature(for: MachineConnect.signingPayload(challenge: challenge))
-    var headers = RequestHeaders()
-    headers.set("connection", "Upgrade")
-    headers.set("upgrade", "websocket")
-    headers.set("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
-    headers.set("sec-websocket-version", "13")
-    headers.set(MachineConnect.pubkeyHeader, key.pubkeyLabel)
-    headers.set(MachineConnect.challengeHeader, challenge)
-    headers.set(MachineConnect.signatureHeader, signature.base64EncodedString())
-    headers.set(MachineConnect.capabilitiesHeader, MachineConnect.groupSecrets)
-    guard case let .webSocket(socket, serve) = try await ServeTesting.upgrade(handler, Request(url: URL(string: "http://space/v1/machine/connect")!, headers: headers)) else {
-      throw UnexpectedResponse(status: .badRequest)
+    let work = try ScratchFolder("evergreen-work")
+    scratch.withLock { $0.append(work) }
+    let agent = try OperationAgent(machine: added.id.rawValue, kinds: fileOperationKinds() + [.init(ExecKind())], authorize: { _, _ in })
+    let service = MachineV2Service(
+      space: space, hub: machineV2Hub, key: SymmetricKey(size: .bits256), failure: nil,
+      fetch: { _ in FetchClient { try await agent.handler($0) } },
+    )
+    await hub.configureV2(service)
+    host.yield { await agent.run() }
+    host.yield {
+      do { try await service.run() }
+      catch is CancellationError {} catch { Issue.record("machine service failed: \(error)") }
+      await agent.shutdown()
+      await service.shutdown()
     }
-    host.yield(serve)
-    let state = try ScratchFolder("evergreen-agent"), work = try ScratchFolder("evergreen-work")
-    scratch.withLock { $0 += [state, work] }
-    let agent = makeAgent(state: state)
-    let dialer = AgentDialer()
-    dialer.offer(socket)
-    host.yield { await agent.run(dial: dialer.dial) }
-    try await until("the machine attaches") { await hub.attachedMachines().contains(added.id) }
     return (added.id, work.path)
   }
 
@@ -415,7 +413,6 @@ private final class Story: Sendable {
     defer { scratch.withLock { $0.forEach { $0.remove() } } }
     let result = try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { [service] in try await service.start() }
-      group.addTask { [hub] in await hub.run() }
       group.addTask { [jobs] in
         await withDiscardingTaskGroup { hosted in
           for await job in jobs { hosted.addTask { await job() } }

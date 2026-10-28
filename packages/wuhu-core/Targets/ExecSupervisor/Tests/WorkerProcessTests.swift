@@ -11,6 +11,7 @@
   import Darwin
   import Foundation
 #endif
+import CExecSupervisor
 import Fetch
 import enum JSONValue.JSONValue
 import struct OperationProtocol.ErrorEnvelope
@@ -29,15 +30,10 @@ import Testing
     var directories: [String] { launches.withLock { $0.map(\.directory) } }
   }
 
-  func executable() throws -> String {
-    let cli = try #require(ProcessInfo.processInfo.environment["WUHU_CLI"])
-    return cli.hasPrefix("/") ? cli : FileManager.default.currentDirectoryPath + "/" + cli
-  }
-
   /// Every worker the body launched is gone when it returns or throws, unless `keep`: a worker holding operations outlives its
   /// agent by design. Receipts lapse after `retention`, so a retired worker exits within the test.
   func compose<R: Sendable>(_ home: MachineHome, forgets: Bool = true, retention: Duration = .seconds(1), launched: Launched = Launched(), keep: Bool = false, _ body: @escaping @Sendable (ComputerAgent, ExecWorkers) async throws -> R) async throws -> R {
-    try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: home.operations, executable: try executable(), files: .local, kinds: [], forgetsRevokedMachine: forgets, retention: retention, launch: { arguments in
+    try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: home.operations, executable: try machineExecutable(), files: .local, kinds: [], forgetsRevokedMachine: forgets, retention: retention, launch: { arguments in
       let pid = try ExecSupervisor.launchReaped(arguments)
       launched.launches.withLock { $0.append((pid, arguments[3])) }
       return pid
@@ -137,10 +133,11 @@ import Testing
     }
   }
 
-  /// The busy exec writes its own PID, then becomes `sleep`.
-  func busy(_ agent: ComputerAgent, _ home: MachineHome) async throws -> (UUID, Int32) {
+  /// Publishes the process-group leader for independent liveness assertions.
+  func busy(_ agent: ComputerAgent, _ home: MachineHome, backpressure: Bool = false) async throws -> (UUID, Int32) {
     let file = home.path + "/busy-" + UUID().uuidString
-    let id = try await start(agent, ["/bin/sh", "-c", "echo $$ > \(file).tmp && mv \(file).tmp \(file) && exec sleep 60"])
+    let work = backpressure ? "while :; do printf '%1024s' x; printf '%1024s' y >&2; done" : "exec sleep 60"
+    let id = try await start(agent, ["/bin/sh", "-c", "echo $$ > \(file).tmp && mv \(file).tmp \(file) && " + work])
     let clock = ContinuousClock(); let deadline = clock.now + .seconds(10)
     while true {
       if let text = try? String(contentsOfFile: file, encoding: .utf8), let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) { return (id, pid) }
@@ -310,6 +307,66 @@ import Testing
       #expect(remaining == 1)
       let entries = try home.entries(manifest.operation)
       #expect(entries == ["manifest.json"], "the agent never removes a supervisor's directory itself")
+    }
+  }
+
+  @Test(arguments: [false, true]) func uninstallKillsUnlinkedWorkersAndExecGroupsWithoutAnAgentOrOutputAcknowledgement(crashedWorker: Bool) async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    let launched = Launched()
+    let child = Mutex<Int32>(0)
+    defer { killWithDescendants(Set(launched.all)) }
+    try await compose(home, retention: .seconds(60), launched: launched, keep: true) { agent, _ in
+      let (_, pid) = try await busy(agent, home, backpressure: true)
+      child.withLock { $0 = pid }
+    }
+    if crashedWorker {
+      for pid in launched.all { kill(pid, SIGKILL) }
+      try await expectExited(Set(launched.all))
+    }
+    // The agent is gone; the worker cannot rely on a tunnel, control socket or consumer.
+    try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations)
+    try await expectExited(Set(launched.all))
+    try await expectGone(child.withLock { $0 })
+    try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations)
+  }
+
+  @Test func execPublishesItsBirthAnchorBeforeUserCodeAndSurvivesThePublishingWorker() async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    let launched = Launched()
+    defer { killWithDescendants(Set(launched.all)) }
+    let evidence = home.path + "/published"
+    let child = Mutex<Int32>(0)
+    try await compose(home, retention: .seconds(60), launched: launched, keep: true) { agent, _ in
+      _ = try await start(agent, ["/bin/sh", "-c", "cat <&3 > \(evidence).tmp && mv \(evidence).tmp \(evidence); exec sleep 60"])
+      let clock = ContinuousClock(); let deadline = clock.now + .seconds(10)
+      while access(evidence, F_OK) != 0 {
+        guard clock.now < deadline else { throw TestFailure.timeout }
+        try await clock.sleep(for: .milliseconds(10))
+      }
+      let fields = try String(contentsOfFile: evidence, encoding: .utf8).split(separator: " ")
+      try #require(fields.count == 2)
+      let pid = try #require(Int32(fields[0]))
+      let birth = try #require(UInt64(fields[1]))
+      var actual: UInt64 = 0
+      #expect(exec_process_birth(pid, &actual) == 0)
+      #expect(actual == birth)
+      child.withLock { $0 = pid }
+    }
+    for pid in launched.all { kill(pid, SIGKILL) }
+    try await expectExited(Set(launched.all))
+    try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations)
+    try await expectGone(child.withLock { $0 })
+  }
+
+  @Test func receiptTrampolinePreservesExecFailuresInsteadOfInventingExit127() async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    try await compose(home) { agent, workers in
+      let id = try await start(agent, ["/no/such/executable"])
+      let snapshot = try await verdict(agent, id)
+      #expect(snapshot.verdict?.tag == .failed)
+      #expect(snapshot.verdict?.error?.code == .spawnFailed)
+      try await settle(agent, id)
+      _ = await workers.retire(.revoked)
     }
   }
 

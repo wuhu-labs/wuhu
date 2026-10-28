@@ -28,9 +28,4 @@ extension Frame {
     }
     return payload
   }
-
-  var requestID: Int? {
-    guard case let .object(fields) = body, case let .integer(id)? = fields["id"] else { return nil }
-    return id
-  }
 }

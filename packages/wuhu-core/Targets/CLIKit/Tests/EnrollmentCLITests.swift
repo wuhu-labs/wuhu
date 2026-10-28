@@ -84,45 +84,6 @@ import Testing
     }
   }
 
-  // A box that is both a user's device and a machine holds two keys in two
-  // different homes; machine enrollment must never reuse the device key.
-  @Test func userAndMachineKeysOnOneBoxAreDistinct() async throws {
-    let rig = try EnrollRig()
-    defer { rig.cleanUp() }
-    try await rig.serving { server in
-      let account = try await rig.space.addAccount(kind: .human, name: "alice")
-      let deviceToken = try await rig.space.mintJoinToken(account: account.id, capabilities: [.device], createdBy: nil, lifetime: 600)
-      let url = "https://127.0.0.1:\(server.port)/_/enroll#token=\(deviceToken.token.rawValue)&space=\(server.space)&fp=\(server.fingerprint)"
-      #expect(await rig.run(["login"], io: CLIIO(stdin: url + "\n")) == 0)
-
-      let machine = try await rig.space.addMachine(name: "box")
-      let machineToken = try await rig.space.mintJoinToken(
-        account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600,
-      )
-      #expect(await rig.run(
-        ["machine", "join", "https://127.0.0.1:\(server.port)", server.fingerprint],
-        io: CLIIO(stdin: machineToken.token.rawValue + "\n"),
-      ) == 0)
-
-      let deviceKeys = try await rig.space.keys(account: account.id)
-      let machineKeys = try await rig.space.keys(account: machine.account)
-      #expect(deviceKeys.count == 1)
-      #expect(machineKeys.count == 1)
-      #expect(deviceKeys.first?.pubkey != machineKeys.first?.pubkey)
-      // Native clients mint Ed25519 only; p256 exists for WebCrypto engines
-      // without Ed25519, never for the CLI or the machine agent.
-      #expect(deviceKeys.first?.pubkey.hasPrefix("ed25519:") == true)
-      #expect(machineKeys.first?.pubkey.hasPrefix("ed25519:") == true)
-      #expect(machineKeys.first?.capabilities == [.execMachine])
-
-      let deviceKeyFile = rig.configDirectory.appendingPathComponent("keys/\(server.space).key")
-      let machineKeyFile = rig.configDirectory.appendingPathComponent("machine/machine.key")
-      #expect(try Data(contentsOf: deviceKeyFile) != Data(contentsOf: machineKeyFile))
-      #expect(try posixMode(FileManager.default.attributesOfItem(atPath: machineKeyFile.path)[.posixPermissions]) == 0o600)
-      #expect(try posixMode(FileManager.default.attributesOfItem(atPath: machineKeyFile.deletingLastPathComponent().path)[.posixPermissions]) == 0o700)
-    }
-  }
-
   @Test func shareLoginMintsAOneTimeQRLinkForThePhone() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
@@ -243,9 +204,9 @@ import Testing
       #expect(link.contains("&fp=\(server.fingerprint)"))
 
       let machineIO = CLIIO()
-      #expect(await rig.run(["machine", "add"], io: machineIO) == 0)
+      #expect(await rig.run(["machine-v2", "add", "--name", "box"], io: machineIO) == 0)
       let machineHint = await machineIO.stderrText()
-      #expect(machineHint.contains("wuhu machine join https://wuhu.origin.test:9443 \(server.fingerprint)"))
+      #expect(machineHint.contains("wuhu machine-v2 join https://wuhu.origin.test:9443 \(server.fingerprint)"))
       #expect(!machineHint.contains("jt_"))
     }
   }
@@ -264,37 +225,6 @@ import Testing
     #expect(!stderr.contains("jt_secret"))
     #expect(await io.stdoutText().isEmpty)
     #expect(!FileManager.default.fileExists(atPath: rig.configDirectory.path))
-  }
-
-  // The join token carries the same enroll-any-key authority as an invite
-  // link, so machine join holds the same line: never argv, never echoed.
-  @Test func machineJoinRefusesATokenOnArgvWithoutEchoingIt() async throws {
-    let rig = try EnrollRig()
-    defer { rig.cleanUp() }
-    let token = "jt_" + String(repeating: "z", count: 32)
-    for arguments in [
-      ["machine", "join", token],
-      ["machine", "join", "https://127.0.0.1:1", token],
-      ["machine", "join", "https://127.0.0.1:1", token, "sha256:" + String(repeating: "a", count: 64)],
-    ] {
-      let io = CLIIO()
-      let log = RequestLog()
-      #expect(await rig.run(arguments, io: io, log: log) == 64)
-      let stderr = await io.stderrText()
-      #expect(stderr.contains("stdin"))
-      #expect(!stderr.contains(token))
-      #expect(await io.stdoutText().isEmpty)
-      #expect(log.recorded.isEmpty)
-    }
-    #expect(!FileManager.default.fileExists(atPath: rig.configDirectory.path))
-  }
-
-  @Test func machineJoinRequiresANonEmptyStdinToken() async throws {
-    let rig = try EnrollRig()
-    defer { rig.cleanUp() }
-    let io = CLIIO(stdin: "\n")
-    #expect(await rig.run(["machine", "join", "https://127.0.0.1:1"], io: io) == 64)
-    #expect(await io.stderrText().contains("expected the join token on stdin"))
   }
 
   @Test func anInviteLinkParsesWithAnyOneTrailingLineTerminator() {

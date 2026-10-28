@@ -103,6 +103,9 @@ extension Space {
     guard try JSONEncoder().encode(record.start).count <= record.description.limits.inputBytes else { throw OperationError(.inputTooLarge) }
     let now = dateGen.now; let stamp = SQLiteDateFormat.string(from: now)
     return try await writer.write { db in
+      guard try MachineV2MemberRow.where({ $0.machineID.eq(record.machine) }).fetchOne(db) != nil else {
+        throw OperationError(.unknownMachine)
+      }
       if try V2Maintenance.due("receipts/" + group.rawValue, now: now, in: db) {
         let cutoff = SQLiteDateFormat.string(from: now.addingTimeInterval(-7 * 86400))
         let expired = try MachineV2RetentionRow.where { $0.grp.eq(group.rawValue) && $0.kind.eq("operation") && $0.expiredAt.lt(cutoff) }.fetchAll(db)

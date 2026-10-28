@@ -1,5 +1,4 @@
 import Dependencies
-import JSONValue
 import MachineContract
 
 /// Where an incoming exec picks up when its relay already holds part of it durably: output starts at `output`, stdin is taken
@@ -12,10 +11,8 @@ public struct IncomingResume: Sendable {
 
 public actor ChannelEndpoint {
   public nonisolated let incomingExecs: AsyncStream<IncomingExec>
-  public nonisolated let inboundRequests: AsyncStream<InboundRequest>
 
   private nonisolated let incomingExecsContinuation: AsyncStream<IncomingExec>.Continuation
-  private nonisolated let inboundRequestsContinuation: AsyncStream<InboundRequest>.Continuation
 
   private var execs: [ExecID: ExecState] = [:]
   private var execsByStream: [Int: ExecState] = [:]
@@ -25,9 +22,7 @@ public actor ChannelEndpoint {
   }
 
   private var nextStreamID: Int = 1
-  var nextRequestID: Int = 1
-  var pendingRequests: [Int: AsyncThrowingStream<Frame, any Error>.Continuation] = [:]
-  var outbound: AsyncStream<Frame>.Continuation?
+  private var outbound: AsyncStream<Frame>.Continuation?
   private var bindingGeneration: Int = 0
 
   private let clock: any Clock<Duration>
@@ -43,7 +38,6 @@ public actor ChannelEndpoint {
     self.clock = clock
     (expirations, expirationContinuation) = AsyncStream.makeStream()
     (incomingExecs, incomingExecsContinuation) = AsyncStream.makeStream()
-    (inboundRequests, inboundRequestsContinuation) = AsyncStream.makeStream()
   }
 
   public func run(_ transport: some FrameTransport) async {
@@ -292,16 +286,8 @@ public actor ChannelEndpoint {
     guard generation == bindingGeneration else { return }
     outbound?.finish()
     outbound = nil
-    failPendingRequests(with: ChannelError.severed)
     for waiters in terminalWaiters.values { for waiter in waiters { waiter.finish() } }
     terminalWaiters.removeAll()
-  }
-
-  func failPendingRequests(with error: any Error) {
-    for continuation in pendingRequests.values {
-      continuation.finish(throwing: error)
-    }
-    pendingRequests.removeAll()
   }
 
   private func yieldReplay(for exec: ExecState, above cursor: Int, into continuation: AsyncStream<Frame>.Continuation) {
@@ -370,10 +356,6 @@ public actor ChannelEndpoint {
       exec.killDelivered = true
       exec.killsContinuation.yield(())
       exec.killsContinuation.finish()
-    case .vfsResponse, .searchResponse:
-      routeResponse(frame)
-    case .vfsRequest, .searchRequest:
-      routeRequest(frame)
     }
   }
 
@@ -381,24 +363,14 @@ public actor ChannelEndpoint {
     guard let message = try? frame.payload(ControlMessage.self) else { return }
     switch message {
     case let .hello(_, scope):
-      // The peer (re)connected. Any in-flight response may have died with the
-      // peer's old binding, so pending round trips fail instead of hanging.
-      // Live execs resume exactly as at bind — including the exec-start
-      // retransmit, or a start dropped during the peer's outage would never
-      // spawn. The resume must stay synchronous within this actor turn: the
-      // peer's announcement acks arrive after its hello, and an ack that wakes
-      // a window-blocked sendData does so only in a later turn, so a fresh
-      // chunk always follows the replay queued here.
-      failPendingRequests(with: ChannelError.severed)
+      // Replay synchronously before later announcement acks can wake a blocked sender.
       guard let outbound else { return }
       for exec in execs.values.sorted(by: { $0.streamID < $1.streamID }) {
         if exec.role == .incoming, let scope, !scope.contains(exec.start.id) { continue }
         yieldResume(for: exec, into: outbound)
       }
-    case .ping:
+    case .ping, .error:
       break
-    case let .error(error):
-      failPendingRequests(with: ChannelError.remote(error))
     }
   }
 
@@ -439,34 +411,6 @@ public actor ChannelEndpoint {
     if exec.role == .incoming, exec.sender.exit != nil, ack.terminal == true, ack.cursor == exec.sender.nextCursor {
       retire(ack.id)
     }
-  }
-
-  private func routeResponse(_ frame: Frame) {
-    guard let id = frame.requestID, let continuation = pendingRequests.removeValue(forKey: id) else { return }
-    continuation.yield(frame)
-    continuation.finish()
-  }
-
-  private func routeRequest(_ frame: Frame) {
-    if frame.opcode == .searchRequest {
-      // v1 search is retired: answer with an error result rather than leave the caller waiting.
-      guard let id = frame.requestID else {
-        yieldControl(.error(error: MachineError(code: .protocolViolation, message: "malformed \(frame.opcode.rawValue)")))
-        return
-      }
-      let refusal: JSONValue = ["id": .integer(id), "result": ["kind": "error", "error": ["code": "invalidArgument", "message": "this machine agent no longer serves v1 search; search runs over machine v2 (search.v1)"]]]
-      outbound?.yield(Frame(streamID: 0, opcode: .searchResponse, body: refusal))
-      return
-    }
-    let request: InboundRequest? = switch frame.opcode {
-    case .vfsRequest: (try? frame.payload(VFSRequest.self)).map(InboundRequest.vfs)
-    default: nil
-    }
-    guard let request else {
-      yieldControl(.error(error: MachineError(code: .protocolViolation, message: "malformed \(frame.opcode.rawValue)")))
-      return
-    }
-    inboundRequestsContinuation.yield(request)
   }
 
   private func yieldControl(_ message: ControlMessage) {

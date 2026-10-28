@@ -86,17 +86,6 @@ import Testing
     }
   }
 
-  @Test func machineHomeHonorsTheUserConfigOverride() throws {
-    let scratch = try ScratchFolder("trust")
-    defer { scratch.remove() }
-    let override = scratch.url.appendingPathComponent("override")
-    let home = try MachineHome.locate(environment: ["WUHU_CONFIG_DIR": override.path])
-    #expect(home.directory.path == override.appendingPathComponent("machine").path)
-    #expect(throws: (any Error).self) {
-      try MachineHome.locate(environment: ["HOME": ""])
-    }
-  }
-
   @Test func hostKeyDefaultsTo443() throws {
     #expect(ServerTrust.hostKey(url: URL(string: "https://wuhu.test:5540/x")!) == "wuhu.test:5540")
     #expect(ServerTrust.hostKey(url: URL(string: "wss://wuhu.test/v1/exec")!) == "wuhu.test:443")

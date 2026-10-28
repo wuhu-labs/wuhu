@@ -37,6 +37,9 @@ struct StandardInputEncodingError: Error, CustomStringConvertible {
 @main
 enum Main {
   static func main() async {
+    if CommandLine.arguments.count >= 5, Array(CommandLine.arguments[1 ... 2]) == ["machine-v2", "exec-child"] {
+      ExecSupervisor.runChild(Array(CommandLine.arguments.dropFirst(3)))
+    }
     if CommandLine.arguments.count == 6, Array(CommandLine.arguments[1 ... 2]) == ["machine-v2", "local-agent"] {
       do {
         try await ExecSupervisor.runLocalAgent(machine: CommandLine.arguments[3], operationsDirectory: CommandLine.arguments[4], socket: CommandLine.arguments[5], executable: URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path)

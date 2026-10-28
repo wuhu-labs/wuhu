@@ -54,19 +54,30 @@ struct ExecInput: Codable, Sendable {
 struct ExecKind: OperationKind {
   let clock: OperationClock
   let disclaimResponsibility: Bool
-  init(clock: OperationClock = .continuous, disclaimResponsibility: Bool = false) { self.clock = clock; self.disclaimResponsibility = disclaimResponsibility }
+  let receiptsDirectory: String?
+  init(clock: OperationClock = .continuous, disclaimResponsibility: Bool = false, receiptsDirectory: String? = nil) { self.clock = clock; self.disclaimResponsibility = disclaimResponsibility; self.receiptsDirectory = receiptsDirectory }
   let descriptor = ComputerKindSchemas.exec
   func validate(_ input: ExecInput) throws { try input.validate() }
-  func run(_ input: ExecInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
-    try input.validate()
-    try await cancellation.check()
+  func spawn(_ input: ExecInput) async throws -> (exec_child, ProcessReceipt?) {
+    let publication: Int32?
+    if let receiptsDirectory { publication = try await ProcessReceipt.publicationLock(receiptsDirectory, clock: clock) } else { publication = nil }
+    defer { if let publication { exec_close(publication) } }
+    let receipt = try receiptsDirectory.map { try ProcessReceipt(path: $0 + "/.exec-" + UUID().uuidString, process: 0) }
     var child = exec_child()
     let failure = withCStringArray(input.argv) { argv in
       withCStringArray(input.environment) { environment in
-        exec_spawn(argv, environment, input.cwd, disclaimResponsibility ? 1 : 0, &child)
+        exec_spawn_with_receipt(argv, environment, input.cwd, disclaimResponsibility ? 1 : 0, receipt?.descriptor ?? -1, publication ?? -1, &child)
       }
     }
-    guard failure == 0 else { throw OperationError(.spawnFailed, details: ["errno": .number(Double(failure))]) }
+    guard failure == 0 else { receipt?.close(); throw OperationError(.spawnFailed, details: ["errno": .number(Double(failure))]) }
+    return (child, receipt)
+  }
+
+  func run(_ input: ExecInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+    try input.validate()
+    try await cancellation.check()
+    let (child, receipt) = try await spawn(input)
+    defer { receipt?.close() }
     var inputFD = child.input
     defer { exec_close(inputFD); exec_close(child.output); exec_close(child.error) }
     var pipes = [OutputPipe(name: "stdout", fd: child.output, secrets: input.secrets), OutputPipe(name: "stderr", fd: child.error, secrets: input.secrets)]
@@ -122,7 +133,7 @@ struct ExecKind: OperationKind {
         if Task.isCancelled { throw CancellationError() }
         guard await cancellation.reason() != nil else { throw CancellationError() }
       }
-      if result != nil && escalation == nil && !reaped { _ = exec_reap(child.pid); reaped = true }
+      if result != nil && escalation == nil && !reaped { receipt?.close(); _ = exec_reap(child.pid); reaped = true }
       if let result, reaped, pipes.allSatisfy(\.finished) { return result }
       do { try await clock.sleep(.milliseconds(5)) }
       catch { if result != nil { return result! }; throw error }

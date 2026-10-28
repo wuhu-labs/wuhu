@@ -20,14 +20,12 @@ import Testing
   @Test func fsToolSuiteOverMachinesAgainstARealAgent() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
+    let (machine, _) = try await addMachine(server)
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }
     let root = fixture.path
 
-    try await runScenario(server: server) { dialer, _ in
-      dialer.offer(try await connectMachine(server, key: key))
-      try await awaitAttached(server, machine)
+    try await withFileAgent(server, machine: machine) {
       let base = "machines://\(machine.rawValue)\(root)"
 
       let written = try await call(server, "write", ["path": .string("\(base)/notes/hello.txt"), "content": "v1"], as: WriteOutput.self)
@@ -40,7 +38,8 @@ import Testing
       let entry = try await call(server, "stat", ["path": .string("\(base)/notes/hello.txt")], as: SpaceContract.Entry.self)
       let attributes = try FileManager.default.attributesOfItem(atPath: "\(root)/notes/hello.txt")
       let mtime = (attributes[.modificationDate] as! Date).timeIntervalSince1970
-      #expect(entry.token == String(mtime))
+      #expect(!entry.token.isEmpty)
+      #expect(entry.token == read.token)
       #expect(entry.kind == .file)
       #expect(entry.size == 2)
 
@@ -107,14 +106,12 @@ import Testing
   @Test func machineAddressesRejectRevisionsLoudly() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
+    let (machine, _) = try await addMachine(server)
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }
     let root = fixture.path
 
-    try await runScenario(server: server) { dialer, _ in
-      dialer.offer(try await connectMachine(server, key: key))
-      try await awaitAttached(server, machine)
+    try await withFileAgent(server, machine: machine) {
       let base = "machines://\(machine.rawValue)\(root)"
 
       let suffix = try await failure(server, "read", ["path": .string("\(base)/hello.txt@3")])
@@ -129,76 +126,16 @@ import Testing
     }
   }
 
-  @Test func detachedMachineFailsUnavailableAndOversizedFramesNeverSend() async throws {
+  @Test func detachedMachineFailsUnavailable() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
+    let (machine, _) = try await addMachine(server)
 
     let detached = try await failure(server, "read", ["path": .string("machines://\(machine.rawValue)/etc/hosts")])
     #expect(detached.code == "unavailable")
 
     let bogus = try await failure(server, "read", ["path": "machines://nonsense id/etc/hosts"])
     #expect(bogus.code == "notFound")
-
-    let fixture = try ScratchFolder("m5-fixture")
-    defer { fixture.remove() }
-    let root = fixture.path
-    try await runScenario(server: server) { dialer, _ in
-      dialer.offer(try await connectMachine(server, key: key))
-      try await awaitAttached(server, machine)
-      await #expect(throws: MachineHubError.frameTooLarge) {
-        _ = try await server.hub.vfs(
-          machine: machine,
-          op: .write(path: "\(root)/huge.bin", data: Base64Data(Array(repeating: 7, count: 17 << 20)), ifMatch: nil),
-        )
-      }
-      #expect(!FileManager.default.fileExists(atPath: "\(root)/huge.bin"))
-    }
-  }
-
-  // The bind hello is in flight while attachedMachines() already reports the
-  // machine: a round trip issued in that window must resolve, not fail severed.
-  @Test func roundTripRacingTheBindHelloResolves() async throws {
-    let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
-
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await server.run() }
-      group.addTask {
-        let socket = try await connectMachine(server, key: key)
-        try await awaitAttached(server, machine)
-        try await withThrowingTaskGroup(of: Void.self) { round in
-          round.addTask {
-            let result = try await server.hub.vfs(machine: machine, op: .mkdir(path: "/tmp/racing"))
-            #expect(result == .ok)
-          }
-          round.addTask {
-            var requestID: Int?
-            for await message in socket.inbound {
-              guard case let .binary(bytes) = message,
-                    let frame = try? FrameCodec.decode(bytes),
-                    frame.opcode == .vfsRequest,
-                    let request = try? frame.payload(VFSRequest.self)
-              else { continue }
-              requestID = request.id
-              break
-            }
-            let id = try #require(requestID)
-            try await socket.send(.binary(FrameCodec.encode(
-              Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
-            )))
-            try await socket.send(.binary(FrameCodec.encode(
-              Frame(streamID: 0, opcode: .vfsResponse, payload: VFSResponse(id: id, result: .ok)),
-            )))
-          }
-          try await round.waitForAll()
-        }
-        socket.close()
-      }
-      _ = try await group.next()
-      group.cancelAll()
-    }
   }
 
   // The text tools read a machine file whole up to one frame; past it the
@@ -206,7 +143,7 @@ import Testing
   @Test func aFileOverOneReadFrameIsRefusedTyped() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
+    let (machine, _) = try await addMachine(server)
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }
     let root = fixture.path
@@ -214,9 +151,7 @@ import Testing
     let size = VFSDefaults.maxReadBytes + 1
     #expect(FileManager.default.createFile(atPath: path, contents: Data(repeating: UInt8(ascii: "a"), count: size)))
 
-    try await runScenario(server: server) { dialer, _ in
-      dialer.offer(try await connectMachine(server, key: key))
-      try await awaitAttached(server, machine)
+    try await withFileAgent(server, machine: machine) {
       let refused = try await failure(server, "read", ["path": .string("machines://\(machine.rawValue)\(path)")])
       #expect(refused.code == "unsupported")
       #expect(refused.message == "\(path) is \(size) bytes; a machine file is read whole up to \(VFSDefaults.maxReadBytes) bytes")
@@ -279,6 +214,20 @@ import Testing
   }
 }
 
+private func withFileAgent(_ server: TestServer, machine: MachineID, _ body: () async throws -> Void) async throws {
+  let agent = try OperationAgent(machine: machine.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
+  let service = MachineV2Service(space: server.space, hub: MachineV2Hub(space: server.space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
+  await server.hub.configureV2(service)
+  try await withThrowingTaskGroup(of: Void.self) { tasks in
+    tasks.addTask { await agent.run() }
+    tasks.addTask { try await service.run() }
+    defer { tasks.cancelAll() }
+    try await body()
+    await agent.shutdown()
+  }
+  await service.shutdown()
+}
+
 private func run(_ context: SpaceToolContext, _ tool: String, _ input: JSONValue) async throws -> JSONValue {
   try await SpaceToolbox.all.first { $0.name == tool }!.run(context, input: input)
 }
@@ -322,11 +271,6 @@ private struct ToolFailure {
 private struct Page: Equatable {
   let items: [String]
   let hasCursor: Bool
-}
-
-func awaitAttached(_ server: TestServer, _ machine: MachineID) async throws {
-  let attached = try await realPollUntil { await server.hub.attachedMachines().contains(machine) }
-  #expect(attached)
 }
 
 private func post(_ server: TestServer, _ tool: String, _ input: JSONValue) async throws -> Response {

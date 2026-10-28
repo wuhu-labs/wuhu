@@ -7,7 +7,7 @@ import struct OperationProtocol.OperationError
 
 /// Why the agent or a worker stops a running exec; its verdict carries the reason.
 enum StopReason: String {
-  case leaving, retired, refused
+  case retired, refused
 }
 
 /// Why a request for an operation cannot be answered now: the message of its `supervisorUnavailable` error.

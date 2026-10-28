@@ -66,7 +66,7 @@ import Testing
   @Test func everySessionAndEveryHumanWritesMachineNotes() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      _ = try await harness.space.addMachine(name: "studio")
+      _ = (try await harness.space.addMachineV2(name: "studio")).machine
       let first = try await harness.createSession().rawValue
       let second = try await harness.createSession().rawValue
       let notes = "/_/machines/studio/AGENTS.md"

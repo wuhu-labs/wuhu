@@ -10,21 +10,21 @@ title: 机器
 在已经登录的 CLI 上注册机器：
 
 ```sh
-wuhu machine add --name mini
+wuhu machine-v2 add --name mini
 ```
 
 它会打印一枚一次性的加入 token（`jt_...`）和加入命令；如果服务器用的是 Wuhu 自己生成的证书，加入命令里还会带上它的证书指纹。把这枚 token 放到那台机器上的一个文件里，然后在装好 `wuhu` 的那台机器上执行：
 
 ```sh
-wuhu machine join https://example.wuhu:5530 sha256:<fingerprint> --name mini < token
-wuhu machine run
+wuhu machine-v2 join https://example.wuhu:5530 sha256:<fingerprint> < token
+wuhu machine-v2 install <printed-machine-id> --binary /absolute/path/to/wuhu
 ```
 
 用你自己的证书（`--cert`）时，就没有指纹要传。token 从 stdin 进去，所以不会出现在你的 shell 历史里。
 
-`machine join` 把那台机器的密钥和 runner 设置存在它的 `~/.wuhu/machine/` 下。`machine run` 就是 runner。跟 GitHub Actions self-hosted runner 一样，它主动连到你的服务器上，断了会自己重连，你不用在机器上开任何端口。它跑在前台；要常驻就交给 launchd、systemd，或者你自己顺手的办法。
+`machine-v2 join` 把机器密钥和 runner 设置存在 `~/.wuhu/machine-v2/<machine-id>/` 下。安装后的服务主动连接服务器，断开后自行重连，无需在机器上开放端口。Linux 使用 systemd 用户服务；macOS 使用 launchd，安装时会检查「本地网络」权限。需要前台运行时，用 `wuhu machine-v2 run <machine-id>` 代替安装服务。
 
-在 macOS 上，如果服务器在局域网里，runner 需要「本地网络」权限。launchd 不会弹这个提示，所以先手动跑一次并允许它。如果 launchd 起的 runner 还是连不上服务器，用 tmux 会话跑也行。
+旧的 `machine add`、`machine join` 和 `machine run` 已移除。用 `machine-v2` 注册和接入机器；普通机器工具和 `wuhu machine list` 使用这个注册。
 
 ## 信任
 
@@ -38,10 +38,10 @@ runner 是拿运行它的那个系统账号的权限去做 agent 让它做的事
 每台机器属于一个组。注册时可以用 `--group` 直接选组；例如注册到 `shared`，能读取 `shared` 的组里的 agent 就都能使用它：
 
 ```sh
-wuhu machine add --name mini --group shared
+wuhu machine-v2 add --name mini --group shared
 ```
 
-这需要目标组的 admin 权限，但不要求你是该组的成员。全局写法 `wuhu --group shared machine add --name mini` 也只选择注册目标。不显式传这个选项时，机器注册到你的个人组；环境变量和文件夹中的组设置不会改变注册目标。CLI 会核对服务器返回的实际组；旧服务器忽略目标或返回其他组时，会报错并提示升级或移动机器。移动已有机器仍可用 `wuhu machine move mini --group shared`，需要两个组的 admin 权限。
+这需要目标组的 admin 权限，但不要求你是该组的成员。全局写法 `wuhu --group shared machine-v2 add --name mini` 也只选择注册目标。不显式传这个选项时，机器注册到你的个人组；环境变量和文件夹中的组设置不会改变注册目标。CLI 会核对服务器返回的实际组；旧服务器忽略目标或返回其他组时，会报错并提示升级或移动机器。移动已有机器仍可用 `wuhu machine move mini --group shared`，需要两个组的 admin 权限。
 
 ## agent 命令里的 CLI
 

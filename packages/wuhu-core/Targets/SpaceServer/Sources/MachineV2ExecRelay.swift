@@ -100,7 +100,6 @@ struct ExecRelayState: Codable, Equatable, Sendable {
 
 extension MachineV2Service {
   static let timeoutStop = "timeout"
-  // Seconds, the way the v1 agent bounds a caller's timeout: a larger Duration traps.
   static let timeoutCeiling = 1e9
   /// How long a timeout stop may take to end the process and drain its output: the supervisor's five-second SIGKILL escalation
   /// plus margin. Past it the caller is answered with an unknown status. Task-local so tests can shorten it.

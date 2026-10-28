@@ -1,9 +1,6 @@
-import struct MachineContract.MachineError
-
 public enum ChannelError: Error, Equatable, Sendable {
   case severed
   case protocolViolation(String)
-  case remote(MachineError)
 }
 
 public protocol FrameTransport: Sendable {

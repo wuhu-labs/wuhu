@@ -304,15 +304,13 @@ enum Command: Equatable {
   case keyRevoke(pubkey: String)
   case login
   case shareLogin(ttl: Int?)
-  case machineAdd(name: String?, group: String?, scope: String? = nil)
   case machineV2Add(name: String, group: String?)
-  case machineJoin(server: String, fingerprint: String?, name: String?)
-  case machineRun
   case machineV2Install(MachineV2InstallCommand)
   case machineList
   case machineName(machine: String, name: String)
   case machineRotate(id: String)
   case machineRevoke(id: String)
+  case machineDelete(id: String)
   case machineMove(machine: String, group: String)
   case deviceList
   case deviceSet(id: String, name: String?, machine: String?)

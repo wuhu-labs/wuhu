@@ -117,9 +117,9 @@ struct OperationState: Sendable {
   /// stdout and stderr in turn, a search acks with no channel and then on its channel), so only once each has may the operation go.
   var terminalAcknowledgedChannels: Set<String> = []
   var outputConsumed: Bool { outputs.values.allSatisfy { $0.end && $0.acknowledged == $0.through } }
-  var departureSettled: Bool { verdict != nil && terminalAcknowledged && outputConsumed }
+  var settled: Bool { verdict != nil && terminalAcknowledged && outputConsumed }
   /// Settled, and acknowledged on every output channel: no caller can still need it.
-  var released: Bool { departureSettled && outputs.keys.allSatisfy(terminalAcknowledgedChannels.contains) }
+  var released: Bool { settled && outputs.keys.allSatisfy(terminalAcknowledgedChannels.contains) }
   var bufferReservation: Int {
     inputs.values.reduce(0) { $0 + (verdict == nil || $1.payload.count > 0 ? $1.descriptor.windowBytes : 0) }
       + outputs.values.reduce(0) { $0 + (!$1.end || $1.payload.count > 0 ? $1.descriptor.windowBytes : 0) }

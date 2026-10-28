@@ -31,7 +31,7 @@ import Testing
     return (try ComputerAgent(machine: "test", external: workers.external, clock: clock), workers)
   }
 
-  func describe(ack: Bool = false) -> Request { Request(url: URL(string: "https://agent/machine/v2/machines/test" + (ack ? "?leaveAck=true" : ""))!) }
+  func describe() -> Request { Request(url: URL(string: "https://agent/machine/v2/machines/test")!) }
 
   @Test func combinesKindsAndRejectsOtherMachineBeforeDispatch() async throws {
     let (agent, _) = try fixture()
@@ -40,7 +40,6 @@ import Testing
     #expect(description.acceptingStarts)
     let response = try await agent.handler(Request(url: URL(string: "https://agent/machine/v2/machines/not-authorized")!))
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .machineNotAuthorized)
-    #expect(try await agent.handler(describe(ack: true)).body.json(ErrorEnvelope.self).error.code == .invalidInput)
   }
 
   @Test func fileAndExecShareOperationIDsWithNoActiveCap() async throws {
@@ -55,85 +54,76 @@ import Testing
     await agent.shutdown()
   }
 
-  @Test func localLeaveWaitsForLogicalAcknowledgementNotConnectionClose() async throws {
-    let (agent, workers) = try fixture()
-    let leave = Task { try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put)) }
-    defer { leave.cancel() }
-    while await workers.service == .serving { try await ContinuousClock().sleep(for: .milliseconds(1)) }
-    #expect(!(await agent.leaveAcknowledged))
-    #expect(try await agent.handler(describe()).body.json(ErrorEnvelope.self).error.code == .leaving)
-    #expect(!(await agent.leaveAcknowledged))
-    #expect(try await agent.handler(describe(ack: true)).body.json(ErrorEnvelope.self).error.code == .leaving)
-    #expect(try await leave.value.body.json(Bool.self))
-    let start = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: .null)))
-    #expect(try await agent.handler(start).body.json(ErrorEnvelope.self).error.code == .leaving)
-  }
-
-  @Test func lostLeaveAckTimesOutAndCannotLaterClaimDetached() async throws {
-    let now = Mutex(Duration.zero)
-    let holder = Mutex<ComputerAgent?>(nil)
-    let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { duration in
-      if duration >= .seconds(1) {
-        while let agent = holder.withLock({ $0 }), !(await agent.drainCompleted) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
-        now.withLock { $0 += duration }; return
-      }
-      try await ContinuousClock().sleep(for: .milliseconds(1))
-    })
-    let (agent, _) = try fixture(clock: clock)
-    holder.withLock { $0 = agent }
-    let failure = try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put)).body.json(ErrorEnvelope.self).error
-    #expect(failure.code == .requestDeadline)
-    #expect(failure.message == "leaveUnacknowledged")
-    let response = try await agent.handler(describe())
-    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .requestDeadline)
-    #expect(try await agent.handler(describe(ack: true)).body.json(ErrorEnvelope.self).error.code == .invalidInput)
-    #expect(!(await agent.leaveAcknowledged))
-  }
-
-  @Test func timeoutDuringAStartOnItsWayToItsWorkerIsDrainFailedNotMissingAck() async throws {
+  @Test func uninstallRemovesStaleReceiptsWithoutSignallingTheirPIDs() async throws {
     let home = try MachineHome(); defer { home.remove() }
-    let now = Mutex(Duration.zero)
-    let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { duration in
-      if duration >= .seconds(1) { now.withLock { $0 += duration }; return }
-      try await ContinuousClock().sleep(for: .milliseconds(1))
-    })
-    let parked = Mutex<[CheckedContinuation<Void, Never>]>([])
-    defer { for continuation in parked.withLock({ $0 }) { continuation.resume() } }
-    let workers = try ExecWorkers(machine: "test", operationsDirectory: home.operations, executable: "/bin/false", launch: { _ in nil }, authorize: { _, _ in })
-    try await workers.recover()
-    await workers.launchWorker()
-    let worker = try #require(await workers.current)
-    let manifest = try #require(await workers.workers[worker]?.manifest)
-    // The worker takes the start and never answers it.
-    _ = try await workers.link(Rendezvous.Hello(protocol: Rendezvous.protocolName, machine: "test", worker: worker, nonce: manifest.nonce), client: FetchClient { _ in
-      await withCheckedContinuation { continuation in parked.withLock { $0.append(continuation) } }
-      throw CancellationError()
-    }, abort: {})
-    let agent = try ComputerAgent(machine: "test", external: workers.external, clock: clock)
-    let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
-    let start = Task { try await agent.handler(request) }
-    defer { start.cancel() }
-    while await agent.pending.isEmpty { try await ContinuousClock().sleep(for: .milliseconds(1)) }
-    let response = try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put))
-    let error = try await response.body.json(ErrorEnvelope.self).error
-    #expect(error.code == .requestDeadline)
-    #expect(error.message == "drainFailed")
-    #expect(!(await agent.drainCompleted))
-    #expect(!(await agent.leaveAcknowledged))
-    #expect(await agent.pending.count == 1)
-    start.cancel(); _ = try await start.value
+    let directory = home.operations + "/" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let path = directory + "/.lock"
+    try WorkerDirectory.writeFile(path, Data(String(getpgrp()).utf8))
+    try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations)
+    #expect(access(path, F_OK) != 0)
+    try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations)
   }
 
-  @Test func aLeaveWhoseRecordFailsFailsItsReply() async throws {
-    let (agent, workers) = try fixture()
-    struct Unrecorded: Error {}
-    let leave = Task { try await agent.controlHandler(afterLeave: { throw Unrecorded() })(Request(url: URL(string: "http://local/leave")!, method: .put)) }
-    while await workers.service == .serving { try await ContinuousClock().sleep(for: .milliseconds(1)) }
-    #expect(try await agent.handler(describe()).body.json(ErrorEnvelope.self).error.code == .leaving)
-    #expect(try await agent.handler(describe(ack: true)).body.json(ErrorEnvelope.self).error.code == .leaving)
-    let response = try await leave.value
-    #expect(response.status.code != 200)
-    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .supervisorUnavailable)
+  @Test func uninstallCannotFreezeOrRemoveReceiptsBeforeSpawnPublicationFinishes() async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    let directory = home.operations + "/" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let receipt = directory + "/.lock"
+    try WorkerDirectory.writeFile(receipt, Data(String(getpgrp()).utf8))
+    let publishing = exec_lock_file(directory + "/.spawn.lock", 1)
+    try #require(publishing >= 0)
+    defer { exec_close(publishing) }
+    let now = Mutex(Duration.zero)
+    let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { duration in now.withLock { $0 += duration } })
+    do {
+      try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations, clock: clock)
+      Issue.record("uninstall passed an in-flight spawn")
+    } catch let error as OperationError {
+      #expect(error.message.hasPrefix("localStopFailed: "))
+    }
+    #expect(access(receipt, F_OK) == 0, "even stale receipts are untouched until publication ends")
+  }
+
+  @Test func uninstallDoesNotSignalAReusedLeaderIdentityEvenWithALockedReceipt() async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    let directory = home.operations + "/" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let pid = try ExecSupervisor.launchReaped(["/bin/sleep", "60"])
+    defer { _ = killpg(pid, SIGKILL) }
+    let path = directory + "/.lock"
+    let receipt = try ProcessReceipt(path: path, process: pid)
+    defer { receipt.close() }
+    var birth: UInt64 = 0
+    try #require(exec_process_birth(pid, &birth) == 0)
+    let wrong = Array("\(pid) \(birth + 1)".utf8)
+    try #require(ftruncate(receipt.descriptor, 0) == 0)
+    try #require(wrong.withUnsafeBytes { pwrite(receipt.descriptor, $0.baseAddress, $0.count, 0) } == wrong.count)
+    do {
+      try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations)
+      Issue.record("a mismatched leader birth anchor was accepted")
+    } catch let error as OperationError {
+      #expect(error.message.contains(path))
+    }
+    #expect(kill(pid, 0) == 0, "the unrelated process group must remain alive")
+  }
+
+  @Test func uninstallRefusesMalformedLockedReceipts() async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    let directory = home.operations + "/" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let path = directory + "/.lock"
+    let lock = exec_lock_file(path, 1)
+    try #require(lock >= 0)
+    defer { exec_close(lock) }
+    do {
+      try await ExecSupervisor.stopInstalled(operationsDirectory: home.operations)
+      Issue.record("malformed live receipt was ignored")
+    } catch let error as OperationError {
+      #expect(error.code == .supervisorUnavailable)
+      #expect(error.message.hasPrefix("localStopFailed: "))
+      #expect(error.message.contains(path))
+    }
   }
 
   @Test func withComputerAgentServesInjectedBackendsHoldsTheLockAndUnwindsOnSuccessAndThrow() async throws {

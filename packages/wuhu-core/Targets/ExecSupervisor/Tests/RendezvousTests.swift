@@ -24,6 +24,11 @@ import typealias Serve.Handler
 import Synchronization
 import Testing
 
+func machineExecutable() throws -> String {
+  let cli = try #require(ProcessInfo.processInfo.environment["WUHU_CLI"])
+  return cli.hasPrefix("/") ? cli : FileManager.default.currentDirectoryPath + "/" + cli
+}
+
 /// A private machine directory short enough for any platform's Unix socket limit: `/tmp/w252-XXXXXX/operations`.
 struct MachineHome {
   let path: String
@@ -188,8 +193,8 @@ func compose<R: Sendable>(_ home: MachineHome, _ body: @escaping @Sendable (Comp
     let manifest = try await home.manifest()
     let id = manifest.operation
     let directory = home.operations + "/" + id.uuidString
-    let supervisor = Task { try await ExecSupervisor.run(directory: directory) }
-    defer { supervisor.cancel() }
+    let supervisor = try ExecSupervisor.launchReaped([try machineExecutable(), "machine-v2", "supervise", directory])
+    defer { _ = killpg(supervisor, SIGKILL) }
     try await compose(home) { _, workers in
       try await waitForLink(workers, id)
       let start = execRequest(id, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh", "-c", "printf done"], "cwd": "/tmp", "stdin": false])))
@@ -227,7 +232,11 @@ func compose<R: Sendable>(_ home: MachineHome, _ body: @escaping @Sendable (Comp
         try await clock.sleep(for: .milliseconds(50))
       }
     }
-    try await supervisor.value
+    let clock = ContinuousClock(); let deadline = clock.now + .seconds(5)
+    while !exited(supervisor) {
+      guard clock.now < deadline else { throw TestFailure.timeout }
+      try await clock.sleep(for: .milliseconds(10))
+    }
   }
 
   @Test func handshakeRefusesAWrongNonceAnUnknownOperationAndAnUnknownWorkerOverTheRealSocket() async throws {
@@ -285,7 +294,7 @@ func compose<R: Sendable>(_ home: MachineHome, _ body: @escaping @Sendable (Comp
   }
 
   /// A version-1 supervisor listens on its own socket, and this agent does not adopt it: its operation answers a typed unknown
-  /// outcome and counts as lost at departure, the live supervisor is asked to retire, and a dead one's directory goes.
+  /// outcome, the live supervisor is asked to retire, and a dead one's directory goes.
   @Test func aVersionOneSupervisorsOperationHasAnUnknownOutcomeAndItIsRetired() async throws {
     let home = try MachineHome(); defer { home.remove() }
     let alive = try await home.manifest(version: 1)
@@ -304,19 +313,7 @@ func compose<R: Sendable>(_ home: MachineHome, _ body: @escaping @Sendable (Comp
       // Its id stays taken.
       let start = execRequest(alive.operation, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
       #expect(try await computer.handler(start).body.json(ErrorEnvelope.self).error.code == .operationExists)
-      await workers.leave()
-      let clock = ContinuousClock(); let deadline = clock.now + .seconds(10)
-      while true {
-        switch try await workers.departureEvidence() {
-        case .pending:
-          guard clock.now < deadline else { throw TestFailure.timeout }
-          try await clock.sleep(for: .milliseconds(20))
-          continue
-        case let .leaseExpired(lost): #expect(Set(lost) == [alive.operation, dead.operation])
-        case .drained: Issue.record("the unadopted operations drained")
-        }
-        break
-      }
+      for id in [alive.operation, dead.operation] { #expect(await workers.external.owns(id)) }
     }
     let text = try await request.value
     #expect(text.hasPrefix("PUT /retire HTTP/1.1\r\n"))

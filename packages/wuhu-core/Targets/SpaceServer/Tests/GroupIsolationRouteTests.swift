@@ -2,11 +2,16 @@ import struct Credentials.SpaceSecretStores
 import Crypto
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import ComputerFiles
+@testable import ExecSupervisor
 import JSONValue
-import MachineAgent
-import MachineChannel
 import MachineContract
+import OperationRuntime
 import Scratch
 import Serve
 import ServeTesting
@@ -73,7 +78,7 @@ import Testing
 
   /// An exec token for `session`, minted on any machine.
   func token(_ w: World, _ session: SessionID) async throws -> String {
-    let machine = try await w.harness.space.addMachine(name: nil)
+    let (machine, _) = try await w.harness.space.addMachineV2(name: "credential_" + UUID().uuidString.lowercased(), group: .shared)
     let exec = try await w.harness.space.mintExec(machine: machine.id, caller: session.rawValue)
     return w.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
   }
@@ -98,40 +103,26 @@ import Testing
     }
   }
 
-  /// Runs the hub and a real agent keyed and attached as `machine` while `body` runs.
-  func attached(_ w: World, _ machine: MachineRecord, _ body: @escaping @Sendable () async throws -> Void) async throws {
-    let key = Curve25519.Signing.PrivateKey()
-    let label = "ed25519:" + key.publicKey.rawRepresentation.base64EncodedString()
-    _ = try await w.harness.space.addKey(label, account: machine.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
-    let challenge = try JSONValueDecoder().decode(
-      MachineChallengeOutput.self, from: try await json(try await w.harness.get("/v1/machine/challenge")),
-    ).challenge
-    let signature = try key.signature(for: MachineConnect.signingPayload(challenge: challenge))
-    let connect = upgrade("/v1/machine/connect", headers: [
-      (MachineConnect.pubkeyHeader, label),
-      (MachineConnect.challengeHeader, challenge),
-      (MachineConnect.signatureHeader, signature.base64EncodedString()),
-    ])
-    guard case let .webSocket(socket, serve) = try await ServeTesting.upgrade(w.harness.handler, connect) else {
-      Issue.record("the machine's connect was refused")
-      return
-    }
-    let state = try ScratchFolder("m4-agent")
-    defer { state.remove() }
-    let agent = makeAgent(state: state)
-    let dialer = AgentDialer()
-    dialer.offer(socket)
-    let hub = w.harness.hub
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await hub.run() }
-      group.addTask { await serve() }
-      group.addTask { await agent.run(dial: dialer.dial) }
-      group.addTask {
-        #expect(try await realPollUntil { await hub.attachedMachines().contains(machine.id) })
+  func withMachine(_ w: World, _ machine: MachineRecord, _ body: @escaping @Sendable () async throws -> Void) async throws {
+    let agent = try OperationAgent(machine: machine.id.rawValue, kinds: fileOperationKinds() + [.init(ExecKind())], authorize: { _, _ in })
+    let service = MachineV2Service(
+      space: w.harness.space, hub: MachineV2Hub(space: w.harness.space), key: SymmetricKey(size: .bits256), failure: nil,
+      fetch: { _ in FetchClient { try await agent.handler($0) } },
+    )
+    await w.harness.hub.configureV2(service)
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await agent.run() }
+      tasks.addTask { try await service.run() }
+      defer { tasks.cancelAll() }
+      do {
         try await body()
+      } catch {
+        await agent.shutdown()
+        await service.shutdown()
+        throw error
       }
-      _ = try await group.next()
-      group.cancelAll()
+      await agent.shutdown()
+      await service.shutdown()
     }
   }
 
@@ -228,12 +219,12 @@ import Testing
     try await withSessionDeps {
       try await world { w in
         let added = try await send(
-          w, .post, "/v1/machine", .object(["name": "hers", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
+          w, .post, "/v1/machine-v2", .object(["name": "hers", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
         )
         #expect(added.status == .ok)
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
         #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
-        _ = try await w.harness.space.addMachine(name: "common")
+        _ = try await w.harness.space.addMachineV2(name: "common", group: .shared)
 
         func listed(_ bearer: String, group: GroupID? = nil) async throws -> [String] {
           let response = try await send(w, .get, "/v1/machine", bearer: bearer, group: group)
@@ -244,21 +235,22 @@ import Testing
         #expect(try await listed(w.alice) == ["common"])
         #expect(try await listed(w.admin) == ["common"])
 
-        let mint: JSONValue = .object(["machine": .string(id.rawValue)])
-        let fromS = try await send(w, .post, "/v1/exec", mint, bearer: try await token(w, w.s))
-        #expect(fromS.status == .notFound)
-        #expect(try await send(w, .post, "/v1/exec", mint, bearer: try await token(w, w.p)).status == .ok)
-        #expect(try await send(w, .post, "/v1/exec", mint, bearer: w.admin).status == .notFound)
-        #expect(try await send(w, .post, "/v1/exec", mint, bearer: w.alice, group: w.aliceGroup).status == .ok)
+        try await withMachine(w, try #require(try await w.harness.space.machine(id))) {
+          let mint: JSONValue = .object(["machine": .string(id.rawValue)])
+          let fromS = try await send(w, .post, "/v1/exec", mint, bearer: try await token(w, w.s))
+          #expect(fromS.status == .notFound)
+          #expect(try await send(w, .post, "/v1/exec", mint, bearer: try await token(w, w.p)).status == .ok)
+          #expect(try await send(w, .post, "/v1/exec", mint, bearer: w.admin).status == .notFound)
+          #expect(try await send(w, .post, "/v1/exec", mint, bearer: w.alice, group: w.aliceGroup).status == .ok)
+        }
       }
     }
   }
 
-  @Test(arguments: ["/v1/machine", "/v1/machine-v2"])
-  func anAdminAddsAMachineDirectlyToTheRequestedGroup(path: String) async throws {
+  @Test func anAdminAddsAMachineDirectlyToTheRequestedGroup() async throws {
     try await withSessionDeps {
       try await world { w in
-        let added = try await send(w, .post, path, .object(["name": "common_v2", "group": "shared"]), bearer: w.admin)
+        let added = try await send(w, .post, "/v1/machine-v2", .object(["name": "common_v2", "group": "shared"]), bearer: w.admin)
         #expect(added.status == .ok)
         let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
         let id = output.id
@@ -271,8 +263,7 @@ import Testing
     }
   }
 
-  @Test(arguments: ["/v1/machine", "/v1/machine-v2"])
-  func aSpaceAdminDoesNotNeedTheTargetGroupsMembership(path: String) async throws {
+  @Test func aSpaceAdminDoesNotNeedTheTargetGroupsMembership() async throws {
     try await withSessionDeps {
       try await world { w in
         let project = GroupID(rawValue: "project")
@@ -282,11 +273,11 @@ import Testing
         // A space admin administers every group but another person's own, so
         // it may act in one it holds no entry in.
         let actingAsTarget = try await send(
-          w, .post, path, ["name": "admin_acting_v2", "group": .string(project.rawValue)], bearer: w.admin, group: project,
+          w, .post, "/v1/machine-v2", ["name": "admin_acting_v2", "group": .string(project.rawValue)], bearer: w.admin, group: project,
         )
         #expect(actingAsTarget.status == .ok)
         let body: JSONValue = ["name": "admin_only_v2", "group": .string(project.rawValue)]
-        let added = try await send(w, .post, path, body, bearer: w.admin)
+        let added = try await send(w, .post, "/v1/machine-v2", body, bearer: w.admin)
         #expect(added.status == .ok)
         let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
         #expect(output.group == project.rawValue)
@@ -294,19 +285,18 @@ import Testing
 
         // Another person's own group is theirs: a space admin does not administer it.
         let personal: JSONValue = ["name": "not_hers", "group": .string(w.bobGroup.rawValue)]
-        #expect(try await send(w, .post, path, personal, bearer: w.admin).status == .forbidden)
+        #expect(try await send(w, .post, "/v1/machine-v2", personal, bearer: w.admin).status == .forbidden)
       }
     }
   }
 
-  @Test(arguments: ["/v1/machine", "/v1/machine-v2"])
-  func addingToAGroupRequiresItsAdminAndAnExistingGroup(path: String) async throws {
+  @Test func addingToAGroupRequiresItsAdminAndAnExistingGroup() async throws {
     try await withSessionDeps {
       try await world { w in
-        let denied = try await send(w, .post, path, .object(["name": "denied_v2", "group": "shared"]), bearer: w.alice)
+        let denied = try await send(w, .post, "/v1/machine-v2", .object(["name": "denied_v2", "group": "shared"]), bearer: w.alice)
         #expect(denied.status == .forbidden)
         #expect(try await code(denied) == "adminRequired")
-        let unknown = try await send(w, .post, path, .object(["name": "unknown_v2", "group": "missing"]), bearer: w.admin)
+        let unknown = try await send(w, .post, "/v1/machine-v2", .object(["name": "unknown_v2", "group": "missing"]), bearer: w.admin)
         #expect(unknown.status == .notFound)
         #expect(try await code(unknown) == "unknownGroup")
         #expect(try await w.harness.space.resolveMachine("denied_v2") == nil)
@@ -353,13 +343,13 @@ import Testing
     }
   }
 
-  @Test func aBodylessMachineRegistrationTakesTheActingGroupAndItsAdmin() async throws {
+  @Test func aNamedMachineRegistrationTakesTheActingGroupAndItsAdmin() async throws {
     try await withSessionDeps {
       try await world { w in
-        let refused = try await send(w, .post, "/v1/machine", bearer: w.alice)
+        let refused = try await send(w, .post, "/v1/machine-v2", ["name": "default_group"], bearer: w.alice)
         #expect(refused.status == .forbidden)
         #expect(try await code(refused) == "adminRequired")
-        let added = try await send(w, .post, "/v1/machine", bearer: w.admin)
+        let added = try await send(w, .post, "/v1/machine-v2", ["name": "default_group"], bearer: w.admin)
         #expect(added.status == .ok)
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
         #expect(try await w.harness.space.machine(id)?.group == .shared)
@@ -408,7 +398,7 @@ import Testing
   @Test func machinePathsReachOnlyAMachineTheActingGroupMayUse() async throws {
     try await withSessionDeps {
       try await world { w in
-        let hers = try await w.harness.space.addMachine(name: "hers", group: w.aliceGroup)
+        let (hers, _) = try await w.harness.space.addMachineV2(name: "hers", group: w.aliceGroup)
         let root = try scratchURL("group-machine")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -420,7 +410,7 @@ import Testing
         let s = try await token(w, w.s)
         let p = try await token(w, w.p)
 
-        try await attached(w, hers) {
+        try await withMachine(w, hers) {
           for bearer in [w.bob, w.alice, w.admin, s] {
             for input in [read, write] {
               let tool = input == read ? "read" : "write"
@@ -446,38 +436,40 @@ import Testing
   @Test func anExecIsSeenAndJoinedOnlyFromAGroupThatReadsItsHome() async throws {
     try await withSessionDeps {
       try await world { w in
-        let common = try await w.harness.space.addMachine(name: "common", scope: .reachable)
-        let mint: JSONValue = .object(["machine": .string(common.id.rawValue)])
-        func minted(_ bearer: String, group: GroupID? = nil) async throws -> ExecID {
-          let response = try await send(w, .post, "/v1/exec", mint, bearer: bearer, group: group)
-          #expect(response.status == .ok)
-          return try JSONValueDecoder().decode(ExecMintOutput.self, from: try await json(response)).id
-        }
-        let ofP = try await minted(try await token(w, w.p))
-        let ofAlice = try await minted(w.alice, group: w.aliceGroup)
-        let ofBob = try await minted(w.bob)
-        #expect(try await w.harness.space.execRecord(ofP)?.group == w.aliceGroup)
-        #expect(try await w.harness.space.execRecord(ofAlice)?.group == w.aliceGroup)
-        #expect(try await w.harness.space.execRecord(ofBob)?.group == .shared)
+        let (common, _) = try await w.harness.space.addMachineV2(name: "common", group: .shared, scope: .reachable)
+        try await withMachine(w, common) {
+          let mint: JSONValue = .object(["machine": .string(common.id.rawValue)])
+          func minted(_ bearer: String, group: GroupID? = nil) async throws -> ExecID {
+            let response = try await send(w, .post, "/v1/exec", mint, bearer: bearer, group: group)
+            #expect(response.status == .ok)
+            return try JSONValueDecoder().decode(ExecMintOutput.self, from: try await json(response)).id
+          }
+          let ofP = try await minted(try await token(w, w.p))
+          let ofAlice = try await minted(w.alice, group: w.aliceGroup)
+          let ofBob = try await minted(w.bob)
+          #expect(try await w.harness.space.execRecord(ofP)?.group == w.aliceGroup)
+          #expect(try await w.harness.space.execRecord(ofAlice)?.group == w.aliceGroup)
+          #expect(try await w.harness.space.execRecord(ofBob)?.group == .shared)
 
-        func listed(_ bearer: String, group: GroupID? = nil) async throws -> Set<ExecID> {
-          let response = try await send(w, .get, "/v1/exec", bearer: bearer, group: group)
-          #expect(response.status == .ok)
-          let ids = try JSONValueDecoder().decode([ExecStatus].self, from: try await json(response)).map(\.id)
-          return Set(ids).intersection([ofP, ofAlice, ofBob])
-        }
-        #expect(try await listed(w.bob) == [ofBob])
-        #expect(try await listed(w.admin) == [ofBob])
-        #expect(try await listed(w.alice, group: w.aliceGroup) == [ofP, ofAlice, ofBob])
+          func listed(_ bearer: String, group: GroupID? = nil) async throws -> Set<ExecID> {
+            let response = try await send(w, .get, "/v1/exec", bearer: bearer, group: group)
+            #expect(response.status == .ok)
+            let ids = try JSONValueDecoder().decode([ExecStatus].self, from: try await json(response)).map(\.id)
+            return Set(ids).intersection([ofP, ofAlice, ofBob])
+          }
+          #expect(try await listed(w.bob) == [ofBob])
+          #expect(try await listed(w.admin) == [ofBob])
+          #expect(try await listed(w.alice, group: w.aliceGroup) == [ofP, ofAlice, ofBob])
 
-        for exec in [ofP, ofAlice] {
-          #expect(try await send(w, .get, "/v1/exec/\(exec.rawValue)", bearer: w.bob).status == .notFound)
-          #expect(try await send(w, .post, "/v1/exec/\(exec.rawValue)/kill", bearer: w.bob).status == .notFound)
-          #expect(try await dialRefusal(w, exec, bearer: w.bob) == .notFound)
-          #expect(try await send(w, .get, "/v1/exec/\(exec.rawValue)", bearer: w.alice, group: w.aliceGroup).status == .ok)
-          #expect(try await w.harness.space.execRecord(exec)?.terminal == nil)
+          for exec in [ofP, ofAlice] {
+            #expect(try await send(w, .get, "/v1/exec/\(exec.rawValue)", bearer: w.bob).status == .notFound)
+            #expect(try await send(w, .post, "/v1/exec/\(exec.rawValue)/kill", bearer: w.bob).status == .notFound)
+            #expect(try await dialRefusal(w, exec, bearer: w.bob) == .notFound)
+            #expect(try await send(w, .get, "/v1/exec/\(exec.rawValue)", bearer: w.alice, group: w.aliceGroup).status == .ok)
+            #expect(try await w.harness.space.execRecord(exec)?.terminal == nil)
+          }
+          #expect(try await send(w, .get, "/v1/exec/\(ofBob.rawValue)", bearer: w.bob).status == .ok)
         }
-        #expect(try await send(w, .get, "/v1/exec/\(ofBob.rawValue)", bearer: w.bob).status == .ok)
       }
     }
   }
@@ -501,7 +493,7 @@ import Testing
     try await withSessionDeps {
       try await world { w in
         let added = try await send(
-          w, .post, "/v1/machine", .object(["name": "hers", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
+          w, .post, "/v1/machine-v2", .object(["name": "hers", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
         )
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
         let toShared: JSONValue = .object(["group": "shared"])
@@ -520,8 +512,10 @@ import Testing
         _ = try await w.harness.space.setAdmin(w.aliceAccount, admin: true)
         #expect(try await send(w, .put, path, toShared, bearer: w.alice).status == .ok)
         #expect(try await w.harness.space.machine(id)?.group == .shared)
-        let fromS = try await send(w, .post, "/v1/exec", .object(["machine": .string(id.rawValue)]), bearer: try await token(w, w.s))
-        #expect(fromS.status == .ok)
+        try await withMachine(w, try #require(try await w.harness.space.machine(id))) {
+          let fromS = try await send(w, .post, "/v1/exec", .object(["machine": .string(id.rawValue)]), bearer: try await token(w, w.s))
+          #expect(fromS.status == .ok)
+        }
       }
     }
   }
@@ -529,7 +523,7 @@ import Testing
   @Test func renamingAMachineNeedsAnAdminOfItsGroup() async throws {
     try await withSessionDeps {
       try await world { w in
-        let common = try await w.harness.space.addMachine(name: "common")
+        let (common, _) = try await w.harness.space.addMachineV2(name: "common", group: .shared)
         let path = "/v1/machine/\(common.id.rawValue)/name"
 
         let refused = try await send(w, .put, path, .object(["name": "alices_now"]), bearer: w.alice)
@@ -539,7 +533,7 @@ import Testing
         #expect(try await send(w, .put, path, .object(["name": "studio"]), bearer: w.admin).status == .ok)
         #expect(try await w.harness.space.machine(common.id)?.name == "studio")
 
-        let hers = try await w.harness.space.addMachine(name: "hers", group: w.aliceGroup)
+        let (hers, _) = try await w.harness.space.addMachineV2(name: "hers", group: w.aliceGroup)
         let own = try await send(w, .put, "/v1/machine/\(hers.id.rawValue)/name", .object(["name": "her_box"]), bearer: w.alice, group: w.aliceGroup)
         #expect(own.status == .ok)
         #expect(try await w.harness.space.machine(hers.id)?.name == "her_box")

@@ -518,16 +518,6 @@ extension Space {
     }
   }
 
-  public func execRecord(machine: MachineID, streamID: Int) async throws -> ExecRecord? {
-    try await writer.read { db in
-      try Row.fetchOne(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE machine_id = ? AND stream_id = ?",
-        arguments: [machine.rawValue, streamID],
-      ).map(Self.execRecord(from:))
-    }
-  }
-
   public func setExecEndOwed(_ id: ExecID, caller: String, owed: Bool) async throws -> Bool {
     try await writer.write { db in
       try db.execute(
@@ -603,19 +593,6 @@ extension Space {
           arguments: [state.stored, id.rawValue],
         )
       }
-    }
-  }
-
-  // A machine-lost exec may still be running on a box that only dropped off
-  // the network, so it is a candidate too; the hub skips the ones a connected
-  // caller is about to resume.
-  public func pendingKills(machine: MachineID) async throws -> [ExecRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE machine_id = ? AND terminal_state IN ('cancelled', 'reaped', 'machine-lost') AND kill_delivered = 0",
-        arguments: [machine.rawValue],
-      ).map(Self.execRecord(from:))
     }
   }
 

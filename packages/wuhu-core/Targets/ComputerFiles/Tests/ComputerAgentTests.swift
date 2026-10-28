@@ -36,8 +36,6 @@ private final class FakeExternal: Sendable {
       },
       usage: { self.usage.withLock { $0 } },
       owns: { id in self.owned.withLock { $0.contains(id) } },
-      leave: { self.left.withLock { $0 = true } },
-      departure: { .drained },
     )
   }
 }
@@ -87,7 +85,7 @@ private final class FakeExternal: Sendable {
 
   @Test func kindNamesAreUniqueAcrossBackends() throws {
     let external = FakeExternal().kind
-    let clash = ExternalKind(descriptor: ComputerKindSchemas.read, reservation: 0, handler: external.handler, usage: external.usage, owns: external.owns, leave: external.leave, departure: external.departure)
+    let clash = ExternalKind(descriptor: ComputerKindSchemas.read, reservation: 0, handler: external.handler, usage: external.usage, owns: external.owns)
     #expect(throws: OperationError.self) { try ComputerAgent(machine: "disk", external: clash) }
     #expect(throws: OperationError.self) { try ComputerAgent(machine: "disk", kinds: [AnyOperationKind(EchoKind()), AnyOperationKind(EchoKind())]) }
   }
@@ -145,7 +143,6 @@ private final class FakeExternal: Sendable {
       },
       usage: { ExternalUsage(operations: Dictionary(uniqueKeysWithValues: routed.withLock { $0 }.map { ($0, reservation) })) },
       owns: { id in routed.withLock { $0.contains(id) } },
-      leave: {}, departure: { .drained },
     )
     let agent = try ComputerAgent(machine: "disk", external: external)
     let first = Task { try await start(agent, kind: "external.v1", input: [:]) }
@@ -182,7 +179,6 @@ private final class FakeExternal: Sendable {
         return ExternalUsage(operations: Dictionary(uniqueKeysWithValues: routed.withLock { $0 }.map { ($0, reservation) }))
       },
       owns: { id in routed.withLock { $0.contains(id) } },
-      leave: {}, departure: { .drained },
     )
     let agent = try ComputerAgent(machine: "disk", external: external)
     let starts = (0 ..< 3).map { _ in Task { try await start(agent, kind: "external.v1", input: [:]) } }
@@ -199,20 +195,6 @@ private final class FakeExternal: Sendable {
     #expect(admitted == 2)
     #expect(routed.withLock { $0.count } == 2)
     await agent.shutdown()
-  }
-
-  @Test func inProcessLeaveDrainsExternalAndWaitsForServerAcknowledgement() async throws {
-    let external = FakeExternal()
-    let agent = try ComputerAgent(machine: "disk", external: external.kind)
-    let leave = Task { try await agent.leave() }
-    defer { leave.cancel() }
-    while !external.left.withLock({ $0 }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
-    #expect(try await agent.handler(Request(url: URL(string: base)!)).body.json(ErrorEnvelope.self).error.code == .leaving)
-    #expect(!(await agent.leaveAcknowledged))
-    #expect(try await agent.handler(Request(url: URL(string: base + "?leaveAck=true")!)).body.json(ErrorEnvelope.self).error.code == .leaving)
-    try await leave.value
-    #expect(await agent.leaveAcknowledged)
-    #expect(try await start(agent, kind: "external.v1", input: [:]).body.json(ErrorEnvelope.self).error.code == .leaving)
   }
 }
 

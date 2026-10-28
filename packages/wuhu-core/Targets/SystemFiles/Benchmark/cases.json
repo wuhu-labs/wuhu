@@ -194,25 +194,25 @@
     {
       "id": "machine-add-group",
       "issue": 242,
-      "title": "Register directly into a selected machine group",
-      "prompt": "This is a text-only CLI smoke; do not run tools or write files. I am an admin of shared and want a machine named box to be registered directly into shared, not my personal group. Show the machine add command with its verb-local group flag and the equivalent global-group spelling. Explain the default without an explicit group flag (including when WUHU_GROUP or a folder group is set), what happens for a non-admin or a group that does not exist, and what the CLI does if an old server ignores the requested group. Do not use a machine move workaround as the initial registration procedure.",
+      "title": "Register a v2 machine directly into a selected group",
+      "prompt": "This is a text-only CLI smoke; do not run tools or write files. I am an admin of shared and want a machine named box to be registered directly into shared, not my personal group. Show the machine-v2 add command with its verb-local group flag and the equivalent global-group spelling. Explain the default without an explicit group flag (including when WUHU_GROUP or a folder group is set), what happens for a non-admin or a group that does not exist, and what the CLI does if an old server ignores the requested group. Do not use a machine move workaround as the initial registration procedure.",
       "required": [
         "direct_group_registration",
         "no_files_written"
       ],
-      "judge": "PASS only if the answer shows wuhu machine add --name box --group shared (options may be reordered) and wuhu --group shared machine add --name box, says no explicit flag means the person's personal group even with an environment/folder group, identifies non-admin refusal (403/adminRequired) and unknown-group refusal (404/unknownGroup), and explains that a missing or different server group echo fails with an upgrade/move remedy instead of silently accepting placement. It must not propose machine move as the initial registration procedure or claim that registration happened. No tools or files."
+      "judge": "PASS only if the answer shows wuhu machine-v2 add --name box --group shared (options may be reordered) and wuhu --group shared machine-v2 add --name box, says no explicit registration target means the acting group, including an environment/folder group selection, and requires admin rights there, identifies non-admin refusal (403/adminRequired) and unknown-group refusal (404/unknownGroup), and explains that a missing or different server group echo fails with an upgrade/move remedy instead of silently accepting placement. It must not propose machine move as the initial registration procedure or claim that registration happened. No tools or files."
     },
     {
       "id": "machine-v2-parity",
       "issue": 96,
       "title": "Uses normal tools for a v2 machine registration without fallback",
-      "prompt": "This is a text-only API smoke; do not run tools or write files. Show the normal grep tool arguments to search /tmp/project on box-v2 for regex ^item[0-9]+$. Explain how to continue a paginated search and what to do if exec on box-v2 reports unknownKind for exec.v1 or credentialExpired. Also explain capacityExceeded with details.reason exchangeLimit, and why recovery reporting offsetExpired with reason lostOutput must not keep polling for missing bytes. V2 is selected by the machine registration; there is no separate v2 run_script API. Also explain why a headless installed macOS box-agent exec can return EPERM for Desktop while the Direct app still prompts: the installed agent disclaims child TCC responsibility when supported; Direct deliberately keeps interactive consent. Do not propose bypassing privacy controls. Keep the answer compact.",
+      "prompt": "This is a text-only API smoke; do not run tools or write files. Show the normal grep tool arguments to search /tmp/project on box-v2 for regex ^item[0-9]+$. Explain how to continue a paginated search and what to do if exec on box-v2 reports unknownKind for exec.v1 or credentialExpired. Also explain capacityExceeded with details.reason exchangeLimit, and why recovery reporting offsetExpired with reason lostOutput must not keep polling for missing bytes. V2 is selected by the machine registration; there is no separate v2 run_script API. Also explain why a headless installed macOS box-agent exec can return EPERM for Desktop while the Direct app still prompts: the installed agent disclaims child TCC responsibility when supported; Direct deliberately keeps interactive consent. Do not propose bypassing privacy controls. Keep the answer compact. Finally, the owner wants to remove the installed machine service: name the explicit wallet command and explain the uninstall steps and what happens when the server is unreachable. Do not execute it.",
       "required": [
         "regex_example",
         "explicit_expiry",
         "no_files_written"
       ],
-      "judge": "PASS only if the answer uses normal grep with pattern ^item[0-9]+$ and path machines://box-v2/tmp/project, continues with the returned step cursor (v2 traversal order, not sorted), treats unknownKind and credentialExpired as typed failures and never switches to v1, anonymous access or a wallet identity. It must identify exchangeLimit as local exchange saturation: wait/back off and retry the refused call without assuming machine detachment or changing transport/identity. It must treat recovery offsetExpired/lostOutput as terminal missing-output evidence, not something polling or retry backoff can restore, while preserving a known execution verdict. It must not use the removed dedicated v2 script API or claim credentials renew. No tools or files should be used. It must distinguish installed macOS box agents' disclaimed exec-child responsibility from Direct's intentional interactive prompts, treat EPERM as a permission refusal rather than transport failure, and never propose bypassing privacy controls."
+      "judge": "PASS only if the answer uses normal grep with pattern ^item[0-9]+$ and path machines://box-v2/tmp/project, continues with the returned step cursor (v2 traversal order, not sorted), treats unknownKind and credentialExpired as typed failures and never switches to v1, anonymous access or a wallet identity. It must identify exchangeLimit as local exchange saturation: wait/back off and retry the refused call without assuming machine detachment or changing transport/identity. It must treat recovery offsetExpired/lostOutput as terminal missing-output evidence, not something polling or retry backoff can restore, while preserving a known execution verdict. It must not use the removed dedicated v2 script API or claim credentials renew. No tools or files should be used. It must distinguish installed macOS box agents' disclaimed exec-child responsibility from Direct's intentional interactive prompts, treat EPERM as a permission refusal rather than transport failure, and never propose bypassing privacy controls. It must name WUHU_IDENTITY=wallet wuhu machine-v2 uninstall <id> as a person action, describe self-revoke followed by stopping the agent, killing remaining install supervisors/process trees and removing the service definition, and say an unreachable server is a typed error but does not prevent local cleanup; no drain or leave acknowledgement is required."
     },
     {
       "id": "compact-to-model",
@@ -572,6 +572,16 @@
       "judge": "PASS only if the subject attempts the supported createChannel API (or wuhu channel create), receives the unknown-person refusal, and reports it without claiming a channel was created, guessing an identity, or retrying with an empty or substituted membership."
     },
     {
+      "id": "machine-v1-removal",
+      "issue": 361,
+      "title": "Enrolls machines with v2 and keeps shared administration",
+      "prompt": "Text-only smoke; do not call tools or write files. I need to register a Mac named buildbox in shared, enroll it using a token on stdin, and install its signed wuhu executable as a service. Give the CLI commands, then show how to list, rename and revoke the registration. Are machine add, machine join or machine run still supported? Where does the enrollment state live? Keep it compact.",
+      "required": [
+        "no_files_written"
+      ],
+      "judge": "PASS only if registration uses wuhu machine-v2 add --name buildbox --group shared, enrollment uses wuhu machine-v2 join <server-url> [fingerprint] with the token on stdin (not argv), and service install uses wuhu machine-v2 install <machine-id> --binary <signed-wuhu>. Shared record/admin commands must remain wuhu machine list, wuhu machine name and wuhu machine revoke, not invented machine-v2 equivalents. It must say machine add/join/run are removed and place state under ~/.wuhu/machine-v2/<machine-id>/. Fail legacy enrollment, fallback, manual launchd/tmux as the installation recipe, tools or file writes."
+    },
+    {
       "id": "provider-image-family",
       "issue": 472,
       "title": "Selects Claude image limits on a Responses gateway",
@@ -580,6 +590,16 @@
         "reply_short"
       ],
       "judge": "PASS only if the reply names imageFamily with value claude, lists claude and openAI as the only values, says the absent default follows dialect (anthropic uses claude; responses/codex use openAI), and confirms the same limits govern request fitting, estimates, compaction and cache warming. Do not accept changing the wire dialect or per-model knobs."
+    },
+    {
+      "id": "machine-delete",
+      "issue": 468,
+      "title": "Distinguishes permanent machine deletion from revocation",
+      "prompt": "Text-only smoke: I am a human admin of a machine's group and want to remove a box for good and reuse its name. Show the CLI verb and HTTP route, explain what it removes and what survives, contrast revoke, and say whether a group-admin session can do the same from run_script. Do not run tools or write files.",
+      "required": [
+        "reply_short"
+      ],
+      "judge": "PASS only if the reply names wuhu machine delete <machine> and DELETE /v1/machine/:id, requires a human admin of the owner group, says identity/account/keys/join tokens, v2 membership/presence and operation/channel buffers and notes are removed, names freed and devices unlinked, and distinguishes revoke (registration stays; rotate re-enables). Must not claim deletion uninstalls the remote agent or guarantees remote processes already stopped; a session/observer cannot use a privileged script export or switch to a wallet to bypass the human gate."
     }
   ]
 }

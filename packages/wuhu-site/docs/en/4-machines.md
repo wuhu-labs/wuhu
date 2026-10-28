@@ -10,21 +10,21 @@ A machine is a computer your agents can work on: run commands, read and write fi
 From a signed-in CLI, register the machine:
 
 ```sh
-wuhu machine add --name mini
+wuhu machine-v2 add --name mini
 ```
 
 It prints a one-time join token (`jt_...`) and the join command, with the server's certificate fingerprint if it runs the certificate Wuhu generated. Put the token in a file on the machine, then, with `wuhu` installed there:
 
 ```sh
-wuhu machine join https://example.wuhu:5530 sha256:<fingerprint> --name mini < token
-wuhu machine run
+wuhu machine-v2 join https://example.wuhu:5530 sha256:<fingerprint> < token
+wuhu machine-v2 install <printed-machine-id> --binary /absolute/path/to/wuhu
 ```
 
 With your own certificate (`--cert`) there's no fingerprint to pass. The token goes in on stdin so it never shows up in your shell history.
 
-`machine join` stores the machine's key and runner settings in `~/.wuhu/machine/` on that box. `machine run` is the runner. Like a GitHub Actions self-hosted runner, it dials out to your server and reconnects on its own, so you don't open any port on the machine. It runs in the foreground; daemonize it with launchd, systemd or whatever you use.
+`machine-v2 join` stores the machine's key and runner settings under `~/.wuhu/machine-v2/<machine-id>/`. The installed service dials out to your server and reconnects on its own, so you do not open a port on the machine. Linux uses a systemd user unit; macOS uses launchd and checks Local Network permission during installation. For a foreground runner instead, use `wuhu machine-v2 run <machine-id>`.
 
-On macOS, if the server is on your local network, the runner needs the Local Network permission. launchd won't show the prompt, so run it once by hand and allow it first. If a launchd runner still can't reach the server, a tmux session works.
+Legacy `machine add`, `machine join` and `machine run` are removed. Use `machine-v2` to register and enroll the box; normal machine tools and `wuhu machine list` use that registration.
 
 ## Trust
 
@@ -38,10 +38,10 @@ The runner does what agents ask with the permissions of the OS user that runs it
 A machine belongs to one group. Choose it at registration with `--group`; for example, register directly in `shared` so agents in any group that reads `shared` can use it:
 
 ```sh
-wuhu machine add --name mini --group shared
+wuhu machine-v2 add --name mini --group shared
 ```
 
-This needs admin rights in the target group, not membership. The global spelling `wuhu --group shared machine add --name mini` selects the same registration target. Without an explicit flag, the machine starts in your personal group; environment and folder group settings do not set the target. The CLI checks the server's echoed placement and fails with an upgrade/move hint if the server cannot confirm it. To move an existing machine, use `wuhu machine move mini --group shared`, which needs admin rights in both groups.
+This needs admin rights in the target group, not membership. The global spelling `wuhu --group shared machine-v2 add --name mini` selects the same registration target. Without an explicit flag, the machine starts in your personal group; environment and folder group settings do not set the target. The CLI checks the server's echoed placement and fails with an upgrade/move hint if the server cannot confirm it. To move an existing machine, use `wuhu machine move mini --group shared`, which needs admin rights in both groups.
 
 ## The CLI inside an agent's command
 

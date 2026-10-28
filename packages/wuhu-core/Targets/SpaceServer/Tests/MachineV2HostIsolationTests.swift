@@ -26,7 +26,7 @@ import Testing
     let first = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     let key = try await MachineV2KeyStore.loadOrCreate(directory: state, space: first.space)
     let store = try await first.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "offline", start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await first.space.addMachineV2(name: "offline").machine.id.rawValue, start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
     _ = try await store.claim(.init(scope: "old-script", key: "one"), record: record)
     try await first.shutdown()
     switch damage {
@@ -37,7 +37,6 @@ import Testing
     let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     for request in [
       Request(url: URL(string: "https://isolated.test/v1/server")!),
-      Request(url: URL(string: "https://isolated.test/v1/machine")!, method: .post, body: try .json(["name": "still_v1"])),
       Request(url: URL(string: "https://isolated.test/v1/f/note.md")!, method: .put, body: .bytes(Data("ordinary files still work".utf8))),
     ] {
       guard case let .response(response) = try await reopened.handler(request) else { Issue.record("ordinary route upgraded"); continue }
@@ -69,7 +68,7 @@ import Testing
     let first = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     let key = try await MachineV2KeyStore.loadOrCreate(directory: state, space: first.space)
     let store = try await first.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "offline", start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await first.space.addMachineV2(name: "offline").machine.id.rawValue, start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
     _ = try await store.claim(.init(scope: "old-script", key: "one"), record: record)
     try await first.shutdown()
     let offline = try DatabaseQueue(path: folder.url.appendingPathComponent("space.sqlite").path)

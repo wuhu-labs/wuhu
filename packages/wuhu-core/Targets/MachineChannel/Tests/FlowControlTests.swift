@@ -84,7 +84,6 @@ struct FlowControlTests {
     let ackApplied = Checkpoint()
     let severed = Checkpoint()
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await serveRequestsOK(caller) }
       group.addTask {
         await withTaskGroup(of: Void.self) { inner in
           for await exec in machine.incomingExecs {
@@ -92,9 +91,9 @@ struct FlowControlTests {
               try? await exec.send(.stdout, [0, 1, 2, 3])
               try? await exec.send(.stdout, [4, 5, 6, 7, 8, 9])
               await consumedFirst.wait()
-              // The vfs round trip is a barrier: the caller's ack(4) was queued
-              // before its response, so once this returns the ack is applied.
-              _ = try? await machine.vfs(.stat(path: "/"))
+              for await cursor in exec.acknowledgements {
+                if cursor >= 4 { break }
+              }
               ackApplied.signal()
               await severed.wait()
               await exec.exit(.exited(code: 0))

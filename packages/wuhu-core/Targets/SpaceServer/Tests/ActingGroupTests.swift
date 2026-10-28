@@ -77,7 +77,7 @@ import Testing
       let p = try await people(tokens: tokens)
       let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
       let session = try await p.harness.store.createSession(group: p.alice, title: "a", kind: .agent, createdBy: "owner", executor: model)
-      let machine = try await p.harness.space.addMachine(name: "box")
+      let machine = (try await p.harness.space.addMachineV2(name: "box")).machine
       let exec = try await p.harness.space.mintExec(machine: machine.id, caller: session.rawValue)
       let token = tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
       let mismatched = try await write(p, "/x.md", group: GroupID.shared.rawValue, bearer: token)

@@ -10,7 +10,7 @@ Wuhu 是你自己托管的一个工作空间。文档、表格和 AI agent 都�
 - **服务器**就是一个二进制文件 `wuhu`。你把它跑在自己的机器上：家里的 Mac mini、一台 Linux、一台 VPS 都行。
 - **空间**（space）是服务器对外提供的一个文件夹，所有东西都在里面：markdown 文档、SQLite 表、对话、agent 会话以及它们的历史。备份这个文件夹，就等于备份了整个空间。
 - **Agent** 是住在空间里的 AI 会话。你在一个类似 Messages 的聊天界面里跟它们说话。每个 agent 在空间里都有自己的文件夹。它们能设定时器、自己来找你，能读写文档和表格，能开新的 agent，能在接入的机器上跑命令。你关掉 App 之后它们继续干活，服务器重启后它们也会自己回来。
-- **机器**（machine）是你接入空间里的电脑。每台机器上跑一个 **runner**，也就是 `wuhu machine run`。跟 GitHub Actions self-hosted runner 一个道理，它主动连到你的服务器上，你不用在那台机器上开任何端口；然后它做 agent 让它做的事：跑 shell 命令、读写文件。
+- **机器**（machine）是你接入空间里的电脑。每台机器上跑一个 **runner**，也就是 `wuhu machine-v2 run <machine-id>`。跟 GitHub Actions self-hosted runner 一个道理，它主动连到你的服务器上，你不用在那台机器上开任何端口；然后它做 agent 让它做的事：跑 shell 命令、读写文件。
 - **页面**是空间里的 HTML 文件。服务器把它们当作实时网页提供出去，页面能读写空间里的数据，所以 agent 写一个文件就能给你做出一个小应用。
 - **客户端**：iPhone、iPad、Mac 和 Vision Pro 的原生 App，以及网页版和 CLI。它们只跟你的服务器通信，不连别的。
 - **模型**：自带，走订阅或者 API key 都行：Claude、GPT、DeepSeek、Kimi、GLM、Qwen 等等。凭证留在服务器所在的那台机器上。

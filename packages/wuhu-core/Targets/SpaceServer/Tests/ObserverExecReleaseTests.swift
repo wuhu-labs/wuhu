@@ -1,9 +1,20 @@
 import Clocks
+import Crypto
+import Dependencies
 import DeterministicDependencies
-import Foundation
+import Fetch
+import JSONValue
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import MachineChannel
 import MachineContract
 import MainHub
+import OperationProtocol
+import OperationRuntime
+import Serve
 import SessionDomain
 import enum SpaceContract.ScriptOutput
 import SpaceCore
@@ -11,8 +22,6 @@ import SpaceCore
 import Synchronization
 import Testing
 
-// A firing's worker that starts a process for its handler's script and holds
-// its caller line open: cancelled, it can no longer reach main to stop it.
 private final class Spawning: Worker, Sendable {
   let tokens = Mutex<[String]>([])
   let spawn: @Sendable (ScriptHandlerInvocation) async throws -> Void
@@ -33,67 +42,94 @@ private final class Spawning: Worker, Sendable {
   func shutdown() async {}
 }
 
+private final class FiringProcessSide: Sendable {
+  let stopped = Gate()
+  let release = Gate()
+  let reason = Mutex<String?>(nil)
+}
+
+private struct FiringProcess: OperationKind {
+  let side: FiringProcessSide
+  struct Input: Decodable, Sendable { let argv: [String]; let cwd: String; let stdin: Bool }
+  let descriptor = ComputerKindSchemas.exec
+
+  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+    try await channels.send(.init(data: Data("ready\n".utf8)), to: "stdout")
+    @Dependency(\.continuousClock) var clock
+    while await cancellation.reason() == nil { try await clock.sleep(for: .milliseconds(2)) }
+    let reason = await cancellation.reason()
+    side.reason.withLock { $0 = reason }
+    side.stopped.open()
+    await side.release.wait()
+    return ["termination": ["tag": "signal", "signal": 15]]
+  }
+}
+
 @Suite(.deterministicDependencies(clock: ContinuousClock())) struct ObserverExecReleaseTests {
   @Test func cancellingAFiringRevokesItsTokenAndKillsTheProcessItsScriptStarted() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: TestClock())
-    let (machineID, key) = try await addMachine(server)
+    let (machineID, _) = try await addMachine(server)
     let tokens = ExecTokens(spaceURL: "http://main")
     let registry = WorkerRegistry(tokens: tokens, machines: server.hub)
     let observer = Observer(group: .shared, name: "nightly", firing: "f1")
     let invocation = ScriptHandlerInvocation(id: UUID(), path: "/nightly.js", runner: .observer(observer), input: .timer(Date()), stateJSON: nil)
     let (running, run) = AsyncStream<ExecID>.makeStream()
-    let killed = Mutex<[ExecID]>([])
-    let (exiting, exit) = AsyncStream<Void>.makeStream()
+    let side = FiringProcessSide()
+    defer { side.release.open() }
+    let agent = try OperationAgent(machine: machineID.rawValue, kinds: [.init(FiringProcess(side: side))], authorize: { _, _ in })
+    let acknowledged = Mutex(false)
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
+      let response = try await agent.handler(request)
+      if request.url.query?.contains("terminalAck=") == true, response.status == .ok {
+        acknowledged.withLock { $0 = true }
+      }
+      return response
+    } })
+    await server.hub.configureV2(service)
 
     let worker = Spawning { invocation in
       let record = try await space.mintScriptExec(machine: machineID, caller: observer.member, script: invocation.scriptID)
       await server.hub.noteMinted(record)
       let caller = ChannelEndpoint()
-      _ = await caller.startExec(makeExecStart(record.id, command: ["sleep"]))
-      let socket = try await connectCaller(server, exec: record.id)
-      await caller.run(WebSocketTransport(socket))
+      let outgoing = await caller.startExec(ExecStart(id: record.id, cwd: "/", command: ["wait"]))
+      let (serverSocket, clientSocket) = WebSocket.pair()
+      try await withThrowingTaskGroup(of: Void.self) { tasks in
+        tasks.addTask { await server.hub.runCallerSession(record, socket: serverSocket, leg: .observer(observer.member)) }
+        tasks.addTask { await caller.run(WebSocketTransport(clientSocket)) }
+        defer { tasks.cancelAll() }
+        var events = outgoing.events.makeAsyncIterator()
+        _ = try await mixedExecOutput(&events, atLeast: 6)
+        run.yield(record.id)
+        _ = try await mixedExecExit(&events)
+      }
     }
     registry.announce(registry.mint().id, endpoint: worker)
 
-    let machine = ChannelEndpoint()
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await server.run() }
-      group.addTask { await machine.run(WebSocketTransport(try await connectMachine(server, key: key))) }
-      group.addTask {
-        for await exec in machine.incomingExecs {
-          run.yield(exec.start.id)
-          for await _ in exec.kills {
-            killed.withLock { $0.append(exec.start.id) }
-            for await _ in exiting { break }
-            guard !Task.isCancelled else { return }
-            await exec.exit(.signaled(signal: 15))
-            break
-          }
-        }
-      }
-      group.addTask {
-        #expect(try await realPollUntil { await server.hub.attachedMachines().contains(machineID) })
-        let firing = Task { try await registry.fire(invocation) }
-        var started = running.makeAsyncIterator()
-        let exec = try #require(await started.next())
-        let first = worker.tokens.withLock { $0.first }
-        let token = try #require(first)
-        #expect(tokens.observer(ofBearer: token) == observer)
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await server.run() }
+      tasks.addTask { await agent.run() }
+      tasks.addTask { try await service.run() }
+      defer { side.release.open(); tasks.cancelAll() }
+      let firing = Task { try await registry.fire(invocation) }
+      var started = running.makeAsyncIterator()
+      let exec = try #require(await started.next())
+      let token = try #require(worker.tokens.withLock { $0.first })
+      #expect(tokens.observer(ofBearer: token) == observer)
 
-        firing.cancel()
-        _ = try? await firing.value
-        #expect(tokens.observer(ofBearer: token) == nil)
-        #expect(try await realPollUntil { killed.withLock { $0 } == [exec] })
-        #expect(try await space.execRecord(exec)?.terminal == .cancelled)
-        #expect(try await space.liveScriptExecs(script: invocation.scriptID, caller: observer.member).isEmpty)
-        #expect(try await space.takeScriptExecOwners().isEmpty)
+      firing.cancel()
+      _ = try? await firing.value
+      #expect(tokens.observer(ofBearer: token) == nil)
+      await side.stopped.wait()
+      #expect(side.reason.withLock { $0 } == "callerCancelled")
+      #expect(try await space.execRecord(exec)?.terminal == .cancelled)
+      #expect(try await space.liveScriptExecs(script: invocation.scriptID, caller: observer.member).isEmpty)
+      #expect(try await space.takeScriptExecOwners().isEmpty)
 
-        exit.yield(())
-        #expect(try await realPollUntil { try await space.execRecord(exec)?.terminal == .signaled(signal: 15) })
-      }
-      _ = try await group.next()
-      group.cancelAll()
+      #expect(acknowledged.withLock { !$0 })
+      side.release.open()
+      #expect(try await realPollUntil { acknowledged.withLock { $0 } })
+      await agent.shutdown(); await service.shutdown()
     }
   }
 }

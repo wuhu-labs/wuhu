@@ -363,12 +363,12 @@ import Testing
 
   @Test func machineAddWithoutSelectionOmitsTheGroup() async throws {
     let h = try GroupHarness(features: ["groups"])
-    let result = await h.run(["machine", "add"])
+    let result = await h.run(["machine-v2", "add", "--name", "box"])
     #expect(result.code == 0, "\(result.stderr)")
     let request = try #require(await h.recorder.requests.last)
-    #expect(request.url.path == "/v1/machine")
+    #expect(request.url.path == "/v1/machine-v2")
     #expect(request.headers["wuhu-group"] == nil)
-    #expect(try await request.json(JSONValue.self) == [:])
+    #expect(try await request.json(JSONValue.self) == ["name": "box"])
   }
 
   @Test func groupAccessVerbsParseTheirSubjects() throws {
@@ -413,24 +413,21 @@ import Testing
   }
 
   @Test func machineAddAcceptsEitherGroupFlagPosition() throws {
-    #expect(try Command.parse(["machine", "add", "--group", "shared"]) == .machineAdd(name: nil, group: "shared"))
-    #expect(try Command.parse(["machine", "add", "--name", "box", "--group", "shared"]) == .machineAdd(name: "box", group: "shared"))
-    #expect(
-      try Command.parse(["machine", "add", "--scope", "reachable"]) == .machineAdd(name: nil, group: nil, scope: "reachable"),
-    )
+    #expect(try Command.parse(["machine-v2", "add", "--name", "box", "--group", "shared"]) == .machineV2Add(name: "box", group: "shared"))
+    #expect(try Command.parse(["machine-v2", "add", "--name", "box"]) == .machineV2Add(name: "box", group: nil))
     #expect(try Command.parse(["machine", "scope", "box", "owner"]) == .machineScope(machine: "box", scope: "owner"))
     #expect(throws: UsageError.self) { try Command.parse(["machine", "scope", "box", "everyone"]) }
-    #expect(throws: UsageError.self) { try Command.parse(["machine", "add", "--scope", "everyone"]) }
-    let expected = Invocation(group: nil, command: .machineAdd(name: nil, group: "shared"))
-    #expect(try Invocation.parse(["machine", "add", "--group", "shared"]) == expected)
-    #expect(try Invocation.parse(["--group", "shared", "machine", "add"]) == expected)
-    #expect(try Invocation.parse(["machine", "add", "--group", "team_space"]).command == .machineAdd(name: nil, group: "team_space"))
-    #expect(throws: UsageError.self) { try Invocation.parse(["--group", "shared", "machine", "add", "--group", "shared"]) }
+    #expect(throws: UsageError.self) { try Command.parse(["machine-v2", "add", "--scope", "everyone"]) }
+    let expected = Invocation(group: nil, command: .machineV2Add(name: "box", group: "shared"))
+    #expect(try Invocation.parse(["machine-v2", "add", "--name", "box", "--group", "shared"]) == expected)
+    #expect(try Invocation.parse(["--group", "shared", "machine-v2", "add", "--name", "box"]) == expected)
+    #expect(try Invocation.parse(["machine-v2", "add", "--name", "box", "--group", "team_space"]).command == .machineV2Add(name: "box", group: "team_space"))
+    #expect(throws: UsageError.self) { try Invocation.parse(["--group", "shared", "machine-v2", "add", "--name", "box", "--group", "shared"]) }
   }
 
   @Test(arguments: [
-    ["machine", "add", "--name", "box", "--group", "shared"],
-    ["--group", "shared", "machine", "add", "--name", "box"],
+    ["machine-v2", "add", "--name", "box", "--group", "shared"],
+    ["--group", "shared", "machine-v2", "add", "--name", "box"],
   ])
   func machineAddSendsTheSelectedGroupInItsBody(arguments: [String]) async throws {
     let h = try GroupHarness(features: ["groups"])
@@ -438,7 +435,7 @@ import Testing
     #expect(result.code == 0, "\(result.stderr)")
     let request = try #require(await h.recorder.requests.last)
     #expect(request.method == .post)
-    #expect(request.url.path == "/v1/machine")
+    #expect(request.url.path == "/v1/machine-v2")
     #expect(request.headers["wuhu-group"] == nil)
     #expect(try await request.json(JSONValue.self) == ["name": "box", "group": "shared"])
   }
@@ -446,17 +443,17 @@ import Testing
   @Test(arguments: [Source.environment, .config])
   func implicitGroupSelectionDoesNotChangeTheRegistrationTarget(source: Source) async throws {
     let h = try GroupHarness(features: ["groups"], configGroup: source == .config ? "alice" : nil)
-    let result = await h.run(["machine", "add"], environment: source == .environment ? ["WUHU_GROUP": "alice"] : [:])
+    let result = await h.run(["machine-v2", "add", "--name", "box"], environment: source == .environment ? ["WUHU_GROUP": "alice"] : [:])
     #expect(result.code == 0, "\(result.stderr)")
     let request = try #require(await h.recorder.requests.last)
     #expect(request.headers["wuhu-group"] == "alice")
-    #expect(try await request.json(JSONValue.self) == [:])
+    #expect(try await request.json(JSONValue.self) == ["name": "box"])
   }
 
   @Test(arguments: [nil, "alice"] as [String?])
   func anExplicitTargetMustBeConfirmedByTheServer(echoed: String?) async throws {
     let h = try GroupHarness(features: ["groups"], machineGroup: echoed)
-    let result = await h.run(["machine", "add", "--group", "shared"])
+    let result = await h.run(["machine-v2", "add", "--name", "box", "--group", "shared"])
     #expect(result.code == 1)
     #expect(result.stderr.contains(echoed == nil ? "server too old to place machines in a group" : "server placed the machine in group alice, not shared"))
     #expect(result.stderr.contains("machine move mc_abcdefgh --group shared"))
@@ -466,7 +463,7 @@ import Testing
 
   @Test func anOldServerStillWorksWhenNoTargetWasRequested() async throws {
     let h = try GroupHarness(features: ["groups"], machineGroup: nil)
-    let result = await h.run(["machine", "add"])
+    let result = await h.run(["machine-v2", "add", "--name", "box"])
     #expect(result.code == 0, "\(result.stderr)")
   }
 
@@ -608,7 +605,7 @@ private struct GroupHarness {
           info.set("group", group.map { JSONValue.string($0) })
         }
         return try Response.json(info)
-      case "/v1/machine":
+      case "/v1/machine-v2":
         var output: JSONValue = ["id": "mc_abcdefgh", "token": "jt_test"]
         output.set("group", machineGroup.map(JSONValue.string))
         return try Response.json(output)

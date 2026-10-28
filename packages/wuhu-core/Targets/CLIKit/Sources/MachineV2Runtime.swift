@@ -10,12 +10,10 @@ import DeploymentAdmin
   import Darwin
 #endif
 import Assertion
-import class AsyncHTTPClient.HTTPClient
 import Crypto
 import Dependencies
 import enum ExecSupervisor.ExecSupervisor
 import Fetch
-import FetchAsyncHTTPClient
 import struct FetchTunnel.TunnelLimits
 import struct FetchTunnel.TunnelTransport
 import enum FetchTunnelWebSocket.TunnelWebSocket
@@ -29,8 +27,6 @@ import struct MachineContract.MachineStatus
 import enum MachineContract.MachineV2Connect
 import struct MachineContract.MachineV2Upgrade
 import struct NIOCore.IOError
-import class NIOPosix.MultiThreadedEventLoopGroup
-import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
 import enum PinnedTLS.PinnedTLS
 import typealias Serve.Handler
@@ -48,19 +44,19 @@ public enum MachineV2Runtime {
     serviceCommand: (@Sendable ([String]) async throws -> String)? = nil,
   ) async throws -> Bool {
     guard arguments.first == "machine-v2" else { return false }
-    if arguments.count == 1 || arguments == ["machine-v2", "--help"] || (arguments.count >= 2 && ["run", "leave", "preflight", "join"].contains(arguments[1]) && arguments.contains("--help")) {
+    if arguments.count == 1 || arguments == ["machine-v2", "--help"] || (arguments.count >= 2 && ["run", "preflight", "join"].contains(arguments[1]) && arguments.contains("--help")) {
       await stdout("""
       usage: wuhu machine-v2 add --name <name>
              wuhu machine-v2 join <https-origin> [fingerprint] [--name <name>] < v2-token
              wuhu machine-v2 install|upgrade <id> --binary <signed-wuhu>
              wuhu machine-v2 rollback|uninstall <id>
-             wuhu machine-v2 run|leave <id>
+             wuhu machine-v2 run <id>
              wuhu machine-v2 preflight <id> <private-result-path>
 
       """)
       return true
     }
-    guard arguments.count >= 2, ["run", "leave", "preflight", "join", "apply-upgrade"].contains(arguments[1]) else { return false }
+    guard arguments.count >= 2, ["run", "preflight", "join", "apply-upgrade"].contains(arguments[1]) else { return false }
     guard case .wallet = try Identity.resolve(environment: environment) else { throw CLIError(message: machineV2SessionRefusal(arguments[1])) }
     let trust = try ServerTrust(environment: environment)
     switch arguments[1] {
@@ -91,9 +87,6 @@ public enum MachineV2Runtime {
       try home.validate()
       let installer = MachineV2Installer.local(home: URL(fileURLWithPath: path), machine: home.machine, environment: environment, command: serviceCommand)
       await MachineV2AutoUpgrade.apply(home: home, candidate: URL(fileURLWithPath: arguments[3]), target: arguments[4], running: version, token: arguments[5], installer: installer)
-    case "leave":
-      guard arguments.count == 3 else { throw UsageError(message: "machine-v2 leave <id>") }
-      try await leave(home: .locate(environment: environment, machine: arguments[2]))
     default:
       guard arguments.count == 4 else { throw UsageError(message: "machine-v2 preflight <id> <result-path>") }
       try await preflight(home: .locate(environment: environment, machine: arguments[2]), trust: trust, fetch: fetch, result: URL(fileURLWithPath: arguments[3]))
@@ -204,15 +197,15 @@ public enum MachineV2Runtime {
     _ = try home.load(); _ = try home.loadKey(); try home.prepare()
     guard FileManager.default.isExecutableFile(atPath: home.binary.path) else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Install this machine's own v2 binary first") }
     let recorder = try recording.map { try MachineV2Recording(root: $0) }
-    @Sendable func serve(_ handler: @escaping Handler, _ acknowledged: @escaping @Sendable () async -> Bool) async throws {
+    @Sendable func serve(_ handler: @escaping Handler) async throws {
       let handler = MachineV2AutoUpgrade.reporting(recorder?.handler(handler) ?? handler, home: home)
       guard let upgrader else {
-        return try await dialLoop(handler: handler, leaveAcknowledged: acknowledged, connect: { try await connect(home: home, trust: trust, fetch: fetch) })
+        return try await dialLoop(handler: handler, connect: { try await connect(home: home, trust: trust, fetch: fetch) })
       }
       let (checks, check) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
-          try await dialLoop(handler: handler, leaveAcknowledged: acknowledged, connect: { try await connect(home: home, trust: trust, fetch: fetch) }, connected: {
+          try await dialLoop(handler: handler, connect: { try await connect(home: home, trust: trust, fetch: fetch) }, connected: {
             await upgrader.connected()
             check.yield()
           })
@@ -228,26 +221,18 @@ public enum MachineV2Runtime {
         try await group.next()
       }
     }
-    try home.clearRevoked()
-    if home.hasLeft {
-      // A leave outlives the process that acknowledged it: a restarted job neither dials nor serves.
-      home.logUpgrade("left; parked until join or install")
-      while true { try await clock.sleep(.seconds(3600)) }
-    }
-    try await ExecSupervisor.runComputerAgent(machine: home.machine, operationsDirectory: home.operationsDirectory.path, controlSocket: home.socket.path, executable: home.binary.path, left: { try home.markLeft() }) { handler, acknowledged, retire in
-      try await retiringOnRevoke(home: home, service: service, clock: clock, retire: { await retire(.revoked) }) { try await serve(handler, acknowledged) }
+    try await ExecSupervisor.runComputerAgent(machine: home.machine, operationsDirectory: home.operationsDirectory.path, executable: home.binary.path) { handler, retire in
+      try await retiringOnRevoke(home: home, service: service, clock: clock, retire: { await retire(.revoked) }) { try await serve(handler) }
     }
   }
 
-  /// Runs `serve`; when the server revokes the machine, retires every supervisor, records the revocation and rethrows.
+  /// Runs `serve`; when the server revokes the machine, retires every supervisor and rethrows.
   /// Inside its installed job it first stops the job, whatever the loaded definition says about a clean exit, and parks
   /// if it cannot. The home stays: it holds the key, configuration and executable the uninstall still uses.
   static func retiringOnRevoke(home: MachineV2Home, service: MachineV2Service? = nil, clock: OperationClock = .continuous, retire: () async -> Void, _ serve: () async throws -> Void) async throws {
     do { try await serve() }
     catch let error as MachineV2RuntimeError where error.code == .revoked {
       await retire()
-      // Best effort: without the marker the uninstall asks a stopped agent to leave and reports drainFailed.
-      try? home.markRevoked()
       if let service, await !stops(service, home: home) { try await park(home: home, clock: clock) }
       throw error
     }
@@ -274,19 +259,8 @@ public enum MachineV2Runtime {
     (error as? MachineV2RuntimeError)?.code == .revoked ? 0 : 1
   }
 
-  /// The drain the uninstall runs first. A revoked agent has retired its workers and exited, so there is no
-  /// control socket and nothing to drain.
-  static func leaveForUninstall(home: MachineV2Home) async throws {
-    if home.isRevoked { return }
-    try await leave(home: home)
-  }
-
-  static func dialLoop(handler: @escaping Handler, leaveAcknowledged: @escaping @Sendable () async -> Bool, connect: @escaping @Sendable () async throws -> TunnelTransport, connected: @escaping @Sendable () async -> Void = {}, clock: OperationClock = .continuous) async throws {
+  static func dialLoop(handler: @escaping Handler, connect: @escaping @Sendable () async throws -> TunnelTransport, connected: @escaping @Sendable () async -> Void = {}, clock: OperationClock = .continuous) async throws {
     while !Task.isCancelled {
-      if await leaveAcknowledged() {
-        try await clock.sleep(.seconds(2))
-        continue
-      }
       do {
         let transport = try await connect()
         defer { transport.abort() }
@@ -299,43 +273,21 @@ public enum MachineV2Runtime {
     }
   }
 
-  /// Asks the running agent to leave. A recorded leave is final until `join` or `install`, so it answers at once.
-  static func leave(home: MachineV2Home) async throws {
-    try home.validate()
-    if home.hasLeft { return }
-    var state = stat()
-    guard lstat(home.socket.path, &state) == 0, state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK, state.st_mode & 0o777 == 0o600,
-          let encoded = home.socket.path.addingPercentEncoding(withAllowedCharacters: .alphanumerics), let url = URL(string: "http+unix://" + encoded + "/leave") else { throw MachineV2RuntimeError(.drainFailed, message: "No owner-private v2 control socket") }
-    var configuration = HTTPClient.Configuration(); configuration.redirectConfiguration = .disallow
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    let http = HTTPClient(eventLoopGroupProvider: .shared(group), configuration: configuration)
-    let result: Result<Void, any Error>
+  static func revoke(home: MachineV2Home, fetch: FetchClient) async throws {
+    let config = try home.load()
+    let key = try home.loadKey()
+    let fetch = pinnedFetch(config.fingerprint, plain: fetch)
     do {
-      var request = Request(url: url, method: .put)
-      request.headers["Host"] = "localhost"
-      // One lease of leave, then up to ten seconds retiring the supervisors.
-      let response = try await FetchClient.asyncHTTPClient(http, timeout: .seconds(75))(request)
-      try await validateLeaveResponse(response)
-      result = .success(())
-    } catch { result = .failure(error) }
-    var teardownFailure: (any Error)?
-    do { try await http.shutdown() } catch { teardownFailure = error }
-    do { try await group.shutdownGracefully() } catch { teardownFailure = teardownFailure ?? error }
-    try result.get()
-    if let teardownFailure { throw teardownFailure }
-  }
-
-  static func validateLeaveResponse(_ response: Response) async throws {
-    if response.status.code != 200 {
-      let failure: ErrorEnvelope
-      do { failure = try await response.body.json(ErrorEnvelope.self, upTo: 8192) }
-      catch { throw MachineV2RuntimeError(.drainFailed, message: "Malformed local leave error receipt") }
-      throw MachineV2RuntimeError(failure.error.code == .requestDeadline && failure.error.message == "leaveUnacknowledged" ? .leaveUnacknowledged : .drainFailed, message: failure.error.message)
-    }
-    let left: Bool
-    do { left = try await response.body.json(Bool.self, upTo: 32) }
-    catch { throw MachineV2RuntimeError(.drainFailed, message: "Malformed local leave receipt") }
-    guard left else { throw MachineV2RuntimeError(.drainFailed, message: "Negative local leave receipt") }
+      var request = Request(url: URL(string: config.server + "/v1/machine-v2/" + config.machine + "/revoke")!, method: .post)
+      request.headers = try await authentication(server: config.server, machine: config.machine, key: key, fetch: fetch)
+      let response = try await fetch(request)
+      if response.status.code == 401,
+         try await response.body.json(JSONValue.self, upTo: 8192).object?["code"]?.stringValue == "machineNotAuthorized" { return }
+      guard response.status.code == 200 else {
+        throw MachineV2RuntimeError(response.status.code >= 500 ? .serverUnavailable : .enrollmentFailed, message: "Self-revoke HTTP \(response.status.code)")
+      }
+    } catch let error as MachineV2RuntimeError { throw error }
+    catch { throw MachineV2RuntimeError(.serverUnavailable, message: "Cannot revoke the machine: \(error)") }
   }
 
   static func preflight(home: MachineV2Home, trust: ServerTrust, fetch: FetchClient, result: URL) async throws {

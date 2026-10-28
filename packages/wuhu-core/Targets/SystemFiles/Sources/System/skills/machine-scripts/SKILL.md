@@ -35,3 +35,5 @@ Processes cannot outlive their script: cancellation aborts pending reads with Ab
 ## Durable execs
 
 `execs()` lists only live execs owned by the calling session, including execs started by earlier scripts or its exec tool. `execStatus(id)` can also return terminal records; `killExec(id)` kills an owned exec. Unknown ids and another caller's ids both fail with `notFound`.
+
+Machine deletion is a human action: `wuhu machine delete <name-or-id>` requires a human admin of the machine's group and permanently removes its identity, credentials, v2 operation/channel buffers and notes, unlinks devices and frees its names. `revoke` only kicks credentials; rotate can re-enable that registration. There is no delete export in `wuhu:machine`: a session or observer cannot escalate through run_script or a wallet identity. Deletion does not uninstall the remote agent.

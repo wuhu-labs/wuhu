@@ -53,7 +53,6 @@ struct RetentionTests {
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await endpoint.run(machine) }
       group.addTask { await endpoint.runRetention() }
-      group.addTask { await serveRequestsOK(endpoint) }
       group.addTask {
         for await exec in endpoint.incomingExecs {
           try await exec.send(.stdout, [UInt8](repeating: 65, count: 16384))
@@ -89,7 +88,6 @@ struct RetentionTests {
     let (raw, machine) = InMemoryTransport.pair()
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await endpoint.run(machine) }
-      group.addTask { await serveRequestsOK(endpoint) }
       group.addTask {
         for await exec in endpoint.incomingExecs {
           try await exec.send(.stdout, [1, 2, 3])
@@ -150,11 +148,11 @@ struct RetentionTests {
   }
 
   private func barrier(_ raw: InMemoryTransport, iterator: inout AsyncStream<[UInt8]>.Iterator) async throws -> [Frame] {
-    try await raw.send(FrameCodec.encode(Frame(streamID: 0, opcode: .vfsRequest, payload: VFSRequest(id: 123, op: .stat(path: "/")))))
+    try await raw.send(FrameCodec.encode(Frame(streamID: 0, opcode: .execStart, payload: ControlMessage.ping)))
     var frames: [Frame] = []
     while let bytes = await iterator.next() {
       let frame = try FrameCodec.decode(bytes)
-      if frame.opcode == .vfsResponse { return frames }
+      if frame.opcode == .control, case .error = try frame.payload(ControlMessage.self) { return frames }
       frames.append(frame)
     }
     return frames

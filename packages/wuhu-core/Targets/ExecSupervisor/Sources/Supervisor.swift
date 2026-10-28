@@ -34,7 +34,6 @@ public enum ExecSupervisor {
         guard unlink(socket) == 0 else { throw OperationError(.invalidConfiguration) }
       }
       let server = try await ServeNIOServer.bind(unixDomainSocketPath: socket, handler: { request in
-        if request.url.path == "/leave" { return try await agent.controlHandler(request) }
         return try await agent.handler(request)
       })
       guard chmod(socket, 0o600) == 0 else { await server.shutdown(); throw OperationError(.invalidConfiguration) }
@@ -47,13 +46,16 @@ public enum ExecSupervisor {
   public static func run(directory: String) async throws {
     let manifest = try loadSupervisorManifest(directory)
     try validateManifest(manifest, directory: directory)
+    let receipt = try ProcessReceipt(path: directory + "/.lock", process: getpid())
     _ = signal(SIGPIPE, SIG_IGN)
     let clock = OperationClock.continuous
     let limits = OperationLimits()
-    let agent = try OperationAgent(machine: manifest.machine, kinds: [AnyOperationKind(ExecKind(clock: clock, disclaimResponsibility: manifest.disclaimResponsibility == true))], clock: clock, limits: limits, authorize: { request, _ in
+    let agent = try OperationAgent(machine: manifest.machine, kinds: [AnyOperationKind(ExecKind(clock: clock, disclaimResponsibility: manifest.disclaimResponsibility == true, receiptsDirectory: directory))], clock: clock, limits: limits, authorize: { request, _ in
       guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { throw OperationError(.machineNotAuthorized) }
     })
     defer {
+      receipt.close()
+      _ = unlink(directory + "/.spawn.lock")
       _ = unlink(directory + "/manifest.json")
       _ = rmdir(directory)
     }
@@ -114,18 +116,11 @@ actor SupervisorGate {
 
   func handle(_ request: Request) async throws -> Response {
     guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { return try .json(ErrorEnvelope(.init(.machineNotAuthorized)), status: .forbidden) }
-    if request.url.path == "/leave", request.method == .put {
-      await agent.leave()
-      return try .json(true)
-    }
     // The agent stops serving this machine: stop the exec, refuse a start, and exit, dropping the receipts. The reply may not
     // outlive an idle supervisor; the agent takes the operation directory's removal as the answer.
     if request.url.path == "/retire", request.method == .put {
       await retire()
       return try .json(true)
-    }
-    if request.url.path == "/departure", request.method == .get {
-      return try .json(await agent.departureSettled())
     }
     if request.url.path == "/identity", request.method == .get {
       var response = try Response.json(manifest)

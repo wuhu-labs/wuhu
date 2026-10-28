@@ -4,7 +4,6 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import struct MachineContract.MachineAddOutput
-import struct MachineContract.MachineRotateOutput
 import enum PinnedTLS.PinnedTLS
 import Scratch
 import ServeNIO
@@ -28,7 +27,7 @@ import Testing
       contentsOf: base.appendingPathComponent("store/tls/cert.pem"), encoding: .utf8,
     ))
     #expect(handedOut.served == generated)
-    #expect(handedOut.all == Array(repeating: generated, count: 6))
+    #expect(handedOut.all == Array(repeating: generated, count: 5))
   }
 
   @Test func aProvidedCertificateIsNeverHandedOut() async throws {
@@ -45,7 +44,7 @@ import Testing
       folder: base.appendingPathComponent("store"), certificate: certificate, privateKey: privateKey,
     )
     #expect(handedOut.served == (try own.fingerprint()))
-    #expect(handedOut.all == Array(repeating: nil, count: 6))
+    #expect(handedOut.all == Array(repeating: nil, count: 5))
     #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("store/tls").path))
   }
 
@@ -70,8 +69,6 @@ import Testing
 
 private struct HandedOut {
   var served: String
-  /// enroll mint, share-login, machine add, machine rotate, the deployment
-  /// record's pin and the offline invite, in that order.
   var all: [String?]
 }
 
@@ -105,8 +102,7 @@ private func serveAndCollect(folder: URL, certificate: URL? = nil, privateKey: U
     "/v1/enroll/share-login",
     #"{"pubkey":"\#(pubkey)","challenge":"\#(challenge.challenge)","signature":"\#(signature)"}"#,
   )
-  let added: MachineAddOutput = try await client.post("/v1/machine", #"{"name":"box"}"#)
-  let rotated: MachineRotateOutput = try await client.post("/v1/machine/\(added.id.rawValue)/rotate", nil)
+  let added: MachineAddOutput = try await client.post("/v1/machine-v2", #"{"name":"box"}"#)
   server.cancel()
   try await server.value
 
@@ -115,7 +111,7 @@ private func serveAndCollect(folder: URL, certificate: URL? = nil, privateKey: U
   let offline = link.split(separator: "&").first { $0.hasPrefix("fp=") }.map { String($0.dropFirst(3)).trimmingCharacters(in: .newlines) }
   return HandedOut(
     served: served,
-    all: [mint.fingerprint, shareLogin.fingerprint, added.fingerprint, rotated.fingerprint, recorded?.pin, offline],
+    all: [mint.fingerprint, shareLogin.fingerprint, added.fingerprint, recorded?.pin, offline],
   )
 }
 

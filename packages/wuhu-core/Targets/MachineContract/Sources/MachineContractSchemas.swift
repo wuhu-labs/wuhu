@@ -48,8 +48,6 @@ public enum MachineContractSchemas {
     ("MachineEntryKind", MachineEntryKind.jsonSchema),
     ("MachineEntry", MachineEntry.jsonSchema),
     ("VFSOp", VFSOp.jsonSchema),
-    ("VFSRequest", VFSRequest.jsonSchema),
     ("VFSResult", VFSResult.jsonSchema),
-    ("VFSResponse", VFSResponse.jsonSchema),
   ]
 }

@@ -119,16 +119,6 @@ public actor MachineOperations {
     return cached.description
   }
 
-  /// Confirms a leaving machine's settled departure: the machine answers `leaving`.
-  public func acknowledgeLeave(_ machine: String) async throws {
-    let outcome = await link.send(MachineDescription.self, link.address(machine, query: [.init(name: "leaveAck", value: "true")]), correlation: nil, deadline: Self.describeDeadline, limit: 1024 * 1024)
-    switch outcome.result {
-    case .success: throw OperationError(.invalidResponse, message: "Machine did not confirm settled departure")
-    case let .failure(error) where error.code == .leaving: descriptions[machine] = nil
-    case let .failure(error): throw error
-    }
-  }
-
   /// Drops what is cached about a machine that left the membership.
   public func forget(_ machine: String) { descriptions[machine] = nil }
 

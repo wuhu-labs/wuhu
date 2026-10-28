@@ -4,9 +4,19 @@ import Dependencies
 import DeterministicDependencies
 @testable import ExecSupervisor
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
 import JSONValue
-import MachineAgent
 import MachineChannel
 import MachineContract
 @testable import MainHub
@@ -23,32 +33,6 @@ import struct WuhuAI.ToolCall
 
 @Suite(.deterministicDependencies(clock: ContinuousClock()), .timeLimit(.minutes(1)))
 struct ExecDefaultLifetimeTests {
-  @Test func theV1AgentKillsTheProcessGroupAtTheDefaultLifetime() async throws {
-    let state = try ScratchFolder("exec-default-lifetime-agent")
-    let work = try ScratchFolder("exec-default-lifetime-work")
-    defer { state.remove(); work.remove() }
-    let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
-    let clock = LifetimeClock()
-    let agent = withDependencies { $0.continuousClock = clock } operation: {
-      MachineAgent(stateDirectory: state.path, killGrace: .milliseconds(300))
-    }
-    let dialer = AgentDialer()
-    let session = try await makeLifetimeSession(space)
-    try await withThrowingTaskGroup(of: Void.self) { lifetime in
-      lifetime.addTask { await agent.run(dial: dialer.dial) }
-      lifetime.addTask { await server.run() }
-      defer { lifetime.cancelAll() }
-      dialer.offer(try await connectMachine(server, key: key))
-      try await awaitAttached(server, machine)
-      let ready = LifetimeOutput()
-      let executor = lifetimeExecutor(space: space, hub: server.hub, ready: ready)
-      // The v1 agent stops reading output when it kills, and says so.
-      try await expectLifetimes(executor, session: session, machine: machine.rawValue, cwd: work.path, cut: "\n[output was cut when the command stopped]", clock: clock, ready: ready)
-    }
-  }
-
   @Test func theV2SupervisorKillsTheProcessGroupAtTheDefaultLifetime() async throws {
     let clock = LifetimeClock()
     let work = try ScratchFolder("exec-default-lifetime-v2")
@@ -66,7 +50,7 @@ struct ExecDefaultLifetimeTests {
       defer { tasks.cancelAll() }
       let ready = LifetimeOutput()
       let executor = lifetimeExecutor(space: space, hub: hub, ready: ready)
-      try await expectLifetimes(executor, session: session, machine: record.id.rawValue, cwd: work.path, cut: "", clock: clock, ready: ready)
+      try await expectLifetimes(executor, session: session, machine: record.id.rawValue, cwd: work.path, clock: clock, ready: ready)
       await agent.shutdown(); await service.shutdown()
     }
   }
@@ -160,7 +144,7 @@ private func makeLifetimeSession(_ space: Space) async throws -> SessionID {
 
 // The default is shortened to 1 s: the command and the child it backgrounds
 // must both be gone, and an explicit max_lifetime_seconds must outlast the default.
-private func expectLifetimes(_ executor: ToolExecutor, session: SessionID, machine: String, cwd: String, cut: String, clock: LifetimeClock, ready: LifetimeOutput) async throws {
+private func expectLifetimes(_ executor: ToolExecutor, session: SessionID, machine: String, cwd: String, clock: LifetimeClock, ready: LifetimeOutput) async throws {
   try await withDependencies {
     $0.date = DateGenerator { Date() }
     $0.continuousClock = ContinuousClock()
@@ -179,7 +163,7 @@ private func expectLifetimes(_ executor: ToolExecutor, session: SessionID, machi
           Issue.record("default-lifetime exec failed: \(killed)")
           return
         }
-        #expect(result.output == "started\n" + cut + "\n[killed after 1 s, the default max lifetime; start longer work detached and watch it from run_script]")
+        #expect(result.output == "started\n\n[killed after 1 s, the default max lifetime; start longer work detached and watch it from run_script]")
         #expect([128 + 15, 128 + 9].contains(result.exitCode), "\(result.output)")
         let child = try #require(Int32(String(contentsOfFile: cwd + "/child", encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(!isRunning(child), "the backgrounded child survived the kill")
@@ -193,9 +177,10 @@ private func expectLifetimes(_ executor: ToolExecutor, session: SessionID, machi
         try await clock.run(through: pastDefault) { try await clock.sleep(until: pastDefault, tolerance: nil) }
         let fd = open(cwd + "/release", O_WRONLY | O_NONBLOCK)
         try #require(fd >= 0, "the explicit lifetime ended before its release")
-        let release = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        try release.write(contentsOf: Data("go\n".utf8))
-        try release.close()
+        let release = Array("go\n".utf8)
+        let written = release.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        #expect(written == release.count)
+        #expect(close(fd) == 0)
         let explicit = try await call.next()!
         guard case let .exec(finished) = explicit else {
           Issue.record("explicit-lifetime exec failed: \(explicit)")

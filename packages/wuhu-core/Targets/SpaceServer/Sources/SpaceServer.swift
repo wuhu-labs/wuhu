@@ -199,7 +199,7 @@ public enum SpaceServer {
       try await requestPrincipal(request, space: space, date: clock)
     }
     addMachineRoutes(
-      &router, space: space, hub: hub, machineV2Hub: machineV2Hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,
+      &router, space: space, hub: hub, machineV2Hub: machineV2Hub, fingerprint: fingerprint,
     ) { request in
       try await requestPrincipal(request, space: space, date: clock)
     }
@@ -289,7 +289,6 @@ public enum SpaceServer {
     // (readWall in WebOrigin.swift); --public-read opens that one only,
     // never this one.
     let selfAuthenticating: Set<String> = [
-      "/v1/machine/connect", "/v1/machine/challenge",
       "/v1/machine-v2/connect", "/v1/machine-v2/challenge", "/v1/machine-v2/enroll",
       "/v1/enroll/consume",
       "/v1/enroll/share-login", "/v1/enroll/share-login/challenge",
@@ -658,14 +657,8 @@ func attemptLogConfig() -> AttemptLogConfig? {
 
 func toolFailure(_ error: MachineHubError, machine: MachineID) -> ToolRunError {
   switch error {
-  case .frameTooLarge:
-    .failed(code: .invalidArgument, message: "request for machine \(machine.rawValue) exceeds the 16 MiB frame ceiling", hint: nil)
-  case .machineLost:
-    .failed(code: .unavailable, message: "machine \(machine.rawValue) stopped responding", hint: nil)
-  case .machineUnattached, .execNotFound, .severed:
+  case .machineUnattached, .execNotFound:
     .failed(code: .unavailable, message: "machine not attached: \(machine.rawValue)", hint: nil)
-  case .searchNeedsV2:
-    .failed(code: .unsupported, message: "machine \(machine.rawValue) runs the v1 agent; find and grep need a machine v2 agent", hint: "enroll the box as a machine v2 to search it")
   }
 }
 

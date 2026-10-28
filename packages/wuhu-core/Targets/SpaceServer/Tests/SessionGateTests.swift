@@ -36,7 +36,7 @@ import Testing
       title: "coder", kind: .task, parent: parent, createdBy: parent.rawValue, executor: model,
     )
     let stranger = try await harness.store.createSession(group: .shared, title: "stranger", kind: .agent, createdBy: "owner", executor: model)
-    let machine = try await harness.space.addMachine(name: "box")
+    let machine = (try await harness.space.addMachineV2(name: "box")).machine
     let exec = try await harness.space.mintExec(machine: machine.id, caller: parent.rawValue)
     let token = tokens.credential(session: parent, exec: exec.id, timeout: timeout, now: Date()).token
     return Tree(harness: harness, tokens: tokens, parent: parent, child: child, stranger: stranger, exec: exec.id, token: token)
@@ -80,7 +80,7 @@ import Testing
       let t = try await tree()
       for (method, path) in [
         (Fetch.Method.get, "/v1/users"), (.get, "/v1/accounts"),
-        (.post, "/v1/machine"), (.get, "/v1/providers"), (.get, "/v1/session/\(t.child.rawValue)/transcript"),
+        (.post, "/v1/machine-v2"), (.get, "/v1/providers"), (.get, "/v1/session/\(t.child.rawValue)/transcript"),
       ] {
         var request = Request(url: URL(string: "http://space\(path)")!, method: method)
         request.headers[.authorization] = "Bearer " + t.token
@@ -103,7 +103,7 @@ import Testing
       // owner's list admits the reader's group at read only.
       try await t.harness.space.setGrant(.group, group.rawValue, role: .read, in: owner, by: .anonymous, acting: owner)
       let reader = try await t.harness.store.createSession(group: group, title: "reader", kind: .agent, createdBy: "reader", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-      let readerBox = try await t.harness.space.addMachine(name: "reader_box", group: group)
+      let readerBox = (try await t.harness.space.addMachineV2(name: "reader_box", group: group)).machine
       let machine = try #require(try await t.harness.space.resolveMachine(readerBox.id.rawValue, usableFrom: group))
       let exec = try await t.harness.space.mintExec(machine: machine.id, caller: reader.rawValue)
       let token = t.tokens.credential(session: reader, exec: exec.id, timeout: nil, now: Date()).token
@@ -224,7 +224,7 @@ import Testing
       #expect(topLevel.parent == nil)
       #expect(topLevel.kind == .agent)
 
-      let machine = try await t.harness.space.addMachine(name: "box2")
+      let machine = (try await t.harness.space.addMachineV2(name: "box2")).machine
       let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
       let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
       let refused = try await t.harness.post("/v1/session", .object(["title": "x", "kind": "agent", "topLevel": true]), bearer: childToken)
@@ -480,19 +480,21 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.machine(named: "box"))
-      let others = try await t.harness.space.mintExec(machine: machine.id)
-      let minted = try await t.harness.call(
-        "/v1/exec", .object(["machine": .string(machine.id.rawValue)]), as: ExecMintOutput.self, bearer: t.token,
-      )
-      #expect(try await t.harness.space.execRecord(minted.id)?.caller == t.parent.rawValue)
+      try await withExecDescription(space: t.harness.space, hub: t.harness.hub, machine: machine.id) {
+        let others = try await t.harness.space.mintExec(machine: machine.id)
+        let minted = try await t.harness.call(
+          "/v1/exec", .object(["machine": .string(machine.id.rawValue)]), as: ExecMintOutput.self, bearer: t.token,
+        )
+        #expect(try await t.harness.space.execRecord(minted.id)?.caller == t.parent.rawValue)
 
-      let listed = try await t.harness.get("/v1/exec", bearer: t.token)
-      let ids = try JSONValueDecoder().decode([ExecStatus].self, from: try #require(JSONValue.parse(try await listed.text()))).map(\.id)
-      #expect(Set(ids) == [t.exec, minted.id])
+        let listed = try await t.harness.get("/v1/exec", bearer: t.token)
+        let ids = try JSONValueDecoder().decode([ExecStatus].self, from: try #require(JSONValue.parse(try await listed.text()))).map(\.id)
+        #expect(Set(ids) == [t.exec, minted.id])
 
-      #expect(try await t.harness.get("/v1/exec/\(others.id.rawValue)", bearer: t.token).status == .notFound)
-      #expect(try await t.harness.post("/v1/exec/\(others.id.rawValue)/kill", .null, bearer: t.token).status == .notFound)
-      #expect(try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token).status == .ok)
+        #expect(try await t.harness.get("/v1/exec/\(others.id.rawValue)", bearer: t.token).status == .notFound)
+        #expect(try await t.harness.post("/v1/exec/\(others.id.rawValue)/kill", .null, bearer: t.token).status == .notFound)
+        #expect(try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token).status == .ok)
+      }
     }
   }
 
@@ -500,22 +502,24 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.machine(named: "box"))
-      let spec: JSONValue = .object(["lifetime": .number(60)])
-      let body: JSONValue = .object(["machine": .string(machine.id.rawValue), "spec": spec])
-      let first = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
-      let retry = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
-      #expect(first.0 == .ok)
-      #expect(retry.0 == .ok)
-      #expect(first.1 == retry.1)
-      let minted = try JSONValueDecoder().decode(ExecMintOutput.self, from: #require(JSONValue.parse(first.1)))
-      let record = try #require(try await t.harness.space.execRecord(minted.id))
-      #expect(try JSONValue.parse(#require(record.toolSpec)) == spec)
-      let response = try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token)
-      let status = try JSONValueDecoder().decode(ExecStatus.self, from: #require(JSONValue.parse(try await response.text())))
-      #expect(status.toolCallID == "claim")
-      let listed = try await t.harness.get("/v1/exec", bearer: t.token)
-      let statuses = try JSONValueDecoder().decode([ExecStatus].self, from: #require(JSONValue.parse(try await listed.text())))
-      #expect(statuses.filter { $0.toolCallID == "claim" }.map(\.id) == [minted.id])
+      try await withExecDescription(space: t.harness.space, hub: t.harness.hub, machine: machine.id) {
+        let spec: JSONValue = .object(["lifetime": .number(60)])
+        let body: JSONValue = .object(["machine": .string(machine.id.rawValue), "spec": spec])
+        let first = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
+        let retry = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
+        #expect(first.0 == .ok, "\(first.1)")
+        #expect(retry.0 == .ok, "\(retry.1)")
+        #expect(first.1 == retry.1)
+        let minted = try JSONValueDecoder().decode(ExecMintOutput.self, from: #require(JSONValue.parse(first.1)))
+        let record = try #require(try await t.harness.space.execRecord(minted.id))
+        #expect(try JSONValue.parse(#require(record.toolSpec)) == spec)
+        let response = try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token)
+        let status = try JSONValueDecoder().decode(ExecStatus.self, from: #require(JSONValue.parse(try await response.text())))
+        #expect(status.toolCallID == "claim")
+        let listed = try await t.harness.get("/v1/exec", bearer: t.token)
+        let statuses = try JSONValueDecoder().decode([ExecStatus].self, from: #require(JSONValue.parse(try await listed.text())))
+        #expect(statuses.filter { $0.toolCallID == "claim" }.map(\.id) == [minted.id])
+      }
     }
   }
 
@@ -562,26 +566,28 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.machine(named: "box"))
-      let others = try await t.harness.space.mintExec(machine: machine.id)
+      try await withExecDescription(space: t.harness.space, hub: t.harness.hub, machine: machine.id) {
+        let others = try await t.harness.space.mintExec(machine: machine.id)
 
-      func dial(_ path: String) async throws -> Status? {
-        var headers = RequestHeaders()
-        headers.set("connection", "Upgrade")
-        headers.set("upgrade", "websocket")
-        headers.set("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
-        headers.set("sec-websocket-version", "13")
-        headers.set("authorization", "Bearer " + t.token)
-        let request = Request(url: URL(string: "http://space\(path)")!, headers: headers)
-        switch try await ServeTesting.upgrade(t.harness.handler, request) {
-        case let .response(response): return response.status
-        case .webSocket: return nil
+        func dial(_ path: String) async throws -> Status? {
+          var headers = RequestHeaders()
+          headers.set("connection", "Upgrade")
+          headers.set("upgrade", "websocket")
+          headers.set("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+          headers.set("sec-websocket-version", "13")
+          headers.set("authorization", "Bearer " + t.token)
+          let request = Request(url: URL(string: "http://space\(path)")!, headers: headers)
+          switch try await ServeTesting.upgrade(t.harness.handler, request) {
+          case let .response(response): return response.status
+          case let .webSocket(socket, _): socket.close(); return nil
+          }
         }
-      }
 
-      #expect(try await dial("/v1/exec/\(t.exec.rawValue)") == nil)
-      #expect(try await dial("/v1/exec/\(others.id.rawValue)") == .notFound)
-      #expect(try await dial("/v1/sessions/\(t.parent.rawValue)/stream") == .forbidden)
-      #expect(try await dial("/v1/anything") == .forbidden)
+        #expect(try await dial("/v1/exec/\(t.exec.rawValue)") == nil)
+        #expect(try await dial("/v1/exec/\(others.id.rawValue)") == .notFound)
+        #expect(try await dial("/v1/sessions/\(t.parent.rawValue)/stream") == .forbidden)
+        #expect(try await dial("/v1/anything") == .forbidden)
+      }
     }
   }
 
@@ -758,7 +764,7 @@ extension SessionGateTests {
       let credential = try await service.credential(tokens: t.tokens, session: t.parent, group: .shared, owner: owner, timeout: .seconds(60))
       let token = try #require(credential.object?["token"]?.stringValue)
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      var record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "exec.v1", input: ["sessionCredential": credential]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))
+      var record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await t.harness.space.addMachineV2(name: "disk").machine.id.rawValue, start: .init(kind: "exec.v1", input: ["sessionCredential": credential]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))
       _ = try await store.claim(owner, record: record)
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .ok)
       record.stopReason = "scriptEnded"; try await store.save(record, appending: nil)

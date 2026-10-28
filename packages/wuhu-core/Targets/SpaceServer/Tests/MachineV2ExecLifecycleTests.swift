@@ -249,6 +249,7 @@ private struct Rig {
     let caller = Task { await endpoint.run(attached) }
     #expect(try await eventually { try await ready(first) })
     await first.shutdown()
+    await hub.callerScope.close()
     running.cancel()
     transport.close(); caller.cancel()
     _ = await caller.value
@@ -381,6 +382,52 @@ private struct Rig {
       let moved = try await service.operations(group: group)
       #expect(try await eventually(5) { await moved.recentDescription(rig.machine.id.rawValue) != nil })
       await rig.agent.shutdown(); await service.shutdown()
+    }
+  }
+
+  @Test func aRestartRearmsUndrivenExecExpiryWithoutReapingAResumedCaller() async throws {
+    let clock = TestClock<Duration>()
+    try await withDependencies {
+      $0.continuousClock = clock
+    } operation: {
+      try await MachineV2Service.$callerGrace.withValue(.seconds(1)) {
+        let rig = try await Rig()
+        let live = try await rig.space.mintExec(machine: rig.machine.id, group: .shared)
+        let undriven = try await rig.space.mintExec(machine: rig.machine.id, group: .shared)
+        let endpoint = ChannelEndpoint()
+        let outgoing = await endpoint.startExec(.init(id: live.id, cwd: "/tmp", command: ["ticks"], timeout: 60))
+        let events = Events()
+        let following = events.follow(outgoing)
+        defer { following.cancel(); rig.side.release() }
+        try await withThrowingTaskGroup(of: Void.self) { tasks in
+          tasks.addTask { await rig.agent.run() }
+          defer { tasks.cancelAll() }
+          try await rig.serveUntilRestart(live, endpoint: endpoint) { _ in !events.stdout.isEmpty }
+          #expect(try await rig.space.execRecord(undriven.id)?.terminal == nil)
+          let prefix = events.stdout.count
+          let second = await rig.reopen()
+          let hub = MachineHub(space: rig.space)
+          await hub.configureV2(second)
+          tasks.addTask { try await second.run() }
+          let transport = try await connectExecCaller(live.id, space: rig.space, hub: hub)
+          let caller = Task { await endpoint.run(transport) }
+          defer { caller.cancel(); transport.close() }
+          #expect(try await eventually { events.stdout.count > prefix })
+          #expect(try await rig.space.execRecord(undriven.id)?.terminal == nil)
+          #expect(try await eventually {
+            await clock.advance(by: .seconds(1))
+            return try await rig.space.execRecord(undriven.id)?.terminal == .reaped
+          })
+          await clock.advance(by: .seconds(2))
+          #expect(try await rig.space.execRecord(live.id)?.terminal == nil)
+          rig.side.release()
+          #expect(try await eventually { events.status != nil })
+          #expect(events.status == .signaled(signal: 9))
+          #expect(try await rig.space.execRecord(live.id)?.terminal == .signaled(signal: 9))
+          await hub.callerScope.close()
+          await rig.agent.shutdown(); await second.shutdown()
+        }
+      }
     }
   }
 
@@ -1057,6 +1104,43 @@ private final class HeldConsumption: OperationStore, Sendable {
       operation.withLock { $0 = record.id }
       saving.open()
       discarded.open()
+    }
+  }
+}
+
+extension MachineV2ExecLifecycleTests {
+  @Test func deleteEndsAnOpenExecCallerAndDropsDurableOperationState() async throws {
+    let rig = try await Rig()
+    let v2 = MachineV2Hub(space: rig.space)
+    let key = Curve25519.Signing.PrivateKey()
+    _ = try await rig.space.addKey(key.pubkeyLabel, account: rig.machine.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
+    _ = try await v2.attach(.init(pubkey: key.pubkeyLabel, machines: [rig.machine.id.rawValue]), client: .init { try await rig.agent.handler($0) }, abort: {})
+    let hub = MachineHub(space: rig.space)
+    let service = MachineV2Service(space: rig.space, hub: v2, key: rig.key, failure: nil)
+    await hub.configureV2(service)
+    let handler = SpaceServer.configuredHandler(space: rig.space, hub: hub, dev: true, machineV2Hub: v2)
+    let minted = try await rig.space.mintExec(machine: rig.machine.id, group: .shared)
+    let endpoint = ChannelEndpoint()
+    let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["ticks"], timeout: 60))
+    let events = Events()
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await rig.agent.run() }
+      tasks.addTask { try await service.run() }
+      defer { tasks.cancelAll(); rig.side.release() }
+      let transport = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
+      let caller = Task { await endpoint.run(transport) }
+      let following = events.follow(outgoing)
+      defer { caller.cancel(); following.cancel() }
+      #expect(try await eventually { !events.stdout.isEmpty })
+      let request = Request(url: URL(string: "https://space.test/v1/machine/" + rig.machine.id.rawValue)!, method: .delete)
+      guard case let .response(response) = try await handler(request) else { Issue.record("delete upgraded"); return }
+      #expect(response.status == .ok)
+      #expect(try await eventually { events.status != nil })
+      #expect(try await rig.space.execRecord(minted.id)?.terminal == .machineLost)
+      #expect(try await rig.stored(minted, in: service) == nil)
+      #expect(try await rig.space.machineV2RecoveryGroups().isEmpty)
+      rig.side.release()
+      await rig.agent.shutdown(); await service.shutdown()
     }
   }
 }

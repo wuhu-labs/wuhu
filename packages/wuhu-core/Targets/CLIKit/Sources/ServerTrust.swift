@@ -130,8 +130,8 @@ public struct PinMismatch: Error, CustomStringConvertible, Sendable {
     if you expected this change (server reinstalled, tunnel target moved), re-trust with:
       wuhu trust \(self.host)
     if this host is a machine join target, do not re-trust blind — re-join with the exact
-    fingerprint printed by wuhu machine add/rotate:
-      wuhu machine join <server-url> <fingerprint> < token
+    fingerprint printed by wuhu machine-v2 add or wuhu machine rotate:
+      wuhu machine-v2 join <server-url> <fingerprint> < token
     """
   }
 }

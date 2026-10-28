@@ -7,6 +7,11 @@ import CExecSupervisor
 import struct OperationProtocol.OperationError
 
 extension ExecSupervisor {
+  public static func runChild(_ arguments: [String]) -> Never {
+    withCStringArray(arguments) { exec_run_child($0) }
+    fatalError("exec child returned")
+  }
+
   /// Starts `arguments` the way supervisors start: its own process group, standard descriptors on /dev/null and nothing else inherited, so it outlives the agent's service restart. The caller reaps it.
   public static func launchDetached(_ arguments: [String]) throws -> Int32 {
     guard let executable = arguments.first, executable.hasPrefix("/") else { throw OperationError(.invalidConfiguration) }

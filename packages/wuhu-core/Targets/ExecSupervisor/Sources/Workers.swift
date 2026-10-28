@@ -10,7 +10,6 @@ import TaskLifetime
   import Darwin
 #endif
 import CExecSupervisor
-import enum ComputerFiles.ExternalDeparture
 import struct ComputerFiles.ExternalKind
 import struct ComputerFiles.ExternalUsage
 import Fetch
@@ -31,8 +30,7 @@ import typealias Serve.Handler
 /// Version-2 supervisors an older agent launched, one per operation, are adopted the same way until they exit.
 ///
 /// Workers speak only the hello and the operation protocol. What the agent knows of them is its routes (one per operation, from
-/// the starts it forwarded and the inventories of workers it recovered) and the snapshots it forwards; leaving, departure and
-/// retirement are its own state, carried out with standard stops.
+/// the starts it forwarded and the inventories of workers it recovered) and the snapshots it forwards; retirement are its own state, carried out with standard stops.
 actor ExecWorkers {
   nonisolated let taskScope = TaskScope()
   nonisolated let transportScope = TaskScope()
@@ -87,7 +85,7 @@ actor ExecWorkers {
     /// Recovered from an earlier agent; its routes come from the inventory read at recovery.
     case inventoried
     /// Recovered with an unreadable inventory: it may hold anything, so admission charges it the most a worker can hold, its
-    /// ids are unavailable rather than unknown, and departure waits for it.
+    /// ids are unavailable rather than unknown.
     case unreadable
     /// Recovered, and reconciled with the inventory it wrote for its first hello to this agent.
     case reconciled
@@ -122,7 +120,7 @@ actor ExecWorkers {
     enum Phase: Equatable {
       /// Its start is on its way to the worker: an answer that the worker does not know it says nothing yet.
       case starting
-      /// No verdict seen; `stopping` while a stop this agent sent for a leave or retirement is on its way.
+      /// No verdict seen; `stopping` while a stop this agent sent for retirement is on its way.
       case running(stopping: Bool)
       case ended
       /// A verdict, every output consumed and the terminal acknowledged. Never reverts.
@@ -142,9 +140,7 @@ actor ExecWorkers {
   /// Whether the agent serves the machine.
   enum Service: Equatable {
     case serving
-    /// No start is routed and every running operation gets the standard stop, reason `leaving`.
-    case leaving
-    /// As leaving, with stop reason `retired`; every link was cut.
+    /// No start is routed; running operations receive stop reason `retired`.
     case retired(SupervisorRetirement)
   }
 
@@ -154,14 +150,11 @@ actor ExecWorkers {
   var routes: [UUID: Route] = [:]
   /// Operations of version-1 supervisors, which this agent does not adopt: their outcome is unknown.
   var unadopted: Set<UUID> = []
-  /// Operations dropped before they settled: the departure reports them. Mirrors `<workers>/lost.json`, written before the
+  /// Operations dropped before they settled. Mirrors `<workers>/lost.json`, written before the
   /// evidence it came from goes, so it outlives any number of agent restarts.
   var lost: Set<UUID> = []
-  /// Dead workers whose inventory cannot be read and whose operations no route names: what they dropped is unknown, so the
-  /// departure fails rather than report drained, and an id no route names may have been theirs.
+  /// Dead workers whose inventory cannot be read and whose operations no route names: an id no route names may have been theirs.
   var unaccounted: Set<UUID> = []
-  /// A departure was answered drained or lost, so a turn-off after it may clear the ledger.
-  var reported = false
   var service = Service.serving
   var launching = false
   var launchBackoff: Duration = .zero
@@ -286,7 +279,7 @@ actor ExecWorkers {
   }
 
   /// Judges every worker by its lock, records what the dead ones dropped
-  /// and forgets them, expires routes, sends the stops a leave or retirement owes, and keeps one current worker launched while
+  /// and forgets them, expires routes, sends the stops retirement owes, and keeps one current worker launched while
   /// the machine serves.
   func tick() async {
     let now = clock.now()
@@ -453,17 +446,9 @@ actor ExecWorkers {
 
   // MARK: Leaving and retirement
 
-  /// The machine is leaving: no worker is current and no start is routed, and every operation still running gets the standard
-  /// stop. One whose owner is not linked now gets it when the owner redials.
-  func leave() {
-    if service == .serving { service = .leaving }
-    current = nil
-    stopUnverdicted()
-  }
-
-  /// Sends `stop` (reason `leaving`, or `retired` once retiring) to every operation without a verdict whose owner is linked.
+  /// Sends the standard stop to every running operation whose owner is linked.
   func stopUnverdicted() {
-    let reason: StopReason = if case .retired = service { .retired } else { .leaving }
+    let reason = StopReason.retired
     for (id, route) in routes where route.phase == .running(stopping: false) {
       guard let link = linked(route.owner, operation: id) else { continue }
       routes[id]?.phase = .running(stopping: true)
@@ -524,21 +509,10 @@ actor ExecWorkers {
     return url
   }
 
-  /// Pending until no start is on its way, every recovered worker's inventory is known and every routed operation settled or
-  /// was recorded lost; then drained, or the operations lost. A dead worker whose losses cannot be known fails it.
-  func departureEvidence() throws -> ExternalDeparture {
-    if let worker = unaccounted.first {
-      throw OperationError(.requestDeadline, message: "leaveUnacknowledged", details: ["reason": "unreadableEvidence", "path": .string(WorkerDirectory.path(workers: directory, worker))])
-    }
-    guard service != .serving, !workers.values.contains(where: { $0.account == .unreadable }), routes.values.allSatisfy(\.settled) else { return .pending }
-    reported = true
-    return lost.isEmpty ? .drained : .leaseExpired(lost.sorted { $0.uuidString < $1.uuidString })
-  }
-
   /// The agent stops serving the machine: no start is routed, every running operation gets the standard stop (reason
   /// `retired`), and every adopted supervisor its `/retire`. Waits at most `deadline` for their verdicts; a revoked machine,
   /// whose receipts nobody will read, then releases every ended operation. Last it cuts every worker's link; a worker that redials hears it is not current, and exits once its receipts lapse. Returns how many
-  /// operations have no verdict yet. A turn-off after a reported departure clears the loss ledger.
+  /// operations have no verdict yet.
   @discardableResult
   func retire(_ reason: SupervisorRetirement, deadline: Duration = retireDeadline) async -> Int {
     if service != .retired(.revoked) { service = .retired(reason) }
@@ -564,7 +538,6 @@ actor ExecWorkers {
       }
     }
     for worker in workers.values { worker.link?.abort() }
-    if reason == .turnedOff, reported, (try? WorkerDirectory.writeIDs(ledger, [])) != nil { lost = [] }
     return routes.values.filter { !$0.verdict }.count
   }
 
@@ -579,8 +552,6 @@ actor ExecWorkers {
       handler: handler,
       usage: { await self.admissionUsage() },
       owns: { await self.owns($0) },
-      leave: { await self.leave() },
-      departure: { try await self.departureEvidence() },
     )
   }
 
@@ -628,7 +599,7 @@ actor ExecWorkers {
     try JSONDecoder().decode(ExecInput.self, from: Data(start.input.jsonString().utf8)).validate()
     let worker = try await currentWorker()
     guard !owns(id) else { throw OperationError(.operationExists) }
-    // Routed in the same actor turn as the service check, so a leave or retirement waits for it.
+    // Routed in the same actor turn as the service check, so retirement waits for it.
     routes[id] = Route(owner: .worker(worker), lastRequest: clock.now())
     var forwarded = request; forwarded.body = try .json(start)
     // A start whose answer was lost may be running: its route stays. One the worker refused is forgotten.

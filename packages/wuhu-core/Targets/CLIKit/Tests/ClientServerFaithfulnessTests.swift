@@ -26,6 +26,17 @@ private let onePixelPNG: [UInt8] = [
 
 @Suite(.deterministicDependencies(clock: TestClock()))
 struct ClientServerFaithfulnessTests {
+  @Test func deleteRemovesAMachineByNameThroughTheRealServer() async throws {
+    let harness = try ServerHarness()
+    let machine = try await harness.space.addMachineV2(name: "retired_box").machine
+    #expect(await harness.run(["machine", "delete", "retired_box"]) == 0)
+    #expect(await harness.stdout.text == "deleted retired_box\n")
+    #expect(try await harness.space.machine(machine.id) == nil)
+    #expect(try await harness.space.machines().isEmpty)
+    #expect(await harness.run(["machine", "delete", machine.id.rawValue]) == 1)
+    _ = try await harness.space.addMachineV2(name: "retired_box")
+  }
+
   @Test func modelsListAndUpdateKeepInvalidEntriesAndReportThem() async throws {
     let harness = try ServerHarness()
     let provider = #"{"dialect":"responses","baseURL":"https://fixture.test","capacity":{"weekly":2},"models":{"m":{"maxInput":10000,"maxOutput":1000,"efforts":["high"],"defaultEffort":"high"}}}"#
@@ -145,6 +156,7 @@ struct ClientServerFaithfulnessTests {
 }
 
 private struct ServerHarness {
+  let space: Space
   let temp: ServerTemp
   let runner: CommandRunner
   let stdout: ServerSink
@@ -160,6 +172,7 @@ private struct ServerHarness {
       let space = try Space.inMemory()
       return (space, MachineHub(space: space))
     }
+    self.space = createdSpace
     let handler = SpaceServer.handler(space: createdSpace, hub: hub, dev: true)
     let client = ServeTesting.client(upgrading: handler)
     let stdout = ServerSink()

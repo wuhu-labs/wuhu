@@ -83,7 +83,7 @@ struct EnrollRoutesTests {
 
   @Test func consumeNamesTheMachineOnlyForAMachineAccountToken() async throws {
     let harness = try Harness()
-    let machine = try await harness.space.addMachine(name: "box")
+    let machine = (try await harness.space.addMachineV2(name: "box")).machine
     let minted = try await harness.space.mintJoinToken(
       account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600,
     )

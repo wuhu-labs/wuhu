@@ -100,7 +100,7 @@ import Testing
   @Test func annotationNamesTheDeviceAndItsMachine() async throws {
     _ = try await enroll(key)
     let device = try await register(key)
-    let machine = try await harness.space.addMachine(name: "studio")
+    let machine = (try await harness.space.addMachineV2(name: "studio")).machine
     let annotated = try JSONValueDecoder().decode(DevicePayload.self, from: try await json(
       try await call(.patch, "/v1/device/\(device.id)", as: key, body: [
         "name": "Studio Mac", "machine": "studio",

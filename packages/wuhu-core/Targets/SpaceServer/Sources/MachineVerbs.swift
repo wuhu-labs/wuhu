@@ -86,8 +86,6 @@ func addMachineRoutes(
     }
     return try Response.json(MachineStatus(id: record.id, name: record.name, group: record.group.rawValue, attached: listing.attached, scope: record.scope.rawValue))
   }
-  // A directory on a machine, which only a machine has; a file's parents the
-  // byte route makes itself.
   router.post("/v1/machine/:id/mkdir") { request, parameters in
     let id = MachineID(rawValue: parameters["id"] ?? "")
     guard case let .object(fields)? = JSONValue.parse(try await request.body?.text() ?? ""),
@@ -96,7 +94,8 @@ func addMachineRoutes(
     guard try await space.resolveMachine(id.rawValue, usableFrom: user().group) != nil else {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(id.rawValue)")
     }
-    switch try await MachineSeam.$caller.withValue(user().caller.session) { try await machines.vfs(id, .mkdir(path: path)) } {
+    let result = try await MachineSeam.$caller.withValue(user().caller.session) { try await machines.vfs(id, .mkdir(path: path)) }
+    switch result {
     case .ok: return jsonResponse(.object([:]))
     case let .error(error): return jsonResponse(machineFailure(error).payload, status: .unprocessableContent)
     default: return errorResponse(.unprocessableContent, code: "internal", message: "machine returned an unexpected mkdir result for \(path)")

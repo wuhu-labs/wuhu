@@ -127,12 +127,8 @@ The induced `inferences` table is per-call usage, with the same group visibility
 A space can adopt remote boxes ("machines") for raw command execution and raw
 filesystem access:
 
-- Space side: `wuhu machine add` mints an id + one-time join token;
-  `list` / `name` / `rotate` / `revoke` manage them.
-- Box side: `wuhu machine join <server-url> [fingerprint] [--name N] < token`
-  (token from stdin, never argv) then `wuhu machine run`
-  (foreground agent, state under `~/.wuhu/machine`). An unnamed machine takes
-  the box's hostname (or `--name`) as its name; a named one keeps its name.
+- Space side: `wuhu machine-v2 add --name N [--group G]` mints an id and one-time join token. `wuhu machine list|name|rotate|revoke|move|scope` manages the shared records.
+- Box side: `wuhu machine-v2 join <server-url> [fingerprint] < token` (token from stdin, never argv), then `wuhu machine-v2 install <id> --binary <signed-wuhu>` installs the service. `wuhu machine-v2 run <id>` runs in the foreground instead. State lives under `~/.wuhu/machine-v2/<id>/`. Legacy `machine add|join|run` are removed.
 - Naming: a machine answers to its name or its `mc_` id, everywhere — CLI
   verbs, `/v1/machine/:id/*`, and `machines://<name-or-id>/<path>` in the
   kernel tools. The id never moves under a rename.

@@ -917,6 +917,7 @@ private let playbook: @Sendable (IncomingExec, ScriptedExecMachine) async -> Voi
 func withRig(
   space: () throws -> Space = { try Space.inMemory() },
   fetch: FetchClient? = nil,
+  machineHub: MachineHub? = nil,
   machines: MachineSeam? = nil,
   world: MachineWorld? = nil,
   identity: IdentityController? = nil,
@@ -963,7 +964,7 @@ func withRig(
         )
       } else {
         SessionRuntime.toolExecutor(
-          owner: main, scripts: scripts, access: .init(credentials: credentials),
+          owner: main, hub: machineHub, scripts: scripts, access: .init(credentials: credentials),
           origin: origin, contentHostPattern: contentHost, secrets: stores, identity: identity,
         )
       }

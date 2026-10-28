@@ -1,6 +1,9 @@
+import Crypto
 import DeterministicDependencies
 import JSONValue
 @testable import SessionTools
+import SpaceCore
+@testable import SpaceServer
 import SpaceTools
 import Testing
 
@@ -12,15 +15,23 @@ import Testing
     }
   }
 
-  // A script kills its own exec through the same route as the CLI: with the
-  // machine away, main records the cancellation for the machine's return.
   @Test func ownedExecOnAnAbsentMachineIsCancelledThroughTheRoute() async throws {
-    try await withRig { rig in
-      let machine = try await rig.space.addMachine(name: "unavailable").id
-      let own = try await rig.space.mintExec(machine: machine, caller: rig.session.rawValue)
-      let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec(\(JSONValue.string(own.id.rawValue).jsonString()));result('allowed')}catch(e){result(e.code)}")
-      #expect(result == "allowed")
-      #expect(try await rig.space.execRecord(own.id)?.terminal == .cancelled)
+    let space = try Space.inMemory()
+    let hub = MachineHub(space: space)
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil)
+    await hub.configureV2(service)
+    do {
+      try await withRig(space: { space }, machineHub: hub) { rig in
+        let machine = try await rig.space.addMachineV2(name: "unavailable").machine.id
+        let own = try await rig.space.mintExec(machine: machine, caller: rig.session.rawValue)
+        let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec(\(JSONValue.string(own.id.rawValue).jsonString()));result('allowed')}catch(e){result(e.code)}")
+        #expect(result == "allowed")
+        #expect(try await rig.space.execRecord(own.id)?.terminal == .cancelled)
+      }
+      await hub.callerScope.close(); await service.shutdown()
+    } catch {
+      await hub.callerScope.close(); await service.shutdown()
+      throw error
     }
   }
 

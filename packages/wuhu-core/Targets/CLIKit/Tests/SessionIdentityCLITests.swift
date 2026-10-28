@@ -428,7 +428,7 @@ final class IdentityHarness: Sendable {
   @Test func localOnlyVerbsAreRefusedBeforeAnyTraffic() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness()
-      for arguments in [["models", "update"], ["use", "elsewhere.test"], ["login"], ["machine", "add"], ["auth", "list"], ["key", "list"]] {
+      for arguments in [["models", "update"], ["use", "elsewhere.test"], ["login"], ["machine-v2", "add", "--name", "box"], ["auth", "list"], ["key", "list"]] {
         let refused = await h.asSession(arguments)
         #expect(refused.code == 1, "\(arguments)")
         #expect(refused.stderr == sessionRefusal + "\n", "\(arguments)")

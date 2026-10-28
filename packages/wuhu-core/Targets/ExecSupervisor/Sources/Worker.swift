@@ -111,7 +111,7 @@ enum WorkerDirectory {
   }
 
   static func remove(_ directory: String) {
-    for name in ["operations.json", "operations.json.tmp", "superseded", "manifest.json", ".lock"] { _ = unlink(directory + "/" + name) }
+    for name in ["operations.json", "operations.json.tmp", "superseded", "manifest.json", ".lock", ".spawn.lock"] { _ = unlink(directory + "/" + name) }
     _ = rmdir(directory)
   }
 
@@ -220,7 +220,7 @@ actor ExecWorker {
   init(manifest: WorkerManifest, directory: String, clock: OperationClock = .continuous) throws {
     self.manifest = manifest; self.directory = directory; self.clock = clock; began = clock.now()
     let retention = manifest.receiptRetentionMs.map { Duration.milliseconds($0) } ?? OperationAgent.receiptRetention
-    agent = try OperationAgent(machine: manifest.machine, kinds: [AnyOperationKind(ExecKind(clock: clock, disclaimResponsibility: manifest.disclaimResponsibility == true))], clock: clock, receiptRetention: retention, authorize: { request, _ in
+    agent = try OperationAgent(machine: manifest.machine, kinds: [AnyOperationKind(ExecKind(clock: clock, disclaimResponsibility: manifest.disclaimResponsibility == true, receiptsDirectory: directory))], clock: clock, receiptRetention: retention, authorize: { request, _ in
       guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { throw OperationError(.machineNotAuthorized) }
     })
   }
@@ -340,6 +340,7 @@ extension ExecSupervisor {
     let manifest = try WorkerDirectory.load(directory)
     guard let lock = WorkerDirectory.lock(directory, create: true) else { throw OperationError(.invalidConfiguration, message: "Another process owns this exec worker") }
     defer { exec_close(lock) }
+    try ProcessReceipt.write(getpid(), descriptor: lock)
     _ = signal(SIGPIPE, SIG_IGN)
     let worker = try ExecWorker(manifest: manifest, directory: directory)
     let events = MultiThreadedEventLoopGroup(numberOfThreads: 1)

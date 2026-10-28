@@ -40,7 +40,7 @@ import Testing
     return (scratch, home, MachineV2Installer(home: home, machine: "mc_test-v2", platform: .linux, userID: 501, command: { try effects.run($0) }), candidate)
   }
 
-  @Test func isolatedInstallUpgradeRollbackAndDrain() async throws {
+  @Test func isolatedInstallUpgradeRollbackAndUninstall() async throws {
     let effects = Effects()
     let (scratch, home, installer, candidate) = try self.fixture(effects)
     defer { scratch.remove() }
@@ -61,15 +61,16 @@ import Testing
     try await installer.rollback()
     #expect(try Data(contentsOf: installer.binary) == Data("new signed artifact".utf8))
     let count = effects.commands.withLock { $0.count }
-    do {
-      try await installer.uninstall { throw CLIError(message: "terminal acknowledgements pending") }
-      Issue.record("undrained uninstall succeeded")
-    } catch let error as MachineV2InstallError { #expect(error.code == .drainFailed) }
-    #expect(effects.commands.withLock { $0.count } == count)
-    try await installer.uninstall {
+    let steps = Mutex<[String]>([])
+    try await installer.uninstall(revoke: {
+      steps.withLock { $0.append("revoke") }
       #expect(FileManager.default.fileExists(atPath: installer.serviceFile.path))
       #expect(effects.commands.withLock { $0.count } == count)
-    }
+    }, stop: {
+      steps.withLock { $0.append("stop") }
+      #expect(effects.commands.withLock { $0.contains(["/usr/bin/systemctl", "--user", "disable", "--now", installer.unit]) })
+    })
+    #expect(steps.withLock { $0 } == ["revoke", "stop"])
     #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
     #expect(try Data(contentsOf: legacy) == Data("v1".utf8))
     #expect(FileManager.default.fileExists(atPath: installer.binary.path))
@@ -92,10 +93,7 @@ import Testing
     defer { if let descriptor = inherited.withLock({ $0 }) { close(descriptor) } }
     try await installer.install(candidate: candidate)
     #expect(inherited.withLock { $0 != nil })
-    do {
-      try await installer.uninstall { throw CLIError(message: "still draining") }
-      Issue.record("undrained uninstall succeeded")
-    } catch let error as MachineV2InstallError { #expect(error.code == .drainFailed) }
+    try await installer.uninstall(revoke: {}, stop: {})
     try await installer.install(candidate: candidate)
   }
 
@@ -125,7 +123,7 @@ import Testing
         switch action {
         case 0: try await installer.install(candidate: candidate)
         case 1: try await installer.rollback()
-        default: try await installer.uninstall { Issue.record("busy uninstall attempted leave") }
+        default: try await installer.uninstall(revoke: { Issue.record("busy uninstall attempted revoke") }, stop: {})
         }
         Issue.record("concurrent installer acquired held lock")
       } catch let error as MachineV2InstallError { #expect(error.code == .busy) }
@@ -138,7 +136,7 @@ import Testing
     try await installer.install(candidate: candidate)
     try await installer.rollback()
     #expect(try Data(contentsOf: installer.binary) == Data("new signed artifact".utf8))
-    try await installer.uninstall {}
+    try await installer.uninstall(revoke: {}, stop: {})
     #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
     #expect(FileManager.default.fileExists(atPath: lockPath))
   }
@@ -246,17 +244,32 @@ import Testing
     #expect(effects.commands.withLock { $0.first } == ["/bin/launchctl", "bootout", "gui/501/\(mac.label)"])
   }
 
-  @Test func lostLeaveAcknowledgementStillRemovesServiceButNeverReportsDetach() async throws {
+  @Test func offlineRevocationStillStopsAndRemovesService() async throws {
     let effects = Effects()
     let (scratch, _, installer, candidate) = try self.fixture(effects)
     defer { scratch.remove() }
     try await installer.install(candidate: candidate)
     do {
-      try await installer.uninstall { throw MachineV2RuntimeError(.leaveUnacknowledged, message: "server acknowledgement deadline") }
-      Issue.record("unacknowledged leave reported success")
-    } catch let error as MachineV2RuntimeError { #expect(error.code == .leaveUnacknowledged) }
+      try await installer.uninstall(revoke: { throw MachineV2RuntimeError(.serverUnavailable) }, stop: { effects.commands.withLock { $0.append(["stop-supervisors"]) } })
+      Issue.record("offline revocation reported success")
+    } catch let error as MachineV2RuntimeError { #expect(error.code == .serverUnavailable) }
     #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
     #expect(effects.commands.withLock { $0.contains(["/usr/bin/systemctl", "--user", "disable", "--now", installer.unit]) })
+    #expect(effects.commands.withLock { $0.contains(["stop-supervisors"]) })
+  }
+
+  @Test func localStopFailureStillRemovesDefinitionAndCanBeRetried() async throws {
+    let effects = Effects()
+    let (scratch, _, installer, candidate) = try self.fixture(effects)
+    defer { scratch.remove() }
+    try await installer.install(candidate: candidate)
+    do {
+      try await installer.uninstall(revoke: {}, stop: { throw MachineV2RuntimeError(.localStopFailed) })
+      Issue.record("supervisor cleanup failure reported success")
+    } catch let error as MachineV2RuntimeError { #expect(error.code == .localStopFailed) }
+    #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
+    try await installer.uninstall(revoke: {}, stop: {})
+    #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
   }
 
   @Test func serviceFailureKeepsExplicitRollback() async throws {
@@ -326,13 +339,13 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: installer.serviceFile.path))
     try await installer.install(candidate: candidate)
     bootoutFailure.withLock { $0 = "Boot-out failed: 5: Input/output error" }
-    do { try await installer.uninstall {}; Issue.record("genuine bootout error ignored") }
+    do { try await installer.uninstall(revoke: {}, stop: {}); Issue.record("genuine bootout error ignored") }
     catch let error as MachineV2InstallError { #expect(error.code == .serviceFailure) }
-    #expect(FileManager.default.fileExists(atPath: installer.serviceFile.path))
-    bootoutFailure.withLock { $0 = "Boot-out failed: 3: No such process" }
-    try await installer.uninstall {}
     #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
-    try await installer.uninstall {}
+    bootoutFailure.withLock { $0 = "Boot-out failed: 3: No such process" }
+    try await installer.uninstall(revoke: {}, stop: {})
+    #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
+    try await installer.uninstall(revoke: {}, stop: {})
   }
 
   @Test func launchdInstallPreservesSupervisorGroupsAndEscapesPaths() async throws {

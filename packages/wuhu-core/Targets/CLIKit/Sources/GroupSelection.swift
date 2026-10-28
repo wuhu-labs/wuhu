@@ -76,7 +76,6 @@ struct Invocation: Equatable {
       throw UsageError(message: "use: name the group after the host: wuhu use <host:port> --group <id>")
     }
     let registration: (target: String?, command: (String?) -> Command)? = switch command {
-    case let .machineAdd(name, target, scope): (target, { .machineAdd(name: name, group: $0, scope: scope) })
     case let .machineV2Add(name, target): (target, { .machineV2Add(name: name, group: $0) })
     default: nil
     }

@@ -31,9 +31,7 @@ public actor OperationAgent {
   let authorize: @Sendable (Request, String) async throws -> Void
   let availability: KindAvailabilityProvider?
   var operations: [UUID: OperationState] = [:]
-  var leaving = false
-  var pendingDeparture: Set<UUID> = []
-  /// Finished operations dropped before they settled: their departure evidence is gone.
+  /// Finished operations dropped before they settled: their operation evidence is gone.
   public private(set) var lostOperations: Set<UUID> = []
   var closed = false
   var running = false
@@ -115,16 +113,11 @@ public actor OperationAgent {
     return (operations.count, operations.values.reduce(0) { $0 + $1.bufferReservation })
   }
 
-  public func departureSettled() -> Bool {
-    sweep()
-    return leaving && pendingDeparture.isEmpty && lostOperations.isEmpty
-  }
-
   /// Every retained operation, the ones among them a caller may still need (no verdict yet, or a verdict not yet settled), and
   /// the operations dropped before they settled.
   public func inventory() -> (retained: Set<UUID>, unsettled: Set<UUID>, lost: Set<UUID>) {
     sweep()
-    return (Set(operations.keys), Set(operations.values.filter { !$0.departureSettled }.map(\.id)), lostOperations)
+    return (Set(operations.keys), Set(operations.values.filter { !$0.settled }.map(\.id)), lostOperations)
   }
 
   public func hasRetainedOperations() -> Bool { sweep(); return !operations.isEmpty }
@@ -137,12 +130,6 @@ public actor OperationAgent {
   public func inspect(_ operation: UUID) -> OperationSnapshot? { sweep(); return operations[operation]?.snapshot() }
 
   public func shutdown() { closed = true; startQueue.finish(); for id in operations.keys { operations[id]?.stopReason = "shutdown" } }
-  public func leave() {
-    leaving = true
-    pendingDeparture.formUnion(operations.values.filter { !$0.departureSettled }.map(\.id))
-    for (id, operation) in operations where operation.verdict == nil { operations[id]?.stopReason = operation.stopReason ?? "leaving" }
-  }
-
   /// Revocation: every running operation whose kind the gate no longer admits gets a stop intent with the gate's reason, so it ends with a real `stopped` verdict.
   func enforceAvailability() async {
     guard let gates = await availability?.current() else { return }
@@ -159,16 +146,15 @@ public actor OperationAgent {
   }
 
   /// Drops a finished operation once it settles and every output channel has carried the terminal acknowledgement, and otherwise
-  /// `receiptRetention` after its caller's last request. Dropped unsettled, it loses departure evidence.
+  /// `receiptRetention` after its caller's last request. Dropped unsettled, it loses operation evidence.
   func sweep() {
     let now = clock.now()
     for id in operations.keys {
       operations[id]?.expire(now: now)
       guard let op = operations[id], op.finishedAt != nil else { continue }
-      if op.departureSettled { pendingDeparture.remove(id) }
       let expired = now - op.lastRequest >= receiptRetention
       guard op.released || expired else { continue }
-      if !op.departureSettled { lostOperations.insert(id) }
+      if !op.settled { lostOperations.insert(id) }
       operations.removeValue(forKey: id)
     }
   }
@@ -300,11 +286,10 @@ public actor OperationAgent {
     try await authorize(request, machine)
     sweep()
     if path.count == 4 && request.method == .get {
-      if leaving && pendingDeparture.isEmpty && lostOperations.isEmpty { throw OperationError(.leaving) }
       let gates = await availability?.describe(linked: kinds.keys)
       return try .json(MachineDescription(
         instance: instance,
-        acceptingStarts: !leaving && !closed,
+        acceptingStarts: !closed,
         limits: limits,
         kinds: kinds.values.map(\.descriptor).sorted { $0.name < $1.name },
         availability: gates,
@@ -312,7 +297,7 @@ public actor OperationAgent {
     }
     guard path.count >= 6, path[4] == "operations", let id = UUID(uuidString: path[5]) else { throw OperationError(.unknownOperation) }
     if request.method == .post && path.count == 6 {
-      guard !leaving && !closed else { throw OperationError(.leaving) }
+      guard !closed else { throw OperationError(.leaving) }
       guard operations[id] == nil else { throw OperationError(.operationExists) }
       let start: StartRequest
       do { start = try await request.json(StartRequest.self, upTo: limits.inputBytes) }
@@ -321,7 +306,7 @@ public actor OperationAgent {
       guard let kind = kinds[start.kind] else { throw OperationError(.unknownKind) }
       let run: @Sendable (OperationChannels, OperationCancellation) async throws -> JSONValue
       do { run = try kind.prepare(start.input) } catch let error as OperationError { throw error } catch { throw OperationError(.invalidInput) }
-      guard !leaving && !closed else { throw OperationError(.leaving) }
+      guard !closed else { throw OperationError(.leaving) }
       guard operations[id] == nil else { throw OperationError(.operationExists) }
       let d = kind.descriptor
       let reserve = (d.inputChannels + d.outputChannels).reduce(0) { $0 + $1.windowBytes }
@@ -364,7 +349,6 @@ public actor OperationAgent {
         operations[id]?.terminalAcknowledged = true
         if let channel { operations[id]?.terminalAcknowledgedChannels.insert(channel) }
       }
-      if operations[id]?.departureSettled == true { pendingDeparture.remove(id) }
       operations[id]?.renew(now: clock.now(), lease: .milliseconds(limits.leaseMs))
       let deadline = clock.now() + .milliseconds(hold)
       while true {

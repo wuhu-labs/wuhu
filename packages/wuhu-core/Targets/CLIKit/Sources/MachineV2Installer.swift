@@ -11,7 +11,7 @@
 import Dependencies
 
 struct MachineV2InstallError: Error, CustomStringConvertible, Equatable {
-  enum Code: String { case invalidMachine, busy, missingBinary, notInstalled, serviceFailure, localNetworkDenied, preflightFailed, drainFailed }
+  enum Code: String { case invalidMachine, busy, missingBinary, notInstalled, serviceFailure, localNetworkDenied, preflightFailed }
   var code: Code
   var message: String
   var description: String { "\(self.code.rawValue): \(self.message)" }
@@ -105,18 +105,17 @@ struct MachineV2Installer {
     try await self.control(.restart)
   }
 
-  func uninstall(leave: @Sendable () async throws -> Void) async throws {
+  func uninstall(revoke: @Sendable () async throws -> Void, stop: @Sendable () async throws -> Void) async throws {
     try self.validate()
     let lock = try self.lock()
     defer { self.releaseLock(lock) }
-    var unacknowledged: MachineV2RuntimeError?
-    do { try await leave() }
-    catch let error as MachineV2RuntimeError where error.code == .leaveUnacknowledged { unacknowledged = error }
-    catch { throw MachineV2InstallError(code: .drainFailed, message: "v2 service left running: \(error)") }
-    try await self.control(.uninstall)
+    var failure: (any Error)?
+    do { try await revoke() } catch { failure = error }
+    do { try await self.control(.uninstall) } catch { failure = error }
+    do { try await stop() } catch { failure = error }
     if FileManager.default.fileExists(atPath: self.serviceFile.path) { try FileManager.default.removeItem(at: self.serviceFile) }
     if self.platform == .linux { _ = try await self.run(["/usr/bin/systemctl", "--user", "daemon-reload"]) }
-    if let unacknowledged { throw unacknowledged }
+    if let failure { throw failure }
   }
 
   /// Stops the job from inside it: the service manager terminates the caller and, the stop being requested, does not
@@ -178,7 +177,14 @@ struct MachineV2Installer {
         _ = try await self.run(base + ["enable", self.unit])
         _ = try await self.run(base + ["restart", self.unit])
       case .restart: _ = try await self.run(base + ["restart", self.unit])
-      case .uninstall: _ = try await self.run(base + ["disable", "--now", self.unit])
+      case .uninstall:
+        if FileManager.default.fileExists(atPath: self.serviceFile.path) {
+          _ = try await self.run(base + ["disable", "--now", self.unit])
+        } else {
+          do { _ = try await self.command(base + ["stop", self.unit]) }
+          catch let error as CommandFailure where error.status == 5 {}
+          catch { throw MachineV2InstallError(code: .serviceFailure, message: "Cannot stop \(self.unit): \(error)") }
+        }
       }
     case .macOS:
       switch action {

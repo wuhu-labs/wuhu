@@ -81,37 +81,39 @@ import Testing
     try await withSessionDeps {
       let tokens = ExecTokens(spaceURL: "http://space")
       let harness = try await SessionHarness(execTokens: tokens)
-      let common = try await harness.space.addMachine(name: "common").id
-      let alice = try await harness.space.addAccount(kind: .human, name: "alice")
-      let hers = try await harness.space.addMachine(name: "hers", group: try await harness.space.ensurePersonalGroup(account: alice.id)).id
-      let firing = tokens.firingToken(Observer(group: .shared, name: "nightly", firing: "f1"))
+      let common = (try await harness.space.addMachineV2(name: "common")).machine.id
+      try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
+        let alice = try await harness.space.addAccount(kind: .human, name: "alice")
+        let hers = (try await harness.space.addMachineV2(name: "hers", group: try await harness.space.ensurePersonalGroup(account: alice.id))).machine.id
+        let firing = tokens.firingToken(Observer(group: .shared, name: "nightly", firing: "f1"))
 
-      let listed = try await harness.get("/v1/machine", bearer: firing)
-      #expect(listed.status == .ok)
-      let machines = try JSONValueDecoder().decode([MachineStatus].self, from: try #require(JSONValue.parse(try await listed.text())))
-      #expect(machines.compactMap(\.name) == ["common"])
-      #expect(try await harness.get("/v1/machine/hers/status", bearer: firing).status == .notFound)
+        let listed = try await harness.get("/v1/machine", bearer: firing)
+        #expect(listed.status == .ok)
+        let machines = try JSONValueDecoder().decode([MachineStatus].self, from: try #require(JSONValue.parse(try await listed.text())))
+        #expect(machines.compactMap(\.name) == ["common"])
+        #expect(try await harness.get("/v1/machine/hers/status", bearer: firing).status == .notFound)
 
-      #expect(try await harness.post("/v1/exec", ["machine": .string(common.rawValue)], bearer: firing).status == .forbidden)
-      #expect(try await harness.post("/v1/exec", ["machine": .string(hers.rawValue), "script": "s1"], bearer: firing).status == .notFound)
-      let minted = try await harness.post("/v1/exec", ["machine": .string(common.rawValue), "script": "s1"], bearer: firing)
-      #expect(minted.status == .ok)
-      let id = try JSONValueDecoder().decode(ExecMintOutput.self, from: try #require(JSONValue.parse(try await minted.text()))).id
-      let record = try #require(try await harness.space.execRecord(id))
-      #expect(record.caller == "nightly@shared")
-      #expect(record.session == nil)
-      #expect(record.group == .shared)
+        #expect(try await harness.post("/v1/exec", ["machine": .string(common.rawValue)], bearer: firing).status == .forbidden)
+        #expect(try await harness.post("/v1/exec", ["machine": .string(hers.rawValue), "script": "s1"], bearer: firing).status == .notFound)
+        let minted = try await harness.post("/v1/exec", ["machine": .string(common.rawValue), "script": "s1"], bearer: firing)
+        #expect(minted.status == .ok)
+        let id = try JSONValueDecoder().decode(ExecMintOutput.self, from: try #require(JSONValue.parse(try await minted.text()))).id
+        let record = try #require(try await harness.space.execRecord(id))
+        #expect(record.caller == "nightly@shared")
+        #expect(record.session == nil)
+        #expect(record.group == .shared)
 
-      let own = try JSONValueDecoder().decode([ExecStatus].self, from: try #require(JSONValue.parse(try await harness.get("/v1/exec", bearer: firing).text())))
-      #expect(own.map(\.id) == [id])
-      #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: firing).status == .ok)
-      let session = try await harness.store.createSession(
-        group: .shared, title: "agent", kind: .agent, createdBy: "owner",
-        executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
-      )
-      #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: tokens.sessionToken(session)).status == .notFound)
-      let other = tokens.firingToken(Observer(group: .shared, name: "other", firing: "f2"))
-      #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: other).status == .notFound)
+        let own = try JSONValueDecoder().decode([ExecStatus].self, from: try #require(JSONValue.parse(try await harness.get("/v1/exec", bearer: firing).text())))
+        #expect(own.map(\.id) == [id])
+        #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: firing).status == .ok)
+        let session = try await harness.store.createSession(
+          group: .shared, title: "agent", kind: .agent, createdBy: "owner",
+          executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
+        )
+        #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: tokens.sessionToken(session)).status == .notFound)
+        let other = tokens.firingToken(Observer(group: .shared, name: "other", firing: "f2"))
+        #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: other).status == .notFound)
+      }
     }
   }
 }

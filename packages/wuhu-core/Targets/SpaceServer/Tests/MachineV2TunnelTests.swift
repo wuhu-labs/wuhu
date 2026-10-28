@@ -74,7 +74,7 @@ import Testing
     guard case let .response(replayed) = try await f.connect(challenge, machines: [f.machine.id.rawValue]) else { Issue.record("replayed challenge accepted"); return }
     #expect(replayed.status == .unauthorized)
     let v1 = try await f.challenge()
-    guard case let .response(wrongDomain) = try await f.connect(v1, machines: [f.machine.id.rawValue], payload: MachineConnect.signingPayload(challenge: v1)) else { Issue.record("v1 signature accepted"); return }
+    guard case let .response(wrongDomain) = try await f.connect(v1, machines: [f.machine.id.rawValue], payload: Data("wuhu-machine-connect:\(v1)".utf8)) else { Issue.record("v1 signature accepted"); return }
     #expect(wrongDomain.status == .unauthorized)
     guard case let .response(wrongMachine) = try await f.connect(try await f.challenge(), machines: ["mc_zzzzzzzz"]) else { Issue.record("wrong credential accepted"); return }
     #expect(wrongMachine.status == .unauthorized)

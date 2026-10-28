@@ -49,20 +49,15 @@ struct Executor {
     case let .shareLogin(ttl):
       try await self.shareLogin(ttl: ttl)
     case let .machineV2Add(name, group):
-      try await self.machineAdd(name: name, group: group, v2: true)
-    case let .machineAdd(name, group, scope):
-      try await self.machineAdd(name: name, group: group, scope: scope)
-    case let .machineJoin(server, fingerprint, name):
-      try await self.machineJoin(server: server, fingerprint: fingerprint, name: name)
-    case .machineRun:
-      await self.finishWalletAnnouncement()
-      try await self.machineRun()
+      try await self.machineAdd(name: name, group: group)
     case .machineList:
       try await self.machineList()
     case let .machineName(machine, name):
       try await self.machineName(machine: machine, name: name)
     case let .machineRotate(id):
       try await self.machineRotate(id: id)
+    case let .machineDelete(id):
+      try await self.machineDelete(id: id)
     case let .machineRevoke(id):
       try await self.machineRevoke(id: id)
     case let .machineMove(machine, group):

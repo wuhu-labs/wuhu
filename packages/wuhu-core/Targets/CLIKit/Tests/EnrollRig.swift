@@ -11,7 +11,7 @@ import Scratch
 import ServeNIO
 import ServeTLS
 import SpaceCore
-import SpaceServer
+@testable import SpaceServer
 import Synchronization
 import Testing
 
@@ -115,7 +115,7 @@ struct EnrollRig {
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 43))
     } operation: {
       let hub = MachineHub(space: space)
-      return SpaceServer.handler(space: space, hub: hub, origin: origin, fingerprint: fingerprint, dev: dev)
+      return SpaceServer.configuredHandler(space: space, hub: hub, origin: origin, fingerprint: fingerprint, dev: dev, machineV2Hub: MachineV2Hub(space: space))
     }
     let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity, upgrading: handler)
     do {

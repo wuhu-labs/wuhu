@@ -115,31 +115,6 @@ private func makeExecSpace() throws -> Space {
     #expect(try await space.execRecord(cancelled.id)?.terminal == .exited(code: 3))
   }
 
-  @Test func reapedExecsQueueTheirKillForTheMachine() async throws {
-    let space = try makeExecSpace()
-    let machine = try await space.addMachine(name: "box").id
-
-    let record = try await space.mintExec(machine: machine)
-    try await space.finishExec(record.id, .reaped)
-    #expect(try await space.pendingKills(machine: machine).map(\.id) == [record.id])
-
-    try await space.markKillDelivered(record.id)
-    #expect(try await space.pendingKills(machine: machine).isEmpty)
-  }
-
-  // A machine-lost exec may still run on the box; the hub decides at connect
-  // whether a caller resumes it or it gets the kill.
-  @Test func machineLostExecsQueueTheirKillToo() async throws {
-    let space = try makeExecSpace()
-    let machine = try await space.addMachine(name: "box").id
-
-    let lost = try await space.mintExec(machine: machine)
-    try await space.finishExec(lost.id, .machineLost)
-    let exited = try await space.mintExec(machine: machine)
-    try await space.finishExec(exited.id, .exited(code: 0))
-    #expect(try await space.pendingKills(machine: machine).map(\.id) == [lost.id])
-  }
-
   @Test func scriptOwnersSurviveOnlyUntilTheyAreTaken() async throws {
     let space = try makeExecSpace()
     let machine = try await space.addMachine(name: "box").id

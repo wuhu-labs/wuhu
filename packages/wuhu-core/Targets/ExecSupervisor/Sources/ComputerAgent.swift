@@ -17,12 +17,10 @@ import DeploymentAdmin
 import Fetch
 import struct Logging.Logger
 import enum OperationProtocol.ComputerKindSchemas
-import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import struct OperationRuntime.AnyOperationKind
 import class OperationRuntime.OperationAgent
 import typealias Serve.Handler
-import class ServeNIO.ServeNIOServer
 import Synchronization
 
 /// Why an agent stops serving its machine. Either way every running exec is stopped and every adopted supervisor retired; each worker exits once its receipts lapse.
@@ -36,46 +34,18 @@ public enum SupervisorRetirement: Sendable, Equatable {
 }
 
 extension ExecSupervisor {
-  /// Runs the installed agent. `serve` gets the agent's handler, whether the server acknowledged a leave, and `retire`, which the
-  /// caller invokes when the server says the machine is revoked or unknown. A successful local leave retires the supervisors as a turn-off.
   public static func runComputerAgent(
     machine: String,
     operationsDirectory: String,
-    controlSocket: String,
     executable: String,
-    left: @escaping @Sendable () throws -> Void = {},
-    serve: @escaping @Sendable (@escaping Handler, @escaping @Sendable () async -> Bool, @escaping @Sendable (SupervisorRetirement) async -> Void) async throws -> Void,
+    serve: @escaping @Sendable (@escaping Handler, @escaping @Sendable (SupervisorRetirement) async -> Void) async throws -> Void,
   ) async throws {
-    guard controlSocket.hasPrefix("/"), controlSocket.utf8.count < 104 else { throw OperationError(.invalidConfiguration) }
-    var state = stat()
-    let parent = URL(fileURLWithPath: controlSocket).deletingLastPathComponent().path
-    guard lstat(parent, &state) == 0, state.st_uid == getuid(), state.st_mode & 0o777 == 0o700 else { throw OperationError(.invalidConfiguration) }
     try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: .local, kinds: [], disclaimResponsibility: boxAgentDisclaimsResponsibility()) { agent, workers in
-      var state = stat()
-      if lstat(controlSocket, &state) == 0 {
-        guard state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK, unlink(controlSocket) == 0 else { throw OperationError(.invalidConfiguration) }
-      }
-      let server = try await ServeNIOServer.bind(unixDomainSocketPath: controlSocket, handler: agent.controlHandler(afterLeave: {
-        // The leave is recorded before the workers retire, so a restart after any crash stays left; the workers retire either way.
-        let recorded = Result { try left() }
-        _ = await workers.retire(.turnedOff)
-        try recorded.get()
-      }))
-      guard chmod(controlSocket, 0o600) == 0 else { await server.shutdown(); throw OperationError(.invalidConfiguration) }
-      defer { _ = unlink(controlSocket) }
-      do {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-          group.addTask { await server.runUntilCancelled() }
-          group.addTask { try await serve(agent.handler, { await agent.leaveAcknowledged }, { _ = await workers.retire($0) }) }
-          do { _ = try await group.next() }
-          catch { await server.shutdown(); group.cancelAll(); throw error }
-          await server.shutdown(); group.cancelAll()
-        }
-      } catch { await server.shutdown(); throw error }
+      try await serve(agent.handler, { _ = await workers.retire($0) })
     }
   }
 
-  /// Holds the exclusive lock on `operationsDirectory`, recovers its exec workers and runs the composed agent for the duration of `body`. The caller serves `agent.handler` and calls `agent.leave()` itself; no control socket is opened.
+  /// Holds the exclusive lock on `operationsDirectory`, recovers its exec workers and runs the composed agent for the duration of `body`. The caller serves `agent.handler`; no control socket is opened.
   ///
   /// When the machine stops serving, the body calls the second argument, `retire`, before it returns. It waits at most ten seconds for the stopped execs' verdicts.
   /// After a revocation the machine's private directory, the parent of `operationsDirectory`, is removed once the lock is released.
@@ -151,25 +121,6 @@ func removeMachineDirectory(operationsDirectory: String) {
   var state = stat()
   guard directory != "/", lstat(directory, &state) == 0, state.st_mode & S_IFMT == S_IFDIR, state.st_uid == getuid(), state.st_mode & 0o077 == 0 else { return }
   try? FileManager.default.removeItem(atPath: directory)
-}
-
-extension ComputerAgent {
-  nonisolated var controlHandler: Handler { controlHandler(afterLeave: {}) }
-
-  /// `PUT /leave`; `afterLeave` runs once the leave has succeeded, before the reply, and its failure fails the reply.
-  nonisolated func controlHandler(afterLeave: @escaping @Sendable () async throws -> Void) -> Handler {
-    { request in
-      do {
-        guard request.method == .put, request.url.path == "/leave" else { throw OperationError(.invalidInput) }
-        try await self.leave()
-        try await afterLeave()
-        return try .json(true)
-      } catch {
-        let error = error as? OperationError ?? .init(.supervisorUnavailable)
-        return try! .json(ErrorEnvelope(error), status: .init(code: error.statusCode))
-      }
-    }
-  }
 }
 
 func boxAgentDisclaimsResponsibility(

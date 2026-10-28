@@ -1,3 +1,4 @@
+import enum ExecSupervisor.ExecSupervisor
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -37,8 +38,6 @@ extension CommandRunner {
       let enrollment = try MachineV2Home.locate(environment: self.environment, machine: action.machine)
       _ = try enrollment.load()
       _ = try enrollment.loadKey()
-      // Installing is the person putting this machine back on: a recorded leave no longer holds.
-      try enrollment.clearLeft()
       let candidate = URL(fileURLWithPath: binary, relativeTo: URL(fileURLWithPath: self.currentDirectory)).standardizedFileURL
       guard case .upgrade = action else { try await installer.install(candidate: candidate); break }
       // Upgrade keeps the installed service definition as it is, hand edits included; only install writes one.
@@ -48,9 +47,13 @@ extension CommandRunner {
       }
     case .rollback: try await installer.rollback()
     case .uninstall:
-      try await installer.uninstall {
-        try await MachineV2Runtime.leaveForUninstall(home: MachineV2Home(root: home.appendingPathComponent(".wuhu/machine-v2"), machine: action.machine))
-      }
+      let enrollment = MachineV2Home(root: home.appendingPathComponent(".wuhu/machine-v2"), machine: action.machine)
+      try await installer.uninstall(revoke: {
+        try await MachineV2Runtime.revoke(home: enrollment, fetch: self.fetch)
+      }, stop: {
+        do { try await ExecSupervisor.stopInstalled(operationsDirectory: enrollment.operationsDirectory.path) }
+        catch { throw MachineV2RuntimeError(.localStopFailed, message: "Cannot stop install supervisors: \(error)") }
+      })
     }
     await self.stdout("machine-v2 \(action.machine): service updated\n")
   }

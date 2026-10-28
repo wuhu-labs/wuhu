@@ -251,12 +251,14 @@ an enrolled device and a pinned space; its link dies at first use or after
 ## Machines, exec, secrets
 
 ```bash
-wuhu machine add [--name N] [--group G] # prints id + join token (shown ONCE)
-wuhu machine join <server-url> [fingerprint] [--name N] < token   # on the box; token from stdin, never argv
-wuhu machine run                    # on the box, foreground
+wuhu machine-v2 add --name N [--group G] # prints id + join token (shown ONCE)
+wuhu machine-v2 join <server-url> [fingerprint] < token   # on the box; token from stdin, never argv
+wuhu machine-v2 install <id> --binary <signed-wuhu> # install the service on the box
+wuhu machine-v2 run <id>             # foreground instead of the service
 wuhu machine list                   # <name|-> <id> <attached|detached>
 wuhu machine name <machine> <name>  # rename; the mc_ id never moves
 wuhu machine rotate|revoke <machine>
+wuhu machine delete <machine>       # human group admin: remove identity, credentials, v2 state and notes; free names
 wuhu machine move <machine> --group <group>   # needs an admin of both groups
 wuhu exec --cwd machines://<machine>/tmp [--secret ENV=NAME] [--timeout S] [--max-output N] -- ls -la
 wuhu ps
@@ -265,9 +267,9 @@ wuhu secret set NAME < value             # the acting group's secret, for run_sc
 wuhu secret list|remove [NAME]
 ```
 
-A machine belongs to one group: `machine add` puts it in your personal group without an explicit group flag; `machine add --group G` (or global `--group G machine add`) sets only the registration target, needs an admin of G but not membership (`403 adminRequired`, `404 unknownGroup`), and verifies the server echoed G (otherwise fails with an upgrade/move hint). Environment and folder groups do not set the target. Only sessions and people acting in a group that reads the machine's group see or use it. `machine move` hands it to another group (`--group shared` makes it usable from every group that reads shared). Secrets are per group too: `wuhu --group <g> secret …` works on that group's; setting needs an admin of it, removing a human admin. `exec --secret ENV=NAME` takes NAME from the group the machine belongs to, not the one you act in: the value rides the exec start, the machine masks it as `***`, and a name that group lacks fails before anything runs (`wuhu: no secret NAME in group G`, exit 127). Machines keep no secrets of their own.
+A machine belongs to one group: `machine-v2 add --name N` puts it in your personal group without an explicit group flag; `machine-v2 add --name N --group G` (or global `--group G machine-v2 add --name N`) sets only the registration target, needs an admin of G but not membership (`403 adminRequired`, `404 unknownGroup`), and verifies the server echoed G (otherwise fails with an upgrade/move hint). Environment and folder groups do not set the target. Only sessions and people acting in a group that reads the machine's group see or use it. `machine move` hands it to another group (`--group shared` makes it usable from every group that reads shared). Secrets are per group too: `wuhu --group <g> secret …` works on that group's; setting needs an admin of it, removing a human admin. `exec --secret ENV=NAME` takes NAME from the group the machine belongs to, not the one you act in: the value rides the exec start, the machine masks it as `***`, and a name that group lacks fails before anything runs (`wuhu: no secret NAME in group G`, exit 127). Machines keep no secrets of their own.
 
-`<machine>` is the machine's name or its `mc_` id — every machine verb and route takes either, `exec --cwd` included. `machine join` claims `--name` (default: the box's hostname, suffixed until free — `mini`, `mini-2`, …) only when the machine is still unnamed; a named machine keeps its name, so renaming is `machine name` alone.
+`<machine>` is the machine's name or its `mc_` id for shared record/admin verbs and machine paths, `exec --cwd` included. Choose the name at registration with `machine-v2 add --name N`; rename with `machine name`. Enrollment and service state live under `~/.wuhu/machine-v2/<id>/`. Legacy `machine add`, `machine join` and `machine run` are removed; register and enroll with `machine-v2`, not a fallback transport.
 
 `exec` runs argv directly (no shell) and is pipe-clean: command stdout/stderr
 map byte-exactly to local stdout/stderr, diagnostics go to stderr. Exit codes

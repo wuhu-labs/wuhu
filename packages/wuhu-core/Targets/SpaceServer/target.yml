@@ -81,7 +81,6 @@ tests:
     - OperationRuntime
     - ExecSupervisor
     - MachineChannel
-    - MachineAgent
     - ComputerFiles
     - SessionDomain
     - SessionTools

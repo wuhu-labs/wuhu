@@ -125,26 +125,6 @@ func serveEcho(_ endpoint: ChannelEndpoint, stdinLog: Box<[ExecID: [UInt8]]>? = 
   }
 }
 
-func serveRequestsOK(_ endpoint: ChannelEndpoint) async {
-  for await request in endpoint.inboundRequests {
-    switch request {
-    case let .vfs(request): await endpoint.respond(.vfs(VFSResponse(id: request.id, result: .ok)))
-    }
-  }
-}
-
-// RPCs fail fast with .severed while an endpoint is unbound; tests that race
-// the first bind retry through it.
-func vfsRetryingUntilBound(_ endpoint: ChannelEndpoint, _ op: VFSOp) async throws -> VFSResult {
-  while true {
-    do {
-      return try await endpoint.vfs(op)
-    } catch ChannelError.severed {
-      await Task.yield()
-    }
-  }
-}
-
 final class TapTransport: FrameTransport, Sendable {
   let base: InMemoryTransport
   let sent: Box<[Frame]>

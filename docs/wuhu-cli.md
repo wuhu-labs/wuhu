@@ -118,13 +118,14 @@ A handle is display only: it never logs in, never appears in auth, and the perso
 
 ## Machines, exec, secrets
 
-`machine add --group G` and `wuhu --group G machine add` register directly in G, needing an admin of it but not membership. Both flags select only the registration target, not the acting group. Without an explicit flag, registration uses your personal group; `WUHU_GROUP` and folder settings do not choose the target. The CLI verifies the server's echoed placement and fails with an upgrade/machine-move remedy if an older server ignores the request or echoes another group. The machine id and join token are still printed for recovery.
+`machine-v2 add --name N --group G` and `wuhu --group G machine-v2 add --name N` register directly in G, needing an admin of it but not membership. Both flags select only the registration target, not the acting group. Without an explicit target, the server uses the acting group and requires admin rights there. `WUHU_GROUP` and folder settings select the acting group, not an explicit registration target. The CLI verifies the server's echoed placement and fails with an upgrade/machine-move remedy if an older server ignores the request or echoes another group. The machine id and join token are still printed for recovery.
 
 | Verb | Purpose |
 | --- | --- |
-| `wuhu machine add [--name N] [--group G]` | Mint a machine in the pinned space; prints id, one-time join token (once), and, when the server runs its generated certificate, that certificate's fingerprint. |
-| `wuhu machine join <server-url> [fingerprint] [--name N] < token` | Box side: record the fingerprint (if given) into user-level trust, enroll this box's own machine key by consuming the token (read from stdin, never argv), persist the agent config. The box claims `--name`, defaulting to its hostname, if the machine is still unnamed; the server suffixes it until free (`mini`, `mini-2`, …). A machine that already has a name keeps it — rename with `wuhu machine name`, never by rejoining. |
-| `wuhu machine run` | Box side: run the machine agent in the foreground (dial loop with signed challenge handshakes, stderr logs). |
+| `wuhu machine-v2 add --name N [--group G]` | Mint a machine in the pinned space; prints id, one-time join token (once), and, when the server runs its generated certificate, that certificate's fingerprint. |
+| `wuhu machine-v2 join <server-url> [fingerprint] < token` | Box side: pin the supplied fingerprint before consuming the token, enroll the box's own key and persist its configuration. The name was chosen at registration; rename with `machine name`. Token comes from stdin, never argv. |
+| `wuhu machine-v2 install <id> --binary <signed-wuhu>` | Install the enrolled agent as a launchd service on macOS or a systemd user service on Linux. |
+| `wuhu machine-v2 run <id>` | Run the enrolled agent in the foreground instead of installing its service. |
 | `wuhu machine list` | List machines: `<name\|-> <id> <attached\|detached>`. |
 | `wuhu machine name <machine> <name>` | Rename a machine; needs an admin of the machine's group. Names are lowercased, unique per space, and match `[a-z0-9][a-z0-9.-]{0,62}`. |
 | `wuhu machine rotate <machine>` | Kick the machine's enrolled key (dropping any live connection) and mint a fresh join token; rejoin the box with it. |
@@ -137,7 +138,7 @@ A handle is display only: it never logs in, never appears in auth, and the perso
 | `wuhu ps` | List live execs: `<exec-id> <machine-id> <started> <command>`. |
 | `wuhu kill <exec-id>` | Kill an exec; the agent kills the process group it owns. |
 
-A `<machine>` argument is the machine's name or its `mc_` id — every machine verb, `--cwd` included, takes either, and the id never changes under a rename.
+Shared record/admin verbs and `--cwd` accept the machine's name or stable `mc_` id. Box-side `machine-v2` lifecycle commands use the enrolled id. Legacy `machine add`, `machine join` and `machine run` are removed.
 
 ### Exec
 
@@ -230,16 +231,7 @@ never overwritten.
 
 ## Machine agent state
 
-The box side (`wuhu machine join` / `wuhu machine run`) persists its state
-under `~/.wuhu/machine`: `agent.json` (server URL, machine id — file mode
-0600), `machine.key` (the box's ed25519 machine credential, 0600 in the 0700
-directory, distinct from any device key under `~/.wuhu/keys/`) and `state/`
-(the agent's working state; a `vault.json` there from an agent before group
-secrets is no longer read). Server trust
-is not part of this state; it lives in the user-level `~/.wuhu/trust.json`
-shared with every other client on the box. This is the one
-deliberate exception to the wallet rule below: agent identity is per box, not
-per checkout.
+The box side (`machine-v2 join`, `run` and `install`) stores each identity under `~/.wuhu/machine-v2/<machine-id>/`: `config.json` (server, id and name), `machine.key` (its own credential, distinct from device keys), `operations/` and installed binaries under `bin/`. The directory and key are owner-private. Multiple registered identities have separate homes. Server trust remains in the shared user-level `~/.wuhu/trust.json`, not in a checkout wallet.
 
 ## Wallet
 
@@ -249,7 +241,7 @@ The CLI wallet is strictly a `.wuhu` directory found by walking up from the curr
 no space pinned; run: wuhu use <host:port>
 ```
 
-The wallet intentionally never lives in `~/.wuhu`: that directory is user config — the server trust store (below), the device keys under `~/.wuhu/keys` (above), and the machine agent state under `~/.wuhu/machine` — never a `use` binding or identity. `WUHU_CONFIG_DIR` redirects the whole user-config directory (trust store and machine state alike); an empty `WUHU_CONFIG_DIR` or empty/unset `HOME` is a loud error, never a silent fallback.
+The wallet intentionally never lives in `~/.wuhu`: that directory is user config — the server trust store (below), the device keys under `~/.wuhu/keys` (above), and the machine agent state under `~/.wuhu/machine-v2/<machine-id>/` — never a `use` binding or identity. `WUHU_CONFIG_DIR` redirects user-level trust and device configuration; v2 machine homes remain under `$HOME/.wuhu/machine-v2/`. An empty configuration directory or missing required `HOME` is an error, never a silent fallback.
 
 Device bearer assertions are cached owner-only in `.wuhu/assertions.json`. Equivalent HTTPS spellings (`space.example`, `space.example:443`, `https://space.example`) share one credential; legacy duplicates merge to the freshest valid assertion for the enrolled space. Different ports and HTTP remain separate. Cache writers serialize through an owner-only `.wuhu/.assertions.lock` so simultaneous commands preserve each other's server credentials. The JSON format is unchanged; when rolling back to an older CLI, use the canonical `host:port` wallet pin to reuse the migrated entry (older CLIs cannot look up removed aliases). Local expiry normally re-mints automatically. If the server explicitly rejects an assertion as expired, the command fails without replay, names that server, and tells you to re-authenticate there with `wuhu login < invite-link` (obtain a new link with `wuhu share-login` on an enrolled device).
 
@@ -277,12 +269,12 @@ no flag skips verification. `wuhu untrust <host:port>` forgets the record.
 `wuhu login` records the fingerprint its invite link carries, so a `use`
 after it needs no `--pin`. Machine agents resolve trust from the same store with the same
 rules — a recorded pin means a pinned dial, otherwise system trust — so
-`machine add` prints the server certificate fingerprint next to the join
-token, and `machine join <server-url> <fingerprint> < token` records it
+`machine-v2 add` prints the server certificate fingerprint next to the join
+token, and `machine-v2 join <server-url> <fingerprint> < token` records it
 before the first dial (trust rides the token's own out-of-band channel; no
-first-connect window). Without a fingerprint, `machine join` requires the
+first-connect window). Without a fingerprint, `machine-v2 join` requires the
 server to pass system trust unless the box already pins the host. Re-enrolling
-replaces the pin: a `login` or `machine join` with a fingerprint records it
+replaces the pin: a `login` or `machine-v2 join` with a fingerprint records it
 over the old one, and one without drops the host's pin once the server passes
 system trust; when it does not, the existing pin carries the enrollment and
 stays.
@@ -310,7 +302,7 @@ A selected group is never dropped: when `GET /v1/server` answers without `groups
 
 An exec a session runs — its `exec` tool or a `run_script` spawn — is started with `WUHU_EXEC=1`, `WUHU_TOKEN` (a per-exec token, masked in the exec's output, dead once the exec ends, its timeout passes or the server restarts) and `WUHU_SPACE_URL`. The server owns those three names: it strips them from any caller's `env` and `secrets`, and the machine agent unsets them for every other exec. The agent also unsets a `WUHU_IDENTITY` or `WUHU_GROUP` it inherited, unless the exec itself sets it.
 
-With `WUHU_EXEC` set (any non-empty value) and `WUHU_IDENTITY` unset, empty or `session`, the CLI acts as that session on that space, in its group. `--group` and `WUHU_GROUP` are refused. It reads no wallet and no device key — a cwd pinned elsewhere changes nothing, and an address on another server is refused. Read-before-write tokens and observe cursors live in a scratch folder under the temp directory keyed by the token. The server applies the session's own rules (home rule, ancestry, child-only create, own execs only). The home rule covers every verb that writes: the file verbs, `checkout`, `table create|alter|mutate` and `new`, which checks its `in` folder, else its template's, where the instance lands. Verbs a session lacks — `user add|invite|admin|list|handle|profile|remove`, `key`, `auth`, `machine add|join|run|rotate|revoke`, `models update`, `use`, `trust`, `untrust`, `login`, `share-login`, `group use`, `upgrade` (all but `--check`, since on a server's host it swaps the binary the server runs) — are refused locally with `not available to a session; set WUHU_IDENTITY=wallet to act as the wallet's owner`. Routes the server keeps for people return its bare `not available to a session` refusal. `serve`, `upgrade --check` and `user add|reset --space` open no wallet and act on no space, so they run. `send` refuses `--wait` and `--attach`. A missing `WUHU_TOKEN` or `WUHU_SPACE_URL`, or a token the server rejects, is an error saying which — never a fallback to the wallet.
+With `WUHU_EXEC` set (any non-empty value) and `WUHU_IDENTITY` unset, empty or `session`, the CLI acts as that session on that space, in its group. `--group` and `WUHU_GROUP` are refused. It reads no wallet and no device key — a cwd pinned elsewhere changes nothing, and an address on another server is refused. Read-before-write tokens and observe cursors live in a scratch folder under the temp directory keyed by the token. The server applies the session's own rules (home rule, ancestry, child-only create, own execs only). The home rule covers every verb that writes: the file verbs, `checkout`, `table create|alter|mutate` and `new`, which checks its `in` folder, else its template's, where the instance lands. Verbs a session lacks — `user add|invite|admin|list|handle|profile|remove`, `key`, `auth`, `machine-v2 add|join|run|install` and `machine rotate|revoke`, `models update`, `use`, `trust`, `untrust`, `login`, `share-login`, `group use`, `upgrade` (all but `--check`, since on a server's host it swaps the binary the server runs) — are refused locally with `not available to a session; set WUHU_IDENTITY=wallet to act as the wallet's owner`. Routes the server keeps for people return its bare `not available to a session` refusal. `serve`, `upgrade --check` and `user add|reset --space` open no wallet and act on no space, so they run. `send` refuses `--wait` and `--attach`. A missing `WUHU_TOKEN` or `WUHU_SPACE_URL`, or a token the server rejects, is an error saying which — never a fallback to the wallet.
 
 Set `WUHU_IDENTITY=wallet` in the exec's `env` to deliberately act as the wallet's owner. The CLI ignores the session token and URL and finds the wallet from cwd up, so it can act on another space the wallet pins. It prints `acting as <persona> (wallet)` on stderr (`anonymous` for a request without wallet credentials, `the local user` for local-only commands). The announcement uses the command's actual target, not an old pin; repinning to a new space does not look up the old space's persona. Normal group selection applies: `--group`, then `WUHU_GROUP`, then the wallet's configured group. A malformed wallet or failed identity lookup is an error, not a fallback to the session. Use this for another space, or for verbs only the wallet's owner has when that person asked for it.
 

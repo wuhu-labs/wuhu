@@ -91,7 +91,7 @@ import Testing
     try await withSessionDeps {
       let w = try await world()
       let session = try await w.harness.store.createSession(group: .shared, title: "Creator", kind: .agent, createdBy: "person", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-      let machine = try await w.harness.space.addMachine(name: "box")
+      let machine = (try await w.harness.space.addMachineV2(name: "box")).machine
       let exec = try await w.harness.space.mintExec(machine: machine.id, caller: session.rawValue)
       let bearer = w.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
       var request = Request(url: URL(string: "https://space.test/v1/groups")!, method: .post, body: try .json(["alias": "research_notes", "owner": w.account.rawValue]))

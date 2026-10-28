@@ -5,6 +5,9 @@
 #include <spawn.h>
 typedef struct { int pid; int input; int output; int error; } exec_child;
 int exec_disclaim_responsibility_available(void);
+int exec_process_birth(int pid, uint64_t *birth);
+void exec_run_child(char *const arguments[]);
+int exec_spawn_with_receipt(char *const argv[], char *const env[], const char *cwd, int disclaim_responsibility, int receipt, int publication, exec_child *child);
 int exec_spawn(char *const argv[], char *const env[], const char *cwd, int disclaim_responsibility, exec_child *child);
 typedef int (*exec_disclaim_setter)(posix_spawnattr_t *, int);
 int exec_spawn_with_disclaimer(char *const argv[], char *const env[], const char *cwd, int disclaim_responsibility, exec_disclaim_setter setter, exec_child *child);

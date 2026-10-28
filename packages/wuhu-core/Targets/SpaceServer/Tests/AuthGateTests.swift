@@ -29,7 +29,7 @@ import Testing
       let client = HTTPClient(eventLoopGroupProvider: .singleton)
       do {
         let request = Request(
-          url: try #require(URL(string: "http://127.0.0.1:\(port)/v1/machine")),
+          url: try #require(URL(string: "http://127.0.0.1:\(port)/v1/machine-v2")),
           method: .post,
           body: .bytes(Data(#"{"name":"box"}"#.utf8), contentType: "application/json"),
         )

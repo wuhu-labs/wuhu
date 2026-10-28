@@ -1,17 +1,20 @@
 import Clocks
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import MachineChannel
 import MachineContract
 import Serve
+import SessionDomain
 import SpaceCore
 @testable import SpaceServer
 import Testing
 
-// The hub hands a session's exec its credential on the way to a real agent;
-// a human's exec gets none, and nobody can plant the names themselves.
 @Suite(.deterministicDependencies) struct SessionExecEnvironmentTests {
   static let probe = ["sh", "-c", "printf '%s|%s|%s|%s' \"${WUHU_EXEC-unset}\" \"${WUHU_SPACE_URL-unset}\" \"${WUHU_TOKEN-unset}\" \"${#WUHU_TOKEN}\""]
 
@@ -19,93 +22,100 @@ import Testing
     let space = try makeMachineSpace()
     let tokens = ExecTokens(spaceURL: "https://space.test:5530")
     let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
-    let (machine, key) = try await addMachine(server)
+    let (machine, _) = try await addMachine(server)
+    let sessionID = try await makeEnvironmentSession(space)
     let forged = StringMap(["WUHU_EXEC": "0", "WUHU_TOKEN": "forged", "WUHU_SPACE_URL": "https://elsewhere"])
 
-    try await runScenario(server: server) { dialer, host in
-      dialer.offer(try await connectMachine(server, key: key))
+    try await withMixedExecAgents(server, machines: [machine]) { _ in
+      try await withThrowingTaskGroup(of: Void.self) { tasks in
+        let host = ChannelEndpoint()
 
-      let record = try await space.mintExec(machine: machine, caller: "orchestrator")
-      await server.hub.noteMinted(record)
-      host.attach(try await connectCaller(server, exec: record.id))
-      let session = try await collectExec(await host.endpoint.startExec(
-        ExecStart(id: record.id, cwd: "/", command: Self.probe, env: forged),
-      ))
-      #expect(String(decoding: session.stdout, as: UTF8.self) == "1|https://space.test:5530|***|68")
-      #expect(session.exit == .exited(code: 0))
-      #expect(try await space.execRecord(record.id)?.command.contains("wst_") == false)
+        let record = try await space.mintExec(machine: machine, caller: sessionID.rawValue)
+        await server.hub.noteMinted(record)
+        let transport = try await connectExecCaller(record.id, space: space, hub: server.hub)
+        tasks.addTask { await host.run(transport) }
+        defer { tasks.cancelAll() }
+        let session = try await collectExec(await host.startExec(
+          ExecStart(id: record.id, cwd: "/", command: Self.probe, env: forged),
+        ))
+        #expect(String(decoding: session.stdout, as: UTF8.self) == "1|https://space.test:5530|***|68")
+        #expect(session.exit == .exited(code: 0))
+        #expect(try await space.execRecord(record.id)?.command.contains("wst_") == false)
 
-      let human = try await mintExec(server, machine: machine)
-      let other = EndpointHost()
-      Task { await other.run() }
-      other.attach(try await connectCaller(server, exec: human))
-      let plain = try await collectExec(await other.endpoint.startExec(
-        ExecStart(id: human, cwd: "/", command: Self.probe, env: forged),
-      ))
-      #expect(String(decoding: plain.stdout, as: UTF8.self) == "unset|unset|unset|0")
+        let human = try await mintExec(server, machine: machine)
+        let other = ChannelEndpoint()
+        let humanTransport = try await connectExecCaller(human, space: space, hub: server.hub)
+        tasks.addTask { await other.run(humanTransport) }
+        let plain = try await collectExec(await other.startExec(
+          ExecStart(id: human, cwd: "/", command: Self.probe, env: forged),
+        ))
+        #expect(String(decoding: plain.stdout, as: UTF8.self) == "unset|unset|unset|0")
+      }
     }
   }
 
-  // The id-token pair rides in env and the masked secret values, so it reaches
-  // agents of any version; a caller's own values never pass.
   @Test func aSessionsExecGetsItsIDTokenCapabilityMaskedAndAHumansNone() async throws {
     let space = try makeMachineSpace()
     let tokens = ExecTokens(spaceURL: "https://space.test:5530")
     let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
-    let (machine, key) = try await addMachine(server)
+    let (machine, _) = try await addMachine(server)
     let probe = ["sh", "-c", "printf '%s|%s|%s' \"${WUHU_ID_TOKEN_URL-unset}\" \"${WUHU_ID_TOKEN_REQUEST-unset}\" \"${#WUHU_ID_TOKEN_REQUEST}\""]
+    let sessionID = try await makeEnvironmentSession(space)
     let forged = StringMap(["WUHU_ID_TOKEN_URL": "https://elsewhere", "WUHU_ID_TOKEN_REQUEST": "wit_forged"])
 
-    try await runScenario(server: server) { dialer, host in
-      dialer.offer(try await connectMachine(server, key: key))
+    try await withMixedExecAgents(server, machines: [machine]) { _ in
+      try await withThrowingTaskGroup(of: Void.self) { tasks in
+        let host = ChannelEndpoint()
 
-      let record = try await space.mintExec(machine: machine, caller: "orchestrator")
-      await server.hub.noteMinted(record)
-      host.attach(try await connectCaller(server, exec: record.id))
-      let session = try await collectExec(await host.endpoint.startExec(ExecStart(id: record.id, cwd: "/", command: probe, env: forged)))
-      #expect(String(decoding: session.stdout, as: UTF8.self) == "https://space.test:5530/v1/id-token|***|68")
-      #expect(session.exit == .exited(code: 0))
+        let record = try await space.mintExec(machine: machine, caller: sessionID.rawValue)
+        await server.hub.noteMinted(record)
+        let transport = try await connectExecCaller(record.id, space: space, hub: server.hub)
+        tasks.addTask { await host.run(transport) }
+        defer { tasks.cancelAll() }
+        let session = try await collectExec(await host.startExec(ExecStart(id: record.id, cwd: "/", command: probe, env: forged)))
+        #expect(String(decoding: session.stdout, as: UTF8.self) == "https://space.test:5530/v1/id-token|***|68")
+        #expect(session.exit == .exited(code: 0))
 
-      let human = try await mintExec(server, machine: machine)
-      let other = EndpointHost()
-      Task { await other.run() }
-      other.attach(try await connectCaller(server, exec: human))
-      let plain = try await collectExec(await other.endpoint.startExec(ExecStart(id: human, cwd: "/", command: probe, env: forged)))
-      #expect(String(decoding: plain.stdout, as: UTF8.self) == "unset|unset|0")
+        let human = try await mintExec(server, machine: machine)
+        let other = ChannelEndpoint()
+        let humanTransport = try await connectExecCaller(human, space: space, hub: server.hub)
+        tasks.addTask { await other.run(humanTransport) }
+        let plain = try await collectExec(await other.startExec(ExecStart(id: human, cwd: "/", command: probe, env: forged)))
+        #expect(String(decoding: plain.stdout, as: UTF8.self) == "unset|unset|0")
+      }
     }
   }
 
-  // The grant lives for the exec's own timeout, and losing the machine ends
-  // it even though a v1 exec may resume when the machine returns.
-  @Test func theIDTokenGrantFollowsTheExecTimeoutAndEndsWithTheMachine() async throws {
+  @Test func theIDTokenGrantFollowsTheExecTimeoutAndEndsWithTheExec() async throws {
     let space = try makeMachineSpace()
-    let clock = TestClock()
     let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-    let server = TestServer(space: space, clock: clock, tokens: tokens)
-    let (machine, key) = try await addMachine(server)
+    let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
+    let (machine, _) = try await addMachine(server)
+    let sessionID = try await makeEnvironmentSession(space)
 
-    try await runScenario(server: server) { dialer, host in
-      let machineSocket = try await connectMachine(server, key: key)
-      dialer.offer(machineSocket)
-      let record = try await space.mintExec(machine: machine, caller: "orchestrator")
+    try await withMixedExecAgents(server, machines: [machine]) { _ in
+      let record = try await space.mintExec(machine: machine, caller: sessionID.rawValue)
       await server.hub.noteMinted(record)
-      host.attach(try await connectCaller(server, exec: record.id))
+      let caller = ChannelEndpoint()
+      let outgoing = await caller.startExec(.init(id: record.id, cwd: "/", command: ["sh", "-c", "echo up; exec sleep 30"], timeout: 600))
       let started = Date()
-      let start = ExecStart(id: record.id, cwd: "/", command: ["sh", "-c", "echo up; exec sleep 30"], env: nil, secrets: nil, window: nil, maxOutput: nil, timeout: 600)
-      let outgoing = await host.endpoint.startExec(start)
-      for try await event in outgoing.events {
-        if case .output(.stdout, _, _) = event { break }
+      try await withThrowingTaskGroup(of: Void.self) { tasks in
+        let transport = try await connectExecCaller(record.id, space: space, hub: server.hub)
+        tasks.addTask { await caller.run(transport) }
+        defer { tasks.cancelAll() }
+        var events = outgoing.events.makeAsyncIterator()
+        _ = try await mixedExecOutput(&events, atLeast: 3)
+        let expiry = try #require(tokens.idTokens.expiry(of: record.id))
+        #expect(expiry >= started.addingTimeInterval(600) && expiry <= Date().addingTimeInterval(600))
+        try await server.hub.kill(record.id)
+        _ = try await mixedExecExit(&events)
+        #expect(try await realPollUntil { tokens.idTokens.expiry(of: record.id) == nil })
+        #expect(try await space.execRecord(record.id)?.terminal == .cancelled)
       }
-      let expiry = try #require(tokens.idTokens.expiry(of: record.id))
-      #expect(expiry >= started.addingTimeInterval(600) && expiry <= Date().addingTimeInterval(600))
-
-      machineSocket.close()
-      let revoked = try await realPollUntil {
-        await clock.advance(by: .seconds(61))
-        let terminal = try await space.execRecord(record.id)?.terminal
-        return tokens.idTokens.expiry(of: record.id) == nil && terminal == .machineLost
-      }
-      #expect(revoked, "machine loss must end the id-token grant")
     }
   }
+}
+
+private func makeEnvironmentSession(_ space: Space) async throws -> SessionDomain.SessionID {
+  try await space.sessions.createSession(group: .shared, title: "exec environment", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
 }

@@ -104,7 +104,7 @@ import Testing
       #expect(try await rig.harness.get(path, bearer: rig.credential.token).status == .ok)
       let session = try await rig.harness.get(path, bearer: rig.tokens.sessionToken(rig.session))
       #expect(session.status != .ok)
-      let machine = try await rig.harness.space.addMachine(name: "box")
+      let machine = (try await rig.harness.space.addMachineV2(name: "box")).machine
       let exec = try await rig.harness.space.mintExec(machine: machine.id, caller: rig.session.rawValue)
       let execBearer = rig.tokens.credential(session: rig.session, exec: exec.id, timeout: nil, now: Date()).token
       #expect(try await rig.harness.get(path, bearer: execBearer).status != .ok)

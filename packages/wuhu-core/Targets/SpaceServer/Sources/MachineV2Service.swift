@@ -116,7 +116,10 @@ actor MachineV2Service {
   private func recover() async {
     let pending: Set<GroupID>
     if let unrecovered { pending = unrecovered } else {
-      do { pending = try await space.machineV2RecoveryGroups() } catch { return }
+      do {
+        pending = try await space.machineV2RecoveryGroups()
+        for record in try await space.liveExecs() { noteMinted(record, space: space) }
+      } catch { return }
     }
     var left = pending
     for group in pending {
@@ -303,8 +306,7 @@ actor MachineV2Service {
           await groups[watched.group]?.forget(machine)
         }
         for (machine, group) in members where presence[machine] == nil {
-          let detached = try await space.machineV2DetachedMembers(group: group).contains(machine)
-          if let task = try? presenceScope.run("machine-presence", operation: { await self.watch(machine, group: group, detached: detached) }) {
+          if let task = try? presenceScope.run("machine-presence", operation: { await self.watch(machine, group: group) }) {
             presence[machine] = (group, task)
           }
         }
@@ -316,14 +318,12 @@ actor MachineV2Service {
 
   /// Describes the machine every third of its lease and records what that says about its presence. Every failure is this
   /// machine's alone: the loop retries, and only the presence evidence changes.
-  private func watch(_ machine: String, group: GroupID, detached: Bool) async {
+  private func watch(_ machine: String, group: GroupID) async {
     @Dependency(\.continuousClock) var clock
-    await watch(machine, group: group, detached: detached, clock: clock)
+    await watch(machine, group: group, clock: clock)
   }
 
-  private func watch(_ machine: String, group: GroupID, detached initiallyDetached: Bool, clock: some Clock<Duration>) async {
-    var detached = initiallyDetached
-    var leaveFailed = false
+  private func watch(_ machine: String, group: GroupID, clock: some Clock<Duration>) async {
     var lastAnswer = clock.now
     var lease = Duration.seconds(60)
     while !Task.isCancelled {
@@ -333,24 +333,9 @@ actor MachineV2Service {
           let description = try await operations.describe(machine)
           lastAnswer = clock.now
           lease = .milliseconds(description.limits.leaseMs)
-          if detached, !description.acceptingStarts {
-          } else if leaveFailed, !description.acceptingStarts {
-            try await space.recordMachineV2Presence(machine, group: group, state: .lost, reason: "leaveHandshakeFailed")
-          } else {
-            leaveFailed = false; detached = false
-            try await space.recordMachineV2Presence(machine, group: group, state: .attached, description: description)
-          }
-        } catch let error as OperationError where error.code == .leaving {
-          do {
-            try await operations.acknowledgeLeave(machine)
-            leaveFailed = false; detached = true
-            try await space.recordMachineV2Presence(machine, group: group, state: .detached, reason: "leaving")
-          } catch let failure as OperationError where failure.code != .storeUnavailable {
-            leaveFailed = true
-            try await space.recordMachineV2Presence(machine, group: group, state: .lost, reason: "leaveHandshakeFailed")
-          }
+          try await space.recordMachineV2Presence(machine, group: group, state: .attached, description: description)
         } catch let error as OperationError where Self.transient(error) {
-          if !detached, lastAnswer.duration(to: clock.now) >= lease {
+          if lastAnswer.duration(to: clock.now) >= lease {
             try await space.recordMachineV2Presence(machine, group: group, state: .lost, reason: "leaseSilence")
           }
         } catch let error as OperationError {

@@ -23,9 +23,9 @@ import Testing
     let space = try machineSpace()
     let key = SymmetricKey(size: .bits256)
     let store = try await space.machineV2Store(group: GroupID(rawValue: "shared"), key: key, problemsGroup: .shared)
-    try await verifyOperationStoreContract(store)
+    try await verifyOperationStoreContract(store, machine: try await storeMachine("phone", space: space))
     let owner = OperationOwner(scope: "restart", key: "one")
-    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/secret"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: ["path": "/secret"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     #expect(try await store.claim(owner, record: record).dispatch)
     let reopened = try await space.machineV2Store(group: GroupID(rawValue: "shared"), key: key, problemsGroup: .shared)
     #expect(try await reopened.lookup(owner)?.id == record.id)
@@ -48,7 +48,7 @@ extension MachineV2StoreTests {
     let key = SymmetricKey(size: .bits256)
     let space = try Space.open(file: url)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/private-secret-marker"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: ["path": "/private-secret-marker"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     _ = try await store.claim(.init(scope: "restart", key: "one"), record: record)
     var written = record
     let chunk = OutputChunk(sequence: 0, channel: "data", from: .zero, payload: .init(data: Data("private-output-marker".utf8)))
@@ -65,7 +65,7 @@ extension MachineV2StoreTests {
 
   @Test func atomicAdmissionAndOwnerUniqueness() async throws {
     let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
-    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     let dispatches = try await withThrowingTaskGroup(of: Bool.self) { group in
       for _ in 0 ..< 20 { group.addTask { try await store.claim(.init(scope: "race", key: "one"), record: record).dispatch } }
       var count = 0; for try await winner in group { if winner { count += 1 } }; return count
@@ -75,10 +75,10 @@ extension MachineV2StoreTests {
     // past it is refused by the buffer.
     let fits = record.description.limits.bufferBytes / record.reservation
     for index in 1 ..< fits {
-      let next = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: record.start, description: record.description)
+      let next = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: record.start, description: record.description)
       _ = try await store.claim(.init(scope: "race", key: String(index)), record: next)
     }
-    let past = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: record.start, description: record.description)
+    let past = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: record.start, description: record.description)
     await #expect { try await store.claim(.init(scope: "race", key: "past"), record: past) } throws: {
       ($0 as? OperationError)?.details?.object?["reason"] == "machineBufferBytes"
     }
@@ -92,7 +92,7 @@ extension MachineV2StoreTests {
     let key = SymmetricKey(size: .bits256)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read])
-    let damaged = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
+    let damaged = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
     _ = try await store.claim(.init(scope: "output", key: "damaged"), record: damaged)
     var written = damaged
     let chunk = OutputChunk(sequence: 0, channel: "data", from: .zero, payload: .init(data: Data("kept".utf8)))
@@ -103,7 +103,7 @@ extension MachineV2StoreTests {
     }
     await #expect { try await store.read(damaged.id) } throws: { ($0 as? OperationError)?.code == .storeUnavailable }
 
-    let earlier = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
+    let earlier = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
     _ = try await store.claim(.init(scope: "output", key: "earlier"), record: earlier)
     try await space.writer.write { db in
       let id = earlier.id.uuidString + "/data/0"
@@ -226,7 +226,7 @@ extension MachineV2StoreTests {
   @Test func independentOutputAndPendingInputBudgetsRoundTripTogether() async throws {
     let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
     let kind = KindDescriptor("duplex.v1", inputSchema: [:], resultSchema: [:], inputChannels: [.init("in", windowBytes: 65536)], outputChannels: [.init("out", windowBytes: 131_072)])
-    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "duplex.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [kind]))
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "duplex.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [kind]))
     _ = try await store.claim(.init(scope: "budgets", key: "one"), record: record)
     let bytes = Data(repeating: 42, count: 65536)
     var next = record
@@ -260,7 +260,7 @@ extension MachineV2StoreTests {
       var first: UUID?
       for index in 0 ..< 4100 {
         let id = UUID(); if first == nil { first = id }
-        let record = ClientRecord(id: id, correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
+        let record = ClientRecord(id: id, correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
         _ = try await store.claim(.init(scope: "lifetime", key: String(index)), record: record)
         var terminal = record
         terminal.snapshot = .init(operation: id, verdict: .init(.completed, result: .null), terminalToken: UUID(), finalOffsets: ["data": .init(rawValue: 1)], outputConsumed: true)
@@ -271,7 +271,7 @@ extension MachineV2StoreTests {
       let reservations = try await space.writer.read { db in try MachineV2OperationRow.all.fetchAll(db).reduce(0) { $0 + $1.reservedBytes } }
       #expect(reservations == 0)
       time.withLock { $0 = $0.addingTimeInterval(8 * 86400) }
-      let next = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
+      let next = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
       _ = try await store.claim(.init(scope: "lifetime", key: "after-retention"), record: next)
       #expect(try await store.live().count == 1)
       await #expect(throws: OperationError.self) { try await store.read(first!) }
@@ -280,7 +280,7 @@ extension MachineV2StoreTests {
 
   @Test func integralDoubleSurvivesEncryptedKeyReuse() async throws {
     let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
-    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: ["value": .number(4_294_967_296)]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: ["value": .number(4_294_967_296)]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     let owner = OperationOwner(scope: "numeric", key: "reuse")
     _ = try await store.claim(owner, record: record)
     #expect(try await store.claim(owner, record: record).dispatch == false)
@@ -321,9 +321,9 @@ extension MachineV2StoreTests {
     let first = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key, problemsGroup: .shared)
     let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: OperationLimits(), kinds: [ComputerKindSchemas.read])
-    func record() -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: "shared-machine", start: .init(kind: "read.v1", input: [:]), description: description) }
+    func record() async throws -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: try await storeMachine("shared_machine", space: space), start: .init(kind: "read.v1", input: [:]), description: description) }
     for n in 0 ..< 40 {
-      _ = try await (n.isMultiple(of: 2) ? first : second).claim(.init(scope: "script-\(n)", key: "start"), record: record())
+      _ = try await (n.isMultiple(of: 2) ? first : second).claim(.init(scope: "script-\(n)", key: "start"), record: try await record())
     }
   }
 
@@ -334,14 +334,14 @@ extension MachineV2StoreTests {
     var limits = OperationLimits(); limits.bufferBytes = 16 * 1024 * 1024
     let descriptor = KindDescriptor("large.v1", inputSchema: [:], resultSchema: [:], outputChannels: [.init("out", windowBytes: 8 * 1024 * 1024)])
     let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [descriptor])
-    func record(machine: String = "shared-machine") -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: machine, start: .init(kind: "large.v1", input: [:]), description: description) }
-    _ = try await first.claim(.init(scope: "script", key: "one"), record: record())
-    _ = try await second.claim(.init(scope: "script", key: "two"), record: record())
-    do { _ = try await second.claim(.init(scope: "another-script", key: "three"), record: record()); Issue.record("cross-group buffer cap bypass") }
+    func record(machine: String = "shared_machine") async throws -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: try await storeMachine(machine, space: space), start: .init(kind: "large.v1", input: [:]), description: description) }
+    _ = try await first.claim(.init(scope: "script", key: "one"), record: try await record())
+    _ = try await second.claim(.init(scope: "script", key: "two"), record: try await record())
+    do { _ = try await second.claim(.init(scope: "another-script", key: "three"), record: try await record()); Issue.record("cross-group buffer cap bypass") }
     catch let error as OperationError { #expect(error.code == .capacityExceeded) }
     for index in 1 ..< 8 {
-      _ = try await first.claim(.init(scope: "script", key: String(index)), record: record(machine: "first-\(index)"))
-      _ = try await second.claim(.init(scope: "script", key: String(index)), record: record(machine: "second-\(index)"))
+      _ = try await first.claim(.init(scope: "script", key: String(index)), record: try await record(machine: "first-\(index)"))
+      _ = try await second.claim(.init(scope: "script", key: String(index)), record: try await record(machine: "second-\(index)"))
     }
   }
 }
@@ -561,4 +561,9 @@ extension MachineV2StoreTests {
     #expect(pin == problem)
     try await space.close()
   }
+}
+
+private func storeMachine(_ name: String, space: Space) async throws -> String {
+  if let machine = try await space.machine(named: name) { return machine.id.rawValue }
+  return try await space.addMachineV2(name: name).machine.id.rawValue
 }

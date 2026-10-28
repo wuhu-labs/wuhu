@@ -30,3 +30,17 @@ import Testing
     #expect(!text.contains("dropped"))
   }
 }
+
+@Suite(.deterministicDependencies) struct MachineHelpTests {
+  @Test func machineHelpListsOnlySurvivingRecordVerbs() throws {
+    guard case let .help(text) = try Command.parse(["machine", "--help"]) else {
+      Issue.record("expected machine help"); return
+    }
+    #expect(text.contains("<list|name|scope|rotate|revoke|delete|move>"))
+    for verb in ["add", "join", "run"] {
+      #expect(!text.contains("      \(verb) "))
+      #expect(throws: (any Error).self) { try Command.parse(["machine", verb]) }
+    }
+    #expect(text.contains("scope <machine> <owner|reachable>"))
+  }
+}

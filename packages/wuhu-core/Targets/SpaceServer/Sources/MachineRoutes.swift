@@ -4,8 +4,6 @@
   import Foundation
 #endif
 
-import Assertion
-import Dependencies
 import Fetch
 import JSONValue
 import MachineContract
@@ -26,11 +24,9 @@ func addMachineRoutes(
   space: Space,
   hub: MachineHub,
   machineV2Hub: MachineV2Hub? = nil,
-  challenges: OneShotChallenges,
   fingerprint: String?,
   principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict,
 ) {
-  @Dependency(\.date) var dateGen
   // The machine a route names, when the request's principal may use it.
   @Sendable func usable(_ request: Request, _ parameters: RouteParameters) async throws -> Admission<(Principal, MachineRecord)> {
     let principal: Principal
@@ -42,40 +38,6 @@ func addMachineRoutes(
       return .failure(unknownMachine(parameters))
     }
     return .success((principal, record))
-  }
-
-  router.post("/v1/machine") { request, _ in
-    let principal: Principal
-    switch try await principalOf(request) {
-    case let .principal(resolved): principal = resolved
-    case let .refused(response): return response
-    }
-    let input = try await request.body == nil ? MachineAddInput() : request.json(MachineAddInput.self)
-    let group: GroupID
-    switch try await machineRegistrationGroup(input.group, principal: principal, space: space) {
-    case let .success(resolved): group = resolved
-    case let .failure(response): return response
-    }
-    let scope: ReachScope
-    switch machineScope(input.scope) {
-    case let .success(resolved): scope = resolved
-    case let .failure(response): return response
-    }
-    let added: MachineRecord
-    do {
-      added = try await space.addMachine(name: input.name, group: group, scope: scope)
-    } catch let SpaceError.invalidMachineName(raw) {
-      return errorResponse(.badRequest, code: "invalidMachineName", message: "invalid machine name: \(raw)")
-    } catch let SpaceError.machineNameTaken(taken) {
-      return errorResponse(.conflict, code: "machineNameTaken", message: "machine name \(taken) is already taken")
-    }
-    let minted = try await space.mintJoinToken(
-      account: added.account,
-      capabilities: [.execMachine],
-      createdBy: nil,
-      lifetime: machineJoinTokenLifetime,
-    )
-    return try Response.json(MachineAddOutput(id: added.id, token: minted.token.rawValue, fingerprint: fingerprint, group: added.group.rawValue))
   }
 
   router.get("/v1/machine") { request, _ in
@@ -154,7 +116,6 @@ func addMachineRoutes(
     case let .failure(response): return response
     }
     _ = try await space.resetCredentials(account: record.account)
-    await hub.kickMachine(record.id)
     await machineV2Hub?.kick(record.id)
     let minted = try await space.mintJoinToken(
       account: record.account,
@@ -177,7 +138,25 @@ func addMachineRoutes(
     case let .failure(response): return response
     }
     _ = try await space.resetCredentials(account: record.account)
-    await hub.kickMachine(record.id)
+    await machineV2Hub?.kick(record.id)
+    return jsonResponse(.object([:]))
+  }
+
+  router.delete("/v1/machine/:id") { request, parameters in
+    try request.requireNoBody()
+    let principal: Principal
+    switch try await principalOf(request) {
+    case let .principal(resolved): principal = resolved
+    case let .refused(response): return response
+    }
+    guard let raw = parameters["id"], let record = try await space.resolveMachine(raw) else { return unknownMachine(parameters) }
+    guard try await humanAdmits(principal, of: record.group, space: space) else {
+      guard try await space.reads(for: principal).contains(record.group) else { return unknownMachine(parameters) }
+      return humanAdminRequired("deleting machine \(record.name ?? record.id.rawValue)", group: record.group)
+    }
+    do { try await space.deleteMachine(record.id, by: principal) }
+    catch SpaceError.notFound { return unknownMachine(parameters) }
+    catch SpaceError.groupForbidden { return humanAdminRequired("deleting machine", group: record.group) }
     await machineV2Hub?.kick(record.id)
     return jsonResponse(.object([:]))
   }
@@ -257,29 +236,6 @@ func addMachineRoutes(
       id: switched.id, name: switched.name, group: switched.group.rawValue, attached: await hub.attachedMachines().contains(switched.id),
       scope: switched.scope.rawValue,
     ))
-  }
-
-  router.get("/v1/machine/challenge") { _, _ in
-    try Response.json(MachineChallengeOutput(challenge: challenges.mint()))
-  }
-
-  // The signature gate: the box proves possession of its enrolled key by
-  // signing a server-minted one-shot challenge; the pubkey resolves through
-  // the live key row, so a revoked key is refused at the door.
-  router.webSocket("/v1/machine/connect") { request, _ in
-    guard let pubkey = request.headers[MachineConnect.pubkeyHeader],
-          let challenge = request.headers[MachineConnect.challengeHeader],
-          let signature = request.headers[MachineConnect.signatureHeader],
-          challenges.take(challenge),
-          verifiedConnectSignature(pubkey: pubkey, challenge: challenge, signature: signature),
-          let machine = try await space.machine(pubkey: pubkey)
-    else {
-      return .response(errorResponse(.unauthorized, code: "keyInvalid", message: "machine key handshake rejected"))
-    }
-    let capabilities = Set((request.headers[MachineConnect.capabilitiesHeader] ?? "").split(separator: ",").map(String.init))
-    return .webSocket { socket in
-      await hub.runMachineSession(machine, pubkey: pubkey, capabilities: capabilities, socket: socket)
-    }
   }
 
   router.post("/v1/exec") { request, _ in
@@ -391,13 +347,6 @@ func execStatus(of record: ExecRecord) -> ExecStatus {
 }
 
 private let machineJoinTokenLifetime: TimeInterval = 3600
-
-private func verifiedConnectSignature(pubkey: String, challenge: String, signature: String) -> Bool {
-  guard let key = VerifyingKey(label: pubkey),
-        let signatureBytes = Data(base64Encoded: signature)
-  else { return false }
-  return key.isValidSignature(signatureBytes, for: MachineConnect.signingPayload(challenge: challenge))
-}
 
 enum Admission<Value> {
   case success(Value)
