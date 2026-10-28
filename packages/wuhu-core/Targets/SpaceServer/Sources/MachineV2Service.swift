@@ -15,6 +15,7 @@ import struct OperationClient.Operation
 import struct OperationClient.OperationOwner
 import protocol OperationClient.OperationStore
 import struct OperationProtocol.OperationError
+import ServerTelemetry
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import struct SpaceCore.ExecRecord
@@ -215,10 +216,12 @@ actor MachineV2Service {
     if let stores { store = try await stores(group) } else { store = try await space.machineV2Store(group: group, key: key) }
     if let operations = groups[group] { return operations }
     let hub = hub
+    @Dependency(\.tracer) var tracer
     let operations = try MachineOperations(
       origin: Self.origin,
       fetch: fetch?(group) ?? FetchClient { request in try await hub.fetch(request, usableFrom: group) },
       store: store,
+      tracer: stampingOwners(tracer),
       tunnel: tunnel,
     )
     groups[group] = operations

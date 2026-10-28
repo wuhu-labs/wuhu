@@ -9,6 +9,7 @@ import SessionTools
 import InferenceKit
 import Logging
 import LoopCore
+import ServerTelemetry
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
 import struct SessionDomain.SessionID
@@ -24,15 +25,16 @@ func kernelInference(
   sockets: ResponsesSocketRegistry,
   attempts: AttemptHub,
   usage: UsageBoard,
-  makeBindingEpoch: @escaping @Sendable () -> UUID = { UUID() },
   committedWarming: @escaping @Sendable (SessionID, CacheWarmingPolicy) async -> Void = { _, _ in },
 ) -> @Sendable (InferenceRequest) async throws -> InferenceReply {
   @Dependency(\.date) var date
-  let metrics = InferenceMetricsSink { metric in
-    do { try await executor.report(metric) }
-    catch { Logger(label: "wuhu.inference").error("inference report failed", metadata: ["session": "\(metric.jsonLine())", "error": "\(error)"]) }
-  }
-  return { request in
+  @Sendable func attempt(_ request: InferenceRequest, _ span: TelemetrySpan<ModelAttemptOutcome>) async throws -> InferenceReply {
+    @Dependency(\.uuid) var uuid
+    let metrics = InferenceMetricsSink { metric in
+      span.record(metric)
+      do { try await executor.report(metric) }
+      catch { Logger(label: "wuhu.inference").error("inference report failed", metadata: ["session": "\(metric.jsonLine())", "error": "\(error)"]) }
+    }
     let record: SessionRecord
     let resolved: ResolvedModel
     let warmingPolicy: CacheWarmingPolicy?
@@ -59,7 +61,7 @@ func kernelInference(
             member: nil,
             specifier: specifier,
             bindingFingerprint: fingerprint,
-            epoch: makeBindingEpoch().uuidString.lowercased(),
+            epoch: uuid().uuidString.lowercased(),
             reason: .create,
             placedAt: date.now,
             evidence: [],
@@ -78,19 +80,21 @@ func kernelInference(
       case .retired:
         preconditionFailure("kernel inference for \(record.executor.kind) session \(request.sessionID.rawValue)")
       }
+      span.set(.modelGroup, route.group)
       resolved = try await selectedCatalog.resolve(model, session: request.sessionID, routeEpoch: request.transcript.replayBinding?.epoch ?? route.epoch)
       warmingPolicy = selectedCatalog.document.providers[model.provider]?.models[model.model]?.cacheWarming
       if request.transcript.requiresReplayHandoff(to: resolved.bindingIdentity) {
-        @Dependency(\.uuid) var uuid
         throw ReplayBoundaryRequired(binding: ReplayBinding(identity: resolved.bindingIdentity, epoch: uuid().uuidString.lowercased()), budget: resolved.budget)
       }
     } catch {
+      if error is ReplayBoundaryRequired { span.conclude(.handoff) }
       await sockets.invalidate(request.sessionID)
       if let routingCatalog, let failure = try await recordRouteFailure(error, session: request.sessionID, owner: owner, catalog: routingCatalog, usage: usage, inferenceStarted: false) {
         throw ModelRouteWaiting(retryAt: min(failure.deadline, failure.retryAt ?? date.now.addingTimeInterval(60)))
       }
       throw error
     }
+    span.set(.transport, resolved.transport.rawValue)
     let lease: (session: ResponsesWebSocketSession, lease: UUID)?
     if resolved.transport == .websocket {
       lease = try await sockets.acquire(session: request.sessionID, model: resolved)
@@ -123,6 +127,7 @@ func kernelInference(
         mode: request.mode == .forcedCompact ? .forcedCompact : .normal,
         idleTimeout: request.idleTimeout,
       )
+      span.set(.finishReason, completed.metadata.stopReason.rawValue)
       if let held = try await owner.modelRoute(request.sessionID), held.failure != nil {
         try await owner.append(request.sessionID, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: nil)).value(Void.self)
       }
@@ -140,4 +145,5 @@ func kernelInference(
       throw error
     }
   }
+  return { request in try await traced(.attempt) { span in try await attempt(request, span) } }
 }

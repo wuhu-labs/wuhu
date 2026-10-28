@@ -20,7 +20,7 @@
       {
         "content": [
           {
-            "text": "<sender>ocean-crane-clock</sender>\n<timestamp>2026-05-09T06:13:20Z</timestamp>\n<source>conversation/2be0589c-e463-402b-8489-1cc876e27f71</source>\n<type>request</type>\n<message-id>9f0341b1-3d0f-46e0-ac22-c7ab628e0051</message-id>\n<sender-admin>yes</sender-admin>\n\nReply with exactly the word: pineapple. Then report back what you said.",
+            "text": "<sender>ocean-crane-clock</sender>\n<timestamp>2026-05-09T06:13:20Z</timestamp>\n<source>conversation/2be0589c-e463-402b-8489-1cc876e27f71</source>\n<type>request</type>\n<message-id>6ed86638-cee5-4771-ae86-fc6443b2eb14</message-id>\n<sender-admin>yes</sender-admin>\n\nReply with exactly the word: pineapple. Then report back what you said.",
             "type": "input_text"
           }
         ],
@@ -49,14 +49,14 @@
         "type": "function_call_output"
       },
       {
-        "arguments": "{\"request_id\":\"9f0341b1-3d0f-46e0-ac22-c7ab628e0051\",\"kind\":\"final\",\"content\":\"I said: pineapple.\"}",
+        "arguments": "{\"request_id\":\"6ed86638-cee5-4771-ae86-fc6443b2eb14\",\"kind\":\"final\",\"content\":\"I said: pineapple.\"}",
         "call_id": "00000000-0000-0000-0000-000000000012",
         "name": "report",
         "type": "function_call"
       },
       {
         "call_id": "00000000-0000-0000-0000-000000000012",
-        "output": "reported final on request 9f0341b1-3d0f-46e0-ac22-c7ab628e0051",
+        "output": "reported final on request 6ed86638-cee5-4771-ae86-fc6443b2eb14",
         "type": "function_call_output"
       }
     ],

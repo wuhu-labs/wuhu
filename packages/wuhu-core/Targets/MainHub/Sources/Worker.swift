@@ -5,6 +5,7 @@
 #endif
 import struct FetchSSE.SSEEvent
 import SessionDomain
+import struct SpaceContract.GroupID
 import enum SpaceContract.ScriptOutput
 import SpaceCore
 
@@ -108,11 +109,13 @@ public struct ScriptHandlerInvocation: Sendable {
 /// A file run as a space script by its session, from the CLI (`wuhu script`).
 public struct ScriptRun: Sendable, Codable, Equatable {
   public let session: SessionID
+  public let group: GroupID
   public let source: String
   public let arguments: [String]
 
-  public init(session: SessionID, source: String, arguments: [String]) {
+  public init(session: SessionID, group: GroupID, source: String, arguments: [String]) {
     self.session = session
+    self.group = group
     self.source = source
     self.arguments = arguments
   }

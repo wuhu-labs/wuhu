@@ -86,10 +86,13 @@ public struct SessionQueueEntry: Hashable, Sendable, Codable {
 public struct QueueDrain: Hashable, Sendable, Codable {
   public var items: [TranscriptItem]
   public var queueTail: Int
+  /// The group-observer firings that posted the drained messages or opened their requests.
+  public var firings: [String]
 
-  public init(items: [TranscriptItem], queueTail: Int) {
+  public init(items: [TranscriptItem], queueTail: Int, firings: [String] = []) {
     self.items = items
     self.queueTail = queueTail
+    self.firings = firings
   }
 }
 

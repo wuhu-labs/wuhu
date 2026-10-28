@@ -1,6 +1,5 @@
 import Dependencies
 import Logging
-import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -24,6 +23,7 @@ import func MainHub.runningJSON
 import func MainHub.seconds
 import struct MainHub.ToolProblem
 import enum MainHub.WaitCut
+import struct ServerTelemetry.TraceParent
 import SessionDomain
 import SpaceClient
 import SpaceCore
@@ -45,9 +45,6 @@ extension ToolExecutor {
     let lifetime = try execLifetime(arguments)
     let wait = try execWait(arguments, lifetime: lifetime)
     let client = try await client(session, toolCall: callID.rawValue)
-    let span = ServerTracing.enabled ? ServerSpan(.machine, session: session.rawValue) : nil
-    var attributes: [SpanAttribute: String]? = span == nil ? nil : [.machine: machine.id.rawValue, .version: "v1", .kind: "exec", .outcome: "error"]
-    defer { if let attributes { span?.finish(attributes) } }
     let job: ExecJob
     if let running = execJobs.job(session, callID) {
       try await running.gate.holding {
@@ -78,16 +75,9 @@ extension ToolExecutor {
         spec: String(decoding: encoded, as: UTF8.self),
       )
       execJobs.insert(job)
-      try drive(job, spec: spec, client: client)
+      try drive(job, spec: spec, client: client, trace: TraceParent.headers)
     }
-    let result = try await awaitJob(job, wait: wait)
-    if case let .exec(exec) = result {
-      attributes?[.exitCode] = String(exec.exitCode)
-      attributes?[.bytesOut] = String(exec.output.utf8.count)
-      attributes?[.outcome] = "ok"
-      attributes?[.verdict] = job.phase == .detaching || job.phase == .detached ? "running" : "exited"
-    }
-    return result
+    return try await awaitJob(job, wait: wait)
   }
 
   private enum ExecWaitEnd: Sendable {
@@ -128,9 +118,9 @@ extension ToolExecutor {
     return .exec(.init(output: runningJSON(job.handle, tail: job.tail, note: note), exitCode: 0))
   }
 
-  func drive(_ job: ExecJob, spec: ExecJobSpec, client: SpaceClient) throws(ToolProblem) {
+  func drive(_ job: ExecJob, spec: ExecJobSpec, client: SpaceClient, trace: [String: String] = [:]) throws(ToolProblem) {
     do {
-      let task = try execJobs.drivers.run("exec job \(job.handle)") { await self.follow(job, spec: spec, client: client) }
+      let task = try execJobs.drivers.run("exec job \(job.handle)") { await self.follow(job, spec: spec, client: client, trace: trace) }
       job.driver.withLock { $0 = task }
     } catch {
       execJobs.remove(job)
@@ -138,8 +128,8 @@ extension ToolExecutor {
     }
   }
 
-  private func follow(_ job: ExecJob, spec: ExecJobSpec, client: SpaceClient) async {
-    let connection = ExecSession(client: client, start: spec.start(id: job.id))
+  private func follow(_ job: ExecJob, spec: ExecJobSpec, client: SpaceClient, trace: [String: String]) async {
+    let connection = ExecSession(client: client, start: spec.start(id: job.id), headers: trace)
     let buffer = ExecBuffer()
     do {
       _ = try await connection.run(autoAcknowledge: false, failOnRemoteError: true, input: .closed, output: { _, bytes in

@@ -22,84 +22,10 @@ import enum WuhuAI.InferenceError
 import struct WuhuAI.ToolCall
 
 extension SessionActor {
-  func loop() async throws {
-    guard ServerTracing.enabled else { return try await untracedLoop() }
-    try Task.checkCancellation()
-    let group = try live.group
-    let span = ServerTracing.$context.withValue(nil) { ServerSpan(.turn, session: id.rawValue, group: group) }
-    var outcome = "ok"
-    defer { span.finish([.outcome: outcome]) }
-    do {
-      try await ServerTracing.$context.withValue(span.context) { try await untracedLoop() }
-    } catch {
-      outcome = error is CancellationError ? "cancelled" : "error"
-      throw error
-    }
-  }
-
-  private func untracedLoop() async throws {
-    // A cancelled pass (retirement, shutdown) must stop before its next
-    // state read: only live sessions may read state. The check must precede
-    // every `live` access — a buffered nudge can re-enter after dismount.
-    try Task.checkCancellation()
-
-    while true {
-      try Task.checkCancellation()
-
-      guard !(try live).revoking else { return }
-      switch (try live).sessionStatus {
-      case .interrupted, .errored:
-        return
-      case .interrupting(let callback):
-        callback.resume(with: .success(()))
-        // A buffered nudge can re-enter before handleInterrupt persists;
-        // flipping here keeps the callback single-shot.
-        try modify { $0.sessionStatus = .interrupted }
-        return
-      case .healthy:
-        break
-      }
-
-      if (try live).transcript.hasPendingCacheWarming, try await !loopConfig.allowCacheWarming(id) {
-        let transcript = try await main.append(id, .pendingCacheWarmingDiscarded).value(Transcript.self)
-        try modify { $0.transcript = transcript }
-      }
-      guard try await reconcileSubscriptions() else { return }
-      if let toolCall = (try live).transcript.nextPendingToolCall {
-        try await execute(toolCall)
-        continue
-      }
-      let budget = await loopConfig.budget(id)
-      let fullness = try live.transcript.contextFullness(budget: budget)
-      try Task.checkCancellation()
-      guard !(try live).revoking else { return }
-      if fullness >= loopConfig.thresholds.hard {
-        try await runForcedCompaction()
-      } else if (try live).queueHead > (try live).queueTail {
-        try await drainQueue()
-      } else {
-        guard !(try live).revoking else { return }
-        await beforeCompactRequest()
-        let forced = try await takeCompactRequest()
-        try Task.checkCancellation()
-        guard !(try live).revoking else { return }
-        if forced {
-          try await runForcedCompaction()
-        } else if (try live).transcript.hasWork {
-          try await runInference(mode: .normal)
-        } else if let nag = try await idleNag() {
-          try await appended([.notification(nag.notification(id: uuid(), at: date()))])
-        } else {
-          return
-        }
-      }
-    }
-  }
-
   // A forced compaction can start from a settled turn, so the transcript
   // alone would show no run; the row is told, and every exit re-derives it.
   // Run state is advisory: failing to write it never stops the compaction.
-  private func runForcedCompaction() async throws {
+  func runForcedCompaction() async throws {
     try? await main.append(id, .compactionActivity(.active)).value(Void.self)
     do {
       try await runInference(mode: .forcedCompact)
@@ -139,12 +65,12 @@ extension SessionActor {
 
   // Only a model that stopped is asked whether it may; a generation that never
   // ran (created, restarted) is inert. What is left is a park wake.
-  private func idleNag() async throws -> Nag? {
+  func idleNag() async throws -> Nag? {
     guard case .assistant? = (try live).transcript.items.last else { return nil }
     return try await nagOrScheduleWake((try live).transcript.environment)
   }
 
-  private func reconcileSubscriptions() async throws -> Bool {
+  func reconcileSubscriptions() async throws -> Bool {
     let registered = try await main.registeredSubscriptions(id)
     try Task.checkCancellation()
     guard !(try live).revoking else { return false }
@@ -153,15 +79,6 @@ extension SessionActor {
       $0.transcript.handlerSubscriptions = registered.handlers
     }
     return true
-  }
-
-  func drainQueue() async throws {
-    let drain = try await main.drainQueue(id)
-    try modify {
-      for item in drain.items { $0.transcript.append(item) }
-      $0.queueTail = drain.queueTail
-      $0.queueHead = max($0.queueHead, drain.queueTail)
-    }
   }
 
   // Cancelling the looper (retirement, shutdown) must cancel the work and must
@@ -220,31 +137,16 @@ extension SessionActor {
   }
 
   func execute(_ toolCall: ToolCall) async throws {
-    guard ServerTracing.enabled else { _ = try await executeBody(toolCall); return }
-    let span = ServerSpan(.tool)
-    var attributes: [SpanAttribute: String] = [.tool: toolCall.name, .bytesIn: String(toolCall.arguments.json.jsonString().utf8.count), .bytesOut: "0"]
-    if case let .string(reference)? = toolCall.arguments.json.object?["machine"] {
-      attributes[.machineReference] = reference
-    } else if case let .string(path)? = toolCall.arguments.json.object?["path"], path.hasPrefix("machines://") {
-      attributes[.machineReference] = String(path.dropFirst("machines://".count).prefix { $0 != "/" })
-    }
-    defer { span.finish(attributes) }
-    do {
-      let result = try await ServerTracing.$context.withValue(span.context) { try await executeBody(toolCall) }
-      switch result {
+    try await traced(.tool) { span in
+      span.set(.tool, toolCall.name)
+      span.set(.toolCallID, toolCall.id)
+      span.set(.bytesIn, toolCall.arguments.text.utf8.count)
+      switch try await executeBody(toolCall) {
       case let .completed(payload):
-        attributes[.outcome] = "ok"
-        attributes[.bytesOut] = payload.flatMap { try? JSONEncoder().encode($0).count }.map(String.init) ?? "0"
-        if let payload, case let .failure(failure) = payload {
-          attributes[.outcome] = "error"
-          attributes[.errorCode] = failure.code
-        }
+        span.record(payload)
       case .cancelled:
-        attributes[.outcome] = "cancelled"
+        span.conclude(.cancelled)
       }
-    } catch {
-      attributes[.outcome] = error is CancellationError ? "cancelled" : "error"
-      throw error
     }
   }
 
@@ -272,9 +174,9 @@ extension SessionActor {
     let callID = ToolCallID(toolCall.id)
     switch result {
     case .success(let outcome):
-      try await writeToolResult(.toolCall(callID), outcome.payload, context: outcome.context)
+      let written = try await writeToolResult(.toolCall(callID), outcome.payload, context: outcome.context)
       await outcome.committed?()
-      return .completed(outcome.payload)
+      return .completed(written)
     case .failure(is CancellationError):
       guard !Task.isCancelled else { return .cancelled }
       // Released by a hand-off: the call stays pending for the next worker.
@@ -285,9 +187,7 @@ extension SessionActor {
       }
       return .cancelled
     case .failure(let error):
-      let payload = ToolResultPayload.failure(.init(message: String(describing: error)))
-      try await writeToolResult(.toolCall(callID), payload)
-      return .completed(payload)
+      return try await .completed(writeToolResult(.toolCall(callID), .failure(.init(message: String(describing: error)))))
     }
   }
 
@@ -320,7 +220,16 @@ extension SessionActor {
       try await writeToolResult(.toolCall(callID), payload)
       return payload
     }
+    return try await traced(.compaction) { span in
+      span.set(.compactionReason, .tool)
+      span.set(.generation, liveState?.generation)
+      let payload = try await fold(callID, arguments, span: span)
+      if case .failure = payload { span.conclude(.errored) } else { span.conclude(.ok) }
+      return payload
+    }
+  }
 
+  private func fold(_ callID: ToolCallID, _ arguments: CompactArguments, span: TelemetrySpan<StepOutcome>) async throws -> ToolResultPayload {
     let transcript = (try live).transcript
     let kept: Range<Int>?
     do {
@@ -360,6 +269,7 @@ extension SessionActor {
     } else {
       transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept), nil)
     }
+    span.set(.itemsKept, kept?.count ?? 0)
     let compacted = try await main.append(id, .compacted(closing: closing, head: head, kept: kept, completing: nil, transition: transition)).value(Transcript.self)
     try modify {
       $0.transcript = compacted
@@ -371,15 +281,23 @@ extension SessionActor {
   }
 
   func runInference(mode: InferenceMode) async throws {
+    try await traced(.inference) { span in
+      span.set(.inferenceMode, mode == .normal ? .normal : .forcedCompact)
+      span.conclude(try await infer(mode: mode, span: span))
+    }
+  }
+
+  private func infer(mode: InferenceMode, span: TelemetrySpan<InferenceOutcome>) async throws -> InferenceOutcome {
     if (try live).transcript.needsReestablishment {
-      guard try await reestablish() else { return }
+      guard try await reestablish() else { return .cancelled }
     }
 
     let budget = await loopConfig.budget(id)
     let fullness = try live.transcript.contextFullness(budget: budget)
     try Task.checkCancellation()
+    span.set(.contextFullness, fullness)
     let state = try live
-    guard !state.revoking else { return }
+    guard !state.revoking else { return .cancelled }
     if fullness >= loopConfig.thresholds.soft, !state.transcript.hasPendingPressureNotice {
       let percent = Int((fullness * 100).rounded())
       try await appended([.notification(.init(
@@ -399,9 +317,16 @@ extension SessionActor {
     var attempt = 0
     var idleTimeouts = 0
     var boundedFailures = 0
+    var attempts = 0
+    var backoffMs = 0
+    defer {
+      span.set(.attempts, attempts)
+      span.set(.backoffMs, backoffMs)
+    }
     while true {
-      if case .interrupting = (try live).sessionStatus { return }
-      guard try await reconcileSubscriptions() else { return }
+      if case .interrupting = (try live).sessionStatus { return .cancelled }
+      guard try await reconcileSubscriptions() else { return .cancelled }
+      attempts += 1
 
       let attemptID = uuid()
       let request = InferenceRequest(
@@ -412,8 +337,9 @@ extension SessionActor {
         idleTimeout: idleTimeoutSchedule[idleTimeouts],
       )
       let compactClaim = mode == .forcedCompact ? (try live).compactRequestClaim : nil
+      let cache = try live.cacheExpectation(now: date())
       let result = await runLongRunningTask { [loopConfig] in
-        try await loopConfig.inference(request)
+        try await expectingCache(cache) { try await loopConfig.inference(request) }
       }
 
       switch result {
@@ -434,13 +360,14 @@ extension SessionActor {
           $0.malformedMessages = 0
           $0.capacityFailures = 0
           $0.compactedForPayload = false
+          if let usage = reply.metadata.usage { $0.lastPrompt = .init(tokens: usage.inputTokens, at: now, generation: $0.generation) }
         }
         await reply.committed(entry, appended)
         try Task.checkCancellation()
         if mode == .forcedCompact, !reply.message.callsCompact {
-          try await fallbackCompact()
+          try await fallbackCompact(.forced)
         }
-        return
+        return .ok
 
       case .failure(let boundary as ReplayBoundaryRequired):
         let state = try live
@@ -457,7 +384,7 @@ extension SessionActor {
         } catch {
           try Task.checkCancellation()
           await markErrored(error: error)
-          return
+          return .errored
         }
         try modify {
           $0.transcript = compacted
@@ -465,38 +392,38 @@ extension SessionActor {
           $0.compactRequestClaim = nil
         }
         await loopConfig.invalidateInference(id)
-        return
+        return .handoff
 
       case .failure(let waiting as ModelRouteWaiting):
-        guard await backoff(attempt: 1, until: waiting.retryAt) else { return }
+        guard await backoff(attempt: 1, until: waiting.retryAt, adding: &backoffMs) else { return .cancelled }
 
       case .failure(let error):
         switch classify(error) {
         case .cancelled:
-          return
+          return .cancelled
         case .capacity:
           try modify { $0.capacityFailures += 1 }
           if (try live).capacityFailures >= 3 {
             await markErrored(error: InferenceError.normalize(error))
-            return
+            return .errored
           }
           attempt += 1
-          guard await backoff(attempt: attempt) else { return }
+          guard await backoff(attempt: attempt, adding: &backoffMs) else { return .cancelled }
         case .malformedModelMessage:
           try modify { $0.malformedMessages += 1 }
           if (try live).malformedMessages >= 3 {
             await markErrored(error: InferenceError.normalize(error))
-            return
+            return .errored
           }
           idleTimeouts = 0
           boundedFailures = 0
           attempt += 1
-          guard await backoff(attempt: attempt) else { return }
+          guard await backoff(attempt: attempt, adding: &backoffMs) else { return .cancelled }
         case .outage(let retryAt):
           idleTimeouts = 0
           boundedFailures = 0
           attempt += 1
-          guard await backoff(attempt: attempt, until: retryAt) else { return }
+          guard await backoff(attempt: attempt, until: retryAt, adding: &backoffMs) else { return .cancelled }
         case .transient(let timedOut):
           if timedOut {
             idleTimeouts += 1
@@ -505,8 +432,7 @@ extension SessionActor {
                 "session": "\(id.rawValue)",
                 "consecutive_timeouts": "\(idleTimeouts)",
               ])
-              try await park(error, mode: mode)
-              return
+              return try await park(error, mode: mode)
             }
           } else {
             idleTimeouts = 0
@@ -518,11 +444,10 @@ extension SessionActor {
               "failures": "\(boundedFailures)",
               "error": "\(error)",
             ])
-            try await park(error, mode: mode)
-            return
+            return try await park(error, mode: mode)
           }
           attempt += 1
-          guard await backoff(attempt: attempt) else { return }
+          guard await backoff(attempt: attempt, adding: &backoffMs) else { return .cancelled }
         case .requestTooLarge(let normalized):
           let compactedError: InferenceError
           if case let .requestTooLarge(limit) = normalized {
@@ -532,37 +457,32 @@ extension SessionActor {
           }
           if (try live).compactedForPayload {
             await markErrored(error: compactedError)
-            return
+            return .errored
           }
           do {
-            if try await fallbackCompact() {
-              try modify { $0.compactedForPayload = true }
-            }
+            guard try await fallbackCompact(.tooLarge) else { return .cancelled }
+            try modify { $0.compactedForPayload = true }
+            return .compacted
           } catch {
-            if case .requestTooLarge = classify(error) {
-              await markErrored(error: compactedError)
-            } else {
-              throw error
-            }
+            guard case .requestTooLarge = classify(error) else { throw error }
+            await markErrored(error: compactedError)
+            return .errored
           }
-          return
         case .contextTooLong:
-          try await fallbackCompact()
-          return
+          return try await fallbackCompact(.contextTooLong) ? .compacted : .cancelled
         case .terminal:
-          try await park(error, mode: mode)
-          return
+          return try await park(error, mode: mode)
         }
       }
     }
   }
 
-  private func park(_ error: any Error, mode: InferenceMode) async throws {
+  private func park(_ error: any Error, mode: InferenceMode) async throws -> InferenceOutcome {
     if mode == .forcedCompact {
-      try await fallbackCompact()
-    } else {
-      await markErrored(error: error)
+      return try await fallbackCompact(.forced) ? .compacted : .cancelled
     }
+    await markErrored(error: error)
+    return .parked
   }
 
   // Reads are idempotent, so the list reruns wholesale
@@ -594,7 +514,17 @@ extension SessionActor {
   }
 
   @discardableResult
-  func fallbackCompact() async throws -> Bool {
+  func fallbackCompact(_ reason: CompactionReason) async throws -> Bool {
+    try await traced(.compaction) { span in
+      span.set(.compactionReason, reason)
+      span.set(.generation, liveState?.generation)
+      let compacted = try await fallbackCompact(span: span)
+      span.conclude(compacted ? .ok : .cancelled)
+      return compacted
+    }
+  }
+
+  private func fallbackCompact(span: TelemetrySpan<StepOutcome>) async throws -> Bool {
     guard try await reconcileSubscriptions() else { return false }
     let transcript = (try live).transcript
     let sessionID = id
@@ -614,6 +544,7 @@ extension SessionActor {
         runningWork: try await loopConfig.runningWork(id),
       )
       let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: outcome.kept), nil)
+      span.set(.itemsKept, outcome.kept?.count ?? 0)
       let compacted = try await main.append(id, .compacted(closing: nil, head: head, kept: outcome.kept, completing: compactClaim, transition: transition)).value(Transcript.self)
       try modify {
         $0.transcript = compacted
@@ -630,7 +561,7 @@ extension SessionActor {
     }
   }
 
-  private func backoff(attempt: Int, until retryAt: Date? = nil) async -> Bool {
+  private func backoff(attempt: Int, until retryAt: Date? = nil, adding waited: inout Int) async -> Bool {
     let delay: Double
     if let wait = retryAt.map({ $0.timeIntervalSince(date()) }), wait > 0 {
       delay = min(retryAtCeiling, wait)
@@ -641,6 +572,7 @@ extension SessionActor {
       }
       delay = raw * jitter
     }
+    waited += Int((delay * 1000).rounded())
     let sleep = deadlineSleep(after: .seconds(delay), clock: clock)
     let pause = try? taskScope.run("session-retry") { try await sleep() }
     retryPause = pause
@@ -651,11 +583,12 @@ extension SessionActor {
     } onCancel: { pause?.cancel() }
   }
 
+  @discardableResult
   func writeToolResult(
     _ provenance: ToolResultItem.Provenance,
     _ payload: ToolResultPayload,
     context: ScopeContext? = nil,
-  ) async throws {
+  ) async throws -> ToolResultPayload {
     // The backstop, not the budget: whatever the tool layer missed must not
     // enter the transcript unclamped.
     let item = ToolResultItem(id: uuid(), timestamp: date(), provenance: provenance, payload: payload.clamped())
@@ -664,11 +597,12 @@ extension SessionActor {
       items.append(.notification(context.notice(id: uuid(), at: date())))
     }
     try await appended(items)
+    return item.payload
   }
 
   // The in-memory transcript is the truth the loop renders from; the store is
   // told what to persist and what the result is, never asked to read it back.
-  private func appended(_ items: [TranscriptItem]) async throws {
+  func appended(_ items: [TranscriptItem]) async throws {
     var appended = (try live).transcript
     for item in items { appended.append(item) }
     try await main.append(id, .transcriptAppended(items: items, inputOrigin: appended.cacheWarmingInputOrigin, completing: nil)).value(Void.self)

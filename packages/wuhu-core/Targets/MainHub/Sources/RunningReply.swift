@@ -12,4 +12,6 @@ public func runningJSON(_ handle: String, tail: String, note: String) -> String 
   return "{" + fields.map { "\(jsonString($0.0)):\(jsonString($0.1))" }.joined(separator: ",") + "}"
 }
 
+public func isRunningJSON(_ output: String) -> Bool { output.hasPrefix(#"{"status":"running","#) }
+
 private func jsonString(_ text: String) -> String { JSONValue.string(text).jsonString() }

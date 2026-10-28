@@ -265,6 +265,7 @@ export interface TargetManifest {
   productName?: string
   kind: TargetKind
   testOnly?: boolean
+  hmr?: boolean
   sources: string
   dependencies?: Dependency[]
   resources?: Resource[]
@@ -1895,6 +1896,9 @@ export function generatePackageSwift(
 
   const targetDecls: string[] = []
   for (const target of targets) {
+    if (target.hmr && target.kind !== 'library') {
+      throw new Error('target hmr opt-in requires a library')
+    }
     if (target.kind === 'systemLibrary') {
       targetDecls.push(systemLibraryDecl(packageDir, target))
       continue
@@ -2253,6 +2257,11 @@ export async function generateBuildBazel(
   pkg: PackageManifest,
   targets: TargetManifest[],
 ): Promise<string> {
+  for (const target of targets) {
+    if (target.hmr && target.kind !== 'library') {
+      throw new Error('target hmr opt-in requires a library')
+    }
+  }
   const targetNames = new Set(targets.map((target) => target.name))
   const kindByName = new Map(
     targets.map((target) => [target.name, target.kind]),
@@ -2508,6 +2517,8 @@ export async function generateBuildBazel(
       chunks.push(
         `wuhu_swift_library(\n    name = "${target.name}",\n${
           target.testOnly ? '    testonly = True,\n' : ''
+        }${
+          target.hmr ? '    hmr = True,\n' : ''
         }    srcs = ${librarySrcs},\n${await bazelResourceAttrs(
           target,
           sourceRoot,
@@ -3989,10 +4000,16 @@ function profileName(
   target: AppBundleManifest,
   variant: SigningVariant,
   platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>>,
+  hmr = false,
 ): string | undefined {
   if (target.distribution === 'direct') return undefined
   if (isPreviewBundle(target)) {
-    if (target.platform !== 'iOS') return undefined
+    if (hmr && target.platform === 'macOS') {
+      return variant === 'dev' ? `Wuhu Dev ${target.bundleID}` : undefined
+    }
+    if (target.platform !== 'iOS' && !(hmr && target.platform === 'visionOS')) {
+      return undefined
+    }
     return variant === 'dev' ? 'Wuhu Dev Previews' : 'Wuhu AdHoc Previews'
   }
   if (target.platform === 'macOS' && variant === 'adhoc') return undefined
@@ -4015,7 +4032,7 @@ export function appProfileName(
   target: AppBundleManifest,
   variant: SigningVariant,
 ): string | undefined {
-  return profileName(target, variant, profilePlatforms([app]))
+  return profileName(target, variant, profilePlatforms([app]), app.hmr)
 }
 
 export function referencedProfileNames(
@@ -4025,7 +4042,7 @@ export function referencedProfileNames(
   return apps.flatMap((app) =>
     appBundles(app).flatMap((target) =>
       variantsFor(app, target).map((variant) =>
-        profileName(target, variant, platformsByIdentifier)
+        profileName(target, variant, platformsByIdentifier, app.hmr)
       )
     )
   ).filter((name) => name !== undefined)
@@ -4092,11 +4109,13 @@ function generateAppBundleRule(
   watchApplication?: string,
 ): string {
   const direct = target.distribution === 'direct'
+  const hmr = app.hmr && app.targets.includes(target) &&
+    ['macOS', 'iOS', 'visionOS'].includes(target.platform)
   embedsViewPilot &&= !direct
   const variants = variantsFor(app, target)
   const profiles = variants.flatMap(
     (variant): [string, string | null][] => {
-      const name = profileName(target, variant, platformsByIdentifier)
+      const name = profileName(target, variant, platformsByIdentifier, app.hmr)
       if (name === undefined) return [[variant, null]]
       const profile = `:${profileTargetName(target, variant)}`
       return target.platform === 'macOS'
@@ -4129,7 +4148,15 @@ function generateAppBundleRule(
         }"],\n`
       ).join('')
     }    })`
-  return `${rule}(\n    name = "${target.name}",\n    bundle_id = ${
+  const ordinaryPlists = direct
+    ? directPlists
+    : variantExpr(plists, (path) => `["${shellPath(pathPrefix, path)}"]`)
+  const hmrPlist = hmr
+    ? `wuhu_hmr_plist(\n    name = "${target.name}_hmr_plist",\n    src = ${
+      variantExpr(plists, (path) => JSON.stringify(shellPath(pathPrefix, path)))
+    },\n    enabled = select({\n        "//bazel/rules:hmr_enabled": True,\n        "//conditions:default": False,\n    }),\n)\n\n`
+    : ''
+  return `${hmrPlist}${rule}(\n    name = "${target.name}",\n    bundle_id = ${
     variantExpr(
       perVariant((variant) => bundles[variant].bundleID),
       (value) => JSON.stringify(value),
@@ -4157,9 +4184,7 @@ function generateAppBundleRule(
       }, allow_empty = True),\n`
       : ''
   }    infoplists = ${
-    direct
-      ? directPlists
-      : variantExpr(plists, (path) => `["${shellPath(pathPrefix, path)}"]`)
+    hmr ? `[":${target.name}_hmr_plist"]` : ordinaryPlists
   },\n    minimum_os_version = "${target.minimumOSVersion}",\n${
     direct ? '    features = ["disable_legacy_signing"],\n' : ''
   }${
@@ -4306,7 +4331,12 @@ export function generateAppBuildBazel(
   const embedsViewPilot = appEmbedsViewPilot(app)
   const coptsSymbols = [
     ...(app.hmr
-      ? ['WUHU_HMR_COPTS', 'WUHU_HMR_VIEW_COPTS', 'wuhu_hmr_app']
+      ? [
+        'WUHU_HMR_COPTS',
+        'WUHU_HMR_VIEW_COPTS',
+        'wuhu_hmr_app',
+        'wuhu_hmr_plist',
+      ]
       : []),
     ...new Set([
       'WUHU_SWIFT_LANGUAGE_MODE_COPTS',
@@ -4341,7 +4371,8 @@ export function generateAppBuildBazel(
     app.signingTeamID &&
     bundles.some((target) =>
       variantsFor(app, target).some((variant) =>
-        profileName(target, variant, platformsByIdentifier) !== undefined
+        profileName(target, variant, platformsByIdentifier, app.hmr) !==
+          undefined
       )
     )
   ) {
@@ -4405,7 +4436,7 @@ export function generateAppBuildBazel(
     }
     if (!app.signingTeamID) continue
     for (const variant of variantsFor(app, target)) {
-      const name = profileName(target, variant, platformsByIdentifier)
+      const name = profileName(target, variant, platformsByIdentifier, app.hmr)
       if (!name) continue
       chunks.push(
         `local_provisioning_profile(\n    name = "${
@@ -4518,7 +4549,7 @@ export function generateAppBuildBazel(
         target.watchApplication,
       ),
     )
-    if (app.hmr && ['macOS', 'iOS'].includes(target.platform)) {
+    if (app.hmr && ['macOS', 'iOS', 'visionOS'].includes(target.platform)) {
       chunks.push(`wuhu_hmr_app(
     name = "${target.name}HMR",
     app = ":${target.name}",
@@ -4774,6 +4805,7 @@ export function resolvedEntitlements(
   declared: AppBundleManifest,
   signing: SigningVariant,
   teamID: string,
+  hmr = false,
 ): { [key: string]: PlistValue } {
   if (declared.distribution === 'direct') signing = 'store'
   const target = variantBundle(declared, signing)
@@ -4794,7 +4826,7 @@ export function resolvedEntitlements(
     // Both variants sign the identifier in: a store bundle whose signature
     // lacks it is TestFlight-ineligible (ASC 90886) even though upload and
     // App Store review accept it.
-    if (!preview) {
+    if (!preview || hmr) {
       values['com.apple.application-identifier'] =
         `${teamID}.${target.bundleID}`
       if (variant === 'dev') {
@@ -4805,9 +4837,13 @@ export function resolvedEntitlements(
     values['application-identifier'] = `${teamID}.${target.bundleID}`
   }
   if (variant === 'dev') {
+    if (preview && hmr && target.platform === 'macOS') {
+      values['com.apple.security.get-task-allow'] = true
+    }
     if (
       target.platform !== 'macOS' &&
-      (!preview || target.platform === 'iOS')
+      (!preview || target.platform === 'iOS' ||
+        (hmr && target.platform === 'visionOS'))
     ) {
       values['get-task-allow'] = true
     }
@@ -4902,7 +4938,14 @@ async function prepareApp(
       entitlementSources.push(path)
       await writeIfChanged(
         join(appDir, path),
-        generatePlist(resolvedEntitlements(target, variant, teamID)),
+        generatePlist(
+          resolvedEntitlements(
+            target,
+            variant,
+            teamID,
+            app.hmr && app.targets.includes(target),
+          ),
+        ),
       )
     }
     for (const file of ['adhoc', 'release']) {

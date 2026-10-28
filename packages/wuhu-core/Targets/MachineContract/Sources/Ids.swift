@@ -1,6 +1,6 @@
 import JSONValue
 
-public struct MachineID: Codable, Equatable, Hashable, Sendable {
+public struct MachineID: RawRepresentable, Codable, Equatable, Hashable, Sendable {
   public static let prefix: String = "mc_"
   public static let suffixLength: Int = 8
 

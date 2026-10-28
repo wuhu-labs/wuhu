@@ -168,7 +168,7 @@ extension SessionStore {
       try Sessions.markDrained(key, through: Int64(lastID), now: now, in: db)
       try Sessions.markHasWork(key, now: now, in: db)
       try Sessions.markInferenceOwed(key, now: now, in: db)
-      return QueueDrain(items: items, queueTail: lastID)
+      return QueueDrain(items: items, queueTail: lastID, firings: try Sessions.firings(of: entries.map(\.input), in: db))
     }
   }
 

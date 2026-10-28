@@ -17,6 +17,7 @@ import enum MainHub.ToolLifetimes
 import struct MainHub.ToolProblem
 import enum MainHub.WaitCut
 import struct MainHub.WorkerActivity
+import ServerTelemetry
 import SessionDomain
 import enum SpaceContract.ScriptOutput
 import SpaceCore
@@ -96,6 +97,7 @@ public final class Scripts: Sendable {
       kind: .command { output($0.output) },
       arguments: script.arguments,
       limits: limits,
+      trace: .root(SpanOwner(session: script.session, group: script.group)),
     )
     let run: Task<Void, Never>
     do { run = try scope.run("script \(execution.id)") { await execution.run(owner: self.owner) } }

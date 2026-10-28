@@ -5,7 +5,6 @@ import Foundation
 import enum PinnedTLS.PinnedTLS
 import Scratch
 import ServeNIO
-import struct ServerTelemetry.OTLPExporter
 import ServeTLS
 import SpaceServer
 import Synchronization
@@ -102,7 +101,7 @@ import Tracing
   ]) func anUnusableOTLPEndpointStopsTheStart(environment: [String: String]) async throws {
     let base = try scratch()
     defer { try? FileManager.default.removeItem(at: base) }
-    await #expect(throws: OTLPExporter.ConfigurationError.self) {
+    await #expect(throws: UnusableOTLPEndpoint.self) {
       try await SpaceServer.serve(folder: base.appendingPathComponent("store"), port: 0, dev: true, telemetryEnvironment: environment)
     }
     #expect(InstrumentationSystem.tracer is NoOpTracer)

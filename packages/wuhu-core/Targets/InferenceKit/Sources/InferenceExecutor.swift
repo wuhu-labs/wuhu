@@ -194,7 +194,7 @@ public struct InferenceExecutor: Sendable {
     ttft: Duration?,
     elapsed: Duration,
   ) -> InferenceMetric {
-    let derived = cancelled ? (outcome: InferenceMetric.Outcome.cancelled, kind: String?.none, status: Int?.none) : InferenceMetric.classify(error)
+    let derived = cancelled ? (outcome: InferenceMetric.Outcome.cancelled, kind: String?.none, status: Int?.none, text: String?.none) : InferenceMetric.classify(error)
     return InferenceMetric(
       timestamp: timestamp,
       payer: .session(session),
@@ -204,6 +204,7 @@ public struct InferenceExecutor: Sendable {
       effort: model.specifier.effort,
       outcome: derived.outcome,
       errorKind: derived.kind,
+      errorText: derived.text,
       status: derived.status,
       ttftMs: ttft?.milliseconds,
       durationMs: elapsed.milliseconds,

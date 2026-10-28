@@ -410,7 +410,7 @@ private func sessionRouter(
   // The session's worker runs the file; the stream closing kills it.
   router.post("/v1/scripts") { request, _ in
     let input = try await request.json(ScriptRunInput.self)
-    let script = ScriptRun(session: principal().session, source: input.source, arguments: input.arguments)
+    let script = ScriptRun(session: principal().session, group: principal().group, source: input.source, arguments: input.arguments)
     let events = AsyncStream<SSEEvent> { continuation in
       let say: @Sendable (ScriptOutput) -> Void = { output in
         if let event = try? SSEEvent.json(output) { continuation.yield(event) }

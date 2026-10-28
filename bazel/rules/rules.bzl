@@ -411,7 +411,7 @@ WUHU_HMR_VIEW_COPTS = select({
 def _swift_6_copts(kwargs):
     return WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_CONTROLLABLE_CLOCK_COPTS + kwargs.pop("copts", [])
 
-def wuhu_swift_library(name, srcs, deps, package_name, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, embedded_directories = None, **kwargs):
+def wuhu_swift_library(name, srcs, deps, package_name, hmr = False, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, embedded_directories = None, **kwargs):
     copy_resources = copy_resources or []
     process_resources = process_resources or []
     embedded_directories = embedded_directories or []
@@ -421,9 +421,12 @@ def wuhu_swift_library(name, srcs, deps, package_name, copy_resources = None, pr
     swift_library(
         name = name,
         srcs = srcs + resource_srcs + embedded_srcs,
-        copts = _swift_6_copts(kwargs) + WUHU_HMR_VIEW_COPTS,
+        copts = _swift_6_copts(kwargs) + WUHU_HMR_VIEW_COPTS + (WUHU_HMR_COPTS if hmr else []),
         data = data,
-        deps = deps + embedded_deps,
+        deps = deps + embedded_deps + (select({
+            "//bazel/rules:hmr_enabled": ["//packages/hmr:HMRRuntime"],
+            "//conditions:default": [],
+        }) if hmr else []),
         module_name = name,
         package_name = package_name,
         **kwargs
@@ -710,5 +713,37 @@ wuhu_hmr_app = rule(
     attrs = {
         "app": attr.label(mandatory = True, cfg = _hmr_transition),
         "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
+    },
+)
+
+def _hmr_plist_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".plist")
+    channel = ctx.var.get("HMR_CHANNEL_URL", "") if ctx.attr.enabled else ""
+    version = ctx.var.get("HMR_BUILD_VERSION", "") if ctx.attr.enabled else ""
+    if bool(channel) != bool(version):
+        fail("HMR_CHANNEL_URL and HMR_BUILD_VERSION must be provided together")
+    if channel:
+        if not channel.startswith("https://"):
+            fail("HMR_CHANNEL_URL requires HTTPS")
+        ctx.actions.run_shell(
+            inputs = [ctx.file.src],
+            outputs = [out],
+            arguments = [ctx.file.src.path, out.path, channel, version],
+            command = """set -eu
+/usr/bin/plutil -convert xml1 -o "$2" "$1"
+/usr/bin/plutil -insert HMRChannelURL -string "$3" "$2"
+/usr/bin/plutil -replace CFBundleVersion -string "$4" "$2"
+""",
+            mnemonic = "HMRSessionPlist",
+        )
+    else:
+        ctx.actions.symlink(output = out, target_file = ctx.file.src)
+    return [DefaultInfo(files = depset([out]))]
+
+wuhu_hmr_plist = rule(
+    implementation = _hmr_plist_impl,
+    attrs = {
+        "src": attr.label(allow_single_file = [".plist"], mandatory = True),
+        "enabled": attr.bool(default = False),
     },
 )

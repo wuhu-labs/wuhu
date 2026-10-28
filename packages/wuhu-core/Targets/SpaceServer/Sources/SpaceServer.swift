@@ -487,7 +487,6 @@ public enum SpaceServer {
     // main hands over while its services still run, so nothing it stops
     // reaches the workers.
     let handover = await withTaskGroup(of: Bool?.self, returning: Result<Handover, any Error>?.self) { group in
-      if let telemetry { group.addTask { await telemetry.run(); return nil } }
       group.addTask { await spaceHost.run(); return nil }
       group.addTask {
         await api.runUntilCancelled()

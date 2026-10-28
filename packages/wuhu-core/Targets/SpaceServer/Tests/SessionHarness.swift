@@ -182,7 +182,7 @@ struct SessionHarness {
     return try await space.mintPersona(key: key).name
   }
 
-  init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil) async throws {
+  init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil, metrics: InferenceMetricsSink = .noop) async throws {
     credentials = credentialResolver ?? .bound { providerID in
       CredentialBinding(credential: .apiKey(CredentialResolver.environmentAPIKey(providerID) ?? ""), identityEpoch: "assembled-fixture-credential")
     }
@@ -196,7 +196,7 @@ struct SessionHarness {
       space: space,
       hub: hub,
       attemptLog: nil,
-      metrics: .noop,
+      metrics: metrics,
       credentials: credentials,
       secrets: nil,
       usage: UsageBoard(),

@@ -18,6 +18,7 @@ import struct OperationProtocol.OperationError
 import struct OperationProtocol.StartRequest
 import struct OperationProtocol.Verdict
 import Serve
+import struct ServerTelemetry.TraceParent
 import struct SessionDomain.SessionID
 import SpaceCore
 import Synchronization
@@ -32,6 +33,8 @@ struct MachineV2ExecRelay: Sendable {
   let tokens: ExecTokens?
   let secrets: SpaceSecretStores?
   var resumed: ResumedExec? = nil
+  /// The span that started the exec, when its first caller sent one: its exchanges nest under it.
+  var trace: TraceParent? = nil
 }
 
 /// A live exec operation a restart found, with the relay state stored on it.
@@ -133,7 +136,7 @@ extension MachineV2Service {
     holder(record).map { $0 == leg } ?? true
   }
 
-  func runCaller(_ record: ExecRecord, socket: WebSocket, leg: ExecLeg, space: Space, tokens: ExecTokens?, secrets: SpaceSecretStores?) async {
+  func runCaller(_ record: ExecRecord, socket: WebSocket, leg: ExecLeg, space: Space, tokens: ExecTokens?, secrets: SpaceSecretStores?, trace: TraceParent?) async {
     @Dependency(\.date) var date
     let key = record.id.rawValue
     // The route refuses another actor with 409 before upgrading; this covers the race between that check and here. A group whose
@@ -149,7 +152,7 @@ extension MachineV2Service {
       // Stdin is acknowledged once durable, so a restart resumes it where the caller's acknowledgement says.
       let entry = ExecEndpoint(endpoint: ChannelEndpoint(incomingResume: .init(output: 0, stdin: 0)))
       execEndpoints[key] = entry
-      relays.continuation.yield(.caller(.init(record: record, endpoint: entry.endpoint, starter: entry.starter, space: space, tokens: tokens, secrets: secrets)))
+      relays.continuation.yield(.caller(.init(record: record, endpoint: entry.endpoint, starter: entry.starter, space: space, tokens: tokens, secrets: secrets, trace: trace)))
     }
     let entry = execEndpoints[key]!
     execEndpoints[key]!.callers[caller] = leg
@@ -187,7 +190,7 @@ extension MachineV2Service {
   /// Relays the exec, then keeps its endpoint `endpointRetention` for a caller that comes back to read the end.
   func serveExec(_ relay: MachineV2ExecRelay) async {
     let key = relay.record.id.rawValue
-    await relayExec(relay)
+    if let trace = relay.trace { await trace.run { await relayExec(relay) } } else { await relayExec(relay) }
     @Dependency(\.date) var date
     execEndpoints[key]?.completed = date.now
     execEndpoints[key]?.operation = nil

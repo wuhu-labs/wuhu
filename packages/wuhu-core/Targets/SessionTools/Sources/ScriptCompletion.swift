@@ -9,6 +9,7 @@ import InferenceKit
 import JSONValue
 import OrderedCollections
 import QuickJSKit
+import ServerTelemetry
 import SessionDomain
 import SpaceClient
 import SpaceCore
@@ -112,6 +113,10 @@ struct CompletionRequest {
 
 extension ToolExecutor {
   func complete(_ actor: ScriptActor, _ request: CompletionRequest) async throws -> String {
+    try await traced(.attempt) { span in try await complete(actor, request, span) }
+  }
+
+  private func complete(_ actor: ScriptActor, _ request: CompletionRequest, _ span: TelemetrySpan<ModelAttemptOutcome>) async throws -> String {
     let catalog: ProviderCatalog
     do {
       catalog = try await self.catalog(actor, includeGroups: true)
@@ -191,6 +196,7 @@ extension ToolExecutor {
       case let .success(.usage(value, model, _)): usage = value; servedModel = model
       case let .success(.done(message, metadata)):
         completed = message; usage = metadata.usage; servedModel = metadata.servedModel ?? servedModel
+        span.set(.finishReason, metadata.stopReason.rawValue)
       default: break
       }
       if failure != nil { break }
@@ -213,11 +219,13 @@ extension ToolExecutor {
       effort: specifier.effort,
       outcome: outcome.outcome,
       errorKind: outcome.kind,
+      errorText: outcome.text,
       status: outcome.status,
       ttftMs: firstEvent?.completionMilliseconds,
       durationMs: started.duration(to: clock.now).completionMilliseconds,
       usage: usage,
     )
+    span.record(metric)
     try await report(metric, as: actor)
     if let failure {
       if case .cancelled = failure { throw CancellationError() }

@@ -33,6 +33,8 @@ public struct InferenceMetric: Sendable, Equatable {
   public var effort: String
   public var outcome: Outcome
   public var errorKind: String?
+  /// The provider's error text, for the attempt's span only: never persisted or reported.
+  public var errorText: String?
   public var status: Int?
   public var ttftMs: Int64?
   public var durationMs: Int64
@@ -48,6 +50,7 @@ public struct InferenceMetric: Sendable, Equatable {
     effort: String,
     outcome: Outcome,
     errorKind: String? = nil,
+    errorText: String? = nil,
     status: Int? = nil,
     ttftMs: Int64? = nil,
     durationMs: Int64,
@@ -62,6 +65,7 @@ public struct InferenceMetric: Sendable, Equatable {
     self.effort = effort
     self.outcome = outcome
     self.errorKind = errorKind
+    self.errorText = errorText
     self.status = status
     self.ttftMs = ttftMs
     self.durationMs = durationMs
@@ -102,45 +106,53 @@ public struct InferenceMetric: Sendable, Equatable {
 }
 
 extension InferenceMetric {
-  public static func classify(_ error: InferenceError?) -> (outcome: Outcome, kind: String?, status: Int?) {
-    guard let error else { return (.ok, nil, nil) }
+  /// `text` is the provider's own error text, clipped, kept apart from the code.
+  public static func classify(_ error: InferenceError?) -> (outcome: Outcome, kind: String?, status: Int?, text: String?) {
+    guard let error else { return (.ok, nil, nil, nil) }
     switch error {
     case .cancelled:
-      return (.cancelled, nil, nil)
+      return (.cancelled, nil, nil, nil)
     case .streamCut:
-      return (.networkError, "streamCut", nil)
+      return (.networkError, "streamCut", nil, nil)
     case .upstreamUnavailable:
-      return (.httpError, "upstreamUnavailable", nil)
+      return (.httpError, "upstreamUnavailable", nil, nil)
     case .oidcSigningFailed:
-      return (.httpError, "oidcSigningFailed", nil)
+      return (.httpError, "oidcSigningFailed", nil, nil)
     case .credentialRefreshRefused:
-      return (.httpError, "credentialRefreshRefused", 401)
+      return (.httpError, "credentialRefreshRefused", 401, nil)
     case .authenticationRefused:
-      return (.httpError, "authenticationRefused", 401)
+      return (.httpError, "authenticationRefused", 401, nil)
     case .rateLimited:
-      return (.httpError, "rateLimited", 429)
-    case let .capacityExceeded(code, _, status):
-      return (.httpError, code, status)
+      return (.httpError, "rateLimited", 429, nil)
+    case let .capacityExceeded(code, message, status):
+      return (.httpError, code, status, clipped(message))
     case .malformedModelMessage:
-      return (.httpError, "malformedModelMessage", nil)
+      return (.httpError, "malformedModelMessage", nil, nil)
     case .requestTooLarge:
-      return (.httpError, "requestTooLarge", 413)
+      return (.httpError, "requestTooLarge", 413, nil)
     case .requestTooLargeAfterCompaction:
-      return (.httpError, "requestTooLargeAfterCompaction", 413)
+      return (.httpError, "requestTooLargeAfterCompaction", 413, nil)
     case .contextTooLong:
-      return (.httpError, "contextTooLong", 413)
-    case let .invalidInput(status, _):
-      return (.httpError, "invalidInput", status)
+      return (.httpError, "contextTooLong", 413, nil)
+    case let .invalidInput(status, body):
+      return (.httpError, "invalidInput", status, body.map { clipped($0) })
     case let .transport(kind):
-      return (kind.isTimeout ? .timeout : .networkError, kind.rawValue, nil)
+      return (kind.isTimeout ? .timeout : .networkError, kind.rawValue, nil, nil)
     case let .transient(status, body):
-      if let status { return (.httpError, "serverError", status) }
-      return (.networkError, body.map { clipped($0) } ?? "transport", nil)
-    case let .other(status, _):
-      if let status { return (.httpError, "other", status) }
-      return (.networkError, "other", nil)
+      return (status == nil ? .networkError : .httpError, status == nil ? "transport" : "serverError", status, body.map { clipped($0) })
+    case let .other(status, body):
+      return (status == nil ? .networkError : .httpError, "other", status, body.map { clipped($0) })
     }
   }
+
+  /// The failure code, typed for `error.type`.
+  public var failure: InferenceFailure? { errorKind.map(InferenceFailure.init(rawValue:)) }
+}
+
+/// A failed attempt's code as the classifier or its source names it, never the provider's text: persisted as `error`.
+public struct InferenceFailure: RawRepresentable, Hashable, Sendable {
+  public let rawValue: String
+  public init(rawValue: String) { self.rawValue = rawValue }
 }
 
 private func clipped(_ text: String, to limit: Int = 80) -> String {

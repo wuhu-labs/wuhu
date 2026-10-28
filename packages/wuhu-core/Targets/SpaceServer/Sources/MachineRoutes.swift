@@ -11,6 +11,8 @@ import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import Serve
 import ServeRouting
+import struct ServerTelemetry.SpanOwner
+import struct ServerTelemetry.TraceParent
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import SpaceCore
@@ -320,8 +322,9 @@ func addMachineRoutes(
     guard await hub.admitsCaller(admitted.record, leg: leg) else {
       return .response(errorResponse(.conflict, code: "execAttached", message: "exec \(admitted.record.id.rawValue) belongs to another caller"))
     }
+    let trace = TraceParent.propagated(request.headers.values, owner: SpanOwner(session: admitted.record.session, group: admitted.record.group))
     return .webSocket { socket in
-      await hub.runCallerSession(admitted.record, socket: socket, leg: leg)
+      await hub.runCallerSession(admitted.record, socket: socket, leg: leg, trace: trace)
     }
   }
 }

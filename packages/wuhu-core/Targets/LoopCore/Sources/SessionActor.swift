@@ -11,6 +11,7 @@ import TaskLifetime
 #else
   import Foundation
 #endif
+import struct ServerTelemetry.CacheExpectation
 import SessionDomain
 import SpaceCore
 
@@ -47,6 +48,7 @@ actor SessionActor {
     var lastUpdatedByLoopAt: Date?
     let group: String
     let isTask: Bool
+    let parent: SessionID?
     var delegatedWake = false
     var parkWake: (at: Date, task: Task<Void, Never>)?
     var revoking = false
@@ -54,6 +56,20 @@ actor SessionActor {
     var malformedMessages = 0
     var capacityFailures = 0
     var compactedForPayload = false
+    var turnsSinceMount = 0
+    var lastPrompt: LastPrompt?
+
+    /// The last reply's whole prompt, for the next attempt's cache expectation; only in the generation that made it.
+    struct LastPrompt {
+      let tokens: Int
+      let at: Date
+      let generation: Int
+    }
+
+    func cacheExpectation(now: Date) -> CacheExpectation? {
+      guard let lastPrompt, lastPrompt.generation == generation else { return nil }
+      return CacheExpectation(tokens: lastPrompt.tokens, idleMs: max(0, Int((now.timeIntervalSince(lastPrompt.at) * 1000).rounded())))
+    }
 
     var hasSettled: Bool {
       guard lastUpdatedByLoopAt != nil else { return false }
@@ -374,6 +390,7 @@ extension SessionActor.LiveState {
       lastUpdatedByLoopAt: now,
       group: hydration.record.group.rawValue,
       isTask: hydration.record.kind == .task,
+      parent: hydration.record.parent,
     )
   }
 }

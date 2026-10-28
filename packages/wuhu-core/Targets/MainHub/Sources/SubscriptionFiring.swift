@@ -468,14 +468,14 @@ public struct SubscriptionFiring: Sendable {
     else { throw CancellationError() }
     @Dependency(\.date) var date
     @Dependency(\.uuid) var uuid
-    let kind = switch input {
-    case .rows: "observe"
-    case .timer: "timer"
-    case .event: "stream"
+    let kind: FiringKind = switch input {
+    case .rows: .observe
+    case .timer: .timer
+    case .event: .stream
     }
     func notification(_ text: String) -> SystemNotification {
       SystemNotification(
-        id: uuid(), timestamp: date.now, kind: kind == "timer" ? .timer : .spaceObservation,
+        id: uuid(), timestamp: date.now, kind: kind == .timer ? .timer : .spaceObservation,
         subscriptionID: subscription.slot.id, content: .init(text: text),
       )
     }
@@ -483,28 +483,28 @@ public struct SubscriptionFiring: Sendable {
     case let .session(id): .session(id)
     case let .group(group): .observer(Observer(group: group, name: attempt.name!, firing: attempt.firing))
     }
-    let span = ServerSpan(.firing, session: attempt.owner.session?.rawValue, group: attempt.owner.group?.rawValue)
-    var traced: [SpanAttribute: String] = [.subscription: subscription.slot.id.rawValue, .firing: attempt.firing, .kind: kind]
-    traced[.observer] = attempt.owner.group == nil ? nil : attempt.name
+    let lag: Int? = if case let .timer(due) = input { max(0, Int(date.now.timeIntervalSince(due) * 1000)) } else { nil }
     let result: ScriptHandlerResult
     do {
-      result = try await ServerTracing.$context.withValue(span.context) {
-        try await worker.fire(.init(
+      result = try await traced(.firing, under: .root(SpanOwner(session: attempt.owner.session, group: attempt.group))) { span in
+        span.set(.subscription, subscription.slot.id)
+        span.set(.firing, attempt.firing)
+        span.set(.firingKind, kind)
+        span.set(.observer, attempt.owner.group == nil ? nil : attempt.name)
+        span.set(.lagMs, lag)
+        let result = try await worker.fire(.init(
           id: attempt.attemptID, path: path, runner: runner, input: input,
           stateJSON: attempt.stateJSON,
         ))
+        try Task.checkCancellation()
+        span.set(.wakes, result.wakes.count)
+        span.conclude(.ok)
+        return result
       }
-      try Task.checkCancellation()
-      traced[.outcome] = "ok"
-      span.finish(traced)
     } catch is CancellationError {
-      traced[.outcome] = "cancelled"
-      span.finish(traced)
       try? await uncancellable("Log the cancelled firing") { try await space.sessions.cancelFiring(attempt) }
       throw CancellationError()
     } catch {
-      traced[.outcome] = "error"
-      span.finish(traced)
       guard try await space.sessions.finishSubscriptionHandler(
         attempt, result: .failure(
           error: "\(error)", notification: notification("handler \(path) for \(subscription.slot.id.rawValue) failed: \(error)"),

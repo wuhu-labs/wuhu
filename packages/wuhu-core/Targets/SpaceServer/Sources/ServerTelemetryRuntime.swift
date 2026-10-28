@@ -8,21 +8,17 @@
 #elseif canImport(Glibc)
   import Glibc
 #endif
-import AsyncHTTPClient
-import FetchAsyncHTTPClient
 import Logging
 import OTel
-import ServerTelemetry
 import ServiceLifecycle
 import TaskLifetime
 
-/// The server's traces, configured by the standard `OTEL_*` variables: swift-otel's tracer behind `InstrumentationSystem`, and
-/// until its span kinds move there, the hand-rolled `ServerTracing` exporter to the same endpoint. The two never export the same
-/// span. `InstrumentationSystem` takes one bootstrap per process.
+/// An OTLP endpoint that is not an HTTP(S) URL with a host, or carries credentials, a query or a fragment.
+public struct UnusableOTLPEndpoint: Error {}
+
+/// The server's traces, configured by the standard `OTEL_*` variables: swift-otel's tracer behind `InstrumentationSystem`, which
+/// takes one bootstrap per process.
 struct ServerTelemetryRuntime: Sendable {
-  let buffer = SpanBuffer()
-  let exporter: OTLPExporter
-  let client: HTTPClient
   let otel: ServiceGroup
   let otelRun: Task<Void, any Error>
   let scope = TaskScope()
@@ -32,46 +28,31 @@ struct ServerTelemetryRuntime: Sendable {
     guard environment["OTEL_SDK_DISABLED"]?.lowercased() != "true",
           let raw = [environment["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"], environment["OTEL_EXPORTER_OTLP_ENDPOINT"]].compactMap({ $0 }).first(where: { !$0.isEmpty })
     else { return nil }
-    guard let endpoint = URL(string: raw) else { throw OTLPExporter.ConfigurationError.invalidEndpoint }
+    guard let endpoint = URL(string: raw), ["http", "https"].contains(endpoint.scheme), endpoint.host != nil,
+          endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil
+    else { throw UnusableOTLPEndpoint() }
     try UnsupportedTelemetrySetting.refuse(environment)
-    let host = hostName()
     let logger = Logger(label: "wuhu.otel")
+    let service = try OTel.bootstrap(configuration: Self.configuration(version: version, log: logger), environment: environment)
+    otel = ServiceGroup(services: [service], logger: logger)
+    otelRun = try scope.run("otel") { [otel] in try await otel.run() }
+  }
+
+  static func configuration(version: String, log: Logger) -> OTel.Configuration {
     var configuration = OTel.Configuration.default
-    configuration.diagnosticLogger = .custom(logger)
-    configuration.diagnosticLogLevel = .error
+    configuration.diagnosticLogger = .custom(Logger(label: log.label) { _ in TraceExportLog(upstream: log) })
     configuration.serviceName = "wuhu-server"
-    configuration.resourceAttributes = ["service.version": version].merging(host.map { ["host.name": $0] } ?? [:]) { $1 }
+    configuration.resourceAttributes = ["service.version": version].merging(hostName().map { ["host.name": $0] } ?? [:]) { $1 }
     configuration.logs.enabled = false
     configuration.metrics.enabled = false
     configuration.traces.otlpExporter.protocol = .httpProtobuf
     configuration.traces.otlpExporter.timeout = .seconds(2)
     configuration.traces.batchSpanProcessor.exportTimeout = .seconds(2)
-    var http = HTTPClient.Configuration()
-    http.redirectConfiguration = .disallow
-    http.timeout.connect = .seconds(2)
-    http.timeout.read = .seconds(2)
-    client = HTTPClient(configuration: http)
-    let service: any Service
-    do {
-      exporter = try OTLPExporter(endpoint: endpoint, serviceVersion: version, hostName: host, fetch: .asyncHTTPClient(client, timeout: .seconds(2)))
-      service = try OTel.bootstrap(configuration: configuration, environment: environment)
-    } catch {
-      try? await client.shutdown()
-      throw error
-    }
-    otel = ServiceGroup(services: [service], logger: logger)
-    ServerTracing.install { [buffer] in buffer.append($0) }
-    otelRun = try scope.run("otel") { [otel] in try await otel.run() }
+    return configuration
   }
 
-  func run() async {
-    await buffer.run(export: exporter.export)
-  }
-
+  /// Flushes the exporter within its two-second deadline.
   func shutdown() async {
-    ServerTracing.install(nil)
-    await buffer.shutdown(export: exporter.export)
-    try? await client.shutdown()
     await otel.triggerGracefulShutdown()
     _ = await otelRun.result
     await scope.close()

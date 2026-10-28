@@ -170,6 +170,30 @@ enum Sessions {
     }
   }
 
+  static func firings(of inputs: [QueueInput], in db: Database) throws -> [String] {
+    var messages: [String] = []
+    var requests: [String] = []
+    for input in inputs {
+      switch input {
+      case let .message(message):
+        messages.append(message.messageID.rawValue)
+        if let request = message.requestID { requests.append(request.rawValue) }
+      case let .notification(notification):
+        if let request = notification.requestID { requests.append(request.rawValue) }
+      }
+    }
+    guard !messages.isEmpty || !requests.isEmpty else { return [] }
+    return try String.fetchAll(
+      db,
+      sql: """
+      SELECT firing FROM messages WHERE firing IS NOT NULL AND id IN (\(databaseQuestionMarks(count: messages.count)))
+      UNION SELECT firing FROM requests WHERE firing IS NOT NULL AND id IN (\(databaseQuestionMarks(count: requests.count)))
+      ORDER BY firing
+      """,
+      arguments: StatementArguments(messages + requests),
+    )
+  }
+
   static func markDrained(_ key: String, through id: Int64, now: String, in db: Database) throws {
     try db.execute(
       sql: "UPDATE session_queue SET drained_at = ? WHERE session_id = ? AND id <= ? AND drained_at IS NULL",

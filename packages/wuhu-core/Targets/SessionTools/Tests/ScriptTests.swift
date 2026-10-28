@@ -712,7 +712,7 @@ final class ScriptRig: Sendable {
 
   /// Runs `source` as `wuhu script` runs a file: for this caller alone.
   func command(_ source: String, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
-    try await scripts.run(ScriptRun(session: session, source: source, arguments: []), tools: executor, output: output)
+    try await scripts.run(ScriptRun(session: session, group: GroupID(rawValue: "g"), source: source, arguments: []), tools: executor, output: output)
   }
 
   func evaluate(_ source: String) async throws -> JSONValue {

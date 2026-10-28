@@ -53,9 +53,14 @@ enum MachineExchange: Sendable {
   }
 }
 
+private struct HeaderInjector: Injector {
+  func inject(_ value: String, forKey key: String, into headers: inout RequestHeaders) { headers[key] = value }
+}
+
 /// One request to one machine, with a real deadline: the caller is answered when the deadline passes, whatever the fetch is
-/// doing, and the fetch is cancelled behind it. Nothing here limits how many exchanges run at once. Each exchange is one
-/// content-free `machine.exchange` client span under the current one.
+/// doing, and the fetch is cancelled behind it. Nothing here limits how many exchanges run at once. Each exchange made in a
+/// trace is one content-free `machine.exchange` client span under the current one, its context sent as the tracer's
+/// propagation headers (`traceparent` under OTel); outside a trace, such as a presence poll, it starts none.
 struct MachineLink: Sendable {
   let taskScope = TaskScope()
   let origin: URL
@@ -88,12 +93,15 @@ struct MachineLink: Sendable {
     limit: Int,
     preparation: (@Sendable (Bool) -> Void)? = nil,
   ) async -> Exchanged<T> {
-    let span = tracer.startSpan("machine.exchange", ofKind: .client)
+    let context = ServiceContext.current
+    let tracer: any Tracer = context == nil ? NoOpTracer() : self.tracer
+    let span = tracer.startSpan("machine.exchange", context: context ?? .topLevel, ofKind: .client)
     defer { span.end() }
     let id = ids()
     var request = Request(url: url(machine, exchange), method: exchange.method, body: body)
     request.headers["X-Wuhu-Request-ID"] = id.uuidString
     request.headers["X-Wuhu-Correlation-ID"] = (correlation ?? id).uuidString
+    tracer.inject(span.context, into: &request.headers, using: HeaderInjector())
     let began = clock.now()
     let outcome: Exchanged<Data>
     do {
@@ -130,7 +138,13 @@ struct MachineLink: Sendable {
       attributes["machine.exchange.kind"] = exchange.kind
       attributes["operation.id"] = exchange.operation?.uuidString
       attributes["machine.exchange.elapsed_ms"] = (clock.now() - began).milliseconds
-      if case let .failure(error) = result { attributes["error.type"] = error.code.rawValue }
+      switch result {
+      case .success: attributes["wuhu.outcome"] = "ok"
+      case let .failure(error):
+        attributes["wuhu.outcome"] = "errored"
+        // A code this build does not define is the machine's own word.
+        attributes["error.type"] = error.code.isKnown ? error.code.rawValue : "unknown"
+      }
     }
     if case .failure = result { span.setStatus(.init(code: .error)) }
     return .init(result: result, answered: outcome.answered)

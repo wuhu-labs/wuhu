@@ -3139,6 +3139,39 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
   )
 })
 
+Deno.test('HMR preview variants support visionOS without enabling the ordinary target', () => {
+  const app: AppManifest = {
+    name: 'VisionPreview',
+    hmr: true,
+    libraries: [{
+      name: 'PreviewLibrary',
+      sources: 'Sources',
+      dependencies: [],
+    }],
+    targets: [{
+      name: 'PreviewVision',
+      platform: 'visionOS',
+      bundleID: 'test.preview.vision',
+      bundleName: 'VisionPreview',
+      entitlements: {},
+      families: ['vision'],
+      appIcons: [],
+      infoPlist: 'Info.plist',
+      minimumOSVersion: '26.0',
+      info: {},
+      dependencies: [':PreviewLibrary'],
+    }],
+  }
+  assertStringIncludes(
+    generateAppBuildBazel(app),
+    'wuhu_hmr_app(\n    name = "PreviewVisionHMR",\n    app = ":PreviewVision",\n    tags = ["manual"],\n    target_compatible_with = wuhu_platforms([\n        "visionos",\n    ]),\n)',
+  )
+  assertEquals(
+    generateAppBuildBazel({ ...app, hmr: false }).includes('PreviewVisionHMR'),
+    false,
+  )
+})
+
 Deno.test('ad hoc honors an explicit Dev CloudKit environment without changing Store or Direct', () => {
   const target: AppManifest['targets'][number] = {
     name: 'ExampleiOS',
@@ -3362,4 +3395,103 @@ Deno.test('mac runner rejects missing and duplicate pinned insertion anchors', (
       )
     }
   }
+})
+
+Deno.test('HMR preview Mac and visionOS builds select development profiles and loadable-code entitlements', () => {
+  const target = (
+    platform: 'macOS' | 'visionOS',
+  ): AppManifest['targets'][number] => ({
+    name: `ExamplePreview${platform}`,
+    platform,
+    bundleID: 'tech.lakeridge.previews.example',
+    bundleName: 'ExamplePreview',
+    entitlements: {},
+    families: platform === 'macOS' ? ['mac'] : ['vision'],
+    appIcons: [],
+    infoPlist: 'Sources/Info.plist',
+    minimumOSVersion: '26.0',
+    dependencies: [],
+    info: {},
+  })
+  const mac = target('macOS'), vision = target('visionOS')
+  const app: AppManifest = {
+    name: 'ExamplePreview',
+    signingTeamID: 'TEAM123456',
+    hmr: true,
+    targets: [mac, vision],
+  }
+  const build = generateAppBuildBazel(app)
+  assertStringIncludes(
+    build,
+    'profile_name = "Wuhu Dev tech.lakeridge.previews.example"',
+  )
+  assertStringIncludes(build, 'profile_extension = ".provisionprofile"')
+  assertStringIncludes(build, 'profile_name = "Wuhu Dev Previews"')
+  assertEquals(resolvedEntitlements(mac, 'dev', 'TEAM123456', true), {
+    'com.apple.application-identifier':
+      'TEAM123456.tech.lakeridge.previews.example',
+    'com.apple.developer.team-identifier': 'TEAM123456',
+    'com.apple.security.get-task-allow': true,
+  })
+  assertEquals(resolvedEntitlements(vision, 'dev', 'TEAM123456', true), {
+    'application-identifier': 'TEAM123456.tech.lakeridge.previews.example',
+    'get-task-allow': true,
+  })
+  assertEquals(resolvedEntitlements(mac, 'dev', 'TEAM123456'), {})
+  const local = generateAppBuildBazel({ ...app, hmr: false })
+  assertEquals(
+    local.includes('profile_name = "Wuhu Dev tech.lakeridge.previews.example"'),
+    false,
+  )
+})
+
+Deno.test('shared preview host opts into conditional HMR without adding an ordinary runtime dependency', async () => {
+  const host = { ...minimalTarget('PreviewHost', 'library'), hmr: true }
+  const build = await generateBuildBazel(basePkg, [
+    host,
+    minimalTarget('Ordinary', 'library'),
+  ])
+  assertStringIncludes(build, 'name = "PreviewHost",\n    hmr = True,')
+  const ordinary = build.slice(build.indexOf('name = "Ordinary"'))
+  assertEquals(ordinary.includes('hmr = True'), false)
+  assertEquals(build.includes('"//packages/hmr:HMRRuntime"'), false)
+  await assertRejects(
+    () => generateBuildBazel(basePkg, [{ ...host, kind: 'executable' }]),
+    Error,
+    'target hmr opt-in requires a library',
+  )
+})
+
+Deno.test('HMR session plist is a declared build input gated by HMR configuration', () => {
+  const app: AppManifest = {
+    name: 'Preview',
+    hmr: true,
+    targets: [{
+      name: 'PreviewIOS',
+      platform: 'iOS',
+      bundleID: 'test.preview',
+      bundleName: 'Preview',
+      entitlements: {},
+      appIcons: [],
+      info: {},
+      minimumOSVersion: '18.0',
+      families: ['iphone'],
+      infoPlist: 'Sources/Info.plist',
+      dependencies: [],
+    }],
+  }
+  const build = generateAppBuildBazel(app)
+  assertStringIncludes(
+    build,
+    'wuhu_hmr_plist(\n    name = "PreviewIOS_hmr_plist",',
+  )
+  assertStringIncludes(
+    build,
+    '"//bazel/rules:hmr_enabled": True,\n        "//conditions:default": False,',
+  )
+  assertStringIncludes(build, 'infoplists = [":PreviewIOS_hmr_plist"],')
+  assertStringIncludes(build, '"Sources/Info.plist"')
+  const ordinary = generateAppBuildBazel({ ...app, hmr: false })
+  assertEquals(ordinary.includes('wuhu_hmr_plist'), false)
+  assertEquals(ordinary.includes('PreviewIOS_hmr_plist'), false)
 })

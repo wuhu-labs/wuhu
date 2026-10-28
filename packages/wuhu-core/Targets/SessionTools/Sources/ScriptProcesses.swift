@@ -4,7 +4,6 @@ import enum MachineContract.ExecOutputStream
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineID
 import struct MainHub.ScriptError
-import ServerTelemetry
 import SessionDomain
 import SpaceClient
 import SpaceCore
@@ -146,7 +145,6 @@ final class ScriptProcess: Sendable {
   let id: ExecID
   let machine: MachineID
   let acceptsStdin: Bool
-  private let span = ServerTracing.enabled ? ServerSpan(.machine) : nil
   private let exec: ExecSession
   private let giveBack: @Sendable (Int) -> Void
   private let state = Mutex(State())
@@ -173,22 +171,6 @@ final class ScriptProcess: Sendable {
   // MARK: The machine's side
 
   func drive() async {
-    defer {
-      if let span {
-        var attributes: [SpanAttribute: String] = [.machine: machine.rawValue, .version: "v1", .kind: "exec", .outcome: "error"]
-        state.withLock { state in
-          attributes[.bytesOut] = String(state.received)
-          if case let .exited(status) = state.end {
-            attributes[.outcome] = "ok"; attributes[.verdict] = "exited"
-            switch status {
-            case let .exited(code): attributes[.exitCode] = String(code)
-            case let .signaled(signal): attributes[.exitCode] = String(128 + signal)
-            }
-          }
-        }
-        span.finish(attributes)
-      }
-    }
     await pump()
   }
 

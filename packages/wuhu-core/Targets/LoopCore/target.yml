@@ -9,7 +9,7 @@ dependencies:
   - TaskLifetime
   - Clocks
   - ServerTelemetry
-
+  - OperationProtocol
   - SessionDomain
   - SpaceContract
   - SpaceCore
@@ -26,7 +26,8 @@ tests:
   dependencies:
     - MainHub
     - ServerTelemetry
-
+    - InMemoryTracing
+    - Tracing
     - OrderedCollections
     - SessionDomain
     - SpaceContract

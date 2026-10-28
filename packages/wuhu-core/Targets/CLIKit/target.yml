@@ -57,6 +57,8 @@ tests:
     - SessionDomain
     - SessionTools
     - ServerTelemetry
+    - InMemoryTracing
+    - Tracing
     - LoopCore
     - InferenceKit
     - MinimalAgent

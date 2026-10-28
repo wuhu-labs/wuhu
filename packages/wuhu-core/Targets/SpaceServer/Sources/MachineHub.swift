@@ -11,6 +11,8 @@ import Logging
 import MachineContract
 import struct OperationProtocol.OperationError
 import Serve
+import func ServerTelemetry.reachedMachine
+import struct ServerTelemetry.TraceParent
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceCore
@@ -48,6 +50,7 @@ public actor MachineHub {
 
   private func group(_ machine: MachineID) async throws -> GroupID {
     guard let record = try await space.machine(machine) else { throw MachineHubError.machineUnattached(machine) }
+    reachedMachine(machine)
     return record.group
   }
 
@@ -63,9 +66,9 @@ public actor MachineHub {
     return await service.admits(record, leg: leg)
   }
 
-  public func runCallerSession(_ record: ExecRecord, socket: WebSocket, leg: ExecLeg) async {
+  public func runCallerSession(_ record: ExecRecord, socket: WebSocket, leg: ExecLeg, trace: TraceParent? = nil) async {
     guard let service else { socket.close(); return }
-    await service.runCaller(record, socket: socket, leg: leg, space: space, tokens: tokens, secrets: secrets)
+    await service.runCaller(record, socket: socket, leg: leg, space: space, tokens: tokens, secrets: secrets, trace: trace)
   }
 
   public func noteMinted(_ record: ExecRecord) async {

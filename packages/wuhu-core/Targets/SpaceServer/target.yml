@@ -71,6 +71,9 @@ tests:
     - Subprocess
     - ServerTelemetry
     - Tracing
+    - InMemoryTracing
+    - OTel
+    - ServiceLifecycle
     - Assertion
 
 

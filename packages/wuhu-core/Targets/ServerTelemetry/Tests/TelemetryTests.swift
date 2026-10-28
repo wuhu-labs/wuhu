@@ -1,178 +1,131 @@
-import Clocks
-import ControlledTime
 import Dependencies
-import DeterministicDependencies
-#if canImport(FoundationEssentials)
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
-import Fetch
+import InMemoryTracing
 import ServerTelemetry
-import Synchronization
+import struct SessionDomain.SessionID
+import struct SpaceContract.GroupID
 import Testing
+import Tracing
 
-@Test(.deterministicDependencies) func boundedDropsAndRecoversFromDeadCollector() async {
-  let buffer = SpanBuffer(capacity: 4)
-  ServerTracing.$emitter.withValue({ buffer.append($0) }) {
-    for _ in 0 ..< 20 { ServerSpan(.turn, session: "s", group: "g").finish() }
-  }
-  #expect(buffer.pending == 4)
-  #expect(buffer.dropped == 16)
-  struct Offline: Error {}
-  await buffer.flush { _ in throw Offline() }
-  #expect(buffer.pending == 0)
-  #expect(buffer.dropped == 20)
-  ServerTracing.$emitter.withValue({ buffer.append($0) }) { ServerSpan(.turn).finish() }
-  await buffer.flush { spans in #expect(spans.count == 1) }
-  #expect(buffer.pending == 0)
+private struct Refused: Error {}
+
+private func owner(_ session: String? = nil) -> SpanOwner {
+  SpanOwner(session: session.map(SessionID.init(rawValue:)), group: GroupID(rawValue: "g"))
 }
 
-@Test(.deterministicDependencies) func batchingContextAndContentFreeOTLP() async throws {
-  let spans = Mutex<[FinishedSpan]>([])
-  ServerTracing.$emitter.withValue({ span in spans.withLock { $0.append(span) } }) {
-    let turn = ServerSpan(.turn, session: "s", group: "g")
-    ServerTracing.$context.withValue(turn.context) {
-      ServerSpan(.inference).finish([.provider: "codex", .model: "sol", .effort: "high", .ttftMs: "10", .inputTokens: "12", .outputTokens: "4", .outcome: "ok"])
-      let tool = ServerSpan(.tool)
-      ServerTracing.$context.withValue(tool.context) {
-        ServerSpan(.machine).finish([.machine: "devbox", .version: "v1", .kind: "exec", .exitCode: "0", .outcome: "ok"])
-      }
-      tool.finish([.tool: "exec", .bytesIn: "99", .bytesOut: "12", .outcome: "ok"])
+private func recorded(_ body: () async throws -> Void) async rethrows -> [FinishedInMemorySpan] {
+  let tracer = InMemoryTracer()
+  try await withDependencies { $0.tracer = tracer } operation: { try await body() }
+  return tracer.finishedSpans
+}
+
+@Test func aRootStampsItsOwnerOnEverySpanUnderIt() async throws {
+  let spans = await recorded {
+    await traced(.turn, under: .root(owner("s"))) { turn in
+      turn.set(.steps, 2)
+      await traced(.tool) { tool in tool.conclude(.ok) }
+      turn.conclude(.ok)
     }
-    turn.finish([.outcome: "ok"])
   }
-  let snapshot = spans.withLock { $0 }
-  let turn = try #require(snapshot.first { $0.name == .turn })
-  let tool = try #require(snapshot.first { $0.name == .tool })
-  #expect(snapshot.allSatisfy { $0.context.traceID == turn.context.traceID && $0.context.session == "s" && $0.context.group == "g" })
-  #expect(snapshot.first { $0.name == .inference }?.parentSpanID == turn.context.spanID)
-  #expect(tool.parentSpanID == turn.context.spanID)
-  #expect(snapshot.first { $0.name == .machine }?.parentSpanID == tool.context.spanID)
-  let exporter = try OTLPExporter(endpoint: URL(string: "http://collector:4318")!, serviceVersion: "0.1.0-dev.121", hostName: "ct106", fetch: FetchClient { request in
-    #expect(request.url.absoluteString == "http://collector:4318/v1/traces")
-    let text = try await request.body!.text()
-    #expect(text.contains("wuhu-server"))
-    #expect(text.contains("startTimeUnixNano"))
-    #expect(!text.contains("arguments"))
-    #expect(!text.contains("command"))
-    return .text("{}")
-  })
-  try await exporter.export(snapshot)
+  let turn = try #require(spans.first { $0.operationName == "agent.turn" })
+  let tool = try #require(spans.first { $0.operationName == "tool.call" })
+  #expect(turn.parentSpanID == nil)
+  #expect(tool.parentSpanID == turn.spanID)
+  #expect(tool.traceID == turn.traceID)
+  for span in spans {
+    #expect(span.attributes.get("wuhu.session.id") == .string("s"))
+    #expect(span.attributes.get("wuhu.group.id") == .string("g"))
+    #expect(span.attributes.get("wuhu.outcome") == .string("ok"))
+  }
+  #expect(turn.attributes.get("wuhu.steps") == .int64(2))
 }
 
-private struct ExportedResources: Decodable {
-  struct ResourceSpans: Decodable { let resource: Resource }
-  struct Resource: Decodable { let attributes: [Attribute] }
-  struct Attribute: Decodable { let key: String; let value: Value }
-  struct Value: Decodable { let stringValue: String }
-  let resourceSpans: [ResourceSpans]
+@Test func aThrowingBodyEndsErroredWithoutItsErrorText() async throws {
+  let spans = await recorded {
+    await #expect(throws: Refused.self) {
+      try await traced(.script, under: .root(owner())) { _ in throw Refused() }
+    }
+    await #expect(throws: CancellationError.self) {
+      try await traced(.firing, under: .root(owner())) { _ in throw CancellationError() }
+    }
+  }
+  let script = try #require(spans.first { $0.operationName == "script.run" })
+  #expect(script.attributes.get("wuhu.outcome") == .string("failed"))
+  #expect(script.attributes.get("wuhu.session.id") == nil)
+  #expect(script.status == SpanStatus(code: .error))
+  #expect(script.errors.isEmpty)
+  let firing = try #require(spans.first { $0.operationName == "handler.firing" })
+  #expect(firing.attributes.get("wuhu.outcome") == .string("cancelled"))
+  #expect(firing.status == nil)
 }
 
-private func exportedResource(hostName: String?) async throws -> [String: String] {
-  let body = Mutex<String?>(nil)
-  let exporter = try OTLPExporter(endpoint: URL(string: "http://collector:4318")!, serviceVersion: "0.1.0-dev.121", hostName: hostName, fetch: FetchClient { request in
-    let text = try await request.body!.text()
-    body.withLock { $0 = text }
-    return .text("{}")
-  })
-  try await exporter.export([])
-  let decoded = try JSONDecoder().decode(ExportedResources.self, from: Data(try #require(body.withLock { $0 }).utf8))
-  let resource = try #require(decoded.resourceSpans.first?.resource)
-  return Dictionary(uniqueKeysWithValues: resource.attributes.map { ($0.key, $0.value.stringValue) })
-}
-
-@Test(.deterministicDependencies) func resourceNamesServiceVersionAndHost() async throws {
-  #expect(try await exportedResource(hostName: "ct106") == ["service.name": "wuhu-server", "service.version": "0.1.0-dev.121", "host.name": "ct106"])
-  #expect(try await exportedResource(hostName: nil) == ["service.name": "wuhu-server", "service.version": "0.1.0-dev.121"])
-}
-
-@Test(.deterministicDependencies) func disabledHasNoContext() {
-  let span = ServerSpan(.turn)
-  #expect(span.context == nil)
-  span.finish()
-}
-
-@Test(.deterministicDependencies) func slowCollectorCannotBackpressureProducers() async {
-  let buffer = SpanBuffer(capacity: 4)
-  let (entered, enter) = AsyncStream<Void>.makeStream()
-  let (release, resume) = AsyncStream<Void>.makeStream()
-  await ServerTracing.$emitter.withValue({ buffer.append($0) }) {
-    ServerSpan(.turn).finish()
-    let sender = Task {
-      await buffer.flush { _ in
-        enter.finish()
-        for await _ in release {}
-        throw OTLPExporter.ConfigurationError.collectorRejected
+@Test func theFirstConclusionWinsAndCarriesTheProviderText() async throws {
+  let spans = await recorded {
+    await #expect(throws: Refused.self) {
+      try await traced(.attempt, under: .root(owner())) { span in
+        span.conclude(.errored, providerText: "upstream overloaded")
+        throw Refused()
       }
     }
-    for await _ in entered {}
-    for _ in 0 ..< 100 { ServerSpan(.tool).finish() }
-    #expect(buffer.pending == 4)
-    #expect(buffer.dropped == 96)
-    resume.finish()
-    await sender.value
-    #expect(buffer.pending == 0)
-    #expect(buffer.dropped == 101)
   }
+  let attempt = try #require(spans.first)
+  #expect(attempt.attributes.get("exception.message") == .string("upstream overloaded"))
+  #expect(attempt.status == SpanStatus(code: .error, message: "upstream overloaded"))
 }
 
-@Test(.deterministicDependencies(clock: TestClock())) func cancelledShutdownDrainsAllBatchesBeforeReturning() async {
-  let buffer = SpanBuffer()
-  let exported = BatchSizes()
-  await ServerTracing.$emitter.withValue({ buffer.append($0) }) {
-    for _ in 0 ..< 129 { ServerSpan(.tool).finish() }
-    let shutdown = Task {
-      withUnsafeCurrentTask { $0?.cancel() }
-      await buffer.shutdown { batch in exported.values.withLock { $0.append(batch.count) } }
+@Test func aCacheExpectationLandsOnlyOnAttempts() async throws {
+  let spans = await recorded {
+    await traced(.inference, under: .root(owner())) { _ in
+      await expectingCache(CacheExpectation(tokens: 1200, idleMs: 40)) {
+        await traced(.attempt) { _ in }
+        await traced(.tool) { _ in }
+      }
     }
-    await shutdown.value
   }
-  #expect(exported.values.withLock { $0 } == [64, 64, 1])
-  #expect(buffer.pending == 0)
-  #expect(buffer.dropped == 0)
+  let attempt = try #require(spans.first { $0.operationName == "model.attempt" })
+  #expect(attempt.attributes.get("wuhu.cache.expected_tokens") == .int64(1200))
+  #expect(attempt.attributes.get("wuhu.cache.idle_ms") == .int64(40))
+  #expect(spans.first { $0.operationName == "tool.call" }?.attributes.get("wuhu.cache.expected_tokens") == nil)
 }
 
-@Test(.deterministicDependencies) func shutdownDeadlineDropsAnUnavailableCollectorWithoutHanging() async throws {
-  try await withDependencies {
-    $0.installTimeControl()
-  } operation: {
-    @Dependency(\.timeControl) var time
-    @Dependency(\.continuousClock) var clock
-    let buffer = SpanBuffer(capacity: 4)
-    ServerTracing.$emitter.withValue({ buffer.append($0) }) {
-      for _ in 0 ..< 4 { ServerSpan(.tool).finish() }
+@Test func aSpanThatDoesNotRecordNeverEvaluatesItsValues() async {
+  await withDependencies { $0.tracer = NoOpTracer() } operation: {
+    await traced(.turn, under: .root(owner())) { span in
+      #expect(!span.isRecording)
+      span.set(.steps, { Issue.record("evaluated"); return 1 }())
+      span.event(.drained) { _ in Issue.record("filled") }
     }
-    let shutdown = Task { [clock] in await buffer.shutdown { _ in try await clock.sleep(for: .seconds(100)) } }
-    try await time.asleep("shutdown deadline", dueIn: 2)
-    try await time.asleep("blocked export", dueIn: 100)
-    await time.advance(to: Date(timeIntervalSinceReferenceDate: 2))
-    await shutdown.value
-    #expect(buffer.pending == 0)
-    #expect(buffer.dropped == 4)
   }
 }
 
-private final class BatchSizes: Sendable {
-  let values = Mutex<[Int]>([])
+@Test func theFirstMachineAToolReachesNamesIt() async throws {
+  let spans = await recorded {
+    reachedMachine(Machine(rawValue: "mc_outside"))
+    await traced(.tool, under: .root(owner("s"))) { _ in
+      await traced(.script) { _ in reachedMachine(Machine(rawValue: "mc_first")) }
+      reachedMachine(Machine(rawValue: "mc_second"))
+    }
+  }
+  #expect(spans.first { $0.operationName == "tool.call" }?.attributes.get("wuhu.machine") == .string("mc_first"))
+  #expect(spans.first { $0.operationName == "script.run" }?.attributes.get("wuhu.machine") == nil)
 }
 
-@Test(.deterministicDependencies) func stoppedPeriodicSenderDrainsItsSleepingQueue() async throws {
-  try await withDependencies {
-    $0.installTimeControl()
-  } operation: {
-    @Dependency(\.timeControl) var time
-    let buffer = SpanBuffer()
-    let exported = BatchSizes()
-    let export: @Sendable ([FinishedSpan]) async throws -> Void = { batch in exported.values.withLock { $0.append(batch.count) } }
-    let sender = Task { await buffer.run(export: export) }
-    try await time.asleep("periodic sender", dueIn: 1)
-    ServerTracing.$emitter.withValue({ buffer.append($0) }) { ServerSpan(.turn).finish() }
-    sender.cancel()
-    await sender.value
-    #expect(exported.values.withLock { $0.isEmpty })
-    await buffer.shutdown(export: export)
-    #expect(exported.values.withLock { $0 } == [1])
-    #expect(buffer.pending == 0)
+@Test func aPropagatedParentContinuesTheCallersTraceUnderItsOwner() async throws {
+  let tracer = InMemoryTracer()
+  try await withDependencies { $0.tracer = tracer } operation: {
+    #expect(TraceParent.headers.isEmpty)
+    #expect(TraceParent.propagated([:], owner: owner()) == nil)
+    var headers: [String: String] = [:]
+    await traced(.tool, under: .root(owner("s"))) { _ in headers = TraceParent.headers }
+    let parent = try #require(TraceParent.propagated(headers, owner: owner("relay")))
+    await parent.run { stampingOwners(tracer).startSpan("machine.exchange", context: ServiceContext.current ?? .topLevel).end() }
   }
+  let tool = try #require(tracer.finishedSpans.first { $0.operationName == "tool.call" })
+  let exchange = try #require(tracer.finishedSpans.first { $0.operationName == "machine.exchange" })
+  #expect(exchange.traceID == tool.traceID && exchange.parentSpanID == tool.spanID)
+  #expect(exchange.attributes.get("wuhu.session.id") == .string("relay"))
+  #expect(exchange.attributes.get("wuhu.group.id") == .string("g"))
+}
+
+private struct Machine: RawRepresentable {
+  let rawValue: String
 }

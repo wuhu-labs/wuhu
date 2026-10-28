@@ -1,5 +1,5 @@
 extension SystemNotification {
-  var isCacheWarming: Bool { kind == .context && subscriptionID == SubscriptionID("cache-warming") }
+  public var isCacheWarming: Bool { kind == .context && subscriptionID == SubscriptionID("cache-warming") }
 }
 
 extension Transcript {

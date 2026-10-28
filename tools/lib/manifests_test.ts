@@ -14,6 +14,17 @@ import {
 // sign-store build consumes.
 function storeInfoPlists(build: string): Map<string, string> {
   const plists = new Map<string, string>()
+  const generatedSources = new Map<string, string>()
+  for (const rule of build.split('\n)\n')) {
+    if (!rule.includes('wuhu_hmr_plist(')) continue
+    const name = /\n {4}name = "([^"]+)",\n/.exec(rule)?.[1]
+    const source = /\n {4}src = ([\s\S]*?),\n {4}enabled/.exec(rule)?.[1]
+    if (!name || !source) continue
+    const store = /"\/\/bazel\/signing:store": "([^"]+)"/.exec(source)
+    const plain = /^"([^"]+)"$/.exec(source)
+    const path = store?.[1] ?? plain?.[1]
+    if (path) generatedSources.set(`:${name}`, path)
+  }
   for (const rule of build.split('\n)\n')) {
     const name = /\n {4}name = "([^"]+)",\n/.exec(rule)?.[1]
     const expression = /\n {4}infoplists = ([\s\S]*?),\n {4}minimum_os_version/
@@ -22,7 +33,7 @@ function storeInfoPlists(build: string): Map<string, string> {
     const store = /"\/\/bazel\/signing:store": \["([^"]+)"\]/.exec(expression)
     const plain = /^\["([^"]+)"\]$/.exec(expression)
     const path = store?.[1] ?? plain?.[1]
-    if (path) plists.set(name, path)
+    if (path) plists.set(name, generatedSources.get(path) ?? path)
   }
   return plists
 }

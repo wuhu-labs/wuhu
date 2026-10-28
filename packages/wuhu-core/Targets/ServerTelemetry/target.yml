@@ -2,15 +2,14 @@ name: ServerTelemetry
 kind: library
 sources: Sources
 dependencies:
-  - TaskLifetime
+  - Tracing
   - Dependencies
-  - Clocks
-  - Fetch
-  - Logging
+  - SessionDomain
+  - SpaceContract
 tests:
   dependencies:
-    - DeterministicDependencies
+    - InMemoryTracing
+    - Tracing
     - Dependencies
-    - Clocks
-    - Fetch
-    - ControlledTime
+    - SessionDomain
+    - SpaceContract

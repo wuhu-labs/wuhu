@@ -121,6 +121,7 @@ final class ScriptExecution: Sendable {
     var delivering = false
     var completing = 0
     var credit: Duration = .zero
+    var updates = 0
   }
 
   let id: String
@@ -136,7 +137,7 @@ final class ScriptExecution: Sendable {
   let limits: ScriptLimits
   let buffers: Mutex<ScriptBuffers>
   let processes = ScriptProcesses()
-  private let traceContext = ServerTracing.enabled ? ServerTracing.context : nil
+  private let trace: TraceParent
   private let interrupter = JSEngine.Interrupter()
   private let state: Mutex<State>
   private let controls: AsyncStream<Control>
@@ -159,6 +160,7 @@ final class ScriptExecution: Sendable {
     kind: ScriptKind = .call,
     arguments: [String] = [],
     limits: ScriptLimits = .standard,
+    trace: TraceParent = .current,
   ) {
     self.id = id
     self.actor = actor
@@ -171,6 +173,7 @@ final class ScriptExecution: Sendable {
     self.arguments = arguments
     self.limits = limits
     buffers = Mutex(ScriptBuffers(budget: limits.bufferBytes))
+    self.trace = trace
     if case .command = kind {
       state = Mutex(State(waiter: .detached))
     } else {
@@ -314,27 +317,13 @@ final class ScriptExecution: Sendable {
   }
 
   private func traced(owner: any Main) async {
-    guard ServerTracing.enabled else { return await runBody(owner: owner) }
-    let group = (try? await client.api(.get, "/v1/context") as ScriptContext)?.group
-    await ServerTracing.$context.withValue(traceContext) {
-      let span = ServerSpan(.script, session: actor.session?.rawValue, group: group)
-      await ServerTracing.$context.withValue(span.context) {
-        await runBody(owner: owner)
-        let outcome = state.withLock { state in
-          switch state.ending {
-          case .released: "ok"
-          case .failed: "error"
-          case .killed: "cancelled"
-          case nil: "error"
-          }
-        }
-        let kind = switch kind {
-        case .call: "run_script"
-        case .command: "wuhu_script"
-        case .handler: "handler"
-        }
-        span.finish([.outcome: outcome, .kind: kind, .sourceSHA256: sha256Hex(source)])
-      }
+    await ServerTelemetry.traced(.script, under: trace) { span in
+      await runBody(owner: owner)
+      span.set(.scriptKind, kind.span)
+      span.set(.sourceSHA256, sha256Hex(source))
+      let (ending, updates) = state.withLock { ($0.ending, $0.updates) }
+      span.set(.updates, updates)
+      span.conclude(ending.spanOutcome)
     }
   }
 
@@ -513,7 +502,10 @@ final class ScriptExecution: Sendable {
 
   func recordUpdate(_ text: String) throws {
     guard handler == nil else { throw ScriptError("handlers use wake(text); update() is only for run_script") }
-    state.withLock { $0.deliveries.append(.post(.update(text))) }
+    state.withLock {
+      $0.updates += 1
+      $0.deliveries.append(.post(.update(text)))
+    }
     drain()
   }
 
@@ -678,5 +670,25 @@ private final class WindDown: Sendable {
       return taken
     }
     taken?.resume(returning: ended)
+  }
+}
+
+extension ScriptKind {
+  fileprivate var span: ScriptSpanKind {
+    switch self {
+    case .call: .call
+    case .command: .command
+    case .handler: .handler
+    }
+  }
+}
+
+extension ScriptEnding? {
+  fileprivate var spanOutcome: ScriptOutcome {
+    switch self {
+    case .released: .released
+    case .failed, nil: .failed
+    case .killed: .killed
+    }
   }
 }

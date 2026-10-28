@@ -1,10 +1,13 @@
 import Crypto
+import Dependencies
 import DeterministicDependencies
 import Fetch
 import Foundation
+import InMemoryTracing
 import ServerTelemetry
 import Synchronization
 import Testing
+import Tracing
 
 private let shebang = "#!/usr/bin/env -S wuhu script\n"
 
@@ -28,16 +31,16 @@ private func hex(_ text: String) -> String {
       update("two")
       """
       let file = try script(h, source)
-      let spans = Mutex<[FinishedSpan]>([])
-      let run = await ServerTracing.$emitter.withValue({ span in spans.withLock { $0.append(span) } }) {
-        await h.asSession(["script", file, "a", "--b"])
-      }
+      let tracer = InMemoryTracer()
+      let run = await withDependencies { $0.tracer = tracer } operation: { await h.asSession(["script", file, "a", "--b"]) }
       #expect(run.code == 0, "\(run.stderr)")
       #expect(run.stdout == "args 2\none a\ntwo\n")
-      let scripts = spans.withLock { $0.filter { $0.name == .script } }
-      #expect(scripts.map(\.attributes[.kind]) == ["wuhu_script"])
-      #expect(scripts.map(\.attributes[.sourceSHA256]) == [hex(source)])
-      #expect(scripts.map(\.attributes[.outcome]) == ["ok"])
+      let scripts = tracer.finishedSpans.filter { $0.operationName == "script.run" }
+      #expect(scripts.map { $0.attributes.get("wuhu.script.kind") } == [.string("wuhu_script")])
+      #expect(scripts.map { $0.attributes.get("wuhu.script.source.sha256") } == [.string(hex(source))])
+      #expect(scripts.map { $0.attributes.get("wuhu.updates") } == [.int64(2)])
+      #expect(scripts.map { $0.attributes.get("wuhu.outcome") } == [.string("released")])
+      #expect(scripts.allSatisfy { $0.parentSpanID == nil && $0.attributes.get("wuhu.group.id") != nil })
     }
   }
 
