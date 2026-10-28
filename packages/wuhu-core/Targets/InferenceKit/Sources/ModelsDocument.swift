@@ -35,6 +35,9 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
 
   public struct Provider: Hashable, Sendable, Codable {
     public var dialect: Dialect
+    public var imageFamily: ImageFamily?
+
+    public var images: ImageLimits { imageFamily?.limits ?? dialect.images }
     public var baseURL: URL
     public var originator: String?
     public var transport: Transport?
@@ -47,8 +50,9 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     private var invalidOpaqueReplay: JSONValue?
     public var models: [String: Model]
 
-    public init(dialect: Dialect, baseURL: URL, originator: String? = nil, transport: Transport? = nil, auth: Auth? = nil, capacity: [String: Double]? = nil, opaqueReplay: OpaqueReplay? = nil, models: [String: Model]) {
+    public init(dialect: Dialect, baseURL: URL, imageFamily: ImageFamily? = nil, originator: String? = nil, transport: Transport? = nil, auth: Auth? = nil, capacity: [String: Double]? = nil, opaqueReplay: OpaqueReplay? = nil, models: [String: Model]) {
       self.dialect = dialect
+      self.imageFamily = imageFamily
       self.baseURL = baseURL
       self.originator = originator
       self.transport = transport
@@ -56,6 +60,18 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
       self.capacity = capacity
       self.opaqueReplay = opaqueReplay
       self.models = models
+    }
+  }
+
+  public enum ImageFamily: String, Hashable, Sendable, Codable {
+    case claude
+    case openAI
+
+    var limits: ImageLimits {
+      switch self {
+      case .claude: .claude
+      case .openAI: .openAI
+      }
     }
   }
 
@@ -134,8 +150,8 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
       } else { cacheWarming = nil }
     }
 
-    public func budget(_ dialect: Dialect) -> ContextBudget {
-      ContextBudget(maxInput: maxInput, maxOutput: maxOutput, headroomOverride: headroomOverride, images: dialect.images)
+    public func budget(images: ImageLimits) -> ContextBudget {
+      ContextBudget(maxInput: maxInput, maxOutput: maxOutput, headroomOverride: headroomOverride, images: images)
     }
   }
 }
@@ -192,12 +208,13 @@ extension ModelsDocument.Provider {
   // Keys this version no longer reads (the retired `acceptsUnsignedThinking`) are
   // ignored on decode and dropped on encode.
   private enum CodingKeys: String, CodingKey {
-    case dialect, baseURL, originator, transport, auth, capacity, opaqueReplay, models
+    case dialect, imageFamily, baseURL, originator, transport, auth, capacity, opaqueReplay, models
   }
 
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     dialect = try container.decode(ModelsDocument.Dialect.self, forKey: .dialect)
+    imageFamily = try container.decodeIfPresent(ModelsDocument.ImageFamily.self, forKey: .imageFamily)
     baseURL = try container.decode(URL.self, forKey: .baseURL)
     originator = try container.decodeIfPresent(String.self, forKey: .originator)
     transport = try container.decodeIfPresent(ModelsDocument.Transport.self, forKey: .transport)
@@ -216,6 +233,7 @@ extension ModelsDocument.Provider {
   public func encode(to encoder: any Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(dialect, forKey: .dialect)
+    try container.encodeIfPresent(imageFamily, forKey: .imageFamily)
     try container.encode(baseURL, forKey: .baseURL)
     try container.encodeIfPresent(originator, forKey: .originator)
     try container.encodeIfPresent(transport, forKey: .transport)

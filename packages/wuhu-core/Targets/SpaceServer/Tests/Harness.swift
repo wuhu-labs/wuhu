@@ -118,3 +118,9 @@ func connectExecCaller(_ id: ExecID, space: Space, hub: MachineHub) async throws
   }
   return WebSocketTransport(client)
 }
+
+extension Space {
+  func registerPeople(_ ids: [String]) async throws {
+    for id in ids { _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil) }
+  }
+}

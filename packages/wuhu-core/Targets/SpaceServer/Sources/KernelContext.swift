@@ -39,7 +39,7 @@ private func contextBudget(_ specifier: ModelSpecifier, _ document: ModelsDocume
   guard let model = try? ProviderCatalog(document: document, credentials: .unavailable).validate(specifier),
         let provider = document.providers[specifier.provider]
   else { return nil }
-  return model.budget(provider.dialect)
+  return model.budget(images: provider.images)
 }
 
 // The session's prompt for its generation: rendered by the first inference

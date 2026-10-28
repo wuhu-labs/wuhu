@@ -134,6 +134,29 @@ extension MachineV2StoreTests {
     await #expect(throws: SpaceError.self) { try await space.query("SELECT * FROM machine_v2_operations", as: .init(actor: .anonymous, group: .shared)) }
   }
 
+  @Test func aTraceBatchPublishesEachProblemRevisionInOrder() async throws {
+    let clock = TestClock()
+    let space = try makeSpace(clock: clock)
+    let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
+    let changes = await space.observeFS(glob: "/wuhu/machine-v2-problems.table", group: .shared)
+    var commits = changes.makeAsyncIterator()
+    for code in [OperationError.Code.invalidOffset, .offsetExpired] {
+      try sink(.init(request: UUID(), correlation: UUID().uuidString, path: "/machine/v2/machines/disk/operations/\(UUID())", event: .failure, elapsed: .zero, error: code))
+    }
+    await clock.advance(by: .milliseconds(100))
+    let first = try #require(await commits.next())
+    let second = try #require(await commits.next())
+    #expect(first.rev < second.rev)
+    for commit in [first, second] {
+      #expect(commit.group == .shared)
+      #expect(!commit.events.isEmpty)
+      #expect(commit.events.allSatisfy { $0.rev == commit.rev && $0.group == commit.group })
+    }
+    let rows = try await space.query("SELECT error_code FROM \"/wuhu/machine-v2-problems.table\" ORDER BY error_code", as: .init(actor: .anonymous, group: .shared))
+    #expect(rows.rows == [[.text("invalidOffset")], [.text("offsetExpired")]])
+    try await space.close()
+  }
+
   @Test func problemFingerprintCountsIncidentsNotRetransmissions() async throws {
     let space = try machineSpace(); let correlation = UUID()
     let first = try await space.recordMachineV2Problem(group: .shared, traceGroup: .shared, invariant: 13, code: .invalidOffset, incident: "op-one", correlation: correlation)

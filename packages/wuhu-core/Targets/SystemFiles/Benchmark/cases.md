@@ -230,3 +230,9 @@ _Afterwards:_ `subscriptions` has the session's `observe` with that `url` and a 
 _Prompt:_ "Write a small HTML page at {sb}/feedback.html with a button that gives success haptic feedback when tapped, usable in the Wuhu app and in a browser. Use the supported page API, not platform detection or a custom native bridge."
 
 _Afterwards:_ `{sb}/feedback.html` imports `haptic` from `wuhu:device`, calls `haptic("success")` inside a click handler, and follows `--wuhu-inset-*` with safe-area fallbacks. It requests no permission, invents no native bridge and awaits no result. The reply does not claim physical feedback was verified.
+
+## channel-unknown-person
+
+_Prompt:_ "Create a human-only channel titled bench-{tag}-unknown with the one person definitely_missing_person_{tag}. If that person is not in the directory, report the refusal; do not substitute another person, create an empty channel, or tell me it succeeded."
+
+_Afterwards:_ The channel API’s typed unknown-person refusal is reported. No channel is created. The subject does not claim success, invent a canonical id or retry with empty/substituted membership.

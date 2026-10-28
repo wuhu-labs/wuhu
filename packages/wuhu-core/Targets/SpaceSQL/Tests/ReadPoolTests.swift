@@ -21,6 +21,25 @@ import Testing
     try connection.close()
   }
 
+  @Test func attachedSpaceHasThePageCache() throws {
+    let file = try Fixture()
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: .init(schema: "page", views: "cache"))
+    func text(_ sql: String) -> String? {
+      var statement: OpaquePointer?
+      #expect(sqlite3_prepare_v2(connection.handle, sql, -1, &statement, nil) == SQLITE_OK)
+      defer { sqlite3_finalize(statement) }
+      guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+      return sqlite3_column_text(statement, 0).map { String(cString: $0) }
+    }
+    #expect(text("PRAGMA spage.cache_size") == String(-PageCache.readerKiB))
+    let mmap = text("PRAGMA spage.mmap_size").flatMap { Int($0) } ?? 0
+    let cap = text("SELECT substr(compile_options, 15) FROM pragma_compile_options WHERE compile_options LIKE 'MAX!_MMAP!_SIZE=%' ESCAPE '!'")
+    let limit = cap.flatMap { $0.hasPrefix("0x") ? Int($0.dropFirst(2), radix: 16) : Int($0) } ?? PageCache.mmapBytes
+    #expect(mmap == min(PageCache.mmapBytes, limit))
+    #expect(mmap >= 1 << 30)
+    try connection.close()
+  }
+
   @Test func closeIsIdempotentAndRefusesOpenedAndUnusedSlots() async throws {
     let file = try Fixture()
     let pool = ReadPool(path: file.path)

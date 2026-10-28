@@ -225,6 +225,7 @@ struct MessagingTests {
       let space = try Space.inMemory()
       let foreign = try await plainGroup(space, "foreign")
       let session = try await makeSession(space)
+      try await space.registerPeople(["alice"])
       let source = try await space.sessions.createConversation(members: ["alice"], in: foreign)
       let delivery = try await space.sessions.post(.conversation(source), messageID: MessageID("source"), sender: Sender(id: "alice", timeZone: .gmt), content: .init(text: "secret"), uploads: [AttachmentUpload(name: "secret.txt", bytes: Array("secret".utf8))])
       let path = try #require(delivery.message.content.attachments.first?.path)

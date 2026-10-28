@@ -77,7 +77,7 @@ final class MachineTraceWriter: Sendable {
             }
             let events = pending
             if !events.isEmpty { db.afterNextTransaction(onCommit: { _ in
-              broadcast.emit(Dictionary(grouping: events, by: \.group).map { group, events in FSCommit(group: group, rev: events[0].rev, events: events) })
+              broadcast.emit(Dictionary(grouping: events, by: \.rev).sorted { $0.key < $1.key }.map { rev, events in FSCommit(group: events[0].group, rev: rev, events: events) })
             }) }
           }
         } catch is CancellationError { break }

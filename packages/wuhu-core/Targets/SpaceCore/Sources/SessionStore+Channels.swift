@@ -17,13 +17,16 @@ public enum ChannelError: Error, Equatable, Sendable {
 }
 
 enum Channels {
-  static func validate(_ people: [String], in db: Database) throws {
-    for person in people {
-      guard try !Sessions.exists(person, in: db) else { throw ChannelError.sessionMember(person) }
-      guard !person.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        throw ChannelError.unknownPerson(person)
-      }
+  static func resolve(_ people: [String], in db: Database) throws -> [String] {
+    try people.map { try resolve($0, in: db) }
+  }
+
+  static func resolve(_ person: String, in db: Database) throws -> String {
+    guard try !Sessions.exists(person, in: db) else { throw ChannelError.sessionMember(person) }
+    guard let id = try Aliases.resolvePerson(person, in: db) else {
+      throw ChannelError.unknownPerson(person)
     }
+    return id
   }
 
   static func validate(title: String?) throws {
@@ -52,7 +55,7 @@ extension SessionStore {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
       _ = try Channels.authorized(id, as: principal, in: db)
-      try Channels.validate(people, in: db)
+      let people = try Channels.resolve(people, in: db)
       for person in people { try Conversations.join(id.rawValue, member: .init(member: person, kind: .user), now: now, in: db) }
     }
   }
@@ -60,9 +63,10 @@ extension SessionStore {
   public func removeChannelMembers(_ id: ConversationID, people: [String], as principal: Principal) async throws {
     try await writer.write { db in
       _ = try Channels.authorized(id, as: principal, in: db)
-      try Channels.validate(people, in: db)
       for person in people {
-        try ConversationMemberRow.where { $0.conversationID.eq(id.rawValue) && $0.member.eq(person) }.delete().execute(db)
+        guard try !Sessions.exists(person, in: db) else { throw ChannelError.sessionMember(person) }
+        let ids = [person, try Aliases.target(person, kind: .person, in: db)].compactMap { $0 }
+        try ConversationMemberRow.where { $0.conversationID.eq(id.rawValue) && $0.member.in(ids) }.delete().execute(db)
       }
     }
   }

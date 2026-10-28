@@ -40,7 +40,7 @@ struct CacheWarmer: Sendable {
           try await space.sessions.scheduleCacheWarming(id, intervalSeconds: policy.intervalSeconds)
           try await space.sessions.enqueueCacheWarming(
             id, maxPings: policy.maxPings,
-            floorTokens: policy.floorTokens, images: entry.budget(provider.dialect).images,
+            floorTokens: policy.floorTokens, images: provider.images,
             quotaLow: quotaLow(provider: model.provider, policy: policy),
           )
         } catch {
@@ -56,7 +56,7 @@ struct CacheWarmer: Sendable {
     let record = try await space.sessions.record(id)
     guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal,
           let (model, provider, entry) = try await configuration(record), let policy = entry.cacheWarming,
-          try await space.sessions.transcript(id).reachesCacheWarmingFloor(policy.floorTokens, images: entry.budget(provider.dialect).images)
+          try await space.sessions.transcript(id).reachesCacheWarmingFloor(policy.floorTokens, images: provider.images)
     else { return false }
     return !quotaLow(provider: model.provider, policy: policy)
   }

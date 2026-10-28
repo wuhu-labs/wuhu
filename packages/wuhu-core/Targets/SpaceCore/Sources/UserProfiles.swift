@@ -59,10 +59,9 @@ extension Space {
   }
 
   public func userProfile(handle: String) async throws -> UserProfile? {
-    let lowered = handle.lowercased()
     return try await writer.read { db in
-      guard let alias = try AliasRow.where({ $0.name.eq(lowered) }).fetchOne(db), alias.kind == .person else { return nil }
-      return try UserProfileRow.find(alias.target).fetchOne(db).map(Self.userProfile(from:))
+      guard let id = try Aliases.resolvePerson(handle, in: db) else { return nil }
+      return try UserProfileRow.find(id).fetchOne(db).map(Self.userProfile(from:))
     }
   }
 

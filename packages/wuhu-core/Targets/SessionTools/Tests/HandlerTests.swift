@@ -227,6 +227,7 @@ func withHandlerFiring(
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
+      try await space.registerPeople(["morgan"])
       let channel = try await space.sessions.createConversation(members: ["morgan"], title: "The Park", in: .shared)
       _ = try await space.fs(.shared).write("/park.js", Data("""
       export default ({rows,state,wake}) => {

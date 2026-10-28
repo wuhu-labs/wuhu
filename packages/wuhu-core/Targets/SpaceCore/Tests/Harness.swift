@@ -97,3 +97,9 @@ func awaitItems<Element>(
 func settle(_ duration: Duration = .milliseconds(80)) async {
   try? await ContinuousClock().sleep(for: duration)
 }
+
+extension Space {
+  func registerPeople(_ ids: [String]) async throws {
+    for id in ids { _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil) }
+  }
+}

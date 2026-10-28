@@ -6,12 +6,56 @@ import struct SpaceContract.GroupID
 import Testing
 
 @Suite(.deterministicDependencies) struct ChannelTests {
+  @Test func aliasesPersistCanonicalMembersSoPeopleCanResolveAndOpenTheirChannel() async throws {
+    let space = try makeSpace()
+    let owner = try await space.addAccount(kind: .human, name: "Minsheng")
+    let key = try await space.addKey(testPubkey("channel-owner"), account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let persona = try await space.adoptPersona(key: key)
+    _ = try await space.setUserProfile(principal: persona.name, handle: "minsheng", displayName: nil)
+    _ = try await space.setUserProfile(principal: persona.name, handle: "renamed", displayName: nil)
+    let reader = Principal.shared(.person(persona: persona.name, account: owner.id))
+    let id = try await space.sessions.createConversation(members: ["MINSHENG", "renamed", persona.name], title: "Wuhu bugs", in: .shared)
+    #expect(try await space.sessions.conversation(id).members.map(\.member) == [persona.name])
+    #expect(try await space.query("SELECT id, title FROM conversations WHERE kind = 'users'", as: reader).rows == [[.text(id.rawValue), .text("Wuhu bugs")]])
+    #expect(try await space.sessions.reads(space.sessions.conversation(id), reader: persona.name, group: .shared))
+    _ = try await space.sessions.post(.conversation(id), messageID: MessageID("opened"), sender: person(persona.name), content: .init(text: "hello"), acting: reader)
+    _ = try await space.setUserProfile(principal: "second-person", handle: "hazel", displayName: nil)
+    await #expect(throws: ChannelError.unknownPerson("missing")) {
+      try await space.sessions.addChannelMembers(id, people: ["hazel", "missing"], as: reader)
+    }
+    #expect(try await space.sessions.conversation(id).members.map(\.member) == [persona.name])
+    try await space.sessions.addChannelMembers(id, people: ["HAZEL", "second-person"], as: reader)
+    #expect(try await space.sessions.conversation(id).members.map(\.member).sorted() == [persona.name, "second-person"].sorted())
+    try await space.sessions.removeChannelMembers(id, people: ["hazel"], as: reader)
+    #expect(try await space.sessions.conversation(id).members.map(\.member) == [persona.name])
+    await #expect(throws: ChannelError.unknownPerson("missing")) {
+      try await space.sessions.createConversation(members: ["minsheng", "missing"], in: .shared)
+    }
+    #expect(try await space.sessions.conversations(reader: persona.name, group: .shared).map(\.id) == [id])
+  }
+
+  @Test func removingPeopleAlsoRemovesLegacyRawAliasesAndUnknownStoredMembers() async throws {
+    let space = try makeSpace()
+    try await space.registerPeople(["owner", "person-id"])
+    _ = try await space.setUserProfile(principal: "person-id", handle: "hazel", displayName: nil)
+    let id = try await space.sessions.createConversation(members: ["owner", "person-id"], in: .shared)
+    let owner = Principal.shared(.person(persona: "owner", account: AccountID(rawValue: "owner")))
+    try await space.writer.write { db in
+      for raw in ["hazel", "no-longer-in-directory"] {
+        try db.execute(sql: "INSERT INTO conversation_members VALUES (?, ?, 'user', '2026-01-01T00:00:00Z')", arguments: [id.rawValue, raw])
+      }
+    }
+    try await space.sessions.removeChannelMembers(id, people: ["hazel", "no-longer-in-directory", "not-a-member"], as: owner)
+    #expect(try await space.sessions.conversation(id).members.map(\.member) == ["owner"])
+  }
+
   @Test func managementIsAtomicHumanOnlyAndSessionsNeverJoin() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
       let store = space.sessions
       let agent = try await store.createSession(group: .shared, title: "Helper", kind: .agent, createdBy: "alice", model: .test)
       let principal = Principal.shared(.session(agent))
+      try await space.registerPeople(["alice", "bob", "carol"])
       let id = try await store.createConversation(members: ["alice", "bob"], title: "Team", in: .shared)
       #expect(try await store.conversation(id).title == "Team")
       #expect(try await store.conversation(id).members.map(\.member) == ["alice", "bob"])
@@ -23,6 +67,10 @@ import Testing
         try await store.createConversation(members: ["alice", agent.rawValue], in: .shared)
       }
       try await store.addChannelMembers(id, people: ["carol", "carol"], as: principal)
+      await #expect(throws: ChannelError.sessionMember(agent.rawValue)) {
+        try await store.removeChannelMembers(id, people: ["alice", agent.rawValue], as: principal)
+      }
+      #expect(try await store.conversation(id).members.map(\.member) == ["alice", "bob", "carol"])
       try await store.removeChannelMembers(id, people: ["bob"], as: principal)
       try await store.renameChannel(id, title: "Renamed", as: principal)
       #expect(try await store.conversation(id).members.map(\.member) == ["alice", "carol"])
@@ -40,6 +88,7 @@ import Testing
     let rig = try MovingClockSpace()
     let store = rig.store
     let agent = try await store.createSession(group: .shared, title: "Helper", kind: .agent, createdBy: "alice", model: .test)
+    try await rig.space.registerPeople(["alice", "bob"])
     let id = try await store.createConversation(members: ["alice", "bob"], in: .shared)
     let plain = try await store.post(.conversation(id), messageID: MessageID("plain"), sender: person("alice"), content: .init(text: "hello people"))
     #expect(plain.enqueued.isEmpty)
@@ -66,6 +115,7 @@ import Testing
     try await withSessionDeps {
       let space = try makeSpace()
       let store = space.sessions
+      try await space.registerPeople(["alice", "bob"])
       let id = try await store.createConversation(members: ["alice", "bob"], title: "Private", in: .shared)
       let stranger = Principal.shared(.person(persona: "carol", account: AccountID(rawValue: "carol")))
       #expect(try await !store.reads(store.conversation(id), reader: "carol", group: .shared))
@@ -88,6 +138,7 @@ import Testing
       let alice = try await plainGroup(space, "alice")
       let bob = try await plainGroup(space, "bob")
       let agent = try await space.sessions.createSession(group: bob, title: "Reader", kind: .agent, createdBy: "bob", model: .test)
+      try await space.registerPeople(["alice"])
       let id = try await space.sessions.createConversation(members: ["alice"], title: "People", in: alice)
       #expect(try await !space.sessions.reads(space.sessions.conversation(id), reader: agent.rawValue, group: bob))
       await #expect(throws: SessionStoreError.unknownConversation(id.rawValue)) {
@@ -106,6 +157,7 @@ import Testing
   @Test func channelUnreadUsesThePersonsReadMarkerAndClears() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
+      try await space.registerPeople(["alice", "bob"])
       let id = try await space.sessions.createConversation(members: ["alice", "bob"], in: .shared)
       _ = try await space.sessions.post(.conversation(id), messageID: MessageID("one"), sender: person("alice"), content: .init(text: "hello"))
       #expect(try await space.sessions.unreadCount(identity: "bob", source: id.rawValue) == 1)
@@ -121,6 +173,7 @@ import Testing
       try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
       let agent = try await space.sessions.createSession(group: .shared, title: "Reader", kind: .agent, createdBy: "alice", model: .test)
       for group in [GroupID.shared, foreign] {
+        try await space.registerPeople(["alice", "bob"])
         let id = try await space.sessions.createConversation(members: ["alice", "bob"], in: group)
         _ = try await space.sessions.post(.conversation(id), messageID: MessageID("secret-" + group.rawValue), sender: person("alice"), content: .init(text: "secret"))
         for name in ["notifications", "wuhu://\(group.rawValue).localspace/notifications", "wuhu://*.localspace/notifications"] {
@@ -153,6 +206,7 @@ import Testing
     try await withSessionDeps {
       let space = try makeSpace()
       let store = space.sessions
+      try await space.registerPeople(["alice", "bob"])
       let older = try await store.createConversation(members: ["alice"], title: "Older", in: .shared)
       let newer = try await store.createConversation(members: ["alice"], title: "Newer", in: .shared)
       let foreign = try await plainGroup(space, "foreign")

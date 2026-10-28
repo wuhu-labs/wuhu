@@ -23,6 +23,16 @@ public enum AliasError: Error, Equatable, Sendable {
 }
 
 enum Aliases {
+  static func target(_ spelling: String, kind: AliasKind, in db: Database) throws -> String? {
+    try AliasRow.where { $0.name.eq(spelling.lowercased()) && $0.kind.eq(kind) }.select(\.target).fetchOne(db)
+  }
+
+  static func resolvePerson(_ spelling: String, in db: Database) throws -> String? {
+    let id = try target(spelling, kind: .person, in: db) ?? spelling
+    if try PersonaRow.find(id).select(\.name).fetchOne(db) != nil { return id }
+    return try UserProfileRow.find(id).select(\.principal).fetchOne(db)
+  }
+
   static func requireFree(_ name: String, kind: AliasKind, target: String?, group: GroupID? = nil, in db: Database) throws {
     if let row = try GroupRow.where({ $0.id.eq(name) }).fetchOne(db), kind != .group || row.id != target {
       throw AliasError.taken(name)
@@ -57,7 +67,7 @@ extension Space {
         guard let row = try GroupRow.where({ $0.id.eq(alias.target) }).fetchOne(db), row.removedAt == nil else { return nil }
         return GroupID(rawValue: row.id)
       case .person:
-        guard let account = try String.fetchOne(db, sql: "SELECT account_id FROM personas WHERE name = ?", arguments: [alias.target]) else { return nil }
+        guard let account = try PersonaRow.find(alias.target).select(\.accountID).fetchOne(db) else { return nil }
         return try Groups.personalGroup(of: AccountID(rawValue: account), in: db)
       case .machine: return nil
       }

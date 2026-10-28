@@ -191,8 +191,8 @@ extension Space {
   public func machine(named name: String) async throws -> MachineRecord? {
     let lowered = name.lowercased().replacingOccurrences(of: "-", with: "_")
     return try await writer.read { db in
-      guard let alias = try AliasRow.where({ $0.name.eq(lowered) }).fetchOne(db), alias.kind == .machine else { return nil }
-      return try MachineRow.where { $0.id.eq(alias.target) }.fetchOne(db).map(Self.machineRecord(from:))
+      guard let id = try Aliases.target(lowered, kind: .machine, in: db) else { return nil }
+      return try MachineRow.where { $0.id.eq(id) }.fetchOne(db).map(Self.machineRecord(from:))
     }
   }
 

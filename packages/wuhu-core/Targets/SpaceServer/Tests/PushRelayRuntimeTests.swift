@@ -313,6 +313,7 @@ import Testing
       $0.date = .constant(fixedDate)
     } operation: {
       try await runtime.drain()
+      try await space.registerPeople(["other-person"])
       for id in ["d1", "d2"] {
         if id == "d2" { try await space.sessions.archive(owner, grace: .seconds(3600)) }
         _ = try await space.sessions.post(

@@ -557,3 +557,9 @@ private struct ExecRecordingTransport: FrameTransport {
     try await base.send(bytes)
   }
 }
+
+extension Space {
+  func registerPeople(_ ids: [String]) async throws {
+    for id in ids { _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil) }
+  }
+}

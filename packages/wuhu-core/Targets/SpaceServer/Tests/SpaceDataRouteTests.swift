@@ -180,6 +180,7 @@ import Testing
     _ = try await run(r, r.bobGroup, "table.create", [
       "path": "/private.table", "header": ["columns": [["name": "title", "type": "string"]]],
     ])
+    try await space.registerPeople([r.alice.rawValue, r.bob.rawValue])
     let dm = try await space.sessions.createConversation(members: [r.alice.rawValue, r.bob.rawValue], in: r.aliceGroup)
     let posted = try await space.sessions.post(
       .conversation(dm), messageID: MessageID("m1"),

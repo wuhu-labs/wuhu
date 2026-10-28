@@ -66,7 +66,9 @@ public actor Space {
     if let identity, !SpaceIdentity.isValid(identity.rawValue) {
       throw SpaceIdentityError.invalid(identity.rawValue)
     }
-    let queue = try DatabaseQueue(path: file.path, configuration: makeConfiguration())
+    var configuration = makeConfiguration()
+    configuration.prepareDatabase { try $0.execute(sql: PageCache.pragmas(cacheKiB: PageCache.writerKiB)) }
+    let queue = try DatabaseQueue(path: file.path, configuration: configuration)
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
     return try Space(writer: queue, identity: identity, objects: store, log: log)
   }

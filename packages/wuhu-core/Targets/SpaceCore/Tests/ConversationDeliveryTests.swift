@@ -68,6 +68,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a person can neither post to a task nor DM it, and nothing is stored`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPeople(["carol"])
     let parent = try await agent(rig.store)
     let task = try await task(rig.store, parent: parent)
     await #expect(throws: SessionStoreError.taskTakesNoHumanInput(task.rawValue)) {
@@ -105,6 +106,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     let rig = try MovingClockSpace()
     let parent = try await agent(rig.store)
     let task = try await task(rig.store, parent: parent)
+    try await rig.space.registerPeople(["carol"])
     let group = try await rig.store.createConversation(members: ["carol"], in: .shared)
     _ = try await rig.store.post(
       .conversation(group), messageID: MessageID("t1"), sender: human(task.rawValue),
@@ -180,6 +182,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     let a = try await agent(rig.store)
     let b = try await agent(rig.store)
     let sessions = [a, b].sorted { $0.rawValue < $1.rawValue }
+    try await rig.space.registerPeople(["carol"])
     let channel = try await rig.store.createConversation(members: ["carol"], in: .shared)
     for session in reversePosts ? sessions.reversed().map({ $0 }) : sessions {
       _ = try await rig.store.post(

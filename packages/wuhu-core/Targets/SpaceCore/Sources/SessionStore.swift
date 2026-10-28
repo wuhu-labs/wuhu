@@ -132,6 +132,7 @@ public enum SessionStoreError: Error, Equatable, Sendable {
 
   case modelRouteInvalid(group: String, member: String)
   case unknownSession(String)
+  case unknownPerson(String)
   case archiveGraceExpired(String)
   case busyForRestart(String)
   case requestDeadlineWithoutFireDate(String)

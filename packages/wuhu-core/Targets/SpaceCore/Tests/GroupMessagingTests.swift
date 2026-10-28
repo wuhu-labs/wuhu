@@ -300,6 +300,7 @@ import Testing
       )
       return "bobp"
     }
+    try await rig.space.registerPeople(["alice-person"])
     let dm = try await rig.store.post(
       .dm(with: persona), messageID: MessageID("m1"), sender: Sender(id: "alice-person", timeZone: Self.utc),
       content: .init(text: "hi bob"), acting: Principal(actor: .anonymous, group: Self.alice),
@@ -324,6 +325,7 @@ import Testing
       )
     }
     let carol = Sender(id: "carol", timeZone: Self.utc)
+    try await rig.space.registerPeople(["alice-person"])
     let dm = try await rig.store.post(
       .dm(with: "carol"), messageID: MessageID("m1"), sender: Sender(id: "alice-person", timeZone: Self.utc),
       content: .init(text: "from alice"), acting: Principal(actor: .anonymous, group: Self.alice),

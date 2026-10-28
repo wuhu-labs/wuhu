@@ -1,8 +1,10 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+import Scratch
 import struct SpaceContract.GroupID
 @testable import SpaceCore
+import enum SpaceSQL.PageCache
 import Testing
 
 @Suite(.deterministicDependencies) struct MigrationTests {
@@ -33,8 +35,8 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     #expect(throws: DatabaseError.self) { try Space(writer: database) }
-    // The seven already-applied migrations stay applied.
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 7)
+    // The eight already-applied migrations stay applied.
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 8)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await database.write { db in
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
@@ -95,7 +97,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 7)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 8)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
   }
@@ -382,7 +384,54 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "998", "999"])
     try await original.close()
+  }
+
+  @Test(arguments: [false, true]) func machineV2IndexesUpgradeWithOrWithoutExistingIndexes(existingIndexes: Bool) async throws {
+    let database = try database()
+    let original = try Space(writer: database)
+    try await database.write { db in
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '011'")
+      if !existingIndexes {
+        try db.execute(sql: "DROP INDEX machine_v2_operations_admission; DROP INDEX machine_v2_channels_by_operation")
+      }
+    }
+    let reopened = try DatabaseQueue(path: database.path)
+    let upgraded = try Space(writer: reopened)
+    #expect(try await reopened.read { db in
+      try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_operations_admission') ORDER BY seqno")
+    } == ["machine_id", "active", "reserved_bytes"])
+    #expect(try await reopened.read { db in
+      try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_channels_by_operation') ORDER BY seqno")
+    } == ["operation_id"])
+    #expect(try await reopened.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier = '011'")
+    } == 1)
+    #expect(try await plan(reopened, "SELECT reserved_bytes FROM machine_v2_operations WHERE machine_id = 'm' AND (active OR reserved_bytes > 0)").contains("machine_v2_operations_admission"))
+    #expect(try await plan(reopened, "SELECT * FROM machine_v2_channels WHERE operation_id = 'o'").contains("machine_v2_channels_by_operation"))
+    try await original.close()
+    try await upgraded.close()
+  }
+
+  @Test func fileBackedWriterHasThePageCache() async throws {
+    let folder = try ScratchFolder("page-cache")
+    let space = try Space.open(file: folder.url.appending(path: "space.sqlite"))
+    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "PRAGMA cache_size") } == -PageCache.writerKiB)
+    let (mmap, cap) = try await space.writer.read { db in
+      try (Int.fetchOne(db, sql: "PRAGMA mmap_size"), String.fetchOne(db, sql: Self.mmapCap))
+    }
+    let limit = cap.flatMap { $0.hasPrefix("0x") ? Int($0.dropFirst(2), radix: 16) : Int($0) } ?? PageCache.mmapBytes
+    #expect(mmap == min(PageCache.mmapBytes, limit))
+    #expect(mmap ?? 0 >= 1 << 30)
+    try await space.close()
+  }
+
+  static let mmapCap = "SELECT substr(compile_options, 15) FROM pragma_compile_options WHERE compile_options LIKE 'MAX!_MMAP!_SIZE=%' ESCAPE '!'"
+
+  private func plan(_ database: DatabaseQueue, _ sql: String) async throws -> String {
+    try await database.read { db in
+      try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql).map { $0["detail"] as String }.joined(separator: "\n")
+    }
   }
 }

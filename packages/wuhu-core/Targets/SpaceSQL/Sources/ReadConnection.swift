@@ -102,6 +102,7 @@ final class ReadConnection {
     try exec("PRAGMA trusted_schema = OFF")
     modules = try Set(strings("SELECT name FROM pragma_module_list")).subtracting(ViewCatalog.tableFunctions)
     try exec("ATTACH DATABASE \(Self.literal(Self.attachmentURI(path))) AS \(quoted(schema))")
+    try exec(PageCache.pragmas(cacheKiB: PageCache.readerKiB, schema: schema))
   }
 
   private static func attachmentURI(_ path: String) -> String {

@@ -1,5 +1,20 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
+import StructuredQueries
+import StructuredQueriesSQLite
+
+@Table("personas")
+struct PersonaRow {
+  @Column(primaryKey: true) var name: String
+  var allocation: Int64
+  var pubkey: String
+  @Column("account_id") var accountID: String
+  @Column("created_at") var createdAt: String
+}
 
 public struct PersonaRecord: Equatable, Sendable {
   public let name: String

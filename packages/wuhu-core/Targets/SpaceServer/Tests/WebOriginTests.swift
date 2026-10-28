@@ -813,6 +813,7 @@ extension WebOriginTests {
   @Test func publicReadDoesNotAdmitAnonymousChannelReaders() async throws {
     try await withSessionDeps {
       let harness = try Harness(dev: false, publicRead: true)
+      try await harness.space.registerPeople(["alice"])
       let id = try await harness.space.sessions.createConversation(members: ["alice"], in: .shared)
       let delivery = try await harness.space.sessions.post(.conversation(id), messageID: MessageID("private"), sender: Sender(id: "alice", timeZone: .gmt), content: .init(text: "private"), uploads: [AttachmentUpload(name: "private.txt", bytes: Array("private".utf8))])
       let path = try #require(delivery.message.content.attachments.first?.path)

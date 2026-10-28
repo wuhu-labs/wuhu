@@ -60,7 +60,7 @@ result(await query(`SELECT * FROM "${path}"`))
 
 ## Channels
 
-`createChannel({ title?, people })` returns a human-only channel id in your group. `addChannelMembers(id, people)`, `removeChannelMembers(id, people)` and `renameChannel(id, title)` manage it; a null title shows members' names. Session membership throws `SpaceError` with `code: "invalidArgument"`. Read-box owns conversation visibility.
+`createChannel({ title?, people })` returns a human-only channel id in your group. `addChannelMembers(id, people)`, `removeChannelMembers(id, people)` and `renameChannel(id, title)` manage it; a null title shows members' names. People may be canonical directory ids or person aliases (case-insensitive, including historical aliases); create/add store canonical ids; remove deletes both the supplied spelling and its canonical id, including legacy alias rows, and an unknown nonmember is a no-op. Unknown people on create/add and session membership throw `SpaceError` with `code: "invalidArgument"`. Read-box owns conversation visibility.
 
 ## Templates
 

@@ -171,10 +171,10 @@ enum Conversations {
   // two racing posts converge instead of forking the conversation.
   /// `group` homes a DM minted here: the opener's.
   static func resolveDM(_ a: String, _ b: String, group: GroupID, now: String, in db: Database) throws -> ConversationID {
+    let aKind = try memberKind(of: a, in: db)
+    let bKind = try memberKind(of: b, in: db)
     let id = dmID(a, b)
     if try record(id.rawValue, in: db) == nil {
-      let aKind = try memberKind(of: a, in: db)
-      let bKind = try memberKind(of: b, in: db)
       try create(
         id: id.rawValue,
         kind: aKind == .session && bKind == .session ? .dmSession : .dmUser,

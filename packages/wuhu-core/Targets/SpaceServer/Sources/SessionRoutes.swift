@@ -800,6 +800,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
       return errorResponse(.unprocessableContent, code: "modelRouteInvalid", message: "model group \(group) pinned member \(member) no longer matches the stored concrete target; Start over")
     case let .unknownSession(key):
       return errorResponse(.notFound, code: "notFound", message: "unknown session: \(key)")
+    case let .unknownPerson(id):
+      return errorResponse(.unprocessableContent, code: "invalidArgument", message: "unknown person: \(id)")
     case let .unknownMessage(id):
       return errorResponse(.notFound, code: "notFound", message: "unknown message: \(id)")
     case let .archiveGraceExpired(key):

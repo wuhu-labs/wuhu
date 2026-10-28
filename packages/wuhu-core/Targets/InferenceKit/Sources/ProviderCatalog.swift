@@ -217,7 +217,7 @@ public struct ProviderCatalog: Sendable {
       case .codex:
         throw .invalidInput(status: 422, body: CatalogError.invalidOIDCDialect(provider: specifier.provider).description)
       }
-      var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(provider.dialect), transport: provider.transport ?? .sse, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
+      var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(images: provider.images), transport: provider.transport ?? .sse, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
       resolved.socketIdentity = SocketRegistryIdentity(provider: specifier.provider, model: specifier.model, configuration: provider, credential: .apiKey(token), replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
       return resolved
     }
@@ -276,7 +276,7 @@ public struct ProviderCatalog: Sendable {
         body: CatalogError.credentialMismatch(provider: specifier.provider).description,
       )
     }
-    var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(provider.dialect), transport: provider.transport ?? .sse, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
+    var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(images: provider.images), transport: provider.transport ?? .sse, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
     resolved.socketIdentity = SocketRegistryIdentity(provider: specifier.provider, model: specifier.model, configuration: provider, credential: credential, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
     return resolved
   }

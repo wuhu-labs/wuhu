@@ -204,6 +204,7 @@ struct DeviceTests {
     let pubkey = try await enrolled(space, "mac")
     let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Studio")
     let store = space.sessions
+    try await space.registerPeople(["alice", "morgan"])
     let conversation = try await store.createConversation(members: ["morgan", "alice"], in: .shared)
     let delivery = try await store.post(
       .conversation(conversation),
@@ -219,6 +220,7 @@ struct DeviceTests {
   @Test func aMessagePostedWithoutADeviceStaysUnattributed() async throws {
     let space = try makeSpace()
     let store = space.sessions
+    try await space.registerPeople(["alice", "morgan"])
     let conversation = try await store.createConversation(members: ["morgan", "alice"], in: .shared)
     _ = try await store.post(
       .conversation(conversation),

@@ -2,6 +2,10 @@
 
 Each executor attempt, including forced-compaction calls and failed or cancelled attempts, produces one `InferenceMetric`. It carries call start, session, configured provider/model/effort, API-reported served model when available, outcome/error, duration, optional time to first event, and optional usage. The metrics sink is also called on failures. Failed or cancelled attempts retain the last reported partial usage, when present. Usage remains in WuhuAI's total-input form until the server normalizes it for storage. Existing `logs/inference.jsonl` encoding stays unchanged, including zero for unreported reasoning. A provider `malformedModelMessage` is reported as `httpError` with error kind `malformedModelMessage` and no HTTP status; failed streamed partials are removed from the live attempt hub and never returned as completed inference.
 
+## Image limits
+
+Provider `imageFamily` optionally selects `claude` or `openAI` limits independently of dialect. Without it, `anthropic` uses Claude limits and `responses`/`codex` use OpenAI limits. Unknown values produce the existing entry-local `CatalogError.invalidProvider`. The provider's resolved limits flow into request media fitting, context estimation, compaction and cache warming.
+
 ## Kernel endpoints
 
 `ProviderCatalog.resolve` builds an Anthropic-dialect endpoint (other than DeepSeek's) with 1-hour automatic prompt caching (`AnthropicPromptCache.oneHour`), and a Responses endpoint with a hashed session/binding/route-epoch cache key. Codex uses the same scoped base key for prompt cache, session and thread affinity.

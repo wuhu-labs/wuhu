@@ -568,7 +568,7 @@ public struct SubscriptionFiring: Sendable {
       switch error {
       case .archiveGraceExpired, .unknownSession:
         try await retire(subscription)
-      case .modelRouteInvalid, .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
+      case .modelRouteInvalid, .unknownPerson, .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
            .selfDirectMessage, .humanAgentDirectMessage, .taskHasNoBox, .taskTakesNoHumanInput, .notTheParent,
            .requestAlreadyOpen, .unknownRequest, .reportRefused,
            .busyForRestart, .requestDeadlineWithoutFireDate, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:

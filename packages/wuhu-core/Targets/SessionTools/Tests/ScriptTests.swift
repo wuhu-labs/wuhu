@@ -429,6 +429,7 @@ import struct WuhuAI.ToolCall
       try await rig.space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
       }
+      _ = try await rig.space.setUserProfile(principal: "u_morgan", handle: "morgan", displayName: nil)
       let theirs = try await store.createConversation(members: ["u_morgan"], in: GroupID(rawValue: "alice"))
       let ours = try await store.createConversation(members: ["u_morgan"], in: .shared)
       let foreign = try await makeSession(rig.space, name: "P", group: GroupID(rawValue: "alice"))

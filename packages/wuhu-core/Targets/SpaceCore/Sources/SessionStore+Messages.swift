@@ -126,7 +126,7 @@ extension SessionStore {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     let id = ConversationID(uuid().uuidString.lowercased())
     try await writer.write { db in
-      try Channels.validate(members, in: db)
+      let members = try Channels.resolve(members, in: db)
       try Channels.validate(title: title)
       try Conversations.create(
         id: id.rawValue,
@@ -375,7 +375,16 @@ extension SessionStore {
         throw SessionStoreError.unknownConversation(owner.rawValue)
       }
       return conversation
-    case let .dm(other):
+    case let .dm(spelling):
+      let other: String
+      if try Sessions.exists(spelling, in: db) {
+        other = spelling
+      } else {
+        guard let person = try Aliases.resolvePerson(spelling, in: db) else {
+          throw SessionStoreError.unknownPerson(spelling)
+        }
+        other = person
+      }
       guard me != other else { throw SessionStoreError.selfDirectMessage(me) }
       if try Sessions.exists(other, in: db) {
         let existing = try Conversations.record(Conversations.dmID(me, other).rawValue, in: db)

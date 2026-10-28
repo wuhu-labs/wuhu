@@ -89,7 +89,7 @@ one executor: the built-in kernel loop, for every provider.
 Created inert (`wuhu session create --provider P --model M [--effort E]
 <title>`); it starts working when something is posted to it. The
 `(provider, model, effort)` spec is validated against `wuhu://settings.localspace/models.json` — a plain space file keyed
-by provider (`dialect`, `baseURL`, per-model `maxInput`/`maxOutput`/
+by provider (`dialect`, `baseURL`, optional `imageFamily`, per-model `maxInput`/`maxOutput`/
 `efforts`/`defaultEffort`/optional `headroomOverride`). An `anthropic`-dialect
 `baseURL` is the vendor's published one (`https://api.deepseek.com/anthropic`);
 the server appends `/v1/messages`, or just `/messages` to a base ending in `/v1`. `wuhu models update`
@@ -97,6 +97,8 @@ seeds/merges it additively (your edits win); API keys come from the server's
 environment (`ANTHROPIC_API_KEY` pattern), never the space. Usable context =
 maxInput − (headroomOverride ?? maxOutput); the session self-compacts past
 70% of it and is forced past 85%.
+
+Provider `imageFamily` accepts `claude` or `openAI` to select image limits independently of wire dialect (for example `claude` on a Responses gateway). Absent uses `claude` for `anthropic`, `openAI` for `responses`/`codex`; unknown values invalidate that provider. It governs request fitting, context estimates, compaction and cache warming.
 
 One way in: `wuhu send <session-id> "..."` posts into an agent's box. A task
 takes no messages from people; only its parent directs it. The session answers

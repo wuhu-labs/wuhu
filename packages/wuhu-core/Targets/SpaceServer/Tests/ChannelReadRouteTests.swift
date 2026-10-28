@@ -119,6 +119,7 @@ import Testing
       let harness = try await SessionHarness()
       let (aliceBearer, aliceKey) = try await harness.enrolledBearer()
       let alice = try await harness.space.mintPersona(key: aliceKey).name
+      _ = try await harness.space.setUserProfile(principal: ownerIdentity, handle: "owner", displayName: nil)
       let first = try await harness.store.createConversation(members: [alice, ownerIdentity], title: "First", in: .shared)
       let second = try await harness.store.createConversation(members: [alice], title: "Second", in: .shared)
       for (operation, fields) in [("rename", JSONValue.object(["title": "First renamed"])), ("add", ["people": .array([.string(alice)])]), ("remove", ["people": .array([.string(alice)])])] {

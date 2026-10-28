@@ -277,6 +277,8 @@ extension Hub {
       ToolProblem(CatalogError.modelRouteInvalid(group: group, member: member).description, code: "modelRouteInvalid")
     case let .unknownSession(key):
       ToolProblem("unknown session: \(key)")
+    case let .unknownPerson(id):
+      ToolProblem("unknown person: \(id)", code: "invalidArgument")
     case let .unknownMessage(id):
       ToolProblem("unknown message: \(id)")
     case let .unknownConversation(id):

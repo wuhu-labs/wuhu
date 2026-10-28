@@ -9,9 +9,38 @@ import SessionDomain
 import Testing
 
 @Suite(.deterministicDependencies) struct HumanAgentDMTests {
+  @Test func personAliasesAndCanonicalIDsOpenOneDMAndUnknownPeopleAreRefused() async throws {
+    let space = try Space.inMemory()
+    try await space.registerPeople(["alice-id", "bob-id"])
+    _ = try await space.setUserProfile(principal: "bob-id", handle: "bob", displayName: nil)
+    _ = try await space.setUserProfile(principal: "bob-id", handle: "renamed", displayName: nil)
+    let first = try await space.sessions.post(.dm(with: "BOB"), messageID: .init("one"), sender: Sender(id: "alice-id", timeZone: .gmt), content: .init(text: "hello"))
+    let second = try await space.sessions.post(.dm(with: "renamed"), messageID: .init("two"), sender: Sender(id: "alice-id", timeZone: .gmt), content: .init(text: "again"))
+    let reply = try await space.sessions.post(.dm(with: "alice-id"), messageID: .init("three"), sender: Sender(id: "bob-id", timeZone: .gmt), content: .init(text: "reply"))
+    #expect(first.message.conversation == second.message.conversation)
+    #expect(first.message.conversation == reply.message.conversation)
+    #expect(try await space.sessions.conversation(first.message.conversation).members.map(\.member) == ["alice-id", "bob-id"])
+    await #expect(throws: SessionStoreError.unknownPerson("missing")) {
+      try await space.sessions.post(.dm(with: "missing"), messageID: .init("unknown"), sender: Sender(id: "alice-id", timeZone: .gmt), content: .init(text: "no"))
+    }
+    await #expect(throws: SessionStoreError.selfDirectMessage("bob-id")) {
+      try await space.sessions.post(.dm(with: "BOB"), messageID: .init("self"), sender: Sender(id: "bob-id", timeZone: .gmt), content: .init(text: "no"))
+    }
+  }
+
+  @Test func unenrolledDevSeatCanOpenAPersonDM() async throws {
+    let space = try Space.inMemory()
+    try await space.registerPeople(["bob-id"])
+    _ = try await space.setUserProfile(principal: "bob-id", handle: "bob", displayName: nil)
+    let delivery = try await space.sessions.post(.dm(with: "BOB"), messageID: .init("dev-dm"), sender: Sender(id: "owner", timeZone: .gmt), content: .init(text: "hello"))
+    #expect(try await space.sessions.conversation(delivery.message.conversation).members.map(\.member).sorted() == ["bob-id", "owner"])
+    #expect(try await space.sessions.reads(space.sessions.conversation(delivery.message.conversation), reader: "owner", group: .shared))
+  }
+
   @Test func openingAHumanSessionDMIsRefusedForAgentsAndTasksFromEitherSide() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      try await space.registerPeople(["carol", "dave"])
       let store = space.sessions
       let agent = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "carol", model: .test)
       let task = try await store.createSession(group: .shared, title: "t", kind: .task, parent: agent, createdBy: agent.rawValue, executor: .kernel(.test))
@@ -37,6 +66,7 @@ import Testing
   @Test func oldHumanSessionDMsRemainReadableButNeitherSideCanPost() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      try await space.registerPeople(["carol", "dave"])
       let store = space.sessions
       let agent = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "carol", model: .test)
       let dm = try await space.writer.write { db in
@@ -66,7 +96,9 @@ import Testing
 
   @Test func humanHumanDMsStillPostAndNotify() async throws {
     try await withSessionDeps {
-      let store = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      try await space.registerPeople(["carol", "dave"])
+      let store = space.sessions
       let delivery = try await store.post(.dm(with: "dave"), messageID: .init("m1"), sender: Sender(id: "carol", timeZone: .gmt), content: .init(text: "hi"))
       #expect(delivery.enqueued.isEmpty)
       #expect(try await store.conversation(delivery.message.conversation).members.allSatisfy { $0.kind == .user })

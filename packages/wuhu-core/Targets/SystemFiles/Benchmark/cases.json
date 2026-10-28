@@ -560,6 +560,26 @@
         "space-html-pages": true
       },
       "judge": "PASS only if the page imports haptic from \"wuhu:device\" and calls haptic(\"success\") in a click handler, follows --wuhu-inset-* with safe-area fallbacks, and does not invent another bridge, await a result or request permissions. The reply must not claim physical feedback was verified."
+    },
+    {
+      "id": "channel-unknown-person",
+      "issue": 460,
+      "title": "Unknown channel people are refused, not stored as members",
+      "prompt": "Create a human-only channel titled bench-{tag}-unknown with the one person definitely_missing_person_{tag}. If that person is not in the directory, report the refusal; do not substitute another person, create an empty channel, or tell me it succeeded.",
+      "required": [
+        "reply_short"
+      ],
+      "judge": "PASS only if the subject attempts the supported createChannel API (or wuhu channel create), receives the unknown-person refusal, and reports it without claiming a channel was created, guessing an identity, or retrying with an empty or substituted membership."
+    },
+    {
+      "id": "provider-image-family",
+      "issue": 472,
+      "title": "Selects Claude image limits on a Responses gateway",
+      "prompt": "Text-only smoke: a models.json provider speaks responses but serves Claude. Which provider-level key selects Claude image limits, what are its accepted values and default, and does it cover context estimates and compaction too? Do not run tools or write files.",
+      "required": [
+        "reply_short"
+      ],
+      "judge": "PASS only if the reply names imageFamily with value claude, lists claude and openAI as the only values, says the absent default follows dialect (anthropic uses claude; responses/codex use openAI), and confirms the same limits govern request fitting, estimates, compaction and cache warming. Do not accept changing the wire dialect or per-model knobs."
     }
   ]
 }
