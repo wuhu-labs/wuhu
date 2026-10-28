@@ -13,7 +13,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct WebOriginTests {
   let injection = #"<script type="module" src="/_/shell.js"></script>"#
-  let importMap = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#
+  let importMap = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js","wuhu:device":"/_/device.js"}}</script>"#
 
   @Test func servesFilesWithMimeByExtension() async throws {
     let harness = try Harness()

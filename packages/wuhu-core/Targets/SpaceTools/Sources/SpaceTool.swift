@@ -43,7 +43,13 @@ public struct SpaceToolContext: Sendable {
       try await space.refuseWrite(path, in: group, by: principal.actor, acting: principal.group)
       return
     }
-    if let owner = path.homeOwner { throw SpaceError.foreignHome(path: path.rawValue, owner: owner) }
+    if path.homeOwner != nil {
+      throw ToolRunError.failed(
+        code: .unauthorized,
+        message: "page scripts can't write session homes; keep page data outside /_/sessions/",
+        hint: nil,
+      )
+    }
     if group == .settings || (space.isGroupInstructions(path) && group != principal.group) {
       throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue)
     }

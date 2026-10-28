@@ -85,12 +85,7 @@ Every request on the API plane acts in one group. Hostless paths, `/v1/f/*`, too
 
 ## Page data: `/_/space/*`
 
-A page imports `wuhu:space`; the import map every served HTML page carries
-points it at `/_/space.js`, the browser transport over the shared core
-`packages/wuhu-web/app/app/lib/shell-sdk/space-core.js` (also served, no-cache,
-as `/_/space-core.js`). The core speaks these routes on the content origin;
-`run_script` embeds the same core over host calls. The legacy `/_/query` and
-`/_/observe` are unchanged.
+A page imports `wuhu:space` for data or `wuhu:device` for device feedback; the import map every served HTML page carries points them at `/_/space.js` and `/_/device.js`. The device contract lives in `packages/wuhu-web/app/SPEC.md`. The data module is the browser transport over the shared core `packages/wuhu-web/app/app/lib/shell-sdk/space-core.js` (also served, no-cache, as `/_/space-core.js`). The core speaks these routes on the content origin; `run_script` embeds the same core over host calls. The legacy `/_/query` and `/_/observe` are unchanged.
 
 - Reads pass the wall `/_/query` passes (a read session, `--dev` or `--public-read`, and the cross-origin refusal):
   - `GET /_/space/query?sql=&params=` answers a typed snapshot
@@ -108,12 +103,7 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
   - `GET /_/space/find?glob=[&path=][&matchLimit=][&hidden=][&noIgnore=][&step=]` and `GET /_/space/grep?pattern=[&path=][&matchLimit=][&hidden=][&noIgnore=][&step=]` run the `find` and `grep` tools as the page's group, answering their output: `{paths, cursor?, scanned, skipped}` and `{matches: [{path, line, text}], cursor?, scanned, skipped}`, `cursor` present exactly when more results remain. A missing glob or pattern, a limit that is not an integer, or a flag other than `true`/`false` is 400 `invalidArgument`; the tool's own refusals keep their codes (a bad regex or cursor 400, an unread group or missing path 404, a `machines://` path 503 `unavailable`, since a page has no machine seam). Other methods are 405.
 - Writes are `POST /_/space/rows` `{path, ops, page}` → `{rev, ids}` and `POST /_/space/attributes` `{path, set?, remove?, ifMatch, page}` → `{token}`. `ops` are `{insert: {col: cell}}`, `{update: id, set: {col: cell}}` or `{delete: id}`, applied in one revision; `ids` are the inserted rows' ids in order. A call touching one row id twice is refused as `invalidArgument` (an update's untouched fields come from the row before the call, so two ops on one row cannot fold). The patch is `attributes.patch`'s. Admission, in order: a `Content-Type` other than `application/json` is 415; an `Origin` that is not this host's own content origin (the request's scheme and host), or a `Sec-Fetch-Site` other than `same-origin`, is 403 `crossOrigin`; no live read session for the host's group is 401 (`--public-read` admits no visitor to write; `--dev` writes as its seat, with no actor); a body past 4 MiB is 413, one that is not a JSON object 400; `page` must be the writing page's `location.pathname` — absolute and hostless, percent-decoded, a trailing slash dropped — else 400. `page` is the page's own claim; what keeps active message content from running as a page is the attachment download policy above, not `page`. Other methods on these routes are 405.
 - `POST /_/space/session` (wuhu:session's createSession options plus `key`, `page`) → the `POST /v1/session` output, and `POST /_/space/message` (`{message, conversation | session, reply_target?, attachments?, page}`) → `{messageId, conversationId, n, delivered: []}`, take the write admission above and act as the viewer (the `--dev` seat as `owner`), through the hub's one create and post path. Bound: the viewer's authority intersected with the host's group, at every step. A page creates sessions only in that group, posts (its create's first message included) only into that group's conversations and boxes, and attaches only that group's files; anything else is 403 `outsidePageGroup`. A guest viewer, or one who does not write the group, is 403 `groupForbidden`; a task 403 `taskInput` (a person creates agents only); an incomplete create 422 `{code: incompleteSession, message, id}`; other refusals are 422 with their code, a server without sessions 404. `key` makes a create idempotent per viewer and group: a key never replays across groups. With `expectsReply` the create opens a request on the new agent whose `requester` is the viewer's persona: the request and the agent's reports post in the agent's box, and `request.key` is unique in the group as for a session's request.
-- A page acts as its host's group minus admin, whoever views it: an
-  admin-only target (the group's instruction layer, e.g. shared's
-  `AGENTS.md`) is refused as `unauthorized` even for an admin viewer, and so
-  is every session home. Every path follows one rule: hostless is the host's
-  group, `wuhu://<g>.localspace/<path>` group `g` when the host's group reads
-  it.
+- A page writes with its host's group authority minus admin, recorded as the viewer: it can write its own group's instruction layer, but never the settings group or another group's instruction layer. Every session home is refused with 403 `unauthorized` and message "page scripts can't write session homes; keep page data outside /_/sessions/". Every path follows one rule: hostless is the host's group, `wuhu://<g>.localspace/<path>` group `g` when the host's group reads it.
 - Failures carry the tool error payload (`code`, `message`, `hint?`,
   `token?`) with a status by code: `notFound` 404, `conflict` 409 (a stale
   `ifMatch`, carrying the current `token`), `invalidPath`/`invalidArgument`
@@ -128,7 +118,7 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
 - The read cookie authenticates `/_/space/*` on the content origin, never
   `/v1`.
 - Every served HTML page gets
-  `<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>`
+  `<script type="importmap">{"imports":{"wuhu:space":"/_/space.js","wuhu:device":"/_/device.js"}}</script>`
   at the start of `<head>` (after the `<head>` tag, else after the doctype,
   else first), since an import map must precede every module script; the
   shell script is still injected before the last `</body>`. The HTML `ETag`

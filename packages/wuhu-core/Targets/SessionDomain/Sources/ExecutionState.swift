@@ -2,6 +2,7 @@ import Foundation
 
 public enum Subscription: Hashable, Sendable, Codable {
   case observe(sql: String)
+  case stream(URL)
   case timer(TimerSchedule)
   case requestDeadline(Date)
 }
@@ -64,7 +65,10 @@ public struct ToolExecutionState: Hashable, Sendable {
         subscriptions[.deadline(result.requestID)] = .requestDeadline(deadline)
       }
     case let .observe(result):
-      subscriptions[result.subscriptionID] = .observe(sql: result.sql)
+      subscriptions[result.subscriptionID] = switch result.source {
+      case let .query(sql): .observe(sql: sql)
+      case let .stream(url): .stream(url)
+      }
     case let .timer(result):
       subscriptions[result.subscriptionID] = .timer(result.schedule)
     case let .cancelObservation(result):
@@ -148,7 +152,7 @@ func registeredSubscriptionState(
 ) -> [SubscriptionID: Subscription] {
   subscriptions.filter { id, subscription in
     switch subscription {
-    case .observe, .timer: registered.contains(id)
+    case .observe, .stream, .timer: registered.contains(id)
     case .requestDeadline: true
     }
   }

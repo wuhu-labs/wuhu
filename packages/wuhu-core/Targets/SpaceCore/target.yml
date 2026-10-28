@@ -44,6 +44,8 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - Fetch
+    - OperationRuntime
     - DeterministicDependencies
     - name: CImageCodec
       platforms: [linux]

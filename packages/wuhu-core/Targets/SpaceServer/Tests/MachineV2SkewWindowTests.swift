@@ -1,3 +1,4 @@
+import Dependencies
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -51,7 +52,7 @@ private final class Starts: Sendable {
 
 /// Runs a real agent behind a proxy that rewrites its description to `release`'s, and the server's normal hub in front.
 private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHub, MachineID, Starts) async throws -> Void) async throws {
-  let space = try Space.inMemory()
+  let space = try withDependencies { $0.continuousClock = ContinuousClock() } operation: { try Space.inMemory() }
   let (record, _) = try await space.addMachineV2(name: "skew_v2", group: .shared)
   let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
   let starts = Starts()
@@ -78,6 +79,7 @@ private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHu
     await agent.shutdown()
   }
   await service.shutdown()
+  try await space.close()
 }
 
 @Suite(.deterministicDependencies) struct MachineV2SkewWindowTests {

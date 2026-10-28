@@ -95,9 +95,11 @@ public struct SubscriptionInput: Codable, Equatable, Sendable {
   public let name: String?
 }
 
+// One of sql (a query's rows) and url (a server-sent event stream).
 @Contract
 public struct SubscriptionObserveInput: Codable, Equatable, Sendable {
-  public let sql: String
+  public let sql: String?
+  public let url: String?
   public let throttleSeconds: Double?
 }
 

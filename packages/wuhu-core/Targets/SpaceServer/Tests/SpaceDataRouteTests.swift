@@ -102,7 +102,7 @@ import Testing
     #expect(history.entries.filter { $0.via != nil }.count == 1)
   }
 
-  @Test func aPageWritesItsOwnGroupsInstructionsButNeverSettings() async throws {
+  @Test func aPageWritesItsOwnGroupsInstructionsButNeverSettingsOrSessionHomes() async throws {
     let r = try await rig()
     #expect(try await r.harness.space.isHumanAdmin(r.alice, of: .shared))
     let written = try await run(r, .shared, "write", ["path": "/AGENTS.md", "content": "---\nk: 1\n---\nrules\n"])
@@ -130,6 +130,32 @@ import Testing
     #expect(ordinary.status == .ok)
     let read = try JSONValueDecoder().decode(ReadOutput.self, from: try await run(r, .shared, "read", ["path": "/plan.md"]))
     #expect(read.content == "---\nk: 2\n---\n")
+
+    let home = "/_/sessions/some-session-id"
+    let table = home + "/tasks.table"
+    let note = home + "/notes.md"
+    try await run(r, .shared, "table.create", [
+      "path": .string(table), "header": ["columns": [["name": "title", "type": "string"]]],
+    ])
+    let homeNote = try await run(r, .shared, "write", ["path": .string(note), "content": "---\nk: 1\n---\n"])
+    let requests: [(String, JSONValue)] = [
+      ("/_/space/rows", ["path": .string(table), "ops": [["insert": ["title": "blocked"]]], "page": "/p.html"]),
+      ("/_/space/attributes", [
+        "path": .string(note), "set": ["k": 2], "ifMatch": try #require(homeNote.object?["token"]), "page": "/p.html",
+      ]),
+    ]
+    for (route, body) in requests {
+      let response = try await post(r, Self.sharedHost, route, body, cookie: alices)
+      #expect(response.status == .forbidden)
+      let error = try await json(response)
+      #expect(error.object?["code"] == "unauthorized")
+      #expect(error.object?["message"] == "page scripts can't write session homes; keep page data outside /_/sessions/")
+      #expect(error.object?["hint"] == nil)
+    }
+    let rows = try await r.harness.space.query("SELECT count(*) FROM \"\(table)\"", as: .shared(.anonymous))
+    #expect(rows.rows == [[.integer(0)]])
+    let unchanged = try JSONValueDecoder().decode(ReadOutput.self, from: try await run(r, .shared, "read", ["path": .string(note)]))
+    #expect(unchanged.content == "---\nk: 1\n---\n")
   }
 
   @Test func aStaleIfMatchIsA409CarryingTheCurrentToken() async throws {
@@ -456,7 +482,7 @@ import Testing
       "path": "/page.html", "content": "<!doctype html><html><HEAD lang=en><title>t</title></HEAD><header></header><body>b</body></html>",
     ])
     try await run(r, .shared, "write", ["path": "/bare.html", "content": "<!DOCTYPE html>\n<p>no head</p>"])
-    let map = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#
+    let map = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js","wuhu:device":"/_/device.js"}}</script>"#
     let page = try await get(r, Self.sharedHost, "/page.html")
     let text = try await page.text()
     #expect(text.hasPrefix("<!doctype html><html><HEAD lang=en>" + map + "<title>t</title>"))

@@ -4,9 +4,9 @@
   import Foundation
 #endif
 import Dependencies
+import func MainHub.fetchOrigin
 import Serve
 import ServeRouting
-import func SessionTools.fetchOrigin
 import SpaceCore
 
 /// `GET /v1/id-token?audience=<origin>` with `Authorization: Bearer wit_…`: a

@@ -253,7 +253,7 @@ extension SessionStore {
         else { throw NonAdvancingSubscription(due: due, next: next) }
         row.nextFireAt = SQLiteDateFormat.string(from: next)
       }
-      if case let .observed(marker) = advance { row.marker = marker }
+      if let marker = advance?.marker { row.marker = marker }
       row.payload = try Sessions.encode(slot)
       if let session = attempt.owner.session {
         for wake in wakes {

@@ -30,6 +30,7 @@ actor OperationDriver {
   private(set) var record: ClientRecord
   private var dispatch: Bool
   private var stopSent = false
+  private let leaseClock: LocalWorkClock
   private var lastAnswer: Duration
   private var startOutcome: Result<Void, OperationError>?
   private var generation: UInt64 = 0
@@ -49,6 +50,7 @@ actor OperationDriver {
 
   init(record: ClientRecord, dispatch: Bool, link: MachineLink, store: any OperationStore, onEnd: @escaping @Sendable (UUID) async -> Void) {
     self.record = record; self.dispatch = dispatch; self.link = link; self.store = store; self.onEnd = onEnd; machine = record.machine
+    leaseClock = LocalWorkClock(link.clock)
     lastAnswer = link.clock.now()
     if !dispatch { startOutcome = .success(()) }
   }
@@ -253,13 +255,13 @@ actor OperationDriver {
 
   private func deadline(hold: Int = 0) -> Duration {
     let normal = .milliseconds(hold) + Self.exchangeMargin
-    let silence = lastAnswer + .milliseconds(leaseMs) - link.clock.now()
+    let silence = lastAnswer + .milliseconds(leaseMs) - leaseClock.now()
     return max(.zero, min(normal, silence))
   }
 
   private func exchange<T: Decodable & Sendable>(_ type: T.Type, _ url: URL, method: Fetch.Method = .get, body: Body? = nil, hold: Int = 0) async -> Result<T, OperationError> {
-    let outcome = await link.send(type, url, method: method, body: body, correlation: record.correlation, deadline: deadline(hold: hold), limit: OperationLimits.responseBytes)
-    if outcome.answered { lastAnswer = link.clock.now() }
+    let outcome = await link.send(type, url, method: method, body: body, correlation: record.correlation, deadline: deadline(hold: hold), limit: OperationLimits.responseBytes, preparation: { [leaseClock] in leaseClock.work($0) })
+    if outcome.answered { lastAnswer = leaseClock.now() }
     return outcome.result
   }
 
@@ -300,7 +302,7 @@ actor OperationDriver {
   func cleanupStop() async {
     var delay = Self.backoff.first
     while !Task.isCancelled {
-      guard let failure = await sendStop(), disposition(failure.code) == .retry, link.clock.now() - lastAnswer < .milliseconds(leaseMs) else { return }
+      guard let failure = await sendStop(), disposition(failure.code) == .retry, leaseClock.now() - lastAnswer < .milliseconds(leaseMs) else { return }
       try? await link.clock.sleep(delay)
       delay = min(delay * 2, Self.backoff.last)
     }
@@ -476,6 +478,8 @@ actor OperationDriver {
     if fenced { throw OperationError(.requestCancelled, message: "Operation driver stopped", operation: record.id) }
     var next = record
     let persist = try change(&next)
+    leaseClock.work(true)
+    defer { leaseClock.work(false) }
     switch persist {
     case .none: return
     case .memory: break
@@ -503,7 +507,7 @@ actor OperationDriver {
     }
     let diagnostic: OperationError
     if disposition(error.code) == .retry {
-      guard link.clock.now() - lastAnswer >= .milliseconds(leaseMs) else { return false }
+      guard leaseClock.now() - lastAnswer >= .milliseconds(leaseMs) else { return false }
       diagnostic = OperationError(.unknownOperation, message: "Machine was silent for the operation's lease", operation: record.id, details: ["outcome": "unknown", "reason": "leaseSilence", "cause": .string(error.code.rawValue)])
     } else {
       diagnostic = OperationError(error.code, message: error.message, operation: record.id, details: error.details)

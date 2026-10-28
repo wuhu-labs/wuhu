@@ -25,22 +25,29 @@ final class ScriptHandlerContext: Sendable {
   let input: JSONValue
   private let output = Mutex(Output())
 
-  init(rows: Rows?, fireTime: Date?, stateJSON: String?) throws {
+  init(input: ScriptHandlerInvocation.Input?, stateJSON: String?) throws {
     var fields: OrderedDictionary<String, JSONValue> = ["state": .null]
     if let stateJSON {
       guard let state = JSONValue.parse(stateJSON) else { throw ScriptError("invalid saved handler state") }
       fields["state"] = state
     }
-    if let rows, case let .object(snapshot) = Wire.queryOutput(rows), case let .array(values)? = snapshot["rows"] {
+    switch input {
+    case let .rows(rows):
+      guard case let .object(snapshot) = Wire.queryOutput(rows), case let .array(values)? = snapshot["rows"] else { preconditionFailure("a query's output has rows") }
       fields["rows"] = .array(values.map { value in
         guard case let .array(cells) = value else { preconditionFailure("query rows are arrays") }
         var object: OrderedDictionary<String, JSONValue> = [:]
         for (column, cell) in zip(rows.columns, cells) { object[column] = cell }
         return .object(object)
       })
+    case let .timer(fireTime):
+      fields["fireTime"] = .string(fireTime.ISO8601Format())
+    case let .event(event):
+      fields["event"] = .object(["id": event.id.map(JSONValue.string) ?? .null, "type": .string(event.event), "data": .string(event.data)])
+    case nil:
+      break
     }
-    if let fireTime { fields["fireTime"] = .string(fireTime.ISO8601Format()) }
-    input = .object(fields)
+    self.input = .object(fields)
   }
 
   func install(in engine: JSEngine) throws {
@@ -92,12 +99,11 @@ extension Scripts {
     id: UUID = UUID(),
     path: String,
     actor: ScriptActor,
-    rows: Rows? = nil,
-    fireTime: Date? = nil,
+    input: ScriptHandlerInvocation.Input? = nil,
     stateJSON: String? = nil,
     tools: ToolExecutor,
   ) async throws -> ScriptHandlerResult {
-    let context = try ScriptHandlerContext(rows: rows, fireTime: fireTime, stateJSON: stateJSON)
+    let context = try ScriptHandlerContext(input: input, stateJSON: stateJSON)
     let module = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
     let quoted = JSONValue.string(module).jsonString()
     let client = try await tools.client(actor)

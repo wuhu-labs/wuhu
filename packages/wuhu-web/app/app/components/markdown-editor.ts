@@ -8,8 +8,12 @@ import TaskList from '@tiptap/extension-task-list'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
+import { Marked, type marked } from 'marked'
+import markedCjkFriendly from 'marked-cjk-friendly'
 import { ContentMarks, SettleAfterDrop } from './editor-plugins'
 import { SlashCommands } from './editor-slash'
+
+const cjkParser = new Marked(markedCjkFriendly())
 
 const lowlight = createLowlight(common)
 
@@ -23,7 +27,8 @@ const extensions = [
     },
   }),
   CodeBlockLowlight.configure({ lowlight }),
-  Markdown,
+  // Tiptap consumes Marked's Lexer/use APIs but declares the callable singleton type.
+  Markdown.configure({ marked: cjkParser as unknown as typeof marked }),
   TaskList,
   TaskItem.configure({ nested: true }),
   Mathematics,

@@ -139,7 +139,7 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
       switch subscription {
       case .timer: !tools.handlerSubscriptions.contains(id)
       case .requestDeadline: true
-      case .observe: false
+      case .observe, .stream: false
       }
     }
   }

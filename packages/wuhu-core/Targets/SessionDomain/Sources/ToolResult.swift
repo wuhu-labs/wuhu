@@ -323,13 +323,40 @@ public struct TemplatesResult: Hashable, Sendable, Codable {
   }
 }
 
+/// What an observation watches: a query's rows, or a server-sent event stream.
+public enum ObservedSource: Hashable, Sendable {
+  case query(String)
+  case stream(URL)
+}
+
 public struct ObserveResult: Hashable, Sendable, Codable {
   public var subscriptionID: SubscriptionID
-  public var sql: String
+  public var source: ObservedSource
 
-  public init(subscriptionID: SubscriptionID, sql: String) {
+  public init(subscriptionID: SubscriptionID, source: ObservedSource) {
     self.subscriptionID = subscriptionID
-    self.sql = sql
+    self.source = source
+  }
+
+  private enum CodingKeys: String, CodingKey { case subscriptionID, sql, url }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    subscriptionID = try container.decode(SubscriptionID.self, forKey: .subscriptionID)
+    if let url = try container.decodeIfPresent(URL.self, forKey: .url) {
+      source = .stream(url)
+    } else {
+      source = .query(try container.decode(String.self, forKey: .sql))
+    }
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(subscriptionID, forKey: .subscriptionID)
+    switch source {
+    case let .query(sql): try container.encode(sql, forKey: .sql)
+    case let .stream(url): try container.encode(url, forKey: .url)
+    }
   }
 }
 

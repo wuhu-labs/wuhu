@@ -3,6 +3,7 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import ExecutionOwner
 import struct FileSearch.SearchError
+import struct MainHub.EventSources
 import class MainHub.Hub
 import protocol MainHub.Main
 import enum MainHub.RevocationPolicy
@@ -56,7 +57,7 @@ public struct SessionRuntime: Sendable {
   /// Main's OIDC signing, which workers in their own processes ask for.
   var signing = InferenceAccess()
   let store: SessionStore
-  let firing: SubscriptionFiring
+  var firing: SubscriptionFiring
   let sockets: ResponsesSocketRegistry?
   let owner: Hub
   /// Where an inference a worker reports lands: `POST /v1/inferences`.
@@ -183,6 +184,7 @@ extension SessionRuntime {
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
+    eventSources: EventSources? = nil,
     outOfProcess: Bool = false,
     takingOver: Bool = false,
   ) async -> SessionRuntime {
@@ -249,6 +251,7 @@ extension SessionRuntime {
       tokens: tokens, connection: connection,
     )
     runtime.signing = access
+    if let eventSources { runtime.firing.sources = eventSources }
     return runtime
   }
 }

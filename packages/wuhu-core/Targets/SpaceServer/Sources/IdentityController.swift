@@ -7,7 +7,7 @@ import Dependencies
 import Fetch
 import JSONValue
 import Logging
-import func SessionTools.fetchOrigin
+import func MainHub.fetchOrigin
 import enum WuhuAI.InferenceError
 
 enum IssuerChoice: String, Codable, Sendable { case `self`, directory }

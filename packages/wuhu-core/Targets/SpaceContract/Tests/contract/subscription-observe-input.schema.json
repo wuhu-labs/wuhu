@@ -1,1 +1,1 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SubscriptionObserveInput","type":"object","properties":{"sql":{"type":"string"},"throttleSeconds":{"type":["number","null"]}},"required":["sql"],"additionalProperties":false}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SubscriptionObserveInput","type":"object","properties":{"sql":{"type":["string","null"]},"url":{"type":["string","null"]},"throttleSeconds":{"type":["number","null"]}},"required":[],"additionalProperties":false}

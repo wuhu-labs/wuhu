@@ -64,6 +64,7 @@ extension SessionStore {
       for armed in try SubscriptionRow.of(.session(id)).fetchAll(db).map(self.armedSubscription) {
         switch armed.slot.kind {
         case let .observe(sql, _): subscriptions[armed.slot.id] = .observe(sql: sql)
+        case let .stream(url, _): subscriptions[armed.slot.id] = .stream(url)
         case let .timer(schedule, _): subscriptions[armed.slot.id] = .timer(schedule)
         case .requestDeadline:
           guard let deadline = armed.nextFireAt else { throw SessionStoreError.requestDeadlineWithoutFireDate(armed.slot.id.rawValue) }

@@ -6,6 +6,7 @@ import Fetch
   import Foundation
 #endif
 import HTTPTypes
+import func MainHub.fetchOrigin
 import SpaceClient
 
 /// The transport an identity fetch's hops go out on: one that answers a

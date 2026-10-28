@@ -44,6 +44,7 @@ private final class Spawning: Worker, Sendable {
     let invocation = ScriptHandlerInvocation(id: UUID(), path: "/nightly.js", runner: .observer(observer), input: .timer(Date()), stateJSON: nil)
     let (running, run) = AsyncStream<ExecID>.makeStream()
     let killed = Mutex<[ExecID]>([])
+    let (exiting, exit) = AsyncStream<Void>.makeStream()
 
     let worker = Spawning { invocation in
       let record = try await space.mintScriptExec(machine: machineID, caller: observer.member, script: invocation.scriptID)
@@ -64,6 +65,8 @@ private final class Spawning: Worker, Sendable {
           run.yield(exec.start.id)
           for await _ in exec.kills {
             killed.withLock { $0.append(exec.start.id) }
+            for await _ in exiting { break }
+            guard !Task.isCancelled else { return }
             await exec.exit(.signaled(signal: 15))
             break
           }
@@ -85,6 +88,9 @@ private final class Spawning: Worker, Sendable {
         #expect(try await space.execRecord(exec)?.terminal == .cancelled)
         #expect(try await space.liveScriptExecs(script: invocation.scriptID, caller: observer.member).isEmpty)
         #expect(try await space.takeScriptExecOwners().isEmpty)
+
+        exit.yield(())
+        #expect(try await realPollUntil { try await space.execRecord(exec)?.terminal == .signaled(signal: 15) })
       }
       _ = try await group.next()
       group.cancelAll()

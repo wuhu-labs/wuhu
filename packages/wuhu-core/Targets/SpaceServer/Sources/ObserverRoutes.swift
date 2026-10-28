@@ -1,4 +1,9 @@
 import Fetch
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct MainHub.ArmingProblem
 import class MainHub.Hub
 import Serve
@@ -58,14 +63,15 @@ func addObserverRoutes(
 }
 
 func observerOutput(_ armed: ArmedSubscription, group: GroupID) -> ObserverOutput {
-  let (kind, sql, cron): (SubscriptionKindPayload, String?, String?) = switch armed.slot.kind {
-  case let .observe(sql, _): (.observe, sql, nil)
-  case let .timer(.cron(expression), _): (.timer, nil, expression)
-  case .timer(.oneShot, _): (.timer, nil, nil)
+  let (kind, sql, url, cron): (SubscriptionKindPayload, String?, URL?, String?) = switch armed.slot.kind {
+  case let .observe(sql, _): (.observe, sql, nil, nil)
+  case let .stream(url, _): (.observe, nil, url, nil)
+  case let .timer(.cron(expression), _): (.timer, nil, nil, expression)
+  case .timer(.oneShot, _): (.timer, nil, nil, nil)
   case .requestDeadline, .requestStall: preconditionFailure("a group observer is an observation or a timer")
   }
   return ObserverOutput(
-    name: armed.name!, id: armed.slot.id.rawValue, group: group.rawValue, kind: kind, handler: armed.slot.handler!, sql: sql, cron: cron,
+    name: armed.name!, id: armed.slot.id.rawValue, group: group.rawValue, kind: kind, handler: armed.slot.handler!, sql: sql, url: url?.absoluteString, cron: cron,
     fireAt: armed.nextFireAt?.timeIntervalSince1970, status: armed.status == .armed ? .armed : .paused,
     sessionsPerHour: armed.sessionsPerHour!, lastFiredAt: armed.lastFiredAt?.timeIntervalSince1970, lastError: armed.slot.lastError,
   )

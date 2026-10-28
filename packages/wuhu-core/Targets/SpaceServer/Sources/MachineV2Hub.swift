@@ -7,6 +7,7 @@ import Fetch
 import FetchTunnel
 import struct MachineContract.MachineID
 import struct OperationProtocol.OperationError
+import enum OperationProtocol.OperationPreparation
 import struct SpaceContract.GroupID
 import SpaceCore
 
@@ -78,23 +79,27 @@ actor MachineV2Hub {
   func streams(_ machine: String) -> Int? { routes[machine]?.streams }
 
   func fetch(_ request: Request, usableFrom group: GroupID) async throws -> Response {
-    try checkAvailable()
-    let path = request.url.path.split(separator: "/").map(String.init)
-    guard path.count >= 4, Array(path.prefix(3)) == ["machine", "v2", "machines"],
-          let machine = try await space.resolveMachine(path[3], usableFrom: group), machine.id.rawValue == path[3],
-          try await space.machineV2Members(group: machine.group).contains(path[3]) else { throw OperationError(.unknownMachine) }
-    guard let route = routes[path[3]] else {
-      guard let evidence = try await space.machineV2PresenceEvidence(path[3], group: machine.group) else { throw OperationError(.unknownMachine) }
-      let detached = evidence.state == .detached
-      let observed = evidence.observedAt
-      throw OperationError(.machineUnavailable, message: "No live Machine v2 tunnel route", details: [
-        "state": detached ? "detached" : "lost", "started": false,
-        detached ? "leftAt" : "silentSince": .number(observed.timeIntervalSince1970),
-      ])
+    let client = try await OperationPreparation.run {
+      try checkAvailable()
+      let path = request.url.path.split(separator: "/").map(String.init)
+      guard path.count >= 4, Array(path.prefix(3)) == ["machine", "v2", "machines"],
+            let machine = try await space.resolveMachine(path[3], usableFrom: group), machine.id.rawValue == path[3],
+            try await space.machineV2Members(group: machine.group).contains(path[3]) else { throw OperationError(.unknownMachine) }
+      guard let route = routes[path[3]] else {
+        guard let evidence = try await space.machineV2PresenceEvidence(path[3], group: machine.group) else { throw OperationError(.unknownMachine) }
+        let detached = evidence.state == .detached
+        let observed = evidence.observedAt
+        throw OperationError(.machineUnavailable, message: "No live Machine v2 tunnel route", details: [
+          "state": detached ? "detached" : "lost", "started": false,
+          detached ? "leftAt" : "silentSince": .number(observed.timeIntervalSince1970),
+        ])
+      }
+      guard route.credential.machines.contains(path[3]) else { throw OperationError(.machineNotAuthorized) }
+      try await authorize(route.credential)
+      return route.client
     }
-    guard route.credential.machines.contains(path[3]) else { throw OperationError(.machineNotAuthorized) }
-    try await authorize(route.credential)
-    return try await route.client(request)
+    try Task.checkCancellation()
+    return try await client(request)
   }
 
   func run(_ credential: Credential, transport: TunnelTransport, streams: Int = TunnelLimits().streams) async {

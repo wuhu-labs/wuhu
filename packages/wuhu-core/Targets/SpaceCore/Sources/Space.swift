@@ -24,6 +24,7 @@ public actor Space {
   let clock: any Clock<Duration>
   let rng: WithRandomNumberGenerator
   let log: Logger
+  var machineTraces: MachineTraceWriter?
   var identityCache: SpaceIdentity?
   var templateCloneFault: String?
 
@@ -50,6 +51,7 @@ public actor Space {
   }
 
   public func close() async throws {
+    await machineTraces?.close()
     broadcast.close()
     await taskScope.close()
     var failure: (any Error)?

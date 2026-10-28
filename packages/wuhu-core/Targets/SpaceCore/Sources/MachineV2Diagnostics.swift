@@ -77,42 +77,30 @@ extension Space {
 
   public func machineV2TraceSink(group: GroupID, problemsGroup: GroupID?) throws -> @Sendable (OperationTrace) throws -> Void {
     guard let problemsGroup else { throw OperationError(.traceUnavailable, message: "Machine v2 needs an explicit problems group") }
-    let writer = writer; let date = dateGen; let broadcast = broadcast
+    if machineTraces == nil {
+      machineTraces = MachineTraceWriter(writer: writer, date: dateGen, clock: clock, broadcast: broadcast, log: log)
+    }
+    let buffer = machineTraces!
     return { trace in
-      guard trace.path.hasPrefix("/machine/v2/machines/"), !trace.path.contains("?"), !trace.path.contains("#") else { throw OperationError(.traceUnavailable) }
-      let now = date.now; let stamp = SQLiteDateFormat.string(from: now)
-      let cutoff = SQLiteDateFormat.string(from: now.addingTimeInterval(-7 * 86400))
-      let parts = trace.elapsed.components
-      guard parts.seconds >= 0, parts.seconds < Int64(Int.max / 1000) else { throw OperationError(.traceUnavailable) }
-      let elapsed = Int(parts.seconds) * 1000 + Int(parts.attoseconds / 1_000_000_000_000_000)
-      try writer.writeWithoutTransaction { db in
-        var pending: [MutationEvent] = []
-        try db.inTransaction {
-          let id = group.rawValue + "/" + trace.request.uuidString
-          let prior = try MachineV2TraceRow.where { $0.id.eq(id) }.fetchOne(db)
-          var row = MachineV2TraceRow(id: id, grp: group.rawValue, requestID: trace.request.uuidString, correlationID: trace.correlation, path: trace.path, event: trace.event.rawValue, startAt: prior?.startAt ?? stamp, elapsedMs: elapsed, status: trace.status ?? prior?.status, headMs: trace.event == .head ? elapsed : prior?.headMs, errorCode: trace.error?.rawValue, problemID: prior?.problemID)
-          if let incident = try MachineV2IncidentRow.where({ $0.traceGroup.eq(group.rawValue) && $0.correlationID.eq(trace.correlation) }).fetchOne(db) { row.problemID = incident.problemID }
-          try MachineV2TraceRow.upsert { row }.execute(db)
-          if let code = trace.error, [.invalidResponse, .invalidOffset, .offsetExpired].contains(code) {
-            let parts = trace.path.split(separator: "/").map(String.init)
-            let operation = parts.count >= 6 ? UUID(uuidString: parts[5]) : nil
-            _ = try V2Problems.record(group: problemsGroup, traceGroup: group, invariant: 13, code: code, incident: operation?.uuidString ?? trace.request.uuidString, correlation: UUID(uuidString: trace.correlation), stamp: stamp, in: db, pending: &pending)
-          }
-          if try V2Maintenance.due("problems/" + problemsGroup.rawValue, now: now, in: db) { try V2Problems.releaseResolvedPins(group: problemsGroup, stamp: stamp, cutoff: cutoff, in: db) }
-          if try V2Maintenance.due("traces/" + group.rawValue, now: now, in: db) { try MachineV2TraceRow.where { $0.grp.eq(group.rawValue) && $0.startAt.lt(cutoff) && $0.problemID.is(nil) }.delete().execute(db) }
-          return .commit
-        }
-        if !pending.isEmpty { broadcast.emit(Dictionary(grouping: pending, by: \.group).map { group, events in FSCommit(group: group, rev: events[0].rev, events: events) }) }
-      }
+      guard trace.path.hasPrefix("/machine/v2/machines/"), !trace.path.contains("?"), !trace.path.contains("#"),
+            trace.path.utf8.count <= 4096, trace.correlation.utf8.count <= 256,
+            trace.elapsed >= .zero, trace.elapsed.components.seconds < Int64(Int.max / 1000)
+      else { throw OperationError(.traceUnavailable) }
+      buffer.append(trace, group: group, problemsGroup: problemsGroup)
     }
   }
 
   public func pinMachineV2Trace(group: GroupID, correlation: String, problem: Int64?) async throws {
+    let problemsGroup = machineTraces?.problemsGroup(for: group) ?? group
     try await writer.write { db in
       let rows = try MachineV2TraceRow.where { $0.grp.eq(group.rawValue) && $0.correlationID.eq(correlation) }.fetchAll(db)
       for var row in rows { row.problemID = problem; try MachineV2TraceRow.upsert { row }.execute(db) }
       let incidents = try MachineV2IncidentRow.where { $0.traceGroup.eq(group.rawValue) && $0.correlationID.eq(correlation) }.fetchAll(db)
       for var row in incidents { row.problemID = problem; try MachineV2IncidentRow.upsert { row }.execute(db) }
+      if incidents.isEmpty {
+        let marker = MachineV2IncidentRow(id: "pin/" + group.rawValue + "/" + correlation, grp: problemsGroup.rawValue, traceGroup: group.rawValue, fingerprint: "explicitPin", correlationID: correlation, problemID: problem)
+        try MachineV2IncidentRow.upsert { marker }.execute(db)
+      }
     }
   }
 
@@ -141,9 +129,11 @@ enum V2Problems {
         let retention = MachineV2RetentionRow(id: incident.id, grp: group.rawValue, kind: "incident", expiredAt: stamp)
         try MachineV2RetentionRow.upsert { retention }.execute(db)
       }
-      let traceGroups = Set(pinned.filter { $0.problemID == id }.map(\.traceGroup))
-      let traces = try MachineV2TraceRow.where { $0.problemID.eq(id) }.fetchAll(db).filter { traceGroups.contains($0.grp) }
-      for var trace in traces { trace.problemID = nil; try MachineV2TraceRow.upsert { trace }.execute(db) }
+      for incident in pinned where incident.problemID == id {
+        guard let correlation = incident.correlationID else { continue }
+        try MachineV2TraceRow.where { $0.grp.eq(incident.traceGroup) && $0.correlationID.eq(correlation) && $0.problemID.eq(id) }
+          .update { $0.problemID = #bind(nil as Int64?) }.execute(db)
+      }
     }
     let expired = try MachineV2RetentionRow.where { $0.grp.eq(group.rawValue) && $0.kind.eq("incident") && $0.expiredAt.lt(cutoff) }.fetchAll(db)
     for entry in expired {

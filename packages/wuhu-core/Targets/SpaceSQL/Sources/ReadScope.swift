@@ -116,15 +116,16 @@ public struct ViewCatalog: Sendable {
             select: """
             SELECT * FROM (SELECT CASE su.owner_kind WHEN 'group' THEN su.owner ELSE se.grp END AS grp,
               su.subscription_id AS id, su.name AS name, CASE su.owner_kind WHEN 'session' THEN su.owner END AS session_id,
-              CASE WHEN json_type(su.payload, '$.kind.observe') IS NOT NULL THEN 'observe' ELSE 'timer' END AS kind,
-              json_extract(su.payload, '$.kind.observe.sql') AS sql,
+              CASE WHEN json_type(su.payload, '$.kind.timer') IS NOT NULL THEN 'timer' ELSE 'observe' END AS kind,
+              json_extract(su.payload, '$.kind.observe.sql') AS sql, json_extract(su.payload, '$.kind.stream.url') AS url,
               COALESCE(json_extract(su.payload, '$.kind.timer._0.cron._0'),
                 strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(su.payload, '$.kind.timer._0.oneShot._0') + 978307200, 'unixepoch')) AS schedule,
               json_extract(su.payload, '$.handler') AS handler, su.status AS status, su.sessions_per_hour AS sessions_per_hour,
               su.armed_at AS armed_at, su.last_fired_at AS last_fired_at,
               json_extract(su.payload, '$.lastError') AS last_error
             FROM \(s)."subscription_slots" su LEFT JOIN \(s)."sessions" se ON su.owner_kind = 'session' AND se.id = su.owner
-            WHERE json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.timer') IS NOT NULL)
+            WHERE json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.stream') IS NOT NULL
+              OR json_type(su.payload, '$.kind.timer') IS NOT NULL)
             WHERE \(groupFilter)
             """,
             joins: ["sessions"],

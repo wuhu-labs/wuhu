@@ -1,0 +1,495 @@
+[
+  {
+    "_provenance": "All 123 cases: https://github.com/tats-u/markdown-cjk-friendly testcases/{strong,korean,pseudo-emoji,non-bmp,underscore-cjk-punct,gfm-strikethrough}.md and marked-17 HTML snapshots, retrieved 2026-10-28 (Unicode 18, MIT).",
+    "source": "これは**私のやりたかったこと。**だからするの。",
+    "html": "<p>これは<strong>私のやりたかったこと。</strong>だからするの。</p>"
+  },
+  {
+    "source": "**[製品ほげ](./product-foo)**と**[製品ふが](./product-bar)**をお試しください",
+    "html": "<p><strong><a href=\"./product-foo\">製品ほげ</a></strong>と<strong><a href=\"./product-bar\">製品ふが</a></strong>をお試しください</p>"
+  },
+  {
+    "source": "単語と**[単語と](word-and)**単語",
+    "html": "<p>単語と<strong><a href=\"word-and\">単語と</a></strong>単語</p>"
+  },
+  {
+    "source": "**これは太字になりません。**ご注意ください。",
+    "html": "<p><strong>これは太字になりません。</strong>ご注意ください。</p>"
+  },
+  {
+    "source": "カッコに注意**（太字にならない）**文が続く場合に要警戒。",
+    "html": "<p>カッコに注意<strong>（太字にならない）</strong>文が続く場合に要警戒。</p>"
+  },
+  {
+    "source": "**[リンク](https://example.com)**も注意。（画像も同様）",
+    "html": "<p><strong><a href=\"https://example.com\">リンク</a></strong>も注意。（画像も同様）</p>"
+  },
+  {
+    "source": "先頭の**\\`コード\\`も注意。**",
+    "html": "<p>先頭の<strong>`コード`も注意。</strong></p>"
+  },
+  {
+    "source": "**末尾の\\`コード\\`**も注意。",
+    "html": "<p><strong>末尾の`コード`</strong>も注意。</p>"
+  },
+  {
+    "source": "税込**¥10,000**で入手できます。",
+    "html": "<p>税込<strong>¥10,000</strong>で入手できます。</p>"
+  },
+  {
+    "source": "正解は**④**です。",
+    "html": "<p>正解は<strong>④</strong>です。</p>"
+  },
+  {
+    "source": "太郎は**「こんにちわ」**といった",
+    "html": "<p>太郎は<strong>「こんにちわ」</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**\"こんにちわ\"**といった",
+    "html": "<p>太郎は<strong>&quot;こんにちわ&quot;</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**こんにちわ**といった",
+    "html": "<p>太郎は<strong>こんにちわ</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**「Hello」**といった",
+    "html": "<p>太郎は<strong>「Hello」</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**\"Hello\"**といった",
+    "html": "<p>太郎は<strong>&quot;Hello&quot;</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**Hello**といった",
+    "html": "<p>太郎は<strong>Hello</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**「Oh my god」**といった",
+    "html": "<p>太郎は<strong>「Oh my god」</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**\"Oh my god\"**といった",
+    "html": "<p>太郎は<strong>&quot;Oh my god&quot;</strong>といった</p>"
+  },
+  {
+    "source": "太郎は**Oh my god**といった",
+    "html": "<p>太郎は<strong>Oh my god</strong>といった</p>"
+  },
+  {
+    "source": "**C#**や**F#**は**「.NET」**というプラットフォーム上で動作します。",
+    "html": "<p><strong>C#</strong>や<strong>F#</strong>は<strong>「.NET」</strong>というプラットフォーム上で動作します。</p>"
+  },
+  {
+    "source": "IDが**001号**になります。",
+    "html": "<p>IDが<strong>001号</strong>になります。</p>"
+  },
+  {
+    "source": "IDが**００１号**になります。",
+    "html": "<p>IDが<strong>００１号</strong>になります。</p>"
+  },
+  {
+    "source": "Go**「初心者」**を対象とした記事です。",
+    "html": "<p>Go<strong>「初心者」</strong>を対象とした記事です。</p>"
+  },
+  {
+    "source": "**[リンク](https://example.com)**も注意。",
+    "html": "<p><strong><a href=\"https://example.com\">リンク</a></strong>も注意。</p>"
+  },
+  {
+    "source": "**⻲田太郎**と申します",
+    "html": "<p><strong>⻲田太郎</strong>と申します</p>"
+  },
+  {
+    "source": "・**㋐**:選択肢１つ目",
+    "html": "<p>・<strong>㋐</strong>:選択肢１つ目</p>"
+  },
+  {
+    "source": "**真，**她",
+    "html": "<p><strong>真，</strong>她</p>"
+  },
+  {
+    "source": "**真。**她",
+    "html": "<p><strong>真。</strong>她</p>"
+  },
+  {
+    "source": "**真、**她",
+    "html": "<p><strong>真、</strong>她</p>"
+  },
+  {
+    "source": "**真；**她",
+    "html": "<p><strong>真；</strong>她</p>"
+  },
+  {
+    "source": "**真：**她",
+    "html": "<p><strong>真：</strong>她</p>"
+  },
+  {
+    "source": "**真？**她",
+    "html": "<p><strong>真？</strong>她</p>"
+  },
+  {
+    "source": "**真！**她",
+    "html": "<p><strong>真！</strong>她</p>"
+  },
+  {
+    "source": "**真“**她",
+    "html": "<p><strong>真“</strong>她</p>"
+  },
+  {
+    "source": "**真”**她",
+    "html": "<p><strong>真”</strong>她</p>"
+  },
+  {
+    "source": "**真‘**她",
+    "html": "<p><strong>真‘</strong>她</p>"
+  },
+  {
+    "source": "**真’**她",
+    "html": "<p><strong>真’</strong>她</p>"
+  },
+  {
+    "source": "**真（**她",
+    "html": "<p><strong>真（</strong>她</p>"
+  },
+  {
+    "source": "真**（她**",
+    "html": "<p>真<strong>（她</strong></p>"
+  },
+  {
+    "source": "**真）**她",
+    "html": "<p><strong>真）</strong>她</p>"
+  },
+  {
+    "source": "**真【**她",
+    "html": "<p><strong>真【</strong>她</p>"
+  },
+  {
+    "source": "真**【她**",
+    "html": "<p>真<strong>【她</strong></p>"
+  },
+  {
+    "source": "**真】**她",
+    "html": "<p><strong>真】</strong>她</p>"
+  },
+  {
+    "source": "**真《**她",
+    "html": "<p><strong>真《</strong>她</p>"
+  },
+  {
+    "source": "真**《她**",
+    "html": "<p>真<strong>《她</strong></p>"
+  },
+  {
+    "source": "**真》**她",
+    "html": "<p><strong>真》</strong>她</p>"
+  },
+  {
+    "source": "**真—**她",
+    "html": "<p><strong>真—</strong>她</p>"
+  },
+  {
+    "source": "**真～**她",
+    "html": "<p><strong>真～</strong>她</p>"
+  },
+  {
+    "source": "**真…**她",
+    "html": "<p><strong>真…</strong>她</p>"
+  },
+  {
+    "source": "**真·**她",
+    "html": "<p><strong>真·</strong>她</p>"
+  },
+  {
+    "source": "**真〃**她",
+    "html": "<p><strong>真〃</strong>她</p>"
+  },
+  {
+    "source": "**真-**她",
+    "html": "<p><strong>真-</strong>她</p>"
+  },
+  {
+    "source": "**真々**她",
+    "html": "<p><strong>真々</strong>她</p>"
+  },
+  {
+    "source": "**真**她",
+    "html": "<p><strong>真</strong>她</p>"
+  },
+  {
+    "source": "**真，** 她",
+    "html": "<p><strong>真，</strong> 她</p>"
+  },
+  {
+    "source": "**真**，她",
+    "html": "<p><strong>真</strong>，她</p>"
+  },
+  {
+    "source": "**真，**&ZeroWidthSpace;她",
+    "html": "<p><strong>真，</strong>&ZeroWidthSpace;她</p>"
+  },
+  {
+    "source": "私は**⻲田太郎**と申します",
+    "html": "<p>私は<strong>⻲田太郎</strong>と申します</p>"
+  },
+  {
+    "source": "選択肢**㋐**: 1つ目の選択肢",
+    "html": "<p>選択肢<strong>㋐</strong>: 1つ目の選択肢</p>"
+  },
+  {
+    "source": "**さようなら︙**と太郎はいった。",
+    "html": "<p><strong>さようなら︙</strong>と太郎はいった。</p>"
+  },
+  {
+    "source": ".NET**（.NET Frameworkは不可）**では、",
+    "html": "<p>.NET<strong>（.NET Frameworkは不可）</strong>では、</p>"
+  },
+  {
+    "source": "「禰󠄀」の偏は示ではなく**礻**です。",
+    "html": "<p>「禰󠄀」の偏は示ではなく<strong>礻</strong>です。</p>"
+  },
+  {
+    "source": "Git**（注：不是GitHub）**",
+    "html": "<p>Git<strong>（注：不是GitHub）</strong></p>"
+  },
+  {
+    "source": "太郎は**「こんにちわ」**といった。",
+    "html": "<p>太郎は<strong>「こんにちわ」</strong>といった。</p>"
+  },
+  {
+    "source": "𰻞𰻞**（ビャンビャン）**麺",
+    "html": "<p>𰻞𰻞<strong>（ビャンビャン）</strong>麺</p>"
+  },
+  {
+    "source": "𰻞𰻞**(ビャンビャン)**麺",
+    "html": "<p>𰻞𰻞<strong>(ビャンビャン)</strong>麺</p>"
+  },
+  {
+    "source": "ハイパーテキストコーヒーポット制御プロトコル**(HTCPCP)**",
+    "html": "<p>ハイパーテキストコーヒーポット制御プロトコル<strong>(HTCPCP)</strong></p>"
+  },
+  {
+    "source": "﨑**(崎)**",
+    "html": "<p>﨑<strong>(崎)</strong></p>"
+  },
+  {
+    "source": "国際規格**[ECMA-262](https://tc39.es/ecma262/)**",
+    "html": "<p>国際規格<strong><a href=\"https://tc39.es/ecma262/\">ECMA-262</a></strong></p>"
+  },
+  {
+    "source": "㐧**(第の俗字)**",
+    "html": "<p>㐧<strong>(第の俗字)</strong></p>"
+  },
+  {
+    "source": "𠮟**(こちらが正式表記)**",
+    "html": "<p>𠮟<strong>(こちらが正式表記)</strong></p>"
+  },
+  {
+    "source": "𪜈**(トモの合略仮名)**",
+    "html": "<p>𪜈<strong>(トモの合略仮名)</strong></p>"
+  },
+  {
+    "source": "𫠉**(馬の俗字)**",
+    "html": "<p>𫠉<strong>(馬の俗字)</strong></p>"
+  },
+  {
+    "source": "谺𬤲**(こだま)**石神社",
+    "html": "<p>谺𬤲<strong>(こだま)</strong>石神社</p>"
+  },
+  {
+    "source": "石𮧟**(いしただら)**",
+    "html": "<p>石𮧟<strong>(いしただら)</strong></p>"
+  },
+  {
+    "source": "**推荐几个框架：**React、Vue等前端框架。",
+    "html": "<p><strong>推荐几个框架：</strong>React、Vue等前端框架。</p>"
+  },
+  {
+    "source": "葛󠄀**(こちらが正式表記)**城市",
+    "html": "<p>葛󠄀<strong>(こちらが正式表記)</strong>城市</p>"
+  },
+  {
+    "source": "禰󠄀**(こちらが正式表記)**豆子",
+    "html": "<p>禰󠄀<strong>(こちらが正式表記)</strong>豆子</p>"
+  },
+  {
+    "source": "𱟛**(U+317DB)**",
+    "html": "<p>𱟛<strong>(U+317DB)</strong></p>"
+  },
+  {
+    "source": "阿寒湖アイヌシアターイコㇿ**(Akanko Ainu Theater Ikor)**",
+    "html": "<p>阿寒湖アイヌシアターイコㇿ<strong>(Akanko Ainu Theater Ikor)</strong></p>"
+  },
+  {
+    "source": "あ𛀙**(か)**よろし",
+    "html": "<p>あ𛀙<strong>(か)</strong>よろし</p>"
+  },
+  {
+    "source": "𮹝**(simplified form of 龘 in China)**",
+    "html": "<p>𮹝<strong>(simplified form of 龘 in China)</strong></p>"
+  },
+  {
+    "source": "大塚︀**(U+585A U+FE00)** 大塚**(U+FA10)**",
+    "html": "<p>大塚︀<strong>(U+585A U+FE00)</strong> 大塚<strong>(U+FA10)</strong></p>"
+  },
+  {
+    "source": "〽︎**(庵点)**は、",
+    "html": "<p>〽︎<strong>(庵点)</strong>は、</p>"
+  },
+  {
+    "source": "**“︁Git”︁**Hub",
+    "html": "<p><strong>“︁Git”︁</strong>Hub</p>"
+  },
+  {
+    "source": "**이 [링크](https://example.kr/)**만을 강조하고 싶다.",
+    "html": "<p><strong>이 <a href=\"https://example.kr/\">링크</a></strong>만을 강조하고 싶다.</p>"
+  },
+  {
+    "source": "**스크립트(script)**라고",
+    "html": "<p><strong>스크립트(script)</strong>라고</p>"
+  },
+  {
+    "source": "패키지를 발행하려면 **`npm publish`**를 실행하십시오.",
+    "html": "<p>패키지를 발행하려면 <strong><code>npm publish</code></strong>를 실행하십시오.</p>"
+  },
+  {
+    "source": "**안녕(hello)**하세요.",
+    "html": "<p><strong>안녕(hello)</strong>하세요.</p>"
+  },
+  {
+    "source": "ᅡ**(a)**",
+    "html": "<p>ᅡ<strong>(a)</strong></p>"
+  },
+  {
+    "source": "**(k)**ᄏ",
+    "html": "<p><strong>(k)</strong>ᄏ</p>"
+  },
+  {
+    "source": "a**〰**a",
+    "html": "<p>a<strong>〰</strong>a</p>"
+  },
+  {
+    "source": "a**〽**a",
+    "html": "<p>a<strong>〽</strong>a</p>"
+  },
+  {
+    "source": "a**🈂**a",
+    "html": "<p>a<strong>🈂</strong>a</p>"
+  },
+  {
+    "source": "a**🈷**a",
+    "html": "<p>a<strong>🈷</strong>a</p>"
+  },
+  {
+    "source": "a**㊗**a",
+    "html": "<p>a<strong>㊗</strong>a</p>"
+  },
+  {
+    "source": "a**㊙**a",
+    "html": "<p>a<strong>㊙</strong>a</p>"
+  },
+  {
+    "source": "a**a«**a",
+    "html": "<p>a**a«**a</p>"
+  },
+  {
+    "source": "a**»a**a",
+    "html": "<p>a**»a**a</p>"
+  },
+  {
+    "source": "a**a∇**a",
+    "html": "<p>a**a∇**a</p>"
+  },
+  {
+    "source": "a**∇a**a",
+    "html": "<p>a**∇a**a</p>"
+  },
+  {
+    "source": "a**a𝜵**a",
+    "html": "<p>a**a𝜵**a</p>"
+  },
+  {
+    "source": "a**𝜵a**a",
+    "html": "<p>a**𝜵a**a</p>"
+  },
+  {
+    "source": "a**𐬻a**a",
+    "html": "<p>a**𐬻a**a</p>"
+  },
+  {
+    "source": "a**a𐬻**a",
+    "html": "<p>a**a𐬻**a</p>"
+  },
+  {
+    "source": "__注意__：注意事項",
+    "html": "<p><strong>注意</strong>：注意事項</p>"
+  },
+  {
+    "source": "注意：__注意事項__",
+    "html": "<p>注意：<strong>注意事項</strong></p>"
+  },
+  {
+    "source": "正體字。︁_Traditional._",
+    "html": "<p>正體字。︁<em>Traditional.</em></p>"
+  },
+  {
+    "source": "正體字。︁__Hong Kong and Taiwan.__",
+    "html": "<p>正體字。︁<strong>Hong Kong and Taiwan.</strong></p>"
+  },
+  {
+    "source": "简体字 / 新字体。︀_Simplified._",
+    "html": "<p>简体字 / 新字体。︀<em>Simplified.</em></p>"
+  },
+  {
+    "source": "简体字 / 新字体。︀__Mainland China or Japan.__",
+    "html": "<p>简体字 / 新字体。︀<strong>Mainland China or Japan.</strong></p>"
+  },
+  {
+    "source": "“︁Git”︁__Hub__",
+    "html": "<p>“︁Git”︁<strong>Hub</strong></p>"
+  },
+  {
+    "source": "a~~a()~~あ",
+    "html": "<p>a<del>a()</del>あ</p>"
+  },
+  {
+    "source": "あ~~()a~~a",
+    "html": "<p>あ<del>()a</del>a</p>"
+  },
+  {
+    "source": "𩸽~~()a~~a",
+    "html": "<p>𩸽<del>()a</del>a</p>"
+  },
+  {
+    "source": "a~~a()~~𩸽",
+    "html": "<p>a<del>a()</del>𩸽</p>"
+  },
+  {
+    "source": "葛󠄀~~()a~~a",
+    "html": "<p>葛󠄀<del>()a</del>a</p>"
+  },
+  {
+    "source": "羽︀~~()a~~a",
+    "html": "<p>羽︀<del>()a</del>a</p>"
+  },
+  {
+    "source": "a~~「a~~」",
+    "html": "<p>a<del>「a</del>」</p>"
+  },
+  {
+    "source": "「~~a」~~a",
+    "html": "<p>「<del>a」</del>a</p>"
+  },
+  {
+    "source": "~~a~~：~~a~~",
+    "html": "<p><del>a</del>：<del>a</del></p>"
+  },
+  {
+    "source": "~~日本語。︀~~English.",
+    "html": "<p><del>日本語。︀</del>English.</p>"
+  },
+  {
+    "source": "~~“︁a”︁~~a",
+    "html": "<p><del>“︁a”︁</del>a</p>"
+  }
+]

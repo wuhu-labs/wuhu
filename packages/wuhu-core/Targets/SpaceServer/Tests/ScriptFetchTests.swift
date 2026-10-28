@@ -7,6 +7,7 @@ import FetchAsyncHTTPClient
 import Foundation
 import HTTPTypes
 import JSONValue
+import func MainHub.fetchOrigin
 import class MainHub.Hub
 import OrderedCollections
 import ServeNIO
@@ -295,7 +296,7 @@ func withIdentityScript(
   }
 }
 
-private func verify(_ jwt: String, jwks: JSONValue, audience: String) throws {
+func verify(_ jwt: String, jwks: JSONValue, audience: String) throws {
   let parts = jwt.split(separator: ".").map(String.init)
   #expect(parts.count == 3)
   let header = try #require(JSONValue.parse(String(decoding: jwtDecode(parts[0]), as: UTF8.self))?.object)
@@ -310,7 +311,7 @@ private func verify(_ jwt: String, jwks: JSONValue, audience: String) throws {
   #expect(claims["exp"] == .integer(1_700_000_060))
 }
 
-private func tokenClaims(_ jwt: String) throws -> OrderedDictionary<String, JSONValue> {
+func tokenClaims(_ jwt: String) throws -> OrderedDictionary<String, JSONValue> {
   try #require(JSONValue.parse(String(decoding: jwtDecode(String(jwt.split(separator: ".")[1])), as: UTF8.self))?.object)
 }
 

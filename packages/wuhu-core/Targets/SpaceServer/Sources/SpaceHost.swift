@@ -118,6 +118,7 @@ public actor SpaceHost {
           let record = try await space.sessions.record(session)
           return try await serverIdentity.inferenceReplayIdentity(audience: audience, space: space.identity().rawValue, group: record.group.rawValue)
         },
+        eventSources: .signed(by: serverIdentity, in: space),
         outOfProcess: placement.outOfProcess,
         takingOver: handover != nil,
       )

@@ -725,7 +725,7 @@ private func groupShellInjection(_ group: GroupID) -> Data {
 
 /// `wuhu:space` resolves through an import map, which must precede every
 /// module a page authors, so it opens `<head>`; shell.js closes `<body>`.
-private let importMapInjection = Data(#"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#.utf8)
+private let importMapInjection = Data(#"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js","wuhu:device":"/_/device.js"}}</script>"#.utf8)
 
 private func injected(_ data: Data, contentType: String, shell: [String: Data]?, group: GroupID) -> Data {
   guard shell != nil, contentType.hasPrefix("text/html") else { return data }

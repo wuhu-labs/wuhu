@@ -29,24 +29,38 @@ extension Hub {
     _ callID: ToolCallID,
     _ arguments: ObserveArguments,
   ) async throws -> ToolResultPayload {
+    let source: ObservedSource
     let throttle: Double
     do {
+      source = try SubscriptionArming.observedSource(sql: arguments.sql, url: arguments.url)
       throttle = try SubscriptionArming.observationThrottle(arguments.throttleSeconds)
     } catch {
       throw ToolProblem(error.message)
     }
-    // Running the query now both validates it through the sandbox and pins
-    // the baseline: arming never fires on rows that already existed.
-    let baseline = try await space.query(arguments.sql, as: try await space.principal(of: session))
+    let (kind, marker) = try await observation(source, throttle: throttle, as: try await space.principal(of: session))
     let subscriptionID = SubscriptionID.observation(callID)
-    let payload = ToolResultPayload.observe(.init(subscriptionID: subscriptionID, sql: arguments.sql))
+    let payload = ToolResultPayload.observe(.init(subscriptionID: subscriptionID, source: source))
     return try await store.armSubscription(
       session,
-      slot: .init(id: subscriptionID, kind: .observe(sql: arguments.sql, throttleSeconds: throttle), handler: try handlerPath(arguments.handler)),
+      slot: .init(id: subscriptionID, kind: kind, handler: try handlerPath(arguments.handler)),
       name: try subscriptionName(arguments.name),
-      marker: rowsMarker(baseline),
+      marker: marker,
       answering: ToolReceipt(session: session, callID: callID, payload: payload),
     )
+  }
+
+  // A query runs now as the subscriber, both to refuse what it may not read
+  // and to pin the baseline: arming never fires on rows that already
+  // existed. A stream starts at its next event.
+  nonisolated func observation(
+    _ source: ObservedSource,
+    throttle: Double,
+    as principal: Principal,
+  ) async throws -> (kind: SubscriptionSlot.Kind, marker: String?) {
+    switch source {
+    case let .query(sql): (.observe(sql: sql, throttleSeconds: throttle), rowsMarker(try await space.query(sql, as: principal)))
+    case let .stream(url): (.stream(url: url, throttleSeconds: throttle), nil)
+    }
   }
 
   nonisolated public func timer(
@@ -86,7 +100,7 @@ extension Hub {
     }
     return try await store.cancelSubscription(session, subscriptionID: subscriptionID, answering: callID) { armed in
       switch armed?.kind {
-      case .observe?:
+      case .observe?, .stream?:
         return .cancelObservation(.init(subscriptionID: subscriptionID))
       case .timer?:
         return .cancelTimer(.init(subscriptionID: subscriptionID))

@@ -16,7 +16,7 @@ import SessionDomain
 import SpaceFS
 import Testing
 
-private func handlerNotifications(_ space: Space, _ session: SessionID) async throws -> [SystemNotification] {
+func handlerNotifications(_ space: Space, _ session: SessionID) async throws -> [SystemNotification] {
   try await space.sessions.hydrate(session).undrained.compactMap {
     guard case let .notification(notification) = $0.input else { return nil }
     return notification
@@ -280,7 +280,7 @@ func withHandlerFiring(
       }
       """)
       let rows = try await rig.space.query("SELECT 'release?' AS text", as: try await rig.space.principal(of: rig.session))
-      let result = try await rig.scripts.runHandler(path: "/handler.js", actor: .session(rig.session), rows: rows, stateJSON: "{\"cursor\":10}", tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
+      let result = try await rig.scripts.runHandler(path: "/handler.js", actor: .session(rig.session), input: .rows(rows), stateJSON: "{\"cursor\":10}", tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
       #expect(JSONValue.parse(result.stateJSON) == .object(["cursor": 11]))
       #expect(result.wakes == ["release digest"])
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
@@ -359,26 +359,28 @@ func withHandlerFiring(
       try await withHandlerFiring(space) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/missing.js"]))
-        await time.advance(by: 61)
-        try await untilAdvancing("missing handler error", time) { try await handlerNotifications(space, session).count == 1 }
+        try await time.wake("first cron firing", after: 60)
+        try await until("missing handler error") { try await handlerNotifications(space, session).count == 1 }
         let missingError = try #require(await space.sessions.armedSubscriptions(session).first?.slot.lastError)
         #expect(missingError.contains("notFound:"), "\(missingError)")
         let fs = await space.fs(.shared)
         _ = try await fs.write("/missing.js", Data("export default () => { throw Error('again'); };".utf8), ifMatch: nil)
-        await time.advance(by: 61)
-        try await untilAdvancing("same streak second error", time) {
+        try await time.wake("first retry", after: 1)
+        try await until("same streak second error") {
           try await space.sessions.armedSubscriptions(session).first?.slot.lastError?.contains("again") == true
         }
         #expect(try await handlerNotifications(space, session).count == 1)
         let (entry, _) = try await fs.read("/missing.js")
         _ = try await fs.write("/missing.js", Data("export default ({state}) => ({n:(state?.n ?? 0)+1});".utf8), ifMatch: entry)
-        await time.advance(by: 61)
-        try await untilAdvancing("success ends failure streak", time) { try await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON != nil }
+        try await time.wake("second retry", after: 2)
+        try await until("success ends failure streak") { try await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON != nil }
         #expect(try await space.sessions.armedSubscriptions(session).first?.slot.lastError == nil)
         let (next, _) = try await fs.read("/missing.js")
         _ = try await fs.write("/missing.js", Data("export default () => { throw Error('new streak'); };".utf8), ifMatch: next)
-        await time.advance(by: 61)
-        try await untilAdvancing("new streak wakes again", time) { try await handlerNotifications(space, session).count == 2 }
+        @Dependency(\.date) var date
+        let nextFire = try #require(await space.sessions.armedSubscriptions(session).first?.nextFireAt)
+        try await time.wake("next cron firing", after: nextFire.timeIntervalSince(date.now))
+        try await until("new streak wakes again") { try await handlerNotifications(space, session).count == 2 }
         #expect(JSONValue.parse(try #require(await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON)) == .object(["n": 1]))
       }
     }

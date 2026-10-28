@@ -317,7 +317,7 @@ export async function resume(id) {
 
 export async function createObserver(group, options) {
   if (options === null || typeof options !== "object") {
-    throw new TypeError("createObserver(group, { name, handler, observe: { sql, throttleSeconds } | timer: { inSeconds | cron }, sessionsPerHour })")
+    throw new TypeError("createObserver(group, { name, handler, observe: { sql | url, throttleSeconds } | timer: { inSeconds | cron }, sessionsPerHour })")
   }
   return answered(await observer("createObserver", String(group), options))
 }

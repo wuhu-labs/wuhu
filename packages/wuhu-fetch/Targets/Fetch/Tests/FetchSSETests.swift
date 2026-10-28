@@ -11,6 +11,7 @@
 import Fetch
 import FetchSSE
 import FetchTesting
+import Synchronization
 import Testing
 
 @Suite struct FetchSSETests {
@@ -154,6 +155,29 @@ import Testing
     )
   }
 
+  @Test func eventsResumeFromTheSentIDAndAnEmptyIDResetsIt() async throws {
+    let response = Response(status: Status(code: 200), body: .chunk(Data("data: a\n\nid: 8\ndata: b\n\nid\ndata: c\n\n".utf8)))
+
+    var events: [SSEEvent] = []
+    for try await event in response.sseEvents(after: "7") {
+      events.append(event)
+    }
+
+    #expect(events.map(\.id) == ["7", "8", nil])
+  }
+
+  @Test func eventsReadTheBodyNoFasterThanTheyAreTaken() async throws {
+    let pulls = Pulls()
+    let chunks = (1 ... 3).map { Data("id: \($0)\ndata: x\n\n".utf8) }
+    let response = Response(status: Status(code: 200), body: .stream(Counted(chunks: chunks, pulls: pulls)))
+
+    var events = response.sseEvents().makeAsyncIterator()
+    #expect(try await events.next()?.id == "1")
+    #expect(pulls.count == 1)
+    #expect(try await events.next()?.id == "2")
+    #expect(pulls.count == 2)
+  }
+
   private func collect(_ events: AsyncThrowingStream<SSEEvent, Error>) async throws -> [SSEEvent] {
     var collected: [SSEEvent] = []
 
@@ -163,4 +187,28 @@ import Testing
 
     return collected
   }
+}
+
+/// Chunks that count how many were pulled.
+private struct Counted: AsyncSequence, Sendable {
+  let chunks: [Data]
+  let pulls: Pulls
+
+  func makeAsyncIterator() -> AsyncIterator { AsyncIterator(chunks: chunks[...], pulls: pulls) }
+
+  struct AsyncIterator: AsyncIteratorProtocol {
+    var chunks: ArraySlice<Data>
+    let pulls: Pulls
+
+    mutating func next() async -> Data? {
+      pulls.add()
+      return chunks.popFirst()
+    }
+  }
+}
+
+private final class Pulls: Sendable {
+  private let pulled = Mutex(0)
+  var count: Int { pulled.withLock { $0 } }
+  func add() { pulled.withLock { $0 += 1 } }
 }

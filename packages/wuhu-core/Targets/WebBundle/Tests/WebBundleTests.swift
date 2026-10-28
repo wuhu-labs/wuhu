@@ -41,6 +41,15 @@ import WebBundle
     #expect(try await head.text() == "")
   }
 
+  @Test func pageDeviceModuleIsServedNoCache() async throws {
+    let web = try client()
+    let response = try await web(Request(url: URL(string: "https://shared.localhost/_/device.js")!))
+    #expect(response.status == .ok)
+    #expect(response.headers[.contentType] == "text/javascript; charset=utf-8")
+    #expect(response.headers[.cacheControl] == "no-cache")
+    #expect(try await response.text().contains("export function haptic"))
+  }
+
   @Test func thePageWorkerAndItsModulesAreServedNoCacheWithRootScope() async throws {
     let web = try client()
     let worker = try await web(Request(url: URL(string: "https://shared.localhost/_/worker.js")!))

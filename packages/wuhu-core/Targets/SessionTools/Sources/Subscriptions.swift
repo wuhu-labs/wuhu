@@ -5,6 +5,7 @@
 #endif
 import JSONValue
 import struct MainHub.ObserveArguments
+import enum MainHub.SubscriptionArming
 import struct MainHub.TimerArguments
 import struct MainHub.ToolProblem
 import OrderedCollections
@@ -16,13 +17,21 @@ import SpaceCore
 // so a retried arm lands on the same slot.
 extension ToolExecutor {
   func observe(_ session: SessionID, _ call: String, _ arguments: ObserveArguments) async throws -> ToolResultPayload {
-    var observe: OrderedDictionary<String, JSONValue> = ["sql": .string(arguments.sql)]
+    let source: ObservedSource
+    do {
+      source = try SubscriptionArming.observedSource(sql: arguments.sql, url: arguments.url)
+    } catch {
+      throw ToolProblem(error.message)
+    }
+    var observe: OrderedDictionary<String, JSONValue> = [:]
+    observe["sql"] = arguments.sql.map(JSONValue.string)
+    observe["url"] = arguments.url.map(JSONValue.string)
     observe["throttleSeconds"] = arguments.throttleSeconds.map(JSONValue.number)
     var body: OrderedDictionary<String, JSONValue> = ["observe": .object(observe)]
     body["handler"] = arguments.handler.map(JSONValue.string)
     body["name"] = arguments.name.map(JSONValue.string)
     let armed: SubscriptionOutput = try await verb(.session(session), call, .post, "/v1/subscription", body: .object(body))
-    return .observe(.init(subscriptionID: SubscriptionID(armed.id), sql: arguments.sql))
+    return .observe(.init(subscriptionID: SubscriptionID(armed.id), source: source))
   }
 
   func timer(_ session: SessionID, _ call: String, _ arguments: TimerArguments) async throws -> ToolResultPayload {

@@ -5,9 +5,9 @@
 #endif
 import Dependencies
 import Fetch
+import func MainHub.fetchOrigin
 import Serve
 import ServeRouting
-import func SessionTools.fetchOrigin
 import SpaceCore
 
 private struct IdentitySetInput: Decodable {

@@ -47,3 +47,7 @@ The shown-node projection still composes asynchronous stat/read dependencies for
 GlassMenu delegates keyboard navigation, focus return, dismissal, radio semantics and collision-aware positioning to Base UI Menu rather than maintaining a second menu state machine. Catalog cards enforce the shared WidgetScriptSource per-size allowance before rendering; small Figure notes are omitted, and retained text ellipsizes at the catalog line limits.
 
 The sidebar catalog waits for the initial preference outcome before exposing entries; missing persona/file and failed reads release the hold with empty hidden addresses, while later malformed reads retain last-good preferences. Metadata displays Loading… until the first outcome and Unknown after failure. Hidden script rows use file titles even after a prior runtime result. Settings uses the shared UI Switch component without a visible subtitle.
+
+# Page device feedback
+
+The page module and per-platform feedback contract live in [Page device feedback](../../../products/wuhu/public/docs/http-api.md#page-device-feedback).

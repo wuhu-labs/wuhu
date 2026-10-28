@@ -5,12 +5,19 @@ import ReactMarkdown, {
   defaultUrlTransform,
 } from 'react-markdown'
 import { Link, useOutletContext } from 'react-router'
+import remarkCjkFriendly from 'remark-cjk-friendly'
+import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough'
 import remarkGfm from 'remark-gfm'
 import { spaceLink } from '~/lib/links'
 import { remarkBlocks } from '~/lib/markdown-blocks'
 import type { SpaceContext } from '~/routes/space'
 
-const remarkPlugins = [remarkGfm, remarkBlocks]
+const remarkPlugins = [
+  remarkGfm,
+  remarkCjkFriendly,
+  remarkCjkFriendlyGfmStrikethrough,
+  remarkBlocks,
+]
 
 function textOf(node: ElementContent): string {
   if (node.type === 'text') return node.value

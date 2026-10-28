@@ -52,6 +52,9 @@ tests:
     - SpaceServer
     - SpaceClient
     - Serve
+    - ServeNIO
+    - AsyncHTTPClient
+    - FetchAsyncHTTPClient
     - InferenceKit
     - Credentials
     - ExecutionOwner

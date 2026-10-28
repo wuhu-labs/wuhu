@@ -42,9 +42,13 @@ Values: BOOLEAN columns are `true`/`false`, JSON columns the parsed value, BLOB 
 
 Prefer `observe` over query-then-poll: its first snapshot replaces the initial query. A stream opens when the loop starts and closes when it leaves; a dropped connection reopens on its own. A refusal rejects with a `SpaceError` carrying `code`, `message` and sometimes `hint`; with the space unreachable, a one-shot call or write rejects with fetch's own `TypeError`.
 
-A page acts as an ordinary member of the group it lives in, as the person viewing it. A hostless path means that group; `wuhu://<group>.localspace/<path>` reaches another group it can read or write. A page writes its own group's `/AGENTS.md` and skills like any member, but no other group's, and never the settings group: only a space admin writes that. Writes are online only and never queued.
+A page writes with its group's authority minus admin, recorded as the viewer, and never into any session home (`/_/sessions/<id>/…`). Keep app data in group folders such as `/<app>/data/`. A hostless path means that group; `wuhu://<group>.localspace/<path>` reaches another group it can read or write. A page writes its own group's `/AGENTS.md` and skills like any member, but no other group's, and never the settings group: only a space admin writes that. Writes are online only and never queued.
 
 `/_/query` and `/_/observe` are deprecated: they still serve existing pages their old untyped `{columns, rows}` shape, but new pages use `wuhu:space`.
+
+## Device feedback: `wuhu:device`
+
+`import { haptic } from "wuhu:device"` gives a page best-effort feedback: call `haptic("success")` inside a button's click handler. Kinds are `selection`, `light`, `medium`, `heavy`, `success`, `warning`, and `error`. It returns nothing and never throws. Unknown kinds log an error listing valid kinds and play nothing. iOS plays native feedback; Mac uses trackpad feedback for selection and impact kinds where available (notification kinds play nothing); visionOS does nothing. Browser pages (raw or embedded) use `navigator.vibrate` where supported, otherwise nothing. No permission or device detection is needed.
 
 ## Agents: `createSession` and `sendMessage`
 

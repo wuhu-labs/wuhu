@@ -86,13 +86,14 @@ extension ToolExecutor {
     ),
     Tool(
       name: "observe",
-      description: "Subscribe to a read-only SQL query over the space database; you receive a message whenever its results change, or a handler runs silently and can wake you. Cancel it with cancel and the subscription id it reports (obs.…).",
+      description: "Subscribe to a read-only SQL query over the space database, or to a server-sent event stream; you receive a message whenever its results change or events arrive, or a handler runs silently and can wake you. Cancel it with cancel and the subscription id it reports (obs.…).",
       parameters: schema([
         ("sql", string("Read-only SQL over space tables and induced tables (docs, links, sessions, ...).")),
-        ("throttle_seconds", number("Minimum seconds between firings (default 30).")),
-        ("handler", string("Optional space script module path; default export receives {rows, state, wake} and returns next JSON state. Runs as you, 60 s budget.")),
+        ("url", string("Instead of sql: an http(s) SSE stream the server dials with an OIDC token naming you (audience: its origin), resuming after the last event taken.")),
+        ("throttle_seconds", number("Minimum seconds between firings (default 30); a stream's handler fires on every event.")),
+        ("handler", string("Optional space script module path; default export receives {rows | event: {id, type, data}, state, wake} and returns next JSON state. Runs as you, 60 s budget.")),
         ("name", string("Optional readable name, shown in subscriptions; defaults to the handler's file name.")),
-      ], required: ["sql"]),
+      ], required: []),
     ),
     Tool(
       name: "timer",

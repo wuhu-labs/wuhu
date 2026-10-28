@@ -17,6 +17,7 @@ struct ObservationProgress: Hashable, Sendable, Codable {
 public struct SubscriptionSlot: Hashable, Sendable, Codable {
   public enum Kind: Hashable, Sendable, Codable {
     case observe(sql: String, throttleSeconds: Double)
+    case stream(url: URL, throttleSeconds: Double)
     case timer(TimerSchedule, message: String)
     case requestDeadline(request: RequestID, task: SessionID)
     case requestStall(RequestStall)
@@ -234,7 +235,7 @@ extension SessionStore {
   private func prepared(_ slot: SubscriptionSlot) -> SubscriptionSlot {
     @Dependency(\.uuid) var uuid
     var inserted = slot
-    if case .observe = inserted.kind, inserted.observationProgress == nil {
+    if inserted.kind.observes, inserted.observationProgress == nil {
       inserted.observationProgress = ObservationProgress(incarnation: uuid(), deliverySequence: 0)
     }
     if inserted.handler != nil {
@@ -346,7 +347,7 @@ extension SessionStore {
       .order { ($0.ownerKind, $0.owner, $0.subscriptionID) }.fetchAll(db).map { row in
         let subscription = try armedSubscription(row)
         let orphaned = try Self.actingGroup(of: subscription.owner, in: db) == nil
-        guard case .observe = subscription.slot.kind else { return (subscription, nil, orphaned) }
+        guard subscription.slot.kind.observes else { return (subscription, nil, orphaned) }
         return (subscription, observationToken(subscription), orphaned)
       }
   }
@@ -376,6 +377,9 @@ extension SessionStore {
     case retire
     case reschedule(Date)
     case observed(marker: String)
+    /// A stream's events were taken: a reconnect resumes after the last
+    /// one's id, empty when the stream had none or reset it.
+    case streamed(lastEventID: String)
   }
 
   @discardableResult
@@ -400,11 +404,11 @@ extension SessionStore {
       if notification.kind == .spaceObservation {
         guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
         let current = try armedSubscription(row)
-        guard case .observe = current.slot.kind, notification.id == observationToken(current)
+        guard current.slot.kind.observes, notification.id == observationToken(current)
         else { throw StaleSubscriptionCallback() }
 
-        if case let .observed(marker) = advance {
-          guard marker != current.marker else { throw StaleSubscriptionCallback() }
+        if advance != .retire {
+          if case let .observed(marker) = advance, marker == current.marker { throw StaleSubscriptionCallback() }
           var progress = observationProgress(current)
           progress.deliverySequence += 1
           var slot = current.slot
@@ -443,11 +447,12 @@ extension SessionStore {
           $0.nextFireAt = #bind(SQLiteDateFormat.string(from: next))
           $0.lastFiredAt = #bind(now)
         }.execute(db)
-      case let .observed(marker):
+      case .observed, .streamed:
         let payload = try advancedObservation.map { try Sessions.encode($0) }
+        let marker = advance.marker
         try slot.update {
           if let payload { $0.payload = #bind(payload) }
-          $0.marker = #bind(marker)
+          if let marker { $0.marker = #bind(marker) }
           $0.lastFiredAt = #bind(now)
         }.execute(db)
       }
@@ -455,6 +460,27 @@ extension SessionStore {
     }
     signals.post(id)
     return row
+  }
+}
+
+extension SubscriptionSlot.Kind {
+  /// Whether it watches a source (a query, a stream) rather than a clock.
+  var observes: Bool {
+    switch self {
+    case .observe, .stream: true
+    case .timer, .requestDeadline, .requestStall: false
+    }
+  }
+}
+
+extension SessionStore.SubscriptionAdvance {
+  /// What the slot's marker becomes; nil leaves it.
+  var marker: String? {
+    switch self {
+    case let .observed(marker): marker
+    case let .streamed(lastEventID): lastEventID
+    case .retire, .reschedule: nil
+    }
   }
 }
 

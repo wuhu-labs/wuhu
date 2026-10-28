@@ -1,12 +1,18 @@
+import ControlledTime
 import Crypto
+import Dependencies
 import DeterministicDependencies
+import Dispatch
 import Fetch
 import Foundation
+import enum JSONValue.JSONValue
 import MachineContract
+import OperationClient
 import OperationProtocol
+import OperationRuntime
 import Serve
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
@@ -302,5 +308,106 @@ extension MachineV2TunnelTests {
     guard case let .response(stale) = try await inFlight.value else { Issue.record("revoke should be HTTP"); return }
     #expect(stale.status == .unauthorized)
     #expect(try await space.machine(pubkey: replacement.pubkeyLabel) == machine.id)
+  }
+}
+
+extension MachineV2TunnelTests {
+  @Test func localPreparationIncludesBlockedIdentityReadAndCancelledPreparationNeverDispatches() async throws {
+    let f = try await Fixture()
+    let dispatched = Mutex(0)
+    let preparation = Mutex(0)
+    _ = try await f.hub.attach(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue]), client: FetchClient { _ in
+      dispatched.withLock { $0 += 1 }; return Response(status: .ok)
+    }, abort: {})
+    let entered = AsyncStream<Void>.makeStream()
+    let gate = DispatchSemaphore(value: 0)
+    let writer = await f.space.writer
+    let blocker = Task { try await writer.write { _ in entered.continuation.yield(()); gate.wait() } }
+    for await _ in entered.stream { break }
+    defer { gate.signal() }
+    let request = Request(url: URL(string: "https://operation.test/machine/v2/machines/" + f.machine.id.rawValue)!)
+    let began = AsyncStream<Void>.makeStream()
+    let exchange = Task {
+      try await OperationPreparation.$observer.withValue({ active in
+        preparation.withLock { $0 += active ? 1 : -1 }
+        if active { began.continuation.yield(()) }
+      }) { try await f.hub.fetch(request, usableFrom: .shared) }
+    }
+    for await _ in began.stream { break }
+    #expect(preparation.withLock { $0 } == 1)
+    exchange.cancel()
+    gate.signal(); try await blocker.value
+    do { _ = try await exchange.value; Issue.record("cancelled preparation dispatched") } catch {}
+    #expect(preparation.withLock { $0 } == 0)
+    #expect(dispatched.withLock { $0 } == 0)
+    try await f.space.close()
+  }
+}
+
+private struct PreparedHold: OperationKind {
+  let gate: AsyncStream<Void>
+  let descriptor = KindDescriptor("prepared-hold.v1", inputSchema: ["type": "object"], resultSchema: ["type": "object"])
+  func run(_ input: [String: String], channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+    for await _ in gate {}
+    return [:]
+  }
+}
+
+extension MachineV2TunnelTests {
+  @Test(.timeLimit(.minutes(1))) func routingDatabaseWaitBeyondClientLeaseDoesNotBecomeMachineSilence() async throws {
+    try await withDependencies {
+      $0.installTimeControl()
+    } operation: {
+      @Dependency(\.continuousClock) var clock
+      @Dependency(\.timeControl) var time
+      @Dependency(\.date) var date
+      let origin = date.now
+      let operationClock = OperationClock(now: { .seconds(date.now.timeIntervalSince(origin)) }, sleep: { try await clock.sleep(for: $0) })
+      let f = try await Fixture()
+      let finish = AsyncStream<Void>.makeStream()
+      let started = AsyncStream<Void>.makeStream()
+      let entered = AsyncStream<Void>.makeStream()
+      let preparing = AsyncStream<Void>.makeStream()
+      let gate = DispatchSemaphore(value: 0)
+      let writer = await f.space.writer
+      let blocker = Task {
+        for await _ in started.stream { break }
+        try await writer.write { _ in entered.continuation.yield(()); gate.wait() }
+      }
+      defer { gate.signal() }
+      let agent = try OperationAgent(machine: f.machine.id.rawValue, kinds: [.init(PreparedHold(gate: finish.stream))], clock: operationClock, authorize: { _, _ in })
+      let run = Task { await agent.run() }
+      _ = try await f.hub.attach(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue]), client: FetchClient { request in
+        let response = try await agent.handler(request)
+        if request.method == .post {
+          started.continuation.yield(())
+          for await _ in entered.stream { break }
+        }
+        guard request.url.lastPathComponent == f.machine.id.rawValue else { return response }
+        let description = try await response.body.json(MachineDescription.self)
+        var limits = description.limits
+        limits.leaseMs = 900; limits.pollHoldMs = 200
+        var headers = response.headers
+        headers[.contentLength] = nil
+        return try .json(MachineDescription(instance: description.instance, acceptingStarts: true, limits: limits, kinds: description.kinds), headers: headers)
+      }, abort: {})
+      let operations = try MachineOperations(origin: URL(string: "https://operation.test")!, fetch: FetchClient { request in
+        let observer = OperationPreparation.observer
+        return try await OperationPreparation.$observer.withValue({ active in
+          observer?(active)
+          if active, request.method == .get, request.url.path.contains("/operations/") { preparing.continuation.yield(()) }
+        }) { try await f.hub.fetch(request, usableFrom: .shared) }
+      }, store: MemoryOperationStore(), clock: operationClock)
+      let operation = try await operations.open(.init(scope: "test", key: "routing-stall"), machine: f.machine.id.rawValue, start: .init(kind: "prepared-hold.v1", input: [:]))
+      for await _ in preparing.stream { break }
+      try await time.wake("blocked routing exchange deadline", after: 0.9)
+      try await time.asleep("routing exchange retry", dueIn: 0.1)
+      gate.signal(); try await blocker.value
+      finish.continuation.finish()
+      try await time.wake("routing exchange retry", after: 0.1)
+      #expect(try await operation.verdict().tag == .completed)
+      await operations.shutdown(); await agent.shutdown(); await run.value
+      try await f.space.close()
+    }
   }
 }

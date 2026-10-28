@@ -35,6 +35,7 @@ public struct ObserverOutput: Codable, Equatable, Sendable {
   public let kind: SubscriptionKindPayload
   public let handler: String
   public let sql: String?
+  public let url: String?
   public let cron: String?
   public let fireAt: Double?
   public let status: ObserverStatusPayload

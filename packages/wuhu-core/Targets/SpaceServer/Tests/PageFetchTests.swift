@@ -7,13 +7,13 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import func MainHub.fetchOrigin
 import NIOCore
 import NIOPosix
 import OrderedCollections
 import Serve
 import ServeNIO
 import struct SessionDomain.SessionID
-import func SessionTools.fetchOrigin
 import SpaceContract
 import SpaceCore
 @testable import SpaceServer

@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import struct FetchSSE.SSEEvent
 import enum InferenceKit.AttemptEvent
 import protocol MachineChannel.FrameTransport
 import SessionDomain
@@ -129,6 +130,7 @@ struct WireInvocation: Codable, Sendable {
   enum Input: Codable, Sendable {
     case rows(columns: [String], decltypes: [String?], rows: [[WireCell]])
     case timer(Double)
+    case event(id: String?, type: String, data: String)
   }
 
   enum Runner: Codable, Sendable {
@@ -155,6 +157,7 @@ struct WireInvocation: Codable, Sendable {
     input = switch invocation.input {
     case let .rows(rows): .rows(columns: rows.columns, decltypes: rows.decltypes, rows: rows.rows.map { $0.map(WireCell.init) })
     case let .timer(date): .timer(date.timeIntervalSince1970)
+    case let .event(event): .event(id: event.id, type: event.event, data: event.data)
     }
   }
 
@@ -162,6 +165,7 @@ struct WireInvocation: Codable, Sendable {
     let input: ScriptHandlerInvocation.Input = switch self.input {
     case let .rows(columns, decltypes, rows): .rows(Rows(columns: columns, decltypes: decltypes, rows: rows.map { $0.map(\.cell) }))
     case let .timer(seconds): .timer(Date(timeIntervalSince1970: seconds))
+    case let .event(id, type, data): .event(SSEEvent(event: type, data: data, id: id))
     }
     let runner: ScriptHandlerInvocation.Runner
     let token: String?

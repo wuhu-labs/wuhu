@@ -398,7 +398,7 @@ import Testing
     try await put(r, r.aliceGroup, "/page.html", "<body>hi</body>")
     let script = #"<script type="module" src="/_/shell.js"></script>"#
     let bare = try await get(r, Self.sharedHost, "/page.html")
-    let importMap = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#
+    let importMap = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js","wuhu:device":"/_/device.js"}}</script>"#
     #expect(try await bare.text() == "\(importMap)<body>hi\(script)</body>")
     let grouped = try await get(r, r.aliceHost, "/page.html", cookie: try await cookie(r, r.alice, r.aliceGroup))
     #expect(try await grouped.text() == importMap + #"<body>hi<meta name="wuhu-group" content="\#(r.aliceGroup.rawValue)">\#(script)</body>"#)

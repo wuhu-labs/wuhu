@@ -1,4 +1,6 @@
 import Dependencies
+import struct FetchSSE.SSEEvent
+import struct FetchSSE.SSEEvents
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,6 +12,7 @@ import Logging
 import ServerTelemetry
 import SessionDomain
 @_spi(SessionObservation) import SpaceCore
+import Synchronization
 
 public struct SubscriptionFiring: Sendable {
   let space: Space
@@ -17,6 +20,8 @@ public struct SubscriptionFiring: Sendable {
   var observationStream: @Sendable (Space, Principal, String) async throws -> AsyncThrowingStream<Rows, any Error> = { space, principal, sql in
     await space.observeQuery(sql, throttle: .zero, as: principal)
   }
+
+  public var sources: EventSources = .unavailable
 
   var nextCronFire: @Sendable (String, Date) -> Date? = { expression, after in
     try? CronSchedule.parse(expression).next(after: after)
@@ -157,10 +162,15 @@ public struct SubscriptionFiring: Sendable {
   }
 
   private func run(_ subscription: ArmedSubscription, callbackID: UUID?) async throws {
-    if case let .observe(sql, throttleSeconds) = subscription.slot.kind {
+    switch subscription.slot.kind {
+    case let .observe(sql, throttleSeconds):
       guard let callbackID else { throw FiringFailure.missingObservationCallback }
-      try await runObservation(subscription, callbackID: callbackID, sql: sql, throttleSeconds: throttleSeconds)
-      return
+      return try await runObservation(subscription, callbackID: callbackID, sql: sql, throttleSeconds: throttleSeconds)
+    case let .stream(url, throttleSeconds):
+      guard let callbackID else { throw FiringFailure.missingObservationCallback }
+      return try await runStream(subscription, callbackID: callbackID, url: url, throttleSeconds: throttleSeconds)
+    case .timer, .requestDeadline, .requestStall:
+      break
     }
     try await sleep(until: subscription.nextFireAt)
     @Dependency(\.date) var date
@@ -168,7 +178,7 @@ public struct SubscriptionFiring: Sendable {
     let now = date.now
     let due = subscription.nextFireAt ?? now
     switch subscription.slot.kind {
-    case .observe:
+    case .observe, .stream:
       break
     case let .timer(schedule, message):
       try await fireTimer(subscription, schedule: schedule, message: message, due: due, now: now)
@@ -216,7 +226,7 @@ public struct SubscriptionFiring: Sendable {
       guard marker != delivered else { continue }
       guard try await retireIfOrphaned(subscription) == false else { return }
       if subscription.slot.handler != nil {
-        try await fireHandler(subscription, rows: rows, fireTime: nil, advance: .observed(marker: marker), marker: marker)
+        try await fireHandler(subscription, input: .rows(rows), advance: .observed(marker: marker), marker: marker)
         delivered = marker
         try await clock.sleep(for: .seconds(throttleSeconds))
         continue
@@ -233,6 +243,115 @@ public struct SubscriptionFiring: Sendable {
       try await clock.sleep(for: .seconds(throttleSeconds))
     }
     throw CancellationError()
+  }
+
+  // Each connection resumes after the last event taken, so an event whose
+  // firing failed comes again. A stream that ends or fails is dialled again,
+  // backing off from 1 s to 5 min, or longer when its server says so. Events
+  // are read no faster than they are fired or woken, so a slow handler holds
+  // the source back rather than piling events up.
+  private func runStream(
+    _ subscription: ArmedSubscription,
+    callbackID: UUID,
+    url: URL,
+    throttleSeconds: Double,
+  ) async throws {
+    @Dependency(\.continuousClock) var clock
+    var lastEventID = subscription.marker ?? ""
+    var backoff = 0
+    while true {
+      var retryAfter = Duration.zero
+      do {
+        let events = try await sources.open(url, as: subscription.owner, after: lastEventID)
+        if subscription.slot.handler != nil {
+          for try await event in events {
+            guard try await retireIfOrphaned(subscription) == false else { return }
+            let id = event.id ?? ""
+            guard try await fireHandlerOnce(subscription, input: .event(event), advance: .streamed(lastEventID: id), marker: nil)
+            else { break }
+            lastEventID = id
+            backoff = 0
+          }
+        } else {
+          guard let session = try await wakes(subscription, orPause: "a group observer runs a handler") else { return }
+          let retired = try await wake(session, with: events, of: subscription, callbackID: callbackID, url: url, throttleSeconds: throttleSeconds) {
+            lastEventID = $0
+            backoff = 0
+          }
+          if retired { return }
+        }
+      } catch let StreamFailure.refused(reason) {
+        guard let session = try await wakes(subscription, orPause: reason) else { return }
+        try await notifyObservation(
+          subscription,
+          to: session,
+          callbackID: callbackID,
+          text: "observation \(subscription.slot.id.rawValue) of \(url) failed and was cancelled: \(reason)",
+          advance: .retire,
+        )
+        return
+      } catch let StreamFailure.unavailable(after) {
+        retryAfter = after ?? .zero
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        log.info("stream \(subscription.slot.id.rawValue) dropped: \(error)")
+      }
+      backoff = min(max(1, backoff * 2), 300)
+      try await clock.sleep(for: max(.seconds(backoff), retryAfter))
+    }
+  }
+
+  /// Wakes `session` with what `events` sends, at most once a throttle: what
+  /// arrives in between goes in one wake of up to 64 KiB, and reading waits
+  /// while that is full. `delivered` gets each wake's last event id. True
+  /// when the slot retired because its owner was archived.
+  private func wake(
+    _ session: SessionID,
+    with events: SSEEvents,
+    of subscription: ArmedSubscription,
+    callbackID: UUID,
+    url: URL,
+    throttleSeconds: Double,
+    delivered: (String) -> Void,
+  ) async throws -> Bool {
+    @Dependency(\.continuousClock) var clock
+    let pending = PendingEvents()
+    let (arrivals, arrived) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    let (takes, took) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    defer { took.finish() }
+    return try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask {
+        defer { arrived.finish() }
+        var taken = takes.makeAsyncIterator()
+        for try await event in events {
+          while !pending.add(event) {
+            guard await taken.next() != nil else { return }
+          }
+          arrived.yield()
+        }
+      }
+      for await _ in arrivals {
+        let batch = pending.take()
+        took.yield()
+        guard let lastEventID = batch.lastEventID else { continue }
+        guard try await retireIfOrphaned(subscription) == false else {
+          group.cancelAll()
+          return true
+        }
+        try await notifyObservation(
+          subscription,
+          to: session,
+          callbackID: callbackID,
+          text: "observed \(batch.count) event\(batch.count == 1 ? "" : "s") from \(url):\n" + batch.rendered,
+          advance: .streamed(lastEventID: lastEventID),
+        )
+        delivered(lastEventID)
+        try await clock.sleep(for: .seconds(throttleSeconds))
+      }
+      try await group.waitForAll()
+      return false
+    }
   }
 
   private func notifyObservation(
@@ -298,7 +417,7 @@ public struct SubscriptionFiring: Sendable {
       endsSubscription = false
     }
     if subscription.slot.handler != nil {
-      try await fireHandler(subscription, rows: nil, fireTime: due, advance: advance)
+      try await fireHandler(subscription, input: .timer(due), advance: advance)
       return
     }
     guard let session = try await wakes(subscription, orPause: "a group timer runs a handler") else { return }
@@ -322,14 +441,13 @@ public struct SubscriptionFiring: Sendable {
   // backing off, until the handler takes them or the slot goes.
   private func fireHandler(
     _ subscription: ArmedSubscription,
-    rows: Rows?,
-    fireTime: Date?,
+    input: ScriptHandlerInvocation.Input,
     advance: SessionStore.SubscriptionAdvance,
     marker: String? = nil,
   ) async throws {
     @Dependency(\.continuousClock) var clock
     var backoff = 0
-    while try await !fireHandlerOnce(subscription, rows: rows, fireTime: fireTime, advance: advance, marker: marker) {
+    while try await !fireHandlerOnce(subscription, input: input, advance: advance, marker: marker) {
       backoff = min(max(1, backoff * 2), 300)
       try await clock.sleep(for: .seconds(backoff))
     }
@@ -337,8 +455,7 @@ public struct SubscriptionFiring: Sendable {
 
   private func fireHandlerOnce(
     _ subscription: ArmedSubscription,
-    rows: Rows?,
-    fireTime: Date?,
+    input: ScriptHandlerInvocation.Input,
     advance: SessionStore.SubscriptionAdvance,
     marker: String?,
   ) async throws -> Bool {
@@ -351,9 +468,14 @@ public struct SubscriptionFiring: Sendable {
     else { throw CancellationError() }
     @Dependency(\.date) var date
     @Dependency(\.uuid) var uuid
+    let kind = switch input {
+    case .rows: "observe"
+    case .timer: "timer"
+    case .event: "stream"
+    }
     func notification(_ text: String) -> SystemNotification {
       SystemNotification(
-        id: uuid(), timestamp: date.now, kind: rows == nil ? .timer : .spaceObservation,
+        id: uuid(), timestamp: date.now, kind: kind == "timer" ? .timer : .spaceObservation,
         subscriptionID: subscription.slot.id, content: .init(text: text),
       )
     }
@@ -362,13 +484,13 @@ public struct SubscriptionFiring: Sendable {
     case let .group(group): .observer(Observer(group: group, name: attempt.name!, firing: attempt.firing))
     }
     let span = ServerSpan(.firing, session: attempt.owner.session?.rawValue, group: attempt.owner.group?.rawValue)
-    var traced: [SpanAttribute: String] = [.subscription: subscription.slot.id.rawValue, .firing: attempt.firing, .kind: rows == nil ? "timer" : "observe"]
+    var traced: [SpanAttribute: String] = [.subscription: subscription.slot.id.rawValue, .firing: attempt.firing, .kind: kind]
     traced[.observer] = attempt.owner.group == nil ? nil : attempt.name
     let result: ScriptHandlerResult
     do {
       result = try await ServerTracing.$context.withValue(span.context) {
         try await worker.fire(.init(
-          id: attempt.attemptID, path: path, runner: runner, input: rows.map(ScriptHandlerInvocation.Input.rows) ?? .timer(fireTime!),
+          id: attempt.attemptID, path: path, runner: runner, input: input,
           stateJSON: attempt.stateJSON,
         ))
       }
@@ -474,6 +596,42 @@ private func invalidObservationQuery(_ error: any Error) -> Bool {
     return true
   default:
     return false
+  }
+}
+
+private final class PendingEvents: Sendable {
+  private let batch = Mutex(EventBatch())
+
+  func add(_ event: SSEEvent) -> Bool { batch.withLock { $0.add(event) } }
+
+  func take() -> EventBatch {
+    batch.withLock { batch in
+      defer { batch = EventBatch() }
+      return batch
+    }
+  }
+}
+
+/// Events waiting for a wake, rendered as they came over the wire. It takes
+/// events while they fit in 64 KiB, and always its first, cut to fit.
+private struct EventBatch {
+  static let limit = 64 << 10
+  private(set) var count = 0
+  /// The last event's id, empty when it had none; nil while the batch is empty.
+  private(set) var lastEventID: String?
+  private(set) var rendered = ""
+
+  mutating func add(_ event: SSEEvent) -> Bool {
+    var lines = event.id.map { ["id: " + $0] } ?? []
+    if event.event != "message" { lines.append("event: " + event.event) }
+    lines += event.data.split(separator: "\n", omittingEmptySubsequences: false).map { "data: " + $0 }
+    let wire = lines.joined(separator: "\n") + "\n\n"
+    let size = wire.utf8.count
+    if count > 0, rendered.utf8.count + size > Self.limit { return false }
+    count += 1
+    lastEventID = event.id ?? ""
+    rendered += size <= Self.limit ? wire : String(decoding: wire.utf8.prefix(Self.limit), as: UTF8.self) + "\n(cut at 64 KiB of \(size) bytes)\n\n"
+    return true
   }
 }
 

@@ -418,3 +418,14 @@ public struct OperationTrace: Sendable {
     self.elapsed = elapsed; self.status = status; self.error = error
   }
 }
+
+/// In-process routers bracket local preparation so it cannot be mistaken for silence from the machine.
+public enum OperationPreparation {
+  @TaskLocal public static var observer: (@Sendable (Bool) -> Void)?
+
+  public static func run<T: Sendable>(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
+    observer?(true)
+    defer { observer?(false) }
+    return try await body()
+  }
+}

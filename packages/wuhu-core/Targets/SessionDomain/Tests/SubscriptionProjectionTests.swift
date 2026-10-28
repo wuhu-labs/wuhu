@@ -9,7 +9,7 @@ import Testing
     let deadline = SubscriptionID.deadline(.init("r"))
     var transcript = Transcript(items: [
       Fix.result(.timer(.init(subscriptionID: timer, schedule: .oneShot(Fix.instant), message: "tick"))),
-      Fix.result(.observe(.init(subscriptionID: observer, sql: "SELECT 1"))),
+      Fix.result(.observe(.init(subscriptionID: observer, source: .query("SELECT 1")))),
       Fix.result(.read(.init(path: "/file.md", revision: .journal(7), content: "body"))),
     ])
     let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "snapshot", snapshot: .init(subscriptions: [deadline: .requestDeadline(Fix.instant)]), runningWork: [])

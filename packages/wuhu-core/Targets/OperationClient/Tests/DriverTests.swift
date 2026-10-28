@@ -172,6 +172,8 @@ private struct SlowClaims: OperationStore {
 private final class FlakySaves: OperationStore, Sendable {
   let base = MemoryOperationStore()
   let failing = Mutex(0)
+  let onFailure: @Sendable () -> Void
+  init(onFailure: @escaping @Sendable () -> Void = {}) { self.onFailure = onFailure }
   func lookup(_ owner: OperationOwner) async throws -> ClientRecord? { try await base.lookup(owner) }
   func claim(_ owner: OperationOwner, record: ClientRecord) async throws -> OperationClaim { try await base.claim(owner, record: record) }
   func read(_ id: UUID) async throws -> ClientRecord { try await base.read(id) }
@@ -182,7 +184,7 @@ private final class FlakySaves: OperationStore, Sendable {
       guard count > 0 else { return false }
       count -= 1; return true
     }
-    if fail { throw OperationError(.storeUnavailable, message: "database is locked") }
+    if fail { onFailure(); throw OperationError(.storeUnavailable, message: "database is locked") }
     try await base.save(record, appending: chunk)
   }
 
@@ -812,5 +814,47 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
     #expect(wire.posts.withLock { $0 } == 2)
     for operations in groups { await operations.shutdown() }
     await wire.close()
+  }
+}
+
+extension DriverTests {
+  @Test func databaseWaitLongerThanLeaseDoesNotExpireTheNextExchange() async throws {
+    let wire = try Wire()
+    let now = Mutex(Duration.zero)
+    let zeroDeadlines = Mutex(0)
+    let store = FlakySaves { now.withLock { $0 += .seconds(120) } }
+    store.failing.withLock { $0 = 1 }
+    let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { duration in
+      if duration <= .zero { zeroDeadlines.withLock { $0 += 1 } }
+      try await ContinuousClock().sleep(for: duration)
+    })
+    let operations = try MachineOperations(origin: URL(string: "https://memory.invalid")!, fetch: wire.fetch, store: store, clock: clock)
+    let operation = try await operations.open(.init(scope: "test", key: "delayed-save"), machine: "disk", start: emit(chunks: 2, size: 10))
+    #expect(try await drain(operation) == expected(chunks: 2, size: 10))
+    #expect(try await operation.verdict().tag == .completed)
+    #expect(zeroDeadlines.withLock { $0 } == 0)
+    await operations.shutdown(); await wire.close()
+  }
+}
+
+extension DriverTests {
+  @Test func suspendedOutputSaveDoesNotConcludeLeaseSilenceOnAnotherLane() async throws {
+    let wire = try Wire()
+    let store = ParkedSaves()
+    let failing = Mutex(false)
+    let operations = try MachineOperations(origin: URL(string: "https://memory.invalid")!, fetch: FetchClient { request in
+      if failing.withLock({ $0 }) { throw OperationError(.transport) }
+      return try await wire.fetch(request)
+    }, store: store)
+    store.parking.withLock { $0 = true }
+    let operation = try await operations.open(.init(scope: "test", key: "suspended-save"), machine: "disk", start: emit(chunks: 3, size: 100))
+    #expect(try await eventually { store.parked.withLock { $0 } > 0 })
+    failing.withLock { $0 = true }
+    try await ContinuousClock().sleep(for: .milliseconds(1500))
+    failing.withLock { $0 = false }
+    store.parking.withLock { $0 = false }; store.release()
+    #expect(try await drain(operation) == expected(chunks: 3, size: 100))
+    #expect(try await operation.verdict().tag == .completed)
+    await operations.shutdown(); await wire.close()
   }
 }

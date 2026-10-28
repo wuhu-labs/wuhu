@@ -469,6 +469,7 @@ extension Command {
     case "create":
       let handler = try parser.option("--handler", verb: verb)
       let sql = try parser.option("--sql", verb: verb)
+      let url = try parser.option("--url", verb: verb)
       let throttle = try parser.doubleOption("--throttle", verb: verb)
       let inSeconds = try parser.doubleOption("--in", verb: verb)
       let cron = try parser.option("--cron", verb: verb)
@@ -476,10 +477,10 @@ extension Command {
       let name = try parser.required("name", verb: verb)
       try parser.finish(verb: verb)
       guard let handler else { throw UsageError(message: "\(verb): --handler <module> is required") }
-      let observe = sql.map { SubscriptionObserveInput(sql: $0, throttleSeconds: throttle) }
+      let observe = sql == nil && url == nil ? nil : SubscriptionObserveInput(sql: sql, url: url, throttleSeconds: throttle)
       let timer = inSeconds == nil && cron == nil ? nil : ObserverTimerInput(inSeconds: inSeconds, cron: cron)
       guard (observe == nil) != (timer == nil), throttle == nil || observe != nil else {
-        throw UsageError(message: "\(verb): pass exactly one of --sql [--throttle], --in and --cron")
+        throw UsageError(message: "\(verb): pass exactly one of --sql [--throttle], --url [--throttle], --in and --cron")
       }
       return .groupObserverCreate(group: group, ObserverInput(name: name, handler: handler, observe: observe, timer: timer, sessionsPerHour: cap))
     default:
@@ -1759,11 +1760,12 @@ extension Command {
     "group observer": """
     usage: wuhu group observer list <group>
            wuhu group observer create <group> <name> --handler <module>
-             (--sql <query> [--throttle <s>] | --in <s> | --cron <expr>) [--sessions-per-hour <n>]
+             ((--sql <query> | --url <sse-url>) [--throttle <s>] | --in <s> | --cron <expr>) [--sessions-per-hour <n>]
            wuhu group observer cancel <group> <name>
 
     a group observer runs its handler module as the group, on an observation
-    (each change of the query's rows) or a timer (once after --in seconds, or
+    (each change of the query's rows, or each event of the stream, which the
+    server dials with an OIDC token naming the group) or a timer (once after --in seconds, or
     on a five-field UTC cron). it needs write on the group to create or cancel,
     read to list. sessions it creates count against --sessions-per-hour
     (default 10); at the cap it pauses until created again under its name.

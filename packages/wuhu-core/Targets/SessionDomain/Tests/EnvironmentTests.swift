@@ -26,7 +26,7 @@ import Testing
       Self.post("b"),
       .report(.init(messageID: .init("f"), requestID: .init("r1"), conversationID: .init("dm"), kind: .final)),
       .timer(.init(subscriptionID: .init("timer.t"), schedule: .cron("0 * * * *"), message: "tick")),
-      .observe(.init(subscriptionID: .init("obs.o"), sql: "SELECT 1")),
+      .observe(.init(subscriptionID: .init("obs.o"), source: .query("SELECT 1"))),
       .mount(.init(mount: .init(location: "/notes"), contextVersion: 1, contextEmission: nil)),
       .read(.init(path: "/notes/a.md", revision: .journal(3), content: "x")),
       .exec(.init(output: "", exitCode: 0)),

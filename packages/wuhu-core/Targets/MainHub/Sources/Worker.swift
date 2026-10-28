@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import struct FetchSSE.SSEEvent
 import SessionDomain
 import enum SpaceContract.ScriptOutput
 import SpaceCore
@@ -70,6 +71,7 @@ public struct ScriptHandlerInvocation: Sendable {
   public enum Input: Sendable {
     case rows(Rows)
     case timer(Date)
+    case event(SSEEvent)
   }
 
   /// Whom the handler runs as: its session, or its group's observer in this

@@ -29,7 +29,7 @@ import WuhuAI
 
   @Test func `cancellation supersedes subscriptions`() {
     let folded = state([
-      Fix.result(.observe(.init(subscriptionID: .init("obs-1"), sql: "select 1"))),
+      Fix.result(.observe(.init(subscriptionID: .init("obs-1"), source: .query("select 1")))),
       Fix.result(.timer(.init(subscriptionID: .init("tim-1"), schedule: .oneShot(Fix.instant), message: "wake"))),
       Fix.result(.cancelObservation(.init(subscriptionID: .init("obs-1")))),
       Fix.result(.cancelTimer(.init(subscriptionID: .init("tim-1")))),

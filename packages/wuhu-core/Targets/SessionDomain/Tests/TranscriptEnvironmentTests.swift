@@ -69,7 +69,7 @@ import Testing
   }
 
   @Test func `an observation does not keep a task from being nagged`() {
-    let observing = Fix.result(.observe(.init(subscriptionID: .init("obs.o"), sql: "SELECT 1")))
+    let observing = Fix.result(.observe(.init(subscriptionID: .init("obs.o"), source: .query("SELECT 1"))))
     #expect(Self.environment([Self.request, observing]).nag(task: true, now: Fix.instant) == Self.park)
   }
 

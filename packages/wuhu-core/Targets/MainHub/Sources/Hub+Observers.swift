@@ -11,8 +11,6 @@ import SpaceCore
 
 extension Hub {
   /// Arms `input` as `group`'s observer; who may is the caller's to admit.
-  /// Its observation query runs now as the observer, both to refuse what the
-  /// group may not read and to pin the baseline.
   nonisolated public func armObserver(_ group: GroupID, _ input: ObserverInput) async throws -> ArmedSubscription {
     @Dependency(\.date) var date
     @Dependency(\.uuid) var uuid
@@ -21,12 +19,12 @@ extension Hub {
     let observer = Observer(group: group, name: terms.name, firing: nil)
     switch (input.observe, input.timer) {
     case let (observe?, nil):
-      let throttle = try SubscriptionArming.observationThrottle(observe.throttleSeconds)
-      let baseline = try await space.query(observe.sql, as: observer.principal)
+      let source = try SubscriptionArming.observedSource(sql: observe.sql, url: observe.url)
+      let (kind, marker) = try await observation(source, throttle: try SubscriptionArming.observationThrottle(observe.throttleSeconds), as: observer.principal)
       return try await store.armObserver(
         group, terms,
-        slot: .init(id: SubscriptionID("obs.\(uuid().uuidString.lowercased())"), kind: .observe(sql: observe.sql, throttleSeconds: throttle), handler: handler),
-        marker: rowsMarker(baseline),
+        slot: .init(id: SubscriptionID("obs.\(uuid().uuidString.lowercased())"), kind: kind, handler: handler),
+        marker: marker,
       )
     case let (nil, timer?):
       let (schedule, nextFireAt) = try SubscriptionArming.timerSchedule(inSeconds: timer.inSeconds, cron: timer.cron, now: date.now)

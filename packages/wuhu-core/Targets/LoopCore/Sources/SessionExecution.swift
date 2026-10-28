@@ -87,12 +87,6 @@ public struct SessionExecution: Worker {
   }
 
   public func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
-    let rows: Rows?
-    let fireTime: Date?
-    switch invocation.input {
-    case let .rows(value): rows = value; fireTime = nil
-    case let .timer(value): rows = nil; fireTime = value
-    }
     let actor: ScriptActor
     switch invocation.runner {
     case let .session(session): actor = .session(session)
@@ -102,7 +96,7 @@ public struct SessionExecution: Worker {
     }
     return try await scripts.runHandler(
       id: invocation.id, path: invocation.path, actor: actor,
-      rows: rows, fireTime: fireTime, stateJSON: invocation.stateJSON, tools: tools,
+      input: invocation.input, stateJSON: invocation.stateJSON, tools: tools,
     )
   }
 

@@ -11,8 +11,10 @@ dependencies:
   - Dependencies
   - ExecutionOwner
   - Fetch
+  - FetchSSE
   - FileSearch
   - GRDB
+  - HTTPTypes
   - InferenceKit
   - JSONValue
   - Logging

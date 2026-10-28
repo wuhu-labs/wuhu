@@ -37,6 +37,18 @@ public enum SubscriptionArming {
     }
   }
 
+  public static func observedSource(sql: String?, url: String?) throws(ArmingProblem) -> ObservedSource {
+    switch (sql, url) {
+    case let (sql?, nil):
+      return .query(sql)
+    case let (nil, url?):
+      guard let parsed = URL(string: url), fetchOrigin(parsed) != nil else { throw ArmingProblem("url must be an http(s) URL with a plain host") }
+      return .stream(parsed)
+    default:
+      throw ArmingProblem("observe wants exactly one of sql or url")
+    }
+  }
+
   public static func observationThrottle(_ throttleSeconds: Double?) throws(ArmingProblem) -> Double {
     let throttle = throttleSeconds ?? 30
     guard throttle >= 1 else { throw ArmingProblem("throttle_seconds must be at least 1") }

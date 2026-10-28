@@ -536,6 +536,30 @@
         "sessions": true
       },
       "judge": "PASS only if a group observer named bench-{tag}-review was armed with createObserver from wuhu:session (or wuhu group observer create): an observe whose SQL reads docs under {sb}/drafts/ with status review, and a handler module in the group's files (not the session home) whose default export calls createSession for each newly seen doc, keeping what it has seen in its returned state rather than relying on wake(). The reply says the observer's name and how to stop it (cancelObserver or wuhu group observer cancel). Fail a session-owned observe or timer, a polling loop, a handler that wakes the subject instead of creating the agent, or invented APIs."
+    },
+    {
+      "id": "stream-observe",
+      "issue": 443,
+      "title": "Observes a server-sent event stream with a durable handler",
+      "prompt": "Our deploy bot publishes server-sent events at https://deploys.bench.invalid/events. Each time it sends one, append the event's data as a line to {sb}/deploys.md. Keep it going after this chat ends.",
+      "required": [
+        "stream_observed",
+        "handler_reads_event"
+      ],
+      "judge": "PASS only if the session armed observe with url https://deploys.bench.invalid/events (not sql) and a handler module whose default export takes the event argument and appends event.data to {sb}/deploys.md, returning its state; the reply is short and says where the handler lives and how to stop it (cancel with the obs. id). The host does not resolve, so no line is expected. Fail a run_script loop holding a fetch open, a timer that polls, a plain observe relying on wakes, or invented APIs."
+    },
+    {
+      "id": "page-haptics",
+      "issue": 234,
+      "title": "Native page feedback through wuhu:device",
+      "prompt": "Write a small HTML page at {sb}/feedback.html with a button that gives success haptic feedback when tapped, usable in the Wuhu app and in a browser. Use the supported page API, not platform detection or a custom native bridge.",
+      "required": [
+        "skill_reads"
+      ],
+      "skills": {
+        "space-html-pages": true
+      },
+      "judge": "PASS only if the page imports haptic from \"wuhu:device\" and calls haptic(\"success\") in a click handler, follows --wuhu-inset-* with safe-area fallbacks, and does not invent another bridge, await a result or request permissions. The reply must not claim physical feedback was verified."
     }
   ]
 }

@@ -30,15 +30,17 @@ public struct ExecArguments: Decodable, Sendable {
 public struct ObserveArguments: Decodable, Sendable {
   public var handler: String?
   public var name: String?
-  public var sql: String
+  public var sql: String?
+  public var url: String?
   public var throttleSeconds: Double?
 
-  public init(sql: String, throttleSeconds: Double? = nil, handler: String? = nil, name: String? = nil) {
-    self.sql = sql; self.throttleSeconds = throttleSeconds; self.handler = handler; self.name = name
+  public init(sql: String? = nil, url: String? = nil, throttleSeconds: Double? = nil, handler: String? = nil, name: String? = nil) {
+    self.sql = sql; self.url = url; self.throttleSeconds = throttleSeconds; self.handler = handler; self.name = name
   }
 
   enum CodingKeys: String, CodingKey {
     case sql
+    case url
     case handler
     case name
     case throttleSeconds = "throttle_seconds"

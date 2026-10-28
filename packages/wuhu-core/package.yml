@@ -66,6 +66,10 @@ externalPackages:
     url: https://github.com/swiftlang/swift-syntax
     exact: "604.0.0"
     products: [SwiftSyntax, SwiftSyntaxMacros, SwiftSyntaxBuilder, SwiftCompilerPlugin, SwiftSyntaxMacrosTestSupport]
+  swift-cmark:
+    url: https://github.com/wuhu-labs/swift-cmark.git
+    revision: 2fb7249f65e2a2f205ab8d340accefadd155afa6
+    products: [cmark-gfm, cmark-gfm-extensions]
   swift-markdown:
     url: https://github.com/swiftlang/swift-markdown.git
     from: "0.7.3"

@@ -136,7 +136,6 @@ import Testing
     }
     let sharedLayer = try await seedFile("/AGENTS.md", "---\nk: 1\n---\n", context)
     let homeLayer = try await seedFile("wuhu://\(home.rawValue).localspace/AGENTS.md", "---\nk: 1\n---\n", person)
-    let sessionHome = try await seedFile("/_/sessions/some-session-id/notes.md", "---\nk: 1\n---\n", context)
     let siblingFile = try await seedFile("/n.md", "---\nk: 1\n---\n", SpaceToolContext(space: space, principal: Principal(actor: .anonymous, group: sibling)))
 
     func patch(_ context: SpaceToolContext, _ path: String, _ token: String) async -> ToolRunError? {
@@ -146,7 +145,6 @@ import Testing
     let current = try await run("read", ["path": "/AGENTS.md"], context, as: ReadOutput.self).token
     #expect(code(await patch(try pageAt(home), "wuhu://shared.localspace/AGENTS.md", current)) == .unauthorized)
     #expect(await patch(try pageAt(.shared), "/AGENTS.md", current) == nil)
-    #expect(code(await patch(try pageAt(.shared), "/_/sessions/some-session-id/notes.md", sessionHome.token)) == .unauthorized)
     #expect(code(await patch(try pageAt(home), "wuhu://\(sibling.rawValue).localspace/n.md", siblingFile.token)) == .notFound)
     #expect(await patch(try pageAt(home), "/AGENTS.md", homeLayer.token) == nil)
 

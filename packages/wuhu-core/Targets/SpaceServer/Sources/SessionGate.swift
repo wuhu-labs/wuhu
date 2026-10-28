@@ -13,6 +13,7 @@ import JSONValue
 import MachineContract
 import struct MainHub.CancelArguments
 import struct MainHub.CreateSessionArguments
+import func MainHub.fetchOrigin
 import class MainHub.Hub
 import struct MainHub.ManipulateUIArguments
 import struct MainHub.ObserveArguments
@@ -501,7 +502,7 @@ private func sessionRouter(
     switch (input.observe, input.timer) {
     case let (observe?, nil):
       payload = try await answered {
-        try await owner.observe(principal().session, callID(request), ObserveArguments(sql: observe.sql, throttleSeconds: observe.throttleSeconds, handler: input.handler, name: input.name))
+        try await owner.observe(principal().session, callID(request), ObserveArguments(sql: observe.sql, url: observe.url, throttleSeconds: observe.throttleSeconds, handler: input.handler, name: input.name))
       }
     case let (nil, timer?):
       payload = try await answered {

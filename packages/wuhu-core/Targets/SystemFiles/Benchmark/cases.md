@@ -218,3 +218,15 @@ _Afterwards:_ the reply names `createSession` (or `create_session`) with `expect
 _Prompt:_ "Whenever a doc under {sb}/drafts/ gets status: review, a new agent here should start reviewing that doc. This belongs to the group, not to you: it has to keep working after you and this chat are archived. Call it bench-{tag}-review."
 
 _Afterwards:_ `subscriptions` has a group observer (`session_id` null) named `bench-{tag}-review`, an `observe` over `docs` under `{sb}/drafts/` with status `review`, whose handler module lives in the group's files and calls `createSession` for each new doc, deduped by its returned state. The reply names it and says how to cancel it. A session-owned observe is a fail.
+
+## stream-observe
+
+_Prompt:_ "Our deploy bot publishes server-sent events at https://deploys.bench.invalid/events. Each time it sends one, append the event's data as a line to {sb}/deploys.md. Keep it going after this chat ends."
+
+_Afterwards:_ `subscriptions` has the session's `observe` with that `url` and a handler module that appends `event.data` to `{sb}/deploys.md`. The host never resolves, so the slot backs off quietly until the bench archives the session. A script holding the stream open or a polling timer is a fail.
+
+## page-haptics
+
+_Prompt:_ "Write a small HTML page at {sb}/feedback.html with a button that gives success haptic feedback when tapped, usable in the Wuhu app and in a browser. Use the supported page API, not platform detection or a custom native bridge."
+
+_Afterwards:_ `{sb}/feedback.html` imports `haptic` from `wuhu:device`, calls `haptic("success")` inside a click handler, and follows `--wuhu-inset-*` with safe-area fallbacks. It requests no permission, invents no native bridge and awaits no result. The reply does not claim physical feedback was verified.

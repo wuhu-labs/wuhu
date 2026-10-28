@@ -7,6 +7,7 @@ import Fetch
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
+import enum OperationProtocol.OperationPreparation
 import struct OperationProtocol.OperationTrace
 import Synchronization
 import TaskLifetime
@@ -46,18 +47,19 @@ struct MachineLink: Sendable {
     correlation: UUID?,
     deadline: Duration,
     limit: Int,
+    preparation: (@Sendable (Bool) -> Void)? = nil,
   ) async -> Exchanged<T> {
     let id = ids()
     var request = Request(url: url, method: method, body: body)
     request.headers["X-Wuhu-Request-ID"] = id.uuidString
     request.headers["X-Wuhu-Correlation-ID"] = (correlation ?? id).uuidString
     let began = clock.now()
-    record(request, id: id, began: began, .dispatch)
     let outcome: Exchanged<Data>
     do {
       outcome = try await withUnjoinedDeadline("machine-exchange", within: deadline, clock: ExchangeClock(clock), scope: taskScope) { [request] in
         do {
-          let response = try await fetch(request)
+          record(request, id: id, began: began, .dispatch)
+          let response = try await OperationPreparation.$observer.withValue(preparation) { try await fetch(request) }
           record(request, id: id, began: began, .head, status: response.status.code)
           let bytes = try await response.body.data(upTo: limit)
           guard response.headers[.init("X-Wuhu-Correlation-ID")!] == request.headers["X-Wuhu-Correlation-ID"],
@@ -99,5 +101,36 @@ struct MachineLink: Sendable {
       status: status,
       error: error,
     ))
+  }
+}
+
+final class LocalWorkClock: Sendable {
+  private struct State {
+    var active = 0
+    var began = Duration.zero
+    var excluded = Duration.zero
+  }
+
+  private let state = Mutex(State())
+  private let clock: OperationClock
+  init(_ clock: OperationClock) { self.clock = clock }
+  func work(_ active: Bool) {
+    state.withLock { state in
+      let now = clock.now()
+      if active {
+        if state.active == 0 { state.began = now }
+        state.active += 1
+      } else {
+        state.active -= 1
+        if state.active == 0 { state.excluded += now - state.began }
+      }
+    }
+  }
+
+  func now() -> Duration {
+    state.withLock { state in
+      let now = clock.now()
+      return now - state.excluded - (state.active > 0 ? now - state.began : .zero)
+    }
   }
 }

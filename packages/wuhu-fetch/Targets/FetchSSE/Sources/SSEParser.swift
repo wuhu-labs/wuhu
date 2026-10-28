@@ -13,6 +13,10 @@ struct _SSEParser {
   private var state = _SSEEventState()
   private var lastEventID: String?
 
+  init(lastEventID: String? = nil) {
+    self.lastEventID = lastEventID
+  }
+
   mutating func parse(_ bytes: Bytes) throws -> [SSEEvent] {
     var events: [SSEEvent] = []
     var index = bytes.startIndex
