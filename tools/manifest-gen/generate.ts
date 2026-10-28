@@ -285,9 +285,6 @@ export interface TargetManifest {
   // it references them, e.g. the superclass of an overlay's subclass.
   linkedFrameworks?: string[]
   stamp?: boolean
-  // A stamped executable also gets `<name>_unstamped`, for tests (see
-  // unstampedTwin); so it requires `stamp: true`.
-  unstamped?: boolean
   // An executable's embedded Info.plist (macOS only); the version keys are
   // stamped, so it requires `stamp: true`.
   info?: { [key: string]: PlistValue }
@@ -469,18 +466,6 @@ export function validateTargetLinkedFrameworks(target: TargetManifest): void {
 }
 
 const stampedInfoKeys = ['CFBundleShortVersionString', 'CFBundleVersion']
-
-export function validateTargetUnstamped(target: TargetManifest): void {
-  if (target.unstamped === undefined) return
-  if (typeof target.unstamped !== 'boolean') {
-    throw new Error(`${target.name}.unstamped must be true or false`)
-  }
-  if (target.unstamped && (target.kind !== 'executable' || !target.stamp)) {
-    throw new Error(
-      `${target.name} declares unstamped: but is not a stamped executable (kind: executable, stamp: true)`,
-    )
-  }
-}
 
 export function validateTargetInfo(target: TargetManifest): void {
   const info = target.info
@@ -1060,7 +1045,6 @@ async function discoverTargets(root: string): Promise<TargetManifest[]> {
     const resolved = { ...target, manifestDir: dirname(manifestPath) }
     validateTargetRelease(resolved)
     validateTargetInfo(resolved)
-    validateTargetUnstamped(resolved)
     validateTargetLinkedFrameworks(resolved)
     targets.push(resolved)
   }
@@ -1609,6 +1593,9 @@ export async function targetCheckPlatforms(
     result.set(target.name, platforms)
     if (target.kind === 'executable' && target.productName) {
       result.set(target.productName, platforms)
+    }
+    if (target.kind === 'executable' && target.stamp) {
+      result.set(`${target.name}_unstamped`, platforms)
     }
     if (
       target.kind === 'systemLibrary' || target.kind === 'objcLibrary' ||
@@ -2182,15 +2169,15 @@ enum BuildStamp {
 SWIFT
 """,
     stamp = 1,
+    tags = ["manual"],
 )\n`
 }
 
 // The stamp carries the commit, so a stamped binary re-links on every commit
 // and every test that takes it as data runs again, with no cache hit anywhere.
-// Tests take this twin instead (`unstamped: true` asks for it): the same
-// sources and deps with the checked-in fallback stamp and no Info.plist.
-// `manual`, so only a dependent builds it; releases and installs keep the
-// stamped target, and a test that checks the real version takes that too.
+// The stamped target is therefore `manual`: releases and installs name it.
+// Checks build this twin instead, and tests take it: the same sources and deps
+// with the checked-in fallback stamp and no Info.plist.
 function unstampedTwin(
   pkg: PackageManifest,
   target: TargetManifest,
@@ -2201,7 +2188,7 @@ function unstampedTwin(
     bazelSourceGlob(`Targets/${target.name}/${target.sources}`)
   },\n${swiftSettingsCoptsAttr(target.swiftSettings)}    deps = ${
     starlarkList(deps)
-  },\n${pluginsAttr}    tags = ["manual"],\n${
+  },\n${pluginsAttr}${
     platformsAttr(
       libraryPlatforms(pkg, target),
       `${target.manifestDir}/target.yml`,
@@ -2231,6 +2218,7 @@ sed "s/${infoPlistVersionPlaceholder}/$\${version:?}/g" > $@ <<'PLIST'
 ${plist}PLIST
 """,
     stamp = 1,
+    tags = ["manual"],
     target_compatible_with = wuhu_platforms(["mac"]),
 )\n`
 }
@@ -2469,19 +2457,21 @@ export async function generateBuildBazel(
           swiftSettingsCoptsAttr(settings)
         }    deps = ${starlarkList(deps)},\n${pluginsAttr}${
           target.info ? infoPlistLinkAttrs(target) : ''
-        }${
+        }${target.stamp ? '    tags = ["manual"],\n' : ''}${
           platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
           )
         })\n`,
       )
-      if (target.stamp && target.unstamped) {
+      if (target.stamp) {
         chunks.push(unstampedTwin(pkg, target, deps, pluginsAttr))
       }
       if (target.productName && target.productName !== target.name) {
         chunks.push(
-          `alias(\n    name = "${target.productName}",\n    actual = ":${target.name}",\n)\n`,
+          `alias(\n    name = "${target.productName}",\n    actual = ":${target.name}",\n${
+            target.stamp ? '    tags = ["manual"],\n' : ''
+          })\n`,
         )
       }
     } else {
@@ -2545,7 +2535,7 @@ ${
         true,
       )
       const testDeps = [
-        `":${target.name}"`,
+        `":${target.name}${target.stamp ? '_unstamped' : ''}"`,
         '"@swiftpkg_swift_issue_reporting//:IssueReportingTestSupport"',
         ...testExtraDeps,
       ]

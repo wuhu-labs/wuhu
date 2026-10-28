@@ -36,6 +36,7 @@ public indirect enum CatalogError: Error, Hashable, Sendable, CustomStringConver
   case invalidTransport(provider: String)
   case invalidCacheWarming(String)
   case invalidOIDCDialect(provider: String)
+  case invalidUsageSource(provider: String)
   case invalidOpaqueReplay(provider: String, value: String)
 
   public var description: String {
@@ -62,6 +63,8 @@ public indirect enum CatalogError: Error, Hashable, Sendable, CustomStringConver
     case let .invalidEndpoint(provider): "provider endpoint must be an HTTP(S) URL without user information: \(provider)"
     case let .invalidTransport(provider):
       "websocket transport requires a Responses or Codex provider: \(provider)"
+    case let .invalidUsageSource(provider):
+      "usage \"gateway\" requires a Responses provider with a stored credential, not OIDC: \(provider)"
     case let .unknownProvider(provider):
       "unknown provider: \(provider) (edit \(ModelsDocument.spacePath) or run `wuhu models update`)"
     case let .unknownModel(provider, model):

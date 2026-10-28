@@ -15,21 +15,21 @@ extension Executor {
     @Dependency(\.date) var date
     let reported = output.providers.compactMap { renderedUsage($0, now: date.now) }
     guard !reported.isEmpty else {
-      await self.runner.stdout("no plan usage observed yet; only codex providers report it\n")
+      await self.runner.stdout("no plan usage observed yet; codex providers and Claude gateways report it\n")
       return
     }
     await self.runner.stdout(reported.joined(separator: "\n") + "\n")
   }
 }
 
-private func renderedUsage(_ provider: ProviderDescriptor, now: Date) -> String? {
+func renderedUsage(_ provider: ProviderDescriptor, now: Date) -> String? {
   guard let usage = provider.usage else { return nil }
   let age = Int(now.timeIntervalSince1970 - usage.observedAt) / 60
   var text = provider.id + (usage.plan.map { " (\($0))" } ?? "") + " · observed \(age)m ago\n"
   for window in usage.windows {
     let percent = window.usedPercent.map { String(format: "%.0f%%", $0) } ?? "?"
-    let resets = window.resetsAt.map {
-      " resets " + isoFormatted(Date(timeIntervalSince1970: $0), in: .current)
+    let resets = window.resetsAt.flatMap {
+      $0 > now.timeIntervalSince1970 ? " resets " + isoFormatted(Date(timeIntervalSince1970: $0), in: .current) : nil
     } ?? ""
     text += "  \(window.name) \(percent)\(resets)\n"
   }

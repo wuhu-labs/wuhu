@@ -1842,9 +1842,10 @@ extension Command {
     usage: wuhu usage [--json]
 
     prints the plan usage the pinned space's server last observed per
-    provider: every codex provider, window by window, with its
-    reset time. inference refreshes it as a side effect; the server reads it
-    itself when a provider has gone fifteen minutes unobserved.
+    provider that has reported it, window by window, with its reset time.
+    inference refreshes it as a side effect; the server reads a codex
+    provider, or one declaring "usage": "gateway", itself when it has gone
+    fifteen minutes unobserved.
     \(exitCodes)
     """,
     "models": """

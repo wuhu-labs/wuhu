@@ -45,7 +45,6 @@ import {
   validateTargetInfo,
   validateTargetLinkedFrameworks,
   validateTargetRelease,
-  validateTargetUnstamped,
   viewPilotProducts,
 } from './generate.ts'
 import { join } from '@std/path'
@@ -1638,6 +1637,15 @@ Deno.test('an executable may expose a product name without changing its target m
     bazel,
     'alias(\n    name = "arcroom-cli",\n    actual = ":CLIV2",\n)',
   )
+  // A stamped executable's alias is as `manual` as its target, or
+  // `//packages/...` would build the stamped binary through it.
+  const stamped = await generateBuildBazel(basePkg, [
+    { ...target, stamp: true },
+  ])
+  assertStringIncludes(
+    stamped,
+    'alias(\n    name = "arcroom-cli",\n    actual = ":CLIV2",\n    tags = ["manual"],\n)',
+  )
 })
 
 Deno.test('generateBuildBazel discovers DocC catalogs and emits a merged site', async () => {
@@ -1708,31 +1716,42 @@ Deno.test('generateBuildBazel stamps an executable with a status genrule and def
     `srcs = glob(["Targets/wuhu/Sources/**/*.swift"]) + [":wuhu_stamp"]`,
   )
   assertStringIncludes(build, `"-DWUHU_STAMPED"`)
-  // The twin is opt-in.
-  if (build.includes('wuhu_unstamped')) {
-    throw new Error('did not expect a twin without unstamped: true')
-  }
+  assertEquals(build.split('"-DWUHU_STAMPED"').length, 2)
 
-  // Tests take the unstamped twin, so a new commit does not re-run them.
-  const twinned = await generateBuildBazel(basePkg, [
-    { ...minimalTarget('wuhu', 'executable'), stamp: true, unstamped: true },
-  ])
-  const twin = twinChunk(twinned, 'wuhu')
+  // Checks and tests take the unstamped twin, so a new commit rebuilds
+  // nothing: every stamped rule is `manual`, and only releases name it.
+  const twin = twinChunk(build, 'wuhu')
   assertStringIncludes(
     twin,
     `name = "wuhu_unstamped",\n    srcs = glob(["Targets/wuhu/Sources/**/*.swift"]),`,
   )
-  assertStringIncludes(twin, 'tags = ["manual"]')
-  if (twin.includes(':wuhu_stamp') || twin.includes('WUHU_STAMPED')) {
-    throw new Error(`the twin takes the stamp:\n${twin}`)
+  if (
+    twin.includes('manual') || twin.includes(':wuhu_stamp') ||
+    twin.includes('WUHU_STAMPED')
+  ) {
+    throw new Error(`the twin is not a plain checked binary:\n${twin}`)
   }
-  assertEquals(twinned.split('"-DWUHU_STAMPED"').length, 2)
+  const twinless = build.replace(twin, '')
+  assertEquals(twinless.split('stamp = 1,\n    tags = ["manual"]').length, 2)
+  assertStringIncludes(
+    twinless.slice(twinless.indexOf('wuhu_swift_binary(\n    name = "wuhu",')),
+    'tags = ["manual"]',
+  )
 
   const plain = await generateBuildBazel(basePkg, [
     minimalTarget('tool', 'executable'),
   ])
   if (plain.includes('stamp')) {
     throw new Error('did not expect stamp rules on an unstamped executable')
+  }
+
+  const tested = await generateBuildBazel(basePkg, [
+    { ...minimalTarget('wuhu', 'executable'), stamp: true, tests: {} },
+  ])
+  const testRule = tested.slice(tested.indexOf('wuhu_swift_test('))
+  assertStringIncludes(testRule, 'deps = [\n        ":wuhu_unstamped",')
+  if (testRule.includes('":wuhu"')) {
+    throw new Error(`the test takes the stamped binary:\n${testRule}`)
   }
 })
 
@@ -1751,7 +1770,6 @@ Deno.test('generateBuildBazel embeds an executable Info.plist on macOS only', as
     {
       ...minimalTarget('wuhu', 'executable'),
       stamp: true,
-      unstamped: true,
       info: { CFBundleIdentifier: 'ai.wuhu.cli', Cost: '$5 \\ R&D' },
     },
   ])
@@ -1813,12 +1831,6 @@ Deno.test('executable info blocks are validated at parse', () => {
     () => validateTargetInfo({ ...target, kind: 'library' }),
     Error,
     'is not a stamped executable',
-  )
-  validateTargetUnstamped({ ...target, unstamped: true })
-  assertThrows(
-    () => validateTargetUnstamped({ ...target, stamp: false, unstamped: true }),
-    Error,
-    'declares unstamped: but is not a stamped executable',
   )
   assertThrows(
     () => validateTargetInfo({ ...target, info: { CFBundleName: 'wuhu' } }),

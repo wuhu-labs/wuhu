@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import enum Credentials.ProviderCredential
 import Dependencies
 import Fetch
 #if canImport(FoundationEssentials)
@@ -7,6 +8,7 @@ import Fetch
   import Foundation
 #endif
 import struct InferenceKit.ModelsDocument
+import struct InferenceKit.ProviderCatalog
 import JSONValue
 import Logging
 import struct SpaceContract.ProviderUsage
@@ -139,21 +141,22 @@ struct UsageRefresher: Sendable {
   func refreshStale() async {
     @Dependency(\.date) var date
     guard let document = await modelsDocument(space: space) else { return }
-    for (id, provider) in document.providers.sorted(by: { $0.key < $1.key }) {
-      switch provider.dialect {
-      case .codex:
-        guard board.claimRefresh(id, now: date.now, interval: Self.interval) else { continue }
-        await refreshCodex(id, provider: provider)
-      case .anthropic, .responses:
-        continue
+    let invalid = ProviderCatalog(document: document, credentials: .unavailable).providerErrors
+    await withTaskGroup { reads in
+      for (id, provider) in document.providers where invalid[id] == nil {
+        let read: (@Sendable () async -> Void)? = switch (provider.dialect, provider.usage) {
+        case (.codex, _): { await refreshCodex(id, provider: provider) }
+        case (.responses, .gateway?): { await refreshGateway(id, provider: provider) }
+        case (.anthropic, _), (.responses, nil): nil
+        }
+        guard let read, board.claimRefresh(id, now: date.now, interval: Self.interval) else { continue }
+        reads.addTask(operation: read)
       }
     }
   }
 
   private func refreshCodex(_ id: String, provider: ModelsDocument.Provider) async {
-    @Dependency(\.fetch) var fetch
-    @Dependency(\.date) var date
-    guard case let .chatGPT(accessToken, accountID)? = try? await credentials.resolve(id) else { return }
+    guard let (accessToken, accountID) = await credential(id, { if case let .chatGPT(token, account) = $0 { (token, account) } else { nil } }) else { return }
     let root = provider.baseURL.lastPathComponent == "codex" ? provider.baseURL.deletingLastPathComponent() : provider.baseURL
     var headers = RequestHeaders()
     headers.setSensitive("authorization", "Bearer \(accessToken)")
@@ -161,16 +164,48 @@ struct UsageRefresher: Sendable {
     headers.set("originator", provider.originator ?? "wuhu")
     // Cloudflare refuses the backend without a User-Agent.
     headers.set("user-agent", "wuhu-usage/1")
+    await read(id, Request(url: root.appendingPathComponent("wham/usage"), headers: headers), parse: codexUsage(payload:))
+  }
+
+  // The Claude gateway's saved `rate_limits`, the shape its WebSocket reports.
+  private func refreshGateway(_ id: String, provider: ModelsDocument.Provider) async {
+    guard let key = await credential(id, { if case let .apiKey(key) = $0 { key } else { nil } }) else { return }
+    var headers = RequestHeaders()
+    headers.setSensitive("authorization", "Bearer \(key)")
+    await read(id, Request(url: provider.baseURL.appendingPathComponent("usage"), headers: headers), parse: codexSocketUsage)
+  }
+
+  private enum CredentialProblem: String {
+    case unreadable, wrongKind
+  }
+
+  private func credential<Value>(_ id: String, _ extract: (ProviderCredential) -> Value?) async -> Value? {
+    let problem: CredentialProblem
     do {
-      let response = try await fetch(Request(url: root.appendingPathComponent("wham/usage"), headers: headers))
+      // A provider without a login is the ordinary unconfigured state, not worth a line every interval.
+      guard let credential = try await credentials.resolve(id) else { return nil }
+      if let value = extract(credential) { return value }
+      problem = .wrongKind
+    } catch {
+      problem = .unreadable
+    }
+    Logger(label: "wuhu.usage").notice("usage read skipped", metadata: ["provider": "\(id)", "credential": "\(problem.rawValue)"])
+    return nil
+  }
+
+  private func read(_ id: String, _ request: Request, parse: (JSONValue) -> (plan: String?, windows: [UsageWindow])) async {
+    @Dependency(\.fetch) var fetch
+    @Dependency(\.date) var date
+    do {
+      let response = try await fetch(request)
       guard response.status.code == 200 else {
-        Logger(label: "wuhu.usage").notice("codex usage read failed", metadata: ["provider": "\(id)", "status": "\(response.status.code)"])
+        Logger(label: "wuhu.usage").notice("usage read failed", metadata: ["provider": "\(id)", "status": "\(response.status.code)"])
         return
       }
-      let (plan, windows) = codexUsage(payload: try await response.body.json(JSONValue.self))
+      let (plan, windows) = parse(try await response.body.json(JSONValue.self))
       board.record(id, plan: plan, windows: windows, at: date.now)
     } catch {
-      Logger(label: "wuhu.usage").notice("codex usage read failed", metadata: ["provider": "\(id)", "error": "\(error)"])
+      Logger(label: "wuhu.usage").notice("usage read failed", metadata: ["provider": "\(id)", "error": "\(error)"])
     }
   }
 }

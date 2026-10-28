@@ -17,8 +17,23 @@ private func providers(_ harness: SessionHarness) async throws -> [ProviderDescr
   ).providers
 }
 
-private let codexAndClaudeModels = """
+private let usageModels = """
 {
+  "gateway": {
+    "dialect": "responses",
+    "baseURL": "http://gateway.test/v1", "usage": "gateway",
+    "models": {"opus": {"maxInput": 1000, "maxOutput": 100, "efforts": ["high"], "defaultEffort": "high"}}
+  },
+  "broken": {
+    "dialect": "responses", "auth": "oidc",
+    "baseURL": "http://broken.test/v1", "usage": "gateway",
+    "models": {"opus": {"maxInput": 1000, "maxOutput": 100, "efforts": ["high"], "defaultEffort": "high"}}
+  },
+  "plain": {
+    "dialect": "responses",
+    "baseURL": "http://plain.test/v1",
+    "models": {"gpt": {"maxInput": 1000, "maxOutput": 100, "efforts": ["high"], "defaultEffort": "high"}}
+  },
   "chatgpt": {
     "dialect": "codex",
     "baseURL": "https://chatgpt.com/backend-api/codex",
@@ -161,18 +176,25 @@ private let codexAndClaudeModels = """
     #expect(board.claimRefresh("codex", now: start + 1700, interval: 900))
   }
 
-  @Test func theRefresherReadsOnlyCodexWhenStale() async throws {
+  @Test func theRefresherReadsCodexAndDeclaredGatewaysWhenStale() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
-      _ = try await space.fs(.settings).write("/models.json", Data(codexAndClaudeModels.utf8), ifMatch: nil)
+      _ = try await space.fs(.settings).write("/models.json", Data(usageModels.utf8), ifMatch: nil)
       let board = UsageBoard()
       let resolved = Mutex<[String]>([])
       let seen = Mutex<[URLRequestSummary]>([])
       let refresher = UsageRefresher(board: board, space: space, credentials: CredentialResolver { provider in
         resolved.withLock { $0.append(provider) }
-        #expect(provider == "chatgpt", "Claude must not be probed")
-        return provider == "chatgpt" ? .chatGPT(accessToken: "jwt", accountID: "acct-42") : nil
+        return switch provider {
+        case "chatgpt": .chatGPT(accessToken: "jwt", accountID: "acct-42")
+        case "gateway", "broken": .apiKey("gateway-key")
+        default: nil
+        }
       })
+      let bodies = [
+        "https://chatgpt.com/backend-api/wham/usage": #"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":61,"limit_window_seconds":604800,"reset_at":1790314546},"secondary_window":null}}"#,
+        "http://gateway.test/v1/usage": #"{"type":"codex.rate_limits","rate_limits":{"primary":{"used_percent":30,"window_minutes":300,"reset_at":1790000000},"windows":{"five_hour":{"used_percent":30,"window_minutes":300,"reset_at":1790000000},"seven_day_overage_included":{"used_percent":0,"window_minutes":10080,"reset_at":1790500000}}}}"#,
+      ]
       await withDependencies {
         $0.fetch = FetchClient { request in
           seen.withLock {
@@ -182,18 +204,26 @@ private let codexAndClaudeModels = """
               authorization: request.headers.sensitiveValues["authorization"],
             ))
           }
-          return Response(status: .ok, body: .string(#"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":61,"limit_window_seconds":604800,"reset_at":1790314546},"secondary_window":null}}"#))
+          return Response(status: .ok, body: .string(try #require(bodies[request.url.absoluteString])))
         }
       } operation: {
         await refresher.refreshStale()
         await refresher.refreshStale()
       }
-      #expect(seen.withLock { $0 } == [URLRequestSummary(url: "https://chatgpt.com/backend-api/wham/usage", account: "acct-42", authorization: "Bearer jwt")])
-      #expect(resolved.withLock { $0 } == ["chatgpt"], "the second fresh pass reads no credentials and only Codex is probed")
+      #expect(seen.withLock { $0 }.sorted { $0.url < $1.url } == [
+        URLRequestSummary(url: "http://gateway.test/v1/usage", account: nil, authorization: "Bearer gateway-key"),
+        URLRequestSummary(url: "https://chatgpt.com/backend-api/wham/usage", account: "acct-42", authorization: "Bearer jwt"),
+      ])
+      #expect(resolved.withLock { $0 }.sorted() == ["chatgpt", "gateway"], "the second fresh pass reads no credentials, and only Codex and the valid gateway are read")
       #expect(board.usage("chatgpt")?.plan == "pro")
       #expect(board.usage("chatgpt")?.windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546, windowMinutes: 10080)])
-      #expect(board.usage("claude") == nil)
-      #expect(board.usage("testing") == nil)
+      #expect(board.usage("gateway")?.windows == [
+        UsageWindow(name: "five_hour", usedPercent: 30, resetsAt: 1_790_000_000, windowMinutes: 300),
+        UsageWindow(name: "seven_day_overage_included", usedPercent: 0, resetsAt: 1_790_500_000, windowMinutes: 10080),
+      ])
+      for provider in ["broken", "plain", "claude", "testing"] {
+        #expect(board.usage(provider) == nil)
+      }
     }
   }
 }
