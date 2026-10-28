@@ -1,6 +1,5 @@
 import Dependencies
 import Fetch
-import let MainHub.scriptBufferBytes
 import struct MainHub.ScriptError
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -18,12 +17,17 @@ import SpaceTools
 import Synchronization
 
 struct ScriptBuffers {
+  let budget: Int
   private var next = 0
   private(set) var held = 0
   private var bodies: [Int: Data] = [:]
 
+  init(budget: Int) {
+    self.budget = budget
+  }
+
   var room: Int {
-    scriptBufferBytes - held
+    budget - held
   }
 
   mutating func hold(_ body: Data) throws -> Int {
@@ -50,7 +54,7 @@ struct ScriptBuffers {
   }
 
   private func reserve(_ bytes: Int, for buffer: ScriptBuffer) throws -> Int {
-    guard bytes <= room else { throw overBudget(buffer) }
+    guard bytes <= room else { throw overBudget(buffer, budget: budget) }
     return bytes
   }
 }
@@ -63,7 +67,7 @@ enum ScriptBuffer {
   case execOutput
 }
 
-func overBudget(_ buffer: ScriptBuffer) -> ScriptError {
+func overBudget(_ buffer: ScriptBuffer, budget: Int) -> ScriptError {
   let (what, advice) = switch buffer {
   case .fileResult:
     ("file result", "read a smaller file or directory, or read earlier response bodies first")
@@ -77,7 +81,7 @@ func overBudget(_ buffer: ScriptBuffer) -> ScriptError {
     ("the output budget of this machine exec", "lower maxOutput, or let other machine work finish first")
   }
   return ScriptError("""
-  \(what) does not fit in the \(scriptBufferBytes >> 20) MB this script may buffer (unread response \
+  \(what) does not fit in the \(budget >> 20) MB this script may buffer (unread response \
   bodies and machine process output together); \(advice)
   """)
 }
@@ -214,7 +218,7 @@ final class ScriptBindings: Sendable {
     do {
       data = try await response.body.bytes(upTo: room)
     } catch FetchError.bodyLimitExceeded {
-      throw overBudget(.responseBody)
+      throw overBudget(.responseBody, budget: execution.limits.bufferBytes)
     } catch {
       let message = "reading the response body failed: \(error)"
       throw ScriptError(secrets.mask(message))

@@ -51,7 +51,7 @@ import Testing
     _ = try await fs.write("/_/machines/renamed/deep/child.md", Data("child".utf8), ifMatch: nil)
     let exec = try await space.mintExec(machine: machine.id, caller: nil)
     let encryption = SymmetricKey(size: .bits256)
-    let store = try await space.machineV2Store(group: .shared, key: encryption, problemsGroup: .shared)
+    let store = try await space.machineV2Store(group: .shared, key: encryption)
     let owner = OperationOwner(scope: "exec/" + exec.id.rawValue, key: exec.id.rawValue)
     var record = ClientRecord(id: UUID(), correlation: UUID(), machine: machine.id.rawValue, start: .init(kind: "exec.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))
     _ = try await store.claim(owner, record: record)
@@ -59,7 +59,7 @@ import Testing
     record.output = [chunk]; record.committed["stdout"] = chunk.through; record.nextSequence = 1
     record.pendingInputs["stdin"] = .init(offset: .zero, payload: .init(data: Data("input".utf8)), end: false)
     try await store.save(record, appending: chunk)
-    let otherStore = try await space.machineV2Store(group: .settings, key: encryption, problemsGroup: .shared)
+    let otherStore = try await space.machineV2Store(group: .settings, key: encryption)
     let otherRecord = ClientRecord(id: UUID(), correlation: UUID(), machine: machine.id.rawValue, start: record.start, description: record.description)
     _ = try await otherStore.claim(owner, record: otherRecord)
     let before = try await space.currentRevision()
@@ -78,9 +78,9 @@ import Testing
     #expect(try await reopened.machineV2RecoveryGroups().isEmpty)
     #expect(try await reopened.execRecord(exec.id)?.terminal == .machineLost)
     await #expect(throws: JoinTokenRejected.self) { try await reopened.consumeJoinToken(outstanding.token, pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel) }
-    let restored = try await reopened.machineV2Store(group: .shared, key: encryption, problemsGroup: .shared)
+    let restored = try await reopened.machineV2Store(group: .shared, key: encryption)
     #expect(try await restored.lookup(owner) == nil)
-    let otherRestored = try await reopened.machineV2Store(group: .settings, key: encryption, problemsGroup: .shared)
+    let otherRestored = try await reopened.machineV2Store(group: .settings, key: encryption)
     #expect(try await otherRestored.lookup(owner) == nil)
     await #expect(throws: OperationError.self) { try await restored.read(record.id) }
     await #expect(throws: OperationError.self) { try await restored.save(record, appending: nil) }

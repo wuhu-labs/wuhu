@@ -2423,6 +2423,75 @@ Deno.test('generateDenoBuildBazel rejects an artifact naming an undeclared task'
   }
 })
 
+Deno.test('generateDenoBuildBazel narrows every target to declared platforms and reserves DENO_JOBS CPUs', () => {
+  const build = generateDenoBuildBazel('packages/build-pool', {
+    owner: 'internal',
+    platforms: ['linux'],
+    tasks: { lint: 'z', test: 'DENO_JOBS=6 deno test --parallel tests' },
+  })
+  assertStringIncludes(
+    build,
+    `deno_task_test(\n    name = "test",\n    srcs = [":srcs"],\n    tags = [\n        "cpu:6",\n        "requires-network",\n    ],\n    task = "test",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
+  )
+  assertStringIncludes(
+    build,
+    `deno_task_test(\n    name = "lint",\n    srcs = [":srcs"],\n    tags = ["requires-network"],\n    task = "lint",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
+  )
+})
+
+Deno.test('generateDenoBuildBazel gives an extra checking task its own platforms and tags a manual one', () => {
+  const build = generateDenoBuildBazel('packages/build-pool', {
+    owner: 'internal',
+    platforms: ['linux'],
+    tasks: {
+      test: 'DENO_JOBS=6 deno test --parallel tests',
+      'test-mac': 'm',
+      contract: 'c',
+    },
+    tests: { 'test-mac': { platforms: ['mac'] }, contract: { manual: true } },
+  })
+  assertStringIncludes(
+    build,
+    `deno_task_test(\n    name = "test-mac",\n    srcs = [":srcs"],\n    tags = ["requires-network"],\n    task = "test-mac",\n    target_compatible_with = wuhu_platforms([\n        "mac",\n    ]),\n)`,
+  )
+  assertStringIncludes(
+    build,
+    `deno_task_test(\n    name = "contract",\n    srcs = [":srcs"],\n    tags = [\n        "manual",\n        "requires-network",\n    ],\n    task = "contract",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
+  )
+  assertThrows(
+    () =>
+      generateDenoBuildBazel('packages/p', {
+        owner: 'internal',
+        tasks: { test: 't' },
+        tests: { test: { platforms: ['mac'] } },
+      }),
+    Error,
+    'tests.test: test is a standard checking task',
+  )
+  assertThrows(
+    () =>
+      generateDenoBuildBazel('packages/p', {
+        owner: 'internal',
+        tasks: { test: 't' },
+        tests: { 'test-ios': { platforms: ['ios'] } },
+      }),
+    Error,
+    'tests.test-ios names a task deno.json does not declare',
+  )
+})
+
+Deno.test('generateDenoBuildBazel rejects a parallel deno test without DENO_JOBS', () => {
+  assertThrows(
+    () =>
+      generateDenoBuildBazel('packages/p', {
+        owner: 'internal',
+        tasks: { test: 'deno test --parallel tests' },
+      }),
+    Error,
+    'packages/p/deno.json tasks.test runs deno test --parallel without DENO_JOBS',
+  )
+})
+
 Deno.test('generateDenoBuildBazel injects generated inputs and excludes their paths', () => {
   const build = generateDenoBuildBazel('packages/wuhu-web', {
     owner: 'wuhu',
@@ -3160,14 +3229,98 @@ Deno.test('macBundle opts only the mac host into an assembled XCTest resource bu
 })
 
 const macRunnerFixture = `#!/bin/bash
-set -e
+set -euo pipefail
 TEST_ENV="%(test_env)s"
 for SINGLE_TEST_ENV in \${TEST_ENV//,/ }; do
   IFS== read key value <<< "$SINGLE_TEST_ENV"
   echo "$key=$value"
 done
-xcodebuild test-without-building
+TEST_BUNDLE_NAME=Page-Tests
+XCTESTRUN="$TEST_TMP_DIR/tests.xctestrun"
+XCTESTRUN_ENV=
+declare -r sed_delim=$'\\001'
+sed \\
+  -e "s\${sed_delim}BAZEL_TEST_ENVIRONMENT\${sed_delim}$XCTESTRUN_ENV\${sed_delim}g" \\
+  -i.orig \\
+  "$XCTESTRUN"
+test_exit_code=0
+readonly testlog="$TEST_TMP_DIR/test.log"
+xcodebuild test-without-building \\
+    -xctestrun "$XCTESTRUN" \\
+    2>&1 | tee -i "$testlog" \\
+    || test_exit_code=$?
+exit "$test_exit_code"
 `
+
+async function runMacRunner(filter: string | undefined, log: string) {
+  const dir = await Deno.makeTempDir()
+  try {
+    await Deno.writeTextFile(
+      `${dir}/xcodebuild`,
+      `#!/bin/bash\nprintf '%s\\n' "$@" > "$TEST_TMP_DIR/args"\necho "$FAKE_LOG"\n`,
+    )
+    await Deno.chmod(`${dir}/xcodebuild`, 0o755)
+    await Deno.writeTextFile(
+      `${dir}/tests.xctestrun`,
+      '<dict><key>TestBundlePath</key></dict>',
+    )
+    await Deno.writeTextFile(
+      `${dir}/runner.sh`,
+      macRunnerTemplate(macRunnerFixture, [], false),
+    )
+    const { code, stderr } = await new Deno.Command('bash', {
+      args: [`${dir}/runner.sh`],
+      clearEnv: true,
+      env: {
+        PATH: `${dir}:${Deno.env.get('PATH')}`,
+        TEST_TMP_DIR: dir,
+        FAKE_LOG: log,
+        ...(filter === undefined ? {} : { TESTBRIDGE_TEST_ONLY: filter }),
+      },
+      stdout: 'null',
+    }).output()
+    return {
+      code,
+      stderr: new TextDecoder().decode(stderr),
+      args: (await Deno.readTextFile(`${dir}/args`)).trimEnd().split('\n'),
+      xctestrun: await Deno.readTextFile(`${dir}/tests.xctestrun`),
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true })
+  }
+}
+
+Deno.test('mac runner selects Bazel test filters through xcodebuild', async () => {
+  const selected = await runMacRunner(
+    'Suite/kept(),-Suite/skipped()',
+    'Test run with 1 test in 1 suite passed after 0.1 seconds.',
+  )
+  assertEquals(selected.code, 0)
+  assertEquals(selected.args.slice(3), [
+    '-only-testing:BazelMacOSTests/Suite/kept()',
+    '-skip-testing:BazelMacOSTests/Suite/skipped()',
+  ])
+  assertStringIncludes(
+    selected.xctestrun,
+    '<key>ProductModuleName</key><string>Page_Tests</string><key>TestBundlePath</key>',
+  )
+
+  const unfiltered = await runMacRunner(undefined, 'Executed 0 tests')
+  assertEquals(unfiltered.code, 0)
+  assertEquals(unfiltered.args.length, 3)
+})
+
+Deno.test('mac runner fails a filter that selects no tests', async () => {
+  const empty = await runMacRunner(
+    'Suite/missing()',
+    'Executed 0 tests\nTest run with 0 tests in 1 suite passed after 0.001 seconds.',
+  )
+  assertEquals(empty.code, 1)
+  assertStringIncludes(
+    empty.stderr,
+    '--test_filter=Suite/missing() selected no tests',
+  )
+})
 
 Deno.test('mac capture runner acquires declared display before launching XCTest', () => {
   const output = macRunnerTemplate(macRunnerFixture, [], true)
@@ -3190,6 +3343,10 @@ Deno.test('mac runner rejects missing and duplicate pinned insertion anchors', (
     const anchor of [
       'TEST_ENV="%(test_env)s"',
       '  IFS== read key value <<< "$SINGLE_TEST_ENV"',
+      'xcodebuild test-without-building \\',
+      '  -e "s${sed_delim}BAZEL_TEST_ENVIRONMENT${sed_delim}$XCTESTRUN_ENV${sed_delim}g" \\',
+      '    -xctestrun "$XCTESTRUN" \\',
+      '    || test_exit_code=$?',
     ]
   ) {
     for (

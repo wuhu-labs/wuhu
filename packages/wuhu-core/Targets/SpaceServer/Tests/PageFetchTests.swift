@@ -349,10 +349,12 @@ import Testing
     })
     do {
       let port = try #require(server.localAddress?.port)
-      let response = try await pinnedPageFetch(Request(url: URL(string: "http://127.0.0.1:\(port)/stream")!), deadline: .now() + .seconds(30))
+      let clock = TestClock()
+      let response = try await pinnedPageFetch(Request(url: URL(string: "http://127.0.0.1:\(port)/stream")!), deadline: .now() + .seconds(60), clock: clock)
       #expect(response.status == .ok)
       var iterator = response.body.asyncBytes().makeAsyncIterator()
       #expect(try await iterator.next() == Data("first".utf8))
+      await clock.advance(by: .seconds(60))
       await #expect(throws: (any Error).self) { try await iterator.next() }
       await server.shutdown()
     } catch { await server.shutdown(); throw error }

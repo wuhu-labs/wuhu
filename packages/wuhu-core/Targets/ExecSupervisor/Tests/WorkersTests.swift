@@ -10,6 +10,7 @@ import TaskLifetime
   import Darwin
 #endif
 import CExecSupervisor
+import Clocks
 @testable import ComputerFiles
 @testable import ExecSupervisor
 import Fetch
@@ -126,7 +127,7 @@ import Testing
       let lock = try #require(WorkerDirectory.lock(path, create: true))
       return (id, path, lock)
     }
-    try WorkerDirectory.writeFile(path + "/.lock", Data(), sync: false)
+    try WorkerDirectory.writeFile(path + "/.lock", Data())
     return (id, path, nil)
   }
 
@@ -485,17 +486,29 @@ import Testing
       return Response.text("late")
     }
     let request = Request(url: URL(string: "http://supervisor/identity")!)
-    let clock = ContinuousClock(); let began = clock.now
+    let clock = TestClock()
+    let answered = Mutex(0)
+    let timed = Task {
+      defer { answered.withLock { $0 += 1 } }
+      return try await ExecWorkers.exchange(scope: scope, request, client: client, nonce: "nonce", deadline: .milliseconds(200), operation: nil, clock: clock)
+    }
+    try await until("the exchange reaches the peer") { parked.withLock { $0.count } == 1 }
+    try await until("the deadline fires") {
+      await clock.advance(by: .milliseconds(200))
+      return answered.withLock { $0 } == 1
+    }
     do {
-      _ = try await ExecWorkers.exchange(scope: scope, request, client: client, nonce: "nonce", deadline: .milliseconds(200), operation: nil)
+      _ = try await timed.value
       Issue.record("the deadline did not fire")
     } catch let error as OperationError { #expect(error.message == Unavailable.supervisorTimeout.rawValue) }
-    #expect(clock.now - began < .seconds(2))
-    let caller = Task { try await ExecWorkers.exchange(scope: scope, request, client: client, nonce: "nonce", deadline: .seconds(60), operation: nil) }
-    try await clock.sleep(for: .milliseconds(50))
+    let caller = Task {
+      defer { answered.withLock { $0 += 1 } }
+      return try await ExecWorkers.exchange(scope: scope, request, client: client, nonce: "nonce", deadline: .seconds(60), operation: nil, clock: clock)
+    }
+    try await until("the second exchange reaches the peer") { parked.withLock { $0.count } == 2 }
     caller.cancel()
+    try await until("the cancelled exchange returns") { answered.withLock { $0 } == 2 }
     await #expect(throws: CancellationError.self) { try await caller.value }
-    #expect(clock.now - began < .seconds(4))
     for continuation in parked.withLock({ $0 }) { continuation.resume() }
     await scope.close()
     #expect(scope.liveTasks.isEmpty)

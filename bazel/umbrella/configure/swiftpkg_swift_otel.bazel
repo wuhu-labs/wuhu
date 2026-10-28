@@ -1,0 +1,12 @@
+# swift-otel enables both OTLP exporters by default. The server exports
+# OTLP/HTTP only; the gRPC trait would link grpc-swift and its HTTP/2 transport
+# into the Linux static binary for an exporter nothing selects. Its OTLP
+# header parsing reaches `trimmingCharacters`, which only full Foundation has;
+# the patch trims with the standard library so the static binary stays off
+# full Foundation + ICU.
+swift_deps.configure_package(
+    name = "swiftpkg_swift_otel",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:swift-otel-headers-without-foundation.patch"],
+    traits = ["OTLPHTTP"],
+)

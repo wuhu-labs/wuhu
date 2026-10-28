@@ -654,7 +654,9 @@ actor ExecWorkers {
   }
 
   /// One request over a link, its answer read whole, bounded by `deadline`.
-  static func exchange(scope: TaskScope, _ request: Request, client: FetchClient, nonce: String, deadline: Duration, operation: UUID?) async throws -> (Response, Data) {
+  static func exchange(
+    scope: TaskScope, _ request: Request, client: FetchClient, nonce: String, deadline: Duration, operation: UUID?, clock: any Clock<Duration> = ContinuousClock(),
+  ) async throws -> (Response, Data) {
     let query = request.url.query.map { "?" + $0 } ?? ""
     guard let url = URL(string: "http://localhost" + request.url.path + query) else { throw OperationError(.invalidConfiguration) }
     var local = request; local.url = url
@@ -672,7 +674,7 @@ actor ExecWorkers {
     }
     defer { work.cancel() }
     do {
-      return try await withDeadline(deadline, clock: ContinuousClock()) {
+      return try await withDeadline(deadline, clock: clock) {
         for try await answer in answers { return answer }
         throw CancellationError()
       }

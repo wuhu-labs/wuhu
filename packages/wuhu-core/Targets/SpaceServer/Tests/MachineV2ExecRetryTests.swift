@@ -462,7 +462,7 @@ private final class Collected: Sendable {
         losing.withLock { $0 = false }
         await side.stop.wait()
         #expect(side.stopped.withLock { $0 } == MachineV2Service.timeoutStop)
-        let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+        let store = try await space.machineV2Store(group: .shared, key: key)
         let operation = try await store.lookup(OperationOwner(scope: "exec/" + minted.id.rawValue, key: minted.id.rawValue))
         #expect(operation?.stopReason == MachineV2Service.timeoutStop)
         side.release()

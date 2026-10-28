@@ -10,10 +10,10 @@ import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.Offset
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
-import struct OperationProtocol.OperationTrace
 import struct OperationProtocol.StartRequest
 import struct OperationProtocol.Verdict
 import TaskLifetime
+import Tracing
 
 /// A handle on one operation. Output arrives in arrival order across channels and stays retained, durably, until acknowledged;
 /// every call works the same before and after a server restart.
@@ -94,18 +94,18 @@ public actor MachineOperations {
     store: any OperationStore,
     clock: OperationClock = .continuous,
     ids: @escaping @Sendable () -> UUID = { UUID() },
-    trace: @escaping @Sendable (OperationTrace) throws -> Void = { _ in },
+    tracer: any Tracer = InstrumentationSystem.tracer,
     tunnel: TunnelLanes = TunnelLanes(),
   ) throws {
     guard origin.scheme == "http" || origin.scheme == "https", origin.host != nil else { throw OperationError(.invalidInput) }
-    link = MachineLink(origin: origin, fetch: fetch, clock: clock, ids: ids, trace: trace)
+    link = MachineLink(origin: origin, fetch: fetch, clock: clock, ids: ids, tracer: tracer)
     self.store = store; self.tunnel = tunnel
   }
 
   // MARK: Machines
 
   public func describe(_ machine: String) async throws -> MachineDescription {
-    let outcome = await link.send(MachineDescription.self, link.address(machine), correlation: nil, deadline: Self.describeDeadline, limit: 1024 * 1024)
+    let outcome = await link.send(MachineDescription.self, machine, .describe, correlation: nil, deadline: Self.describeDeadline, limit: 1024 * 1024)
     let description = try outcome.result.get()
     guard description.version == 2, description.limits.isValid,
           description.kinds.allSatisfy({ $0.schemaDialect == "https://json-schema.org/draft/2020-12/schema" }) else { throw OperationError(.unsupportedProtocol) }

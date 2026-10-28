@@ -160,7 +160,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func aCompileHasAStepBudget() async throws {
-    let compiler = JSXCompiler(stepBudget: 2000)
+    let compiler = JSXCompiler(stepBudget: 500)
     #expect(try await compiler.javaScript("export default () => <Figure value={1} />", file: "/a.widget.jsx", version: "1").contains("h(Figure"))
     let huge = (0 ..< 20000).map { "export const v\($0) = <List rows={[{ label: '\($0)' }]} />" }.joined(separator: "\n")
     let failure = await #expect(throws: JSXCompiler.Failure.self) { try await compiler.javaScript(huge, file: "/huge.widget.jsx", version: "1") }

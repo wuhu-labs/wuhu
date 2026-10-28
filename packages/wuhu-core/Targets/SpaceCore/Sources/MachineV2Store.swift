@@ -25,14 +25,13 @@ public struct SpaceOperationStore: OperationStore {
   let space: Space
   let group: GroupID
   let key: SymmetricKey
-  let problemsGroup: GroupID
   public func lookup(_ owner: OperationOwner) async throws -> ClientRecord? { try await space.v2Lookup(owner, group: group, key: key) }
   public func claim(_ owner: OperationOwner, record: ClientRecord) async throws -> OperationClaim { try await space.v2Claim(owner, record: record, group: group, key: key) }
   public func read(_ id: UUID) async throws -> ClientRecord { try await space.v2Read(id, group: group, key: key) }
   public func live() async throws -> [StoredOperation] { try await space.v2Live(group: group, key: key) }
   public func setAside(_ id: UUID) async throws { try await space.v2SetAside(id, group: group) }
   public func save(_ record: ClientRecord, appending chunk: OutputChunk?) async throws {
-    try await space.v2Write(record, group: group, problemsGroup: problemsGroup, key: key) { row, db in
+    try await space.v2Write(record, group: group, key: key) { row, db in
       guard let chunk else { return }
       guard record.output.last?.sequence == chunk.sequence else { throw OperationError(.invalidInput, operation: record.id) }
       let id = row.id + "/" + String(chunk.sequence)
@@ -42,7 +41,7 @@ public struct SpaceOperationStore: OperationStore {
   }
 
   public func trim(_ record: ClientRecord, removing sequences: [UInt64]) async throws {
-    try await space.v2Write(record, group: group, problemsGroup: problemsGroup, key: key) { row, db in
+    try await space.v2Write(record, group: group, key: key) { row, db in
       let ids = sequences.map { row.id + "/" + String($0) }
       try MachineV2OutputRow.where { $0.operationID.eq(row.id) && $0.id.in(ids) }.delete().execute(db)
     }
@@ -51,9 +50,9 @@ public struct SpaceOperationStore: OperationStore {
 
 extension Space {
   /// The caller supplies a durable 256-bit key; losing it is a typed store failure, never plaintext recovery.
-  public func machineV2Store(group: GroupID, key: SymmetricKey, problemsGroup: GroupID?) throws -> SpaceOperationStore {
-    guard key.bitCount == 256, let problemsGroup else { throw OperationError(.storeUnavailable, message: "Machine v2 needs a durable key and explicit problems group") }
-    return .init(space: self, group: group, key: key, problemsGroup: problemsGroup)
+  public func machineV2Store(group: GroupID, key: SymmetricKey) throws -> SpaceOperationStore {
+    guard key.bitCount == 256 else { throw OperationError(.storeUnavailable, message: "Machine v2 needs a durable key") }
+    return .init(space: self, group: group, key: key)
   }
 
   func v2Lookup(_ owner: OperationOwner, group: GroupID, key: SymmetricKey) async throws -> ClientRecord? {
@@ -137,16 +136,13 @@ extension Space {
   }
 
   /// Persists the record's state and cursors, then `output`'s change to its retained rows, in one transaction.
-  func v2Write(_ record: ClientRecord, group: GroupID, problemsGroup: GroupID, key: SymmetricKey, output: @escaping @Sendable (MachineV2OperationRow, Database) throws -> Void) async throws {
+  func v2Write(_ record: ClientRecord, group: GroupID, key: SymmetricKey, output: @escaping @Sendable (MachineV2OperationRow, Database) throws -> Void) async throws {
     let stamp = SQLiteDateFormat.string(from: dateGen.now)
-    try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+    try await writer.write { db in
       let row = try V2Records.row(record.id, group: group, in: db)
       guard record.machine == row.machineID, try V2Records.digest(record, key: key) == row.inputDigest else { throw OperationError(.invocationConflict, operation: record.id) }
       try V2Records.writeState(record, row: row, key: key, stamp: stamp, in: db)
       try output(row, db)
-      if let code = record.snapshot?.verdict?.error?.code, [.invalidResponse, .invalidOffset, .offsetExpired].contains(code) {
-        _ = try V2Problems.record(group: problemsGroup, traceGroup: group, invariant: 13, code: code, incident: row.id, correlation: record.correlation, stamp: stamp, in: db, pending: &pending)
-      }
     }
   }
 
@@ -277,5 +273,15 @@ enum V2Records {
       try MachineV2ChannelRow.upsert { channel }.execute(db)
     }
     for stale in prior.values { try MachineV2ChannelRow.where { $0.id.eq(stale.id) }.delete().execute(db) }
+  }
+}
+
+enum V2Maintenance {
+  static func due(_ id: String, now: Date, in db: Database) throws -> Bool {
+    let threshold = SQLiteDateFormat.string(from: now.addingTimeInterval(-300))
+    if let prior = try MachineV2MaintenanceRow.where({ $0.id.eq(id) }).fetchOne(db), prior.ranAt > threshold { return false }
+    let row = MachineV2MaintenanceRow(id: id, ranAt: SQLiteDateFormat.string(from: now))
+    try MachineV2MaintenanceRow.upsert { row }.execute(db)
+    return true
   }
 }

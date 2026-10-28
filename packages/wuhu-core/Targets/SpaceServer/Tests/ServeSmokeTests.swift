@@ -5,10 +5,12 @@ import Foundation
 import enum PinnedTLS.PinnedTLS
 import Scratch
 import ServeNIO
+import struct ServerTelemetry.OTLPExporter
 import ServeTLS
 import SpaceServer
 import Synchronization
 import Testing
+import Tracing
 
 @Suite(.deterministicDependencies(clock: TestClock())) struct ServeSmokeTests {
   private func scratch() throws -> URL {
@@ -74,6 +76,54 @@ import Testing
     let port = try #require(bound.withLock { $0 }.first ?? nil)
     #expect(bound.withLock { $0 } == [port])
     #expect(torndown.withLock { $0 } == [port])
+  }
+
+  @Test func serveWithoutAnOTLPEndpointInstallsNoTracer() async throws {
+    let base = try scratch()
+    defer { try? FileManager.default.removeItem(at: base) }
+    let (binds, bindsContinuation) = AsyncStream<Void>.makeStream()
+    let hooks = ServeNIOHooks(onDidBind: { _ in bindsContinuation.yield() }, onStartupFailure: { _ in bindsContinuation.finish() })
+    let environment = ["OTEL_SERVICE_NAME": "elsewhere", "OTEL_EXPORTER_OTLP_ENDPOINT": "", "OTEL_TRACES_SAMPLER": "always_on"]
+    let server = Task {
+      try await SpaceServer.serve(folder: base.appendingPathComponent("store"), port: 0, dev: true, telemetryEnvironment: environment, hooks: hooks)
+    }
+    var iterator = binds.makeAsyncIterator()
+    _ = await iterator.next()
+    #expect(InstrumentationSystem.tracer is NoOpTracer)
+    server.cancel()
+    try await server.value
+    #expect(InstrumentationSystem.tracer is NoOpTracer)
+  }
+
+  @Test(arguments: [
+    ["OTEL_EXPORTER_OTLP_ENDPOINT": "file:///tmp/spans"],
+    ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://user:password@collector/v1/traces"],
+    ["OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector?token=secret"],
+  ]) func anUnusableOTLPEndpointStopsTheStart(environment: [String: String]) async throws {
+    let base = try scratch()
+    defer { try? FileManager.default.removeItem(at: base) }
+    await #expect(throws: OTLPExporter.ConfigurationError.self) {
+      try await SpaceServer.serve(folder: base.appendingPathComponent("store"), port: 0, dev: true, telemetryEnvironment: environment)
+    }
+    #expect(InstrumentationSystem.tracer is NoOpTracer)
+    #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("store/space.sqlite").path))
+  }
+
+  @Test(arguments: [
+    ["OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"],
+    ["OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "grpc"],
+    ["OTEL_TRACES_SAMPLER": "parentbased_jaeger_remote"],
+    ["OTEL_PROPAGATORS": "tracecontext,b3"],
+  ]) func aSettingSwiftOTelCannotRunStopsTheStart(setting: [String: String]) async throws {
+    let base = try scratch()
+    defer { try? FileManager.default.removeItem(at: base) }
+    let environment = setting.merging(["OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318"]) { $1 }
+    let refused = try #require(await #expect(throws: UnsupportedTelemetrySetting.self) {
+      try await SpaceServer.serve(folder: base.appendingPathComponent("store"), port: 0, dev: true, telemetryEnvironment: environment)
+    })
+    #expect(setting[refused.variable]?.contains(refused.value) == true)
+    #expect(InstrumentationSystem.tracer is NoOpTracer)
+    #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("store/space.sqlite").path))
   }
 
   // The bare host keeps the exact leaf clients pinned; only `<g>.<host>`

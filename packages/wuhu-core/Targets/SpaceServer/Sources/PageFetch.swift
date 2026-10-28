@@ -224,7 +224,7 @@ func fetchWithinDeadline<T: Sendable>(_ deadline: NIODeadline, timeoutError: any
   }
 }
 
-func pinnedPageFetch(_ request: Request, deadline: NIODeadline, stripCookies: Bool = true, timeoutError: any Error = PageFetchError.timeout, resolve: @Sendable (String, Int) async throws -> SocketAddress = resolveFetchHost) async throws -> Response {
+func pinnedPageFetch(_ request: Request, deadline: NIODeadline, stripCookies: Bool = true, timeoutError: any Error = PageFetchError.timeout, clock: any Clock<Duration> = ContinuousClock(), resolve: @Sendable (String, Int) async throws -> SocketAddress = resolveFetchHost) async throws -> Response {
   let rawHost = request.url.host!
   let host = rawHost.hasPrefix("[") ? String(rawHost.dropFirst().dropLast()) : rawHost
   let address = try await resolve(host, request.url.port ?? (request.url.scheme == "https" ? 443 : 80))
@@ -245,7 +245,7 @@ func pinnedPageFetch(_ request: Request, deadline: NIODeadline, stripCookies: Bo
   for (name, value) in response.headers where !hopHeaders.contains(name.lowercased()) && !nominated.contains(name.lowercased()) && (!stripCookies || name.lowercased() != "set-cookie") {
     if let field = HTTPField.Name(name) { headers.append(HTTPField(name: field, value: value)) }
   }
-  return Response(status: Status(code: Int(response.status.code)), headers: headers, body: .stream(FetchResponseStream(body: response.body, lease: lease, deadline: deadline, timeoutError: timeoutError)))
+  return Response(status: Status(code: Int(response.status.code)), headers: headers, body: .stream(FetchResponseStream(body: response.body, lease: lease, deadline: deadline, timeoutError: timeoutError, expiry: expiry(clock, deadline))))
 }
 
 private final class FetchConnection: Sendable {
@@ -269,18 +269,31 @@ private struct FetchResponseStream: AsyncSequence, Sendable {
   let lease: FetchConnection
   let deadline: NIODeadline
   let timeoutError: any Error
-  func makeAsyncIterator() -> Iterator { Iterator(base: body.makeAsyncIterator(), lease: lease, deadline: deadline, timeoutError: timeoutError) }
+  let expiry: @Sendable () async throws -> Void
+  func makeAsyncIterator() -> Iterator { Iterator(base: body.makeAsyncIterator(), lease: lease, deadline: deadline, timeoutError: timeoutError, expiry: expiry) }
   struct Iterator: AsyncIteratorProtocol {
     var base: HTTPClientResponse.Body.AsyncIterator
     let lease: FetchConnection
     let deadline: NIODeadline
     let timeoutError: any Error
+    let expiry: @Sendable () async throws -> Void
     mutating func next() async throws -> Bytes? {
       guard .now() < deadline else { throw timeoutError }
-      guard let buffer = try await base.next() else { lease.timeout.cancel(); lease.client.shutdown { _ in }; return nil }
+      let (lease, expiry) = (lease, expiry)
+      let buffer = try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { try await expiry(); lease.client.shutdown { _ in } }
+        defer { group.cancelAll() }
+        return try await base.next()
+      }
+      guard let buffer else { lease.timeout.cancel(); lease.client.shutdown { _ in }; return nil }
       return Data(buffer.readableBytesView)
     }
   }
+}
+
+private func expiry<C: Clock<Duration>>(_ clock: C, _ deadline: NIODeadline) -> @Sendable () async throws -> Void {
+  let instant = clock.now.advanced(by: .nanoseconds(Swift.max(0, (deadline - .now()).nanoseconds)))
+  return { try await clock.sleep(until: instant, tolerance: nil) }
 }
 
 private func resolveFetchHost(_ host: String, _ port: Int) async throws -> SocketAddress {

@@ -1,5 +1,5 @@
 {
-  "originHash": "310a7e3b01e68c77cc25703285e7ed4dca78573e71ac3e23e6da5eabdeb2e3bd",
+  "originHash": "6a2655da9eb961cc80a97cf9285a5ba0aaf13d4b0ec465fff09607797bb0bbe7",
   "pins": [
     {
       "identity": "async-http-client",
@@ -26,6 +26,33 @@
       "state": {
         "revision": "36e30a6f1ef10e4194f6af0cff90888526f0c115",
         "version": "7.10.0"
+      }
+    },
+    {
+      "identity": "grpc-swift-2",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/grpc/grpc-swift-2.git",
+      "state": {
+        "revision": "e31eb485c4575e0dbed3d1925e24084f755ac6e8",
+        "version": "2.4.4"
+      }
+    },
+    {
+      "identity": "grpc-swift-nio-transport",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/grpc/grpc-swift-nio-transport.git",
+      "state": {
+        "revision": "ff4420d7c33cc998a590b0761630d67f76bc291e",
+        "version": "2.10.0"
+      }
+    },
+    {
+      "identity": "grpc-swift-protobuf",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/grpc/grpc-swift-protobuf.git",
+      "state": {
+        "revision": "83f5cdb2f8b4c7b57ed9419c6f4f6380b683500e",
+        "version": "2.5.0"
       }
     },
     {
@@ -158,8 +185,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/apple/swift-distributed-tracing.git",
       "state": {
-        "revision": "dc4030184203ffafbb2ec614352487235d747fe0",
-        "version": "1.4.1"
+        "revision": "297b5b9c82a5631e3199ce3ec0993a3cfb0fbb84",
+        "version": "1.7.2"
       }
     },
     {
@@ -205,6 +232,15 @@
       "state": {
         "revision": "3c6f9523da3a1ec2fd829673e472d95b8097a3b8",
         "version": "0.8.0"
+      }
+    },
+    {
+      "identity": "swift-metrics",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/apple/swift-metrics.git",
+      "state": {
+        "revision": "9467f9cc3c32b4386fad1ecc4618328887ef5758",
+        "version": "2.12.0"
       }
     },
     {
@@ -271,12 +307,30 @@
       }
     },
     {
+      "identity": "swift-otel",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/swift-otel/swift-otel.git",
+      "state": {
+        "revision": "f6771f8c6b1c3c08d386638fc5c3015b452136d9",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "identity": "swift-protobuf",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/apple/swift-protobuf.git",
+      "state": {
+        "revision": "3d537cb81aef272a03cb3be815439e9bf0eb3bd3",
+        "version": "1.39.0"
+      }
+    },
+    {
       "identity": "swift-service-context",
       "kind": "remoteSourceControl",
       "location": "https://github.com/apple/swift-service-context.git",
       "state": {
-        "revision": "d0997351b0c7779017f88e7a93bc30a1878d7f29",
-        "version": "1.3.0"
+        "revision": "853ba3d9ce78851b9cc20108e8bd4f13f7fa546c",
+        "version": "1.5.1"
       }
     },
     {
@@ -330,6 +384,15 @@
       "state": {
         "revision": "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
         "version": "1.6.4"
+      }
+    },
+    {
+      "identity": "swift-w3c-trace-context",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/swift-otel/swift-w3c-trace-context.git",
+      "state": {
+        "revision": "32ac5402972037710376c48cef91350b85dfd971",
+        "version": "1.0.0"
       }
     },
     {

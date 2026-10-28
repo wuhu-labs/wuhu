@@ -4,10 +4,7 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import Clocks
 import Crypto
-import Dispatch
-import Fetch
 import GRDB
 import OperationClient
 import OperationClientTestSupport
@@ -22,15 +19,15 @@ import Testing
   @Test func durableContractAndGroupIsolation() async throws {
     let space = try machineSpace()
     let key = SymmetricKey(size: .bits256)
-    let store = try await space.machineV2Store(group: GroupID(rawValue: "shared"), key: key, problemsGroup: .shared)
+    let store = try await space.machineV2Store(group: GroupID(rawValue: "shared"), key: key)
     try await verifyOperationStoreContract(store, machine: try await storeMachine("phone", space: space))
     let owner = OperationOwner(scope: "restart", key: "one")
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: ["path": "/secret"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     #expect(try await store.claim(owner, record: record).dispatch)
-    let reopened = try await space.machineV2Store(group: GroupID(rawValue: "shared"), key: key, problemsGroup: .shared)
+    let reopened = try await space.machineV2Store(group: GroupID(rawValue: "shared"), key: key)
     #expect(try await reopened.lookup(owner)?.id == record.id)
     #expect(try await reopened.claim(owner, record: record).dispatch == false)
-    let other = try await space.machineV2Store(group: GroupID(rawValue: "other"), key: key, problemsGroup: .shared)
+    let other = try await space.machineV2Store(group: GroupID(rawValue: "other"), key: key)
     #expect(try await other.lookup(owner) == nil)
     await #expect(throws: OperationError.self) { try await other.read(record.id) }
   }
@@ -47,7 +44,7 @@ extension MachineV2StoreTests {
     let url = folder.url.appending(path: "space.sqlite")
     let key = SymmetricKey(size: .bits256)
     let space = try Space.open(file: url)
-    let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let store = try await space.machineV2Store(group: .shared, key: key)
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: ["path": "/private-secret-marker"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     _ = try await store.claim(.init(scope: "restart", key: "one"), record: record)
     var written = record
@@ -57,14 +54,14 @@ extension MachineV2StoreTests {
     let encrypted = try await space.writer.read { db in try #require(try MachineV2OperationRow.where { $0.id.eq(record.id.uuidString) }.fetchOne(db)).record }
     #expect(!encrypted.contains("private-secret-marker"))
     let reopened = try Space.open(file: url)
-    let restored = try await reopened.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let restored = try await reopened.machineV2Store(group: .shared, key: key)
     #expect(try await restored.read(record.id).output.first?.payload.data == Data("private-output-marker".utf8))
-    let wrong = try await reopened.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
+    let wrong = try await reopened.machineV2Store(group: .shared, key: .init(size: .bits256))
     await #expect(throws: OperationError.self) { try await wrong.read(record.id) }
   }
 
   @Test func atomicAdmissionAndOwnerUniqueness() async throws {
-    let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
+    let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256))
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     let dispatches = try await withThrowingTaskGroup(of: Bool.self) { group in
       for _ in 0 ..< 20 { group.addTask { try await store.claim(.init(scope: "race", key: "one"), record: record).dispatch } }
@@ -90,7 +87,7 @@ extension MachineV2StoreTests {
   @Test func damagedOutputFailsAndEarlierOutputIsDropped() async throws {
     let space = try machineSpace()
     let key = SymmetricKey(size: .bits256)
-    let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let store = try await space.machineV2Store(group: .shared, key: key)
     let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read])
     let damaged = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
     _ = try await store.claim(.init(scope: "output", key: "damaged"), record: damaged)
@@ -117,55 +114,6 @@ extension MachineV2StoreTests {
     let left = try await space.writer.read { db in try MachineV2OutputRow.where { $0.operationID.eq(earlier.id.uuidString) }.fetchCount(db) }
     #expect(left == 0)
   }
-
-  @Test func tracesAreOneRowPerRoundTripAndGroupFiltered() async throws {
-    let space = try machineSpace()
-    let own = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-    let other = try await space.machineV2TraceSink(group: .init(rawValue: "other"), problemsGroup: .shared)
-    let request = UUID(); let path = "/machine/v2/machines/disk/operations/\(UUID())"
-    try own(.init(request: request, correlation: "own", path: path, event: .dispatch, elapsed: .zero))
-    try own(.init(request: request, correlation: "own", path: path, event: .head, elapsed: .milliseconds(1), status: 200))
-    try own(.init(request: request, correlation: "own", path: path, event: .complete, elapsed: .milliseconds(2)))
-    try other(.init(request: UUID(), correlation: "private", path: path, event: .dispatch, elapsed: .zero))
-    try await waitForTrace(space, request: request, event: .complete)
-    let rows = try await space.query("SELECT correlation_id, event, elapsed_ms, status FROM machine_v2_trace", as: .init(actor: .anonymous, group: .shared))
-    #expect(rows.rows == [[.text("own"), .text("complete"), .integer(2), .integer(200)]])
-    #expect(throws: OperationError.self) { try own(.init(request: UUID(), correlation: "unsafe", path: path + "?secret=oops", event: .dispatch, elapsed: .zero)) }
-    await #expect(throws: SpaceError.self) { try await space.query("SELECT * FROM machine_v2_operations", as: .init(actor: .anonymous, group: .shared)) }
-  }
-
-  @Test func aTraceBatchPublishesEachProblemRevisionInOrder() async throws {
-    let clock = TestClock()
-    let space = try makeSpace(clock: clock)
-    let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-    let changes = await space.observeFS(glob: "/wuhu/machine-v2-problems.table", group: .shared)
-    var commits = changes.makeAsyncIterator()
-    for code in [OperationError.Code.invalidOffset, .offsetExpired] {
-      try sink(.init(request: UUID(), correlation: UUID().uuidString, path: "/machine/v2/machines/disk/operations/\(UUID())", event: .failure, elapsed: .zero, error: code))
-    }
-    await clock.advance(by: .milliseconds(100))
-    let first = try #require(await commits.next())
-    let second = try #require(await commits.next())
-    #expect(first.rev < second.rev)
-    for commit in [first, second] {
-      #expect(commit.group == .shared)
-      #expect(!commit.events.isEmpty)
-      #expect(commit.events.allSatisfy { $0.rev == commit.rev && $0.group == commit.group })
-    }
-    let rows = try await space.query("SELECT error_code FROM \"/wuhu/machine-v2-problems.table\" ORDER BY error_code", as: .init(actor: .anonymous, group: .shared))
-    #expect(rows.rows == [[.text("invalidOffset")], [.text("offsetExpired")]])
-    try await space.close()
-  }
-
-  @Test func problemFingerprintCountsIncidentsNotRetransmissions() async throws {
-    let space = try machineSpace(); let correlation = UUID()
-    let first = try await space.recordMachineV2Problem(group: .shared, traceGroup: .shared, invariant: 13, code: .invalidOffset, incident: "op-one", correlation: correlation)
-    let duplicate = try await space.recordMachineV2Problem(group: .shared, traceGroup: .shared, invariant: 13, code: .invalidOffset, incident: "op-one", correlation: UUID())
-    let second = try await space.recordMachineV2Problem(group: .shared, traceGroup: .shared, invariant: 13, code: .invalidOffset, incident: "op-two", correlation: UUID())
-    #expect(first == duplicate && second == first)
-    let rows = try await space.query("SELECT occurrences, invariant FROM \"/wuhu/machine-v2-problems.table\"", as: .init(actor: .anonymous, group: .shared))
-    #expect(rows.rows == [[.integer(2), .integer(13)]])
-  }
 }
 
 import Dependencies
@@ -173,58 +121,8 @@ import SpaceFS
 import Synchronization
 
 extension MachineV2StoreTests {
-  @Test func retentionPinsIncidentsUntilOperatorResolvesAndDoesNotCountExpectedLoss() async throws {
-    let time = Mutex(Date(timeIntervalSince1970: 1_000_000_000))
-    try await withDependencies { $0.date = .init { time.withLock { $0 } } } operation: {
-      let space = try machineSpace(); let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-      let correlation = UUID(); let operation = UUID()
-      let path = "/machine/v2/machines/disk/operations/\(operation)"
-      let request = UUID()
-      try sink(.init(request: request, correlation: correlation.uuidString, path: path, event: .failure, elapsed: .milliseconds(1), error: .invalidOffset))
-      try sink(.init(request: UUID(), correlation: correlation.uuidString, path: path, event: .failure, elapsed: .milliseconds(1), error: .invalidOffset))
-      try sink(.init(request: UUID(), correlation: "ordinary", path: path, event: .failure, elapsed: .milliseconds(1), error: .requestDeadline))
-      try await waitForTrace(space, request: request, event: .failure)
-      let problems = try await space.query("SELECT id, occurrences FROM \"/wuhu/machine-v2-problems.table\"", as: .init(actor: .anonymous, group: .shared))
-      #expect(problems.rows.count == 1); #expect(problems.rows[0][1] == .integer(1))
-      time.withLock { $0 = $0.addingTimeInterval(8 * 86400) }
-      try await waitForDatabase(space, read: { db in
-        try MachineV2TraceRow.where { $0.correlationID.eq("ordinary") }.fetchCount(db)
-      }, until: { $0 == 0 })
-      let retained = try await space.query("SELECT correlation_id FROM machine_v2_trace", as: .init(actor: .anonymous, group: .shared))
-      #expect(retained.rows.count == 2); #expect(!retained.rows.contains([.text("ordinary")]))
-      guard case let .integer(id) = problems.rows[0][0] else { Issue.record("missing problem id"); return }
-      _ = try await space.commitRows(try SpacePath(validating: "/wuhu/machine-v2-problems.table"), edits: [.update(id: id, ["status": "verified"])], in: .shared, acting: .shared)
-      time.withLock { $0 = $0.addingTimeInterval(301) }
-      try await waitForDatabase(space, read: { db in
-        try MachineV2TraceRow.where { $0.correlationID.eq(correlation.uuidString) }.fetchCount(db)
-      }, until: { $0 == 0 })
-      let expired = try await space.query("SELECT correlation_id FROM machine_v2_trace", as: .init(actor: .anonymous, group: .shared))
-      #expect(!expired.rows.contains([.text(correlation.uuidString)]))
-    }
-  }
-}
-
-extension MachineV2StoreTests {
-  @Test func missingProblemsConfigurationIsTypedAndOneTableHoldsCrossGroupCountsOnly() async throws {
-    let space = try machineSpace()
-    await #expect(throws: OperationError.self) { try await space.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: nil) }
-    await #expect(throws: OperationError.self) { try await space.machineV2TraceSink(group: .shared, problemsGroup: nil) }
-    let owner = GroupID(rawValue: "private")
-    let sink = try await space.machineV2TraceSink(group: owner, problemsGroup: .shared)
-    let request = UUID()
-    try sink(.init(request: request, correlation: UUID().uuidString, path: "/machine/v2/machines/hidden-machine/operations/\(UUID())", event: .failure, elapsed: .zero, error: .invalidResponse))
-    try await waitForTrace(space, request: request, event: .failure)
-    let counts = try await space.query("SELECT * FROM \"/wuhu/machine-v2-problems.table\"", as: .init(actor: .anonymous, group: .shared))
-    #expect(counts.rows.count == 1)
-    #expect(counts.columns == ["id", "first_seen_at", "last_seen_at", "occurrences", "fingerprint", "invariant", "error_code", "status"])
-    #expect(!counts.rows.flatMap { $0 }.contains(.text("hidden-machine")))
-    #expect(try await space.query("SELECT * FROM machine_v2_trace", as: .init(actor: .anonymous, group: .shared)).rows.isEmpty)
-  }
-}
-
-extension MachineV2StoreTests {
   @Test func independentOutputAndPendingInputBudgetsRoundTripTogether() async throws {
-    let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
+    let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256))
     let kind = KindDescriptor("duplex.v1", inputSchema: [:], resultSchema: [:], inputChannels: [.init("in", windowBytes: 65536)], outputChannels: [.init("out", windowBytes: 131_072)])
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "duplex.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [kind]))
     _ = try await store.claim(.init(scope: "budgets", key: "one"), record: record)
@@ -255,10 +153,12 @@ extension MachineV2StoreTests {
     let time = Mutex(Date(timeIntervalSince1970: 1_000_000_000))
     try await withDependencies { $0.date = .init { time.withLock { $0 } } } operation: {
       let space = try machineSpace(); let key = SymmetricKey(size: .bits256)
-      let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-      let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read])
+      let store = try await space.machineV2Store(group: .shared, key: key)
+      // The buffer holds one operation's reservation, so each claim is admitted only because the one before it settled.
+      var limits = OperationLimits(); limits.bufferBytes = ComputerKindSchemas.read.outputChannels.reduce(0) { $0 + $1.windowBytes }
+      let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [ComputerKindSchemas.read])
       var first: UUID?
-      for index in 0 ..< 4100 {
+      for index in 0 ..< 3 {
         let id = UUID(); if first == nil { first = id }
         let record = ClientRecord(id: id, correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
         _ = try await store.claim(.init(scope: "lifetime", key: String(index)), record: record)
@@ -274,12 +174,16 @@ extension MachineV2StoreTests {
       let next = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
       _ = try await store.claim(.init(scope: "lifetime", key: "after-retention"), record: next)
       #expect(try await store.live().count == 1)
+      let past = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: [:]), description: description)
+      await #expect { try await store.claim(.init(scope: "lifetime", key: "past"), record: past) } throws: {
+        ($0 as? OperationError)?.details?.object?["reason"] == "machineBufferBytes"
+      }
       await #expect(throws: OperationError.self) { try await store.read(first!) }
     }
   }
 
   @Test func integralDoubleSurvivesEncryptedKeyReuse() async throws {
-    let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
+    let space = try machineSpace(); let store = try await space.machineV2Store(group: .shared, key: .init(size: .bits256))
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await storeMachine("disk", space: space), start: .init(kind: "read.v1", input: ["value": .number(4_294_967_296)]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     let owner = OperationOwner(scope: "numeric", key: "reuse")
     _ = try await store.claim(owner, record: record)
@@ -291,35 +195,10 @@ extension MachineV2StoreTests {
 }
 
 extension MachineV2StoreTests {
-  @Test func maintenanceIsThrottledAndResolvedIncidentsEventuallyPrune() async throws {
-    let time = Mutex(Date(timeIntervalSince1970: 1_000_000_000))
-    try await withDependencies { $0.date = .init { time.withLock { $0 } } } operation: {
-      let space = try machineSpace(); let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-      let request = UUID(); let path = "/machine/v2/machines/disk/operations/\(UUID())"
-      try sink(.init(request: request, correlation: UUID().uuidString, path: path, event: .failure, elapsed: .zero, error: .invalidResponse))
-      try await waitForTrace(space, request: request, event: .failure)
-      try await waitForDatabase(space, read: { db in try MachineV2MaintenanceRow.all.fetchCount(db) }, until: { $0 > 0 })
-      let initial = try await space.writer.read { db in try MachineV2MaintenanceRow.all.fetchAll(db).map(\.ranAt) }
-      time.withLock { $0 = $0.addingTimeInterval(30) }
-      for _ in 0 ..< 20 { try sink(.init(request: UUID(), correlation: "normal", path: path, event: .complete, elapsed: .zero)) }
-      #expect(try await space.writer.read { db in try MachineV2MaintenanceRow.all.fetchAll(db).map(\.ranAt) } == initial)
-      let rows = try await space.query("SELECT id FROM \"/wuhu/machine-v2-problems.table\"", as: .init(actor: .anonymous, group: .shared))
-      guard case let .integer(id) = rows.rows[0][0] else { Issue.record("missing problem"); return }
-      _ = try await space.commitRows(try SpacePath(validating: "/wuhu/machine-v2-problems.table"), edits: [.update(id: id, ["status": "verified"])], in: .shared, acting: .shared)
-      time.withLock { $0 = $0.addingTimeInterval(301) }
-      try await waitForDatabase(space, read: { db in try MachineV2IncidentRow.all.fetchAll(db).allSatisfy { $0.problemID == nil } }, until: { $0 })
-      time.withLock { $0 = $0.addingTimeInterval(8 * 86400) }
-      try await waitForDatabase(space, read: { db in try MachineV2IncidentRow.all.fetchAll(db).isEmpty }, until: { $0 })
-      try await space.close()
-    }
-  }
-}
-
-extension MachineV2StoreTests {
   @Test func machineActiveOperationsAreNotCounted() async throws {
     let space = try machineSpace(); let key = SymmetricKey(size: .bits256)
-    let first = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key, problemsGroup: .shared)
+    let first = try await space.machineV2Store(group: .shared, key: key)
+    let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key)
     let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: OperationLimits(), kinds: [ComputerKindSchemas.read])
     func record() async throws -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: try await storeMachine("shared_machine", space: space), start: .init(kind: "read.v1", input: [:]), description: description) }
     for n in 0 ..< 40 {
@@ -329,8 +208,8 @@ extension MachineV2StoreTests {
 
   @Test func machineBufferReservationsAreSharedButScriptCapacityRemainsGroupScoped() async throws {
     let space = try machineSpace(); let key = SymmetricKey(size: .bits256)
-    let first = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key, problemsGroup: .shared)
+    let first = try await space.machineV2Store(group: .shared, key: key)
+    let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key)
     var limits = OperationLimits(); limits.bufferBytes = 16 * 1024 * 1024
     let descriptor = KindDescriptor("large.v1", inputSchema: [:], resultSchema: [:], outputChannels: [.init("out", windowBytes: 8 * 1024 * 1024)])
     let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [descriptor])
@@ -429,138 +308,8 @@ extension MachineV2StoreTests {
   }
 }
 
-private func waitForDatabase<Value: Sendable>(
-  _ space: Space, read: @escaping @Sendable (Database) throws -> Value, until predicate: @Sendable (Value) -> Bool,
-) async throws {
-  let writer = await space.writer
-  for try await value in ValueObservation.tracking(read).values(in: writer) {
-    if predicate(value) { return }
-  }
-  Issue.record("Database observation ended before its expected value")
-}
-
-private func waitForTrace(_ space: Space, request: UUID, event: OperationTrace.Event) async throws {
-  try await waitForDatabase(space, read: { db in
-    try MachineV2TraceRow.where { $0.requestID.eq(request.uuidString) && $0.event.eq(event.rawValue) }.fetchCount(db)
-  }, until: { $0 == 1 })
-}
-
-extension MachineV2StoreTests {
-  @Test(.timeLimit(.minutes(1))) func machineExchangeIgnoresBlockedTraceDatabaseAndBoundsItsBacklog() async throws {
-    let logs = RecordedLogs()
-    let space = try makeSpace(clock: ContinuousClock(), log: logs.logger)
-    let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-    let writer = await space.writer
-    let held = AsyncStream<Void>.makeStream()
-    let gate = DispatchSemaphore(value: 0)
-    let blocker = Task {
-      try await writer.write { _ in
-        held.continuation.yield(())
-        gate.wait()
-      }
-    }
-    for await _ in held.stream { break }
-    defer { gate.signal() }
-    let agent = try OperationAgent(machine: "disk", kinds: [], authorize: { _, _ in })
-    let operations = try MachineOperations(origin: URL(string: "https://memory.invalid")!, fetch: FetchClient { try await agent.handler($0) }, store: MemoryOperationStore(), trace: sink)
-    for _ in 0 ..< 2000 {
-      try sink(.init(request: UUID(), correlation: "pressure", path: "/machine/v2/machines/disk", event: .complete, elapsed: .zero))
-    }
-    #expect(try await operations.describe("disk").version == 2)
-    await operations.shutdown()
-    await agent.shutdown()
-    gate.signal()
-    try await blocker.value
-    try await space.close()
-    let dropped = logs.all.filter { $0.message.contains("traces dropped") }.compactMap { $0.metadata["count"].flatMap(Int.init) }.reduce(0, +)
-    #expect(dropped >= 2000 - 1024 - 128)
-  }
-
-  @Test(.timeLimit(.minutes(1))) func traceShutdownDropsUnflushedEventsAndRejectsLaterWrites() async throws {
-    let logs = RecordedLogs()
-    let space = try makeSpace(clock: TestClock(), log: logs.logger)
-    let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-    try sink(.init(request: UUID(), correlation: "pending", path: "/machine/v2/machines/disk", event: .complete, elapsed: .zero))
-    try await space.close()
-    try sink(.init(request: UUID(), correlation: "late", path: "/machine/v2/machines/disk", event: .complete, elapsed: .zero))
-    #expect(logs.all.contains { $0.message == "Machine traces dropped at shutdown" && $0.metadata["count"] == "1" })
-  }
-
-  @Test(.timeLimit(.minutes(1))) func traceRetentionIsIndependentBoundedAndPreservesPinsAndGroups() async throws {
-    let space = try makeSpace(clock: ContinuousClock())
-    let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-    try sink(.init(request: UUID(), correlation: "young", path: "/machine/v2/machines/disk", event: .complete, elapsed: .zero))
-    try await space.writer.write { db in
-      for n in 0 ..< 1200 {
-        let row = MachineV2TraceRow(id: "expired/\(n)", grp: "shared", requestID: "\(n)", correlationID: "expired", path: "/machine/v2/machines/disk", event: "complete", startAt: "2001-01-01T00:00:00.000Z", elapsedMs: 0, problemID: n < 12 ? 1 : nil)
-        try MachineV2TraceRow.insert { row }.execute(db)
-      }
-      let other = MachineV2TraceRow(id: "private", grp: "private", requestID: "private", correlationID: "private", path: "/machine/v2/machines/disk", event: "complete", startAt: "2001-01-01T00:00:00.000Z", elapsedMs: 0)
-      try MachineV2TraceRow.insert { other }.execute(db)
-    }
-    for expected in [700, 188, 12] {
-      try await waitForDatabase(space, read: { db in try MachineV2TraceRow.where { $0.correlationID.eq("expired") }.fetchCount(db) }, until: { $0 == expected })
-    }
-    let rows = try await space.writer.read { db in try MachineV2TraceRow.all.fetchAll(db).map(\.correlationID) }
-    #expect(rows.count == 14)
-    #expect(rows.contains("private") && rows.contains("young"))
-    try await space.close()
-  }
-}
-
 private func machineSpace() throws -> Space {
   try withDependencies { $0.continuousClock = ContinuousClock() } operation: { try Space.inMemory() }
-}
-
-extension MachineV2StoreTests {
-  @Test func pinBeforeFlushAppliesToBufferedTraces() async throws {
-    let space = try makeSpace(clock: ContinuousClock())
-    let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-    let request = UUID()
-    try sink(.init(request: request, correlation: "manual", path: "/machine/v2/machines/disk", event: .complete, elapsed: .zero))
-    try await space.pinMachineV2Trace(group: .shared, correlation: "manual", problem: 42)
-    try await waitForTrace(space, request: request, event: .complete)
-    let pin = try await space.writer.read { db in
-      try MachineV2TraceRow.where { $0.requestID.eq(request.uuidString) }.fetchOne(db)?.problemID
-    }
-    #expect(pin == 42)
-    try await space.close()
-  }
-
-  @Test func retentionCursorBoundsPinnedPrefixAndEqualTimestampRows() async throws {
-    let space = try machineSpace()
-    try await space.writer.write { db in
-      for n in 0 ..< 1600 {
-        let row = MachineV2TraceRow(id: "cursor/\(n)", grp: "shared", requestID: "\(n)", correlationID: "cursor", path: "/machine/v2/machines/disk", event: "complete", startAt: "2001", elapsedMs: 0, problemID: n < 1100 ? 1 : nil)
-        try MachineV2TraceRow.insert { row }.execute(db)
-      }
-      var cursor: (String, Int64)?
-      for remaining in [1600, 1600, 1164, 1100] {
-        cursor = try MachineTraceWriter.prune(group: .shared, cutoff: "2002", after: cursor, in: db)
-        #expect(try MachineV2TraceRow.all.fetchCount(db) == remaining)
-      }
-      #expect(cursor == nil)
-    }
-    try await space.close()
-  }
-}
-
-extension MachineV2StoreTests {
-  @Test func unpinReceiptCannotHideALaterActiveIncident() async throws {
-    let space = try makeSpace(clock: ContinuousClock())
-    let sink = try await space.machineV2TraceSink(group: .shared, problemsGroup: .shared)
-    let correlation = UUID()
-    try await space.pinMachineV2Trace(group: .shared, correlation: correlation.uuidString, problem: nil)
-    let problem = try await space.recordMachineV2Problem(group: .shared, traceGroup: .shared, invariant: 13, code: .invalidResponse, incident: "after-unpin", correlation: correlation)
-    let request = UUID()
-    try sink(.init(request: request, correlation: correlation.uuidString, path: "/machine/v2/machines/disk", event: .complete, elapsed: .zero))
-    try await waitForTrace(space, request: request, event: .complete)
-    let pin = try await space.writer.read { db in
-      try MachineV2TraceRow.where { $0.requestID.eq(request.uuidString) }.fetchOne(db)?.problemID
-    }
-    #expect(pin == problem)
-    try await space.close()
-  }
 }
 
 private func storeMachine(_ name: String, space: Space) async throws -> String {

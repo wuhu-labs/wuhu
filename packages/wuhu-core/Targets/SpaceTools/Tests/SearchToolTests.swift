@@ -1,7 +1,7 @@
 import Clocks
 import Dependencies
 import DeterministicDependencies
-import FileSearch
+@testable import FileSearch
 import Foundation
 import JSONValue
 import SpaceContract
@@ -228,19 +228,21 @@ import Testing
   // page's read budget is found on a later page, as it is on a machine.
   @Test func aFileLargerThanAPageReadIsGreppedToItsEnd() async throws {
     let context = try makeContext()
-    let filler = String(repeating: "padding line\n", count: (SearchLimits.pageReadBytes + (1 << 20)) / 13)
+    let readBudget = 4 * SearchLimits.lineBytes
+    let filler = String(repeating: "padding line\n", count: (readBudget + SearchLimits.lineBytes) / 13)
     _ = try await seedFile("/big.txt", filler + "needle", context)
+    let target = try await context.resolve("/")
+    let source = SpaceSearchSource(backend: target.backend, hidesRootEntries: target.isSpace)
+    var query = SearchQuery(mode: .grep, pattern: "needle", root: target.path, scope: "space")
     var found: [Int] = []
-    var step: String?
     var pages = 0
     repeat {
-      let input: JSONValue = step.map { .object(["pattern": "needle", "step": .string($0)]) } ?? .object(["pattern": "needle"])
-      let page = try await run("grep", input, context, as: GrepOutput.self)
+      let page = try await query.run(in: source, clock: TestClock(), readBudget: readBudget)
       #expect(page.skipped.isEmpty)
-      found += page.matches.map(\.line)
-      step = page.cursor
+      found += page.hits.compactMap(\.line)
+      query.step = page.cursor
       pages += 1
-    } while step != nil && pages < 10
+    } while query.step != nil && pages < 10
     #expect(found == [filler.utf8.count / 13 + 1])
     #expect(pages == 2)
   }

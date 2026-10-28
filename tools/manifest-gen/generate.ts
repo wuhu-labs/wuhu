@@ -1617,6 +1617,21 @@ export async function targetCheckPlatforms(
   return result
 }
 
+export async function testSnapshotReferences(
+  packageDir: string,
+): Promise<Map<string, string>> {
+  const references = new Map<string, string>()
+  for (const target of await discoverTargets(packageDir)) {
+    for (const test of testTargets(target)) {
+      references.set(
+        test.name,
+        join(target.manifestDir, test.sources, '__Snapshots__'),
+      )
+    }
+  }
+  return references
+}
+
 function platformsAttr(
   platforms: CheckPlatform[],
   location: string,
@@ -2731,6 +2746,12 @@ ${
 // them, and without this every lane would. An artifact may narrow this.
 export const denoCheckPlatforms: CheckPlatform[] = ['linux', 'mac']
 
+export function denoPackagePlatforms(
+  manifest: { platforms?: CheckPlatform[] },
+): CheckPlatform[] {
+  return manifest.platforms ?? denoCheckPlatforms
+}
+
 export async function discoverPackageDirs(root: string): Promise<string[]> {
   return (await globFiles(`${root}/*/package.yml`))
     .map((manifestPath) => manifestPath.slice(0, -'/package.yml'.length))
@@ -2744,6 +2765,15 @@ interface DenoPackageManifest {
   exportedDirs?: Record<string, string>
   links?: string[]
   artifacts?: Record<string, DenoArtifact>
+  platforms?: CheckPlatform[]
+  tests?: Record<string, DenoTest>
+}
+
+// A checking task beyond fmt/typecheck/lint/test: its own platforms (default
+// the package's), and `manual` keeps it out of `//...` and CI.
+export interface DenoTest {
+  platforms?: CheckPlatform[]
+  manual?: boolean
 }
 
 // A tree output `deno task <task> <out dir>` produces, keyed by target name.
@@ -2920,6 +2950,27 @@ function denoWorkspaceAttrs(
   return attrs
 }
 
+// Bazel reserves one CPU for a test unless a `cpu:N` tag says otherwise, so a
+// `--parallel` run declares its width in DENO_JOBS and reserves that many.
+function denoTaskTags(
+  command: string,
+  location: string,
+  manual = false,
+): string {
+  const jobs = /(?:^|\s)DENO_JOBS=(\d+)\s/.exec(command)?.[1]
+  if (jobs === undefined && /\s--parallel\b/.test(command)) {
+    throw new Error(
+      `${location} runs deno test --parallel without DENO_JOBS=<n>, so Bazel cannot reserve its CPUs`,
+    )
+  }
+  const tags = [
+    ...jobs === undefined ? [] : [`cpu:${jobs}`],
+    ...manual ? ['manual'] : [],
+    'requires-network',
+  ]
+  return tags.length === 1 ? '["requires-network"]' : quotedStarlarkList(tags)
+}
+
 // A deno package is one atomic Bazel target per workspace (repo-layout law 4):
 // a `bundle` tree output when the manifest declares a `build` task, plus one
 // test per checking task. All key on sources + deno.lock + the pinned toolchain.
@@ -2949,7 +3000,7 @@ export function generateDenoBuildBazel(
     ? denoWorkspaceAttrs(packageDir, workspace!)
     : ''
   const denoPlatformsAttr = platformsAttr(
-    denoCheckPlatforms,
+    denoPackagePlatforms(manifest),
     `${packageDir}/deno.json`,
   )
   const symbols: string[] = []
@@ -2962,11 +3013,39 @@ export function generateDenoBuildBazel(
       `deno_bundle(\n    name = "bundle",\n    srcs = ${srcs},\n${generatedAttr}${workspaceAttr}    output_dir = "build/client",\n    tags = ["requires-network"],\n${denoPlatformsAttr})\n`,
     )
   }
-  for (const task of ['fmt', 'typecheck', 'lint', 'test']) {
-    if (!tasks[task]) continue
+  const standard = ['fmt', 'typecheck', 'lint', 'test']
+  const checking: [string, string, boolean][] = standard
+    .filter((task) => tasks[task])
+    .map((task) => [task, denoPlatformsAttr, false])
+  for (
+    const [task, test] of Object.entries(manifest.tests ?? {})
+      .sort(([lhs], [rhs]) => lhs.localeCompare(rhs))
+  ) {
+    const location = `${packageDir}/deno.json tests.${task}`
+    if (standard.includes(task)) {
+      throw new Error(`${location}: ${task} is a standard checking task`)
+    }
+    if (!tasks[task]) {
+      throw new Error(`${location} names a task deno.json does not declare`)
+    }
+    checking.push([
+      task,
+      test.platforms
+        ? platformsAttr(test.platforms, location)
+        : denoPlatformsAttr,
+      test.manual ?? false,
+    ])
+  }
+  for (const [task, platforms, manual] of checking) {
     if (!symbols.includes('deno_task_test')) symbols.push('deno_task_test')
     chunks.push(
-      `deno_task_test(\n    name = "${task}",\n    srcs = ${srcs},\n${generatedAttr}${workspaceAttr}    tags = ["requires-network"],\n    task = "${task}",\n${denoPlatformsAttr})\n`,
+      `deno_task_test(\n    name = "${task}",\n    srcs = ${srcs},\n${generatedAttr}${workspaceAttr}    tags = ${
+        denoTaskTags(
+          tasks[task]!,
+          `${packageDir}/deno.json tasks.${task}`,
+          manual,
+        )
+      },\n    task = "${task}",\n${platforms})\n`,
     )
   }
   for (

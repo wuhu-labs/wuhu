@@ -4,6 +4,8 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
+import ControlledTime
+import Dependencies
 import ExecutionOwner
 import Fetch
 import GRDB
@@ -30,35 +32,40 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
 @Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct RequestStallRuntimeTests {
   @Test func archiveStopsAnInProcessScriptSoItCannotHoldALaterRequest() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness(assembledModels: testModelsJSON)
-      let space = harness.space
-      let model = SessionExecutor.kernel(.init(provider: "offline", model: "small", effort: "none"))
-      let parent = try await harness.store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "owner", executor: model)
-      let task = try await harness.store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: parent.rawValue, executor: model)
-      func taskScripts() async -> Int { await harness.runtime.workers.activity().scripts.values.filter { $0 == task }.count }
+      try await withDependencies { $0.installTimeControl(anchor: Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))) } operation: {
+        @Dependency(\.timeControl) var time
+        let harness = try await SessionHarness(assembledModels: testModelsJSON)
+        let space = harness.space
+        let model = SessionExecutor.kernel(.init(provider: "offline", model: "small", effort: "none"))
+        let parent = try await harness.store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "owner", executor: model)
+        let task = try await harness.store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: parent.rawValue, executor: model)
+        func taskScripts() async -> Int { await harness.runtime.workers.activity().scripts.values.filter { $0 == task }.count }
 
-      try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await harness.runtime.run() }
-        defer { group.cancelAll() }
-        let started = try await callResult(harness, task.rawValue, tool: "run_script", .object([
-          "source": .string("result('watching'); await sleep(3_600_000)"),
-        ]))
-        #expect(resultText(started)?.contains("watching") == true)
-        #expect(await taskScripts() == 1)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+          group.addTask { await harness.runtime.run() }
+          defer { group.cancelAll() }
+          let started = try await callResult(harness, task.rawValue, tool: "run_script", .object([
+            "source": .string("result('watching'); await sleep(3_600_000)"),
+          ]))
+          #expect(resultText(started)?.contains("watching") == true)
+          #expect(await taskScripts() == 1)
 
-        // The production firing sees the script as a wait.
-        let first = RequestID("stall-before-archive")
-        _ = try await harness.store.openRequest(on: task, from: .session(parent), messageID: MessageID(first.rawValue), text: "watch", deadline: nil, stallSeconds: 1)
-        try await ContinuousClock().sleep(for: .seconds(3))
-        #expect(try await stallAlerts(space, to: parent, for: first) == 0)
+          // The production firing sees the script as a wait.
+          let first = RequestID("stall-before-archive")
+          _ = try await harness.store.openRequest(on: task, from: .session(parent), messageID: MessageID(first.rawValue), text: "watch", deadline: nil, stallSeconds: 1)
+          try await time.wake("the first stall check", after: 1)
+          try await time.asleep("the stall check the wait reschedules", dueIn: 1)
+          #expect(try await stallAlerts(space, to: parent, for: first) == 0)
 
-        try await harness.runtime.service.archive(task, force: true)
-        try await until("archive stops the task's script") { await taskScripts() == 0 }
-        try await harness.runtime.service.unarchive(task)
+          try await harness.runtime.service.archive(task, force: true)
+          try await until("archive stops the task's script") { await taskScripts() == 0 }
+          try await harness.runtime.service.unarchive(task)
 
-        let second = RequestID("stall-after-unarchive")
-        _ = try await harness.store.openRequest(on: task, from: .session(parent), messageID: MessageID(second.rawValue), text: "again", deadline: nil, stallSeconds: 1)
-        try await until("the new request's stall alert") { try await stallAlerts(space, to: parent, for: second) == 1 }
+          let second = RequestID("stall-after-unarchive")
+          _ = try await harness.store.openRequest(on: task, from: .session(parent), messageID: MessageID(second.rawValue), text: "again", deadline: nil, stallSeconds: 1)
+          try await time.wake("the new request's stall check", after: 1)
+          try await until("the new request's stall alert") { try await stallAlerts(space, to: parent, for: second) == 1 }
+        }
       }
     }
   }

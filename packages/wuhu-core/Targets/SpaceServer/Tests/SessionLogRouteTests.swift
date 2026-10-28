@@ -76,26 +76,26 @@ private func toolHeavyKernelSession(_ harness: SessionHarness, rounds: Int) asyn
   @Test func kernelLogFiltersServerSideAndPaginatesPostFilter() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      // Raw rows: 1 generation head + 60 messages + 240 tool rows.
-      let id = try await toolHeavyKernelSession(harness, rounds: 60)
+      // Raw rows: 1 generation head + 12 messages + 48 tool rows.
+      let id = try await toolHeavyKernelSession(harness, rounds: 12)
       let path = "/v1/session/\(id.rawValue)/log"
 
-      let narrative = try await decodeLog(harness.get(path, query: ["level": "1", "limit": "50"]))
-      #expect(narrative.items.count == 50)
-      #expect(try narrative.items.compactMap(messageText).count == 50, "tail-50 at L1 is 50 narrative items, not 50 raw rows")
-      #expect(try messageText(try #require(narrative.items.first)) == "msg 10")
-      #expect(try messageText(try #require(narrative.items.last)) == "msg 59")
+      let narrative = try await decodeLog(harness.get(path, query: ["level": "1", "limit": "10"]))
+      #expect(narrative.items.count == 10)
+      #expect(try narrative.items.compactMap(messageText).count == 10, "tail-10 at L1 is 10 narrative items, not 10 raw rows")
+      #expect(try messageText(try #require(narrative.items.first)) == "msg 2")
+      #expect(try messageText(try #require(narrative.items.last)) == "msg 11")
 
-      let defaultLevel = try await decodeLog(harness.get(path, query: ["limit": "50"]))
+      let defaultLevel = try await decodeLog(harness.get(path, query: ["limit": "10"]))
       #expect(defaultLevel.items.map(\.ref) == narrative.items.map(\.ref))
 
       let defaultLimit = try await decodeLog(harness.get(path, query: ["level": "3"]))
       #expect(defaultLimit.items.count == 50)
 
       let verbose = try await decodeLog(harness.get(path, query: ["level": "2", "limit": "500"]))
-      #expect(verbose.items.count == 181)
+      #expect(verbose.items.count == 37)
       let everything = try await decodeLog(harness.get(path, query: ["level": "3", "limit": "500"]))
-      #expect(everything.items.count == 301)
+      #expect(everything.items.count == 61)
 
       #expect(try await harness.get(path, query: ["level": "9"]).status == .badRequest)
       #expect(try await harness.get(path, query: ["limit": "0"]).status == .badRequest)

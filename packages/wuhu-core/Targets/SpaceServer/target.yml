@@ -17,6 +17,8 @@ dependencies:
   - MainHub
   - TaskLifetime
   - ServerTelemetry
+  - OTel
+  - ServiceLifecycle
   - Assertion
 
 
@@ -68,6 +70,7 @@ tests:
     - ServeTLS
     - Subprocess
     - ServerTelemetry
+    - Tracing
     - Assertion
 
 

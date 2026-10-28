@@ -6,7 +6,7 @@ checks:
   test: [linux, mac]
 dependencies:
   - TaskLifetime
-  - ServerTelemetry
+  - Tracing
   - OperationProtocol
   - JSONValue
   - Fetch
@@ -15,7 +15,8 @@ dependencies:
   - FileSearch
 tests:
   dependencies:
-    - ServerTelemetry
+    - InMemoryTracing
+    - Tracing
     - OperationClientTestSupport
     - OperationRuntime
     - Clocks

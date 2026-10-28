@@ -137,7 +137,7 @@ enum Main {
             groupPrivateKey: config.groupPrivateKey.map { URL(fileURLWithPath: $0) },
             webAppDirectory: config.webApp.map { URL(fileURLWithPath: $0, isDirectory: true) },
             webContent: try WebBundle.load(),
-            otelEndpoint: config.otelEndpoint.flatMap(URL.init(string:)),
+            telemetryEnvironment: ProcessInfo.processInfo.environment,
             workers: config.workerProcess ? .process(reboots: reboots) : .inProcess,
           )
         }

@@ -22,16 +22,19 @@ import Testing
 // space.sqlite and goldens.json out of the test's undeclared outputs.
 @Suite(.deterministicDependencies) struct BackcompatTests {
   static let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Backcompat")
+  static let goldens = try? JSONDecoder().decode(Goldens.self, from: Data(contentsOf: folder.appending(path: "goldens.json")))
 
-  @Test func todaysClientSQLAnswersByteForByte() async throws {
-    let goldens = try JSONDecoder().decode(
-      Goldens.self, from: Data(contentsOf: Self.folder.appending(path: "goldens.json")),
-    )
-    let answers = try await Backcompat.answers(fixture: Self.folder.appending(path: "space.sqlite"), meta: goldens.meta)
-    #expect(answers.keys.sorted() == goldens.answers.keys.sorted())
-    for (name, expected) in goldens.answers.sorted(by: { $0.key < $1.key }) {
-      #expect(answers[name] == expected, "\(name)")
-    }
+  @Test func everyProbeHasAGolden() throws {
+    let goldens = try #require(Self.goldens)
+    #expect(Backcompat.probes(goldens.meta).keys.sorted() == goldens.answers.keys.sorted())
+  }
+
+  @Test(arguments: goldens?.answers.keys.sorted() ?? [])
+  func todaysClientSQLAnswersByteForByte(_ name: String) async throws {
+    let goldens = try #require(Self.goldens)
+    let probe = try #require(Backcompat.probes(goldens.meta)[name])
+    let answer = try await Backcompat.answer(probe, fixture: Self.folder.appending(path: "space.sqlite"), meta: goldens.meta)
+    #expect(answer == goldens.answers[name])
   }
 
   @Test(.enabled(if: ProcessInfo.processInfo.environment["BACKCOMPAT_RECORD"] != nil))
@@ -176,15 +179,20 @@ enum Backcompat {
   static func answers(fixture: URL, meta: Goldens.Meta) async throws -> [String: String] {
     var answers: [String: String] = [:]
     for (name, probe) in probes(meta) {
-      let scratch = try scratchURL("backcompat")
-      try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-      defer { try? FileManager.default.removeItem(at: scratch) }
-      let file = scratch.appending(path: "space.sqlite")
-      try Data(contentsOf: fixture).write(to: file)
-      if try !Wuhu45Migration.isApplied(to: file) { try Wuhu45Migration.apply(to: file) }
-      answers[name] = try await answer(probe, file: file, meta: meta)
+      answers[name] = try await answer(probe, fixture: fixture, meta: meta)
     }
     return answers
+  }
+
+  /// Answers `probe` against a fresh copy of `fixture`, so no probe sees another's mutation.
+  static func answer(_ probe: Probe, fixture: URL, meta: Goldens.Meta) async throws -> String {
+    let scratch = try scratchURL("backcompat")
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    let file = scratch.appending(path: "space.sqlite")
+    try Data(contentsOf: fixture).write(to: file)
+    if try !Wuhu45Migration.isApplied(to: file) { try Wuhu45Migration.apply(to: file) }
+    return try await answer(probe, file: file, meta: meta)
   }
 
   private static func answer(_ probe: Probe, file: URL, meta: Goldens.Meta) async throws -> String {

@@ -42,7 +42,7 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
     public var description: String { rawValue }
     /// Whether this build defines the code.
     public var isKnown: Bool { Self.known.contains(self) }
-    public static let known: Set<Self> = [.unknownMachine, .unknownKind, .unknownOperation, .unknownChannel, .unsupportedProtocol, .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invalidInput, .inputTooLarge, .recordTooLarge, .resultTooLarge, .capacityExceeded, .invocationConflict, .machineUnavailable, .callerDeadline, .requestDeadline, .requestCancelled, .transport, .invalidResponse, .kindFailed, .machineNotAuthorized, .traceUnavailable, .storeUnavailable, .fileChanged, .fileUnavailable, .credentialExpired, .spawnFailed, .supervisorUnavailable, .supervisorIdentityMismatch, .invalidConfiguration, .kindUnavailable, .permissionDenied, .deviceLocked]
+    public static let known: Set<Self> = [.unknownMachine, .unknownKind, .unknownOperation, .unknownChannel, .unsupportedProtocol, .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invalidInput, .inputTooLarge, .recordTooLarge, .resultTooLarge, .capacityExceeded, .invocationConflict, .machineUnavailable, .callerDeadline, .requestDeadline, .requestCancelled, .transport, .invalidResponse, .kindFailed, .machineNotAuthorized, .storeUnavailable, .fileChanged, .fileUnavailable, .credentialExpired, .spawnFailed, .supervisorUnavailable, .supervisorIdentityMismatch, .invalidConfiguration, .kindUnavailable, .permissionDenied, .deviceLocked]
     public static let unknownMachine = Self("unknownMachine")
     public static let unknownKind = Self("unknownKind")
     public static let unknownOperation = Self("unknownOperation")
@@ -67,7 +67,6 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
     public static let invalidResponse = Self("invalidResponse")
     public static let kindFailed = Self("kindFailed")
     public static let machineNotAuthorized = Self("machineNotAuthorized")
-    public static let traceUnavailable = Self("traceUnavailable")
     public static let storeUnavailable = Self("storeUnavailable")
     public static let fileChanged = Self("fileChanged")
     public static let fileUnavailable = Self("fileUnavailable")
@@ -394,29 +393,6 @@ public struct OperationSnapshot: Codable, Sendable {
 public struct StopRequest: Codable, Sendable {
   public let reason: String
   public init(reason: String) { self.reason = reason }
-}
-
-public struct OperationTrace: Sendable {
-  public enum Event: String, Sendable { case dispatch, head, complete, deadline, cancelled, failure }
-  public let request: UUID
-  public let correlation: String
-  public let path: String
-  public let event: Event
-  public let elapsed: Duration
-  public let status: Int?
-  public let error: OperationError.Code?
-  public init(
-    request: UUID,
-    correlation: String,
-    path: String,
-    event: Event,
-    elapsed: Duration,
-    status: Int? = nil,
-    error: OperationError.Code? = nil,
-  ) {
-    self.request = request; self.correlation = correlation; self.path = path; self.event = event
-    self.elapsed = elapsed; self.status = status; self.error = error
-  }
 }
 
 /// In-process routers bracket local preparation so it cannot be mistaken for silence from the machine.

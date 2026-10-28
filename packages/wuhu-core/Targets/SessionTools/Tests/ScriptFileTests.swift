@@ -145,17 +145,18 @@ import Testing
   }
 
   @Test func listingBoundsApplyToLiveHistoricalAndHiddenRootViews() async throws {
-    try await withRig { rig in
+    var limits = ScriptLimits.standard; limits.listingEntries = 8
+    try await withRig(limits: limits) { rig in
       var rev = 0
-      for index in 0 ..< 501 {
+      for index in 0 ..< 9 {
         let token = try await rig.space.fs(.shared).write("/many/\(index).md", Data(), ifMatch: nil)
         rev = Int(String(decoding: token.bytes, as: UTF8.self))!
       }
       #expect(try await rig.space.fs(.shared, listingLimit: 7).list("/many").1.count == 7)
       #expect(try await rig.space.fs(.shared, at: Rev(rev), listingLimit: 7).list("/many").1.count == 7)
       #expect(try await rig.evaluate("import {list} from 'wuhu:space';const codes=[];for(const options of [{},{rev:\(rev)}]){try{await list('/many',options);codes.push('ok')}catch(e){codes.push(e.code)}};result(codes)") == ["invalidArgument", "invalidArgument"])
-      _ = try await rig.space.fs(.shared).delete("/many/500.md", ifMatch: nil)
-      #expect(try await rig.evaluate("import {list} from 'wuhu:space';result((await list('/many')).entries.length)") == 500)
+      _ = try await rig.space.fs(.shared).delete("/many/8.md", ifMatch: nil)
+      #expect(try await rig.evaluate("import {list} from 'wuhu:space';result((await list('/many')).entries.length)") == 8)
     }
   }
 
@@ -183,24 +184,25 @@ import Testing
   }
 
   @Test func listingByteBudgetRefusesLongNamesBeforeEntryCountLimit() async throws {
-    try await withRig { rig in
-      let name = String(repeating: "x", count: 64 << 10)
+    var limits = ScriptLimits.standard; limits.fileResultBytes = 256 << 10
+    try await withRig(limits: limits) { rig in
+      let name = String(repeating: "x", count: 8 << 10)
       var rev = 0
-      for index in 0 ..< 400 {
+      for index in 0 ..< 40 {
         let token = try await rig.space.fs(.shared).write("/long/\(name)\(index)", Data(), ifMatch: nil)
         rev = Int(String(decoding: token.bytes, as: UTF8.self))!
       }
       for at in [nil, Rev(rev)] {
         do {
-          _ = try await rig.space.fs(.shared, at: at, listingLimit: 501, listingByteLimit: 24 << 20).list("/long")
+          _ = try await rig.space.fs(.shared, at: at, listingLimit: 501, listingByteLimit: limits.fileResultBytes).list("/long")
           Issue.record("long-name listing exceeded byte allowance")
         } catch {
-          #expect(error as? SpaceError == .listingResultTooLarge(byteLimit: 24 << 20))
+          #expect(error as? SpaceError == .listingResultTooLarge(byteLimit: limits.fileResultBytes))
         }
       }
       let value = try await rig.evaluate("import {list} from 'wuhu:space';const failures=[];for(const options of [{},{rev:\(rev)}]){try{await list('/long',options);failures.push('ok')}catch(e){failures.push({code:e.code,message:e.message})}};result(failures)")
-      #expect(value == [["code": "byteLimitExceeded", "message": "listing exceeds 25165824 byte allowance"], ["code": "byteLimitExceeded", "message": "listing exceeds 25165824 byte allowance"]], "\(value)")
-      #expect(try await rig.space.fs(.shared, listingLimit: 1, listingByteLimit: 24 << 20).list("/long").1.count == 1)
+      #expect(value == [["code": "byteLimitExceeded", "message": "listing exceeds 262144 byte allowance"], ["code": "byteLimitExceeded", "message": "listing exceeds 262144 byte allowance"]], "\(value)")
+      #expect(try await rig.space.fs(.shared, listingLimit: 1, listingByteLimit: limits.fileResultBytes).list("/long").1.count == 1)
       #expect(try await rig.evaluate("import {list} from 'wuhu:space';result((await list('/')).entries.length>0)") == true)
     }
   }

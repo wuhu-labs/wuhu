@@ -1,0 +1,24 @@
+--- a/swiftpkg/internal/pkginfos.bzl
++++ b/swiftpkg/internal/pkginfos.bzl
+@@ -440,7 +440,7 @@
+     )
+ 
+ def _trait_condition_satisfied(condition_traits, enabled_traits):
+-    """Returns True if all traits in the condition are enabled.
++    """Returns True if any trait in the condition is enabled, as SwiftPM's `.when(traits:)` does.
+ 
+     Args:
+         condition_traits: A `list` of trait name strings from a condition.
+@@ -452,9 +452,9 @@
+     if not condition_traits:
+         return True
+     for trait in condition_traits:
+-        if trait not in enabled_traits:
+-            return False
+-    return True
++        if trait in enabled_traits:
++            return True
++    return False
+ 
+ def _new_target_dependency_condition_from_dump_json_map(dump_map):
+     if dump_map == None:

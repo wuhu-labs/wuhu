@@ -9,7 +9,7 @@ import Testing
 @Suite(.deterministicDependencies(clock: TestClock())) struct TemporaryFolderLeakTests {
   @Test(.enabled(if: !LeakGuard.isChild)) func aRepresentativeRunLeavesNoTemporaryFolders() async throws {
     let run = try await LeakGuard.run(
-      filter: "SecretVerbTests|UserVerbTests|SessionIdentityCLITests|EnrollmentCLITests|ServerTrustStoreTests|UpgradeCLITests|ClientServerFaithfulnessTests",
+      filter: "SecretVerbTests,UserVerbTests,SessionIdentityCLITests,EnrollmentCLITests,ServerTrustStoreTests,UpgradeCLITests,ClientServerFaithfulnessTests",
     )
     #expect(run.status == 0, "\(run.output)")
     #expect(run.ran > 0, "\(run.output)")

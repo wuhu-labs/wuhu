@@ -373,7 +373,7 @@ public enum SpaceServer {
     groupPrivateKey: URL? = nil,
     webAppDirectory: URL? = nil,
     webContent: WebContent = WebContent(),
-    otelEndpoint: URL? = nil,
+    telemetryEnvironment: [String: String] = [:],
     hooks: ServeNIOHooks = ServeNIOHooks(),
     workers: ServeWorkers = .inProcess,
   ) async throws -> ServeEnd {
@@ -449,12 +449,19 @@ public enum SpaceServer {
       placement = .process(executable: currentExecutable(), socket: socket, handover: try inherited.map { try Handover.take(from: $0.handover) })
       logger.notice(inherited == nil ? "workers run in their own processes" : "main rebooted in place; workers announce again")
     }
-    let spaceHost = try await SpaceHost.open(
-      folder: folder, deployment: deployment, configDirectory: configDirectory, allowEnvironmentCredentials: true,
-      fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
-      aiDisclosure: aiDisclosure, version: version, webContent: webContent,
-      devImport: devImport, devExport: devExport, placement: placement,
-    )
+    let telemetry = try await ServerTelemetryRuntime(environment: telemetryEnvironment, version: version)
+    let spaceHost: SpaceHost
+    do {
+      spaceHost = try await SpaceHost.open(
+        folder: folder, deployment: deployment, configDirectory: configDirectory, allowEnvironmentCredentials: true,
+        fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
+        aiDisclosure: aiDisclosure, version: version, webContent: webContent,
+        devImport: devImport, devExport: devExport, placement: placement,
+      )
+    } catch {
+      await telemetry?.shutdown()
+      throw error
+    }
     let directory = SingleSpaceDirectory(host: spaceHost)
     var options = ServeOptions()
     options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
@@ -473,14 +480,7 @@ public enum SpaceServer {
       }
     } catch {
       try? await spaceHost.shutdown()
-      throw error
-    }
-    let telemetry: ServerTelemetryRuntime?
-    do { telemetry = try otelEndpoint.map { try ServerTelemetryRuntime(endpoint: $0, version: version) } }
-    catch {
-      await api.shutdown()
-      await workerAPI?.shutdown()
-      try? await spaceHost.shutdown()
+      await telemetry?.shutdown()
       throw error
     }
     // Serves until cancelled, or until a reboot has put new workers up; then

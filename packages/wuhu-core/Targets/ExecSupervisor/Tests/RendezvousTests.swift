@@ -117,19 +117,11 @@ final class InProcessWorkers: Sendable {
     }
   }
 
-  /// The workers end with the composition: one that holds nothing exits once its agent is gone. Only one that outlives the
-  /// fallback is cancelled, which can cut a redial short.
+  /// The workers end with the composition, cancelled rather than left to their lifetime rule: one the agent left before it
+  /// linked would wait out its first-link grace.
   func finish() async {
     let tasks = tasks.withLock { $0 }
-    await withTaskGroup(of: Void.self) { group in
-      group.addTask { for task in tasks { await task.value } }
-      group.addTask {
-        do { try await ContinuousClock().sleep(for: .seconds(15)) } catch { return }
-        for task in tasks { task.cancel() }
-      }
-      await group.next()
-      group.cancelAll()
-    }
+    for task in tasks { task.cancel() }
     for task in tasks { await task.value }
   }
 }

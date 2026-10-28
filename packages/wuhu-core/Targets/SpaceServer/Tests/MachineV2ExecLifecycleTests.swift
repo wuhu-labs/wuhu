@@ -608,7 +608,7 @@ private struct Rig {
   @Test(arguments: [false, true])
   func outputCutBeforeARestartEndsWhereTheCallerHasIt(holdConsumption: Bool) async throws {
     let rig = try await Rig()
-    let store = HeldConsumption(base: try await rig.space.machineV2Store(group: .shared, key: rig.key, problemsGroup: MachineV2Service.problemsGroup))
+    let store = HeldConsumption(base: try await rig.space.machineV2Store(group: .shared, key: rig.key))
     defer { store.release.open() }
     if !holdConsumption { store.release.open() }
     let minted = try await rig.space.mintExec(machine: rig.machine.id, group: .shared)
@@ -662,7 +662,7 @@ private struct Rig {
 
   @Test func aPartlyAcknowledgedChunkResumesWithoutDuplicatingItsPrefix() async throws {
     let rig = try await Rig()
-    let store = HeldConsumption(base: try await rig.space.machineV2Store(group: .shared, key: rig.key, problemsGroup: MachineV2Service.problemsGroup))
+    let store = HeldConsumption(base: try await rig.space.machineV2Store(group: .shared, key: rig.key))
     store.release.open()
     let minted = try await rig.space.mintExec(machine: rig.machine.id, group: .shared)
     let endpoint = ChannelEndpoint()
@@ -781,7 +781,7 @@ private struct Rig {
 
       let space = rig.space, key = rig.key
       let second = await rig.reopen { group in
-        FlakyLive(base: try await space.machineV2Store(group: group, key: key, problemsGroup: MachineV2Service.problemsGroup), failures: 1)
+        FlakyLive(base: try await space.machineV2Store(group: group, key: key), failures: 1)
       }
       #expect(await second.recovered(.shared) == false)
       await #expect { _ = try await second.operations(group: .shared) } throws: { ($0 as? OperationError)?.code == .storeUnavailable }
@@ -975,7 +975,7 @@ extension MachineV2ExecLifecycleTests {
 
       let space = rig.space, key = rig.key
       let second = await rig.reopen { group in
-        RefusingWrites(base: try await space.machineV2Store(group: group, key: key, problemsGroup: MachineV2Service.problemsGroup), refused: refused.id)
+        RefusingWrites(base: try await space.machineV2Store(group: group, key: key), refused: refused.id)
       }
       #expect(await second.recovered(.shared))
       let hub = MachineHub(space: rig.space)

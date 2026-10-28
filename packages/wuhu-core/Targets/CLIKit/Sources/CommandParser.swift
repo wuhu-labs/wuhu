@@ -369,13 +369,7 @@ extension Command {
       let cert = try parser.option("--cert", verb: verb)
       let key = try parser.option("--key", verb: verb)
       let webApp = try parser.option("--web-app", verb: verb)
-      let otelEndpoint = try parser.option("--otel-endpoint", verb: verb)
       let workerProcess = parser.flag("--worker-process")
-      if let otelEndpoint {
-        guard let url = URL(string: otelEndpoint), ["http", "https"].contains(url.scheme), url.host != nil,
-              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil
-        else { throw UsageError(message: "serve: --otel-endpoint must be an HTTP(S) collector URL without credentials, query or fragment") }
-      }
       var ignored: [String] = []
       for name in ["--web-port", "--web-origin"] {
         if try parser.option(name, verb: verb) != nil { ignored.append(name) }
@@ -436,7 +430,7 @@ extension Command {
         contentHostPattern: contentHostPattern,
         groupCertificate: groupCert,
         groupPrivateKey: groupKey,
-        otelEndpoint: otelEndpoint, webApp: webApp,
+        webApp: webApp,
         workerProcess: workerProcess,
         ignoredOptions: ignored,
       ))
@@ -1361,7 +1355,7 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>] [--worker-process]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--worker-process]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls

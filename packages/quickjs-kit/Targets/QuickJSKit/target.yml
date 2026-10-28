@@ -21,6 +21,7 @@ dependencies:
         publicHeader: quickjs.h
         defines: [_GNU_SOURCE]
         unsafeFlags:
+          - "-O2"
           - "-funsigned-char"
           - "-Wno-array-bounds"
           - "-Wno-implicit-fallthrough"

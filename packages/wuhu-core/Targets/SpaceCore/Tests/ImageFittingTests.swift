@@ -64,8 +64,8 @@ import Testing
   }
 
   @Test func `a 6000 px image is scaled to what each model takes`() throws {
-    let png = try #require(Self.png(width: 6000, height: 4000))
-    for (limits, patch) in [(ImageLimits.claude, 28), (.openAI, 32), (ImageLimits.claude.forRequest(imageCount: 21), 28)] {
+    let png = try #require(Self.png(width: 6000 / 4, height: 4000 / 4))
+    for (limits, patch) in [(Self.quarter(.claude), 28), (Self.quarter(.openAI), 32), (Self.quarter(.claude).forRequest(imageCount: 21), 28)] {
       guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
         Issue.record("the image must be scaled, not dropped")
         continue
@@ -78,44 +78,41 @@ import Testing
   }
 
   @Test func `an image past the byte budget is re-encoded under it`() throws {
-    let png = try #require(Self.png(width: 2000, height: 2000, noise: true))
-    #expect(png.count > ImageMedia.maxBytes)
-    guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: .claude) else {
+    let limits = Self.quarter(.claude)
+    let png = try #require(Self.png(width: 2000 / 4, height: 2000 / 4, noise: true))
+    #expect(png.count > limits.maxBytes)
+    guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
       Issue.record("the image must be re-encoded, not dropped")
       return
     }
-    #expect(data.count <= ImageMedia.maxBytes)
+    #expect(data.count <= limits.maxBytes)
   }
 
   @Test func `many mid-size images in one request stay under its byte budget`() throws {
-    // Twelve noisy 1200 px screenshots of about 4 MB each: 50 MB in all.
-    let png = try #require(Self.png(width: 1200, height: 1200, noise: true))
-    #expect(png.count > 4_000_000)
-    for base in [ImageLimits.openAI, .claude] {
+    // Twelve noisy 1200 px screenshots of about 4 MB each, at a quarter scale.
+    let png = try #require(Self.png(width: 1200 / 4, height: 1200 / 4, noise: true))
+    #expect(png.count > 4_000_000 / 16)
+    for base in [Self.quarter(.openAI), Self.quarter(.claude)] {
       let budget = try #require(base.requestBytes)
-      let limits = base.forRequest(imageCount: 12)
-      var total = 0
-      for _ in 0 ..< 12 {
-        guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
-          Issue.record("each image must be re-encoded, not dropped")
-          return
-        }
-        total += data.count
+      guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: base.forRequest(imageCount: 12)) else {
+        Issue.record("each image must be re-encoded, not dropped")
+        return
       }
-      #expect(total <= budget)
+      #expect(12 * data.count <= budget)
     }
   }
 
   @Test func `an iPhone screenshot fits the long edge`() throws {
-    let png = try #require(Self.png(width: 1320, height: 2868))
-    guard case let .image(data, mime) = ImageFitting.fit(png, mimeType: "image/png", limits: .claude) else {
+    let limits = Self.quarter(.claude)
+    let png = try #require(Self.png(width: 1320 / 4, height: 2868 / 4))
+    guard case let .image(data, mime) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
       Issue.record("the screenshot must be scaled"); return
     }
     let size = try #require(ImageMedia.pixelSize(ofBytes: data))
-    #expect(size.height == 2576)
-    #expect((1185 ... 1186).contains(size.width))
+    #expect(size.height == 2576 / 4)
+    #expect((296 ... 297).contains(size.width))
     #expect(mime == "image/png")
-    #expect(data.count <= ImageLimits.claude.maxBytes)
+    #expect(data.count <= limits.maxBytes)
   }
 
   @Test func `a JPEG past the byte budget stays JPEG`() throws {
@@ -295,6 +292,17 @@ import Testing
       }
     }
   #endif
+
+  /// A preset at a quarter of its edges and a sixteenth of its area and bytes, so the fixtures that cross it stay small.
+  static func quarter(_ preset: ImageLimits) -> ImageLimits {
+    var limits = preset
+    limits.maxLongEdge /= 4
+    limits.maxPatches /= 16
+    limits.maxBytes /= 16
+    limits.crowding?.maxLongEdge /= 4
+    limits.requestBytes = preset.requestBytes.map { $0 / 16 }
+    return limits
+  }
 
   static func jpeg(_ png: Data) -> Data? {
     #if canImport(ImageIO)

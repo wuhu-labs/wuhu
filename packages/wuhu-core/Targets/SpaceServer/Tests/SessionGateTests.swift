@@ -758,7 +758,7 @@ extension SessionGateTests {
     try await withSessionDeps {
       let t = try await tree()
       let key = SymmetricKey(size: .bits256)
-      let store = try await t.harness.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+      let store = try await t.harness.space.machineV2Store(group: .shared, key: key)
       let service = MachineV2Service(space: t.harness.space, hub: MachineV2Hub(space: t.harness.space), key: key, failure: nil, fetch: { _ in .init { _ in throw OperationError(.transport) } })
       let owner = OperationOwner(scope: "script", key: "exec")
       let credential = try await service.credential(tokens: t.tokens, session: t.parent, group: .shared, owner: owner, timeout: .seconds(60))

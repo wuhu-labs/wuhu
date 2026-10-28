@@ -3,7 +3,9 @@
 #else
   import Foundation
 #endif
+import Dependencies
 import GRDB
+import Logging
 
 public struct SpaceIdentity: Hashable, Sendable {
   static let prefix: String = "spc_"
@@ -23,11 +25,11 @@ public struct SpaceIdentity: Hashable, Sendable {
 enum SpaceMeta {
   static let memorySchema: Result<DatabaseQueue, any Error> = Result {
     let queue = try DatabaseQueue()
-    try Migrations.apply(to: queue)
+    try Migrations.apply(to: queue, log: Logger(label: "wuhu.migration") { _ in SwiftLogNoOpLogHandler() }, date: .constant(Date(timeIntervalSince1970: 0)))
     return queue
   }
 
-  static func prepare(_ queue: any DatabaseWriter, identity: SpaceIdentity? = nil) throws {
+  static func prepare(_ queue: any DatabaseWriter, identity: SpaceIdentity? = nil, log: Logger, date: DateGenerator) throws {
     try queue.read { db in
       if let identity, try db.tableExists("space_meta"),
          let actual = try String.fetchOne(db, sql: "SELECT space_id FROM space_meta WHERE id = 1"), actual != identity.rawValue
@@ -35,7 +37,7 @@ enum SpaceMeta {
         throw SpaceIdentityError.mismatch(expected: identity.rawValue, actual: actual)
       }
     }
-    try Migrations.apply(to: queue)
+    try Migrations.apply(to: queue, log: log, date: date)
     try queue.write { db in
       try seedIfAbsent(in: db, identity: identity)
     }

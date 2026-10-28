@@ -133,7 +133,8 @@ final class ScriptExecution: Sendable {
   let tools: ToolExecutor
   let kind: ScriptKind
   let arguments: [String]
-  let buffers = Mutex(ScriptBuffers())
+  let limits: ScriptLimits
+  let buffers: Mutex<ScriptBuffers>
   let processes = ScriptProcesses()
   private let traceContext = ServerTracing.enabled ? ServerTracing.context : nil
   private let interrupter = JSEngine.Interrupter()
@@ -157,6 +158,7 @@ final class ScriptExecution: Sendable {
     tools: ToolExecutor,
     kind: ScriptKind = .call,
     arguments: [String] = [],
+    limits: ScriptLimits = .standard,
   ) {
     self.id = id
     self.actor = actor
@@ -167,6 +169,8 @@ final class ScriptExecution: Sendable {
     self.tools = tools
     self.kind = kind
     self.arguments = arguments
+    self.limits = limits
+    buffers = Mutex(ScriptBuffers(budget: limits.bufferBytes))
     if case .command = kind {
       state = Mutex(State(waiter: .detached))
     } else {

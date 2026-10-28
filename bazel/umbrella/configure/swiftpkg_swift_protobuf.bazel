@@ -1,0 +1,7 @@
+# swift-protobuf's default BinaryDelimitedStreams trait imports full Foundation
+# (Input/OutputStream), which drags ICU into the Linux static binary. The OTLP
+# exporter only serializes messages to bytes.
+swift_deps.configure_package(
+    name = "swiftpkg_swift_protobuf",
+    traits = ["FieldMaskUtilities"],
+)

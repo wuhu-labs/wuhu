@@ -116,6 +116,7 @@ extension Scripts {
       secrets: ScriptSecrets(client: client),
       tools: tools,
       kind: .handler(context),
+      limits: limits,
     )
     await execution.run(owner: owner)
     let result = try execution.handlerResult()

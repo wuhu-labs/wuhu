@@ -54,8 +54,8 @@ struct ScriptFiles: Sendable {
           case nil: revision = nil
           default: throw ToolRunError.failed(code: .invalidArgument, message: "rev must be non-negative", hint: nil)
           }
-          try claimFileBuffer(24 << 20, in: execution)
-          defer { execution.buffers.withLock { $0.unclaim(24 << 20) } }
+          try claimFileBuffer(execution.limits.fileResultBytes, in: execution)
+          defer { execution.buffers.withLock { $0.unclaim(execution.limits.fileResultBytes) } }
           let token: String
           let rev: Int?
           let data: Data
@@ -88,7 +88,7 @@ struct ScriptFiles: Sendable {
           if name == "writeText", case let .string(text)? = fields["content"] { data = Data(text.utf8) }
           else if name == "writeBytes", let text = fields["data"]?.stringValue, let bytes = Data(base64Encoded: text) { data = bytes }
           else { throw ToolRunError.failed(code: .invalidArgument, message: "invalid file content", hint: nil) }
-          guard data.count <= 16 << 20 else { throw overBudget(.fileResult) }
+          guard data.count <= 16 << 20 else { throw overBudget(.fileResult, budget: execution.limits.bufferBytes) }
           try execution.buffers.withLock { try $0.claim(data.count, for: .fileResult) }
           defer { execution.buffers.withLock { $0.unclaim(data.count) } }
           output = try await client.putFileBytes(path, data, ifMatch: token, createOnly: token == nil)
@@ -115,15 +115,15 @@ struct ScriptFiles: Sendable {
           case .bool?, nil: break
           default: throw ToolRunError.failed(code: .invalidArgument, message: "hidden must be a boolean", hint: nil)
           }
-          try claimFileBuffer(24 << 20, in: execution)
-          reserved = 24 << 20
-          input["limit"] = .integer(500)
-          input["byteLimit"] = .integer(24 << 20)
+          try claimFileBuffer(execution.limits.fileResultBytes, in: execution)
+          reserved = execution.limits.fileResultBytes
+          input["limit"] = .integer(execution.limits.listingEntries)
+          input["byteLimit"] = .integer(execution.limits.fileResultBytes)
           output = try await client.tool("ls", .object(input))
         default:
           output = try await client.tool(name == "move" ? "mv" : name, .object(input))
         }
-        let bytes = try fileResultSize(output, limit: 24 << 20)
+        let bytes = try fileResultSize(output, limit: execution.limits.fileResultBytes)
         if reserved > 0 {
           execution.buffers.withLock { $0.unclaim(reserved - bytes) }
         } else { try claimFileBuffer(bytes, in: execution) }

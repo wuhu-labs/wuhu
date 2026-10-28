@@ -46,7 +46,10 @@ single_version_override(
 # verbosity environment variable, so that one configuration key is the only knob there is.
 # Quiet, a run killed at Bazel's test timeout names no test at all: the runner reads the event
 # stream only after the run returns. The stalled-test watchdog reads it live and prints a
-# `STALLED:` line naming every test still running after 60 seconds.
+# `STALLED:` line naming every test still running after 60 seconds. Upstream reads `--test_filter`
+# as one unanchored regex (`Suite/a()` also selects `Suite/ab()`); the filter patch gives it the
+# identifier-list grammar the macOS bundle runner hands to xcodebuild, so one filter means the
+# same on every host lane.
 single_version_override(
     module_name = "rules_swift",
     patch_strip = 1,
@@ -55,6 +58,7 @@ single_version_override(
         "//bazel/patches:rules-swift-linux-toolchain-watch.patch",
         "//bazel/patches:rules-swift-test-runner-completion.patch",
         "//bazel/patches:rules-swift-stalled-test-watchdog.patch",
+        "//bazel/patches:rules-swift-test-filter-identifiers.patch",
     ],
     version = "3.6.1",
 )
@@ -79,10 +83,15 @@ single_version_override(
 # `configure_package` for deliberate deviations. Upstream tracks the gap as
 # cgrindel/rules_swift_package_manager#2137; the fork branch is
 # xnzg/rules_swift_package_manager#consumer-traits, intended for upstreaming.
+# rspm-trait-condition-any: a `.when(traits:)` dependency is linked when any of
+# its traits is enabled, as in SwiftPM; the fork required all of them.
 archive_override(
     module_name = "rules_swift_package_manager",
     patch_strip = 1,
-    patches = ["//bazel/patches:rspm-stable-trait-requests.patch"],
+    patches = [
+        "//bazel/patches:rspm-stable-trait-requests.patch",
+        "//bazel/patches:rspm-trait-condition-any.patch",
+    ],
     integrity = "sha256-Gk9qolXlI5HfkcOwihD11MMlAbXpSVIz2Ws8+z3rLKc=",
     strip_prefix = "rules_swift_package_manager-20be64cf7ddfd1254bc381384b1ef593522e28f8",
     urls = ["https://github.com/xnzg/rules_swift_package_manager/archive/20be64cf7ddfd1254bc381384b1ef593522e28f8.tar.gz"],
@@ -124,7 +133,8 @@ http_archive(
 # include; `quickjs.h` alone is public, which is also what the generated Clang
 # module for `import CQuickJS` covers. The copts mirror the warning
 # suppressions and `-funsigned-char` that upstream's build applies to the same
-# sources. MIT licensed; LICENSE rides in the archive. One patch: upstream
+# sources, plus `-O2` in every compilation mode (docs/bazel.md, "Compiler
+# flags"). MIT licensed; LICENSE rides in the archive. One patch: upstream
 # frees a module while a top-level await still pending at context teardown
 # holds it, and the runtime's final GC then aborts or corrupts the heap
 # (bellard/quickjs#280, still open on quickjs-ng master).
@@ -161,6 +171,7 @@ cc_library(
     hdrs = ["quickjs.h"],
     aspect_hints = [":quickjs_interop"],
     copts = [
+        "-O2",
         "-funsigned-char",
         "-Wno-array-bounds",
         "-Wno-implicit-fallthrough",

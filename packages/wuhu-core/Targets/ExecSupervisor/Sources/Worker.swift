@@ -126,7 +126,7 @@ enum WorkerDirectory {
     let path = directory + "/operations.json"
     do {
       _ = unlink(path + ".tmp")
-      try writeFile(path + ".tmp", JSONEncoder().encode(inventory), sync: false)
+      try writeFile(path + ".tmp", JSONEncoder().encode(inventory))
       guard rename(path + ".tmp", path) == 0 else { throw unreadable(path) }
     } catch {
       let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -158,15 +158,16 @@ enum WorkerDirectory {
     return decoded
   }
 
-  /// Replaces `path` whole and durably (write beside it, sync, then rename); an empty set removes it.
+  /// Replaces `path` whole and durably (written beside it, synced, then renamed): a torn ledger would fail every later recovery.
+  /// An empty set removes it.
   static func writeIDs(_ path: String, _ ids: Set<UUID>) throws {
     guard !ids.isEmpty else { _ = unlink(path); return }
     _ = unlink(path + ".tmp")
-    try writeFile(path + ".tmp", JSONEncoder().encode(ids.sorted { $0.uuidString < $1.uuidString }))
+    try writeFile(path + ".tmp", JSONEncoder().encode(ids.sorted { $0.uuidString < $1.uuidString }), sync: true)
     guard rename(path + ".tmp", path) == 0 else { throw OperationError(.invalidConfiguration, details: ["path": .string(path)]) }
   }
 
-  static func writeFile(_ path: String, _ data: Data, sync: Bool = true) throws {
+  static func writeFile(_ path: String, _ data: Data, sync: Bool = false) throws {
     guard data.count <= evidenceBytes else { throw OperationError(.invalidConfiguration, message: "evidenceFull", details: ["path": .string(path)]) }
     let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw OperationError(.invalidConfiguration, details: ["path": .string(path)]) }

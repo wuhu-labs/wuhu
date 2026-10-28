@@ -80,6 +80,10 @@ build --host_macos_minimum_os=26.0
 # Swift-specific
 build --features=swift.use_global_module_cache
 
+# One value everywhere; why each exists: docs/bazel.md, "Compiler flags".
+build --@build_bazel_rules_swift//swift:copt=-j8
+build --per_file_copt=external/(libpng|zlib)[+]/.*@-O2
+
 # Output
 common --symlink_prefix=.bazel/
 build --show_result=10

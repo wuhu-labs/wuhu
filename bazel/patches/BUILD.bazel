@@ -2,6 +2,7 @@ exports_files([
     "async-http-client-stream-finish-after-error-head.patch",
     "rules-apple-imported-framework-helper-modes.patch",
     "rspm-stable-trait-requests.patch",
+    "rspm-trait-condition-any.patch",
     "concurrency-extras-linux-locking.patch",
     "crdtkit-dependency-compatibility.patch",
     "concurrency-extras-linux-lockisolated.patch",
@@ -17,6 +18,7 @@ exports_files([
     "swift-dependencies-linux-lock.patch",
     "swift-dependencies-linux-typename.patch",
     "swift-dependencies-linux-uuid-hex.patch",
+    "swift-otel-headers-without-foundation.patch",
 ])
 
 # check-tooling-test asserts each rules_apple override patch touches one file.

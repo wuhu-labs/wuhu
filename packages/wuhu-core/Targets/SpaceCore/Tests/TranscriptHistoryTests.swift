@@ -12,24 +12,24 @@ import WuhuAI
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let id = try await store.createSession(group: .shared, title: "history", kind: .agent, createdBy: "owner", model: .test)
-      for index in 0 ..< 405 {
+      for index in 0 ..< 10 {
         try await store.appendAssistant(id, attemptID: UUID(), message: SessionFix.assistant("entry \(index)"), metadata: SessionFix.metadata)
       }
       let full = try await store.transcriptSnapshot(id)
-      let tail = try await store.transcriptHistory(id)
-      #expect(tail.entries.count == 200)
-      #expect(tail.entries.map(\.position) == Array(205 ..< 405))
-      #expect(tail.entries.map(\.item) == Array(full.items.suffix(200)))
-      #expect(tail.before == 205)
+      let tail = try await store.transcriptHistory(id, limit: 4)
+      #expect(tail.entries.count == 4)
+      #expect(tail.entries.map(\.position) == Array(6 ..< 10))
+      #expect(tail.entries.map(\.item) == Array(full.items.suffix(4)))
+      #expect(tail.before == 6)
       #expect(tail.hasEarlier)
-      #expect(tail.headPosition == 404)
-      let middle = try await store.transcriptHistory(id, generation: tail.generation, before: tail.before)
-      #expect(middle.entries.map(\.position) == Array(5 ..< 205))
+      #expect(tail.headPosition == 9)
+      let middle = try await store.transcriptHistory(id, limit: 4, generation: tail.generation, before: tail.before)
+      #expect(middle.entries.map(\.position) == Array(2 ..< 6))
       #expect(middle.hasEarlier)
-      let first = try await store.transcriptHistory(id, generation: tail.generation, before: middle.before)
-      #expect(first.entries.map(\.position) == Array(0 ..< 5))
+      let first = try await store.transcriptHistory(id, limit: 4, generation: tail.generation, before: middle.before)
+      #expect(first.entries.map(\.position) == Array(0 ..< 2))
       #expect(!first.hasEarlier)
-      let empty = try await store.transcriptHistory(id, generation: tail.generation, before: 0)
+      let empty = try await store.transcriptHistory(id, limit: 4, generation: tail.generation, before: 0)
       #expect(empty.entries.isEmpty)
       #expect(!empty.hasEarlier)
     }
@@ -78,14 +78,14 @@ import WuhuAI
       let space = try makeSpace()
       let store = space.sessions
       let id = try await store.createSession(group: .shared, title: "bounded", kind: .agent, createdBy: "owner", model: .test)
-      for index in 0 ..< 405 { try await store.appendAssistant(id, attemptID: UUID(), message: SessionFix.assistant("entry \(index)"), metadata: SessionFix.metadata) }
+      for index in 0 ..< 10 { try await store.appendAssistant(id, attemptID: UUID(), message: SessionFix.assistant("entry \(index)"), metadata: SessionFix.metadata) }
       try await space.writer.write { db in
         try db.execute(sql: "UPDATE session_contents SET payload = '{\"unexpected\":true}' WHERE session_id = ? AND id = (SELECT content_id FROM session_pointers WHERE session_id = ? AND generation = 0 AND position = 0)", arguments: [id.rawValue, id.rawValue])
       }
-      let tail = try await store.transcriptHistory(id)
-      #expect(tail.entries.count == 200)
-      let older = try await store.transcriptHistory(id, generation: tail.generation, before: tail.before)
-      #expect(older.entries.map(\.position) == Array(5 ..< 205))
+      let tail = try await store.transcriptHistory(id, limit: 4)
+      #expect(tail.entries.map(\.position) == Array(6 ..< 10))
+      let older = try await store.transcriptHistory(id, limit: 4, generation: tail.generation, before: tail.before)
+      #expect(older.entries.map(\.position) == Array(2 ..< 6))
       await #expect(throws: (any Error).self) { _ = try await store.transcriptSnapshot(id) }
     }
   }

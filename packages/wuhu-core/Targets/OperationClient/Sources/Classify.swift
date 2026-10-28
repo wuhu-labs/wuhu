@@ -12,7 +12,7 @@ enum Disposition: Equatable, Sendable {
 func disposition(_ code: OperationError.Code) -> Disposition {
   switch code {
   case .transport, .requestDeadline, .requestCancelled, .machineUnavailable, .supervisorUnavailable, .capacityExceeded,
-       .storeUnavailable, .traceUnavailable:
+       .storeUnavailable:
     .retry
   case .unknownMachine, .machineNotAuthorized, .unknownOperation, .unknownChannel, .offsetExpired, .invalidOffset, .invalidResponse,
        .invalidInput, .unsupportedProtocol, .resultTooLarge, .recordTooLarge, .inputTooLarge, .leaving, .operationEnded,

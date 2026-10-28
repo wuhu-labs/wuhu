@@ -120,10 +120,12 @@ import struct WuhuAI.ToolCall
   }
 
   @Test func oneBudgetCoversEveryBuffer() async throws {
-    let twentyMegabytes = FetchClient { _ in
-      Response(status: .ok, body: .string(String(repeating: "x", count: 20 << 20)))
+    // The standard 64 MB budget and 20 MB bodies, at a sixty-fourth of the size.
+    var limits = ScriptLimits.standard; limits.bufferBytes = 1 << 20
+    let body = FetchClient { _ in
+      Response(status: .ok, body: .string(String(repeating: "x", count: 320 << 10)))
     }
-    try await withRig(fetch: twentyMegabytes) { rig in
+    try await withRig(fetch: body, limits: limits) { rig in
       try await rig.run("budget")
       try await rig.released()
       try rig.expect("budget")
@@ -930,6 +932,7 @@ func withRig(
   task: Bool = false,
   childAgent: Bool = false,
   prepare: (Space, SessionID) async throws -> Void = { _, _ in },
+  limits: ScriptLimits = .standard,
   _ body: @escaping (ScriptRig) async throws -> Void,
 ) async throws {
   try await withToolDeps { time in
@@ -954,7 +957,7 @@ func withRig(
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
       let main = Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute)
-      let scripts = Scripts(owner: main)
+      let scripts = Scripts(owner: main, limits: limits)
       let origin = contentHost.map { _ in "https://space.test" }
       // With a machine world, the executor's main answers `/v1/exec*` from the scripted machine.
       let executor = if let world {

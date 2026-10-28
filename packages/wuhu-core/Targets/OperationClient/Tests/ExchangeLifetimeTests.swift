@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import Dispatch
 import Fetch
 import OperationClient
 import OperationProtocol
@@ -72,29 +71,4 @@ private actor AdapterGate {
   await operations.shutdown()
   do { _ = try await operations.resume(); Issue.record("Expected shutdown refusal") }
   catch let error as OperationError { #expect(error.code == .requestCancelled) }
-}
-
-@Test(.timeLimit(.minutes(1))) func exchangeDeadlineStartsBeforeDispatchTracing() async throws {
-  let entered = AsyncStream<Void>.makeStream()
-  let finished = AsyncStream<Void>.makeStream()
-  let gate = DispatchSemaphore(value: 0)
-  let clock = OperationClock(now: { .zero }, sleep: { _ in
-    for await _ in entered.stream { break }
-  })
-  let operations = try MachineOperations(
-    origin: URL(string: "https://memory.invalid")!, fetch: FetchClient { _ in throw CancellationError() },
-    store: MemoryOperationStore(), clock: clock, trace: { trace in
-      if trace.event == .dispatch {
-        entered.continuation.yield(()); entered.continuation.finish()
-        gate.wait()
-        finished.continuation.yield(()); finished.continuation.finish()
-      }
-    },
-  )
-  defer { gate.signal() }
-  do { _ = try await operations.describe("disk"); Issue.record("Expected a deadline") }
-  catch let error as OperationError { #expect(error.code == .requestDeadline) }
-  await operations.shutdown()
-  gate.signal()
-  for await _ in finished.stream { break }
 }

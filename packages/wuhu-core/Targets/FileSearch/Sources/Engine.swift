@@ -13,9 +13,13 @@ extension SearchQuery {
   /// ``SearchLimits/deadline`` on `clock`, which cancels the walk. Any error a
   /// source throws other than ``SearchUnreadable`` ends the search.
   public func run(in source: some SearchSource, clock: any Clock<Duration> = ContinuousClock()) async throws -> SearchPage {
+    try await run(in: source, clock: clock, readBudget: SearchLimits.pageReadBytes)
+  }
+
+  func run(in source: some SearchSource, clock: any Clock<Duration>, readBudget: Int) async throws -> SearchPage {
     try await withThrowingTaskGroup(of: SearchPage?.self) { group in
       defer { group.cancelAll() }
-      group.addTask { try await Walker(self, source).run() }
+      group.addTask { try await Walker(self, source, readBudget: readBudget).run() }
       group.addTask {
         try await clock.sleep(for: SearchLimits.deadline)
         return nil
@@ -57,6 +61,7 @@ private final class Walker<Source: SearchSource> {
   let source: Source
   let matcher: Matcher
   let limit: Int
+  let readBudget: Int
   let resume: SearchCursor?
 
   var hits: [SearchHit] = []
@@ -69,7 +74,7 @@ private final class Walker<Source: SearchSource> {
   var skips: [SearchSkipReason: SearchSkip] = [:]
   var cursor: SearchCursor?
 
-  init(_ query: SearchQuery, _ source: Source) throws(SearchError) {
+  init(_ query: SearchQuery, _ source: Source, readBudget: Int = SearchLimits.pageReadBytes) throws(SearchError) {
     var query = query
     guard query.root.hasPrefix("/") else { throw SearchError(.notFound, "not an absolute path: \(query.root)") }
     while query.root.count > 1, query.root.hasSuffix("/") { query.root.removeLast() }
@@ -88,6 +93,7 @@ private final class Walker<Source: SearchSource> {
     resume = try query.step.map { step throws(SearchError) in try SearchCursor(step, for: query) }
     self.query = query
     self.source = source
+    self.readBudget = readBudget
   }
 
   var root: String { query.root }
@@ -177,7 +183,7 @@ private final class Walker<Source: SearchSource> {
     let relative = relative(path)
     // A page's first entry is always visited; any other only with room for
     // one more read (a chunk, or a `.gitignore`).
-    guard scanned < SearchLimits.pageEntries, scanned == 0 || readBytes + SearchLimits.lineBytes <= SearchLimits.pageReadBytes else {
+    guard scanned < SearchLimits.pageEntries, scanned == 0 || readBytes + SearchLimits.lineBytes <= readBudget else {
       cursor = SearchCursor(path: relative)
       return false
     }
@@ -229,7 +235,7 @@ private final class Walker<Source: SearchSource> {
       return accept(SearchHit(path: path, line: line, text: clamped(decoded)), else: here)
     }
     while true {
-      if chunks > 0, readBytes + SearchLimits.lineBytes > SearchLimits.pageReadBytes {
+      if chunks > 0, readBytes + SearchLimits.lineBytes > readBudget {
         cursor = SearchCursor(path: relative, offset: lineStart, line: line)
         return false
       }

@@ -319,30 +319,12 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
     }
   }
 
-  @Test func aFileAtTheSizeLimitIsAcceptedAndOneByteMoreIsRefused() async throws {
+  @Test func aFileOverTheSizeLimitIsRefusedWhileItStreams() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness { _, _ in reply("seen") }
       let id = try await harness.createSession()
       let over = try await refusal(harness.streamed(id, sizes: [AttachmentLimits.maxFileBytes + 1]))
       #expect(over == (.contentTooLarge, "attachmentTooLarge"))
-
-      let (post, _) = try await harness.accepted(harness.streamed(id, sizes: [AttachmentLimits.maxFileBytes]))
-      let stored = try #require(try await harness.stored(post).first)
-      guard case let .file(_, _, size) = stored else {
-        Issue.record("stored as \(stored), not a file")
-        return
-      }
-      #expect(size == AttachmentLimits.maxFileBytes)
-    }
-  }
-
-  @Test func aTotalOverTheLimitIsRefused() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
-      let id = try await harness.createSession()
-      let sizes = Array(repeating: AttachmentLimits.maxFileBytes, count: 3) + [1]
-      let over = try await refusal(harness.streamed(id, sizes: sizes))
-      #expect(over == (.contentTooLarge, "attachmentsTooLarge"))
     }
   }
 

@@ -10,6 +10,7 @@ import OperationProtocol
 @testable import OperationRuntime
 import Synchronization
 import Testing
+import Tracing
 
 /// Writes `chunks` payloads of `size` bytes to `out`, then completes; with `echo` first copies `in` to `out` until its end;
 /// with `wait` runs until stopped.
@@ -46,7 +47,7 @@ private struct EmitKind: OperationKind {
   static func chunk(_ index: Int, size: Int) -> Data { Data((0 ..< size).map { UInt8(($0 + index * 7) % 251) }) }
 }
 
-private func emit(chunks: Int = 0, size: Int = 0, wait: Bool = false, echo: Bool = false) -> StartRequest {
+func emit(chunks: Int = 0, size: Int = 0, wait: Bool = false, echo: Bool = false) -> StartRequest {
   .init(kind: "emit.v1", input: ["chunks": .integer(chunks), "size": .integer(size), "wait": .bool(wait), "echo": .bool(echo)])
 }
 
@@ -142,8 +143,8 @@ final class Wire: Sendable {
     }
   }
 
-  func operations(store: any OperationStore = MemoryOperationStore(), tunnel: TunnelLanes = TunnelLanes()) throws -> MachineOperations {
-    try MachineOperations(origin: URL(string: "https://memory.invalid")!, fetch: fetch, store: store, tunnel: tunnel)
+  func operations(store: any OperationStore = MemoryOperationStore(), tunnel: TunnelLanes = TunnelLanes(), tracer: any Tracer = NoOpTracer()) throws -> MachineOperations {
+    try MachineOperations(origin: URL(string: "https://memory.invalid")!, fetch: fetch, store: store, tracer: tracer, tunnel: tunnel)
   }
 
   func close() async {
@@ -230,7 +231,7 @@ private final class ParkedSaves: OperationStore, Sendable {
 }
 
 /// Reads and acknowledges output until the operation is drained, returning the bytes in order.
-private func drain(_ operation: OperationClient.Operation) async throws -> Data {
+func drain(_ operation: OperationClient.Operation) async throws -> Data {
   var bytes = Data()
   var after: UInt64?
   while let chunks = try await operation.output(after: after) {

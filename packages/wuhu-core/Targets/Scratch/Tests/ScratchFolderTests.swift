@@ -75,14 +75,14 @@ private let held = Mutex<[ScratchFolder]>([])
 
 @Suite struct ScratchExitTests {
   @Test(.enabled(if: !LeakGuard.isChild)) func aPassingRunLeavesNothingBehind() async throws {
-    let run = try await LeakGuard.run(filter: "holdsAFolderAndPasses")
+    let run = try await LeakGuard.run(filter: "ScratchChildTests/holdsAFolderAndPasses()")
     #expect(run.status == 0, "\(run.output)")
     #expect(run.ran > 0, "\(run.output)")
     #expect(run.leftovers == [], "\(run.output)")
   }
 
   @Test(.enabled(if: !LeakGuard.isChild)) func aFailingRunLeavesNothingBehind() async throws {
-    let run = try await LeakGuard.run(filter: "holdsAFolderFailsAndThrows", environment: ["WUHU_SCRATCH_FAIL": "1"])
+    let run = try await LeakGuard.run(filter: "ScratchChildTests/holdsAFolderFailsAndThrows()", environment: ["WUHU_SCRATCH_FAIL": "1"])
     #expect(run.status != 0, "\(run.output)")
     #expect(run.ran > 0, "\(run.output)")
     #expect(run.leftovers == [], "\(run.output)")

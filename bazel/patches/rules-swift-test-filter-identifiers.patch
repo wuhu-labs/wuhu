@@ -1,0 +1,55 @@
+--- a/tools/test_observer/ShardingFilteringTestCollector.swift
++++ b/tools/test_observer/ShardingFilteringTestCollector.swift
+@@ -36,7 +36,7 @@
+   private var shardCount: Int
+   private var shardIndex: Int
+   private var seenTestCount: Int
+-  private var filter: Regex<AnyRegexOutput>?
++  private var filter: (only: [Substring], skip: [Substring])?
+ 
+   /// Indicates whether the next test added to the collector should be included in the current
+   /// shard.
+@@ -76,14 +76,18 @@
+       throw Error(
+         message: "Invalid shard count (\(shardCount)) and shard index (\(shardIndex))")
+     }
++    // `--test_filter` takes the grammar of xcodebuild's -only-testing, which the macOS bundle
++    // runner passes it to: comma-separated identifiers, `Suite` selecting everything under it,
++    // `Suite/test()` one test, and a leading `-` skipping instead.
+     if let filterString = environment["TESTBRIDGE_TEST_ONLY"] {
+-      guard let maybeFilter = try? Regex(filterString) else {
+-        throw Error(
+-          message: """
+-            Could not parse '--test_filter' string as a regular expression: \(filterString)
+-            """)
++      let identifiers = filterString.split(separator: ",", omittingEmptySubsequences: false)
++      guard identifiers.allSatisfy({ !$0.isEmpty && $0 != "-" }) else {
++        throw Error(message: "Invalid '--test_filter' identifier list: \(filterString)")
+       }
+-      self.filter = maybeFilter
++      self.filter = (
++        identifiers.filter { !$0.hasPrefix("-") },
++        identifiers.filter { $0.hasPrefix("-") }.map { $0.dropFirst() }
++      )
+     } else {
+       self.filter = nil
+     }
+@@ -104,13 +108,13 @@
+     self.seenTestCount += 1
+   }
+ 
+-  /// Returns `true` if the given test identifier matches the `--test_filter` regular expression.
++  /// Returns `true` if the `--test_filter` identifiers select the given test identifier.
+   private func isIncludedByFilter(_ testIdentifier: String) -> Bool {
+     guard let filter = self.filter else { return true }
+-    do {
+-      return try filter.firstMatch(in: testIdentifier) != nil
+-    } catch {
+-      return false
++    func selects(_ identifier: Substring) -> Bool {
++      testIdentifier == identifier || testIdentifier.hasPrefix("\(identifier)/")
+     }
++    return (filter.only.isEmpty || filter.only.contains(where: selects))
++      && !filter.skip.contains(where: selects)
+   }
+ }

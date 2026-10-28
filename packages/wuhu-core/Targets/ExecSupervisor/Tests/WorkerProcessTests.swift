@@ -18,6 +18,7 @@ import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.StartRequest
+import struct OperationProtocol.Verdict
 import class OperationRuntime.OperationAgent
 import Synchronization
 import Testing
@@ -32,7 +33,7 @@ import Testing
 
   /// Every worker the body launched is gone when it returns or throws, unless `keep`: a worker holding operations outlives its
   /// agent by design. Receipts lapse after `retention`, so a retired worker exits within the test.
-  func compose<R: Sendable>(_ home: MachineHome, forgets: Bool = true, retention: Duration = .seconds(1), launched: Launched = Launched(), keep: Bool = false, _ body: @escaping @Sendable (ComputerAgent, ExecWorkers) async throws -> R) async throws -> R {
+  func compose<R: Sendable>(_ home: MachineHome, forgets: Bool = true, retention: Duration = .seconds(1), launched: Launched = Launched(), keep: Bool = false, teardownGrace: Duration = .seconds(5), _ body: @escaping @Sendable (ComputerAgent, ExecWorkers) async throws -> R) async throws -> R {
     try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: home.operations, executable: try machineExecutable(), files: .local, kinds: [], forgetsRevokedMachine: forgets, retention: retention, launch: { arguments in
       let pid = try ExecSupervisor.launchReaped(arguments)
       launched.launches.withLock { $0.append((pid, arguments[3])) }
@@ -40,20 +41,20 @@ import Testing
     }) { agent, workers in
       let value: R
       do { value = try await body(agent, workers) } catch {
-        await tearDown(workers, launched, failed: true)
+        await tearDown(workers, launched, failed: true, grace: teardownGrace)
         throw error
       }
-      if !keep { await tearDown(workers, launched, failed: false) }
+      if !keep { await tearDown(workers, launched, failed: false, grace: teardownGrace) }
       return value
     }
   }
 
   /// A body that threw is retired here; whatever still runs afterwards is killed with its execs. A body that returned
   /// normally must have retired its workers itself, so one still running fails the test.
-  func tearDown(_ workers: ExecWorkers, _ launched: Launched, failed: Bool) async {
-    if failed { _ = await workers.retire(.turnedOff, deadline: .seconds(3)) }
+  func tearDown(_ workers: ExecWorkers, _ launched: Launched, failed: Bool, grace: Duration) async {
+    if failed { _ = await workers.retire(.turnedOff, deadline: min(grace, .seconds(3))) }
     var running = Set(launched.all)
-    let clock = ContinuousClock(); let deadline = clock.now + .seconds(5)
+    let clock = ContinuousClock(); let deadline = clock.now + grace
     while true {
       running = running.filter { !exited($0) }
       guard !running.isEmpty, clock.now < deadline else { break }
@@ -237,11 +238,12 @@ import Testing
     let home = try MachineHome(); defer { home.remove() }
     let launched = Launched()
     try await compose(home, launched: launched) { agent, workers in
-      let ids = try await withThrowingTaskGroup(of: UUID.self, returning: [UUID].self) { group in
-        for code in 0 ..< 8 { group.addTask { try await start(agent, ["/bin/sh", "-c", "sleep 0.2; exit \(code)"]) } }
+      // Each verdict is read as its exec ends: a receipt lapses `retention` after that.
+      let tags = try await withThrowingTaskGroup(of: Verdict.Tag?.self, returning: [Verdict.Tag?].self) { group in
+        for code in 0 ..< 8 { group.addTask { try await verdict(agent, start(agent, ["/bin/sh", "-c", "sleep 0.2; exit \(code)"])).verdict?.tag } }
         return try await group.reduce(into: []) { $0.append($1) }
       }
-      for id in ids { #expect(try await verdict(agent, id).verdict?.tag == .completed) }
+      #expect(tags == Array(repeating: .completed, count: 8))
       #expect(launched.all.count == 1)
       #expect(home.liveWorkers().count == 1)
       #expect(await workers.retire(.turnedOff) == 0)
@@ -337,7 +339,8 @@ import Testing
     let evidence = home.path + "/published"
     let child = Mutex<Int32>(0)
     try await compose(home, retention: .seconds(60), launched: launched, keep: true) { agent, _ in
-      _ = try await start(agent, ["/bin/sh", "-c", "cat <&3 > \(evidence).tmp && mv \(evidence).tmp \(evidence); exec sleep 60"])
+      // Not `cat`: its copy_file_range clones the fresh receipt on ZFS, which waits for the block's transaction group to sync.
+      _ = try await start(agent, ["/bin/sh", "-c", "IFS= read -r anchor <&3; printf %s \"$anchor\" > \(evidence).tmp && mv \(evidence).tmp \(evidence); exec sleep 60"])
       let clock = ContinuousClock(); let deadline = clock.now + .seconds(10)
       while access(evidence, F_OK) != 0 {
         guard clock.now < deadline else { throw TestFailure.timeout }
@@ -377,7 +380,8 @@ import Testing
     let launched = Launched()
     let child = Mutex<Int32>(0)
     await #expect(throws: Abandoned.self) {
-      try await compose(home, launched: launched) { agent, _ in
+      // A stopped worker answers nothing in any grace, so a short one only skips the wait.
+      try await compose(home, launched: launched, teardownGrace: .milliseconds(200)) { agent, _ in
         let (_, pid) = try await busy(agent, home)
         child.withLock { $0 = pid }
         for worker in launched.all { kill(worker, SIGSTOP) }

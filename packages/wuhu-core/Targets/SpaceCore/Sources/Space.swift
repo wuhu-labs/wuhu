@@ -24,7 +24,6 @@ public actor Space {
   let clock: any Clock<Duration>
   let rng: WithRandomNumberGenerator
   let log: Logger
-  var machineTraces: MachineTraceWriter?
   var identityCache: SpaceIdentity?
   var templateCloneFault: String?
 
@@ -36,8 +35,8 @@ public actor Space {
     catalog: ViewCatalog = .groups,
     trace: (@Sendable (String) -> Void)? = nil,
   ) throws {
-    try SpaceMeta.prepare(writer, identity: identity)
     @Dependency(\.date) var date
+    try SpaceMeta.prepare(writer, identity: identity, log: log, date: date)
     @Dependency(\.continuousClock) var clock
     @Dependency(\.withRandomNumberGenerator) var rng
     self.writer = writer
@@ -51,7 +50,6 @@ public actor Space {
   }
 
   public func close() async throws {
-    await machineTraces?.close()
     broadcast.close()
     await taskScope.close()
     var failure: (any Error)?
@@ -94,6 +92,7 @@ public actor Space {
     config.foreignKeysEnabled = true
     config.busyMode = .timeout(5)
     config.journalMode = journalMode
+    config.prepareDatabase { try $0.execute(sql: "PRAGMA secure_delete = OFF") }
     return config
   }
 

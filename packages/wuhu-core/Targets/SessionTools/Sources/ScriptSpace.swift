@@ -55,7 +55,7 @@ struct ScriptSpace: Sendable {
         } catch let failure as SpaceClient.ToolFailure
           where failure.error.code == .byteLimitExceeded
         {
-          throw overBudget(.queryResult)
+          throw overBudget(.queryResult, budget: execution.limits.bufferBytes)
         }
         return output
       }

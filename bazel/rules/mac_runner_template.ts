@@ -29,6 +29,48 @@ export function macRunnerTemplate(
   fi`,
     )
   }
+  // The pinned runner ignores Bazel's --test_filter. xcodebuild selects only
+  // through the xctestrun's ProductModuleName, and a selection matching nothing
+  // passes silently, so an empty filtered run fails here.
+  const launch = 'xcodebuild test-without-building \\'
+  replaceOnce(
+    launch,
+    `selection=()
+if [[ -n "\${TESTBRIDGE_TEST_ONLY:-}" ]]; then
+  IFS=, read -r -a filters <<< "$TESTBRIDGE_TEST_ONLY"
+  for filter in "\${filters[@]}"; do
+    if [[ "$filter" == -* ]]; then
+      selection+=("-skip-testing:BazelMacOSTests/\${filter:1}")
+    else
+      selection+=("-only-testing:BazelMacOSTests/$filter")
+    fi
+  done
+fi
+${launch}`,
+  )
+  const substitution =
+    '  -e "s${sed_delim}BAZEL_TEST_ENVIRONMENT${sed_delim}$XCTESTRUN_ENV${sed_delim}g" \\'
+  replaceOnce(
+    substitution,
+    `${substitution}
+  -e "s\${sed_delim}<key>TestBundlePath</key>\${sed_delim}<key>ProductModuleName</key><string>\${TEST_BUNDLE_NAME//-/_}</string><key>TestBundlePath</key>\${sed_delim}" \\`,
+  )
+  const xctestrun = '    -xctestrun "$XCTESTRUN" \\'
+  replaceOnce(
+    xctestrun,
+    `${xctestrun}
+    \${selection[@]+"\${selection[@]}"} \\`,
+  )
+  const status = '    || test_exit_code=$?'
+  replaceOnce(
+    status,
+    `${status}
+if [[ \${#selection[@]} -gt 0 && "$test_exit_code" -eq 0 ]] &&
+  ! grep -qE '(Executed|Test run with) [1-9][0-9]* tests?' "$testlog"; then
+  echo "error: --test_filter=$TESTBRIDGE_TEST_ONLY selected no tests" >&2
+  exit 1
+fi`,
+  )
   return source
 }
 

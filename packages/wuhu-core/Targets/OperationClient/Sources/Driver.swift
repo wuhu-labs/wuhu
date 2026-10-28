@@ -259,8 +259,8 @@ actor OperationDriver {
     return max(.zero, min(normal, silence))
   }
 
-  private func exchange<T: Decodable & Sendable>(_ type: T.Type, _ url: URL, method: Fetch.Method = .get, body: Body? = nil, hold: Int = 0) async -> Result<T, OperationError> {
-    let outcome = await link.send(type, url, method: method, body: body, correlation: record.correlation, deadline: deadline(hold: hold), limit: OperationLimits.responseBytes, preparation: { [leaseClock] in leaseClock.work($0) })
+  private func exchange<T: Decodable & Sendable>(_ type: T.Type, _ exchange: MachineExchange, body: Body? = nil, hold: Int = 0) async -> Result<T, OperationError> {
+    let outcome = await link.send(type, record.machine, exchange, body: body, correlation: record.correlation, deadline: deadline(hold: hold), limit: OperationLimits.responseBytes, preparation: { [leaseClock] in leaseClock.work($0) })
     if outcome.answered { lastAnswer = leaseClock.now() }
     return outcome.result
   }
@@ -268,7 +268,7 @@ actor OperationDriver {
   private func sendStart() async -> OperationError? {
     let body: Body
     do { body = try .json(record.start) } catch { return await refuseStart(.init(.invalidInput, operation: record.id)) }
-    switch await exchange(OperationSnapshot.self, link.address(record.machine, operation: record.id), method: .post, body: body) {
+    switch await exchange(OperationSnapshot.self, .start(record.id), body: body) {
     case let .success(snapshot):
       // The machine took the start. A store that could not keep its answer loses nothing the state polls do not bring back;
       // only an answer that breaks the protocol refuses it.
@@ -312,7 +312,7 @@ actor OperationDriver {
     guard let reason = record.stopReason else { return nil }
     let body: Body
     do { body = try .json(StopRequest(reason: reason)) } catch { return .init(.invalidInput) }
-    switch await exchange(OperationSnapshot.self, link.address(record.machine, operation: record.id, suffix: "stop"), method: .put, body: body) {
+    switch await exchange(OperationSnapshot.self, .stop(record.id), body: body) {
     case let .success(snapshot):
       if let failure = await absorb(snapshot, channel: nil) { return failure }
       stopSent = true
@@ -331,7 +331,7 @@ actor OperationDriver {
     guard let pending = record.pendingInputs[channel] else { return nil }
     let body: Body
     do { body = try .json(pending) } catch { return .init(.invalidInput) }
-    switch await exchange(WriteReceipt.self, link.address(record.machine, operation: record.id, suffix: "inputs/\(channel)"), method: .put, body: body) {
+    switch await exchange(WriteReceipt.self, .input(record.id, channel: channel), body: body) {
     case let .success(receipt):
       let requested = Offset(rawValue: pending.offset.rawValue + UInt64(pending.payload.count))
       guard receipt.acceptedThrough >= pending.offset, receipt.acceptedThrough <= requested,
@@ -363,7 +363,7 @@ actor OperationDriver {
     var answer: OperationSnapshot?
     let channels = record.outputChannels
     if channels.isEmpty {
-      switch await exchange(OperationSnapshot.self, link.address(record.machine, operation: record.id, query: [.init(name: "holdMs", value: "0"), .init(name: "terminalAck", value: token.uuidString)])) {
+      switch await exchange(OperationSnapshot.self, .poll(record.id, query: [.init(name: "holdMs", value: "0"), .init(name: "terminalAck", value: token.uuidString)])) {
       case let .success(value): answer = value
       case let .failure(error): return error
       }
@@ -372,7 +372,7 @@ actor OperationDriver {
     for channel in channels {
       let final = snapshot.finalOffsets[channel.name] ?? .zero
       let query: [URLQueryItem] = [.init(name: "holdMs", value: "0"), .init(name: "channel", value: channel.name), .init(name: "after", value: String(final.rawValue)), .init(name: "terminalAck", value: token.uuidString)]
-      switch await exchange(OperationSnapshot.self, link.address(record.machine, operation: record.id, query: query)) {
+      switch await exchange(OperationSnapshot.self, .poll(record.id, query: query)) {
       case let .success(value):
         if let failure = await absorb(value, channel: channel.name) { return failure }
         answer = value
@@ -388,7 +388,7 @@ actor OperationDriver {
   }
 
   private func pollState(hold: Int) async -> OperationError? {
-    switch await exchange(OperationSnapshot.self, link.address(record.machine, operation: record.id, query: [.init(name: "holdMs", value: String(hold))]), hold: hold) {
+    switch await exchange(OperationSnapshot.self, .poll(record.id, query: [.init(name: "holdMs", value: String(hold))]), hold: hold) {
     case let .success(snapshot): return await absorb(snapshot, channel: nil)
     case let .failure(error): return error
     }
@@ -413,7 +413,7 @@ actor OperationDriver {
     let hold = record.snapshot?.verdict == nil ? hold : 0
     let after = record.committed[channel.name] ?? .zero
     let query: [URLQueryItem] = [.init(name: "holdMs", value: String(hold)), .init(name: "channel", value: channel.name), .init(name: "after", value: String(after.rawValue))]
-    switch await exchange(OperationSnapshot.self, link.address(record.machine, operation: record.id, query: query), hold: hold) {
+    switch await exchange(OperationSnapshot.self, .poll(record.id, query: query), hold: hold) {
     case let .success(snapshot): return await absorb(snapshot, channel: channel.name)
     case let .failure(error): return error
     }

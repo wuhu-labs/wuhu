@@ -218,7 +218,7 @@ void exec_run_child(char *const arguments[]) {
     if(!failure) failure=exec_process_birth(getpid(),&birth);
     char bytes[96];
     int length=snprintf(bytes,sizeof(bytes),"%d %llu",getpid(),(unsigned long long)birth);
-    if(!failure && (ftruncate(3,0) || pwrite(3,bytes,(size_t)length,0)!=length || fsync(3))) failure=errno ? errno : EIO;
+    if(!failure && (ftruncate(3,0) || pwrite(3,bytes,(size_t)length,0)!=length)) failure=errno ? errno : EIO;
     close(4);
     if(!failure) failure=child_exec(arguments);
     const char *cursor=(const char *)&failure;

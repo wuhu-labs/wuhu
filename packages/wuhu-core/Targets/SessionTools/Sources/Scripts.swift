@@ -25,6 +25,7 @@ import TaskLifetime
 
 public final class Scripts: Sendable {
   let owner: any Main
+  let limits: ScriptLimits
   // Every execution runs in here, from its start until it ends or `close`.
   private let scope = TaskScope()
   private let running = Mutex<[String: ScriptExecution]>([:])
@@ -32,8 +33,13 @@ public final class Scripts: Sendable {
   // "unknown". Bounded and in-process: past either, an id reads as unknown.
   private let ended = Mutex(EndedScripts())
 
-  public init(owner: any Main) {
+  public convenience init(owner: any Main) {
+    self.init(owner: owner, limits: .standard)
+  }
+
+  init(owner: any Main, limits: ScriptLimits) {
     self.owner = owner
+    self.limits = limits
   }
 
   deinit { scope.cancel() }
@@ -55,6 +61,7 @@ public final class Scripts: Sendable {
       client: client,
       secrets: ScriptSecrets(client: client),
       tools: tools,
+      limits: limits,
     )
     try Task.checkCancellation()
     running.withLock { $0[id] = execution }
@@ -88,6 +95,7 @@ public final class Scripts: Sendable {
       tools: tools,
       kind: .command { output($0.output) },
       arguments: script.arguments,
+      limits: limits,
     )
     let run: Task<Void, Never>
     do { run = try scope.run("script \(execution.id)") { await execution.run(owner: self.owner) } }

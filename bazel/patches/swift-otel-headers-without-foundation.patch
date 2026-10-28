@@ -1,0 +1,27 @@
+--- a/Sources/OTel/OTelCore/OTel+Configuration+EnvironmentVariableRepresentable.swift
++++ b/Sources/OTel/OTelCore/OTel+Configuration+EnvironmentVariableRepresentable.swift
+@@ -308,6 +308,13 @@
+     }
+ }
+ 
++private func trimmingWhitespace(_ string: String) -> String {
++    guard let start = string.firstIndex(where: { !$0.isWhitespace }),
++          let end = string.lastIndex(where: { !$0.isWhitespace })
++    else { return "" }
++    return String(string[start...end])
++}
++
+ struct OTelHeaders {
+     var backing: [(String, String)]
+ }
+@@ -320,8 +327,8 @@
+             let pair = header.split(separator: .init(ascii: "="), maxSplits: 1, omittingEmptySubsequences: true)
+             guard let key = pair.first, let value = pair.dropFirst().first else { return nil }
+             backing.append((
+-                String(decoding: key, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines),
+-                String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
++                trimmingWhitespace(String(decoding: key, as: UTF8.self)),
++                trimmingWhitespace(String(decoding: value, as: UTF8.self))
+             ))
+         }
+         self.backing = backing

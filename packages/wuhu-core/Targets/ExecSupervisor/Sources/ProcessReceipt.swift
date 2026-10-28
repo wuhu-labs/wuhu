@@ -31,8 +31,7 @@ final class ProcessReceipt {
     if process != 0, exec_process_birth(process, &birth) != 0 { throw OperationError(.invalidConfiguration, message: "Cannot identify process receipt leader") }
     let bytes = Array("\(process) \(birth)".utf8)
     guard ftruncate(descriptor, 0) == 0, lseek(descriptor, 0, SEEK_SET) == 0,
-          bytes.withUnsafeBytes({ pwrite(descriptor, $0.baseAddress, $0.count, 0) }) == bytes.count,
-          fsync(descriptor) == 0 else { throw OperationError(.invalidConfiguration, message: "Cannot write process receipt") }
+          bytes.withUnsafeBytes({ pwrite(descriptor, $0.baseAddress, $0.count, 0) }) == bytes.count else { throw OperationError(.invalidConfiguration, message: "Cannot write process receipt") }
   }
 
   func close() {

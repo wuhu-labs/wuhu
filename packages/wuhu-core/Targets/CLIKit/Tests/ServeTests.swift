@@ -202,14 +202,3 @@ struct ServeRoutingTests {
     #expect(throws: UsageError.self) { try Command.parse(arguments) }
   }
 }
-
-@Test(.deterministicDependencies) func telemetryEndpointIsOptInAndValidated() throws {
-  guard case let .serve(off) = try Command.parse(["serve", "store"]),
-        case let .serve(on) = try Command.parse(["serve", "store", "--otel-endpoint", "http://collector.example:4318"])
-  else { Issue.record("expected serve command"); return }
-  #expect(off.otelEndpoint == nil)
-  #expect(on.otelEndpoint == "http://collector.example:4318")
-  for endpoint in ["file:///tmp/spans", "http://user:password@collector", "http://collector?token=secret", "not-a-url"] {
-    #expect(throws: UsageError.self) { try Command.parse(["serve", "store", "--otel-endpoint", endpoint]) }
-  }
-}

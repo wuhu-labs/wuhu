@@ -48,7 +48,6 @@ actor MachineV2Service {
 
   let relays = AsyncStream<ExecJob>.makeStream()
   static let origin = URL(string: "https://machine-v2.internal")!
-  static let problemsGroup = GroupID.shared
   /// Why boot ends an operation a server from before this release started.
   static let serverUpgraded = "serverUpgraded"
   let space: Space
@@ -213,15 +212,13 @@ actor MachineV2Service {
     guard recovering || recovered(group) else { throw OperationError(.storeUnavailable, message: "Machine v2 is still resuming the group's operations") }
     if let operations = groups[group] { return operations }
     let store: any OperationStore
-    if let stores { store = try await stores(group) } else { store = try await space.machineV2Store(group: group, key: key, problemsGroup: Self.problemsGroup) }
-    let trace = try await space.machineV2TraceSink(group: group, problemsGroup: Self.problemsGroup)
+    if let stores { store = try await stores(group) } else { store = try await space.machineV2Store(group: group, key: key) }
     if let operations = groups[group] { return operations }
     let hub = hub
     let operations = try MachineOperations(
       origin: Self.origin,
       fetch: fetch?(group) ?? FetchClient { request in try await hub.fetch(request, usableFrom: group) },
       store: store,
-      trace: trace,
       tunnel: tunnel,
     )
     groups[group] = operations

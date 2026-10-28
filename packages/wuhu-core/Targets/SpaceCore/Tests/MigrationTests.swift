@@ -34,7 +34,9 @@ import Testing
     let database = try database()
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
-    #expect(throws: DatabaseError.self) { try Space(writer: database) }
+    let logs = RecordedLogs()
+    #expect(throws: DatabaseError.self) { try Space(writer: database, log: logs.logger) }
+    #expect(logs.all.last { $0.message.hasPrefix("migration ") }?.message.hasSuffix(": applying") == true)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await database.write { db in
@@ -353,30 +355,6 @@ import Testing
     try await freshSpace.close()
   }
 
-  @Test(arguments: [false, true]) func traceRetentionIndexUpgradesWithOrWithoutExistingIndex(existingIndex: Bool) async throws {
-    let database = try database()
-    let original = try Space(writer: database)
-    #expect(try await database.read { db in
-      try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_trace_retention') ORDER BY seqno")
-    } == ["grp", "start_at"])
-    try await database.write { db in
-      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '010'")
-      if !existingIndex {
-        try db.execute(sql: "DROP INDEX machine_v2_trace_retention")
-      }
-    }
-    let reopened = try DatabaseQueue(path: database.path)
-    let upgraded = try Space(writer: reopened)
-    #expect(try await reopened.read { db in
-      try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_trace_retention') ORDER BY seqno")
-    } == ["grp", "start_at"])
-    #expect(try await reopened.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier = '010'")
-    } == 1)
-    try await original.close()
-    try await upgraded.close()
-  }
-
   @Test func newerDatabaseIsRefusedWithoutChanges() async throws {
     let database = try database()
     let original = try Space(writer: database)
@@ -384,7 +362,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "998", "999"])
     try await original.close()
   }
 
@@ -425,6 +403,23 @@ import Testing
     #expect(mmap == min(PageCache.mmapBytes, limit))
     #expect(mmap ?? 0 >= 1 << 30)
     try await space.close()
+  }
+
+  @Test func fileBackedWriterDoesNotZeroFreedPages() async throws {
+    let folder = try ScratchFolder("secure-delete")
+    let space = try Space.open(file: folder.url.appending(path: "space.sqlite"))
+    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "PRAGMA secure_delete") } == 0)
+    try await space.close()
+  }
+
+  @Test func eachMigrationAnUpgradeAppliesIsLoggedBeforeAndAfterWithItsDuration() async throws {
+    let database = try database()
+    let original = try await baseline(database)
+    let logs = RecordedLogs()
+    let upgraded = try Space(writer: database, log: logs.logger)
+    #expect(logs.all.map(\.message).filter { $0.hasPrefix("migration ") } == ["001", "002", "005"].flatMap { ["migration \($0): applying", "migration \($0): applied in 0 ms"] })
+    try await upgraded.close()
+    try await original.close()
   }
 
   static let mmapCap = "SELECT substr(compile_options, 15) FROM pragma_compile_options WHERE compile_options LIKE 'MAX!_MMAP!_SIZE=%' ESCAPE '!'"

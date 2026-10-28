@@ -13,6 +13,7 @@ import CExecSupervisor
 import Fetch
 import enum JSONValue.JSONValue
 import struct OperationProtocol.ErrorEnvelope
+import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.OperationSnapshot
@@ -20,14 +21,15 @@ import struct OperationProtocol.StartRequest
 import struct OperationProtocol.StopRequest
 import struct OperationRuntime.AnyOperationKind
 import class OperationRuntime.OperationAgent
+import Synchronization
 import Testing
 
 func execRequest(_ id: UUID, query: String = "", suffix: String = "", method: Fetch.Method = .get, body: Body? = nil) -> Request {
   Request(url: URL(string: "http://memory/machine/v2/machines/test/operations/\(id)\(suffix)\(query)")!, method: method, body: body)
 }
 
-func withExec(limits: OperationLimits = .init(), disclaimResponsibility: Bool = false, _ action: (OperationAgent) async throws -> Void) async throws {
-  let agent = try OperationAgent(machine: "test", kinds: [AnyOperationKind(ExecKind(disclaimResponsibility: disclaimResponsibility))], limits: limits, authorize: { _, _ in })
+func withExec(limits: OperationLimits = .init(), disclaimResponsibility: Bool = false, clock: OperationClock = .continuous, _ action: (OperationAgent) async throws -> Void) async throws {
+  let agent = try OperationAgent(machine: "test", kinds: [AnyOperationKind(ExecKind(clock: clock, disclaimResponsibility: disclaimResponsibility))], limits: limits, authorize: { _, _ in })
   try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { await agent.run() }
     do { try await action(agent) } catch { await agent.shutdown(); group.cancelAll(); throw error }
@@ -131,14 +133,21 @@ enum TestFailure: Error { case timeout }
   }
 
   @Test func termIgnoringGroupRequiresObservedSIGKILLAfterGrace() async throws {
-    try await withExec { agent in
+    // Each of the kind's polls moves its clock on by what it asked to sleep, and yields instead of sleeping.
+    let now = Mutex(Duration.zero)
+    let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { duration in
+      now.withLock { $0 += duration }
+      await Task.yield()
+      try Task.checkCancellation()
+    })
+    try await withExec(clock: clock) { agent in
       let id = UUID()
       try await startExec(agent, id: id, script: "trap '' TERM; printf ready >&2; exec sleep 100")
       _ = try await waitStderr(agent, id: id, containing: Data("ready".utf8))
-      let clock = ContinuousClock(); let began = clock.now
+      let began = clock.now()
       _ = try await agent.handler(execRequest(id, suffix: "/stop", method: .put, body: .json(StopRequest(reason: "ignoredTerm"))))
       let snapshot = try await waitExit(agent, id: id)
-      #expect(clock.now - began >= .seconds(5))
+      #expect(clock.now() - began >= .seconds(5))
       #expect(snapshot.verdict?.tag == .stopped)
       #expect(snapshot.verdict?.result == ["termination": ["tag": "signal", "signal": 9]])
     }
