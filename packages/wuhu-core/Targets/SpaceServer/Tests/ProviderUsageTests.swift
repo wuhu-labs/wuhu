@@ -73,7 +73,8 @@ private let usageModels = """
         "testing", plan: "pro",
         windows: [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_800_100_000)], at: at,
       )
-      #expect(try await providers(harness).first?.usage == ProviderUsage(
+      let listed = try await withDependencies { $0.date = .constant(at) } operation: { try await providers(harness) }
+      #expect(listed.first?.usage == ProviderUsage(
         plan: "pro",
         windows: [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_800_100_000)],
         observedAt: 1_800_000_000,
@@ -124,11 +125,10 @@ private let usageModels = """
       #expect(parsed.windows.map(\.name) == ["five_hour", "model_week"])
       #expect(parsed.windows.map(\.windowMinutes) == [300, 10080])
       #expect(parsed.windows.first?.usedPercent == 15)
-      harness.runtime.usage.record("testing", plan: parsed.plan, windows: parsed.windows, at: Date(timeIntervalSince1970: 1_800_000_000))
-      #expect(try await providers(harness).first?.usage?.windows == parsed.windows)
-      let copied = UsageBoard()
-      copied.merge(harness.runtime.usage.snapshot())
-      #expect(copied.usage("testing")?.windows == parsed.windows)
+      let at = Date(timeIntervalSince1970: 1_800_000_000)
+      harness.runtime.usage.record("testing", plan: parsed.plan, windows: parsed.windows, at: at)
+      let listed = try await withDependencies { $0.date = .constant(at) } operation: { try await providers(harness) }
+      #expect(listed.first?.usage?.windows == parsed.windows)
       for malformed in [#"{"rate_limits":{"windows":{"model_week":{"used_percent":12,"window_minutes":0,"reset_at":1}}}}"#, #"{"rate_limits":{"windows":{"model_week":{"used_percent":101,"window_minutes":10080,"reset_at":1}}}}"#] {
         #expect(codexSocketUsage(try #require(JSONValue.parse(malformed))).windows.isEmpty)
       }
@@ -149,20 +149,38 @@ private let usageModels = """
     let board = UsageBoard()
     let early = Date(timeIntervalSince1970: 100)
     board.record("claude", plan: "max", windows: [
-      UsageWindow(name: "five_hour", usedPercent: 10, resetsAt: 1),
-      UsageWindow(name: "seven_day", usedPercent: 50, resetsAt: 2),
+      UsageWindow(name: "five_hour", usedPercent: 10, resetsAt: 18100),
+      UsageWindow(name: "seven_day", usedPercent: 50, resetsAt: 604_900),
     ], at: early)
-    board.record("claude", plan: nil, windows: [UsageWindow(name: "five_hour", usedPercent: 12, resetsAt: 1)], at: early + 60)
-    #expect(board.usage("claude") == ProviderUsage(
+    board.record("claude", plan: nil, windows: [UsageWindow(name: "five_hour", usedPercent: 12, resetsAt: 18100)], at: early + 60)
+    #expect(board.usage("claude", at: early + 60) == ProviderUsage(
       plan: "max",
       windows: [
-        UsageWindow(name: "five_hour", usedPercent: 12, resetsAt: 1),
-        UsageWindow(name: "seven_day", usedPercent: 50, resetsAt: 2),
+        UsageWindow(name: "five_hour", usedPercent: 12, resetsAt: 18100),
+        UsageWindow(name: "seven_day", usedPercent: 50, resetsAt: 604_900),
       ],
       observedAt: 160,
     ))
     board.record("claude", plan: nil, windows: [], at: early + 120)
-    #expect(board.usage("claude")?.observedAt == 160, "an empty report observes nothing")
+    #expect(board.usage("claude", at: early + 120)?.observedAt == 160, "an empty report observes nothing")
+  }
+
+  @Test func aPassedOrZeroResetReadsAsUnusedWithNoResetAndAMissingOneKeepsItsUsage() {
+    let board = UsageBoard()
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    board.record("gateway", plan: nil, windows: [
+      UsageWindow(name: "five_hour", usedPercent: 100, resetsAt: 1_700_000_060, windowMinutes: 300),
+      UsageWindow(name: "seven_day", usedPercent: 40, resetsAt: 1_700_000_000),
+      UsageWindow(name: "seven_day_overage_included", usedPercent: 0, resetsAt: 0, windowMinutes: 10080),
+      UsageWindow(name: "primary", usedPercent: 12, resetsAt: nil),
+    ], at: now - 3600)
+    let unused = [
+      UsageWindow(name: "seven_day", usedPercent: 0, resetsAt: nil),
+      UsageWindow(name: "seven_day_overage_included", usedPercent: 0, resetsAt: nil, windowMinutes: 10080),
+      UsageWindow(name: "primary", usedPercent: 12, resetsAt: nil),
+    ]
+    #expect(board.usage("gateway", at: now)?.windows == [UsageWindow(name: "five_hour", usedPercent: 100, resetsAt: 1_700_000_060, windowMinutes: 300)] + unused)
+    #expect(board.usage("gateway", at: now + 60) == ProviderUsage(plan: nil, windows: [UsageWindow(name: "five_hour", usedPercent: 0, resetsAt: nil, windowMinutes: 300)] + unused, observedAt: 1_699_996_400), "the reading is fresh once its reset passes, without a new poll")
   }
 
   @Test func aRefreshIsClaimedOnlyAfterTheIntervalSinceTheLastObservationOrAttempt() {
@@ -170,7 +188,7 @@ private let usageModels = """
     let start = Date(timeIntervalSince1970: 10000)
     #expect(board.claimRefresh("codex", now: start, interval: 900))
     #expect(!board.claimRefresh("codex", now: start + 60, interval: 900), "a failed attempt is not retried at once")
-    #expect(board.usage("codex") == nil, "an attempt observes nothing")
+    #expect(board.usage("codex", at: start + 60) == nil, "an attempt observes nothing")
     board.record("codex", plan: nil, windows: [UsageWindow(name: "seven_day", usedPercent: 1, resetsAt: nil)], at: start + 800)
     #expect(!board.claimRefresh("codex", now: start + 1000, interval: 900))
     #expect(board.claimRefresh("codex", now: start + 1700, interval: 900))
@@ -195,7 +213,9 @@ private let usageModels = """
         "https://chatgpt.com/backend-api/wham/usage": #"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":61,"limit_window_seconds":604800,"reset_at":1790314546},"secondary_window":null}}"#,
         "http://gateway.test/v1/usage": #"{"type":"codex.rate_limits","rate_limits":{"primary":{"used_percent":30,"window_minutes":300,"reset_at":1790000000},"windows":{"five_hour":{"used_percent":30,"window_minutes":300,"reset_at":1790000000},"seven_day_overage_included":{"used_percent":0,"window_minutes":10080,"reset_at":1790500000}}}}"#,
       ]
+      let at = Date(timeIntervalSince1970: 1_789_000_000)
       await withDependencies {
+        $0.date = .constant(at)
         $0.fetch = FetchClient { request in
           seen.withLock {
             $0.append(URLRequestSummary(
@@ -215,14 +235,14 @@ private let usageModels = """
         URLRequestSummary(url: "https://chatgpt.com/backend-api/wham/usage", account: "acct-42", authorization: "Bearer jwt"),
       ])
       #expect(resolved.withLock { $0 }.sorted() == ["chatgpt", "gateway"], "the second fresh pass reads no credentials, and only Codex and the valid gateway are read")
-      #expect(board.usage("chatgpt")?.plan == "pro")
-      #expect(board.usage("chatgpt")?.windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546, windowMinutes: 10080)])
-      #expect(board.usage("gateway")?.windows == [
+      #expect(board.usage("chatgpt", at: at)?.plan == "pro")
+      #expect(board.usage("chatgpt", at: at)?.windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546, windowMinutes: 10080)])
+      #expect(board.usage("gateway", at: at)?.windows == [
         UsageWindow(name: "five_hour", usedPercent: 30, resetsAt: 1_790_000_000, windowMinutes: 300),
         UsageWindow(name: "seven_day_overage_included", usedPercent: 0, resetsAt: 1_790_500_000, windowMinutes: 10080),
       ])
       for provider in ["broken", "plain", "claude", "testing"] {
-        #expect(board.usage(provider) == nil)
+        #expect(board.usage(provider, at: at) == nil)
       }
     }
   }

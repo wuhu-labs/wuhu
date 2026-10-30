@@ -1,0 +1,7 @@
+# swift-nio-ssl 2.37.2 (d930168b86f46ca51a4bc09c5ca45c1833db8067):
+# expose the existing C target, not another TLS implementation or build.
+swift_deps.configure_package(
+    name = "swiftpkg_swift_nio_ssl",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:nio-ssl-packet-boringssl-product.patch"],
+)

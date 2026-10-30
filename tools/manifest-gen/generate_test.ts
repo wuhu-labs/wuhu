@@ -13,6 +13,7 @@ import {
   appSigningTeamID,
   assertLockfileHonorsPins,
   assertNoMacroProductExport,
+  assertNoManualDependencies,
   assertNoViewPilotDependency,
   collectLoweredDependencies,
   combineBuildBazel,
@@ -3494,4 +3495,463 @@ Deno.test('HMR session plist is a declared build input gated by HMR configuratio
   const ordinary = generateAppBuildBazel({ ...app, hmr: false })
   assertEquals(ordinary.includes('wuhu_hmr_plist'), false)
   assertEquals(ordinary.includes('PreviewIOS_hmr_plist'), false)
+})
+
+function namedRule(build: string, name: string): string {
+  const start = build.indexOf(`    name = "${name}",`)
+  if (start < 0) throw new Error(`missing generated rule ${name}`)
+  return build.slice(start, build.indexOf('\n)\n', start) + 1)
+}
+
+Deno.test('manual targets keep their owned rules out of wildcard builds, not their dependencies', async () => {
+  for (
+    const kind of [
+      'library',
+      'executable',
+      'macro',
+      'cLibrary',
+      'objcLibrary',
+      'systemLibrary',
+    ] as const
+  ) {
+    const target = {
+      ...minimalTarget('Integration', kind),
+      dependencies: ['Ordinary'],
+    }
+    const ordinary = minimalTarget('Ordinary', 'library')
+    const baseline = await generateBuildBazel(basePkg, [ordinary, target])
+    assertEquals(
+      await generateBuildBazel(basePkg, [ordinary, {
+        ...target,
+        manual: false,
+      }]),
+      baseline,
+    )
+    const build = await generateBuildBazel(basePkg, [ordinary, {
+      ...target,
+      manual: true,
+    }])
+    assertStringIncludes(namedRule(build, 'Integration'), 'tags = ["manual"]')
+    assertEquals(namedRule(build, 'Ordinary'), namedRule(baseline, 'Ordinary'))
+    assertEquals(
+      namedRule(build, 'Integration').replace('    tags = ["manual"],\n', ''),
+      namedRule(baseline, 'Integration'),
+    )
+  }
+})
+
+Deno.test('manual executables include stamped twins, aliases and all owned test lanes', async () => {
+  const target: TargetManifest = {
+    ...minimalTarget('Integration', 'executable'),
+    productName: 'integration-tool',
+    manual: true,
+    stamp: true,
+    info: { CFBundleIdentifier: 'tech.example.integration' },
+    tests: { tags: ['requires-network', 'manual'] },
+    additionalTestTargets: [{
+      sources: 'IntegrationTests',
+      tags: ['external'],
+    }],
+  }
+  const build = await generateBuildBazel({
+    ...basePkg,
+    platforms: { macOS: '26.0', iOS: '26.0' },
+    checks: { build: ['mac', 'ios'], test: ['mac', 'ios'] },
+  }, [target])
+  for (
+    const name of [
+      'Integration',
+      'Integration_unstamped',
+      'integration-tool',
+      'Integration_stamp',
+      'Integration_info_plist',
+      'IntegrationTests',
+      'IntegrationTests.ios',
+      'IntegrationIntegrationTests',
+      'IntegrationIntegrationTests.ios',
+    ]
+  ) {
+    const rule = namedRule(build, name)
+    assertEquals(rule.match(/"manual"/g)?.length, 1, name)
+  }
+  assertStringIncludes(
+    namedRule(build, 'IntegrationTests'),
+    '"requires-network"',
+  )
+  assertStringIncludes(
+    namedRule(build, 'IntegrationTests.ios'),
+    '"resources:simulators:1"',
+  )
+  assertStringIncludes(
+    namedRule(build, 'IntegrationIntegrationTests'),
+    '"external"',
+  )
+  const plain = await generateBuildBazel(basePkg, [{
+    ...target,
+    stamp: false,
+    info: undefined,
+  }])
+  assertStringIncludes(
+    namedRule(plain, 'integration-tool'),
+    'tags = ["manual"]',
+  )
+})
+
+Deno.test('manual generated-source targets also mark the producing action', async () => {
+  const build = await generateBuildBazel(basePkg, [{
+    ...minimalTarget('Generated', 'library'),
+    manual: true,
+    openapiGenerate: {
+      document: 'openapi.yml',
+      config: 'generator.yml',
+      output: 'Types.swift',
+    },
+  }])
+  for (const name of ['Generated', 'Generated_gen']) {
+    assertStringIncludes(namedRule(build, name), 'tags = ["manual"]')
+  }
+})
+
+Deno.test('manual app shells cover libraries, bundles and HMR helpers without changing platforms', () => {
+  const bundle: AppManifest['targets'][number] = {
+    name: 'IntegrationApp',
+    platform: 'iOS',
+    bundleID: 'tech.example.integration',
+    bundleName: 'Integration',
+    entitlements: {},
+    families: ['iphone'],
+    appIcons: [],
+    infoPlist: 'Sources/Info.plist',
+    minimumOSVersion: '26.0',
+    dependencies: [':Shell'],
+    info: {},
+  }
+  const app: AppManifest = {
+    name: 'Integration',
+    hmr: true,
+    libraries: [{
+      name: 'Shell',
+      sources: 'Sources',
+      dependencies: ['//packages/ordinary:Ordinary'],
+    }],
+    targets: [{ ...bundle, extensions: ['Extension'] }],
+    extensions: [{ ...bundle, name: 'Extension' }],
+    watchApplications: [{
+      ...bundle,
+      name: 'Watch',
+      platform: 'watchOS',
+      families: ['watch'],
+    }],
+  }
+  const baseline = generateAppBuildBazel(app)
+  assertEquals(generateAppBuildBazel({ ...app, manual: false }), baseline)
+  const build = generateAppBuildBazel({ ...app, manual: true })
+  for (
+    const name of [
+      'Shell',
+      'IntegrationApp',
+      'Extension',
+      'Watch',
+      'IntegrationApp_hmr_plist',
+    ]
+  ) {
+    assertStringIncludes(namedRule(build, name), 'tags = ["manual"]')
+    assertEquals(
+      namedRule(build, name).replace('    tags = ["manual"],\n', ''),
+      namedRule(baseline, name),
+    )
+  }
+  assertEquals(
+    namedRule(build, 'IntegrationAppHMR'),
+    namedRule(baseline, 'IntegrationAppHMR'),
+  )
+})
+
+Deno.test('manual boundary validation rejects local and cross-package dependencies and product aliases', async () => {
+  const root = await Deno.makeTempDir()
+  const write = async (path: string, value: unknown) => {
+    const full = join(root, path)
+    await Deno.mkdir(full.slice(0, full.lastIndexOf('/')), { recursive: true })
+    await Deno.writeTextFile(full, JSON.stringify(value))
+  }
+  const source = 'packages/p/Targets/Ordinary/target.yml'
+  try {
+    await write('packages/p/package.yml', {
+      ...basePkg,
+      externalPackages: {
+        q: { path: '../q', products: { RenamedProduct: 'Remote_unstamped' } },
+      },
+    })
+    await write('packages/q/package.yml', { ...basePkg, name: 'q' })
+    await write('packages/p/Targets/Manual/target.yml', {
+      ...minimalTarget('Manual', 'executable'),
+      manual: true,
+      stamp: true,
+      productName: 'manual-tool',
+    })
+    await write('packages/q/Targets/Remote/target.yml', {
+      ...minimalTarget('Remote', 'executable'),
+      manual: true,
+      stamp: true,
+    })
+    const ordinary = minimalTarget('Ordinary', 'library')
+    for (
+      const name of [
+        'Manual',
+        ':Manual',
+        '//packages/p:Manual',
+        ':manual-tool',
+        '//packages/p:manual-tool',
+        ':Manual_unstamped',
+        '//packages/q:Remote',
+        'RenamedProduct',
+      ]
+    ) {
+      for (
+        const fields of [
+          { dependencies: [name] },
+          { tests: { dependencies: [name] } },
+          {
+            additionalTestTargets: [{
+              sources: 'OtherTests',
+              dependencies: [name],
+            }],
+          },
+        ]
+      ) {
+        await write(source, { ...ordinary, ...fields })
+        await assertRejects(
+          () => assertNoManualDependencies(root),
+          Error,
+          `${join(root, source)}: ordinary`,
+        )
+      }
+    }
+    await write(source, {
+      ...ordinary,
+      dependencies: [{ name: ':Manual', bazel: false }],
+    })
+    await assertNoManualDependencies(root)
+    await write(source, {
+      ...ordinary,
+      tests: { dependencies: [':Manual'], tags: ['manual'] },
+    })
+    await assertNoManualDependencies(root)
+    await write(source, {
+      ...ordinary,
+      manual: true,
+      dependencies: [':Manual'],
+    })
+    await assertNoManualDependencies(root)
+    await write(source, { ...ordinary })
+    await write('packages/p/Targets/Manual/target.yml', {
+      ...minimalTarget('Manual', 'library'),
+      manual: true,
+      dependencies: ['Ordinary'],
+    })
+    await assertNoManualDependencies(root)
+  } finally {
+    await Deno.remove(root, { recursive: true })
+  }
+})
+
+Deno.test('ordinary tests cannot host on a manual shell, and ordinary shell libraries and bundles cannot reach manual targets', async () => {
+  const root = await Deno.makeTempDir()
+  const write = async (path: string, value: unknown) => {
+    const full = join(root, path)
+    await Deno.mkdir(full.slice(0, full.lastIndexOf('/')), { recursive: true })
+    await Deno.writeTextFile(full, JSON.stringify(value))
+  }
+  const source = 'packages/p/Targets/Ordinary/target.yml'
+  const shellSource = 'packages/p/Apps/ordinary/app.yml'
+  const bundle: AppManifest['targets'][number] = {
+    name: 'Host',
+    platform: 'iOS',
+    bundleID: 'tech.example.host',
+    bundleName: 'Host',
+    families: ['iphone'],
+    appIcons: [],
+    infoPlist: 'Info.plist',
+    minimumOSVersion: '26.0',
+    info: {},
+    entitlements: {},
+    dependencies: [],
+  }
+  try {
+    await write('packages/p/package.yml', basePkg)
+    await write('packages/q/package.yml', { ...basePkg, name: 'q' })
+    await write('packages/q/Apps/manual/app.yml', {
+      name: 'Manual',
+      manual: true,
+      hmr: true,
+      targets: [bundle],
+    })
+    await write('packages/p/Apps/manual/app.yml', {
+      name: 'LocalManual',
+      manual: true,
+      targets: [{ ...bundle, name: 'LocalHost' }],
+    })
+    await write('packages/q/Targets/Manual/target.yml', {
+      ...minimalTarget('Manual', 'library'),
+      manual: true,
+    })
+    for (
+      const host of [
+        ':LocalHost',
+        '//packages/p:LocalHost',
+        '//packages/q:Host',
+      ]
+    ) {
+      for (
+        const fields of [
+          { tests: { host: { ios: host } } },
+          {
+            additionalTestTargets: [{
+              sources: 'OtherTests',
+              host: { ios: host },
+            }],
+          },
+        ]
+      ) {
+        await write(source, {
+          ...minimalTarget('Ordinary', 'library'),
+          ...fields,
+        })
+        await assertRejects(
+          () => assertNoManualDependencies(root),
+          Error,
+          `${join(root, source)}: ordinary`,
+        )
+      }
+    }
+    await write(source, minimalTarget('Ordinary', 'library'))
+    for (
+      const name of [
+        ':LocalHost',
+        '//packages/q:Manual',
+        '//packages/q:HostHMR',
+      ]
+    ) {
+      for (
+        const fields of [
+          {
+            libraries: [{
+              name: 'Shell',
+              sources: 'Sources',
+              dependencies: [name],
+            }],
+            targets: [],
+          },
+          { targets: [{ ...bundle, dependencies: [name] }] },
+          { extensions: [{ ...bundle, dependencies: [name] }], targets: [] },
+          {
+            watchApplications: [{ ...bundle, dependencies: [name] }],
+            targets: [],
+          },
+        ]
+      ) {
+        await write(shellSource, { name: 'OrdinaryShell', ...fields })
+        await assertRejects(
+          () => assertNoManualDependencies(root),
+          Error,
+          `${join(root, shellSource)}: ordinary`,
+        )
+        await write(shellSource, {
+          name: 'ManualShell',
+          manual: true,
+          ...fields,
+        })
+        await assertNoManualDependencies(root)
+      }
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true })
+  }
+})
+
+Deno.test('invalid manual metadata names its target or shell manifest', async () => {
+  for (const manual of ['true', 1, null]) {
+    await assertRejects(
+      () =>
+        generateBuildBazel(basePkg, [
+          {
+            ...minimalTarget('Bad', 'library'),
+            manual,
+          } as unknown as TargetManifest,
+        ]),
+      Error,
+      'Targets/Bad/target.yml: manual must be a boolean',
+    )
+    assertThrows(
+      () =>
+        generateAppBuildBazel(
+          { name: 'Bad', targets: [], manual } as unknown as AppManifest,
+          [],
+          'Apps/bad',
+        ),
+      Error,
+      'Apps/bad/app.yml: manual must be a boolean',
+    )
+  }
+})
+
+Deno.test('cTarget nested public headers preserve the upstream module layout', () => {
+  const cTarget = {
+    ...quickjsLowering.cTarget,
+    module: 'CNIOBoringSSL',
+    publicHeader: undefined,
+    publicHeadersPath: 'Sources/CNIOBoringSSL/include',
+    sources: ['Sources/CNIOBoringSSL'],
+  }
+  const target = {
+    ...minimalTarget('Lib', 'library'),
+    dependencies: [{
+      name: '@swiftpkg_swift_nio_ssl//:PacketBoringSSL',
+      swiftpm: { cTarget },
+    }],
+  }
+  const swift = generatePackageSwift(basePkg, 'packages/p', [target])
+  assertStringIncludes(
+    swift,
+    'publicHeadersPath: "Sources/CNIOBoringSSL/include"',
+  )
+  assertStringIncludes(swift, 'path: ".upstream/CNIOBoringSSL"')
+  assertThrows(
+    () =>
+      generatePackageSwift(basePkg, 'packages/p', [{
+        ...target,
+        dependencies: [{
+          name: '@swiftpkg_swift_nio_ssl//:PacketBoringSSL',
+          swiftpm: { cTarget: { ...cTarget, publicHeader: 'a.h' } },
+        }],
+      }]),
+    Error,
+    'exactly one',
+  )
+})
+
+Deno.test('cTarget scopes its C++ standard separately from C defines and flags', () => {
+  const swift = generatePackageSwift(basePkg, 'packages/p', [{
+    ...minimalTarget('Lib', 'library'),
+    dependencies: [{
+      name: '@swiftpkg_swift_nio_ssl//:PacketBoringSSL',
+      swiftpm: {
+        cTarget: {
+          ...quickjsLowering.cTarget,
+          cxxStandard: 'c++17',
+          defines: ['_GNU_SOURCE', '_DARWIN_C_SOURCE'],
+          unsafeFlags: ['-D_POSIX_C_SOURCE=200112L'],
+        },
+      },
+    }],
+  }])
+  assertStringIncludes(swift, 'cxxSettings: [.unsafeFlags(["-std=c++17"])]')
+  assertStringIncludes(swift, '.define("_GNU_SOURCE")')
+  assertStringIncludes(swift, '.define("_DARWIN_C_SOURCE")')
+  assertStringIncludes(swift, '.unsafeFlags(["-D_POSIX_C_SOURCE=200112L"])')
+  const legacy = generatePackageSwift(basePkg, 'packages/p', [{
+    ...minimalTarget('Lib', 'library'),
+    dependencies: [{ name: '@quickjs//:quickjs', swiftpm: quickjsLowering }],
+  }])
+  assertEquals(legacy.includes('cxxSettings:'), false)
 })

@@ -8,18 +8,16 @@ import struct SpaceContract.ProviderDescriptor
 import Testing
 
 struct UsageVerbTests {
-  @Test func aResetStillAheadIsPrintedAndAPassedOneIsNot() throws {
+  @Test func aWindowPrintsItsResetOnlyWhenTheServerReportsOne() throws {
     let provider = try JSONDecoder().decode(ProviderDescriptor.self, from: Data(#"""
     {"id":"claude","dialect":"responses","models":[],"usage":{"observedAt":1760000000,"windows":[
-      {"name":"five_hour","usedPercent":0,"resetsAt":0},
-      {"name":"seven_day","usedPercent":40,"resetsAt":1759999000},
+      {"name":"five_hour","usedPercent":0},
       {"name":"seven_day_overage_included","usedPercent":50,"resetsAt":1760600000}
     ]}}
     """#.utf8))
     let lines = try #require(renderedUsage(provider, now: Date(timeIntervalSince1970: 1_760_000_000))).split(separator: "\n").map(String.init)
-    #expect(lines.count == 4)
+    #expect(lines.count == 3)
     #expect(lines[1] == "  five_hour 0%")
-    #expect(lines[2] == "  seven_day 40%")
-    #expect(lines[3].hasPrefix("  seven_day_overage_included 50% resets "))
+    #expect(lines[2].hasPrefix("  seven_day_overage_included 50% resets "))
   }
 }

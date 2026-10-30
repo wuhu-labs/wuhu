@@ -56,16 +56,15 @@ final class UsageBoard: Sendable {
     }
   }
 
-  func snapshot() -> [String: ProviderUsage] { entries.withLock { $0.mapValues(\.usage) } }
-
-  func merge(_ snapshot: [String: ProviderUsage]) {
-    for (id, usage) in snapshot {
-      record(id, plan: usage.plan, windows: usage.windows, at: Date(timeIntervalSince1970: usage.observedAt))
+  /// A window whose reset has passed, or is 0, reads as used 0 with no reset
+  /// time, so a reading taken before its reset is fresh after it without a new poll.
+  func usage(_ provider: String, at now: Date) -> ProviderUsage? {
+    guard let usage = entries.withLock({ $0[provider]?.usage }), !usage.windows.isEmpty else { return nil }
+    let windows = usage.windows.map { window in
+      guard let reset = window.resetsAt, reset <= now.timeIntervalSince1970 else { return window }
+      return UsageWindow(name: window.name, usedPercent: 0, resetsAt: nil, windowMinutes: window.windowMinutes)
     }
-  }
-
-  func usage(_ provider: String) -> ProviderUsage? {
-    entries.withLock { $0[provider]?.usage }.flatMap { $0.windows.isEmpty ? nil : $0 }
+    return ProviderUsage(plan: usage.plan, windows: windows, observedAt: usage.observedAt)
   }
 
   // Claims a refresh when the provider has been neither observed nor tried

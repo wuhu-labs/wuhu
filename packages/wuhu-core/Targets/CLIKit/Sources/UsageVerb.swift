@@ -28,9 +28,7 @@ func renderedUsage(_ provider: ProviderDescriptor, now: Date) -> String? {
   var text = provider.id + (usage.plan.map { " (\($0))" } ?? "") + " · observed \(age)m ago\n"
   for window in usage.windows {
     let percent = window.usedPercent.map { String(format: "%.0f%%", $0) } ?? "?"
-    let resets = window.resetsAt.flatMap {
-      $0 > now.timeIntervalSince1970 ? " resets " + isoFormatted(Date(timeIntervalSince1970: $0), in: .current) : nil
-    } ?? ""
+    let resets = window.resetsAt.map { " resets " + isoFormatted(Date(timeIntervalSince1970: $0), in: .current) } ?? ""
     text += "  \(window.name) \(percent)\(resets)\n"
   }
   return text

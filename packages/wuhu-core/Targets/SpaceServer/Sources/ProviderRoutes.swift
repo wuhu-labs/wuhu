@@ -1,3 +1,4 @@
+import Dependencies
 import Fetch
 import InferenceKit
 import JSONValue
@@ -19,6 +20,7 @@ func addProviderRoutes(_ router: inout Router, space: Space, usage: UsageBoard?)
     } catch SpaceError.notFound {
       document = ModelsDocument(providers: [:])
     } catch { return sessionErrorResponse(error) }
+    @Dependency(\.date.now) var now
     let providers = document.providers.sorted { $0.key < $1.key }.map { id, provider in
       ProviderDescriptor(
         id: id,
@@ -26,7 +28,7 @@ func addProviderRoutes(_ router: inout Router, space: Space, usage: UsageBoard?)
         models: provider.models.sorted { $0.key < $1.key }.map { name, model in
           ProviderModel(id: name, effortLevels: model.efforts, defaultEffort: model.defaultEffort)
         },
-        usage: usage?.usage(id),
+        usage: usage?.usage(id, at: now),
       )
     }
     let catalog = ProviderCatalog(document: document, credentials: .unavailable)

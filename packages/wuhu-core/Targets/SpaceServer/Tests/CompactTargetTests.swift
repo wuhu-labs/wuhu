@@ -124,7 +124,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
       #expect(try await prepare(id, compacted(harness.store, id), .init(model: "work")) == nil)
       let reset = Date().timeIntervalSince1970 + 18000
-      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
+      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 99, resetsAt: nil)], at: Date())
       harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
       let transition = try #require(await prepare(id, compacted(harness.store, id), .init(model: "work")))
       #expect(transition.route.group == "work" && transition.route.member == "b")

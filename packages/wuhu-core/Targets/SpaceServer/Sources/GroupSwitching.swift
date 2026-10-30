@@ -17,7 +17,7 @@ func replacementRoute(_ held: SessionModelRoute, catalog: ProviderCatalog, usage
   let group = try catalog.validatedGroup(id, effort: held.specifier.effort).declaration
   @Dependency(\.date.now) var now
   @Dependency(\.uuid) var uuid
-  let placed = try placeModelGroup(id: id, group: group, providers: catalog.document.providers, usage: groupUsage(group, usage: usage), now: now, reason: reason)
+  let placed = try placeModelGroup(id: id, group: group, providers: catalog.document.providers, usage: groupUsage(group, usage: usage, at: now), now: now, reason: reason)
   return .init(group: id, member: placed.member.id, specifier: .init(provider: placed.member.provider, model: placed.member.model, effort: held.specifier.effort), bindingFingerprint: catalog.document.providers[placed.member.provider]!.routeFingerprint, epoch: uuid().uuidString.lowercased(), reason: reason, placedAt: now, evidence: placed.evidence)
 }
 
@@ -204,7 +204,7 @@ func recordRouteFailure(_ error: any Error, session: SessionID, owner: any Main,
   switch InferenceError.normalize(error) {
   case let .rateLimited(reset):
     reason = .quota
-    let reported = reset ?? usage?.usage(route.specifier.provider)?.windows.filter { ($0.usedPercent ?? 0) >= 100 }.compactMap(\.resetsAt).max().map { Date(timeIntervalSince1970: $0) }
+    let reported = reset ?? usage?.usage(route.specifier.provider, at: now)?.windows.filter { ($0.usedPercent ?? 0) >= 100 }.compactMap(\.resetsAt).max().map { Date(timeIntervalSince1970: $0) }
     retryAt = reported.flatMap { $0 > now ? $0 : nil }
     code = "quotaExhausted"
   case let .credentialRefreshRefused(id) where id == route.specifier.provider:

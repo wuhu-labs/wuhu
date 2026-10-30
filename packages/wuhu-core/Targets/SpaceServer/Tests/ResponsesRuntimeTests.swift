@@ -23,8 +23,9 @@ import Testing
           try await harness.deliver("query the constant", to: sid)
           try await until("two assembled WebSocket creates") { await peer.creates.count == 2 }
           try await until("assembled runtime settled") { try await harness.store.record(sid).work == .noWork }
-          try await until("quota in production UsageBoard") { harness.runtime.usage.usage("testing")?.windows.first?.usedPercent == 22 }
-          let usage = try #require(harness.runtime.usage.usage("testing"))
+          let beforeReset = Date(timeIntervalSince1970: 1_799_000_000)
+          try await until("quota in production UsageBoard") { harness.runtime.usage.usage("testing", at: beforeReset)?.windows.first?.usedPercent == 22 }
+          let usage = try #require(harness.runtime.usage.usage("testing", at: beforeReset))
           #expect(usage.plan == "pro")
           #expect(usage.windows.first?.name == "five_hour")
           #expect(usage.windows.first?.resetsAt == 1_800_000_000)

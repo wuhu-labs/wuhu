@@ -43,6 +43,20 @@ common:sign-adhoc --//bazel/signing:variant=adhoc
 common:sign-store --//bazel/signing:variant=store
 common:release-unsigned --define=wuhu_unsigned_release=true --features=disable_legacy_signing
 
+# Static Swift stdlib only for Foundation-free Linux binaries. Deliberately
+# excludes the Foundation archive group and its dynamic curl dependencies.
+build:linux-static-stdlib --linkopt=-L/usr/lib/swift_static/linux
+build:linux-static-stdlib --linkopt=@/usr/lib/swift_static/linux/static-stdlib-args.lnk
+
+# Static FoundationEssentials without umbrella Foundation, ICU or networking.
+build:linux-static-essentials --config=linux-static-stdlib
+build:linux-static-essentials --linkopt=-Wl,--start-group
+build:linux-static-essentials --linkopt=-lFoundationEssentials
+build:linux-static-essentials --linkopt=-l_FoundationCollections
+build:linux-static-essentials --linkopt=-l_FoundationCShims
+build:linux-static-essentials --linkopt=-lswiftSynchronization
+build:linux-static-essentials --linkopt=-Wl,--end-group
+
 # Static Swift runtime for distributable Linux binaries (release CLI, hosted
 # server; tools/release/linux-static.ts passes --config=linux-static-runtime).
 # static-stdlib-args.lnk covers the stdlib; the Foundation archives (and their

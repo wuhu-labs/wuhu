@@ -233,7 +233,10 @@ embedded_directory_sources = rule(
     },
 )
 
-def _wuhu_embedded_directory_srcs(name, directories):
+def _manual_tags(tags):
+    return ["manual"] if "manual" in (tags or []) else []
+
+def _wuhu_embedded_directory_srcs(name, directories, tags):
     swift_srcs = []
     deps = []
     for directory in directories:
@@ -249,6 +252,7 @@ def _wuhu_embedded_directory_srcs(name, directories):
 
         embedded_directory_sources(
             name = generated_name,
+            tags = tags,
             srcs = directory.get("srcs"),
             strip_prefix = directory.get("strip_prefix", ""),
             directory = directory.get("directory"),
@@ -258,21 +262,25 @@ def _wuhu_embedded_directory_srcs(name, directories):
         )
         native.filegroup(
             name = c_filegroup_name,
+            tags = tags,
             srcs = [":{}".format(generated_name)],
             output_group = "c",
         )
         native.filegroup(
             name = swift_filegroup_name,
+            tags = tags,
             srcs = [":{}".format(generated_name)],
             output_group = "swift",
         )
         native.filegroup(
             name = payload_filegroup_name,
+            tags = tags,
             srcs = [":{}".format(generated_name)],
             output_group = "payload",
         )
         cc_library(
             name = cc_name,
+            tags = tags,
             srcs = [":{}".format(c_filegroup_name)],
             additional_compiler_inputs = [":{}".format(payload_filegroup_name)],
         )
@@ -332,14 +340,16 @@ wuhu_openapi_sources = rule(
     },
 )
 
-def _wuhu_resource_bundle(name, bundle_name, resource_root, copy_resources, process_resources):
+def _wuhu_resource_bundle(name, bundle_name, resource_root, copy_resources, process_resources, tags):
     infoplist_name = "{}_resource_bundle_infoplist".format(name)
     resource_bundle_infoplist(
         name = infoplist_name,
+        tags = tags,
         region = "en",
     )
     apple_resource_bundle(
         name = "{}_resource_bundle".format(name),
+        tags = tags,
         bundle_name = bundle_name,
         infoplists = [":{}".format(infoplist_name)],
         resources = process_resources,
@@ -347,7 +357,7 @@ def _wuhu_resource_bundle(name, bundle_name, resource_root, copy_resources, proc
         strip_structured_resources_prefixes = [resource_root] if copy_resources else [],
     )
 
-def _wuhu_resource_srcs(name, package_name, module_name, resource_root, resource_sentinel, copy_resources, process_resources):
+def _wuhu_resource_srcs(name, package_name, module_name, resource_root, resource_sentinel, copy_resources, process_resources, tags):
     resources = copy_resources + process_resources
     if not resources:
         return ([], [])
@@ -355,10 +365,11 @@ def _wuhu_resource_srcs(name, package_name, module_name, resource_root, resource
         fail("resource_root and resource_sentinel are required when resources are provided")
 
     bundle_name = "{}_{}".format(package_name, module_name)
-    _wuhu_resource_bundle(name, bundle_name, resource_root, copy_resources, process_resources)
+    _wuhu_resource_bundle(name, bundle_name, resource_root, copy_resources, process_resources, tags)
     accessor_name = "{}_bundle_module_accessor".format(name)
     bundle_module_accessor(
         name = accessor_name,
+        tags = tags,
         bundle_name = bundle_name,
         module_name = module_name,
         resource_root = "{}/{}".format(native.package_name(), resource_root),
@@ -415,8 +426,8 @@ def wuhu_swift_library(name, srcs, deps, package_name, hmr = False, copy_resourc
     copy_resources = copy_resources or []
     process_resources = process_resources or []
     embedded_directories = embedded_directories or []
-    resource_srcs, data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources)
-    embedded_srcs, embedded_deps = _wuhu_embedded_directory_srcs(name, embedded_directories)
+    resource_srcs, data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources, _manual_tags(kwargs.get("tags")))
+    embedded_srcs, embedded_deps = _wuhu_embedded_directory_srcs(name, embedded_directories, _manual_tags(kwargs.get("tags")))
 
     swift_library(
         name = name,
@@ -439,6 +450,7 @@ def wuhu_system_library(name, hdrs, module_map, linkopts = None, **kwargs):
     hint = "{}_swift_interop".format(name)
     swift_interop_hint(
         name = hint,
+        tags = _manual_tags(kwargs.get("tags")),
         module_map = module_map,
         module_name = name,
     )
@@ -472,7 +484,7 @@ def wuhu_swift_macro(name, srcs, deps, **kwargs):
 def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, **kwargs):
     copy_resources = copy_resources or []
     process_resources = process_resources or []
-    resource_srcs, data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources)
+    resource_srcs, data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources, _manual_tags(kwargs.get("tags")))
 
     swift_test(
         name = name,
@@ -556,7 +568,7 @@ _wuhu_macos_runner = rule(
 def wuhu_macos_test(name, srcs, deps, package_name, minimum_os_version, target_compatible_with, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, copts = [], plugins = [], env = None, env_inherit = None, size = None, tags = None, linkopts = []):
     copy_resources = copy_resources or []
     process_resources = process_resources or []
-    resource_srcs, resource_data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources)
+    resource_srcs, resource_data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources, _manual_tags(tags))
     library_name = "{}.library".format(name)
     swift_library(
         name = library_name,
@@ -575,6 +587,7 @@ def wuhu_macos_test(name, srcs, deps, package_name, minimum_os_version, target_c
     inherited = (env_inherit or []) + ["TEST_SRCDIR", "RUNFILES_DIR", "TEST_UNDECLARED_OUTPUTS_DIR", "TEST_TMPDIR"]
     _wuhu_macos_runner(
         name = runner_name,
+        tags = _manual_tags(tags),
         testonly = True,
         data = copy_resources + (extra_data or []),
         env = env,
@@ -607,7 +620,7 @@ _SIMULATOR_UNIT_TEST_RULES = {
 def wuhu_sim_test(name, lane, module_name, srcs, deps, package_name, minimum_os_version, target_compatible_with, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, copts = [], plugins = [], env = None, env_inherit = None, size = None, tags = None, test_host = None, host_arguments = None):
     copy_resources = copy_resources or []
     process_resources = process_resources or []
-    resource_srcs, resource_data = _wuhu_resource_srcs(name, package_name, module_name, resource_root, resource_sentinel, copy_resources, process_resources)
+    resource_srcs, resource_data = _wuhu_resource_srcs(name, package_name, module_name, resource_root, resource_sentinel, copy_resources, process_resources, _manual_tags(tags))
 
     library_name = "{}.library".format(name)
     swift_library(
@@ -627,6 +640,7 @@ def wuhu_sim_test(name, lane, module_name, srcs, deps, package_name, minimum_os_
     runner_name = "{}.runner".format(name)
     wuhu_sim_test_runner(
         name = runner_name,
+        tags = _manual_tags(tags),
         lane = lane,
         host_arguments = host_arguments or [],
         testonly = True,

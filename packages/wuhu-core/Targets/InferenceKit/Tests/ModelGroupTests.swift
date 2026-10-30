@@ -135,10 +135,11 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
 @Suite(.deterministicDependencies) struct ModelPlacementTests {
   let now = Date(timeIntervalSince1970: 100_000)
 
-  func usage(_ used: Double, reset: Double = 118_000, weekly: Double? = nil) -> ModelUsageSnapshot {
-    var windows: [ModelUsageSnapshot.Window] = [.init(name: "five_hour", usedPercent: used, resetsAt: reset)]
-    windows.append(.init(name: "seven_day", usedPercent: weekly ?? 0, resetsAt: 704_800))
-    return ModelUsageSnapshot(observedAt: 100_000, windows: windows)
+  func usage(_ used: Double, reset: Double = 118_000, weekly: Double = 0, weeklyReset: Double = 704_800) -> ModelUsageSnapshot {
+    ModelUsageSnapshot(observedAt: 100_000, windows: [
+      .init(name: "five_hour", usedPercent: used, resetsAt: reset),
+      .init(name: "seven_day", usedPercent: weekly, resetsAt: weeklyReset),
+    ])
   }
 
   func pick(_ doc: ModelsDocument, _ snapshots: [String: ModelUsageSnapshot], reason: ModelPlacementReason = .create) throws -> ModelPlacement {
@@ -147,19 +148,43 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
 
   @Test func relativeCapacityBeatsRawPercentAndEvidenceIsRecorded() throws {
     var doc = try groupDocument()
-    doc.providers["openai"]!.capacity = ["five_hour": 4]
-    let placed = try pick(doc, ["anthropic": usage(50), "openai": usage(70)], reason: .startOver)
+    doc.providers["openai"]!.capacity = ["seven_day": 4]
+    let placed = try pick(doc, ["anthropic": usage(50, weekly: 50), "openai": usage(70, weekly: 70)], reason: .startOver)
     #expect(placed.member.id == "secondary")
     #expect(placed.reason == .startOver)
-    #expect(abs(try #require(placed.evidence[1].windows[0].remaining) - 1.2) < 0.00001)
+    #expect(abs(try #require(placed.evidence[1].windows[1].remaining) - 1.2) < 0.00001)
     #expect(placed.evidence[0].score == 0.5)
   }
 
-  @Test func resetTimeWeightsHeadroomAndWeeklyBottleneckWins() throws {
+  @Test func aFreshSmallMemberBeatsALargeOneWhoseSevenDayBurnsSlower() throws {
+    var doc = try groupDocument()
+    doc.providers["openai"]!.capacity = ["five_hour": 4, "seven_day": 2]
+    let placed = try pick(doc, ["anthropic": usage(0, weekly: 7, weeklyReset: 301_600), "openai": usage(2, weekly: 2)])
+    #expect(placed.member.id == "primary")
+    #expect(abs(try #require(placed.evidence[0].score) - 2.79) < 0.00001)
+    #expect(abs(try #require(placed.evidence[1].score) - 1.96) < 0.00001)
+    #expect(abs(try #require(placed.evidence[1].windows[0].score) - 3.92) < 0.00001, "a fresh five-hour window still records its score")
+  }
+
+  @Test func theSevenDayResetWeightsHeadroomAndAFullFiveHourWindowExcludes() throws {
     let doc = try groupDocument()
-    #expect(try pick(doc, ["anthropic": usage(50), "openai": usage(70, reset: 103_600)]).member.id == "secondary")
+    #expect(try pick(doc, ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 70, weeklyReset: 251_200)]).member.id == "secondary")
     #expect(try pick(doc, ["anthropic": usage(50, weekly: 99), "openai": usage(70, weekly: 10)]).member.id == "secondary")
-    #expect(try pick(doc, ["anthropic": usage(100, reset: 99999), "openai": usage(70)]).member.id == "primary")
+    let capped = try pick(doc, ["anthropic": usage(100), "openai": usage(0, weekly: 90)])
+    #expect(capped.member.id == "secondary")
+    #expect(capped.evidence[0].score == 0)
+  }
+
+  @Test func twoSevenDayWindowsRankByTheirMinimum() throws {
+    var doc = try groupDocument()
+    doc.providers["anthropic"]!.models["claude-sonnet-5"]!.usageWindows = ["five_hour", "seven_day", "seven_day_overage_included"]
+    var fable = usage(0, weekly: 10)
+    fable.windows.append(.init(name: "seven_day_overage_included", usedPercent: 80, resetsAt: 704_800, windowMinutes: 10080))
+    let placed = try pick(doc, ["anthropic": fable, "openai": usage(0, weekly: 50)])
+    #expect(placed.member.id == "secondary")
+    #expect(abs(try #require(placed.evidence[0].score) - 0.2) < 0.00001)
+    fable.windows[2].usedPercent = 0
+    #expect(try pick(doc, ["anthropic": fable, "openai": usage(0, weekly: 50)]).member.id == "primary")
   }
 
   @Test func configuredWindowsBindOnlyTheirModelAndUseReportedDurations() throws {
@@ -190,9 +215,6 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
     left.windows[left.windows.count - 1].usedPercent = 60
     left.windows[left.windows.count - 1].resetsAt = 704_800
     doc.providers["anthropic"]!.capacity = ["model_week": 4]
-    #expect(try pick(doc, ["anthropic": left, "openai": right]).member.id == "primary")
-    left.windows[left.windows.count - 1].usedPercent = 100
-    left.windows[left.windows.count - 1].resetsAt = 99999
     #expect(try pick(doc, ["anthropic": left, "openai": right]).member.id == "primary")
   }
 
@@ -251,24 +273,6 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
     await #expect(throws: CapabilityError(.providerNotConfigured, "Invalid or unreadable /models.json.")) {
       try await CapabilityClient.load(read: { path in path == "/models.json" ? Data("broken".utf8) : nil }, credentials: .unavailable)
     }
-  }
-}
-
-extension ModelPlacementTests {
-  @Test func staleExhaustedWindowBecomesFreshAtResetWithoutResettingWeeklyUsage() throws {
-    let doc = try groupDocument()
-    var gateway = usage(100, reset: 100_001, weekly: 15)
-    gateway.observedAt = now.timeIntervalSince1970 - 57 * 60
-    let other = usage(37, weekly: 49)
-    #expect(try pick(doc, ["anthropic": gateway, "openai": other]).member.id == "secondary")
-    gateway.windows[0].resetsAt = now.timeIntervalSince1970 - 1
-    let placed = try pick(doc, ["anthropic": gateway, "openai": other])
-    #expect(placed.member.id == "primary")
-    let evidence = try #require(placed.evidence.first)
-    #expect(evidence.windows[0].usedPercent == 100)
-    #expect(evidence.windows[0].remaining == 1)
-    #expect(evidence.windows[1].remaining == 0.85)
-    #expect(evidence.score == 0.85)
   }
 }
 

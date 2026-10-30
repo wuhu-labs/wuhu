@@ -84,10 +84,8 @@ struct CacheWarmer: Sendable {
   }
 
   func quotaLow(provider: String, policy: CacheWarmingPolicy) -> Bool {
-    @Dependency(\.date) var date
-    guard let window = usage.usage(provider)?.windows.first(where: { $0.name == "five_hour" }),
-          let used = window.usedPercent, used.isFinite,
-          window.resetsAt.map({ $0 > date.now.timeIntervalSince1970 }) ?? true else { return false }
+    @Dependency(\.date.now) var now
+    guard let used = usage.usage(provider, at: now)?.windows.first(where: { $0.name == "five_hour" })?.usedPercent, used.isFinite else { return false }
     return 100 - used <= policy.minimumRemainingPercent
   }
 }

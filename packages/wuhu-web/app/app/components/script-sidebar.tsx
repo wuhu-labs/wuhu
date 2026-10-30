@@ -320,7 +320,7 @@ function PageCard(
           label={row.title}
           status={row.status}
           caption={row.caption}
-          trail={<Count value={row.badge} tone='grey' />}
+          trail={<Count value={row.badge} />}
         />
       ))}
     </EntityCard>

@@ -1,4 +1,5 @@
 exports_files([
+    "nio-ssl-packet-boringssl-product.patch",
     "async-http-client-stream-finish-after-error-head.patch",
     "rules-apple-imported-framework-helper-modes.patch",
     "rspm-stable-trait-requests.patch",

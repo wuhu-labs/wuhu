@@ -1,0 +1,5 @@
+load(":manual_tags_tests.bzl", "manual_tags_tests")
+
+package(default_visibility = ["//tools:__pkg__"])
+
+manual_tags_tests(name = "manual-tags-test")

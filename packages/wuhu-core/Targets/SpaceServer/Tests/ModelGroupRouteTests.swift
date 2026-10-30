@@ -33,8 +33,8 @@ import Testing
       try await install(harness)
       @Dependency(\.date) var date
       let reset = date.now.timeIntervalSince1970 + 18000
-      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 90, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: date.now)
-      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 30, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: date.now)
+      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 90, resetsAt: reset), .init(name: "seven_day", usedPercent: 90, resetsAt: nil)], at: date.now)
+      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 30, resetsAt: reset), .init(name: "seven_day", usedPercent: 30, resetsAt: nil)], at: date.now)
       let created = try await harness.call("/v1/session", .object(["title": "Group", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
       let id = SessionID(created.id)
       let first = try #require(await harness.store.modelRoute(id))
@@ -44,7 +44,7 @@ import Testing
       #expect(created.modelGroup == "work")
       #expect(try await harness.store.record(id).executor == .modelGroup(id: "work", effort: "high"))
       harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: date.now)
-      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: date.now)
+      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 99, resetsAt: nil)], at: date.now)
       #expect(try await harness.store.modelRoute(id) == first)
       let response = try await harness.get("/v1/session/\(id.rawValue)/model-route")
       let inspected = try await response.body.json(SessionModelRouteOutput.self)

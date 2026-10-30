@@ -31,12 +31,10 @@ function linkAttributes({ href, current, onNavigate }: LinkProps) {
 }
 
 // A count of what is unread; nothing at zero.
-export function Count(
-  { value, tone = 'dark' }: { value: number; tone?: 'dark' | 'grey' },
-) {
+export function Count({ value }: { value: number }) {
   if (value <= 0) return null
   return (
-    <span className='wui-count' data-tone={tone}>
+    <span className='wui-count'>
       {value > 99 ? '99+' : value}
     </span>
   )

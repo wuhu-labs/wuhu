@@ -49,27 +49,26 @@ public func placeModelGroup(
   let evidence = group.members.map { member in
     let snapshot = usage[member.provider]
     let provider = providers[member.provider]!
-    let binding = provider.models[member.model]!.bindingWindows
-    let windows = binding.map { name -> ModelHeadroomWindow in
+    let windows = provider.models[member.model]!.bindingWindows.map { name -> (minutes: Int?, evidence: ModelHeadroomWindow) in
       let window = snapshot?.windows.first { $0.name == name }
       let capacity = provider.capacity?[name] ?? 1
       let used = window?.usedPercent.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
       let reset = window?.resetsAt.flatMap { $0.isFinite ? $0 : nil }
       var evidence = ModelHeadroomWindow(name: name, usedPercent: used, resetsAt: reset, capacity: capacity, remaining: nil, score: nil)
-      let defaultMinutes = ["five_hour": 300, "seven_day": 10080][name]
-      guard let minutes = window?.windowMinutes ?? defaultMinutes, minutes > 0,
-            let used else { return evidence }
+      guard let minutes = window?.windowMinutes ?? ["five_hour": 300, "seven_day": 10080][name], minutes > 0,
+            let used else { return (nil, evidence) }
       let duration = Double(minutes) * 60
-      let expired = reset.map { $0 <= now.timeIntervalSince1970 } ?? false
-      let remaining = (expired ? 1 : max(0, 1 - used / 100)) * capacity
-      let secondsLeft = expired ? duration : reset.map { max(60, $0 - now.timeIntervalSince1970) } ?? duration
-      let score = min(Double.greatestFiniteMagnitude, remaining / min(1, secondsLeft / duration))
+      let remaining = max(0, 1 - used / 100) * capacity
+      let secondsLeft = reset.map { max(60, $0 - now.timeIntervalSince1970) } ?? duration
       evidence.remaining = remaining
-      evidence.score = score
-      return evidence
+      evidence.score = remaining / min(1, secondsLeft / duration)
+      return (minutes, evidence)
     }
-    let scores = windows.compactMap(\.score)
-    return ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows, score: scores.count == binding.count ? scores.min() : nil)
+    let longest = windows.compactMap(\.minutes).max()
+    let score = windows.contains { $0.evidence.remaining == 0 } ? 0
+      : windows.contains { $0.evidence.score == nil } ? nil
+      : windows.filter { $0.minutes == longest }.compactMap(\.evidence.score).min()
+    return ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows.map(\.evidence), score: score)
   }
   let chosen: ModelsDocument.Member?
   switch group.policy {

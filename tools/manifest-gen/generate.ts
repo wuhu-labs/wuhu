@@ -1,3 +1,8 @@
+import {
+  type CTargetLowering,
+  ensureUpstreamCheckout,
+  validateCTarget,
+} from './upstream.ts'
 import { basename, dirname, join, normalize, relative } from '@std/path'
 import { parse } from '@std/yaml'
 import {
@@ -16,6 +21,7 @@ import {
   platforms as releasePlatforms,
 } from '../lib/plan.ts'
 import { manifestFingerprint } from './provenance.ts'
+import { assertManualBoundaries, validateManual } from './manual.ts'
 import {
   pinnedRepos,
   readConfigureFragments,
@@ -103,30 +109,6 @@ function testSupportPackages(
 interface BinaryTargetLowering {
   url: string
   checksum: string
-}
-
-interface UpstreamFetch {
-  url: string
-  sha256: string
-  stripPrefix?: string
-}
-
-interface CTargetLowering {
-  module: string
-  fetch: UpstreamFetch
-  sources: string[]
-  publicHeader: string
-  // `sources` names directories, which SwiftPM walks recursively; the Bazel
-  // side globs one level. Anything the glob would not have matched is excluded
-  // here so both graphs compile the same translation units.
-  exclude?: string[]
-  defines?: string[]
-  // Resolved by SwiftPM against the target's own path. A bare `-I` in
-  // `unsafeFlags` is not: it reaches the compiler verbatim and resolves
-  // against the build's working directory, so the header is never found.
-  headerSearchPaths?: string[]
-  unsafeFlags?: string[]
-  linuxLibraries?: string[]
 }
 
 // A raw Bazel label names a repository the SwiftPM graph cannot see (a pinned
@@ -261,6 +243,7 @@ export interface TargetReleaseManifest {
 }
 
 export interface TargetManifest {
+  manual?: boolean
   name: string
   productName?: string
   kind: TargetKind
@@ -423,6 +406,7 @@ export interface AppReleaseManifest {
 }
 
 export interface AppManifest {
+  manual?: boolean
   name: string
   hmr?: boolean
   viewPilot?: boolean
@@ -1044,6 +1028,7 @@ async function discoverTargets(root: string): Promise<TargetManifest[]> {
       manifestPath,
     )
     const resolved = { ...target, manifestDir: dirname(manifestPath) }
+    validateManual(resolved.manual, manifestPath)
     validateTargetRelease(resolved)
     validateTargetInfo(resolved)
     validateTargetLinkedFrameworks(resolved)
@@ -1266,6 +1251,7 @@ export function rawLabelLowering(dep: Dependency): SwiftPMLowering {
       } must declare exactly one of swiftpm.binaryTarget, cTarget or systemLibrary`,
     )
   }
+  if (lowering.cTarget) validateCTarget(lowering.cTarget)
   return lowering
 }
 
@@ -1670,6 +1656,17 @@ function testSizeAttr(
   return `    size = "${size}",\n`
 }
 
+function manualTags(
+  manual: boolean | undefined,
+  tags: string[] = [],
+): string[] {
+  return manual ? [...new Set([...tags, 'manual'])] : tags
+}
+
+function manualAttr(manual: boolean | undefined): string {
+  return manualTags(manual).length ? '    tags = ["manual"],\n' : ''
+}
+
 function testTagsAttr(tags: string[] | undefined): string {
   return tags?.length ? `    tags = ${quotedStarlarkList(tags)},\n` : ''
 }
@@ -1851,6 +1848,9 @@ function loweredTargetDecl(name: string, lowering: SwiftPMLowering): string {
   const cSettings = settings.length
     ? `,\n      cSettings: [\n        ${settings.join(',\n        ')}\n      ]`
     : ''
+  const cxxSettings = c.cxxStandard
+    ? `,\n      cxxSettings: [.unsafeFlags(["-std=${c.cxxStandard}"])]`
+    : ''
   const linked = (c.linuxLibraries ?? []).map((library) =>
     `.linkedLibrary("${library}", .when(platforms: [.linux]))`
   )
@@ -1863,7 +1863,9 @@ function loweredTargetDecl(name: string, lowering: SwiftPMLowering): string {
     upstreamCheckoutDir(c.module)
   }",\n${
     excluded ? `      exclude: [${excluded}],\n` : ''
-  }      sources: [${sources}],\n      publicHeadersPath: "include"${cSettings}${linkerSettings}\n    )`
+  }      sources: [${sources}],\n      publicHeadersPath: "${
+    c.publicHeadersPath ?? 'include'
+  }"${cSettings}${cxxSettings}${linkerSettings}\n    )`
 }
 
 export function generatePackageSwift(
@@ -1896,6 +1898,7 @@ export function generatePackageSwift(
 
   const targetDecls: string[] = []
   for (const target of targets) {
+    validateManual(target.manual, `${target.manifestDir}/target.yml`)
     if (target.hmr && target.kind !== 'library') {
       throw new Error('target hmr opt-in requires a library')
     }
@@ -2207,7 +2210,7 @@ function unstampedTwin(
     bazelSourceGlob(`Targets/${target.name}/${target.sources}`)
   },\n${swiftSettingsCoptsAttr(target.swiftSettings)}    deps = ${
     starlarkList(deps)
-  },\n${pluginsAttr}${
+  },\n${pluginsAttr}${manualAttr(target.manual)}${
     platformsAttr(
       libraryPlatforms(pkg, target),
       `${target.manifestDir}/target.yml`,
@@ -2258,6 +2261,7 @@ export async function generateBuildBazel(
   targets: TargetManifest[],
 ): Promise<string> {
   for (const target of targets) {
+    validateManual(target.manual, `${target.manifestDir}/target.yml`)
     if (target.hmr && target.kind !== 'library') {
       throw new Error('target hmr opt-in requires a library')
     }
@@ -2399,7 +2403,7 @@ export async function generateBuildBazel(
         `wuhu_system_library(\n    name = "${target.name}",\n    hdrs = glob(["${root}/**/*.h"]),\n    module_map = "${root}/module.modulemap",\n    linkopts = ${
           quotedStarlarkList((target.link ?? []).map((lib) => `-l${lib}`))
         },\n${
-          platformsAttr(
+          manualAttr(target.manual) + platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
           )
@@ -2419,7 +2423,7 @@ export async function generateBuildBazel(
         `wuhu_c_library(\n    name = "${target.name}",\n    srcs = glob(["${root}/**/*.c"]),\n    hdrs = glob(["${root}/**/*.h"]),\n    module_map = "${root}/include/module.modulemap",\n    deps = ${
           starlarkList(deps)
         },\n${
-          platformsAttr(
+          manualAttr(target.manual) + platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
           )
@@ -2439,7 +2443,7 @@ export async function generateBuildBazel(
         `objc_library(\n    name = "${target.name}",\n    srcs = glob(["${root}/**/*.c", "${root}/**/*.m"], allow_empty = True),\n    hdrs = glob(["${root}/**/*.h"], allow_empty = True),\n    alwayslink = True,\n${
           deps.length ? `    deps = ${starlarkList(deps)},\n` : ''
         }${
-          platformsAttr(
+          manualAttr(target.manual) + platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
           )
@@ -2465,7 +2469,7 @@ export async function generateBuildBazel(
           bazelSourceGlob(sourceRoot)
         },\n${swiftSettingsCoptsAttr(target.swiftSettings)}    deps = ${
           starlarkList(deps)
-        },\n${pluginsAttr})\n`,
+        },\n${pluginsAttr}${manualAttr(target.manual)})\n`,
       )
     } else if (target.kind === 'executable') {
       if (target.stamp) chunks.push(stampGenrule(target))
@@ -2481,7 +2485,7 @@ export async function generateBuildBazel(
           swiftSettingsCoptsAttr(settings)
         }    deps = ${starlarkList(deps)},\n${pluginsAttr}${
           target.info ? infoPlistLinkAttrs(target) : ''
-        }${target.stamp ? '    tags = ["manual"],\n' : ''}${
+        }${manualAttr(target.stamp || target.manual)}${
           platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
@@ -2494,7 +2498,7 @@ export async function generateBuildBazel(
       if (target.productName && target.productName !== target.name) {
         chunks.push(
           `alias(\n    name = "${target.productName}",\n    actual = ":${target.name}",\n${
-            target.stamp ? '    tags = ["manual"],\n' : ''
+            manualAttr(target.stamp || target.manual)
           })\n`,
         )
       }
@@ -2508,7 +2512,9 @@ export async function generateBuildBazel(
       const openapi = target.openapiGenerate
       if (openapi) {
         chunks.push(
-          `wuhu_openapi_sources(\n    name = "${target.name}_gen",\n    document = ":${openapi.document}",\n    config = ":Targets/${target.name}/${openapi.config}",\n    output = "${openapi.output}",\n)\n\n`,
+          `wuhu_openapi_sources(\n    name = "${target.name}_gen",\n    document = ":${openapi.document}",\n    config = ":Targets/${target.name}/${openapi.config}",\n    output = "${openapi.output}",\n${
+            manualAttr(target.manual)
+          })\n\n`,
         )
       }
       const librarySrcs = openapi
@@ -2542,7 +2548,7 @@ export async function generateBuildBazel(
         }    deps = ${starlarkList(deps)},
 ${pluginsAttr}    package_name = "${pkg.packageName}",
 ${
-          platformsAttr(
+          manualAttr(target.manual) + platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
           )
@@ -2646,9 +2652,9 @@ ${
             config.hostLinkopts?.length
               ? `    linkopts = ${quotedStarlarkList(config.hostLinkopts)},\n`
               : ''
-          }${testRuntimeAttrs(config)}${testTagsAttr(config.tags)}${
-            platformsAttr(runnable, location)
-          })\n`,
+          }${testRuntimeAttrs(config)}${
+            testTagsAttr(manualTags(target.manual, config.tags))
+          }${platformsAttr(runnable, location)})\n`,
         )
       }
       if (config.hostResources?.length && !config.host) {
@@ -2676,11 +2682,11 @@ ${
               },\n`
               : ''
           }${sharedAttrs}${testRuntimeAttrs(config, lane)}${
-            config.tags?.length
-              ? testTagsAttr([
+            config.tags?.length || target.manual
+              ? testTagsAttr(manualTags(target.manual, [
                 'resources:simulators:1',
-                ...config.tags,
-              ])
+                ...(config.tags ?? []),
+              ]))
               : `    tags = ["resources:simulators:1"],\n`
           }${platformsAttr([lane], location)})\n`,
         )
@@ -3494,80 +3500,6 @@ function assertNoMacroResources(targets: TargetManifest[]): void {
   }
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    bytes as unknown as ArrayBuffer,
-  )
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-// Materializes the pinned upstream a cTarget lowering compiles, into an
-// untracked, Bazel-ignored checkout the generated Package.swift points at.
-// Idempotent: a marker recording the archive sha256 skips the refetch, and any
-// other state is torn down and rebuilt.
-async function ensureUpstreamCheckout(
-  packageDir: string,
-  c: CTargetLowering,
-): Promise<void> {
-  const dir = join(packageDir, upstreamCheckoutDir(c.module))
-  const marker = join(dir, '.fetched-sha256')
-  try {
-    if ((await Deno.readTextFile(marker)).trim() === c.fetch.sha256) return
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error
-  }
-  try {
-    await Deno.remove(dir, { recursive: true })
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error
-  }
-
-  const response = await fetch(c.fetch.url)
-  if (!response.ok) {
-    throw new Error(`fetching ${c.fetch.url} failed: HTTP ${response.status}`)
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  const digest = await sha256Hex(bytes)
-  if (digest !== c.fetch.sha256) {
-    throw new Error(
-      `sha256 mismatch for ${c.fetch.url}: expected ${c.fetch.sha256}, got ${digest}`,
-    )
-  }
-
-  await Deno.mkdir(dir, { recursive: true })
-  const archive = join(dir, '.archive.tar.gz')
-  await Deno.writeFile(archive, bytes)
-  const strip = c.fetch.stripPrefix ? ['--strip-components', '1'] : []
-  const tar = await new Deno.Command('tar', {
-    args: ['-xzf', archive, '-C', dir, ...strip],
-    stderr: 'piped',
-  }).output()
-  if (!tar.success) {
-    throw new Error(
-      `extracting ${archive} failed: ${new TextDecoder().decode(tar.stderr)}`,
-    )
-  }
-  await Deno.remove(archive)
-  await Deno.mkdir(join(dir, 'include'), { recursive: true })
-  if (requiresPublicHeaderMaterialization(c.publicHeader)) {
-    await Deno.copyFile(
-      join(dir, c.publicHeader),
-      join(dir, 'include', c.publicHeader),
-    )
-  }
-  await Deno.writeTextFile(marker, `${c.fetch.sha256}\n`)
-  console.log(`fetched ${dir}`)
-}
-
-export function requiresPublicHeaderMaterialization(
-  publicHeader: string,
-): boolean {
-  return !normalize(publicHeader).startsWith('include/')
-}
-
 // Two shells in one package can load the same rule file with different symbol
 // sets — one with an extension rule, one without — and Bazel rejects a file
 // loaded twice, so the symbols merge rather than the lines deduplicating.
@@ -4152,11 +4084,15 @@ function generateAppBundleRule(
     ? directPlists
     : variantExpr(plists, (path) => `["${shellPath(pathPrefix, path)}"]`)
   const hmrPlist = hmr
-    ? `wuhu_hmr_plist(\n    name = "${target.name}_hmr_plist",\n    src = ${
+    ? `wuhu_hmr_plist(\n    name = "${target.name}_hmr_plist",\n${
+      manualAttr(app.manual)
+    }    src = ${
       variantExpr(plists, (path) => JSON.stringify(shellPath(pathPrefix, path)))
     },\n    enabled = select({\n        "//bazel/rules:hmr_enabled": True,\n        "//conditions:default": False,\n    }),\n)\n\n`
     : ''
-  return `${hmrPlist}${rule}(\n    name = "${target.name}",\n    bundle_id = ${
+  return `${hmrPlist}${rule}(\n    name = "${target.name}",\n${
+    manualAttr(app.manual)
+  }    bundle_id = ${
     variantExpr(
       perVariant((variant) => bundles[variant].bundleID),
       (value) => JSON.stringify(value),
@@ -4328,6 +4264,7 @@ export function generateAppBuildBazel(
   platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>> =
     profilePlatforms([app]),
 ): string {
+  validateManual(app.manual, `${app.name} ${shellPath(pathPrefix, 'app.yml')}`)
   const embedsViewPilot = appEmbedsViewPilot(app)
   const coptsSymbols = [
     ...(app.hmr
@@ -4508,7 +4445,9 @@ export function generateAppBuildBazel(
       ]),
     ].join(' + ')
     chunks.push(
-      `swift_library(\n    name = "${library.name}",\n    srcs = glob(${
+      `swift_library(\n    name = "${library.name}",\n${
+        manualAttr(app.manual)
+      }    srcs = glob(${
         quotedStarlarkList(
           appLibrarySources(library).map((dir) =>
             `${shellPath(pathPrefix, dir)}/**/*.swift`
@@ -4890,6 +4829,7 @@ async function prepareApp(
 ): Promise<PreparedApp> {
   const source = join(appDir, 'app.yml')
   const app = await readYaml<AppManifest>(source)
+  validateManual(app.manual, source)
   validateAppTransportSecurity(app, source)
   validateAppRelease(app, source)
   validateAppExtensions(app, source)
@@ -5204,10 +5144,28 @@ ${
 `
 }
 
+export async function assertNoManualDependencies(root = '.'): Promise<void> {
+  const packages = await Promise.all(
+    (await discoverPackageDirs(join(root, 'packages'))).map(async (dir) => ({
+      dir: relative(root, dir),
+      manifest: await readPackageManifest(dir),
+      targets: await discoverTargets(dir),
+      apps: await Promise.all(
+        (await discoverAppDirs(dir)).map(async (appDir) => ({
+          source: join(appDir, 'app.yml'),
+          app: await readYaml<AppManifest>(join(appDir, 'app.yml')),
+        })),
+      ),
+    })),
+  )
+  assertManualBoundaries(packages)
+}
+
 export async function main(rawArgs: string[] = Deno.args): Promise<void> {
   generatedOutputs.clear()
   configure(rawArgs)
   await removeLegacyPackagesIfNeeded()
+  await assertNoManualDependencies()
 
   swiftPMPackages = workspacePackage
     ? await localPathClosure(workspacePackage)
