@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Credentials
 import Dependencies
 import DeterministicDependencies
@@ -12,7 +12,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct OIDCProviderTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct OIDCProviderTests {
   @Test(arguments: ["anthropic", "deepseek", "openai"])
   func bearerAuthMintsPerCallWithoutCredentials(provider: String) async throws {
     let minted = TokenCalls()

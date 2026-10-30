@@ -1,12 +1,13 @@
 import Clocks
+import ControlledTime
 import struct OperationProtocol.OperationClock
 
 struct MachineRecoveryTestClock: Sendable {
-  private let time: TestClock<Duration>
+  private let time: VirtualClock
   let clock: OperationClock
 
   init() {
-    let time = TestClock<Duration>(); let origin = time.now
+    let time = VirtualClock(); let origin = time.now
     self.time = time
     clock = .init(now: { origin.duration(to: time.now) }, sleep: { try await time.sleep(for: $0) })
   }

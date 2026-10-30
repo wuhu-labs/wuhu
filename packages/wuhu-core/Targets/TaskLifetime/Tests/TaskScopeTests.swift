@@ -1,4 +1,5 @@
 import Clocks
+import ControlledTime
 import Synchronization
 import TaskLifetime
 import Testing
@@ -76,23 +77,24 @@ private actor Owner {
   await scope.close()
 }
 
-@Test func deadlineUsesInjectedClockAndCancelsTheLoser() async throws {
+@MainActor @Test func deadlineUsesInjectedClockAndCancelsTheLoser() async throws {
   let clock = TestClock<Duration>()
   let (blocked, _) = AsyncStream<Void>.makeStream()
   let ended = Mutex(false)
-  let call = Task {
+  let call = Task.immediate {
     try await withDeadline(.seconds(5), clock: clock) {
       for await _ in blocked {}
       ended.withLock { $0 = true }
       try Task.checkCancellation()
     }
   }
+  await clock.sleeping()
   await clock.advance(by: .seconds(5))
   await #expect(throws: DeadlineExceeded.self) { try await call.value }
   #expect(ended.withLock { $0 })
 }
 
-@Test func successfulDeadlineCancelsItsTimer() async throws {
+@MainActor @Test func successfulDeadlineCancelsItsTimer() async throws {
   let clock = TestClock<Duration>()
   #expect(try await withDeadline(.seconds(5), clock: clock) { 42 } == 42)
 }
@@ -139,7 +141,7 @@ private actor Owner {
   #expect(drained.withLock { $0 })
 }
 
-@Test func bestEffortDeadlineCancelsItsOperation() async throws {
+@MainActor @Test func bestEffortDeadlineCancelsItsOperation() async throws {
   let scope = TaskScope()
   let (cancelled, signal) = AsyncStream<Void>.makeStream()
   let (blocked, _) = AsyncStream<Void>.makeStream()
@@ -149,6 +151,7 @@ private actor Owner {
       for await _ in blocked {}
     } onCancel: { signal.yield(()) }
   }
+  await clock.sleeping()
   await clock.advance(by: .seconds(5))
   var iterator = cancelled.makeAsyncIterator()
   _ = await iterator.next()
@@ -219,7 +222,7 @@ private actor AdmissionOrder {
   for _ in 0 ..< 100 { #expect(try await AdmissionOrder().check() == [1, 2]) }
 }
 
-@Test func unjoinedDeadlineAnswersBeforeNoncooperativeWorkEnds() async throws {
+@MainActor @Test func unjoinedDeadlineAnswersBeforeNoncooperativeWorkEnds() async throws {
   let scope = TaskScope()
   let clock = TestClock<Duration>()
   let (started, start) = AsyncStream<Void>.makeStream()
@@ -234,6 +237,7 @@ private actor AdmissionOrder {
     }
   }
   for await _ in started {}
+  await clock.sleeping()
   await clock.advance(by: .seconds(5))
   await #expect(throws: DeadlineExceeded.self) { try await call.value }
   #expect(!completed.withLock { $0 })

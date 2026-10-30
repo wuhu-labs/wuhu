@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import FetchWebSocket
@@ -12,7 +12,7 @@ import Serve
 import Testing
 import WuhuAI
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1))) struct ResponsesServePairTests {
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(1))) struct ResponsesServePairTests {
   @Test func serverEnforcesResponseAndCallReferencesAcrossACommittedToolTurn() async throws {
     let (client, server) = WebSocket.pair()
     let session = ResponsesWebSocketSession()

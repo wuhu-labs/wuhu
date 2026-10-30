@@ -1,4 +1,5 @@
 import Clocks
+import ControlledTime
 import Dependencies
 import class MainHub.Hub
 import class MainHub.SessionService
@@ -12,12 +13,12 @@ import SessionDomain
 import SpaceCore
 import Testing
 
-private struct ReminderAdmissionClock: Clock {
-  let base = TestClock<Duration>()
+private struct ReminderAdmissionClock: NonsendingClock {
+  let base = VirtualClock()
   let admissionDelay = Box<Duration>(.zero)
   let sleepStarted = Box(false)
 
-  var now: TestClock<Duration>.Instant {
+  var now: VirtualClock.Instant {
     let delay = admissionDelay.withLock { delay in
       let previous = delay
       delay = .seconds(30)
@@ -28,11 +29,11 @@ private struct ReminderAdmissionClock: Clock {
 
   var minimumResolution: Duration { base.minimumResolution }
   var currentDate: Date {
-    let elapsed = TestClock<Duration>.Instant().duration(to: base.now) + admissionDelay.value
+    let elapsed = VirtualClock.at(.zero).duration(to: base.now) + admissionDelay.value
     return anchor.addingTimeInterval(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
   }
 
-  func sleep(until deadline: TestClock<Duration>.Instant, tolerance: Duration?) async throws {
+  func sleep(until deadline: VirtualClock.Instant, tolerance: Duration?) async throws {
     let translated = deadline.advanced(by: .zero - admissionDelay.value)
     sleepStarted.withLock { $0 = true }
     try await base.sleep(until: translated, tolerance: tolerance)

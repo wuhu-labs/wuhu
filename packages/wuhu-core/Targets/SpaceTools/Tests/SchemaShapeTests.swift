@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import Foundation
 import JSONValue
@@ -11,7 +11,7 @@ import Testing
 // reference page names (the same registry the checked-in fixtures are
 // golden-pinned to), so an extra or typo'd key in a wire payload fails here
 // instead of shipping.
-@Suite(.deterministicDependencies(clock: TestClock())) struct SchemaShapeTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct SchemaShapeTests {
   static let samples: [(tool: String, input: JSONValue)] = [
     ("write", .object(["path": "/notes/a.md", "content": "foo [b](/b.md)\nbar"])),
     ("read", .object(["path": "/notes/a.md"])),

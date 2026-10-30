@@ -10,6 +10,7 @@ import TaskLifetime
   import Darwin
 #endif
 import CExecSupervisor
+import protocol Clocks.NonsendingClock
 import struct ComputerFiles.ExternalKind
 import struct ComputerFiles.ExternalUsage
 import Fetch
@@ -655,7 +656,8 @@ actor ExecWorkers {
 
   /// One request over a link, its answer read whole, bounded by `deadline`.
   static func exchange(
-    scope: TaskScope, _ request: Request, client: FetchClient, nonce: String, deadline: Duration, operation: UUID?, clock: any Clock<Duration> = ContinuousClock(),
+    scope: TaskScope, _ request: Request, client: FetchClient, nonce: String, deadline: Duration, operation: UUID?, clock: any NonsendingClock<Duration> = ContinuousClock(),
+    isolation: isolated (any Actor)? = #isolation,
   ) async throws -> (Response, Data) {
     let query = request.url.query.map { "?" + $0 } ?? ""
     guard let url = URL(string: "http://localhost" + request.url.path + query) else { throw OperationError(.invalidConfiguration) }

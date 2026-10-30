@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import JSONValue
 import SpaceContract
@@ -7,7 +7,7 @@ import SpaceTools
 import Testing
 
 // Alice's group reads shared; shared reads nothing of hers.
-@Suite(.deterministicDependencies(clock: TestClock())) struct GroupPathTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct GroupPathTests {
   struct Rig {
     let shared: SpaceToolContext
     let alice: SpaceToolContext

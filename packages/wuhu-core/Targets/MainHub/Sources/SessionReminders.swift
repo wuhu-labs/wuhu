@@ -95,7 +95,7 @@ actor SessionReminders {
   }
 }
 
-public func deadlineSleep(after delay: Duration, clock: any Clock<Duration>) -> @Sendable () async throws -> Void {
+public func deadlineSleep(after delay: Duration, clock: any NonsendingClock<Duration>) -> @Sendable () async throws -> Void {
   let clock = AnyClock(clock)
   let deadline = clock.now.advanced(by: delay)
   return { try await clock.sleep(until: deadline, tolerance: nil) }

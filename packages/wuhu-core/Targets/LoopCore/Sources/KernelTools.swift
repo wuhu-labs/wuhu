@@ -28,7 +28,7 @@ public enum KernelToolset {
     ),
     Tool(
       name: KernelTool.compact.rawValue,
-      description: "Compact the conversation: everything before the cut is replaced by your summary. Name a bookmark to keep the transcript after it; omit it to fold everything. List files to re-read so the next generation re-establishes its working context. Name a model to continue on it from the summary: the target is checked first, and a refused one folds nothing.",
+      description: "Compact the conversation: everything before the cut is replaced by your summary. Name a bookmark to keep the transcript after it; omit it to fold everything. List files to re-read so the next generation re-establishes its working context. Name a model to continue on it from the summary: the target is checked first, and a refused one folds nothing. Park when no more work is coming: your turn ends there, and the next generation starts at your next wake, with the prompt and model placement as of then; it is refused while you owe a reply or a request its final report.",
       parameters: .object([
         "type": .string("object"),
         "properties": .object([
@@ -41,6 +41,7 @@ public enum KernelToolset {
           "bookmark": .object(["type": .string("string"), "description": .string("Keep the transcript after this bookmark.")]),
           "model": .object(["type": .string("string"), "description": .string("Continue on this target after the compaction: provider/model or a model group id from /model-groups.json. Omit to stay on the current one.")]),
           "effort": .object(["type": .string("string"), "description": .string("Reasoning effort for model; defaults to the current effort when model names the current target, else the target's default.")]),
+          "park": .object(["type": .string("boolean"), "description": .string("End the turn and start the next generation at the next wake instead of now. Not with model.")]),
         ]),
         "required": .array([.string("summary")]),
         "additionalProperties": .bool(false),
@@ -59,6 +60,7 @@ struct CompactArguments: Codable {
   var bookmark: String?
   var model: String?
   var effort: String?
+  var park: Bool
 
   enum CodingKeys: String, CodingKey {
     case summary
@@ -66,6 +68,7 @@ struct CompactArguments: Codable {
     case bookmark
     case model
     case effort
+    case park
   }
 
   var target: CompactionTarget? { model.map { CompactionTarget(model: $0, effort: effort) } }
@@ -80,6 +83,8 @@ struct CompactArguments: Codable {
     effort = try container.decodeIfPresent(String.self, forKey: .effort)
     if let model, model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw CompactArgumentsError.emptyModel }
     if effort != nil, model == nil { throw CompactArgumentsError.effortWithoutModel }
+    park = try container.decodeIfPresent(Bool.self, forKey: .park) ?? false
+    if park, model != nil { throw CompactArgumentsError.parkWithModel }
   }
 }
 
@@ -87,12 +92,38 @@ enum CompactArgumentsError: Error, Equatable, CustomStringConvertible {
   case emptySummary
   case emptyModel
   case effortWithoutModel
+  case parkWithModel
 
   var description: String {
     switch self {
     case .emptySummary: "emptySummary: compact requires a non-empty summary"
     case .emptyModel: "emptyModel: model names provider/model or a model group id; omit it to stay on the current target"
     case .effortWithoutModel: "effortWithoutModel: effort applies to a model target; name model too"
+    case .parkWithModel: "parkWithModel: a parked compaction is placed at the next wake; omit model, or omit park to switch now"
+    }
+  }
+}
+
+// A parked session runs no nags, so a park that skipped what it owes would
+// drop that obligation for good.
+enum ParkRefusal: Error, Equatable, CustomStringConvertible {
+  case owesReply(conversations: [ConversationID])
+  case owesReport(requests: [RequestID])
+
+  init?(_ environment: SessionEnvironment, task: Bool) {
+    if !task, case let owed = environment.settle.owedConversations, !owed.isEmpty {
+      self = .owesReply(conversations: owed)
+    } else if case let open = environment.settle.openRequests.keys.sorted(by: { $0.rawValue < $1.rawValue }), !open.isEmpty {
+      self = .owesReport(requests: open)
+    } else {
+      return nil
+    }
+  }
+
+  var description: String {
+    switch self {
+    case let .owesReply(conversations): "owesReply: park is refused while you owe a reply in \(conversations.map(\.rawValue).joined(separator: ", ")); reply first, or compact without park"
+    case let .owesReport(requests): "owesReport: park is refused while request \(requests.map(\.rawValue).joined(separator: ", ")) waits for your final report; report first, or compact without park"
     }
   }
 }
@@ -115,6 +146,13 @@ extension Transcript {
       preconditionFailure("compact tool call \(callID.rawValue) is not in the transcript")
     }
     return index
+  }
+
+  func compactCall(_ callID: ToolCallID) -> ToolCall {
+    guard case let .assistant(entry) = items[compactCallIndex(callID)], let call = entry.toolCalls.first(where: { $0.id == callID.rawValue }) else {
+      preconditionFailure("compact tool call \(callID.rawValue) is not in the transcript")
+    }
+    return call
   }
 
   // Fold everything before the named bookmark; keep from the bookmark's region

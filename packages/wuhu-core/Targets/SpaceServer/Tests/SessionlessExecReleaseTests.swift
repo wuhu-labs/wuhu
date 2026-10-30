@@ -1,4 +1,5 @@
 import Clocks
+import ControlledTime
 import Crypto
 import Dependencies
 import DeterministicDependencies
@@ -85,7 +86,7 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
   @Test(arguments: [SessionlessEnd.firingCancelled, .terminalCancelled, .terminalReturned])
   func aRunsEndRevokesItsTokenAndKillsTheProcessItsScriptStarted(_ end: SessionlessEnd) async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: TestClock())
+    let server = TestServer(space: space, clock: VirtualClock())
     let (machineID, _) = try await addMachine(server)
     let tokens = ExecTokens(spaceURL: "http://main")
     let registry = WorkerRegistry(tokens: tokens, machines: server.hub)

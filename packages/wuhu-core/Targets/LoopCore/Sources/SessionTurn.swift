@@ -43,6 +43,7 @@ extension SessionActor {
 
   private func run(_ step: Step, turn: inout TurnTrace) async throws {
     try modify { $0.inStep = true }
+    if case let .foldPending(compactCall) = (try live).transcript.phase { try await runPendingFold(compactCall) }
     switch step {
     case let .tool(call):
       turn.toolCalls += 1
@@ -84,6 +85,14 @@ extension SessionActor {
       try modify { $0.transcript = transcript }
     }
     guard try await reconcileSubscriptions() else { return nil }
+    // A pending fold has no work, nags or forced compaction, and a compact
+    // request finds it compacted already: only a delivery runs the fold.
+    if case .foldPending = (try live).transcript.phase {
+      if try await main.pendingCommand(id) != nil { try await main.append(id, .compactRequestAlreadyCompacted).value(Void.self) }
+      try Task.checkCancellation()
+      guard !(try live).revoking else { return nil }
+      return (try live).queueHead > (try live).queueTail ? .drain : nil
+    }
     if let toolCall = (try live).transcript.nextPendingToolCall { return .tool(toolCall) }
     let budget = await loopConfig.budget(id)
     let fullness = try live.transcript.contextFullness(budget: budget)

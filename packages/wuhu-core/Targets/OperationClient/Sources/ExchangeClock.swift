@@ -1,6 +1,7 @@
+import protocol Clocks.NonsendingClock
 import struct OperationProtocol.OperationClock
 
-struct ExchangeClock: Clock {
+struct ExchangeClock: NonsendingClock {
   struct Instant: InstantProtocol {
     let offset: Duration
     func advanced(by duration: Duration) -> Self { Self(offset: offset + duration) }

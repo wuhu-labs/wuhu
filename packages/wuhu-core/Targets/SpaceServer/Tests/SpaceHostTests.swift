@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Credentials
 import DeterministicDependencies
 import Fetch
@@ -15,7 +15,7 @@ import SpaceCore
 import Synchronization
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock()), .serialized) struct SpaceHostTests {
+@Suite(.deterministicDependencies(clock: VirtualClock()), .serialized) struct SpaceHostTests {
   @Test func separateHostsOwnSeparateStoresAndDiscovery() async throws {
     let previous = ProcessInfo.processInfo.environment["TEST_PROVIDER_API_KEY"]
     setenv("TEST_PROVIDER_API_KEY", "process-key", 1)

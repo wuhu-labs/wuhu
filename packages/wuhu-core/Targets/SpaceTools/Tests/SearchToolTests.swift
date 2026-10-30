@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 @testable import FileSearch
@@ -11,7 +11,7 @@ import SpaceFS
 import Synchronization
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct SearchToolTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct SearchToolTests {
   private func seedCorpus(_ context: SpaceToolContext) async throws {
     _ = try await seedFile("/docs/a.txt", "foo one\nplain\nfoo two", context)
     _ = try await seedFile("/docs/b.txt", "nothing here", context)
@@ -237,7 +237,7 @@ import Testing
     var found: [Int] = []
     var pages = 0
     repeat {
-      let page = try await query.run(in: source, clock: TestClock(), readBudget: readBudget)
+      let page = try await query.run(in: source, clock: VirtualClock(), readBudget: readBudget)
       #expect(page.skipped.isEmpty)
       found += page.hits.compactMap(\.line)
       query.step = page.cursor
@@ -318,7 +318,7 @@ import Testing
   private func failureAtDeadline(
     _ search: @escaping @Sendable () async throws -> SearchPage,
   ) async throws -> (advanced: Duration, error: ToolRunError?, outcome: String) {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let done = Mutex(false)
     let task = Task {
       defer { done.withLock { $0 = true } }

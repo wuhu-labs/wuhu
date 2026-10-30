@@ -1,4 +1,5 @@
 import AsyncHTTPClient
+import ControlledTime
 import Crypto
 import Dependencies
 import DeterministicDependencies
@@ -210,7 +211,7 @@ import struct WuhuAI.ToolCall
   }
 
   @Test func aStalledResponseBodyEndsWithTheFetchWindow() async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let (heads, head) = AsyncStream<Void>.makeStream()
     try await withIdentityScript(identity: try testIdentity().controller, clock: clock, hop: FetchClient { _ in
       head.yield(())
@@ -270,7 +271,7 @@ struct IdentityScriptRig {
 /// and goes out on `hop`; ordinary fetches use `fetch`.
 func withIdentityScript(
   identity: IdentityController? = nil,
-  clock: TestClock<Duration>? = nil,
+  clock: VirtualClock? = nil,
   hop: FetchClient? = nil,
   fetch: FetchClient? = nil,
   _ body: (IdentityScriptRig) async throws -> Void,

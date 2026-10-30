@@ -1,10 +1,10 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import MachineChannel
 import MachineContract
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(2)))
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(2)))
 struct RelayTests {
   @Test func execRoundTripsThroughStatelessRelay() async throws {
     let caller = ChannelEndpoint()

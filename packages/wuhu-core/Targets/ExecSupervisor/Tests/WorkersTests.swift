@@ -478,7 +478,7 @@ import Testing
   }
 
   /// A peer that never answers holds a request only to its deadline, and a cancelled caller not at all.
-  @Test func aRequestDeadlineAnswersWithoutWaitingForTheWork() async throws {
+  @MainActor @Test func aRequestDeadlineAnswersWithoutWaitingForTheWork() async throws {
     let parked = Mutex<[CheckedContinuation<Void, Never>]>([])
     let scope = TaskScope()
     let client = FetchClient { _ in

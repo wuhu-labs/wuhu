@@ -5,11 +5,13 @@ checks:
   build: [linux, mac, ios, visionos]
   test: [linux, mac]
 dependencies:
+  - Clocks
   - Dependencies
   - MachineContract
   - JSONValue
 tests:
   dependencies:
+    - ControlledTime
     - DeterministicDependencies
     - Clocks
     - Dependencies

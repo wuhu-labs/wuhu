@@ -1,11 +1,10 @@
-import Clocks
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import ClockTesting
+import ControlledTime
 import Crypto
 import Dependencies
 import Fetch
@@ -386,7 +385,7 @@ private struct Rig {
   }
 
   @Test func aRestartRearmsUndrivenExecExpiryWithoutReapingAResumedCaller() async throws {
-    let clock = TestClock<Duration>()
+    let clock = VirtualClock()
     try await withDependencies {
       $0.continuousClock = clock
     } operation: {

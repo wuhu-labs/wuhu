@@ -253,7 +253,7 @@ import Testing
   }
 
   /// Each sleep lands at its deadline plus `overshoot`, as after a suspension.
-  final class SteppingClock: Clock {
+  final class SteppingClock: NonsendingClock {
     struct Instant: InstantProtocol, Hashable {
       var offset: Swift.Duration
       func advanced(by duration: Swift.Duration) -> Self { .init(offset: offset + duration) }

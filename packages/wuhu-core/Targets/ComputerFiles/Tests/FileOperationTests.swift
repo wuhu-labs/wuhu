@@ -1,4 +1,4 @@
-import ClockTesting
+import ControlledTime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

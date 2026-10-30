@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import Fetch
@@ -17,7 +17,7 @@ import Testing
 // limit is what breaks the cycle.
 @Suite(.deterministicDependencies) struct ScriptSelfInterruptTests {
   @Test func aScriptThatInterruptsItsOwnSessionLeavesItInterruptedAndResumable() async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let provider = ScriptedProvider()
     try await withDependencies {
       $0.date = DateGenerator { Date() }

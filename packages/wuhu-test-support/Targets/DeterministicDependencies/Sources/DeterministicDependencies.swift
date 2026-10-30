@@ -1,3 +1,4 @@
+import protocol Clocks.NonsendingClock
 import Dependencies
 import DependenciesTestSupport
 #if canImport(FoundationEssentials)
@@ -12,7 +13,7 @@ extension Trait where Self == _DependenciesTrait {
     .dependencies { Self.install(into: &$0) }
   }
 
-  public static func deterministicDependencies(clock: any Clock<Duration>) -> Self {
+  public static func deterministicDependencies(clock: any NonsendingClock<Duration>) -> Self {
     .dependencies {
       Self.install(into: &$0)
       $0.continuousClock = clock

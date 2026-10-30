@@ -1,4 +1,5 @@
 import Clocks
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import Fetch
@@ -13,7 +14,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1))) struct ResponsesWebSocketTests {
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(1))) struct ResponsesWebSocketTests {
   private func endpoint() -> OpenAIGPTEndpoint {
     OpenAIGPTEndpoint(model: "test-model", replayScope: "test-scope", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline-token")
   }
@@ -550,6 +551,7 @@ import WuhuAI
       }
     }
     await server.waitForSend(1)
+    await clock.sleeping()
     await clock.advance(by: .seconds(3))
     switch await task.result {
     case .success: Issue.record("Idle turn succeeded")
@@ -741,7 +743,7 @@ private actor MutableSocketMedia: MediaResolver {
   }
 }
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1))) struct ResponsesCompletionAndCallbackTests {
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(1))) struct ResponsesCompletionAndCallbackTests {
   private func endpoint() -> OpenAIGPTEndpoint {
     OpenAIGPTEndpoint(model: "test-model", replayScope: "test-scope", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline-token")
   }
@@ -860,7 +862,7 @@ private final class CallbackSuspension: Sendable {
   }
 }
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1))) struct ReplayScopeWebSocketContracts {
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(1))) struct ReplayScopeWebSocketContracts {
   @Test(arguments: ["same", "scope", "epoch", "unknown", "reconnect"])
   func acknowledgedContinuationIsBoundToScopeAndRouteEpoch(change: String) async throws {
     let server = ScriptedResponsesSocket(scripts: [textResponse("resp_account_a"), textResponse("resp_next")])

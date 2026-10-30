@@ -18,6 +18,7 @@ dependencies:
   - OrderedCollections
 tests:
   dependencies:
+    - ControlledTime
     - DeterministicDependencies
     - OrderedCollections
     - MachineContract

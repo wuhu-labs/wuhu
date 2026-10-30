@@ -42,7 +42,7 @@ private func outcome(_ span: FinishedInMemorySpan) -> SpanAttribute? { span.attr
       // The thrown compaction wrote no result, so it has no size.
       #expect(tools.filter { $0.attributes.get("wuhu.bytes.out") != nil }.count == 4)
       let folds = tracer.finishedSpans.named("agent.compaction")
-      #expect(folds.count == 2)
+      #expect(folds.count == 1)
       #expect(folds.allSatisfy { fold in
         fold.attributes.get("wuhu.compaction.reason") == .string("tool") && outcome(fold) == .string("errored") && tools.contains { $0.spanID == fold.parentSpanID }
       })

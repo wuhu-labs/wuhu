@@ -1,3 +1,4 @@
+import protocol Clocks.NonsendingClock
 import Dependencies
 import MachineContract
 
@@ -25,7 +26,7 @@ public actor ChannelEndpoint {
   private var outbound: AsyncStream<Frame>.Continuation?
   private var bindingGeneration: Int = 0
 
-  private let clock: any Clock<Duration>
+  private let clock: any NonsendingClock<Duration>
   private let expirations: AsyncStream<(ExecID, @Sendable () async throws -> Void, AsyncStream<Void>)>
   private let expirationContinuation: AsyncStream<(ExecID, @Sendable () async throws -> Void, AsyncStream<Void>)>.Continuation
   private var terminalWaiters: [ExecID: [AsyncStream<Void>.Continuation]] = [:]
@@ -192,9 +193,9 @@ public actor ChannelEndpoint {
     }
   }
 
-  private func expiryWait<C: Clock>(_ clock: C) -> @Sendable () async throws -> Void where C.Duration == Duration {
+  private func expiryWait<C: NonsendingClock>(_ clock: C) -> @Sendable () async throws -> Void where C.Duration == Duration {
     let deadline = clock.now.advanced(by: .seconds(600))
-    return { try await clock.sleep(until: deadline, tolerance: nil) }
+    return { try await clock.sleep(until: deadline, tolerance: nil, isolation: self) }
   }
 
   private func retire(_ id: ExecID) {

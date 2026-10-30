@@ -213,34 +213,35 @@ extension SessionActor {
   private func executeCompact(_ toolCall: ToolCall) async throws -> ToolResultPayload {
     let callID = ToolCallID(toolCall.id)
     let arguments: CompactArguments
-    do {
-      arguments = try decodeArguments(CompactArguments.self, from: toolCall)
-    } catch {
-      let payload = ToolResultPayload.failure(.init(message: "invalid compact arguments: \(error)"))
-      try await writeToolResult(.toolCall(callID), payload)
-      return payload
-    }
-    return try await traced(.compaction) { span in
-      span.set(.compactionReason, .tool)
-      span.set(.generation, liveState?.generation)
-      let payload = try await fold(callID, arguments, span: span)
-      if case .failure = payload { span.conclude(.errored) } else { span.conclude(.ok) }
-      return payload
-    }
-  }
-
-  private func fold(_ callID: ToolCallID, _ arguments: CompactArguments, span: TelemetrySpan<StepOutcome>) async throws -> ToolResultPayload {
-    let transcript = (try live).transcript
     let kept: Range<Int>?
     do {
-      kept = try transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark)
+      let state = try live
+      arguments = try decodeArguments(CompactArguments.self, from: toolCall)
+      kept = try state.transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark)
+      if arguments.park, let refusal = ParkRefusal(state.transcript.environment, task: state.isTask) { throw refusal }
     } catch let notFound as BookmarkNotFound {
-      let payload = ToolResultPayload.failure(.init(message: "bookmark \"\(notFound.name)\" not found; name an existing bookmark or omit it to fold everything"))
-      try await writeToolResult(.toolCall(callID), payload)
-      return payload
+      return try await writeToolResult(.toolCall(callID), .failure(.init(message: "bookmark \"\(notFound.name)\" not found; name an existing bookmark or omit it to fold everything")))
+    } catch let refusal as ParkRefusal {
+      return try await writeToolResult(.toolCall(callID), .failure(.init(message: refusal.description)))
+    } catch {
+      return try await writeToolResult(.toolCall(callID), .failure(.init(message: "invalid compact arguments: \(error)")))
     }
+    guard arguments.park else { return try await fold(callID, arguments, kept: kept) }
+    return try await writeToolResult(.toolCall(callID), .compact(.init(summary: arguments.summary)))
+  }
 
-    let environment = transcript.environment
+  func runPendingFold(_ callID: ToolCallID) async throws {
+    let transcript = (try live).transcript
+    let arguments = try decodeArguments(CompactArguments.self, from: transcript.compactCall(callID))
+    _ = try await fold(callID, arguments, kept: transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark))
+  }
+
+  // A pending fold already holds its closing result; its head, placement and
+  // prompt revision date from the wake that runs it. A refused target, like a
+  // missing bookmark, is refused before the compaction span.
+  private func fold(_ callID: ToolCallID, _ arguments: CompactArguments, kept: Range<Int>?) async throws -> ToolResultPayload {
+    let state = try live
+    let environment = state.transcript.environment
     let head = GenerationHead(
       id: uuid(),
       timestamp: date(),
@@ -249,35 +250,32 @@ extension SessionActor {
       settle: environment.settle,
       runningWork: try await loopConfig.runningWork(id),
     )
-    let closing = ToolResultItem(
-      id: uuid(),
-      timestamp: date(),
-      provenance: .toolCall(callID),
-      payload: .compact(.init(summary: arguments.summary)),
-    )
-    let transition: ModelRouteTransition?
+    let compacted = state.transcript.compacted(head: head, kept: kept)
+    var targeted: ModelRouteTransition??
     if let target = arguments.target {
       do {
-        transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept), target)
-      } catch is CancellationError {
-        throw CancellationError()
-      } catch {
-        let payload = ToolResultPayload.failure(.init(message: "compact target \"\(target.model)\" refused, nothing was folded: \(error)"))
-        try await writeToolResult(.toolCall(callID), payload)
-        return payload
+        targeted = try await loopConfig.prepareCompaction(id, compacted, target)
+      } catch let refusal where !(refusal is CancellationError) {
+        return try await writeToolResult(.toolCall(callID), .failure(.init(message: "compact target \"\(target.model)\" refused, nothing was folded: \(refusal)")))
       }
-    } else {
-      transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept), nil)
     }
-    span.set(.itemsKept, kept?.count ?? 0)
-    let compacted = try await main.append(id, .compacted(closing: closing, head: head, kept: kept, completing: nil, transition: transition)).value(Transcript.self)
-    try modify {
-      $0.transcript = compacted
-      $0.generation += 1
-      $0.compactRequestClaim = nil
+    return try await traced(.compaction) { span in
+      span.set(.compactionReason, .tool)
+      span.set(.generation, state.generation)
+      let transition = if let targeted { targeted } else { try await loopConfig.prepareCompaction(id, compacted, nil) }
+      let payload = ToolResultPayload.compact(.init(summary: arguments.summary))
+      let closing = state.transcript.phase == .live ? ToolResultItem(id: uuid(), timestamp: date(), provenance: .toolCall(callID), payload: payload) : nil
+      span.set(.itemsKept, kept?.count ?? 0)
+      let folded = try await main.append(id, .compacted(closing: closing, head: head, kept: kept, completing: nil, transition: transition)).value(Transcript.self)
+      try modify {
+        $0.transcript = folded
+        $0.generation += 1
+        $0.compactRequestClaim = nil
+      }
+      await loopConfig.invalidateInference(id)
+      span.conclude(.ok)
+      return payload
     }
-    await loopConfig.invalidateInference(id)
-    return closing.payload
   }
 
   func runInference(mode: InferenceMode) async throws {

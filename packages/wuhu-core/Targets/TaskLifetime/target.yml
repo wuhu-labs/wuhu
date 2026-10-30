@@ -2,7 +2,9 @@ name: TaskLifetime
 kind: library
 sources: Sources
 dependencies:
+  - Clocks
   - Logging
 tests:
   dependencies:
     - Clocks
+    - ControlledTime

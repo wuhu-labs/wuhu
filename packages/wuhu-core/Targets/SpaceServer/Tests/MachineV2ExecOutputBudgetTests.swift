@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -46,7 +46,7 @@ private final class StopNote: Sendable {
   let reason = Mutex<String?>(nil)
 }
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(1)))
 struct MachineV2ExecOutputBudgetTests {
   /// The overrun ends the exec however the machine splits the output: a send waiting on the caller's unread window must not hide
   /// the excess byte, and output queued for the window before the overrun still reaches the caller.

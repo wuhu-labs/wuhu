@@ -52,7 +52,7 @@ final class TestServer: Sendable {
   private let sessionsContinuation: AsyncStream<@Sendable () async -> Void>.Continuation
 
   init(
-    space: Space, clock: any Clock<Duration>, dev: Bool = true, tokens: ExecTokens? = nil,
+    space: Space, clock: any NonsendingClock<Duration>, dev: Bool = true, tokens: ExecTokens? = nil,
     secrets: SpaceSecretStores? = nil,
   ) {
     self.space = space

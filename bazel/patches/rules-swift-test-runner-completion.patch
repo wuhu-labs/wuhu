@@ -1,6 +1,6 @@
 --- a/tools/test_discoverer/TestDiscoverer.swift
 +++ b/tools/test_discoverer/TestDiscoverer.swift
-@@ -110,12 +110,24 @@
+@@ -110,23 +110,46 @@
      var contents = """
        import BazelTestObservation
        import Foundation
@@ -9,6 +9,15 @@
 +      #if os(macOS)
 +      import AppKit
 +      #endif
++
++      // exit() runs atexit handlers on the calling thread, which need not be the main actor's.
++      \(availabilityAttribute)
++      nonisolated private func requireCompletedRun() {
++        guard Main.completed.withLock({ $0 }) else {
++          FileHandle.standardError.write(Data("ERROR: test runner exited before recording its completed result\\n".utf8))
++          _exit(1)
++        }
++      }
  
        \(availabilityAttribute)
        @main
@@ -16,16 +25,34 @@
 +        nonisolated static let completed = Mutex(false)
 +
          static func main() {
-+          atexit {
-+            guard Main.completed.withLock({ $0 }) else {
-+              FileHandle.standardError.write(Data("ERROR: test runner exited before recording its completed result\\n".utf8))
-+              _exit(1)
-+            }
++          // swift-testing re-executes this binary with SWT_EXIT_TEST_ID set for each exit test; that child runs
++          // only the exit test's body, from the first entry point call, and ends in its own exit().
++          let isExitTestChild = getenv("SWT_EXIT_TEST_ID") != nil
++          if !isExitTestChild {
++            atexit(requireCompletedRun)
 +          }
            do {
              try loadTestingLibraries()
            } catch {
-@@ -145,8 +157,16 @@
+             print("Fatal error loading runtime libraries: \\(error)")
+             exit(1)
+           }
+-          do {
+-            try XCTestRunner.run(__allDiscoveredXCTests())
+-          } catch {
+-            print("Fatal error running XCTest tests: \\(error)")
+-            exit(1)
++          if !isExitTestChild {
++            do {
++              try XCTestRunner.run(__allDiscoveredXCTests())
++            } catch {
++              print("Fatal error running XCTest tests: \\(error)")
++              exit(1)
++            }
+           }
+           Task {
+             do {
+@@ -145,9 +168,17 @@
                print("ERROR: No tests were executed")
                exit(1)
              }
@@ -42,3 +69,4 @@
 +          #endif
          }
        }
+ 

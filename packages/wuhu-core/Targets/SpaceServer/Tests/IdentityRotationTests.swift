@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Crypto
 import Dependencies
 import DependenciesTestSupport
@@ -156,7 +156,7 @@ import Testing
         entered.open()
       }), fetch: rig.fetch)
     }
-    let clock = TestClock<Duration>()
+    let clock = VirtualClock()
     await withDependencies {
       $0.continuousClock = clock
       $0.date = .constant(rig.epoch.addingTimeInterval(90 * 86400))

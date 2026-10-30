@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Crypto
 import DeterministicDependencies
 import Fetch
@@ -18,7 +18,7 @@ import Testing
 
 // Everything serve hands out for a client to enroll with carries a
 // fingerprint exactly when serve runs the certificate it generated.
-@Suite(.deterministicDependencies(clock: TestClock())) struct CertificatePinTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct CertificatePinTests {
   @Test func theGeneratedCertificateIsHandedOutEverywhere() async throws {
     let base = try scratchURL("certificate-pin")
     defer { try? FileManager.default.removeItem(at: base) }

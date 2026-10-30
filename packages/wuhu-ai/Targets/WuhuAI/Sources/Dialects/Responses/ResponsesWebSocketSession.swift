@@ -101,7 +101,7 @@ public actor ResponsesWebSocketSession {
             group.addTask {
               var previous = await self.activity
               while true {
-                try await clock.sleep(for: idleTimeout)
+                try await clock.sleep(until: clock.now.advanced(by: idleTimeout), tolerance: nil, isolation: self)
                 let current = await self.activity
                 guard current != previous else { throw InferenceError.transport(.idleTimeout) }
                 previous = current

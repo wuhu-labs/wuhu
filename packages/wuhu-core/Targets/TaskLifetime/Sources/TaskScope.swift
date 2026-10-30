@@ -1,3 +1,4 @@
+import protocol Clocks.NonsendingClock
 import Logging
 import Synchronization
 
@@ -72,12 +73,13 @@ public final class TaskScope: Sendable {
   }
 
   public func bestEffort(
-    _ name: String, within duration: Duration, clock: some Clock<Duration> = ContinuousClock(),
+    _ name: String, within duration: Duration, clock: some NonsendingClock<Duration> = ContinuousClock(),
+    isolation: isolated (any Actor)? = #isolation,
     operation: @escaping @Sendable () async throws -> Void,
   ) {
     do {
       try run(name) {
-        do { try await withDeadline(duration, clock: clock, operation: operation) }
+        do { try await withDeadline(duration, clock: clock, isolation: isolation, operation: operation) }
         catch { Logger(label: "task-lifetime").warning("Best-effort task failed", metadata: ["task": "\(name)", "error": "\(error)"]) }
       }
     } catch { Logger(label: "task-lifetime").warning("Best-effort task refused", metadata: ["task": "\(name)", "error": "\(error)"]) }

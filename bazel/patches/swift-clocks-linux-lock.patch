@@ -1,79 +1,29 @@
---- a/Sources/Clocks/Internal/Lock.swift
-+++ b/Sources/Clocks/Internal/Lock.swift
-@@ -1,21 +1,59 @@
--public import Foundation
+diff --git a/Sources/Clocks/Internal/LockIsolated.swift b/Sources/Clocks/Internal/LockIsolated.swift
+index 9b7cb30..91399e5 100644
+--- a/Sources/Clocks/Internal/LockIsolated.swift
++++ b/Sources/Clocks/Internal/LockIsolated.swift
+@@ -1,4 +1,4 @@
+-#if canImport(Foundation)
 +#if canImport(Darwin)
-+  public import Foundation
+   import class Foundation.NSLock
  
--extension NSLock {
--  @inlinable
--  @discardableResult
--  func sync<R>(operation: () -> R) -> R {
--    self.lock()
--    defer { self.unlock() }
--    return operation()
-+  extension NSLock {
-+    @inlinable
-+    @discardableResult
-+    func sync<R>(operation: () -> R) -> R {
-+      self.lock()
-+      defer { self.unlock() }
-+      return operation()
-+    }
+   package final class LockIsolated<Value>: @unchecked Sendable {
+@@ -15,4 +15,18 @@
+       return try operation(&value)
+     }
    }
--}
- 
--extension NSRecursiveLock {
--  @inlinable
--  @discardableResult
--  func sync<R>(operation: () -> R) -> R {
--    self.lock()
--    defer { self.unlock() }
--    return operation()
-+  extension NSRecursiveLock {
-+    @inlinable
-+    @discardableResult
-+    func sync<R>(operation: () -> R) -> R {
-+      self.lock()
-+      defer { self.unlock() }
-+      return operation()
-+    }
-   }
--}
 +#else
-+  import Glibc
++  import Synchronization
 +
-+  final class NSRecursiveLock: @unchecked Sendable {
-+    private let mutex = UnsafeMutablePointer<pthread_mutex_t>.allocate(capacity: 1)
-+
-+    init() {
-+      var attr = pthread_mutexattr_t()
-+      pthread_mutexattr_init(&attr)
-+      pthread_mutexattr_settype(&attr, Int32(PTHREAD_MUTEX_RECURSIVE))
-+      pthread_mutex_init(self.mutex, &attr)
-+      pthread_mutexattr_destroy(&attr)
++  package final class LockIsolated<Value>: Sendable {
++    private let mutex: Mutex<Value>
++    package init(_ value: sending Value) {
++      mutex = Mutex(value)
 +    }
-+
-+    deinit {
-+      pthread_mutex_destroy(self.mutex)
-+      self.mutex.deallocate()
-+    }
-+
-+    func lock() {
-+      pthread_mutex_lock(self.mutex)
-+    }
-+
-+    func unlock() {
-+      pthread_mutex_unlock(self.mutex)
-+    }
-+
-+    @discardableResult
-+    func sync<R>(operation: () -> R) -> R {
-+      self.lock()
-+      defer { self.unlock() }
-+      return operation()
++    package func withLock<R, F: Error>(
++      _ operation: (inout sending Value) throws(F) -> sending R
++    ) throws(F) -> sending R {
++      try mutex.withLock(operation)
 +    }
 +  }
-+
-+  typealias NSLock = NSRecursiveLock
-+#endif
+ #endif

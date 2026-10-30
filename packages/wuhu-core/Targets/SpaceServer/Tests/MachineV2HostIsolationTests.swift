@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -15,7 +15,7 @@ import Serve
 @testable import SpaceServer
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct MachineV2HostIsolationTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct MachineV2HostIsolationTests {
   enum Damage: CaseIterable, Sendable { case missingKey, corruptKey }
 
   @Test(arguments: Damage.allCases) func unusableV2StateDoesNotPreventOpeningTheSpace(_ damage: Damage) async throws {

@@ -15,7 +15,7 @@ func testPubkey(_ seed: String) -> String {
   return "ed25519:" + Data(bytes + repeatElement(0, count: 32 - bytes.count)).base64EncodedString()
 }
 
-func makeSpace(date: Date = fixedDate, clock: (any Clock<Duration>)? = nil, log: Logger? = nil) throws -> Space {
+func makeSpace(date: Date = fixedDate, clock: (any NonsendingClock<Duration>)? = nil, log: Logger? = nil) throws -> Space {
   try withDependencies {
     $0.date = .constant(date)
     if let clock { $0.continuousClock = clock }

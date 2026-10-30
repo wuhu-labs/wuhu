@@ -11,6 +11,7 @@ public enum SessionEvent: Codable, Sendable {
   case modelRouteFailureUpdated(expectedEpoch: String, failure: ModelRouteFailure?)
   case inputEnqueued(QueueInput)
   case pendingCacheWarmingDiscarded
+  case compactRequestAlreadyCompacted
   case transcriptAppended(items: [TranscriptItem], inputOrigin: Bool?, completing: CompactRequestClaim?)
   case portableHandoff(expectedGeneration: Int, source: Transcript, transcript: Transcript)
   case compacted(closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completing: CompactRequestClaim?, transition: ModelRouteTransition?)

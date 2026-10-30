@@ -1,5 +1,5 @@
 {
-  "originHash": "0216300c5ea114eaa878bf761fe76827232957a5d85f5dda9f38e1e702eeb11f",
+  "originHash": "0636e1f8c26d67c5ebd422f153b58539391dce276d85c0843608346e57d3c347",
   "pins": [
     {
       "identity": "async-http-client",
@@ -115,7 +115,7 @@
       "location": "https://github.com/pointfreeco/swift-clocks",
       "state": {
         "branch": "clocks-2",
-        "revision": "77abbdd51dc05c719d5a758572e18f3643f546b7"
+        "revision": "0ff28f79525331bd134184abb229ff8f795e8264"
       }
     },
     {
@@ -174,10 +174,10 @@
     {
       "identity": "swift-dependencies",
       "kind": "remoteSourceControl",
-      "location": "https://github.com/pointfreeco/swift-dependencies",
+      "location": "https://github.com/pointfreeco/swift-dependencies.git",
       "state": {
-        "revision": "b476cc5761057d8d857de063fe7ac8daecf5c06b",
-        "version": "1.17.1"
+        "branch": "clocks-2",
+        "revision": "50c6b3a2d35a512802c6717a8781f48dd039ebda"
       }
     },
     {

@@ -23,15 +23,14 @@ externalPackages:
     products: [Serve]
   wuhu-test-support:
     path: ../wuhu-test-support
-    products: [WuhuRecordReplay, DeterministicDependencies]
+    products: [ControlledTime, WuhuRecordReplay, DeterministicDependencies]
   swift-clocks:
     url: https://github.com/pointfreeco/swift-clocks
-    # Package.resolved holds 77abbdd until the TestClock isolation migration.
     branch: clocks-2
     products: [Clocks]
   swift-dependencies:
     url: https://github.com/pointfreeco/swift-dependencies.git
-    from: "1.17.1"
+    branch: clocks-2
     products: [Dependencies]
   swift-http-types:
     url: https://github.com/apple/swift-http-types.git

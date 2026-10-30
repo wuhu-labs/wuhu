@@ -1,10 +1,10 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import MachineChannel
 import MachineContract
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(2)))
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(2)))
 struct BlipTests {
   @Test(arguments: 0 ..< 24)
   func streamsReassembleByteExactAcrossBlips(iteration: Int) async throws {

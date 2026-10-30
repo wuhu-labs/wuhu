@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import protocol Clocks.NonsendingClock
 import FileSearch
 import enum JSONValue.JSONValue
 import struct OperationProtocol.ChannelPayload
@@ -13,7 +14,7 @@ import struct OperationProtocol.OperationError
 import OperationRuntime
 
 /// `searchClock` times a search's ``FileSearch/SearchLimits/deadline``.
-public func fileOperationKinds(files: ComputerFileSystem = .local, searchClock: any Clock<Duration> = ContinuousClock()) -> [AnyOperationKind] {
+public func fileOperationKinds(files: ComputerFileSystem = .local, searchClock: any NonsendingClock<Duration> = ContinuousClock()) -> [AnyOperationKind] {
   [AnyOperationKind(ReadKind(files: files)), AnyOperationKind(SearchKind(files: files, clock: searchClock))] + metadataOperationKinds(files: files.operations)
 }
 
@@ -76,7 +77,7 @@ private func operationError(_ error: SearchError) -> OperationError {
 /// fits ``OperationProtocol/OperationLimits/resultBytes``.
 private struct SearchKind: OperationKind {
   let files: ComputerFileSystem
-  let clock: any Clock<Duration>
+  let clock: any NonsendingClock<Duration>
   let descriptor = ComputerKindSchemas.search
   func validate(_ input: SearchInput) throws {
     do { try input.query.validate() } catch { throw operationError(error) }

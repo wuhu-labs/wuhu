@@ -24,6 +24,7 @@ extension Hub {
     case let .modelRouteFailureUpdated(epoch, failure): try await store.updateModelRouteFailure(id, expectedEpoch: epoch, failure: failure)
     case .inputEnqueued(let input): return try await .queuePosition(store.enqueue(id, input: input))
     case .pendingCacheWarmingDiscarded: return try await .transcript(store.discardPendingCacheWarming(id))
+    case .compactRequestAlreadyCompacted: _ = try await store.takeCommand(id)
     case let .transcriptAppended(items, inputOrigin, claim): try await store.append(id, items: items, inputOrigin: inputOrigin, completingCompactRequest: claim)
     case let .portableHandoff(generation, source, transcript):
       return try await .transcript(store.writePortableHandoff(id, expectedGeneration: generation, source: source, transcript: transcript))

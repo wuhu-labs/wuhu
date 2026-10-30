@@ -52,6 +52,21 @@ struct WorkTests {
     #expect(transcript.hasWork)
   }
 
+  @Test func aPendingFoldHasNoWorkWhateverFollowsItsClosingResult() {
+    let calls = [ToolCall(id: "k-c", name: "compact", arguments: .object([:])), ToolCall(id: "k-r", name: "read", arguments: .object([:]))]
+    let pending = Transcript(items: [
+      Fix.direct(),
+      Fix.assistant(totalTokens: 10, toolCalls: calls),
+      Fix.result(.compact(.init(summary: "s")), provenance: .toolCall(.init("k-c"))),
+      Fix.notification(),
+    ])
+    #expect(pending.phase == .foldPending(compactCall: .init("k-c")))
+    #expect(!pending.hasWork)
+    #expect(pending.pendingToolCallIDs.isEmpty)
+    #expect(!pending.reachesCacheWarmingFloor(0, images: .claude))
+    #expect(Transcript(items: [Fix.direct()]).reachesCacheWarmingFloor(0, images: .claude))
+  }
+
   @Test func generationHeadTailIsWork() {
     let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "s", snapshot: .init(), runningWork: [])
     #expect(Transcript(items: [.generationHead(head)], keptCount: 1).hasWork)

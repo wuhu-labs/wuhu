@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -32,7 +32,7 @@ private struct SilentExec: OperationKind {
   }
 }
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct MachineCallerAttributionTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct MachineCallerAttributionTests {
   @Test func everyStartASessionCausesNamesItAndOtherStartsDont() async throws {
     let folder = try ScratchFolder("v2-caller")
     let file = folder.url.appending(path: "notes.txt")

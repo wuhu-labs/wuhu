@@ -23,6 +23,7 @@ extension Transcript {
 extension Transcript {
   /// Pending warming notices don't count, so the check reads the same when a notice is enqueued and when it is consumed.
   public func reachesCacheWarmingFloor(_ floorTokens: Int, images: ImageLimits) -> Bool {
+    guard phase == .live else { return false }
     var transcript = self
     for index in pendingCacheWarmingIndices.reversed() { transcript.items.remove(at: index) }
     return transcript.estimatedContextTokens(images: images) >= floorTokens

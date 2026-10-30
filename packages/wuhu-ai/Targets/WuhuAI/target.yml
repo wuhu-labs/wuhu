@@ -12,6 +12,7 @@ dependencies:
   - OrderedCollections
 tests:
   dependencies:
+    - ControlledTime
     - DeterministicDependencies
     - WuhuRecordReplay
     - Serve

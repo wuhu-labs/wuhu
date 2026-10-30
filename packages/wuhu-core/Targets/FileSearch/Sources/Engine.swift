@@ -1,3 +1,4 @@
+import protocol Clocks.NonsendingClock
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -10,18 +11,23 @@ extension SearchQuery {
   /// tree and query page the same way on every backend.
   ///
   /// Query errors are ``SearchError``s; so is running past
-  /// ``SearchLimits/deadline`` on `clock`, which cancels the walk. Any error a
+  /// ``SearchLimits/deadline`` on `clock`, timed on the caller's isolation, which cancels the walk. Any error a
   /// source throws other than ``SearchUnreadable`` ends the search.
-  public func run(in source: some SearchSource, clock: any Clock<Duration> = ContinuousClock()) async throws -> SearchPage {
+  public func run(
+    in source: some SearchSource, clock: any NonsendingClock<Duration> = ContinuousClock(), isolation: isolated (any Actor)? = #isolation,
+  ) async throws -> SearchPage {
     try await run(in: source, clock: clock, readBudget: SearchLimits.pageReadBytes)
   }
 
-  func run(in source: some SearchSource, clock: any Clock<Duration>, readBudget: Int) async throws -> SearchPage {
-    try await withThrowingTaskGroup(of: SearchPage?.self) { group in
+  func run(
+    in source: some SearchSource, clock: some NonsendingClock<Duration>, readBudget: Int, isolation: isolated (any Actor)? = #isolation,
+  ) async throws -> SearchPage {
+    let deadline = clock.now.advanced(by: SearchLimits.deadline)
+    return try await withThrowingTaskGroup(of: SearchPage?.self) { group in
       defer { group.cancelAll() }
       group.addTask { try await Walker(self, source, readBudget: readBudget).run() }
       group.addTask {
-        try await clock.sleep(for: SearchLimits.deadline)
+        try await clock.sleep(until: deadline, tolerance: nil, isolation: isolation)
         return nil
       }
       guard let page = try await group.next() ?? nil else {

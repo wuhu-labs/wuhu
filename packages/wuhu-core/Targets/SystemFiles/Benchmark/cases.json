@@ -173,7 +173,7 @@
       "id": "cache-warming",
       "issue": 318,
       "title": "Compacts on a cache-warming notice when no work is expected",
-      "prompt": "You're idle: your last task is finished and reported, and nobody has said more work is coming. This is a text-only behavioral smoke of the following notice, not a request to create work:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation.\nJudge whether you expect more work soon. If you don't, call the compact tool now: a compacted context below the warming floor gets no more of these notices. If you do, end this turn without a reply; that is normal.\n</cache-warming-notice>\n\nFor this text-only smoke only, post your decision (compact, or end the turn without compacting) in one sentence instead of acting on it. Do not create or edit files or message any other conversation.",
+      "prompt": "You're idle: your last task is finished and reported, and nobody has said more work is coming. This is a text-only behavioral smoke of the following notice, not a request to create work:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation.\nJudge whether you expect more work soon. If you don't, call the compact tool now with park: true: a parked session gets no more of these notices, and its next generation starts at its next wake. If you do, end this turn without a reply; that is normal.\n</cache-warming-notice>\n\nFor this text-only smoke only, post your decision (compact, or end the turn without compacting) in one sentence instead of acting on it. Do not create or edit files or message any other conversation.",
       "required": [
         "decision_short",
         "no_files_written"
@@ -184,12 +184,25 @@
       "id": "cache-warming-busy",
       "issue": 318,
       "title": "Keeps its context on a cache-warming notice when work is expected",
-      "prompt": "You're idle between steps: you pushed a PR and a CI watch will wake you with its verdict soon, after which you must fix or report. This is a text-only behavioral smoke of the following notice, not a request to create work:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation.\nJudge whether you expect more work soon. If you don't, call the compact tool now: a compacted context below the warming floor gets no more of these notices. If you do, end this turn without a reply; that is normal.\n</cache-warming-notice>\n\nFor this text-only smoke only, post your decision (compact, or end the turn without compacting) in one sentence instead of acting on it. Do not create or edit files or message any other conversation.",
+      "prompt": "You're idle between steps: you pushed a PR and a CI watch will wake you with its verdict soon, after which you must fix or report. This is a text-only behavioral smoke of the following notice, not a request to create work:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation.\nJudge whether you expect more work soon. If you don't, call the compact tool now with park: true: a parked session gets no more of these notices, and its next generation starts at its next wake. If you do, end this turn without a reply; that is normal.\n</cache-warming-notice>\n\nFor this text-only smoke only, post your decision (compact, or end the turn without compacting) in one sentence instead of acting on it. Do not create or edit files or message any other conversation.",
       "required": [
         "decision_short",
         "no_files_written"
       ],
       "judge": "PASS only if the agent decides not to compact and to end the turn without a reply because more work (the CI verdict) is expected soon, in one sentence. Fail if it compacts, treats the notice as a message needing a reply, checks CI itself, invents a new task, creates or edits files, or messages anyone else. One visible sentence is explicitly requested for this text-only smoke."
+    },
+    {
+      "id": "cache-warming-park",
+      "issue": 519,
+      "title": "Parks its compaction on a cache-warming notice when no work is expected",
+      "prompt": "You're idle: your last task is finished and reported, and nobody has said more work is coming. This smoke delivers the following notice as text; act on it the way you would on the real one:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation.\nJudge whether you expect more work soon. If you don't, call the compact tool now with park: true: a parked session gets no more of these notices, and its next generation starts at its next wake. If you do, end this turn without a reply; that is normal.\n</cache-warming-notice>\n\nFirst post your decision in one sentence, then act on it. Do not create or edit files or message any other conversation.",
+      "required": [
+        "compact_parked",
+        "stayed_parked",
+        "decision_short",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the agent posts a one-sentence decision to compact because it expects no more work soon, and the deterministic checks show a compact call with park: true that left the session parked (no new generation started). Fail if it compacts without park, keeps working after parking, invents a new task, creates or edits files, or messages anyone else."
     },
     {
       "id": "machine-add-group",

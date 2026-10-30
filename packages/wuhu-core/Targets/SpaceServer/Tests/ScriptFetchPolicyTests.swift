@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import Fetch
@@ -119,7 +119,7 @@ import Testing
 
   @Test(arguments: [0, 20])
   func totalDeadlineBoundsSlowDNSAcrossRedirects(firstHopSeconds: Int) async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let (started, enter) = AsyncStream<Void>.makeStream()
     let seen = Mutex(0)
     let hop = FetchClient { request in
@@ -151,7 +151,7 @@ import Testing
         } catch { return error as? FetchError }
       }
       for await _ in started { break }
-      await clock.advance(to: initial.advanced(by: .seconds(60)))
+      clock.advance(to: initial.advanced(by: .seconds(60)))
       await clock.advance()
       #expect(await task.value == .transportFailure(kind: .deadlineExceeded))
       #expect(initial.duration(to: clock.now) == .seconds(60))
@@ -160,7 +160,7 @@ import Testing
   }
 
   @Test func expiredRedirectDoesNotStartAnotherHop() async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let seen = Mutex(0)
     let hop = FetchClient { _ in
       seen.withLock { $0 += 1 }

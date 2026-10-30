@@ -117,7 +117,6 @@ tests:
     - Dependencies
     - DependenciesTestSupport
     - Clocks
-    - ClockTesting
     - ControlledTime
     - WuhuRecordReplay
     - Logging

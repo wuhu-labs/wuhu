@@ -15,8 +15,25 @@ extension TranscriptItem: Identifiable {
   }
 }
 
+// `compact(park: true)` writes its closing result but not the next head: the
+// generation is over, and its fold runs at the session's next wake.
+public enum GenerationPhase: Hashable, Sendable {
+  case live
+  case foldPending(compactCall: ToolCallID)
+}
+
 extension Transcript {
+  // Only a pending fold leaves its closing result in the generation it folds;
+  // a fold run at once writes the closing result and the next head together.
+  public var phase: GenerationPhase {
+    for case let .toolResult(result) in items.reversed() {
+      if case .compact = result.payload, case let .toolCall(callID) = result.provenance { return .foldPending(compactCall: callID) }
+    }
+    return .live
+  }
+
   public var pendingToolCallIDs: [ToolCallID] {
+    guard phase == .live else { return [] }
     var minted: [ToolCallID] = []
     var satisfied: Set<ToolCallID> = []
     for item in items {
@@ -35,7 +52,7 @@ extension Transcript {
   }
 
   public var hasWork: Bool {
-    guard let last = items.last(where: { item in
+    guard phase == .live, let last = items.last(where: { item in
       if case let .notification(notice) = item, notice.kind == .context, notice.content.text.isEmpty,
          notice.isCacheWarming || notice.subscriptionID == SubscriptionID("context-pressure") { return false }
       return true

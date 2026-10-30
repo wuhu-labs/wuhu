@@ -294,7 +294,7 @@ extension Data {
     #expect(await failure(same, tree) == .invalidStep)
   }
 
-  @Test func aSearchPastTheDeadlineFailsEvenWhenAReadNeverReturns() async throws {
+  @MainActor @Test func aSearchPastTheDeadlineFailsEvenWhenAReadNeverReturns() async throws {
     let tree = MemoryTree(["/a": .file(Data("x".utf8)), "/b": .stalled])
     let (code, advanced) = await underTestClock(grep("x"), tree)
     #expect(code == .timeout)
@@ -304,7 +304,7 @@ extension Data {
   // The deadline cancels a match stuck backtracking. (ICU on Linux abandons
   // such a match by itself after about a second, as no match; so the clock
   // jumps straight to the deadline.)
-  @Test func aBacktrackingMatchFailsAtTheDeadline() async throws {
+  @MainActor @Test func aBacktrackingMatchFailsAtTheDeadline() async throws {
     let tree = MemoryTree(files: ["/a": "fine\n" + String(repeating: "a", count: 64) + "!\n"])
     let clock = TestClock()
     let done = Mutex(false)
@@ -328,7 +328,7 @@ extension Data {
 
   /// Runs `query` under a test clock advanced a second at a time until the
   /// search ends: how it failed, and how far the clock went.
-  private func underTestClock(_ query: SearchQuery, _ tree: MemoryTree) async -> (SearchError.Code?, Duration) {
+  @MainActor private func underTestClock(_ query: SearchQuery, _ tree: MemoryTree) async -> (SearchError.Code?, Duration) {
     let clock = TestClock()
     let done = Mutex(false)
     let search = Task {

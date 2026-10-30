@@ -83,6 +83,12 @@ _Text-only smoke input:_ the same notice, but the agent is waiting on a CI verdi
 
 _Afterwards:_ a short decision not to compact and to end the turn without a reply, with no files changed and no CI check of its own. Together with `cache-warming` it shows the notice is a judgement call, not an order either way.
 
+## cache-warming-park
+
+_Smoke input:_ the `cache-warming` situation and notice, but the agent acts on it after posting its one-sentence decision.
+
+_Afterwards:_ the session log has a `compact` call with `park: true` and its current generation is still the parked one: no compaction head follows, because the next generation starts only at the next wake. Compacting without `park`, carrying on after parking or changing files fails.
+
 ## 13. machine-v2-parity
 
 _Text-only smoke:_ show normal grep tool arguments for `machines://box-v2/tmp/project`, regex `^item[0-9]+$`, and explain opaque step continuation in traversal order. Explain typed missing-kind and credential-expiry failures without a transport or identity fallback, and local `capacityExceeded`/`exchangeLimit` as saturation requiring backoff rather than machine-detachment inference. Distinguish recovery `offsetExpired`/`lostOutput`: missing bytes cannot be restored by polling or retry backoff, and known execution verdicts are retained rather than rewritten. Also explain the installed macOS box agent versus Direct TCC-consent distinction: headless execs disclaim child responsibility where supported; Direct keeps prompts. EPERM is a permission refusal, not a reason to bypass privacy controls. Name the explicit wallet uninstall command and explain self-revoke, service stop, install process-tree cleanup and service-definition removal, with local cleanup even if the server cannot be reached; no drain or leave acknowledgement.

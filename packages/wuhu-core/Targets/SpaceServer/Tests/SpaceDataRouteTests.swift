@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import Fetch
 import FetchSSE
@@ -14,7 +14,7 @@ import Testing
 
 // `/_/space/*`: typed reads, and writes a page makes as its group
 // minus admin, admitted only from its own origin with a live read session.
-@Suite(.deterministicDependencies(clock: TestClock())) struct SpaceDataRouteTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct SpaceDataRouteTests {
   static let origin = "https://space.test:5530"
   static let sharedHost = "shared.space.test:5530"
 

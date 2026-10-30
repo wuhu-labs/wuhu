@@ -1,5 +1,5 @@
 import Assertion
-import Clocks
+import ControlledTime
 import Crypto
 import Dependencies
 import DeterministicDependencies
@@ -21,7 +21,7 @@ import SpaceTools
 import Synchronization
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct PageFetchTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct PageFetchTests {
   struct Rig {
     let h: Harness
     let cookie: String
@@ -303,7 +303,7 @@ import Testing
     let r = try await rig(proxy: proxy)
     try await list(r, #"{"allow":["http://backend.test"]}"#)
     let caller = WebCaller(group: .shared, crossOrigin: false, contentOrigins: ["https://shared.space.test"], cookies: .legacy)
-    let clock = TestClock()
+    let clock = VirtualClock()
     let server = try await ServeNIOServer.bind(port: 0, handler: { request in
       await withDependencies {
         $0.continuousClock = clock
@@ -349,7 +349,7 @@ import Testing
     })
     do {
       let port = try #require(server.localAddress?.port)
-      let clock = TestClock()
+      let clock = VirtualClock()
       let response = try await pinnedPageFetch(Request(url: URL(string: "http://127.0.0.1:\(port)/stream")!), deadline: .now() + .seconds(60), clock: clock)
       #expect(response.status == .ok)
       var iterator = response.body.asyncBytes().makeAsyncIterator()

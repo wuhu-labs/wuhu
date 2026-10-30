@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import Fetch
@@ -44,7 +44,7 @@ private final class StallGate: Sendable {
 struct IdleWatchdogTests {
   @Test("silence past the idle window fails as .transport(.idleTimeout)")
   func idleSilenceTimesOut() async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let gate = StallGate()
     let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: "test-scope", apiKey: "test-key")
       .withFetch(FetchClient { _ in try await gate.stall() })
@@ -67,13 +67,13 @@ struct IdleWatchdogTests {
       }
     }
 
-    await clock.advance(by: .seconds(120))
-    #expect(await outcome.value == InferenceError.transport(.idleTimeout))
+    let failure = try await clock.run(through: VirtualClock.at(.seconds(120))) { await outcome.value }
+    #expect(failure == InferenceError.transport(.idleTimeout))
   }
 
   @Test("a stream that completes never trips an armed watchdog")
   func completionBeatsTheWatchdog() async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: "test-scope", apiKey: "test-key")
       .withFetch(FetchClient { _ in
         Response(status: .ok, body: .string(completingSSE, encoding: .utf8))
@@ -99,7 +99,7 @@ struct IdleWatchdogTests {
       })
 
     let message = try await withDependencies {
-      $0.continuousClock = TestClock()
+      $0.continuousClock = VirtualClock()
     } operation: {
       try await endpoint.inference(context: Context(messages: [])).collect()
     }

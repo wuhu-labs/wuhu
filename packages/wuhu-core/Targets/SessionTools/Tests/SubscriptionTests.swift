@@ -793,7 +793,7 @@ private func installTransientWriteFailure(
 
 // Unlike TestClock's stepped advance, one wake publishes the late wall time
 // before releasing due sleepers, so firing and re-arming cannot run mid-advance.
-private final class LateWakeClock: Clock, Sendable {
+private final class LateWakeClock: NonsendingClock, Sendable {
   typealias Instant = TestClock<Duration>.Instant
   let anchor: Date
   private struct Sleep: Sendable {

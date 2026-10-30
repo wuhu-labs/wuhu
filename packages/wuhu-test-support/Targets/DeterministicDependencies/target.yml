@@ -3,6 +3,7 @@ kind: library
 testOnly: true
 sources: Sources
 dependencies:
+  - Clocks
   - Dependencies
   - DependenciesTestSupport
 tests:

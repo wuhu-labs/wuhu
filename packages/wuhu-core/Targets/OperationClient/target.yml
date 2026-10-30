@@ -13,6 +13,7 @@ dependencies:
   - MachineContract
   - Crypto
   - FileSearch
+  - Clocks
 tests:
   dependencies:
     - InMemoryTracing

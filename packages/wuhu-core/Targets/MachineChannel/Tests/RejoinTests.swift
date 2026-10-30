@@ -1,10 +1,10 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import MachineChannel
 import MachineContract
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(2)))
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(2)))
 struct RejoinTests {
   @Test func freshEndpointResumesFromLastAckAfterCallerCrash() async throws {
     var rng = SplitMix64(seed: 0x5D5A_0001)

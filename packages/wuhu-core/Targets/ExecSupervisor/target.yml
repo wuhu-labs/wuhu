@@ -22,6 +22,7 @@ dependencies:
   - AsyncHTTPClient
   - NIOCore
   - NIOPosix
+  - Clocks
 tests:
   size: large
   # Retirement tests run real supervisor processes: `wuhu machine-v2 supervise`.

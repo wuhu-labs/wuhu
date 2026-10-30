@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import Fetch
 import Foundation
@@ -11,7 +11,7 @@ import Synchronization
 import Testing
 import Tracing
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct ServeSmokeTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct ServeSmokeTests {
   private func scratch() throws -> URL {
     let base = try scratchURL("serve-smoke")
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)

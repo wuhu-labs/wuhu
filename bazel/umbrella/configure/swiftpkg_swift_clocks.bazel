@@ -1,8 +1,8 @@
 # The Linux static binary can only drop full Foundation + ICU (~30MB) once no
 # object references a full-Foundation-only symbol (see #1253/#1270). These
 # patches clear the remaining third-party roots off-Darwin without changing
-# Darwin behavior: here, swift-clocks' NSLock/NSRecursiveLock become a pthread
-# shim (swiftpkg_swift_concurrency_extras and swiftpkg_swift_issue_reporting
+# Darwin behavior: here, swift-clocks' NSLock-backed LockIsolated becomes a
+# Mutex (swiftpkg_swift_concurrency_extras and swiftpkg_swift_issue_reporting
 # carry the rest). swift-configuration's default `JSON` trait
 # (JSONSerialization/NSNull) needs no config at all: async-http-client, its
 # only dependent, requests `traits: []`, and the rspm fork honors that.

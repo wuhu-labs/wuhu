@@ -5,7 +5,7 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import ClockTesting
+import ControlledTime
 import Crypto
 import Dependencies
 import Fetch

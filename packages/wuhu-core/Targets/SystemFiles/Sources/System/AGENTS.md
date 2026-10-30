@@ -75,7 +75,7 @@ Hidden from the navigator. Only you and humans write there; every other session'
 The hidden settings group holds `models.json`, `model-groups.json` and `capabilities.json`; every group can read them, but only a human space admin writes them. `/v1/providers` reads this catalog. One document keyed by provider id: `dialect`, `baseURL`, optional `imageFamily` (`claude` / `openAI`, otherwise dialect-derived), and per-model `maxInput`, `maxOutput`, `efforts`, `defaultEffort`, optional `headroomOverride`. Session model specs validate against it. Usable context is maxInput minus the reserved output (headroomOverride, else maxOutput); compaction pressure is measured against that budget, so a headroomOverride edit changes when sessions compact.
 
 {{#session.agent}}
-An idle agent whose model opts into `cacheWarming` and whose context is at least its `floorTokens` (default 50 000) gets a `<cache-warming-notice>`; on one, judge whether more work is coming soon: if not, compact, and warming stops; if so, end the turn without a reply.
+An idle agent whose model opts into `cacheWarming` and whose context is at least its `floorTokens` (default 50 000) gets a `<cache-warming-notice>`; on one, judge whether more work is coming soon: if not, compact with `park: true`, and warming stops; if so, end the turn without a reply. A parked compaction ends the turn without starting the next generation: that waits for your next wake (a message, request, timer, observation or report), so its prompt and model placement are as of then.
 
 {{/session.agent}}
 ## Durable handlers

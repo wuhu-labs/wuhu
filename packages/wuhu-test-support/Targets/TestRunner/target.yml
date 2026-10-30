@@ -1,0 +1,11 @@
+name: TestRunner
+kind: library
+testOnly: true
+sources: Sources
+# Its tests are the generated Bazel test runner's contracts (bazel/patches/rules-swift-test-runner-completion.patch)
+# on both host lanes; keep them on linux and mac.
+checks:
+  build: [linux, mac]
+tests:
+  checks:
+    test: [linux, mac]

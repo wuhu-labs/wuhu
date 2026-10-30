@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import Foundation
 import JSONValue
@@ -6,7 +6,7 @@ import SpaceContract
 import SpaceTools
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct FsToolTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct FsToolTests {
   @Test func rootListingHidesTheSystemFolderUnlessAsked() async throws {
     let context = try makeContext()
     _ = try await seedFile("/_/sessions/brave-fox/AGENTS.md", "mine", context)

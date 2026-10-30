@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import struct ExecutionOwner.AttemptLogConfig
@@ -15,7 +15,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct SocketAttemptLogTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct SocketAttemptLogTests {
   @Test func correctiveCreatesStayInTheirLogicalAttemptAndReuseDoesNotRetainItsTap() async throws {
     let directory = try scratchURL("socket-attempt-log")
     defer { try? FileManager.default.removeItem(at: directory) }

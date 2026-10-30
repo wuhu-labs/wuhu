@@ -9,6 +9,7 @@ import SessionTools
   import Foundation
 #endif
 import Clocks
+import ControlledTime
 import Dependencies
 import GRDB
 @testable import LoopCore
@@ -245,7 +246,7 @@ import WuhuAI
             #expect(calls.value == attempt + 1)
             await clock.base.advance(by: delay / 2)
             #expect(calls.value == attempt + 1)
-            await clock.base.advance(to: deadline.advanced(by: .microseconds(1)))
+            clock.base.advance(to: deadline.advanced(by: .microseconds(1)))
           }
           if exhausted {
             for await id in failed.stream where id == bad { break }
@@ -282,13 +283,13 @@ private final class ErrorCommits: TransactionObserver, Sendable {
   }
 }
 
-private struct WakeTestClock: Clock {
-  let base = TestClock<Duration>()
-  let sleeps = AsyncStream<TestClock<Duration>.Instant>.makeStream()
-  var now: TestClock<Duration>.Instant { base.now }
+private struct WakeTestClock: NonsendingClock {
+  let base = VirtualClock()
+  let sleeps = AsyncStream<VirtualClock.Instant>.makeStream()
+  var now: VirtualClock.Instant { base.now }
   var minimumResolution: Duration { base.minimumResolution }
 
-  func sleep(until deadline: TestClock<Duration>.Instant, tolerance: Duration?) async throws {
+  func sleep(until deadline: VirtualClock.Instant, tolerance: Duration?) async throws {
     if now.duration(to: deadline) <= .seconds(4) { sleeps.continuation.yield(deadline) }
     try await base.sleep(until: deadline, tolerance: tolerance)
   }

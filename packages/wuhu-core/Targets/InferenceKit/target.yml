@@ -18,6 +18,7 @@ tests:
   data:
     - Targets/SystemFiles/Benchmark
   dependencies:
+    - ControlledTime
     - DeterministicDependencies
     - ExecutionOwner
     - Credentials

@@ -17,11 +17,10 @@ checks:
 externalPackages:
   swift-dependencies:
     url: https://github.com/pointfreeco/swift-dependencies.git
-    from: "1.17.1"
+    branch: clocks-2
     products: [Dependencies, DependenciesTestSupport]
   swift-clocks:
     url: https://github.com/pointfreeco/swift-clocks
-    # Package.resolved holds 77abbdd until the TestClock isolation migration.
     branch: clocks-2
     products: [Clocks]
   swift-http-types:

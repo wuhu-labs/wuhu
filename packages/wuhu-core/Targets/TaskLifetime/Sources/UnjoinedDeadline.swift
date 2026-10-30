@@ -1,7 +1,8 @@
+import protocol Clocks.NonsendingClock
 import Synchronization
 
-public func withUnjoinedDeadline<Value: Sendable, C: Clock>(
-  _ name: String, within duration: Duration, clock: C, scope: TaskScope,
+public func withUnjoinedDeadline<Value: Sendable, C: NonsendingClock>(
+  _ name: String, within duration: Duration, clock: C, scope: TaskScope, isolation: isolated (any Actor)? = #isolation,
   operation: @escaping @Sendable () async throws -> Value,
 ) async throws -> Value where C.Duration == Duration {
   let answer = DeadlineAnswer<Value>()
@@ -16,7 +17,7 @@ public func withUnjoinedDeadline<Value: Sendable, C: Clock>(
         do {
           let timer = try scope.run(name + "-deadline") {
             do {
-              try await clock.sleep(for: max(.zero, duration))
+              try await clock.sleep(until: clock.now.advanced(by: max(.zero, duration)), tolerance: nil, isolation: isolation)
               answer.fire(.failure(DeadlineExceeded()))
             } catch {
               if !Task.isCancelled { answer.fire(.failure(error)) }

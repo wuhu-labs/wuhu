@@ -97,7 +97,7 @@ extension SessionStore {
       let text = """
       <cache-warming-notice>
       This system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation.
-      Judge whether you expect more work soon. If you don't, call the compact tool now: a compacted context below the warming floor gets no more of these notices. If you do, end this turn without a reply; that is normal.
+      Judge whether you expect more work soon. If you don't, call the compact tool now with park: true: a parked session gets no more of these notices, and its next generation starts at its next wake. If you do, end this turn without a reply; that is normal.
       </cache-warming-notice>
       """
       _ = try Sessions.enqueue(id.rawValue, input: .notification(.init(id: noticeID, timestamp: now, kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: text))), nowDate: now, in: db)

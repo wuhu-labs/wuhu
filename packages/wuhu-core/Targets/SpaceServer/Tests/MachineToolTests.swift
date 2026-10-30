@@ -1,5 +1,6 @@
 import Clocks
 import ComputerFiles
+import ControlledTime
 import Crypto
 import DeterministicDependencies
 import Fetch
@@ -16,7 +17,7 @@ import SpaceCore
 import SpaceTools
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct MachineToolTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct MachineToolTests {
   @Test func fsToolSuiteOverMachinesAgainstARealAgent() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())
@@ -161,7 +162,7 @@ import Testing
 
 // One engine walks both backends (FileSearch): a space tree and the same tree
 // on a v2 machine page identically, modulo the address prefix.
-@Suite(.deterministicDependencies(clock: TestClock())) struct SearchParityTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct SearchParityTests {
   @Test func grepAndFindPagesAreIdenticalAcrossBackendsModuloTheAddressPrefix() async throws {
     let space = try makeMachineSpace()
     let scratch = try ScratchFolder("search-parity")

@@ -1,4 +1,5 @@
 import Clocks
+import ControlledTime
 import DeterministicDependencies
 import Foundation
 import JSONValue
@@ -145,7 +146,7 @@ import Testing
   }
 
   @Test func queryObserveThrottleHeldUntilClockAdvances() async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let space = try makeSpace(clock: clock)
     let table = try path("/t.table")
     _ = try await space.createTable(table, header: TableHeader(columns: [TableColumn(name: "n", type: .integer)]), in: .shared, acting: .shared)

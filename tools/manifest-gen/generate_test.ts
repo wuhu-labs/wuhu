@@ -2629,7 +2629,7 @@ Deno.test('assertLockfileHonorsPins catches a stale revision pin', () => {
     ['tca26', {
       url: 'git@github.com:wuhu-labs/tca26.git',
       revision: 'newrevision',
-      products: ['ComposableArchitecture2'],
+      products: ['ComposableArchitecture'],
     }],
   ])
   const lockfile = JSON.stringify({
@@ -2665,7 +2665,7 @@ Deno.test('assertLockfileHonorsPins catches a pinned package missing from the lo
     ['tca26', {
       url: 'git@github.com:wuhu-labs/tca26.git',
       revision: 'somerevision',
-      products: ['ComposableArchitecture2'],
+      products: ['ComposableArchitecture'],
     }],
   ])
   assertThrows(
@@ -2680,7 +2680,7 @@ Deno.test('assertLockfileHonorsPins passes matching pins and ignores range, bran
     ['tca26', {
       url: 'git@github.com:wuhu-labs/tca26.git',
       revision: 'matching',
-      products: ['ComposableArchitecture2'],
+      products: ['ComposableArchitecture'],
     }],
     ['yams', {
       url: 'https://github.com/jpsim/Yams.git',

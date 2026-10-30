@@ -1,4 +1,5 @@
-import ClockTesting
+import protocol Clocks.NonsendingClock
+import ControlledTime
 import Crypto
 import Dependencies
 import DeterministicDependencies
@@ -205,7 +206,7 @@ private func isRunning(_ pid: Int32) -> Bool {
   return true
 }
 
-private final class LifetimeClock: Clock, Sendable {
+private final class LifetimeClock: NonsendingClock, Sendable {
   typealias Instant = VirtualClock.Instant
   let base = VirtualClock()
   let armed = Gate()

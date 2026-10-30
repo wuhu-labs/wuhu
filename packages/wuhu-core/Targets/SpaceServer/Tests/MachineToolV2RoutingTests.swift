@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -21,7 +21,7 @@ import enum SpaceTools.ToolRunError
 import Synchronization
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(3))) struct MachineToolV2RoutingTests {
+@Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(3))) struct MachineToolV2RoutingTests {
   @Test func normalFilesystemSearchAndExecPreflightUseOperations() async throws {
     let folder = try ScratchFolder("v2-normal-tools")
     let a = folder.url.appending(path: "z.txt")

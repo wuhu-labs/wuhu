@@ -8,6 +8,8 @@
 
 `withDeadline(_:clock:operation:)` races one operation against a deadline on the supplied clock. Timeout throws `DeadlineExceeded`; operation and clock failures pass through. The losing child is cancelled and drained before returning.
 
+The deadline timers of `withDeadline`, `withUnjoinedDeadline` and `bestEffort` sleep on the caller's isolation (`isolation:`, `#isolation` by default), so an isolated test advancing a `TestClock` wakes them deterministically.
+
 `withUnjoinedDeadline(_:within:clock:scope:operation:)` owns the operation and timer in the supplied scope, cancels the loser, and delivers the answer without joining either child; the external work may outlive its waiter, and its scope owner remains responsible for draining or an explicit noncooperative-transport teardown exception.
 
 `uncancellable("why")` runs one operation to completion without inheriting the caller’s cancellation, preserving actor isolation and task-local context. The required reason documents why completion matters. This single implementation becomes Swift’s built-in cancellation shield when the deployment floor reaches OS version 27.

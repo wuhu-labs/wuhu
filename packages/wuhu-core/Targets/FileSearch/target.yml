@@ -4,7 +4,8 @@ sources: Sources
 checks:
   build: [linux, mac, ios, visionos]
   test: [linux, mac]
-dependencies: []
+dependencies:
+  - Clocks
 tests:
   dependencies:
     - Clocks

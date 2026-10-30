@@ -1,5 +1,5 @@
 import Clocks
-import ClockTesting
+import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import Fetch

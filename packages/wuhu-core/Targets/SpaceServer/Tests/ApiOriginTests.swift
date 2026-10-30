@@ -1,4 +1,4 @@
-import Clocks
+import ControlledTime
 import DeterministicDependencies
 import Fetch
 import Foundation
@@ -8,7 +8,7 @@ import SpaceContract
 @testable import SpaceServer
 import Testing
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct ApiOriginTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct ApiOriginTests {
   @Test func everyToolIsFaithfulToDirectRun() async throws {
     let harness = try Harness()
     _ = try await harness.direct("write", .object(["path": "/notes/a.md", "content": "foo\nbar [b](/b.md)"]))

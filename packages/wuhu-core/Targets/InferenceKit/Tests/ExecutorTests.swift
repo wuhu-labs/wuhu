@@ -1,4 +1,5 @@
 import Clocks
+import ControlledTime
 import Credentials
 import Dependencies
 import DeterministicDependencies
@@ -115,7 +116,7 @@ private final class MetricBox: Sendable {
 
 // Advances a fixed step on every `now` read, so `clock.measure` around a stream
 // pull returns a deterministic non-zero duration and successive measures order.
-private final class SteppingClock: Clock, Sendable {
+private final class SteppingClock: NonsendingClock, Sendable {
   struct Instant: InstantProtocol {
     var offset: Duration
     func advanced(by duration: Duration) -> Instant { Instant(offset: offset + duration) }
@@ -153,7 +154,7 @@ private func run(
   return (reply, box.captured)
 }
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct ExecutorTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct ExecutorTests {
   @Test func malformedModelMessageMetricKeepsTypedKind() {
     let classified = InferenceMetric.classify(.malformedModelMessage(message: "bad tool_use", reason: "invalid_tool_use_name"))
     #expect(classified.outcome == .httpError)
@@ -445,7 +446,7 @@ extension ExecutorTests {
   }
 }
 
-@Suite(.deterministicDependencies(clock: TestClock())) struct WarmingPrefixTests {
+@Suite(.deterministicDependencies(clock: VirtualClock())) struct WarmingPrefixTests {
   @Test func ordinaryWarmingRenderRetainsByteIdenticalPreviousPrefix() async throws {
     let executor = try await makeExecutor()
     let box = RequestBox()
