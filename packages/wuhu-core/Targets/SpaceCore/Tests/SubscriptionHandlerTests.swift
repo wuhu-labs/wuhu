@@ -201,7 +201,7 @@ import Testing
       let archived = try #require(try await Space.open(file: file).sessions.armedSubscriptions(id).first)
       #expect(archived.slot.handlerStateJSON == "1")
       #expect(archived.slot.handlerIncarnation == slot.slot.handlerIncarnation)
-      #expect(archived.slot.handlerAttemptID == nil)
+      #expect(archived.slot.handlerFiring == nil)
       #expect(try await space.sessions.beginSubscriptionHandler(.session(id), subscriptionID: slot.slot.id, incarnation: late.incarnation) == nil)
       try await space.sessions.unarchive(id)
       #expect(try await !space.sessions.finishSubscriptionHandler(late, result: .success(stateJSON: "2", advance: .observed(marker: "late"), wakes: [wake(slot, "late")])))

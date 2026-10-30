@@ -41,7 +41,7 @@ struct Wallet {
         guard values.isDirectory == true else {
           throw UsageError(message: "found .wuhu but it is not a directory")
         }
-        return Self(directory: wallet, pinTarget: wallet)
+        return Self(directory: wallet, pinTarget: localWallet)
       }
       let parent = candidate.deletingLastPathComponent()
       if parent.path == candidate.path { break }
@@ -86,6 +86,11 @@ struct Wallet {
     return self.pinTarget
   }
 
+  var replacedPin: (space: String, group: String?)? {
+    guard self.directory.path == self.pinTarget.path, let config = self.config else { return nil }
+    return (config.space, config.group)
+  }
+
   var configuredGroup: String? {
     self.config?.group
   }
@@ -100,7 +105,8 @@ struct Wallet {
 
   func pinnedSpace() throws -> String {
     if self.configIsMalformed {
-      throw UsageError(message: "malformed .wuhu/config.json; run: wuhu use <host:port> to repair")
+      let folder = self.directory.deletingLastPathComponent().path
+      throw UsageError(message: "malformed \(self.directory.appendingPathComponent("config.json").path); repair it with: cd \(folder) && wuhu use <host:port>")
     }
     guard let space = self.config?.space else {
       throw UsageError(message: "no space pinned; run: wuhu use <host:port>")
@@ -176,29 +182,6 @@ struct Wallet {
     let url = self.observationState(space: space, mode: mode)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try "{\"hash\":\"\(hash)\"}\n".write(to: url, atomically: true, encoding: .utf8)
-  }
-
-  // One server-minted persona per wallet x space, reused forever after: a
-  // lost/reset file would change who we claim to be, so a malformed file
-  // fails loudly instead of silently re-minting.
-  mutating func persona(space: String) throws -> String? {
-    let url = self.personasFile
-    do {
-      return try Self.read([String: String].self, at: url)?[space]
-    } catch {
-      throw UsageError(message: "malformed \(url.path); fix or remove it")
-    }
-  }
-
-  mutating func recordPersona(_ persona: String, space: String) throws {
-    var personas = (try? Self.read([String: String].self, at: self.personasFile)) ?? [:]
-    personas[space] = persona
-    try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
-    try Self.write(personas, at: self.personasFile)
-  }
-
-  private var personasFile: URL {
-    self.directory.appendingPathComponent("personas.json")
   }
 
   // Live bearer credentials: owner-only like device keys, but re-mintable, so

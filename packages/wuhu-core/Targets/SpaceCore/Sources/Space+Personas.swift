@@ -34,8 +34,10 @@ extension Space {
 
   // Personas are account-interchangeable, so adoption converges every key of
   // one account onto the account's earliest draw; a per-key adoption would
-  // fragment notification inboxes across a human's devices.
+  // fragment notification inboxes across a human's devices. Only a new
+  // account's first request takes the write lock.
   public func adoptPersona(key: KeyRecord) async throws -> PersonaRecord {
+    if let existing = try await persona(account: key.account) { return existing }
     let created = SQLiteDateFormat.string(from: dateGen.now)
     let minted = Allocations.mintSecretCandidate(rng)
     let rng = rng

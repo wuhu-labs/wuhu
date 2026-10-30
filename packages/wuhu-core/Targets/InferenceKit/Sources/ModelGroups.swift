@@ -25,7 +25,7 @@ extension ModelsDocument {
       }
       members = try fields.decode([Member].self, forKey: Field("members"))
       defaultEffort = try fields.decode(String.self, forKey: Field("defaultEffort"))
-      policy = try fields.decodeIfPresent(Policy.self, forKey: Field("policy")) ?? .quotaAware()
+      policy = try fields.decodeIfPresent(Policy.self, forKey: Field("policy")) ?? .quotaAware
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -58,17 +58,16 @@ extension ModelsDocument {
   }
 
   public enum Policy: Hashable, Sendable, Codable {
-    case quotaAware(holdDownSeconds: Int = 1800)
+    case quotaAware
     case select(member: String)
 
     public init(from decoder: any Decoder) throws {
       let fields = try decoder.container(keyedBy: Field.self)
       switch try fields.decode(String.self, forKey: Field("type")) {
       case "quotaAware":
+        // holdDownSeconds is accepted and ignored so catalogs written before it lost its meaning still load.
         try fields.requireOnly(["type", "holdDownSeconds"])
-        let seconds = try fields.decodeIfPresent(Int.self, forKey: Field("holdDownSeconds")) ?? 1800
-        guard (0 ... 86400).contains(seconds) else { throw GroupDeclarationError("holdDownSeconds must be an integer from 0 through 86400") }
-        self = .quotaAware(holdDownSeconds: seconds)
+        self = .quotaAware
       case "select":
         try fields.requireOnly(["type", "member"])
         self = .select(member: try fields.decode(String.self, forKey: Field("member")))
@@ -79,9 +78,8 @@ extension ModelsDocument {
     public func encode(to encoder: any Encoder) throws {
       var fields = encoder.container(keyedBy: Field.self)
       switch self {
-      case let .quotaAware(seconds):
+      case .quotaAware:
         try fields.encode("quotaAware", forKey: Field("type"))
-        try fields.encode(seconds, forKey: Field("holdDownSeconds"))
       case let .select(member):
         try fields.encode("select", forKey: Field("type"))
         try fields.encode(member, forKey: Field("member"))

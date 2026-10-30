@@ -9,7 +9,6 @@ import struct MainHub.WorkerID
 import struct OperationProtocol.OperationError
 import SessionDomain
 import struct SpaceContract.GroupID
-import struct SpaceCore.Observer
 import Synchronization
 
 final class ExecTokens: Sendable {
@@ -87,25 +86,26 @@ final class ExecTokens: Sendable {
     }
   }
 
-  // An observer's token for one firing: minted when the firing goes to a
-  // worker, revoked when it comes back.
-  private let firings = Mutex<[[UInt8]: Observer]>([:])
+  // A sessionless script's token for one run (an observer's firing, a
+  // person's terminal script): minted when the run goes to a worker, revoked
+  // when it comes back.
+  private let scripts = Mutex<[[UInt8]: SessionlessScript]>([:])
 
-  func firingToken(_ observer: Observer) -> String {
+  func scriptToken(_ script: SessionlessScript) -> String {
     let token = Self.randomToken()
-    firings.withLock { $0[Array(token.utf8)] = observer }
+    scripts.withLock { $0[Array(token.utf8)] = script }
     return token
   }
 
-  func revokeFiring(_ token: String) {
-    _ = firings.withLock { $0.removeValue(forKey: Array(token.utf8)) }
+  func revokeScript(_ token: String) {
+    _ = scripts.withLock { $0.removeValue(forKey: Array(token.utf8)) }
   }
 
-  func observer(ofBearer bearer: String) -> Observer? {
+  func script(ofBearer bearer: String) -> SessionlessScript? {
     let presented = Array(bearer.utf8)
-    return firings.withLock { held in
-      var found: Observer?
-      for (token, observer) in held where execTokenEqual(token, presented) { found = observer }
+    return scripts.withLock { held in
+      var found: SessionlessScript?
+      for (token, script) in held where execTokenEqual(token, presented) { found = script }
       return found
     }
   }

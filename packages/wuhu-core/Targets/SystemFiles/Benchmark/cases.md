@@ -95,7 +95,7 @@ A run passes when every `required` deterministic check passes **and** the judge 
 
 ## 13. model-route-handoff
 
-_Text-only smoke:_ a last-resort quota route notice with an outstanding request. The agent explains its next action in one sentence without writing files. The judge requires continuing the outstanding request, re-reading material when needed, and respecting already committed tool receipts; a route change does not complete a request or permit replaying the former account's signatures.
+_Text-only smoke:_ the `(compaction)` route notice production emits when compaction places the session on another group member, with an outstanding request. The agent explains its next action in one sentence without writing files. The judge requires continuing the outstanding request, re-reading material when needed, and respecting already committed tool receipts; a route change does not complete a request or permit replaying the former account's signatures.
 
 ## 14. compact-to-model
 
@@ -197,6 +197,12 @@ _Prompt:_ "On {machine} there's a little tool at {script}. Run it there with {fx
 
 _Afterwards:_ deterministic checks require an exec running the script, the reply carrying the exact line, and no files written. The judge fails reimplementing the script in `run_script`, counting by hand or inventing the line. The case runs only when the pinned release has `wuhu script`.
 
+## terminal-script
+
+_Prompt:_ "There's a tool at {script} on {machine}. I'd like to run it myself later from my own laptop's terminal, without you. Will that work, whom will it act as, and which group are any model calls it makes attributed to? Don't run it and don't change anything." The setup is shebang-script's.
+
+_Afterwards:_ deterministic checks require no exec running the script, the reply naming the personal group, and no files written. The judge passes a reply that the person's signed-in `wuhu script` runs it as them in their acting group, its inferences attributed to their personal group; it fails "terminal callers are refused" or "attributed to the session". The case runs only when the pinned release's `wuhu script --help` names the signed-in person.
+
 ## agent-page
 
 _Prompt:_ "Make me a page at {sb}/ask.html with a text box and a button. Pressing the button starts a new agent here titled with the first few words of the text, hands it the whole text as its first message, and then lets me send that agent follow-ups from the same page."
@@ -224,6 +230,10 @@ _Afterwards:_ `subscriptions` has a group observer (`session_id` null) named `be
 _Prompt:_ "Our deploy bot publishes server-sent events at https://deploys.bench.invalid/events. Each time it sends one, append the event's data as a line to {sb}/deploys.md. Keep it going after this chat ends."
 
 _Afterwards:_ `subscriptions` has the session's `observe` with that `url` and a handler module that appends `event.data` to `{sb}/deploys.md`. The host never resolves, so the slot backs off quietly until the bench archives the session. A script holding the stream open or a polling timer is a fail.
+
+## handler-self-cancel
+
+Text-only smoke: a cron handler that wakes, cancels its own timer, then wakes again. _Afterwards:_ the reply says the firing finishes (code after cancel runs, both wakes arrive) and the timer never fires again, and that a cancel from the tool mid-firing likewise lets the running firing finish first. Deterministic checks: a short reply naming both wakes, no files written. The judge fails an immediate kill, dropped wakes, a timer that keeps firing or an invented self-stop API. Scored runs need a release where a cancel lets a running firing finish.
 
 ## page-haptics
 

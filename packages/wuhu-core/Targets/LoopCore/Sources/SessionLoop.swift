@@ -362,6 +362,7 @@ extension SessionActor {
           $0.compactedForPayload = false
           if let usage = reply.metadata.usage { $0.lastPrompt = .init(tokens: usage.inputTokens, at: now, generation: $0.generation) }
         }
+        if mode == .normal { try modify { $0.inStep = false } }
         await reply.committed(entry, appended)
         try Task.checkCancellation()
         if mode == .forcedCompact, !reply.message.callsCompact {
@@ -373,14 +374,8 @@ extension SessionActor {
         let state = try live
         let compacted: Transcript
         do {
-          var portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: try await loopConfig.runningWork(id))
-          let transition: ModelRouteTransition?
-          if let route = boundary.route, let expectedEpoch = boundary.expectedEpoch {
-            portable.appendRouteNotice(group: route.group!, from: (try await main.modelRoute(id))?.member ?? "unknown", to: route.member!, reason: route.decisionReason)
-            guard portable.estimatedContextTokens(images: boundary.budget.images) <= boundary.budget.usableTokens else { throw PortableHandoffError.modelHandoffTooLarge }
-            transition = ModelRouteTransition(expectedEpoch: expectedEpoch, route: route, transcript: portable)
-          } else { transition = nil }
-          compacted = try await main.append(id, .portableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable, transition: transition)).value(Transcript.self)
+          let portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: try await loopConfig.runningWork(id))
+          compacted = try await main.append(id, .portableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable)).value(Transcript.self)
         } catch {
           try Task.checkCancellation()
           await markErrored(error: error)
@@ -394,8 +389,13 @@ extension SessionActor {
         await loopConfig.invalidateInference(id)
         return .handoff
 
+      // A compaction during a quota wait folds mechanically, so placement can
+      // move the next generation to a member with room.
+      case .failure(let error) where mode == .forcedCompact && waitsOnQuota(error):
+        return try await fallbackCompact(.forced) ? .compacted : .cancelled
+
       case .failure(let waiting as ModelRouteWaiting):
-        guard await backoff(attempt: 1, until: waiting.retryAt, adding: &backoffMs) else { return .cancelled }
+        guard try await backoff(attempt: 1, until: waiting.retryAt, adding: &backoffMs, mode: mode) else { return .cancelled }
 
       case .failure(let error):
         switch classify(error) {
@@ -408,7 +408,7 @@ extension SessionActor {
             return .errored
           }
           attempt += 1
-          guard await backoff(attempt: attempt, adding: &backoffMs) else { return .cancelled }
+          guard try await backoff(attempt: attempt, adding: &backoffMs, mode: mode) else { return .cancelled }
         case .malformedModelMessage:
           try modify { $0.malformedMessages += 1 }
           if (try live).malformedMessages >= 3 {
@@ -418,12 +418,12 @@ extension SessionActor {
           idleTimeouts = 0
           boundedFailures = 0
           attempt += 1
-          guard await backoff(attempt: attempt, adding: &backoffMs) else { return .cancelled }
+          guard try await backoff(attempt: attempt, adding: &backoffMs, mode: mode) else { return .cancelled }
         case .outage(let retryAt):
           idleTimeouts = 0
           boundedFailures = 0
           attempt += 1
-          guard await backoff(attempt: attempt, until: retryAt, adding: &backoffMs) else { return .cancelled }
+          guard try await backoff(attempt: attempt, until: retryAt, adding: &backoffMs, mode: mode) else { return .cancelled }
         case .transient(let timedOut):
           if timedOut {
             idleTimeouts += 1
@@ -447,7 +447,7 @@ extension SessionActor {
             return try await park(error, mode: mode)
           }
           attempt += 1
-          guard await backoff(attempt: attempt, adding: &backoffMs) else { return .cancelled }
+          guard try await backoff(attempt: attempt, adding: &backoffMs, mode: mode) else { return .cancelled }
         case .requestTooLarge(let normalized):
           let compactedError: InferenceError
           if case let .requestTooLarge(limit) = normalized {
@@ -561,7 +561,15 @@ extension SessionActor {
     }
   }
 
-  private func backoff(attempt: Int, until retryAt: Date? = nil, adding waited: inout Int) async -> Bool {
+  /// False when the wait was cut: cancelled, or in normal mode a pending compact command, which
+  /// `nextStep` takes once the inference returns.
+  private func backoff(attempt: Int, until retryAt: Date? = nil, adding waited: inout Int, mode: InferenceMode) async throws -> Bool {
+    if mode == .normal { compactYield = .open }
+    defer { compactYield = .closed }
+    if mode == .normal {
+      let pending = try await main.pendingCommand(id) != nil
+      if pending || compactYield == .requested { return false }
+    }
     let delay: Double
     if let wait = retryAt.map({ $0.timeIntervalSince(date()) }), wait > 0 {
       delay = min(retryAtCeiling, wait)
@@ -665,6 +673,12 @@ private func classify(_ error: any Error) -> FailureClass {
       ? .requestTooLarge(normalized) : .capacity
   case .requestTooLargeAfterCompaction, .oidcSigningFailed, .credentialRefreshRefused, .authenticationRefused, .invalidInput, .other: .terminal
   }
+}
+
+private func waitsOnQuota(_ error: any Error) -> Bool {
+  if error is ModelRouteWaiting { return true }
+  if case .rateLimited = InferenceError.normalize(error) { return true }
+  return false
 }
 
 extension AssistantMessage {

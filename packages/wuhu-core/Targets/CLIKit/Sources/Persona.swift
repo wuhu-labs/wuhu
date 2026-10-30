@@ -2,10 +2,10 @@ import struct SpaceClient.SpaceClient
 import struct SpaceContract.PersonaMintOutput
 
 extension Executor {
-  mutating func announceWallet(space: String, client: SpaceClient, hasBearer: Bool) async throws {
+  mutating func announceWallet(client: SpaceClient, hasBearer: Bool) async throws {
     guard self.walletAnnouncementPending else { return }
     self.walletAnnouncementPending = false
-    let label = hasBearer ? try await self.walletPersona(space: space, client: client) : "anonymous"
+    let label = hasBearer ? try await mintPersona(client) : "anonymous"
     await self.runner.stderr("acting as \(label) (wallet)\n")
   }
 
@@ -15,24 +15,15 @@ extension Executor {
     await self.runner.stderr("acting as the local user (wallet)\n")
   }
 
-  // Existing identity verbs tolerate a revoked device key; a wallet opt-in
-  // must surface that rejection before announcing who it acts as.
   mutating func persona(space: String) async throws -> String? {
-    guard self.session == nil else { return nil }
-    if let cached = try self.wallet.persona(space: space) { return cached }
     guard try await self.bearerSource(space: space) != nil else { return nil }
-    do {
-      let client = try await self.authenticated(space)
-      return try await self.walletPersona(space: space, client: client)
-    } catch let failure as SpaceClient.ToolFailure where !self.walletOptIn && failure.error.code == .unauthorized {
-      return nil
-    }
+    return try await mintPersona(self.authenticated(space))
   }
+}
 
-  private mutating func walletPersona(space: String, client: SpaceClient) async throws -> String {
-    if let cached = try self.wallet.persona(space: space) { return cached }
-    let output: PersonaMintOutput = try await client.api(.post, "/v1/persona")
-    try self.wallet.recordPersona(output.persona, space: space)
-    return output.persona
-  }
+// Asked of the server every time, never cached: a revoked or re-enrolled
+// device key must not keep claiming the persona it used to have.
+private func mintPersona(_ client: SpaceClient) async throws -> String {
+  let output: PersonaMintOutput = try await client.api(.post, "/v1/persona")
+  return output.persona
 }

@@ -48,7 +48,10 @@ import Testing
     func serving(_ answer: String) async throws -> ServeNIOServer {
       try await ServeNIOServer.bind(listeningSocket: listeners.lend(listeners.workers)) { _ in .response(jsonResponse(.string(answer))) }
     }
-    let http = HTTPClient(eventLoopGroupProvider: .singleton)
+    var configuration = HTTPClient.Configuration()
+    configuration.maximumUsesPerConnection = 1
+    let http = HTTPClient(eventLoopGroupProvider: .singleton, configuration: configuration)
+    defer { try? await http.shutdown() }
     let fetch = unixSocketFetch(.asyncHTTPClient(http), socket: socket)
     func ask() async throws -> String { try await fetch.fetch(Request(url: URL(string: "http://main/v1/server")!)).text() }
 
@@ -57,10 +60,34 @@ import Testing
     await first.stopAccepting()
     await first.shutdown()
     let waiting = Task { try await ask() }
-    try await Task.sleep(for: .milliseconds(200))
+    let queued = Task { await pendingConnection(on: listeners.workers) }
+    Task { _ = await waiting.result; queued.cancel() }
+    await queued.value
     let second = try await serving("two")
     #expect(try await waiting.value == "\"two\"")
     await second.shutdown()
-    try await http.shutdown()
+  }
+}
+
+/// Returns once a connection is queued on `listener`, or once cancelled.
+private func pendingConnection(on listener: CInt) async {
+  var fds: [CInt] = [-1, -1]
+  guard pipe(&fds) == 0 else {
+    Issue.record("pipe failed: \(errno)")
+    return
+  }
+  let (wake, woken) = (fds[1], fds[0])
+  defer { close(wake); close(woken) }
+  await withTaskCancellationHandler {
+    await withCheckedContinuation { pending in
+      Thread.detachNewThread {
+        var events = [pollfd(fd: listener, events: Int16(POLLIN), revents: 0), pollfd(fd: woken, events: Int16(POLLIN), revents: 0)]
+        while poll(&events, 2, -1) < 0, errno == EINTR {}
+        pending.resume()
+      }
+    }
+  } onCancel: {
+    var byte: UInt8 = 0
+    _ = write(wake, &byte, 1)
   }
 }

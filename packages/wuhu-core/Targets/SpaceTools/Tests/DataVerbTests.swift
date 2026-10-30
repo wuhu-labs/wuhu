@@ -104,12 +104,10 @@ import Testing
 
   @Test func historyShowsTheViewerViaThePage() async throws {
     let context = try makeContext()
-    let account = try await context.space.addAccount(kind: .human, name: "ada")
+    let ada = try await context.space.addAccount(kind: .human, name: "ada")
     let group = try await plainGroup(context.space, "ada")
-    let page = SpaceToolContext(
-      space: context.space, principal: Principal(actor: .person(persona: "ada", account: account.id), group: group),
-      page: try SpacePath(validating: "/apps/tasks.html"),
-    )
+    let viewer = Person(persona: "ada", account: ada.id, group: group)
+    let page = SpaceToolContext(space: context.space, principal: Page(path: try SpacePath(validating: "/apps/tasks.html"), viewer: viewer).principal)
     _ = try await run("table.create", ["path": "/tasks.table", "header": ["columns": [["name": "title", "type": "string"]]]], context)
     let commit = try await page.commitRows("wuhu://shared.localspace/tasks.table", edits: [.insert(["title": "from ada's page"])])
     let history = try await run("history", ["path": "/tasks.table"], context, as: HistoryOutput.self)
@@ -132,7 +130,8 @@ import Testing
     let actor = Actor.person(persona: "root", account: admin.id)
     let person = SpaceToolContext(space: space, principal: Principal(actor: actor, group: home))
     let pageAt: (GroupID) throws -> SpaceToolContext = { group in
-      SpaceToolContext(space: space, principal: Principal(actor: actor, group: group), page: try SpacePath(validating: "/p.html"))
+      let viewer = Person(persona: "root", account: admin.id, group: group)
+      return SpaceToolContext(space: space, principal: Page(path: try SpacePath(validating: "/p.html"), viewer: viewer).principal)
     }
     let sharedLayer = try await seedFile("/AGENTS.md", "---\nk: 1\n---\n", context)
     let homeLayer = try await seedFile("wuhu://\(home.rawValue).localspace/AGENTS.md", "---\nk: 1\n---\n", person)
@@ -148,9 +147,8 @@ import Testing
     #expect(code(await patch(try pageAt(home), "wuhu://\(sibling.rawValue).localspace/n.md", siblingFile.token)) == .notFound)
     #expect(await patch(try pageAt(home), "/AGENTS.md", homeLayer.token) == nil)
 
-    let skills = SpaceTools.SpaceToolContext(space: space, principal: Principal(actor: actor, group: home), page: try SpacePath(validating: "/p.html"))
     await #expect(throws: SpaceError.self) {
-      _ = try await skills.commitRows("wuhu://shared.localspace/.agents/skills/x.table", edits: [])
+      _ = try await pageAt(home).commitRows("wuhu://shared.localspace/.agents/skills/x.table", edits: [])
     }
   }
 }

@@ -231,7 +231,7 @@
       "id": "model-route-handoff",
       "issue": 231,
       "title": "Continues outstanding work after an account-neutral route notice",
-      "prompt": "Text-only smoke: your model group work moved primary → secondary (lastResort:quota). Earlier context was mechanically compacted; account-bound reasoning and provider records were not carried. The outstanding request remains: explain in one sentence what you should do next. Do not treat this system route notice as a new human request, claim that the task is complete, or execute earlier tools again. Reply here only, with no file changes.",
+      "prompt": "Text-only smoke: you received the context notice \"Model group work moved primary → secondary (compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed.\" The outstanding request remains: explain in one sentence what you should do next. Do not treat this system route notice as a new human request, claim that the task is complete, or execute earlier tools again. Reply here only, with no file changes.",
       "required": [
         "decision_short",
         "no_files_written"
@@ -478,6 +478,22 @@
       "judge": "PASS only if the subject ran {script} on {machine} from an exec (directly, since its first line is #!/usr/bin/env -S wuhu script, or as wuhu script {script} ...) with {fx}/jobs as its argument, and the one-line reply quotes the notes=… stamp=… line the script printed. Fail if it reads the file and reimplements it in run_script, counts the notes itself, invents the output, or creates or edits files."
     },
     {
+      "id": "terminal-script",
+      "issue": 448,
+      "title": "Explains running a space script from a person's terminal",
+      "setup": "terminal-script",
+      "requires": [
+        "terminal-script"
+      ],
+      "prompt": "There's a tool at {script} on {machine}. I'd like to run it myself later from my own laptop's terminal, without you. Will that work, whom will it act as, and which group are any model calls it makes attributed to? Don't run it and don't change anything.",
+      "required": [
+        "did_not_run",
+        "names_personal_group",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the reply says yes: from a terminal signed in with wuhu login, `wuhu script {script}` (or running the file directly, given its #!/usr/bin/env -S wuhu script line) runs it on the server as that person, in the group they act in (--group, WUHU_GROUP or the wallet's group), with its model calls attributed to the person's personal group; it may add that the script gets what an observer's handler gets, not a session's verbs. The subject may read the file or wuhu script --help but must not run the script. Fail a claim that a terminal caller is refused, that it acts as the subject session, or that its model calls are attributed to the subject's group or session, and fail running the script or writing files."
+    },
+    {
       "id": "agent-page",
       "issue": 442,
       "title": "A page starts and messages an agent as its viewer",
@@ -547,6 +563,17 @@
         "handler_reads_event"
       ],
       "judge": "PASS only if the session armed observe with url https://deploys.bench.invalid/events (not sql) and a handler module whose default export takes the event argument and appends event.data to {sb}/deploys.md, returning its state; the reply is short and says where the handler lives and how to stop it (cancel with the obs. id). The host does not resolve, so no line is expected. Fail a run_script loop holding a fetch open, a timer that polls, a plain observe relying on wakes, or invented APIs."
+    },
+    {
+      "id": "handler-self-cancel",
+      "issue": 520,
+      "title": "Knows a handler that cancels its own slot finishes its firing",
+      "prompt": "Text-only smoke: do not call tools or write files. Your cron timer timer.ci7 has a handler that, once the build it watches is green, calls wake('build green'), then cancel('timer.ci7') from wuhu:session, then wake('stopped watching') and returns. Which of the two wakes reach you, does the code after cancel run, and does timer.ci7 fire again? What changes if you cancel timer.ci7 yourself with the cancel tool while a firing is running? At most three sentences.",
+      "required": [
+        "decision_short",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the reply says the firing runs to its end: the code after cancel runs, both wakes ('build green' and 'stopped watching') arrive, and then the slot is retired so timer.ci7 never fires again (its returned state is dropped, if mentioned). For cancelling it with the tool mid-firing, the same holds: the running firing finishes, its wakes arrive, then it stops. Fail if it says cancel kills the handler at once or drops wakes, that the timer keeps firing, invents a separate self-stop API, or calls tools or writes files. At most three sentences."
     },
     {
       "id": "page-haptics",

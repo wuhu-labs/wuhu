@@ -55,7 +55,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
         let fs = await space.fs(.settings)
         var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
         document.providers["alternate"] = document.providers["testing"]
-        let groups = ["work": ModelsDocument.Group(members: [.init(id: "a", provider: "testing", model: "test-model"), .init(id: "b", provider: "alternate", model: "test-model")], defaultEffort: "high", policy: .quotaAware())]
+        let groups = ["work": ModelsDocument.Group(members: [.init(id: "a", provider: "testing", model: "test-model"), .init(id: "b", provider: "alternate", model: "test-model")], defaultEffort: "high", policy: .quotaAware)]
         _ = try await fs.write(ModelsDocument.spacePath, JSONEncoder().encode(document), ifMatch: nil)
         _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: nil)
         let owner = Hub(space: space)

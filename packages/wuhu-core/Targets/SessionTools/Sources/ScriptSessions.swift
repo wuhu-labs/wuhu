@@ -189,7 +189,7 @@ struct ScriptSessions {
 }
 
 private func ownSession(_ actor: ScriptActor) throws -> SessionID {
-  guard let session = actor.session else { throw ToolProblem("an observer has createSession, sendMessage and request; the other verbs act on a session's own tree", code: "invalidArgument") }
+  guard let session = actor.session else { throw ToolProblem("a script without a session has createSession, sendMessage and request; the other verbs act on a session's own tree", code: "invalidArgument") }
   return session
 }
 

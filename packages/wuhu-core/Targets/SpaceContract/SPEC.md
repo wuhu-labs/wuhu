@@ -219,7 +219,7 @@ server-local.
   `SessionCreateInput.request` carries for `expectsReply`); the answer
   carries the request id, its task and the DM it was posted in, with
   `existing: true` when the key was already taken and nothing was posted.
-- **`ScriptRunInput` / `ScriptOutput`** (`POST /v1/scripts`, session token only, SSE): `wuhu script` runs `source` as the session's space script with `arguments` as `import.meta.args`. Each event is one `ScriptOutput` (`update`/`result` with `text`, `failure` with `message`) in the order the run said them, closed by `end` once the run has ended; a run that succeeded says `result` once and no `failure`, and a stream without `end` is a run that did not end.
+- **`ScriptRunInput` / `ScriptOutput`** (`POST /v1/scripts`, a session token or a signed-in person, SSE): `wuhu script` runs `source` as the session's space script, or the person's in the group they act in, with `arguments` as `import.meta.args`. Each event is one `ScriptOutput` (`update`/`result` with `text`, `failure` with `message`) in the order the run said them, closed by `end` once the run has ended; a run that succeeded says `result` once and no `failure`, and a stream without `end` is a run that did not end.
 - **`SessionTagsInput`** (`POST /v1/session/:id/tags`): `tags` replaces the
   session's whole tag list; an empty array clears it. Allowed on any
   lifecycle. The answer is the stored list as `{"tags": [...]}`.
@@ -369,3 +369,7 @@ Normal machine tools use `unknownKind` when a registered v2 machine does not adv
 ## Provider discovery
 
 `ProvidersOutput.providerErrors` and `groupErrors` contain ordered `{id,message}` configuration errors. Discovery succeeds when some entries are invalid: decodable providers retain their model metadata, valid groups retain their descriptors, and malformed declarations appear in the corresponding error map without fabricated metadata. `ModelGroupDescriptor.memberErrors` reports excluded members while the group remains usable over valid members. Only unreadable files or wrong top-level shapes fail the request.
+
+## Labels
+
+`normalizedLabel(_:allowing:length:)` lowercases a label and returns it when its length is in range, it starts with an ASCII letter or digit, and every other character is one too or in `allowing`; otherwise nil. `Handle.normalized` is that rule with `_` and 2–32 characters: the server's `setUserProfile` and the app's Settings both gate a handle on it, so neither can accept what the other refuses.

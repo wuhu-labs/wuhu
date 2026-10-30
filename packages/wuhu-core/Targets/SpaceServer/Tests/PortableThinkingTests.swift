@@ -115,7 +115,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
           } catch let required as ReplayBoundaryRequired {
             #expect(bodies.withLock { $0.isEmpty })
             let portable = try source.portableHandoff(binding: required.binding, budget: required.budget, runningWork: [])
-            adopted = try await owner.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable, transition: nil)).value(Transcript.self)
+            adopted = try await owner.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable)).value(Transcript.self)
           }
         }
         // Rehydrate to prove the decision is not ephemeral executor state.
@@ -145,8 +145,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
 }
 
 extension PortableThinkingTests {
-  @Test(arguments: [false, true])
-  func groupPlacementAndLastResortSwitchKeepPortableToolTurnRunning(lastResort: Bool) async throws {
+  @Test func groupPlacementKeepsPortableToolTurnRunning() async throws {
     try await withSessionDeps {
       let bodies = Mutex<[JSONValue]>([])
       try await withDependencies {
@@ -166,25 +165,10 @@ extension PortableThinkingTests {
         let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
         harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 99, resetsAt: nil)], at: Date())
         harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
-        if lastResort {
-          let failure = ModelRouteFailure(reason: .quota, firstFailureAt: Date().addingTimeInterval(-1900), deadline: Date().addingTimeInterval(-100), retryAt: nil)
-          try await owner.append(id, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: failure)).value(Void.self)
-          let refusing = try #require(await owner.modelRoute(id))
-          do {
-            try await routeWaitOrSwitch(refusing, session: id, catalog: catalog, usage: harness.runtime.usage)
-            Issue.record("expected last-resort boundary")
-            return
-          } catch let boundary as ReplayBoundaryRequired {
-            let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: [])
-            let route = try #require(boundary.route)
-            _ = try await owner.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: route, transcript: portable))).value(Transcript.self)
-          }
-        } else {
-          let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init(), runningWork: [])
-          let compacted = source.compacted(head: head, kept: 0 ..< source.items.count)
-          let transition = try #require(await compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)(id, compacted, nil))
-          _ = try await owner.append(id, .compacted(closing: nil, head: head, kept: 0 ..< source.items.count, completing: nil, transition: transition)).value(Transcript.self)
-        }
+        let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init(), runningWork: [])
+        let compacted = source.compacted(head: head, kept: 0 ..< source.items.count)
+        let transition = try #require(await compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)(id, compacted, nil))
+        _ = try await owner.append(id, .compacted(closing: nil, head: head, kept: 0 ..< source.items.count, completing: nil, transition: transition)).value(Transcript.self)
         #expect(try await owner.modelRoute(id)?.member == "b")
         let access = InferenceAccess(credentials: harness.credentials)
         let infer = kernelInference(owner: owner, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)

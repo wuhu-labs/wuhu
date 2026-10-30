@@ -50,12 +50,8 @@ public struct ToolInvocation: Sendable {
 public struct ReplayBoundaryRequired: Error, Sendable {
   public var binding: ReplayBinding
   public var budget: ContextBudget
-  public var route: SessionModelRoute?
-  public var expectedEpoch: String?
 
-  public init(binding: ReplayBinding, budget: ContextBudget, route: SessionModelRoute? = nil, expectedEpoch: String? = nil) {
-    self.route = route
-    self.expectedEpoch = expectedEpoch
+  public init(binding: ReplayBinding, budget: ContextBudget) {
     self.binding = binding
     self.budget = budget
   }

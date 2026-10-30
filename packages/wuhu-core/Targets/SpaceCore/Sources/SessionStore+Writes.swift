@@ -332,6 +332,9 @@ extension SessionStore {
       case let .observer(observer):
         label = observer.member
         allowed = record.createdBy == observer.member || admin
+      case let .page(page):
+        label = page.path.rawValue
+        allowed = false
       case .anonymous:
         label = "anonymous"
         allowed = true
@@ -440,8 +443,9 @@ extension SessionStore {
     let deadline = nowDate.addingTimeInterval(grace.timeInterval)
     try await writer.write { db in
       _ = try Sessions.record(key, in: db)
+      try SubscriptionRow.of(.session(id)).and(SubscriptionRow.retiring).delete().execute(db)
       try SubscriptionRow.of(.session(id)).update {
-        $0.payload = #sql("json_remove(\($0.payload), '$.handlerAttemptID')", as: String.self)
+        $0.payload = #sql("json_remove(\($0.payload), '$.handlerFiring')", as: String.self)
       }.execute(db)
       try db.execute(
         sql: """

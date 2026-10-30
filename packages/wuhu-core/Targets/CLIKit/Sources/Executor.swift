@@ -116,8 +116,9 @@ struct Executor {
       try await self.transcriber()
     case let .cat(path):
       let route = try self.route(path)
-      let data = try await self.authenticated(route.space).fileBytes(route.path)
-      await self.runner.stdoutBytes(Array(data))
+      let file = try await self.authenticated(route.space).file(route.path)
+      try self.wallet.record(token: file.token, space: route.space, path: route.path)
+      await self.runner.stdoutBytes(Array(file.data))
     case let .put(path, force):
       guard !self.runner.stdinIsTerminal else {
         throw UsageError(message: "put: reads bytes from stdin; redirect them (wuhu put \(path) < file)")
@@ -389,12 +390,11 @@ struct Executor {
       try await self.requireGroup(group, space: space)
     }
     var kept: String?
-    if group == nil, let configured = self.wallet.configuredGroup {
-      let pinned = try? self.wallet.pinnedSpace()
-      if let pinned, !sameServer(pinned, space) {
-        await self.runner.stderr("note: cleared the group \(configured): it belongs to \(pinned)\n")
-      } else {
+    if group == nil, let replaced = self.wallet.replacedPin, let configured = replaced.group {
+      if sameServer(replaced.space, space) {
         kept = configured
+      } else {
+        await self.runner.stderr("note: cleared the group \(configured): it belongs to \(replaced.space)\n")
       }
     }
     let recorded = group ?? kept
@@ -403,7 +403,13 @@ struct Executor {
     if self.walletAnnouncementPending {
       _ = try await self.authenticated(space)
     }
-    let identity = try await self.persona(space: space)
+    let identity: String?
+    do {
+      identity = try await self.persona(space: space)
+    } catch let failure as SpaceClient.ToolFailure where !self.walletOptIn && failure.error.code == .unauthorized {
+      await self.runner.stderr("note: \(space) refused this device's key (\(failure.error.message)); enroll again with: wuhu login < invite-link\n")
+      identity = nil
+    }
     await self.runner.stdout(
       "pinned \(space) -> \(wallet.path)" + (recorded.map { " in group \($0)" } ?? "") + (identity.map { " as \($0)" } ?? "") + "\n",
     )

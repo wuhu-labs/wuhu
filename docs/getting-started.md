@@ -55,8 +55,8 @@ wuhu write /notes/plan.md --body "# Plan"
 wuhu ls /
 ```
 
-`use` records the space in a `./.wuhu` wallet directory (per checkout, found
-by walking up), and `--pin` records the self-signed certificate's fingerprint
+`use` records the space in a `./.wuhu` wallet directory in the current folder
+(other commands find it by walking up), and `--pin` records the self-signed certificate's fingerprint
 in the user-level `~/.wuhu/trust.json`; see the
 [wallet section of wuhu-cli.md](wuhu-cli.md#wallet).
 

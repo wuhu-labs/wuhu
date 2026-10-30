@@ -7,9 +7,6 @@ import struct SpaceContract.ScriptRunInput
 
 extension Executor {
   mutating func script(file: String, arguments: [String]) async throws {
-    guard self.session != nil else {
-      throw UsageError(message: "script: only a session runs scripts, from its own exec (WUHU_EXEC=1)")
-    }
     let url = URL(fileURLWithPath: file, relativeTo: URL(fileURLWithPath: self.runner.currentDirectory, isDirectory: true)).standardizedFileURL
     guard let data = try? Data(contentsOf: url), let source = String(data: data, encoding: .utf8) else {
       throw CLIError(message: "script: cannot read \(url.path) as UTF-8 text")

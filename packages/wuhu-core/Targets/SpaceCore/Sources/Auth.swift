@@ -1,7 +1,7 @@
 import Dependencies
 import Foundation
 
-public struct AccountID: Hashable, Sendable {
+public struct AccountID: RawRepresentable, Hashable, Sendable, Codable {
   static let prefix: String = "ac_"
   static let suffixLength: Int = 8
 

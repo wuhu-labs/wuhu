@@ -4,7 +4,6 @@ import Dependencies
 import FetchWebSocket
 import class MainHub.Hub
 import class MainHub.SessionService
-import struct MainHub.SubtreeArchiveBusy
 import struct MainHub.UnfulfilledError
 import SessionTools
 #if canImport(FoundationEssentials)
@@ -40,16 +39,11 @@ import WuhuAI
       try await runService(service) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for await _ in committed.stream { break }
-        try await until("completed pass permits archive") {
-          do { try await service.archive(sid); return true } catch is SubtreeArchiveBusy { return false }
-        }
+        try await service.archive(sid)
         #expect(invalidated.value == [sid])
         try await service.unarchive(sid)
         #expect(invalidated.value == [sid])
-        try await until("reloaded pass permits restart") {
-          do { _ = try await service.restart(sid, executor: nil, note: nil); return true }
-          catch SessionStoreError.busyForRestart { return false }
-        }
+        _ = try await service.restart(sid, executor: nil, note: nil)
         #expect(invalidated.value == [sid, sid])
       }
       #expect(invalidated.value == [sid, sid, sid])

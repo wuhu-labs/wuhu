@@ -17,6 +17,7 @@ public enum Actor: Hashable, Sendable {
   /// A group observer: its group's own role, as a session acting there that is
   /// not its root.
   case observer(Observer)
+  case page(Page)
   case anonymous
 }
 
@@ -34,13 +35,14 @@ public struct Principal: Hashable, Sendable {
     Principal(actor: actor, group: .shared)
   }
 
-  /// The actor as conversations name their members; nil for the --dev seat.
+  /// The actor as conversations name their members; nil for the --dev seat
+  /// and a page, which is no member.
   public var member: String? {
     switch actor {
     case let .session(id): id.rawValue
     case let .person(persona, _): persona
     case let .observer(observer): observer.member
-    case .anonymous: nil
+    case .page, .anonymous: nil
     }
   }
 
@@ -140,6 +142,8 @@ extension Space {
         return try GroupAccess.reach(of: principal.group, in: db)
       case let .observer(observer):
         return (snapshot.role(from: observer.group.rawValue, in: observer.group.rawValue) ?? .read) >= .write ? [observer.group] : []
+      case let .page(page):
+        return Set(snapshot.all.filter { (snapshot.role(of: page, in: $0.rawValue) ?? .read) >= .write })
       case let .session(id):
         guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }
         return Set(snapshot.all.filter { (snapshot.role(of: session, in: $0.rawValue) ?? .read) >= .write })
@@ -161,7 +165,7 @@ extension Space {
     try await writer.read { db in
       let snapshot = try GroupAccess.Snapshot(db)
       switch actor {
-      case .anonymous, .observer:
+      case .anonymous, .observer, .page:
         return []
       case let .session(id):
         guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }

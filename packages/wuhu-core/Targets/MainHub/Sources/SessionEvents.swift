@@ -12,7 +12,7 @@ public enum SessionEvent: Codable, Sendable {
   case inputEnqueued(QueueInput)
   case pendingCacheWarmingDiscarded
   case transcriptAppended(items: [TranscriptItem], inputOrigin: Bool?, completing: CompactRequestClaim?)
-  case portableHandoff(expectedGeneration: Int, source: Transcript, transcript: Transcript, transition: ModelRouteTransition?)
+  case portableHandoff(expectedGeneration: Int, source: Transcript, transcript: Transcript)
   case compacted(closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completing: CompactRequestClaim?, transition: ModelRouteTransition?)
   case interrupted, resumed
   case compactionActivity(CompactionActivity)

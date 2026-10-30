@@ -1131,13 +1131,15 @@ extension MachineV2ExecLifecycleTests {
       let caller = Task { await endpoint.run(transport) }
       let following = events.follow(outgoing)
       defer { caller.cancel(); following.cancel() }
-      #expect(try await eventually { !events.stdout.isEmpty })
+      await events.firstStdout.wait()
       let request = Request(url: URL(string: "https://space.test/v1/machine/" + rig.machine.id.rawValue)!, method: .delete)
       guard case let .response(response) = try await handler(request) else { Issue.record("delete upgraded"); return }
       #expect(response.status == .ok)
-      #expect(try await eventually { events.status != nil })
+      await following.value
+      #expect(events.status != nil)
       #expect(try await rig.space.execRecord(minted.id)?.terminal == .machineLost)
-      #expect(try await rig.stored(minted, in: service) == nil)
+      let store = try await rig.space.machineV2Store(group: minted.group, key: rig.key)
+      #expect(try await store.lookup(.init(scope: "exec/" + minted.id.rawValue, key: minted.id.rawValue)) == nil)
       #expect(try await rig.space.machineV2RecoveryGroups().isEmpty)
       rig.side.release()
       await rig.agent.shutdown(); await service.shutdown()

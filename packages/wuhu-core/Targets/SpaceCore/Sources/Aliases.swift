@@ -1,5 +1,6 @@
 import GRDB
 import struct SpaceContract.GroupID
+import func SpaceContract.normalizedLabel
 import StructuredQueries
 import StructuredQueriesSQLite
 

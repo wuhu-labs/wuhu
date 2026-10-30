@@ -109,7 +109,8 @@ public struct ViewCatalog: Sendable {
         if group == acting { views.append(View(name: path, table: table)) }
         if readable.contains(group) { views.append(View(name: "wuhu://\(group).localspace\(path)", table: table)) }
       } else if table == "subscription_slots" {
-        // A session's slot acts in its session's group, an observer in its own.
+        // A session's slot acts in its session's group, an observer in its own;
+        // one retiring after its running firing reads as ended.
         func subscriptions(_ name: String, groupFilter: String) -> View {
           View(
             name: name, table: table,
@@ -124,8 +125,8 @@ public struct ViewCatalog: Sendable {
               su.armed_at AS armed_at, su.last_fired_at AS last_fired_at,
               json_extract(su.payload, '$.lastError') AS last_error
             FROM \(s)."subscription_slots" su LEFT JOIN \(s)."sessions" se ON su.owner_kind = 'session' AND se.id = su.owner
-            WHERE json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.stream') IS NOT NULL
-              OR json_type(su.payload, '$.kind.timer') IS NOT NULL)
+            WHERE (json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.stream') IS NOT NULL
+              OR json_type(su.payload, '$.kind.timer') IS NOT NULL) AND json_type(su.payload, '$.handlerFiring.retiring') IS NULL)
             WHERE \(groupFilter)
             """,
             joins: ["sessions"],

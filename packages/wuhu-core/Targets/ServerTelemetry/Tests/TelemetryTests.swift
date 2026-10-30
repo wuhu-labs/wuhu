@@ -109,20 +109,20 @@ private func recorded(_ body: () async throws -> Void) async rethrows -> [Finish
   #expect(spans.first { $0.operationName == "script.run" }?.attributes.get("wuhu.machine") == nil)
 }
 
-@Test func aPropagatedParentContinuesTheCallersTraceUnderItsOwner() async throws {
+@Test func theEnclosingTraceCarriesItsOwnerAndUntracedWorkHasNone() async throws {
   let tracer = InMemoryTracer()
   try await withDependencies { $0.tracer = tracer } operation: {
-    #expect(TraceParent.headers.isEmpty)
-    #expect(TraceParent.propagated([:], owner: owner()) == nil)
-    var headers: [String: String] = [:]
-    await traced(.tool, under: .root(owner("s"))) { _ in headers = TraceParent.headers }
-    let parent = try #require(TraceParent.propagated(headers, owner: owner("relay")))
+    #expect(TraceParent.enclosing == nil)
+    let parent = try await traced(.tool, under: .root(owner("s"))) { _ in
+      await untraced { #expect(TraceParent.enclosing == nil) }
+      return try #require(TraceParent.enclosing)
+    }
     await parent.run { stampingOwners(tracer).startSpan("machine.exchange", context: ServiceContext.current ?? .topLevel).end() }
   }
   let tool = try #require(tracer.finishedSpans.first { $0.operationName == "tool.call" })
   let exchange = try #require(tracer.finishedSpans.first { $0.operationName == "machine.exchange" })
   #expect(exchange.traceID == tool.traceID && exchange.parentSpanID == tool.spanID)
-  #expect(exchange.attributes.get("wuhu.session.id") == .string("relay"))
+  #expect(exchange.attributes.get("wuhu.session.id") == .string("s"))
   #expect(exchange.attributes.get("wuhu.group.id") == .string("g"))
 }
 

@@ -19,7 +19,6 @@ func pageSessionResponse(space: Space, caller: WebCaller, dev: Bool, hub: Hub?, 
   case let .refused(wall): return wall
   case let .admitted(admitted): write = admitted
   }
-  guard let person = Person(write.context.principal) else { preconditionFailure("a page's viewer is a person") }
   var body = write.body
   body.removeValue(forKey: "page")
   @Dependency(\.uuid) var uuid
@@ -37,7 +36,7 @@ func pageSessionResponse(space: Space, caller: WebCaller, dev: Bool, hub: Hub?, 
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected createSession options: \(error)")
     }
-    response = try await createSessionResponse(hub, as: .page(person), callID, arguments) { created in
+    response = try await createSessionResponse(hub, as: .person(write.viewer), callID, arguments) { created in
       try await sessionCreateOutput(created, store: space.sessions)
     }
   } else {
@@ -47,11 +46,11 @@ func pageSessionResponse(space: Space, caller: WebCaller, dev: Bool, hub: Hub?, 
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected sendMessage options: \(error)")
     }
-    response = try await sendMessageResponse(hub, as: .page(person), ToolCallID("page:\(uuid().uuidString.lowercased())"), arguments) { sent in
+    response = try await sendMessageResponse(hub, as: .person(write.viewer), ToolCallID("page:\(uuid().uuidString.lowercased())"), arguments) { sent in
       try Response.json(ConversationPostOutput(
         messageId: sent.messageID.rawValue, conversationId: sent.conversationID.rawValue, n: Int(sent.n), delivered: [],
       ))
     }
   }
-  return response.viewed(by: write.viewer)
+  return response.viewed(by: write.viewer.account)
 }

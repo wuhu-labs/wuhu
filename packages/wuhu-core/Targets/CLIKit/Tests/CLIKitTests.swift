@@ -343,22 +343,25 @@ struct WalletTests {
     #expect(text.contains("127.0.0.1:5530"))
     let confirmation = await harness.stdout.text
     #expect(confirmation.hasPrefix("pinned 127.0.0.1:5530 -> \(wallet.path)"))
-    // Anonymous seats have no persona: minting takes an enrolled device key.
-    #expect(!FileManager.default.fileExists(atPath: wallet.appendingPathComponent("personas.json").path))
     #expect(!FileManager.default.fileExists(atPath: temp.home.appendingPathComponent(".wuhu").path))
   }
 
-  @Test func useUpdatesAncestorWallet() async throws {
+  @Test(arguments: ["127.0.0.1:5530", "127.0.0.1:6650"])
+  func usePinsAFreshWalletInTheCurrentFolderAndLeavesAnAncestorAlone(server: String) async throws {
     let temp = try TemporaryDirectory()
     let ancestor = temp.root.appendingPathComponent(".wuhu", isDirectory: true)
     try FileManager.default.createDirectory(at: ancestor, withIntermediateDirectories: true)
+    let ancestorConfig = ancestor.appendingPathComponent("config.json")
+    let pinned = #"{"space":"127.0.0.1:5530","group":"alice"}"#
+    try Data(pinned.utf8).write(to: ancestorConfig)
     let harness = try Harness(temp: temp, response: .object([:]))
-    #expect(await runTrusting(harness, ["use", "127.0.0.1:6650"]) == 0)
-    let text = try String(contentsOf: ancestor.appendingPathComponent("config.json"), encoding: .utf8)
-    #expect(text.contains("127.0.0.1:6650"))
-    let ancestorConfirmation = await harness.stdout.text
-    #expect(ancestorConfirmation.hasPrefix("pinned 127.0.0.1:6650 -> \(ancestor.path)"))
-    #expect(!FileManager.default.fileExists(atPath: temp.cwd.appendingPathComponent(".wuhu").path))
+    #expect(await runTrusting(harness, ["use", server]) == 0)
+    let local = temp.cwd.appendingPathComponent(".wuhu", isDirectory: true)
+    let config = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: local.appendingPathComponent("config.json")))
+    #expect(config == ["space": server])
+    #expect(await harness.stdout.text.hasPrefix("pinned \(server) -> \(local.path)\n"))
+    #expect(await harness.stderr.text.isEmpty)
+    #expect(try String(contentsOf: ancestorConfig, encoding: .utf8) == pinned)
   }
 
   @Test func useNeverWritesHomeWalletEvenWhenWalkUpFindsIt() async throws {
@@ -596,7 +599,8 @@ struct WalletTests {
     try "not json".write(to: wallet.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
     let broken = try Harness(temp: temp, response: .object([:]))
     #expect(await broken.runner.run(arguments: ["read", "/a"]) == 64)
-    #expect(await broken.stderr.text == "malformed .wuhu/config.json; run: wuhu use <host:port> to repair\n")
+    let folder = wallet.deletingLastPathComponent().path
+    #expect(await broken.stderr.text == "malformed \(wallet.path)/config.json; repair it with: cd \(folder) && wuhu use <host:port>\n")
     #expect(await runTrusting(broken, ["use", "localhost:1"]) == 0)
   }
 
@@ -706,7 +710,7 @@ struct FormattingAndErrorTests {
     #expect(try await request.body?.data() == Data(payload))
   }
 
-  @Test func catReadsTheByteRouteWithoutRecordingAToken() async throws {
+  @Test func catReadsTheByteRoute() async throws {
     let temp = try TemporaryDirectory(withLocalWallet: true)
     let payload: [UInt8] = [0x00, 0xC3, 0x28]
     let bytes = ByteSink()
@@ -727,7 +731,6 @@ struct FormattingAndErrorTests {
     #expect(request.method == .get)
     #expect(request.url.path == "/v1/f/logo.png")
     #expect(await bytes.value == payload)
-    #expect(!FileManager.default.fileExists(atPath: temp.cwd.appendingPathComponent(".wuhu/etags.json").path))
   }
 }
 

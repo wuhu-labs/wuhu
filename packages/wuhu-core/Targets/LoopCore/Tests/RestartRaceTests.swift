@@ -1,4 +1,5 @@
 import class MainHub.Hub
+import struct MainHub.SessionAccess
 import class MainHub.SessionService
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -15,26 +16,29 @@ import Testing
   enum ActivePass: CaseIterable { case inference, compaction, hardCompaction, committedTail }
 
   @Test(arguments: ActivePass.allCases, [false, true])
-  func restartRefusesAnActivePassWithoutCancellingIt(pass: ActivePass, interrupted: Bool) async throws {
+  func restartRefusesAPassWithWorkLeftAndJoinsOneInItsCommittedTail(pass: ActivePass, interrupted: Bool) async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "active restart", kind: .agent, createdBy: "morgan", model: .test)
-      let entered = Box(false), cancelled = Box(false)
+      let entered = Box(false), cancelled = Box(false), committed = Box(false)
       let release = Latch()
-      let worker = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig(inference: { request in
+      var access = SessionAccess()
+      // Only the revoke reads the pending command while the tail is held: the
+      // pass is in its tail when the restart decides to join it.
+      access.afterPendingCommand = { _ in if pass == .committedTail, entered.value { release.release() } }
+      let hold: @Sendable () async -> Void = {
+        await withTaskCancellationHandler {
+          entered.withLock { $0 = true }
+          await release.wait(unless: { Task.isCancelled })
+        } onCancel: { cancelled.withLock { $0 = true } }
+      }
+      let worker = await SessionExecution(main: Hub(space: space, sessionAccess: access), loopConfig: makeConfig(inference: { request in
         if pass == .compaction || pass == .hardCompaction { #expect(request.mode == .forcedCompact) }
         var reply = Fix.reply("original operation finished")
-        if pass == .committedTail {
-          reply.committed = { _, _ in
-            entered.withLock { $0 = true }
-            await release.wait(unless: { Task.isCancelled })
-          }
-        } else {
-          await withTaskCancellationHandler {
-            entered.withLock { $0 = true }
-            await release.wait(unless: { Task.isCancelled })
-          } onCancel: { cancelled.withLock { $0 = true } }
+        if pass == .committedTail { reply.committed = { _, _ in await hold() } } else {
+          await hold()
+          reply.committed = { _, _ in committed.withLock { $0 = true } }
         }
         return reply
       }, budget: .init(maxInput: 1100, maxOutput: 100)))
@@ -48,19 +52,23 @@ import Testing
         try await service.wake(id)
         try await until("active pass entered") { entered.value }
         if interrupted { try await sessions.markInterrupted(id) }
-        let before = try await sessions.hydrate(id)
-        await #expect(throws: SessionStoreError.busyForRestart(id.rawValue)) {
-          try await service.restart(id, executor: nil, note: "discarded")
+        if pass == .committedTail {
+          _ = try await service.restart(id, executor: nil, note: "fresh")
+        } else {
+          let before = try await sessions.hydrate(id)
+          await #expect(throws: SessionStoreError.busyForRestart(id.rawValue)) {
+            try await service.restart(id, executor: nil, note: "discarded")
+          }
+          #expect(try await sessions.hydrate(id).transcript.kernel == before.transcript.kernel)
+          #expect(try await sessions.generationState(id).generation == before.generation)
         }
         #expect(!cancelled.value)
-        #expect(try await sessions.hydrate(id).transcript.kernel == before.transcript.kernel)
-        #expect(try await sessions.generationState(id).generation == before.generation)
-        if pass != .compaction && pass != .hardCompaction {
+        if pass == .inference {
           release.release()
-          try await until("restart after original pass has finished") {
-            do { _ = try await service.restart(id, executor: nil, note: "fresh"); return true }
-            catch SessionStoreError.busyForRestart { return false }
-          }
+          try await until("the original reply committed") { committed.value }
+          _ = try await service.restart(id, executor: nil, note: "fresh")
+        }
+        if pass == .inference || pass == .committedTail {
           let fresh = try await sessions.hydrate(id)
           #expect(fresh.generation == 1)
           #expect(fresh.transcript.kernel.assistantEntries.isEmpty)

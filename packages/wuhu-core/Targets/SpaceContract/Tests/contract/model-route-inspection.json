@@ -60,8 +60,7 @@
         "effort" : "high",
         "model" : "claude-primary",
         "provider" : "anthropic"
-      },
-      "switchCause" : "quota"
+      }
     }
   ],
   "requestedTarget" : {
@@ -91,7 +90,6 @@
     "failure" : {
       "code" : "refusal",
       "consecutiveFailures" : 2,
-      "deadline" : "2026-10-03T04:40:00Z",
       "firstFailureAt" : "2026-10-03T04:10:00Z",
       "lastFailureAt" : "2026-10-03T04:10:30Z",
       "reason" : "quota",
@@ -106,7 +104,6 @@
       "effort" : "high",
       "model" : "claude-primary",
       "provider" : "anthropic"
-    },
-    "switchCause" : "quota"
+    }
   }
 }

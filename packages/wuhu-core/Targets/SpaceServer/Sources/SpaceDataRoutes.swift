@@ -110,9 +110,9 @@ func spaceDataResponse(
       let edits = try RowEdit.parse(write.body["ops"] ?? .null)
       let commit = try await write.context.commitRows(path, edits: edits)
       let output: JSONValue = .object(["rev": .integer(commit.rev.value), "ids": .array(commit.ids.map { .integer(Int($0)) })])
-      return jsonResponse(output).viewed(by: write.viewer)
+      return jsonResponse(output).viewed(by: write.viewer.account)
     } catch {
-      return failureResponse(error).viewed(by: write.viewer)
+      return failureResponse(error).viewed(by: write.viewer.account)
     }
   case ("attributes", .post):
     let write: PageWrite
@@ -122,7 +122,7 @@ func spaceDataResponse(
     }
     var input = write.body
     input.removeValue(forKey: "page")
-    return await toolResponse(write.context, "attributes.patch", input: .object(input)).viewed(by: write.viewer)
+    return await toolResponse(write.context, "attributes.patch", input: .object(input)).viewed(by: write.viewer.account)
   case ("query", _), ("observe", _), ("watch", _), ("rows", _), ("attributes", _), ("find", _), ("grep", _):
     return plainStatus(.methodNotAllowed)
   default:
@@ -199,9 +199,9 @@ private func status(of code: ErrorCode) -> Status {
 }
 
 /// An admitted page write: who is viewing, the JSON body, and the context
-/// that acts as the page's group minus admin, attributed via the page.
+/// that acts as the page.
 struct PageWrite {
-  let viewer: AccountID?
+  let viewer: Person
   let body: OrderedDictionary<String, JSONValue>
   let context: SpaceToolContext
 }
@@ -254,10 +254,8 @@ func writeAdmission(space: Space, caller: WebCaller, dev: Bool, request: Request
       hint: "send location.pathname",
     ))
   }
-  let principal = try await webPrincipal(viewer, group: caller.group, space: space)
-  return .admitted(PageWrite(
-    viewer: viewer, body: body, context: SpaceToolContext(space: space, principal: principal, page: page),
-  ))
+  let acting = Page(path: page, viewer: try await webPerson(viewer, group: caller.group, space: space))
+  return .admitted(PageWrite(viewer: acting.viewer, body: body, context: SpaceToolContext(space: space, principal: acting.principal)))
 }
 
 /// A page's `location.pathname`: hostless and absolute, percent-decoded, a

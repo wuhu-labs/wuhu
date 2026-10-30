@@ -6,13 +6,16 @@ import Synchronization
 public struct TimeControl: Sendable {
   private let _advance: @Sendable (Date) async -> Void
   private let _pendingSleeps: @Sendable () -> [Duration]
+  private let _asleep: @Sendable (Double) async throws -> Void
 
   init(
     advance: @escaping @Sendable (Date) async -> Void,
     pendingSleeps: @escaping @Sendable () -> [Duration],
+    asleep: @escaping @Sendable (Double) async throws -> Void,
   ) {
     self._advance = advance
     self._pendingSleeps = pendingSleeps
+    self._asleep = asleep
   }
 
   public func advance(to target: Date) async {
@@ -33,57 +36,34 @@ public struct TimeControl: Sendable {
         reportIssue("\\.timeControl is unimplemented. Install it with `installTimeControl()`.")
         return []
       },
+      asleep: { _ in
+        reportIssue("\\.timeControl is unimplemented. Install it with `installTimeControl()`.")
+      },
     )
   }
 }
 
-public struct SleepTimeout: Error {}
-
 extension TimeControl {
   /// Advancing wakes only sleeps that have started: one that starts after the
   /// advance counts from the new now and never wakes. A test that means to wake
-  /// a sleep waits for it here first, polling for up to `timeout` of wall time,
-  /// until a sleep due in `seconds` (to the millisecond) is pending. Several
-  /// sleeps due at the same offset can't be told apart.
-  public func asleep(
-    _ description: String,
-    dueIn seconds: Double,
-    timeout: Duration = .seconds(10),
-    fileID: StaticString = #fileID,
-    filePath: StaticString = #filePath,
-    line: UInt = #line,
-    column: UInt = #column,
-  ) async throws {
-    let wall = ContinuousClock()
-    let deadline = wall.now.advanced(by: timeout)
-    while wall.now < deadline {
-      if sleeping(dueIn: seconds) > 0 { return }
-      try? await wall.sleep(for: .milliseconds(2))
-    }
-    reportIssue(
-      "timed out waiting for \(description) to be asleep",
-      fileID: fileID, filePath: filePath, line: line, column: column,
-    )
-    throw SleepTimeout()
+  /// a sleep waits for it here first: this returns once a sleep due in
+  /// `seconds` (to the millisecond) is pending, with no deadline of its own, and
+  /// throws `CancellationError` if its task is cancelled first. Several sleeps
+  /// due at the same offset can't be told apart.
+  public func asleep(_ description: String, dueIn seconds: Double) async throws {
+    try await _asleep(seconds)
   }
 
   /// `asleep`, then an advance a microsecond past that sleep's deadline.
-  public func wake(
-    _ description: String,
-    after seconds: Double,
-    fileID: StaticString = #fileID,
-    filePath: StaticString = #filePath,
-    line: UInt = #line,
-    column: UInt = #column,
-  ) async throws {
-    try await asleep(description, dueIn: seconds, fileID: fileID, filePath: filePath, line: line, column: column)
+  public func wake(_ description: String, after seconds: Double) async throws {
+    try await asleep(description, dueIn: seconds)
     @Dependency(\.date) var date
     await advance(to: date.now.addingTimeInterval(seconds + 1e-6))
   }
 
   /// How many pending sleeps are due in `seconds`, to the millisecond.
   public func sleeping(dueIn seconds: Double) -> Int {
-    pendingSleeps.count { abs($0.timeInterval - seconds) < 1e-3 }
+    pendingSleeps.count { $0.isDue(in: seconds) }
   }
 
   /// How many sleeps are pending.
@@ -111,11 +91,12 @@ extension DependencyValues {
     }
     timeControl = TimeControl(
       advance: { target in
-        await testClock.advance(
+        await clock.advance(
           to: TestClock.Instant(offset: .seconds(target.timeIntervalSinceReferenceDate - anchor.timeIntervalSinceReferenceDate)),
         )
       },
       pendingSleeps: { clock.pendingSleeps() },
+      asleep: { seconds in try await clock.untilSleeping(dueIn: seconds) },
     )
   }
 }
@@ -129,8 +110,24 @@ extension DependencyValues {
 private final class TrackedClock: Clock, Sendable {
   typealias Instant = TestClock<Duration>.Instant
 
+  private struct Waiter {
+    let seconds: Double
+    let continuation: CheckedContinuation<Void, any Error>
+  }
+
+  private struct State {
+    var sleeps: [UUID: Instant] = [:]
+    var waiters: [UUID: Waiter] = [:]
+
+    mutating func waiters(metBy deadlines: some Sequence<Instant>, now: Instant) -> [Waiter] {
+      let met = waiters.filter { _, waiter in deadlines.contains { now.duration(to: $0).isDue(in: waiter.seconds) } }
+      for id in met.keys { waiters[id] = nil }
+      return Array(met.values)
+    }
+  }
+
   private let base: TestClock<Duration>
-  private let pending = Mutex<[UUID: Instant]>([:])
+  private let state = Mutex(State())
 
   init(_ base: TestClock<Duration>) { self.base = base }
 
@@ -139,19 +136,46 @@ private final class TrackedClock: Clock, Sendable {
 
   func sleep(until deadline: Instant, tolerance: Duration?) async throws {
     let id = UUID()
-    pending.withLock { $0[id] = deadline }
-    defer { pending.withLock { $0[id] = nil } }
+    let met = state.withLock {
+      $0.sleeps[id] = deadline
+      return $0.waiters(metBy: [deadline], now: base.now)
+    }
+    for waiter in met { waiter.continuation.resume() }
+    defer { state.withLock { $0.sleeps[id] = nil } }
     // A cancelled sleep leaves the record at once, not when its task next runs.
     try await withTaskCancellationHandler {
       try await base.sleep(until: deadline, tolerance: tolerance)
     } onCancel: {
-      pending.withLock { $0[id] = nil }
+      state.withLock { $0.sleeps[id] = nil }
+    }
+  }
+
+  func advance(to instant: Instant) async {
+    await base.advance(to: instant)
+    let met = state.withLock { $0.waiters(metBy: $0.sleeps.values, now: base.now) }
+    for waiter in met { waiter.continuation.resume() }
+  }
+
+  func untilSleeping(dueIn seconds: Double) async throws {
+    let id = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let ready: Result<Void, any Error>? = state.withLock { state in
+          if Task.isCancelled { return .failure(CancellationError()) }
+          if state.sleeps.values.contains(where: { base.now.duration(to: $0).isDue(in: seconds) }) { return .success(()) }
+          state.waiters[id] = Waiter(seconds: seconds, continuation: continuation)
+          return nil
+        }
+        if let ready { continuation.resume(with: ready) }
+      }
+    } onCancel: {
+      state.withLock { $0.waiters.removeValue(forKey: id) }?.continuation.resume(throwing: CancellationError())
     }
   }
 
   func pendingSleeps() -> [Duration] {
     let now = base.now
-    return pending.withLock { $0.values.map { now.duration(to: $0) } }.filter { $0 > .zero }
+    return state.withLock { $0.sleeps.values.map { now.duration(to: $0) } }.filter { $0 > .zero }
   }
 }
 
@@ -159,5 +183,9 @@ extension Duration {
   fileprivate var timeInterval: TimeInterval {
     let (whole, atto) = components
     return TimeInterval(whole) + TimeInterval(atto) / 1e18
+  }
+
+  fileprivate func isDue(in seconds: Double) -> Bool {
+    self > .zero && abs(timeInterval - seconds) < 1e-3
   }
 }

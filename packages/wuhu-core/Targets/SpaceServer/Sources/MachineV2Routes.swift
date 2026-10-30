@@ -27,7 +27,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     switch principal.actor {
     case let .person(_, account): enrolledBy = account
     case .anonymous: enrolledBy = nil
-    case .session, .observer:
+    case .session, .observer, .page:
       guard input.device == nil else {
         return errorResponse(.forbidden, code: "forbidden", message: "Only a person links a machine to a device")
       }

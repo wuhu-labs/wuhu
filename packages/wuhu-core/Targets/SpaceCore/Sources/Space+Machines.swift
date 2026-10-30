@@ -9,6 +9,7 @@ import struct MachineContract.MachineID
 import struct SessionDomain.SessionID
 import struct SessionDomain.ToolCallID
 import struct SpaceContract.GroupID
+import func SpaceContract.normalizedLabel
 import SpaceFS
 import StructuredQueries
 import StructuredQueriesSQLite

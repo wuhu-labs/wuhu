@@ -18,7 +18,7 @@ import Testing
 import WuhuAI
 
 @Suite(.deterministicDependencies) struct GroupSwitchingTests {
-  func setup(seconds: Int = 1800, policy: ModelsDocument.Policy? = nil, model: String = "test-model") async throws -> (SessionHarness, Hub, ProviderCatalog, SessionID) {
+  func setup(policy: ModelsDocument.Policy = .quotaAware, model: String = "test-model") async throws -> (SessionHarness, Hub, ProviderCatalog, SessionID) {
     let harness = try await SessionHarness(credentials: .bound { provider in
       .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
     })
@@ -26,7 +26,7 @@ import WuhuAI
     let fs = await harness.space.fs(.settings)
     let (entry, data) = try await fs.read(ModelsDocument.groupPath)
     var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
-    groups["work"]!.policy = policy ?? .quotaAware(holdDownSeconds: seconds)
+    groups["work"]!.policy = policy
     _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: entry)
     let owner = Hub(space: harness.space)
     let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
@@ -34,31 +34,21 @@ import WuhuAI
     return (harness, owner, catalog, SessionID(created.id))
   }
 
-  @Test func durableEpisodeKeepsFirstDeadlineAndSuccessClearsIt() async throws {
+  @Test func durableEpisodeKeepsFirstFailureAndSuccessClearsIt() async throws {
     try await withSessionDeps {
       let now = Mutex(Date(timeIntervalSince1970: 10000))
       try await withDependencies { $0.date = DateGenerator { now.withLock { $0 } } } operation: {
         let (harness, owner, catalog, id) = try await setup()
         let pin = try #require(await owner.modelRoute(id))
-        let first = try #require(await recordRouteFailure(InferenceError.rateLimited(retryAt: Date(timeIntervalSince1970: 30000)), session: id, owner: owner, catalog: catalog))
-        #expect(first.deadline == Date(timeIntervalSince1970: 11800))
+        let first = try #require(await recordRouteFailure(InferenceError.rateLimited(retryAt: nil), session: id, owner: owner, catalog: catalog))
         now.withLock { $0 = Date(timeIntervalSince1970: 11000) }
-        let repeated = try #require(await recordRouteFailure(InferenceError.rateLimited(retryAt: Date(timeIntervalSince1970: 30000)), session: id, owner: owner, catalog: catalog))
-        #expect(repeated.deadline == first.deadline)
+        let repeated = try #require(await recordRouteFailure(InferenceError.rateLimited(retryAt: nil), session: id, owner: owner, catalog: catalog))
         #expect(repeated.firstFailureAt == first.firstFailureAt)
+        #expect(repeated.lastFailureAt == Date(timeIntervalSince1970: 11000))
+        #expect(repeated.consecutiveFailures == 2)
         let rehydratedOwner = Hub(space: harness.space)
         let held = try #require(await rehydratedOwner.modelRoute(id))
         #expect(held.failure == repeated)
-        await #expect(throws: ModelRouteWaiting.self) { try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage) }
-        now.withLock { $0 = Date(timeIntervalSince1970: 11800) }
-        do {
-          try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage)
-          Issue.record("deadline must require portable boundary")
-        } catch let boundary as ReplayBoundaryRequired {
-          #expect(boundary.route?.member == "b")
-          #expect(boundary.route?.decisionReason == "lastResort:quota")
-          #expect(boundary.expectedEpoch == pin.epoch)
-        }
         try await owner.append(id, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: nil)).value(Void.self)
         #expect(try await owner.modelRoute(id)?.failure == nil)
         #expect(try await harness.store.modelRouteHistory(id) == [pin])
@@ -66,28 +56,7 @@ import WuhuAI
     }
   }
 
-  @Test func nearResetWaitsAndAllowsSourceRetryEvenAfterRestartPastDeadline() async throws {
-    try await withSessionDeps {
-      let now = Mutex(Date(timeIntervalSince1970: 10000))
-      try await withDependencies { $0.date = DateGenerator { now.withLock { $0 } } } operation: {
-        let (harness, owner, catalog, id) = try await setup()
-        _ = try await recordRouteFailure(InferenceError.rateLimited(retryAt: Date(timeIntervalSince1970: 10600)), session: id, owner: owner, catalog: catalog)
-        let held = try #require(await owner.modelRoute(id))
-        do { try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage) }
-        catch let wait as ModelRouteWaiting { #expect(wait.retryAt == Date(timeIntervalSince1970: 10600)) }
-        now.withLock { $0 = Date(timeIntervalSince1970: 12000) }
-        try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage)
-        #expect(try await owner.modelRoute(id)?.epoch == held.epoch)
-        let repeated = try #require(await recordRouteFailure(InferenceError.rateLimited(retryAt: Date(timeIntervalSince1970: 10600)), session: id, owner: owner, catalog: catalog))
-        #expect(repeated.retryAt == nil)
-        #expect(repeated.deadline == held.failure?.deadline)
-        let refusing = try #require(await owner.modelRoute(id))
-        await #expect(throws: ReplayBoundaryRequired.self) { try await routeWaitOrSwitch(refusing, session: id, catalog: catalog, usage: harness.runtime.usage) }
-      }
-    }
-  }
-
-  @Test func onlyActualTypedRefusalsOrThirdOutageQualifyAndSelectNeverSwitches() async throws {
+  @Test func onlyActualTypedRefusalsOrThirdOutageQualifyAndSelectNeverRecords() async throws {
     try await withSessionDeps {
       let (_, owner, catalog, id) = try await setup()
       for error in [InferenceError.invalidInput(status: 403, body: "model permission"), .contextTooLong, .cancelled, .malformedModelMessage(message: "bad", reason: nil), .transient(status: nil, body: "parser"), .other(status: nil, body: "config"), .transport(.connectionClosed), .transport(.readTimeout), .transport(.idleTimeout)] {
@@ -95,11 +64,9 @@ import WuhuAI
       }
       #expect(try await recordRouteFailure(CatalogError.unknownModel(provider: "testing", model: "typo"), session: id, owner: owner, catalog: catalog) == nil)
       let outages: [InferenceError] = [.transient(status: 503, body: nil), .upstreamUnavailable(code: "overloaded_error"), .transient(status: 529, body: nil)]
-      var deadline: Date?
       for (index, error) in outages.enumerated() {
         let count = index + 1
         let failure = try #require(await recordRouteFailure(error, session: id, owner: owner, catalog: catalog))
-        if let deadline { #expect(failure.deadline == deadline) } else { deadline = failure.deadline }
         #expect(failure.consecutiveFailures == count)
         #expect(failure.refusing == (count == 3))
       }
@@ -133,90 +100,102 @@ import WuhuAI
     }
   }
 
-  @Test func exhaustedAlternativesWaitAndFailureSuppressesWarming() async throws {
+  @Test func authenticationRefusalKeepsTheHeldMemberAndSuppressesWarmingUntilASuccess() async throws {
     try await withSessionDeps {
-      let (harness, owner, catalog, id) = try await setup(seconds: 0)
-      _ = try await recordRouteFailure(InferenceError.authenticationRefused(code: "invalid_api_key"), session: id, owner: owner, catalog: catalog)
-      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 100, resetsAt: Date().timeIntervalSince1970 + 18000), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
-      let held = try #require(await owner.modelRoute(id))
-      await #expect(throws: ModelRouteWaiting.self) { try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage) }
-      #expect(try await CacheWarmer(space: harness.space, usage: harness.runtime.usage).allows(id) == false)
-      #expect(try await owner.modelRoute(id)?.member == "a")
+      let now = Mutex(Date(timeIntervalSince1970: 10000))
+      try await withDependencies { $0.date = DateGenerator { now.withLock { $0 } } } operation: {
+        let (harness, owner, catalog, id) = try await setup()
+        _ = try await recordRouteFailure(InferenceError.authenticationRefused(code: "invalid_api_key"), session: id, owner: owner, catalog: catalog)
+        let warmer = CacheWarmer(space: harness.space, usage: harness.runtime.usage)
+        #expect(try await warmer.allows(id) == false)
+        now.withLock { $0 = $0.addingTimeInterval(86400) }
+        #expect(try await warmer.allows(id) == false)
+        #expect(try await owner.modelRoute(id)?.member == "a")
+      }
     }
   }
-}
 
-extension GroupSwitchingTests {
-  @Test func actualRuntimeRefusalCompactsBeforeDestinationAndNeverAutomaticallyReturns() async throws {
+  @Test func aPastReportedResetFallsBackToTheUsageBoardReset() async throws {
     try await withSessionDeps {
-      let requests = Mutex<[(String, String)]>([])
-      try await withDependencies {
-        $0.fetch = FetchClient { request in
-          let body = try await request.body?.text() ?? ""
-          let round = requests.withLock { $0.append((request.headers.sensitiveValues["authorization"] ?? "", body)); return $0.count }
-          if round == 2 {
-            var headers = Headers()
-            headers[.retryAfter] = "18000"
-            return Response(status: .tooManyRequests, headers: headers, body: .string("quota"))
-          }
-          let events: String
-          if round == 1 {
-            events = [
-              "{\"type\":\"response.output_item.added\",\"item\":{\"type\":\"reasoning\",\"id\":\"native-account-a\",\"summary\":[],\"encrypted_content\":\"signature-account-a\"}}",
-              "{\"type\":\"response.output_item.done\",\"item\":{\"type\":\"reasoning\",\"id\":\"native-account-a\",\"summary\":[],\"encrypted_content\":\"signature-account-a\"}}",
-              "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp-a\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}",
-            ].map { "data: \($0)\n\n" }.joined()
-          } else {
-            events = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-b\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
-          }
-          return Response(status: .ok, body: .bytes(Data(events.utf8), contentType: "text/event-stream"))
-        }
-      } operation: {
-        let models = testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"responses\"")
-        let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { provider in .init(credential: .apiKey("key-" + provider), identityEpoch: provider) })
-        try await ModelGroupRouteTests().install(harness)
-        let fs = await harness.space.fs(.settings)
-        let (entry, data) = try await fs.read(ModelsDocument.groupPath)
-        var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
-        groups["work"]!.policy = .quotaAware(holdDownSeconds: 0)
-        _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: entry)
-        let created = try await harness.call("/v1/session", .object(["title": "Runtime switch", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
-        let id = SessionID(created.id)
-        let original = try #require(await harness.store.modelRoute(id))
-        try await harness.running {
-          try await harness.deliver("first request", to: id)
-          try await until("source success") { try await harness.store.record(id).work == .noWork && requests.withLock { $0.count } == 1 }
-          try await harness.deliver("outstanding second request", to: id)
-          try await until("destination success") { try await harness.store.record(id).work == .noWork && requests.withLock { $0.count } == 3 }
-          let next = try #require(await harness.store.modelRoute(id))
-          #expect(next.member == "b")
-          #expect(next.switchCause == .quota)
-          #expect(next.failure == nil)
-          #expect(next.epoch != original.epoch)
-          #expect(try await harness.store.generationState(id).generation == 1)
-          #expect(try await harness.store.modelRouteHistory(id) == [original, next])
-          let emitted = requests.withLock { $0 }
-          #expect(emitted[0].0 == "Bearer key-testing")
-          #expect(emitted[1].0 == "Bearer key-testing")
-          #expect(emitted[2].0 == "Bearer key-alternate")
-          #expect(!emitted[2].1.contains("signature-account-a"))
-          #expect(!emitted[2].1.contains("native-account-a"))
-          #expect(emitted[2].1.contains("outstanding second request"))
-          #expect(emitted[2].1.contains("lastResort:quota"))
-          try await harness.deliver("third request", to: id)
-          try await until("replacement remains pinned") { try await harness.store.record(id).work == .noWork && requests.withLock { $0.count } == 4 }
-          #expect(try await harness.store.modelRoute(id) == next)
-          #expect(requests.withLock { $0.last?.0 } == "Bearer key-alternate")
-        }
+      let now = Mutex(Date(timeIntervalSince1970: 10000))
+      try await withDependencies { $0.date = DateGenerator { now.withLock { $0 } } } operation: {
+        let (harness, owner, catalog, id) = try await setup()
+        let board = Date(timeIntervalSince1970: 10000 + 7200)
+        harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 100, resetsAt: board.timeIntervalSince1970), .init(name: "seven_day", usedPercent: 40, resetsAt: nil)], at: now.withLock { $0 })
+        let failure = try #require(await recordRouteFailure(InferenceError.rateLimited(retryAt: Date(timeIntervalSince1970: 9000)), session: id, owner: owner, catalog: catalog, usage: harness.runtime.usage))
+        #expect(failure.retryAt == board)
+        let reported = Date(timeIntervalSince1970: 10000 + 600)
+        #expect(try await recordRouteFailure(InferenceError.rateLimited(retryAt: reported), session: id, owner: owner, catalog: catalog, usage: harness.runtime.usage)?.retryAt == reported)
       }
     }
   }
 }
 
 extension GroupSwitchingTests {
-  @Test func typedRefreshRefusalOnlyAffectsHeldProviderAndWarmingFollowsReplacement() async throws {
+  @Test func aRateLimitedMemberIsWaitedOutPastTheOldHoldDownAndResumedWithoutAnySwitch() async throws {
     try await withSessionDeps {
-      let (harness, owner, catalog, id) = try await setup(seconds: 0)
+      let now = Mutex(Date())
+      let requests = Mutex<[String]>([])
+      try await withDependencies {
+        $0.date = DateGenerator { now.withLock { $0 } }
+        $0.fetch = FetchClient { request in
+          let round = requests.withLock { $0.append(request.headers.sensitiveValues["authorization"] ?? ""); return $0.count }
+          if round == 1 {
+            var headers = Headers()
+            headers[.retryAfter] = "18000"
+            return Response(status: .tooManyRequests, headers: headers, body: .string("quota"))
+          }
+          let completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-a\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
+          return Response(status: .ok, body: .bytes(Data(completed.utf8), contentType: "text/event-stream"))
+        }
+      } operation: {
+        let models = testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"responses\"")
+        let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { provider in .init(credential: .apiKey("key-" + provider), identityEpoch: provider) })
+        try await ModelGroupRouteTests().install(harness)
+        let created = try await harness.call("/v1/session", .object(["title": "Held through quota", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
+        let id = SessionID(created.id)
+        let original = try #require(await harness.store.modelRoute(id))
+        #expect(original.member == "a")
+        harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: nil), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: now.withLock { $0 })
+        let owner = Hub(space: harness.space)
+        let access = InferenceAccess(credentials: harness.credentials)
+        let infer = kernelInference(owner: owner, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        var transcript = try await harness.store.transcript(id)
+        transcript.append(.direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: now.withLock { $0 }, content: .init(text: "outstanding request"))))
+        let request = InferenceRequest(sessionID: id, attemptID: UUID(), transcript: transcript, mode: .normal)
+        await #expect(throws: (any Error).self) { try await infer(request) }
+        let failure = try #require(await harness.store.modelRoute(id)?.failure)
+        let reset = try #require(failure.retryAt)
+        #expect(failure.reason == .quota)
+        #expect(reset > failure.firstFailureAt.addingTimeInterval(1800))
+        for instant in [failure.firstFailureAt.addingTimeInterval(1800), reset.addingTimeInterval(-1)] {
+          now.withLock { $0 = instant }
+          do {
+            _ = try await infer(request)
+            Issue.record("a held member must be waited out until its reset")
+          } catch let waiting as ModelRouteWaiting {
+            #expect(waiting.retryAt == reset)
+          }
+        }
+        #expect(requests.withLock { $0.count } == 1)
+        now.withLock { $0 = reset }
+        _ = try await infer(request)
+        let resumed = try #require(await harness.store.modelRoute(id))
+        #expect(resumed.epoch == original.epoch)
+        #expect(resumed.member == "a")
+        #expect(resumed.failure == nil)
+        #expect(requests.withLock { $0 } == ["Bearer key-testing", "Bearer key-testing"])
+        #expect(try await harness.store.modelRouteHistory(id) == [original])
+        #expect(try await harness.store.generationState(id).generation == 0)
+      }
+    }
+  }
+}
+
+extension GroupSwitchingTests {
+  @Test func typedRefreshRefusalOnlyAffectsHeldProviderAndWarmingFollowsACompactionMove() async throws {
+    try await withSessionDeps {
+      let (harness, owner, catalog, id) = try await setup()
       let fs = await harness.space.fs(.settings)
       let (entry, data) = try await fs.read(ModelsDocument.spacePath)
       var document = try ModelsDocument(json: data)
@@ -234,15 +213,14 @@ extension GroupSwitchingTests {
       #expect(failure.code == "loginRequired")
       #expect(try await warmer.allows(id) == false)
       #expect(try await warmer.allows(otherID) == false)
-      let held = try #require(await owner.modelRoute(id))
-      do { try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage); Issue.record("missing route boundary") }
-      catch let boundary as ReplayBoundaryRequired {
-        let hydration = try await owner.hydrate(id)
-        guard case let .kernel(source) = hydration.transcript else { Issue.record("missing kernel transcript"); return }
-        let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: [])
-        let next = try #require(boundary.route)
-        _ = try await owner.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: next, transcript: portable))).value(Transcript.self)
-      }
+      let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
+      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 80, resetsAt: reset), .init(name: "seven_day", usedPercent: 80, resetsAt: nil)], at: Date())
+      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
+      let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "moved", snapshot: .init(), runningWork: [])
+      let compacted = try await harness.store.transcript(id).compacted(head: head, kept: nil)
+      let transition = try #require(await compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)(id, compacted, nil))
+      #expect(transition.route.member == "b")
+      _ = try await owner.append(id, .compacted(closing: nil, head: head, kept: nil, completing: nil, transition: transition)).value(Transcript.self)
       try await harness.store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 10, outputTokens: 0, totalTokens: 10)))
       #expect(try await warmer.allows(id))
       #expect(try await warmer.allows(otherID))
@@ -276,21 +254,14 @@ extension GroupSwitchingTests {
     }
   }
 
-  @Test func actualCredentialRefreshRefusalHandsOffAndInferenceOnlyResolvesHeldReplacement() async throws {
+  @Test func aCredentialRefreshRefusalErrorsTheSessionOnItsHeldMember() async throws {
     try await withSessionDeps {
       let revoked = Mutex(false)
       let emitted = Mutex<[String]>([])
       try await withDependencies {
         $0.fetch = FetchClient { request in
-          let round = emitted.withLock { $0.append(request.headers.sensitiveValues["authorization"] ?? ""); return $0.count }
-          var event = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"replacement\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"
-          if round == 2 {
-            event = [
-              #"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_compact","call_id":"compact_b","name":"compact","arguments":""}}"#,
-              #"{"type":"response.function_call_arguments.done","item_id":"fc_compact","arguments":"{\"summary\":\"Replacement account continues safely\",\"pre_reads\":[\"/task.md\"]}"}"#,
-              #"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_compact","call_id":"compact_b","name":"compact","arguments":"{\"summary\":\"Replacement account continues safely\",\"pre_reads\":[\"/task.md\"]}"}}"#,
-            ].map { "data: \($0)\n\n" }.joined() + event
-          }
+          emitted.withLock { $0.append(request.headers.sensitiveValues["authorization"] ?? "") }
+          let event = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"unexpected\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"
           return Response(status: .ok, body: .bytes(Data(event.utf8), contentType: "text/event-stream"))
         }
       } operation: {
@@ -300,31 +271,19 @@ extension GroupSwitchingTests {
           return .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
         })
         try await ModelGroupRouteTests().install(harness)
-        let fs = await harness.space.fs(.settings)
-        let (entry, data) = try await fs.read(ModelsDocument.groupPath)
-        var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
-        groups["work"]!.policy = .quotaAware(holdDownSeconds: 0)
-        _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: entry)
-        let created = try await harness.call("/v1/session", .object(["title": "Refresh switch", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
+        let created = try await harness.call("/v1/session", .object(["title": "Refresh refusal", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
         let id = SessionID(created.id)
+        let original = try #require(await harness.store.modelRoute(id))
         revoked.withLock { $0 = true }
         try await harness.running {
           try await harness.deliver("request after revoked credential", to: id)
-          try await until("replacement account inferred") { try await harness.store.record(id).work == .noWork && emitted.withLock { $0.count } == 1 }
+          try await until("refusal errors the session") { try await harness.store.record(id).work == .errored }
           let route = try #require(await harness.store.modelRoute(id))
-          #expect(route.member == "b")
-          #expect(route.switchCause == .authentication)
-          #expect(route.failure == nil)
-          #expect(emitted.withLock { $0 } == ["Bearer key-alternate"])
-          try await harness.deliver("replacement remains usable", to: id)
-          try await until("held replacement compacted and inferred again") { try await harness.store.record(id).work == .noWork && emitted.withLock { $0.count } == 3 }
-          #expect(try await harness.store.modelRoute(id) == route)
-          #expect(try await harness.store.generationState(id).generation == 2)
-          let compacted = try await harness.store.transcript(id)
-          guard case let .generationHead(head) = compacted.items[0] else { Issue.record("missing compacted head"); return }
-          #expect(head.summary == "Replacement account continues safely")
-          #expect(head.snapshot.preReads == ["/task.md"])
-          #expect(emitted.withLock { $0 } == Array(repeating: "Bearer key-alternate", count: 3))
+          #expect(route.epoch == original.epoch)
+          #expect(route.member == "a")
+          #expect(route.failure?.source == .credentialRefresh)
+          #expect(emitted.withLock { $0 }.isEmpty)
+          #expect(try await harness.store.modelRouteHistory(id) == [original])
         }
       }
     }
@@ -398,9 +357,9 @@ extension GroupSwitchingTests {
 }
 
 extension GroupSwitchingTests {
-  @Test(arguments: [false, true]) func lastResortSkipsLapsedCandidateAtReadinessOrLateResolve(lateRefresh: Bool) async throws {
+  @Test(arguments: [false, true]) func compactionSkipsLapsedCandidateAtReadinessOrLateResolve(lateRefresh: Bool) async throws {
     try await withSessionDeps {
-      let (harness, owner, _, id) = try await setup(seconds: 0)
+      let (harness, owner, _, id) = try await setup()
       let fs = await harness.space.fs(.settings)
       let (entry, data) = try await fs.read(ModelsDocument.spacePath)
       var document = try ModelsDocument(json: data)
@@ -419,24 +378,21 @@ extension GroupSwitchingTests {
         }
         return .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
       }
-      _ = try await recordRouteFailure(InferenceError.rateLimited(retryAt: Date().addingTimeInterval(18000)), session: id, owner: owner, catalog: catalog)
-      let held = try #require(await owner.modelRoute(id))
-      do {
-        try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage)
-        Issue.record("missing last-resort boundary")
-      } catch let boundary as ReplayBoundaryRequired {
-        let next = try #require(boundary.route)
-        #expect(next.member == "c")
-        #expect(next.specifier.provider == "third")
-        #expect(next.switchCause == .quota)
-        #expect(bResolutions.withLock { $0 } == (lateRefresh ? 2 : 1))
-        let hydration = try await owner.hydrate(id)
-        guard case let .kernel(source) = hydration.transcript else { Issue.record("not kernel"); return }
-        let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: [])
-        _ = try await owner.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: next, transcript: portable))).value(Transcript.self)
-        #expect(try await owner.modelRoute(id) == next)
-        #expect(try await harness.store.generationState(id).generation == hydration.generation + 1)
+      let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
+      for (provider, used) in [("testing", 99.0), ("alternate", 0), ("third", 50)] {
+        harness.runtime.usage.record(provider, plan: nil, windows: [.init(name: "five_hour", usedPercent: used, resetsAt: reset), .init(name: "seven_day", usedPercent: used, resetsAt: nil)], at: Date())
       }
+      let ready = catalog
+      let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "moved", snapshot: .init(), runningWork: [])
+      let compacted = try await harness.store.transcript(id).compacted(head: head, kept: nil)
+      let transition = try #require(await compactionPlacement(owner: owner, catalog: { _ in ready }, usage: harness.runtime.usage)(id, compacted, nil))
+      #expect(transition.route.member == "c")
+      #expect(transition.route.specifier.provider == "third")
+      #expect(bResolutions.withLock { $0 } == (lateRefresh ? 2 : 1))
+      let generation = try await harness.store.generationState(id).generation
+      _ = try await owner.append(id, .compacted(closing: nil, head: head, kept: nil, completing: nil, transition: transition)).value(Transcript.self)
+      #expect(try await owner.modelRoute(id) == transition.route)
+      #expect(try await harness.store.generationState(id).generation == generation + 1)
     }
   }
 }
@@ -479,7 +435,6 @@ extension GroupSwitchingTests {
         let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
         let transition = try #require(await prepare(id, compacted, nil))
         #expect(transition.route.member == "b")
-        #expect(transition.route.switchCause == nil)
         let committed = try await owner.append(id, .compacted(closing: nil, head: head, kept: kept, completing: nil, transition: transition)).value(Transcript.self)
         let access = InferenceAccess(credentials: harness.credentials)
         let infer = kernelInference(owner: owner, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
@@ -504,7 +459,7 @@ extension GroupSwitchingTests {
       let created = try await harness.call("/v1/session", .object(["title": "Date inspection", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
       let id = SessionID(created.id)
       let held = try #require(await owner.modelRoute(id))
-      let failure = ModelRouteFailure(reason: .quota, firstFailureAt: instant, deadline: instant.addingTimeInterval(1800), retryAt: instant.addingTimeInterval(18000), lastFailureAt: instant.addingTimeInterval(1))
+      let failure = ModelRouteFailure(reason: .quota, firstFailureAt: instant, retryAt: instant.addingTimeInterval(18000), lastFailureAt: instant.addingTimeInterval(1))
       try await owner.append(id, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: failure)).value(Void.self)
       let inspected = try await harness.get("/v1/session/\(id.rawValue)/model-route").body.json(SessionModelRouteOutput.self)
       let route = try #require(inspected.route?.object)
@@ -512,7 +467,6 @@ extension GroupSwitchingTests {
       let episode = try #require(route["failure"]?.object)
       #expect(episode["firstFailureAt"]?.stringValue == instant.ISO8601Format())
       #expect(episode["lastFailureAt"]?.stringValue == instant.addingTimeInterval(1).ISO8601Format())
-      #expect(episode["deadline"]?.stringValue == instant.addingTimeInterval(1800).ISO8601Format())
       #expect(episode["retryAt"]?.stringValue == instant.addingTimeInterval(18000).ISO8601Format())
       let decisions = try #require(inspected.decisions?.array)
       #expect(decisions.count == 1)
@@ -525,6 +479,95 @@ extension GroupSwitchingTests {
         #expect(window["resetsAt"]?.stringValue == reset.ISO8601Format())
       }
       #expect(try await owner.modelRoute(id)?.evidence.first(where: { $0.member == "a" })?.observedAt == instant.timeIntervalSince1970)
+    }
+  }
+}
+
+extension GroupSwitchingTests {
+  @Test(arguments: [ModelRouteFailure.Reason.authentication, .quota]) func startOverLeavesOutAHeldMemberOnlyWhileItIsRefusedForAuthentication(reason: ModelRouteFailure.Reason) async throws {
+    try await withSessionDeps {
+      let (harness, owner, catalog, id) = try await setup()
+      let error: InferenceError = reason == .authentication ? .authenticationRefused(code: "invalid_api_key") : .rateLimited(retryAt: nil)
+      #expect(try await recordRouteFailure(error, session: id, owner: owner, catalog: catalog)?.reason == reason)
+      let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
+      for (provider, used) in [("testing", 0.0), ("alternate", 90)] {
+        harness.runtime.usage.record(provider, plan: nil, windows: [.init(name: "five_hour", usedPercent: used, resetsAt: reset), .init(name: "seven_day", usedPercent: used, resetsAt: nil)], at: Date())
+      }
+      let restarted = try await harness.call("/v1/session/\(id.rawValue)/restart", .null, as: SessionRestartOutput.self)
+      let placed = try #require(await owner.modelRoute(id))
+      #expect(placed.member == (reason == .authentication ? "b" : "a"))
+      #expect(restarted.provider == placed.specifier.provider)
+      #expect(placed.reason == .startOver)
+      #expect(placed.failure == nil)
+    }
+  }
+
+  @Test(arguments: [false, true]) func compactionPlacesAwayFromAHeldMemberRefusedForAuthentication(loginLapsed: Bool) async throws {
+    try await withSessionDeps {
+      let (harness, owner, source, id) = try await setup()
+      var catalog = source
+      if loginLapsed {
+        catalog.credentials = .bound { provider in
+          if provider == "testing" { throw ChatGPTAuthError.loginRequired(detail: "lapsed held account") }
+          return .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
+        }
+      } else {
+        _ = try await recordRouteFailure(InferenceError.authenticationRefused(code: "invalid_api_key"), session: id, owner: owner, catalog: catalog)
+      }
+      let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
+      for (provider, used) in [("testing", 0.0), ("alternate", 90)] {
+        harness.runtime.usage.record(provider, plan: nil, windows: [.init(name: "five_hour", usedPercent: used, resetsAt: reset), .init(name: "seven_day", usedPercent: used, resetsAt: nil)], at: Date())
+      }
+      let ready = catalog
+      let compacted = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "moved", snapshot: .init(), runningWork: []), kept: nil)
+      let transition = try #require(await compactionPlacement(owner: owner, catalog: { _ in ready }, usage: harness.runtime.usage)(id, compacted, nil))
+      #expect(transition.route.member == "b")
+      #expect(transition.route.failure == nil)
+    }
+  }
+
+  @Test(arguments: [false, true]) func aCompactionDuringAQuotaWaitFoldsMechanicallyOntoAMemberWithRoom(refusedByTheCompaction: Bool) async throws {
+    try await withSessionDeps {
+      let requests = Mutex<[String]>([])
+      try await withDependencies {
+        $0.fetch = FetchClient { request in
+          let key = request.headers.sensitiveValues["authorization"] ?? ""
+          let round = requests.withLock { $0.append(key); return $0.count }
+          if round > 1, key == "Bearer key-testing" {
+            var headers = Headers()
+            headers[.retryAfter] = "7800"
+            return Response(status: .tooManyRequests, headers: headers, body: .string("quota"))
+          }
+          let completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
+          return Response(status: .ok, body: .bytes(Data(completed.utf8), contentType: "text/event-stream"))
+        }
+      } operation: {
+        let models = testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"responses\"")
+        let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { provider in .init(credential: .apiKey("key-" + provider), identityEpoch: provider) })
+        try await ModelGroupRouteTests().install(harness)
+        let created = try await harness.call("/v1/session", .object(["title": "Compacts while waiting", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
+        let id = SessionID(created.id)
+        let original = try #require(await harness.store.modelRoute(id))
+        #expect(original.member == "a")
+        try await harness.running {
+          try await harness.deliver("first request", to: id)
+          try await until("first reply on the held member") { try await harness.store.record(id).work == .noWork && requests.withLock { $0.count } == 1 }
+          let reset = Date().addingTimeInterval(7800)
+          harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 100, resetsAt: reset.timeIntervalSince1970), .init(name: "seven_day", usedPercent: 40, resetsAt: nil)], at: Date())
+          harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 10, resetsAt: reset.timeIntervalSince1970), .init(name: "seven_day", usedPercent: 10, resetsAt: nil)], at: Date())
+          if !refusedByTheCompaction {
+            try await Hub(space: harness.space).append(id, .modelRouteFailureUpdated(expectedEpoch: original.epoch, failure: .init(reason: .quota, firstFailureAt: Date(), retryAt: reset))).value(Void.self)
+          }
+          #expect(try await harness.post("/v1/session/\(id.rawValue)/compact", .null).status == .ok)
+          try await until("compaction re-placed the session") { try await harness.store.modelRoute(id)?.member == "b" }
+        }
+        let moved = try #require(await harness.store.modelRoute(id))
+        #expect(moved.reason == .compaction)
+        #expect(moved.failure == nil)
+        #expect(try await harness.store.modelRouteHistory(id) == [original, moved])
+        #expect(try await harness.store.generationState(id).generation == 1)
+        #expect(requests.withLock { $0 }.filter { $0 == "Bearer key-testing" }.count == (refusedByTheCompaction ? 2 : 1))
+      }
     }
   }
 }

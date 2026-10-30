@@ -15,9 +15,8 @@ public enum PortableHandoffConflict: Error, Equatable, Sendable {
 }
 
 extension SessionStore {
-  public func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript, transition: ModelRouteTransition? = nil) async throws -> Transcript {
+  public func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript) async throws -> Transcript {
     precondition(transcript.pendingToolCallIDs.isEmpty)
-    precondition(transition == nil || transition?.transcript == transcript)
     guard case let .generationHead(head)? = transcript.items.first, head.replayBinding != nil else {
       preconditionFailure("portable handoff requires a bound generation head")
     }
@@ -39,7 +38,6 @@ extension SessionStore {
           try SessionContentRow.insert { row }.execute(db)
         }
       }
-      if let transition { try Sessions.commitRouteTransition(key, transition: transition, in: db) }
       try Sessions.writeGeneration(key, generation: runtime.generation + 1, transcript: transcript, in: db)
       try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
       try SessionPrompts.advance(key, in: db)

@@ -731,20 +731,4 @@ private func until(
     #expect(try Command.parse(["inbox"]) == .inbox)
     #expect(throws: (any Error).self) { try Command.parse(["session", "steer", "abc"]) }
   }
-
-  @Test func personaCacheRoundTripsPerSpaceAndFailsLoudlyWhenMalformed() throws {
-    let scratch = try ScratchFolder("persona")
-    defer { scratch.remove() }
-    let directory = scratch.url
-    var wallet = Wallet(directory: directory)
-    #expect(try wallet.persona(space: "a") == nil)
-    try wallet.recordPersona("amber-fox-creek", space: "a")
-    try wallet.recordPersona("blue-pond-otter", space: "b")
-    #expect(try wallet.persona(space: "a") == "amber-fox-creek")
-    var rebuilt = Wallet(directory: directory)
-    #expect(try rebuilt.persona(space: "b") == "blue-pond-otter")
-    try Data("not json".utf8).write(to: directory.appendingPathComponent("personas.json"))
-    var corrupted = Wallet(directory: directory)
-    #expect(throws: (any Error).self) { try corrupted.persona(space: "a") }
-  }
 }

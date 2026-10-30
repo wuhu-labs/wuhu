@@ -1,7 +1,7 @@
 import Contract
 import JSONValue
 
-// A file a session's exec runs as a space script (`wuhu script`).
+// A file run as a space script (`wuhu script`) by a session's exec or a signed-in person's terminal.
 @Contract
 public struct ScriptRunInput: Codable, Equatable, Sendable {
   public let source: String

@@ -53,6 +53,8 @@ actor SessionActor {
     var parkWake: (at: Date, task: Task<Void, Never>)?
     var revoking = false
     var claimingCompactRequest = false
+    /// A step of the pass is under way; a normal inference's step ends at its commit, before the post-commit callback.
+    var inStep = false
     var malformedMessages = 0
     var capacityFailures = 0
     var compactedForPayload = false
@@ -71,11 +73,10 @@ actor SessionActor {
       return CacheExpectation(tokens: lastPrompt.tokens, idleMs: max(0, Int((now.timeIntervalSince(lastPrompt.at) * 1000).rounded())))
     }
 
-    var hasSettled: Bool {
-      guard lastUpdatedByLoopAt != nil else { return false }
-      if sessionStatus.stopped {
-        return true
-      }
+    var hasSettled: Bool { lastUpdatedByLoopAt != nil && hasNothingLeft }
+
+    var hasNothingLeft: Bool {
+      if sessionStatus.stopped { return true }
       guard !claimingCompactRequest, compactRequestClaim == nil, queueHead == queueTail else { return false }
       return !transcript.hasWork
     }
@@ -120,6 +121,9 @@ actor SessionActor {
   private var passInFlight = false
   private var passObservers: [CheckedContinuation<Void, Never>] = []
   var retryPause: Task<Void, any Error>?
+  /// A normal-mode retry wait is `open` to a compact command; a wake that finds one pending ends it.
+  var compactYield = CompactYield.closed
+  enum CompactYield { case closed, open, requested }
   private var retired = false
 
   @Dependency(\.date) var date
@@ -228,8 +232,11 @@ actor SessionActor {
         case .whenSettled:
           let head = try await main.queueHead(id)
           try modify { $0.queueHead = max($0.queueHead, head) }
-          guard try live.hasSettled else { return false }
+          if try !live.hasSettled {
+            guard try isFinishingPass, try await main.pendingCommand(id) == nil, try live.hasSettled || isFinishingPass else { return false }
+          }
           try modify { $0.revoking = true }
+          await passEnded()
           return true
         case .handOff:
           // The loop returns at its next boundary; a releasable tool is cut
@@ -251,6 +258,11 @@ actor SessionActor {
         try await handleResume()
       }
     }
+  }
+
+  // A pass between steps with nothing left: once revoking, it takes no further step.
+  private var isFinishingPass: Bool {
+    get throws { try passInFlight && !live.inStep && live.hasNothingLeft }
   }
 
   // Suspends until the pass in flight, if any, has returned: what it knew is
@@ -307,6 +319,7 @@ actor SessionActor {
   private func runPass() async {
     let mountID = liveState?.mountID
     liveState?.lastUpdatedByLoopAt = nil
+    liveState?.inStep = false
     defer {
       if liveState?.mountID == mountID { liveState?.lastUpdatedByLoopAt = date() }
     }
@@ -326,6 +339,10 @@ actor SessionActor {
   private func handleWake() async throws {
     let head = try await main.queueHead(id)
     try modify { $0.queueHead = max($0.queueHead, head) }
+    if compactYield == .open, try await main.pendingCommand(id) != nil, compactYield == .open {
+      compactYield = .requested
+      retryPause?.cancel()
+    }
     nudge()
   }
 

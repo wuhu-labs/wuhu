@@ -67,7 +67,7 @@ struct ScriptAI {
 
 private func capabilitySession(_ actor: ScriptActor) throws -> SessionID {
   guard let session = actor.session else {
-    throw CapabilityError(.invalidArgument, "Capabilities run as a session; an observer handler has complete() only.")
+    throw CapabilityError(.invalidArgument, "Capabilities run as a session; a script without one has complete() only.")
   }
   return session
 }

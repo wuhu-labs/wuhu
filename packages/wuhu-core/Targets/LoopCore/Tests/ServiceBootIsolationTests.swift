@@ -88,10 +88,7 @@ import Testing
         try await service.resume(first)
         try await service.archive(first, force: true)
         try await service.unarchive(first)
-        try await until("unarchived pass permits restart") {
-          do { _ = try await service.restart(first, executor: nil, note: nil); return true }
-          catch SessionStoreError.busyForRestart { return false }
-        }
+        _ = try await service.restart(first, executor: nil, note: nil)
         _ = try await service.enqueue(item: Fix.message("after verbs", message: "healthy-verbs"), to: first)
         #expect(await iterator.next() == first)
         let fresh = try await sessions.createSession(group: .shared, title: "fresh", kind: .agent, createdBy: "morgan", model: .test)

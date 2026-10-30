@@ -81,7 +81,7 @@ func addSessionRoutes(
         return errorResponse(.forbidden, code: "taskInput", message: "a person creates agents only; a task is created by its parent session")
       }
       let executor = try await SessionExecutor.resolve(params, resolveModelExecutor: runtime.resolveModelExecutor, resolveModelGroup: runtime.resolveModelGroup)
-      let route = try await runtime.prepareModelRoute(executor, .create)
+      let route = try await runtime.prepareModelRoute(executor, .create, nil)
       let id = try await store.createSession(
         group: group,
         title: input.title,
@@ -141,6 +141,27 @@ func addSessionRoutes(
         decisions: .array(try await store.modelRouteHistory(id).map(modelRouteInspectionJSON)),
       ))
     } catch { return sessionErrorResponse(error) }
+  }
+
+  // A person's terminal script runs as them in the group they act in, its
+  // inferences attributed to their own group; the stream closing kills it.
+  router.post("/v1/scripts") { request, _ in
+    @Dependency(\.uuid) var uuid
+    let input = try await request.json(ScriptRunInput.self)
+    let run: TerminalRun
+    switch try await principalOf(request) {
+    case let .principal(principal):
+      guard case let .person(persona, account) = principal.actor, try await space.account(account)?.kind == .human else {
+        return errorResponse(.forbidden, code: "forbidden", message: "a terminal script runs as a signed-in person")
+      }
+      // A persona older than personal groups may have none yet.
+      let personalGroup = if let existing = try await space.personalGroup(of: account) { existing } else { try await space.ensurePersonalGroup(account: account) }
+      run = TerminalRun(id: "terminal-" + uuid().uuidString.lowercased(), persona: persona, account: account, group: principal.group, personalGroup: personalGroup)
+    case let .refused(response): return response
+    }
+    return scriptStream(in: runtime.streamScope) { say in
+      try await runtime.workers.run(ScriptRun(runner: .person(run), source: input.source, arguments: input.arguments), output: say)
+    }
   }
 
   router.get("/v1/templates") { request, _ in
@@ -320,7 +341,7 @@ func addSessionRoutes(
         params = params.merged(over: current)
       }
       let executor = try await SessionExecutor.resolve(params, resolveModelExecutor: runtime.resolveModelExecutor, resolveModelGroup: runtime.resolveModelGroup)
-      let route = try await runtime.prepareModelRoute(executor, .startOver)
+      let route = try await runtime.prepareModelRoute(executor, .startOver, store.modelRoute(id))
       let restart = try await service.restart(
         id, executor: executor, note: restartOpening(executor: executor, record: record, at: dateGen.now), modelRoute: route,
       )

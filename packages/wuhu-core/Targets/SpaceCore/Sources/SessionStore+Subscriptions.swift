@@ -14,6 +14,19 @@ struct ObservationProgress: Hashable, Sendable, Codable {
   var deliverySequence: Int
 }
 
+/// A handler slot's firing in progress. One that cancelled its own slot
+/// retires it when it ends, and the slot reads as ended meanwhile.
+enum HandlerFiring: Hashable, Sendable, Codable {
+  case running(UUID)
+  case retiring(UUID)
+
+  var attempt: UUID {
+    switch self {
+    case let .running(id), let .retiring(id): id
+    }
+  }
+}
+
 public struct SubscriptionSlot: Hashable, Sendable, Codable {
   public enum Kind: Hashable, Sendable, Codable {
     case observe(sql: String, throttleSeconds: Double)
@@ -30,7 +43,7 @@ public struct SubscriptionSlot: Hashable, Sendable, Codable {
   public var handlerStateJSON: String?
   public var lastError: String?
   var handlerFailed: Bool?
-  var handlerAttemptID: UUID?
+  var handlerFiring: HandlerFiring?
   var observationProgress: ObservationProgress?
 
   public init(id: SubscriptionID, kind: Kind, handler: String? = nil) {
@@ -243,7 +256,7 @@ extension SessionStore {
       inserted.handlerStateJSON = nil
       inserted.lastError = nil
       inserted.handlerFailed = nil
-      inserted.handlerAttemptID = nil
+      inserted.handlerFiring = nil
     }
     return inserted
   }
@@ -282,10 +295,11 @@ extension SessionStore {
   }
 
   // The cancel as a tool call's effect. `answer` sees the slot as stored (nil
-  // when there is none) and says what the call returns, or throws why it
-  // cannot; the lookup, the delete and the answer's receipt are one write, so
-  // a call already answered (an earlier run, or an overlapping twin of this
-  // one) gets that answer, never a refusal for the slot its twin removed.
+  // when there is none or it is retiring) and says what the call returns, or
+  // throws why it cannot; the lookup, the cancel and the answer's receipt are
+  // one write, so a call already answered (an earlier run, or an overlapping
+  // twin of this one) gets that answer, never a refusal for the slot its twin
+  // removed. A slot whose handler is firing retires when that firing ends.
   public func cancelSubscription(
     _ id: SessionID,
     subscriptionID: SubscriptionID,
@@ -296,9 +310,19 @@ extension SessionStore {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.write { db in
       if let recorded = try Sessions.receipt(key, toolCallID: callID.rawValue, in: db) { return recorded }
-      let stored = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db).map { try self.armedSubscription($0).slot }
+      let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db)
+      var stored = try row.map { try Sessions.decode(SubscriptionSlot.self, from: $0.payload) }
+      if case .retiring? = stored?.handlerFiring { stored = nil }
       let payload = try answer(stored)
-      try Self.deleteSubscription(key, subscriptionID, in: db)
+      if var row, var slot = stored {
+        if case let .running(attempt)? = slot.handlerFiring {
+          slot.handlerFiring = .retiring(attempt)
+          row.payload = try Sessions.encode(slot)
+          try SubscriptionRow.save(row, in: db)
+        } else {
+          try Self.deleteSubscription(key, subscriptionID, in: db)
+        }
+      }
       try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
       return payload
     }

@@ -19,11 +19,22 @@ func modelGroupExecutorResolver(catalog: @escaping @Sendable () async throws -> 
 }
 
 func modelRoutePreparer(catalog: @escaping @Sendable () async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute? {
-  { executor, reason in
+  let place = modelRoutePlacer(catalog: catalog, usage: usage)
+  return { executor, reason in try await place(executor, reason, nil) }
+}
+
+/// Like `modelRoutePreparer`, given the route being replaced: while that route's episode is an
+/// authentication refusal, its member is left out of quota-aware placement unless it is the only one.
+func modelRoutePlacer(catalog: @escaping @Sendable () async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionExecutor, ModelPlacementReason, SessionModelRoute?) async throws -> SessionModelRoute? {
+  { executor, reason, held in
     guard case let .modelGroup(id, effort) = executor else { return nil }
     let catalog = try await catalog()
     _ = try await catalog.validateGroupReadiness(id, effort: effort)
-    let group = try catalog.validatedGroup(id, effort: effort).declaration
+    var group = try catalog.validatedGroup(id, effort: effort).declaration
+    if let held, held.group == id, held.failure?.reason == .authentication, case .quotaAware = group.policy {
+      let others = group.members.filter { $0.id != held.member }
+      if !others.isEmpty { group.members = others }
+    }
     @Dependency(\.date) var date
     @Dependency(\.uuid) var uuid
     let now = date.now

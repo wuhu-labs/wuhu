@@ -142,7 +142,7 @@ extension SessionStore {
   static func group(of caller: Caller, in db: Database) throws -> GroupID {
     switch caller {
     case let .session(id): try Sessions.group(of: id.rawValue, in: db)
-    case let .page(person): person.group
+    case let .person(person): person.group
     case let .observer(observer): observer.group
     }
   }
@@ -171,7 +171,7 @@ extension SessionStore {
       switch requester {
       case let .session(parent):
         guard record.parent == parent else { throw SessionStoreError.notTheParent(key) }
-      case let .page(person):
+      case let .person(person):
         guard record.parent == nil, record.createdBy == person.persona, record.group == person.group else {
           throw SessionStoreError.notTheParent(key)
         }

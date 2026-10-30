@@ -37,7 +37,7 @@ enum Channels {
     guard let record = try Conversations.record(id.rawValue, in: db) else { throw SessionStoreError.unknownConversation(id.rawValue) }
     let allowed: Bool
     switch principal.actor {
-    case .session, .observer:
+    case .session, .observer, .page:
       allowed = try GroupAccess.role(of: principal.actor, in: record.group, acting: principal.group, in: db).map { $0 >= .write } ?? false
     case let .person(persona, _):
       allowed = record.members.contains { $0.member == persona && $0.kind == .user }

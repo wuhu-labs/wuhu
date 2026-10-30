@@ -28,6 +28,14 @@ func kernelInference(
   committedWarming: @escaping @Sendable (SessionID, CacheWarmingPolicy) async -> Void = { _, _ in },
 ) -> @Sendable (InferenceRequest) async throws -> InferenceReply {
   @Dependency(\.date) var date
+  @Sendable func failed(_ error: any Error, session: SessionID, catalog: ProviderCatalog?, inferenceStarted: Bool, span: TelemetrySpan<ModelAttemptOutcome>) async throws -> Never {
+    if error is ReplayBoundaryRequired {
+      span.conclude(.handoff)
+    } else if let catalog, let failure = try await recordRouteFailure(error, session: session, owner: owner, catalog: catalog, usage: usage, inferenceStarted: inferenceStarted), failure.reason == .upstreamOutage, let retry = failure.retryAt {
+      throw ModelRouteWaiting(retryAt: retry)
+    }
+    throw error
+  }
   @Sendable func attempt(_ request: InferenceRequest, _ span: TelemetrySpan<ModelAttemptOutcome>) async throws -> InferenceReply {
     @Dependency(\.uuid) var uuid
     let metrics = InferenceMetricsSink { metric in
@@ -76,7 +84,7 @@ func kernelInference(
         }
         route = held
         model = try selectedCatalog.validateRoute(held, group: id, effort: effort)
-        try await routeWaitOrSwitch(held, session: request.sessionID, catalog: selectedCatalog, usage: usage)
+        if let retry = held.failure?.retryAt, retry > date.now { throw ModelRouteWaiting(retryAt: retry) }
       case .retired:
         preconditionFailure("kernel inference for \(record.executor.kind) session \(request.sessionID.rawValue)")
       }
@@ -87,12 +95,8 @@ func kernelInference(
         throw ReplayBoundaryRequired(binding: ReplayBinding(identity: resolved.bindingIdentity, epoch: uuid().uuidString.lowercased()), budget: resolved.budget)
       }
     } catch {
-      if error is ReplayBoundaryRequired { span.conclude(.handoff) }
       await sockets.invalidate(request.sessionID)
-      if let routingCatalog, let failure = try await recordRouteFailure(error, session: request.sessionID, owner: owner, catalog: routingCatalog, usage: usage, inferenceStarted: false) {
-        throw ModelRouteWaiting(retryAt: min(failure.deadline, failure.retryAt ?? date.now.addingTimeInterval(60)))
-      }
-      throw error
+      try await failed(error, session: request.sessionID, catalog: routingCatalog, inferenceStarted: false, span: span)
     }
     span.set(.transport, resolved.transport.rawValue)
     let lease: (session: ResponsesWebSocketSession, lease: UUID)?
@@ -139,10 +143,7 @@ func kernelInference(
     } catch {
       if let lease { await sockets.invalidate(request.sessionID, lease: lease.lease) }
       if error is InferenceCancelled { throw InferenceError.cancelled }
-      if let routingCatalog, let failure = try await recordRouteFailure(error, session: request.sessionID, owner: owner, catalog: routingCatalog, usage: usage) {
-        throw ModelRouteWaiting(retryAt: min(failure.deadline, failure.retryAt ?? date.now.addingTimeInterval(60)))
-      }
-      throw error
+      try await failed(error, session: request.sessionID, catalog: routingCatalog, inferenceStarted: true, span: span)
     }
   }
   return { request in try await traced(.attempt) { span in try await attempt(request, span) } }

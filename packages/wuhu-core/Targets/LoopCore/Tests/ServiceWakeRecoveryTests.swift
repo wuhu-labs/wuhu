@@ -32,9 +32,8 @@ import WuhuAI
       _ = try await sessions.enqueue(healthy, input: Fix.message("healthy boot", message: "healthy-boot"))
       if boot { _ = try await sessions.enqueue(bad, input: Fix.message("bad boot", message: "bad-boot")) }
       #expect(try await sessions.bootSessions() == (boot ? [bad, healthy] : [healthy]))
-      let errors = ErrorCommits(bad)
-      sessions.writer.add(transactionObserver: errors)
-      defer { errors.stream.continuation.finish() }
+      let failed = AsyncStream<SessionID>.makeStream()
+      defer { failed.continuation.finish() }
       let logs = RecordedLogs()
       let calls = Box<[SessionID]>([])
       let commits = AsyncStream<SessionID>.makeStream()
@@ -44,12 +43,12 @@ import WuhuAI
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
         return reply
-      }), log: logs.logger)
+      }), cancelled: { failed.continuation.yield($0) }, log: logs.logger)
       try await runService(service) { service in
         var iterator = commits.stream.makeAsyncIterator()
         #expect(await iterator.next() == healthy)
         if !boot { _ = try await sessions.enqueue(bad, input: Fix.message("new delivery", message: "bad-signal")) }
-        for await _ in errors.stream.stream { break }
+        for await id in failed.stream where id == bad { break }
         let record = try await sessions.record(bad)
         #expect(record.work == .errored)
         #expect(record.errorMessage != nil)
@@ -108,9 +107,8 @@ import WuhuAI
       let healthy = try await sessions.createSession(group: .shared, title: "healthy", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.enqueue(healthy, input: Fix.message("boot"))
       let commits = AsyncStream<SessionID>.makeStream()
-      let errors = ErrorCommits(bad)
-      sessions.writer.add(transactionObserver: errors)
-      defer { commits.continuation.finish(); errors.stream.continuation.finish() }
+      let failed = AsyncStream<SessionID>.makeStream()
+      defer { commits.continuation.finish(); failed.continuation.finish() }
       let logs = RecordedLogs()
       let hydrations = Box(0)
       let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
@@ -124,7 +122,7 @@ import WuhuAI
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
         return reply
-      }), log: logs.logger)
+      }), cancelled: { failed.continuation.yield($0) }, log: logs.logger)
       try await runService(service) { service in
         var iterator = commits.stream.makeAsyncIterator()
         #expect(await iterator.next() == healthy)
@@ -137,7 +135,7 @@ import WuhuAI
         }
         // Posting directly isolates the unreadable record from enqueue's own validation.
         sessions.signals.post(bad)
-        for await _ in errors.stream.stream { break }
+        for await id in failed.stream where id == bad { break }
         let work = try await space.writer.read { db in
           try String.fetchOne(db, sql: "SELECT work FROM sessions WHERE id = ?", arguments: [bad.rawValue])
         }
@@ -213,10 +211,9 @@ import WuhuAI
         _ = try await sessions.enqueue(healthy, input: Fix.message("boot"))
         let calls = Box(0)
         let recovered = Box(false)
-        let errors = ErrorCommits(bad)
-        sessions.writer.add(transactionObserver: errors)
+        let failed = AsyncStream<SessionID>.makeStream()
         let commits = AsyncStream<SessionID>.makeStream()
-        defer { commits.continuation.finish(); errors.stream.continuation.finish(); clock.sleeps.continuation.finish() }
+        defer { commits.continuation.finish(); failed.continuation.finish(); clock.sleeps.continuation.finish() }
         let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
           var access = SessionAccess()
           access.beforeHydrate = { session async throws in
@@ -230,7 +227,7 @@ import WuhuAI
           var reply = Fix.reply("done")
           reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
           return reply
-        }))
+        }), cancelled: { failed.continuation.yield($0) })
         try await runService(service) { service in
           var commits = commits.stream.makeAsyncIterator()
           var sleeps = clock.sleeps.stream.makeAsyncIterator()
@@ -251,7 +248,7 @@ import WuhuAI
             await clock.base.advance(to: deadline.advanced(by: .microseconds(1)))
           }
           if exhausted {
-            for await _ in errors.stream.stream { break }
+            for await id in failed.stream where id == bad { break }
             #expect(calls.value == 4)
             #expect(try await sessions.record(bad).work == .errored)
             // Ordinary Resume still works when the stored data itself is readable.

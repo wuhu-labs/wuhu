@@ -1,29 +1,30 @@
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
+import struct SpaceFS.SpacePath
 
 /// Who asks the hub to create a session or post a message.
 public enum Caller: Hashable, Sendable {
   case session(SessionID)
-  /// A page acting as the person viewing it, confined to the page's group.
-  case page(Person)
+  /// A person acting in one group: a page's viewer or a terminal script.
+  case person(Person)
   case observer(Observer)
 
   /// The sender and creator the hub records.
   public var name: String {
     switch self {
     case let .session(id): id.rawValue
-    case let .page(person): person.persona
+    case let .person(person): person.persona
     case let .observer(observer): observer.member
     }
   }
 
-  /// Where its receipts and derived message ids live. A page's are its
-  /// viewer's in its group only, so a key the viewer used from another group's
-  /// page never replays here.
+  /// Where its receipts and derived message ids live. A person's are theirs
+  /// in its group only, so a key they used from another group never replays
+  /// here.
   public var receiptHolder: String {
     switch self {
     case let .session(id): id.rawValue
-    case let .page(person): "\(person.persona) in \(person.group.rawValue)"
+    case let .person(person): "\(person.persona) in \(person.group.rawValue)"
     case let .observer(observer): observer.member
     }
   }
@@ -32,15 +33,11 @@ public enum Caller: Hashable, Sendable {
     if case let .session(id) = self { id } else { nil }
   }
 
-  public var person: Person? {
-    if case let .page(person) = self { person } else { nil }
-  }
-
-  /// The one group it acts in: a page's, an observer's.
+  /// The one group it acts in: a person's, an observer's.
   public var confinement: GroupID? {
     switch self {
     case .session: nil
-    case let .page(person): person.group
+    case let .person(person): person.group
     case let .observer(observer): observer.group
     }
   }
@@ -49,14 +46,14 @@ public enum Caller: Hashable, Sendable {
     if case let .observer(observer) = self { observer } else { nil }
   }
 
-  /// The firing what it makes records; a session's or a page's records none.
+  /// The firing what it makes records; a session's or a person's records none.
   public var firing: String? { observer?.firing }
 
   /// Who it acts as when it is not a session.
   public var principal: Principal? {
     switch self {
     case .session: nil
-    case let .page(person): person.principal
+    case let .person(person): person.principal
     case let .observer(observer): observer.principal
     }
   }
@@ -80,9 +77,26 @@ public struct Observer: Hashable, Sendable {
 
   public var principal: Principal { Principal(actor: .observer(self), group: group) }
 
-  /// Whether a recorded caller (an exec's, a script's) is an observer's
-  /// member rather than a session's id.
+  /// Whether a recorded caller (an exec's, a script's) is a sessionless
+  /// script's, an observer's member or a person's `Person.execCaller`, rather
+  /// than a session's id.
   public static func isMember(_ caller: String) -> Bool { caller.contains("@") }
+}
+
+/// A page on its group's host, writing for its viewer (a Person in that
+/// group) as a non-admin agent of the group, into only what the viewer reads.
+public struct Page: Hashable, Sendable {
+  public let path: SpacePath
+  public let viewer: Person
+
+  public init(path: SpacePath, viewer: Person) {
+    self.path = path
+    self.viewer = viewer
+  }
+
+  public var group: GroupID { viewer.group }
+
+  public var principal: Principal { Principal(actor: .page(self), group: group) }
 }
 
 /// A person speaking as `persona`, acting in `group`; no account is the
@@ -96,6 +110,14 @@ public struct Person: Hashable, Sendable {
     self.persona = persona
     self.account = account
     self.group = group
+  }
+
+  /// Whom a person's execs are recorded as: `@<account>`, which no observer
+  /// member (`<name>@<group>`) or session id takes.
+  public static func execCaller(_ account: AccountID) -> String { "@" + account.rawValue }
+
+  public static func account(ofExecCaller caller: String) -> AccountID? {
+    caller.first == "@" ? AccountID(rawValue: String(caller.dropFirst())) : nil
   }
 
   public var principal: Principal {

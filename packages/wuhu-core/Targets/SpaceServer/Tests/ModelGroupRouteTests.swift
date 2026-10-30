@@ -22,7 +22,7 @@ import Testing
     doc.groups["work"] = ModelsDocument.Group(members: [
       .init(id: "a", provider: "testing", model: model),
       .init(id: "b", provider: "alternate", model: model),
-    ], defaultEffort: "high", policy: .quotaAware())
+    ], defaultEffort: "high", policy: .quotaAware)
     _ = try await fs.write("/models.json", JSONEncoder().encode(doc), ifMatch: entry)
     _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(doc.groups), ifMatch: nil)
   }

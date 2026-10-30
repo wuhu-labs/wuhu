@@ -15,9 +15,8 @@ an optional `hint:` on stderr).
 wuhu use localhost:5599
 ```
 
-Creates `./.wuhu/config.json` in the **current directory** (unless a `.wuhu`
-directory already exists in some ancestor — the wallet is found by walking
-up). After pinning, bare paths like `/notes/plan.md` go to that space.
+Creates `./.wuhu/config.json` in the **current directory**, never in an
+ancestor's `.wuhu`; other verbs find the wallet by walking up. After pinning, bare paths like `/notes/plan.md` go to that space.
 `~/.wuhu` is never a wallet; there is no home fallback. Any verb also accepts
 full addresses without a pin: a file's share link `https://host:port/path`, or its
 `wuhu://host:port/path` twin. `path@rev` reads a
@@ -51,9 +50,9 @@ Set `WUHU_IDENTITY=wallet` in exec's `env` to use the wallet found from cwd up, 
 
 `wuhu id-token --audience <origin> [--json]` prints a 60-second OIDC token for this exec (claims `space`, `group`, `session`, `machine`, `exec`; `sub` is `<group>/<session>`) for a service that trusts this space's issuer, such as the build pool. It presents only the exec's `WUHU_ID_TOKEN_REQUEST` at `WUHU_ID_TOKEN_URL`, both set by the server, and fails outside a session's exec.
 
-`wuhu script <file> [args…]` runs a local file as a space script on the server, as this session: the same runtime and API as `run_script`, with the arguments after the file in `import.meta.args`. Its `result` and then each `update` print to stdout as they come; it exits 0 only when the script called `result()` and ended without failing, otherwise 1 with the reason on stderr (a connection that drops before the run ends is a failure too). A first line `#!/usr/bin/env -S wuhu script` makes the file a space script that also runs straight from the shell (`./tool.js a b`); the run's span records the source's sha256. A wallet (terminal) caller is refused.
+`wuhu script <file> [args…]` runs a local file as a space script on the server, as this session: the same runtime and API as `run_script`, with the arguments after the file in `import.meta.args`. Its `result` and then each `update` print to stdout as they come; it exits 0 only when the script called `result()` and ended without failing, otherwise 1 with the reason on stderr (a connection that drops before the run ends is a failure too). A first line `#!/usr/bin/env -S wuhu script` makes the file a space script that also runs straight from the shell (`./tool.js a b`); the run's span records the source's sha256. From a person's terminal it runs as that signed-in person in the group they act in (`--group`), its inferences attributed to their personal group; it has what an observer's handler has, not a session's verbs.
 
-Outside a session's exec (a person's terminal) nothing of this applies.
+Outside a session's exec (a person's terminal) nothing of this applies but `wuhu script`, as above.
 
 ## Files
 
@@ -83,8 +82,8 @@ Sharp edges:
   Reading a binary file through them fails with `unsupported: <path> is not
   UTF-8 text` instead of returning mojibake.
 - `put`/`cat` are the byte lane (`PUT`/`GET /v1/f<path>`): byte-exact, no
-  line semantics, no clamping. `put` takes `--force`; `cat` records no wallet
-  token, so a `cat` then `put` round trip needs `--force`. The served content
+  line semantics, no clamping. `put` takes `--force`; `cat` records the wallet
+  token like `read`, so a `cat` then `put` round trip needs no `--force`. The served content
   type is derived from the path extension, never stored.
 - Writing a path you never read fails:
   `refusing to overwrite /x: read it first, or pass --force`. The wallet
@@ -366,9 +365,10 @@ wuhu inbox
   inbox and one cursor span all your groups, so switching `--group` replays
   nothing; each line names its group (`[12] group ops · message from …`), and
   a sender from outside the conversation's group shows theirs. Sender
-  identity is a server-minted persona cached per `.wuhu` wallet × space
-  (enrolled devices only; unenrolled seats act as the owner), so different
-  work folders are different senders.
+  identity is the account's persona, which the server derives from the
+  enrolled key on every request (unenrolled seats act as the owner): after
+  `key revoke` the key is refused, and a re-enrolled key acts as its new
+  account.
 
 ## Skills
 

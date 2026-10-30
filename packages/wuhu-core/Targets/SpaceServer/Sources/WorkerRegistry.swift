@@ -48,7 +48,7 @@ public final class WorkerRegistry: Worker, Sendable {
   private let tokens: ExecTokens
   private let machines: MachineHub?
 
-  /// `machines` ends what an observer's firing left running there.
+  /// `machines` ends what a script without a session left running there.
   init(tokens: ExecTokens, machines: MachineHub?) {
     self.tokens = tokens
     self.machines = machines
@@ -191,36 +191,53 @@ public final class WorkerRegistry: Worker, Sendable {
     case let .session(session):
       return try await line(of: session).fire(invocation)
     case let .observer(observer):
-      // An observer holds no session, so any worker runs its firing.
-      guard let line = state.withLock({ state in state.leastLoaded().flatMap { state.lines[$0] } }) else { throw NoWorkerError() }
-      let token = tokens.firingToken(observer)
-      defer { tokens.revokeFiring(token) }
-      var invocation = invocation
-      invocation.token = token
-      // A cancelled firing loses its credential at once, before its worker
-      // stops it; so main, not the worker, ends the processes its script runs.
-      let release = { [machines] in
-        guard let machines else { return }
-        let (script, caller) = (invocation.scriptID, observer.member)
-        await Task { await machines.releaseScript(script, caller: caller) }.value
-      }
-      do {
-        let result = try await withTaskCancellationHandler {
-          try await line.fire(invocation)
-        } onCancel: { [tokens] in
-          tokens.revokeFiring(token)
-        }
-        await release()
-        return result
-      } catch {
-        await release()
-        throw error
+      return try await runSessionless(.observer(observer), script: invocation.scriptID) { line, token in
+        var handed = invocation
+        handed.token = token
+        return try await line.fire(handed)
       }
     }
   }
 
   public func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
-    try await line(of: script.session).run(script, output: output)
+    switch script.runner {
+    case let .session(session, _):
+      try await line(of: session).run(script, output: output)
+    case let .person(run):
+      try await runSessionless(.person(run), script: run.id) { line, token in
+        var handed = script
+        handed.token = token
+        try await line.run(handed, output: output)
+      }
+    }
+  }
+
+  // A script without a session holds none, so any worker runs it. A cancelled
+  // run loses its credential at once, before its worker stops it; so main,
+  // not the worker, ends the processes its script runs.
+  private func runSessionless<T>(
+    _ sessionless: SessionlessScript, script: String, _ body: (any Worker, String) async throws -> T,
+  ) async throws -> T {
+    guard let line = state.withLock({ state in state.leastLoaded().flatMap { state.lines[$0] } }) else { throw NoWorkerError() }
+    let token = tokens.scriptToken(sessionless)
+    defer { tokens.revokeScript(token) }
+    let release = { [machines] in
+      guard let machines else { return }
+      let caller = sessionless.member
+      await Task { await machines.releaseScript(script, caller: caller) }.value
+    }
+    do {
+      let result = try await withTaskCancellationHandler {
+        try await body(line, token)
+      } onCancel: { [tokens] in
+        tokens.revokeScript(token)
+      }
+      await release()
+      return result
+    } catch {
+      await release()
+      throw error
+    }
   }
 
   public func runningWork(_ session: SessionID) async throws -> [String] {

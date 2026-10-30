@@ -32,6 +32,7 @@ extension SessionActor {
       }
       while true {
         try await run(step, turn: &turn)
+        try modify { $0.inStep = false }
         turn.pastFirstStep = true
         guard let next = try await nextStep() else { break }
         step = next
@@ -41,6 +42,7 @@ extension SessionActor {
   }
 
   private func run(_ step: Step, turn: inout TurnTrace) async throws {
+    try modify { $0.inStep = true }
     switch step {
     case let .tool(call):
       turn.toolCalls += 1
@@ -95,7 +97,9 @@ extension SessionActor {
     guard !(try live).revoking else { return nil }
     if forced { return .compaction(requested: true) }
     if (try live).transcript.hasWork { return .inference }
-    return try await idleNag().map(Step.nag)
+    let nag = try await idleNag()
+    guard !(try live).revoking else { return nil }
+    return nag.map(Step.nag)
   }
 
   func drainQueue(into turn: inout TurnTrace) async throws {

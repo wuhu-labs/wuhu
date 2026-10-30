@@ -80,7 +80,7 @@ extension Executor {
         throw CLIError(message: "this device holds no signed-in identity in the pinned space; enroll one with: wuhu login < invite-link")
       }
       let client = self.client(space, group: group, longRunning: longRunning)
-      try await self.announceWallet(space: space, client: client, hasBearer: false)
+      try await self.announceWallet(client: client, hasBearer: false)
       return client
     }
     let runner = self.runner
@@ -114,7 +114,7 @@ extension Executor {
       }
       self.groupsConfirmed.insert(space)
     }
-    try await self.announceWallet(space: space, client: client, hasBearer: true)
+    try await self.announceWallet(client: client, hasBearer: true)
     return client
   }
 

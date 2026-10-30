@@ -68,7 +68,7 @@ public struct SessionRuntime: Sendable {
   let warmer: CacheWarmer
   let resolveModelExecutor: @Sendable (String, String, String?) async throws -> SessionExecutor
   let resolveModelGroup: @Sendable (String, String?) async throws -> SessionExecutor
-  let prepareModelRoute: @Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?
+  let prepareModelRoute: @Sendable (SessionExecutor, ModelPlacementReason, SessionModelRoute?) async throws -> SessionModelRoute?
   let budget: @Sendable (SessionID) async -> ContextBudget
 
   init(
@@ -90,7 +90,7 @@ public struct SessionRuntime: Sendable {
     warmer = CacheWarmer(space: space, usage: usage)
     let catalog = groupCatalog(space: space, access: access)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
-    prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
+    prepareModelRoute = modelRoutePlacer(catalog: catalog, usage: usage)
     self.owner = owner
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(owner: owner)
@@ -129,7 +129,7 @@ public struct SessionRuntime: Sendable {
     self.owner = owner
     resolveModelExecutor = modelExecutorResolver(space: space)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
-    prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
+    prepareModelRoute = modelRoutePlacer(catalog: catalog, usage: usage)
     budget = budgetResolver(owner: owner)
     firing = SubscriptionFiring(space: space, worker: workers)
   }

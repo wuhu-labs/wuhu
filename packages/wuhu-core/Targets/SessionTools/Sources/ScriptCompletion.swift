@@ -156,15 +156,12 @@ extension ToolExecutor {
     switch actor {
     case let .session(caller): session = caller; payer = .session(caller)
     case let .observer(observer, _):
-      // OIDC tokens are minted for a session; an observer has none to sign as.
-      guard catalog.document.providers[request.provider]?.auth != .oidc else {
-        throw CompletionError(code: .providerNotConfigured, message: "An observer's complete() needs a provider with key authentication; OIDC providers sign as a session.")
-      }
-      // Only the prompt cache key reads this: the observer's member name keys
-      // its cache the way a session id keys a session's.
-      session = SessionID(observer.member)
       guard let firing = observer.firing else { preconditionFailure("an observer runs its handler only in a firing") }
+      session = try sessionlessCacheKey(observer.member, catalog: catalog, request: request)
       payer = .observer(group: observer.group.rawValue, firing: firing)
+    case let .person(run, _):
+      session = try sessionlessCacheKey(Person.execCaller(run.account), catalog: catalog, request: request)
+      payer = .observer(group: run.personalGroup.rawValue, firing: run.id)
     }
     let resolved: ResolvedModel
     do { resolved = try await catalog.resolve(specifier, session: session) }
@@ -233,6 +230,16 @@ extension ToolExecutor {
     }
     return completionText(completed!)
   }
+}
+
+// OIDC tokens are minted for a session, and a script without one has none to
+// sign as. Only the prompt cache key reads what this returns: the script's
+// member keys its cache the way a session id keys a session's.
+private func sessionlessCacheKey(_ member: String, catalog: ProviderCatalog, request: CompletionRequest) throws -> SessionID {
+  guard catalog.document.providers[request.provider]?.auth != .oidc else {
+    throw CompletionError(code: .providerNotConfigured, message: "complete() in a script without a session needs a provider with key authentication; OIDC providers sign as a session.")
+  }
+  return SessionID(member)
 }
 
 private extension Duration {

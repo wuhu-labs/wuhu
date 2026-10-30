@@ -60,7 +60,7 @@ extension SessionStore {
     return try await writer.read { db in
       for row in try SessionModelRouteRow.where({ $0.provider.eq(provider) && $0.phase.eq("waiting") }).fetchAll(db) {
         let route = try Sessions.decode(SessionModelRoute.self, from: row.payload)
-        guard let failure = route.failure, failure.refusing, failure.evidenceExpiresAt > now,
+        guard let failure = route.failure, failure.refusing, failure.stands(at: now),
               failure.reason != .upstreamOutage || route.specifier.model == model else { continue }
         let record = try Sessions.record(row.sessionID, in: db)
         guard record.lifecycle == .live, record.hold == .normal else { continue }
@@ -148,7 +148,7 @@ extension Sessions {
       memberID: route.member,
       provider: route.specifier.provider,
       model: route.specifier.model,
-      reason: route.decisionReason,
+      reason: route.reason.rawValue,
       placedAt: SQLiteDateFormat.string(from: route.placedAt),
       payload: payload,
     )

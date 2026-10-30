@@ -49,9 +49,9 @@ A session's executor is what runs it: `kernel`, or a model group. `SessionExecut
 
 `SessionTitle.maximumCharacters` is the shared 200-character title bound for persistence validation and worker tool schemas. `SessionStore.titleLimit` retains its existing public value through that contract constant.
 
-## Compaction placement and last-resort route transitions
+## Compaction placement
 
-`SessionModelRoute.failure` is optional typed provenance with source, bounded code/reason, first-failure time, optional latest-failure time, fixed deadline, retry time and consecutive count. `evidenceExpiresAt` bounds warming suppression independently from the frozen switching deadline; legacy failure JSON without a latest-failure time uses its first-failure time. `switchCause` distinguishes last-resort movement while retaining the pre-existing Codable placement-reason vocabulary for old readers; `decisionReason` names distinct durable history reasons. `ModelRouteTransition` couples expected old epoch, replacement route and portable transcript. Route context notices state the aliases/reason and continuation semantics, and do not create a message/reply obligation.
+`SessionModelRoute.failure` is optional typed provenance with reason (`quota`, `authentication` or `upstreamOutage`), source, bounded code, first-failure time, optional latest-failure time, retry time and consecutive count; `refusing` is false only for an outage below three consecutive failures. `stands(at:)` says whether the episode still counts: an authentication refusal until a success clears it, any other until its retry time, else a minute past the latest failure. Legacy failure JSON without a latest-failure time uses its first-failure time, and a legacy `deadline` or route `switchCause` is ignored on decode. `ModelRouteTransition` couples expected old epoch, replacement route and portable transcript. Route context notices state the aliases/reason and continuation semantics, and do not create a message/reply obligation.
 
 FileRevision stores opaque machine version tokens as machine(String), while retaining legacy numeric mtime receipts and journal revisions. All three variants round-trip in stored tool results and file-access logs; new servers continue decoding existing receipts.
 

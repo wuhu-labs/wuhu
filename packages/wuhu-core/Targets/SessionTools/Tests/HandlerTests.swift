@@ -42,7 +42,7 @@ func withHandlerFiring(
   }
 }
 
-@Suite(.deterministicDependencies) struct HandlerTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct HandlerTests {
   @Test func oneObservationSerializesFiringsAcrossInFlightChanges() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
@@ -193,9 +193,10 @@ func withHandlerFiring(
       let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
       try await rig.write("/timeout.js", "export default async ({wake}) => { wake('discard'); await sleep(120000); return 1; }")
       do {
-        _ = try await rig.advancing {
-          try await rig.scripts.runHandler(path: "/timeout.js", actor: .session(rig.session), tools: tools)
-        }
+        async let run = rig.scripts.runHandler(path: "/timeout.js", actor: .session(rig.session), tools: tools)
+        try await rig.time.asleep("the handler's sleep", dueIn: 120)
+        try await rig.time.wake("the handler's budget", after: 60)
+        _ = try await run
         Issue.record("timeout succeeded")
       } catch { #expect(String(describing: error).contains("60")) }
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)

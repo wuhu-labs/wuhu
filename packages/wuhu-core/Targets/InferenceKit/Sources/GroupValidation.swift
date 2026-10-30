@@ -30,11 +30,8 @@ extension ProviderCatalog {
         throw .groupMember(group: id, member: member.id, reason: .invalidGroup(group: id, reason: "empty or duplicate member id/provider/model pair"))
       }
     }
-    switch group.policy {
-    case let .quotaAware(seconds):
-      guard (0 ... 86400).contains(seconds) else { throw .invalidGroup(group: id, reason: "holdDownSeconds must be 0...86400") }
-    case let .select(member):
-      guard ids.contains(member) else { throw .invalidGroup(group: id, reason: "select member \(member) does not exist") }
+    if case let .select(member) = group.policy, !ids.contains(member) {
+      throw .invalidGroup(group: id, reason: "select member \(member) does not exist")
     }
     var errors: [String: CatalogError] = [:]
     for member in group.members {

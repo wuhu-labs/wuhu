@@ -5,7 +5,7 @@ import InferenceKit
 import SessionDomain
 import Testing
 
-private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws -> ModelsDocument {
+private func groupDocument(policy: ModelsDocument.Policy = .quotaAware) throws -> ModelsDocument {
   var document = try ModelsDocument(json: fixtureJSON)
   document.groups["work"] = ModelsDocument.Group(members: [
     .init(id: "primary", provider: "anthropic", model: "claude-sonnet-5"),
@@ -19,16 +19,21 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
     let document = try groupDocument()
     #expect(try ModelsDocument(json: JSONEncoder().encode(document), groupsJSON: JSONEncoder().encode(document.groups)) == document)
     let text = #"{"work":{"kind":"group","members":[{"id":"a","provider":"anthropic","model":"claude-sonnet-5"}],"defaultEffort":"high"}}"#
-    #expect(try ModelsDocument(json: fixtureJSON, groupsJSON: Data(text.utf8)).groups["work"]?.policy == .quotaAware())
+    #expect(try ModelsDocument(json: fixtureJSON, groupsJSON: Data(text.utf8)).groups["work"]?.policy == .quotaAware)
+  }
+
+  @Test func aLegacyHoldDownIsAcceptedAndDropped() throws {
+    let text = #"{"work":{"kind":"group","members":[{"id":"a","provider":"anthropic","model":"claude-sonnet-5"}],"defaultEffort":"high","policy":{"type":"quotaAware","holdDownSeconds":1800}}}"#
+    let document = try ModelsDocument(json: fixtureJSON, groupsJSON: Data(text.utf8))
+    #expect(document.groups["work"]?.policy == .quotaAware)
+    #expect(String(decoding: try JSONEncoder().encode(document.groups["work"]!.policy), as: UTF8.self) == #"{"type":"quotaAware"}"#)
   }
 
   @Test(arguments: [
     #"{"type":"url-test"}"#,
     #"{"type":"fallback"}"#,
     #"{"type":"select","member":"primary","extra":1}"#,
-    #"{"type":"quotaAware","holdDownSeconds":-1}"#,
-    #"{"type":"quotaAware","holdDownSeconds":86401}"#,
-    #"{"type":"quotaAware","holdDownSeconds":0.5}"#,
+    #"{"type":"quotaAware","extra":1}"#,
   ]) func invalidPoliciesAreTyped(_ policy: String) throws {
     let json = #"{"work":{"kind":"group","members":[],"defaultEffort":"high","policy":POLICY}}"#.replacingOccurrences(of: "POLICY", with: policy)
     let document = try ModelsDocument(json: fixtureJSON, groupsJSON: Data(json.utf8))
@@ -149,7 +154,7 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
   @Test func relativeCapacityBeatsRawPercentAndEvidenceIsRecorded() throws {
     var doc = try groupDocument()
     doc.providers["openai"]!.capacity = ["seven_day": 4]
-    let placed = try pick(doc, ["anthropic": usage(50, weekly: 50), "openai": usage(70, weekly: 70)], reason: .startOver)
+    let placed = try pick(doc, ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 70)], reason: .startOver)
     #expect(placed.member.id == "secondary")
     #expect(placed.reason == .startOver)
     #expect(abs(try #require(placed.evidence[1].windows[1].remaining) - 1.2) < 0.00001)
@@ -166,10 +171,34 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
     #expect(abs(try #require(placed.evidence[1].windows[0].score) - 3.92) < 0.00001, "a fresh five-hour window still records its score")
   }
 
+  @Test func aFiveHourWindowBurningAheadOfPaceLosesToOneWithRoom() throws {
+    var doc = try groupDocument()
+    doc.providers["openai"]!.capacity = ["five_hour": 4, "seven_day": 2]
+    let burning = usage(64, reset: 116_500, weekly: 17, weeklyReset: 352_000)
+    let placed = try pick(doc, ["anthropic": burning, "openai": usage(11, reset: 106_840, weekly: 3)])
+    #expect(placed.member.id == "secondary")
+    #expect(abs(try #require(placed.evidence[0].score) - 1.992) < 0.00001)
+    #expect(abs(try #require(placed.evidence[1].score) - 1.94) < 0.00001)
+    #expect(abs(try #require(placed.evidence[0].shortWindowPace) - 0.36 / (16500.0 / 18000)) < 0.00001)
+    #expect(abs(try #require(placed.evidence[1].shortWindowPace) - 0.89 / (6840.0 / 18000)) < 0.00001)
+    let fresh = try pick(doc, ["anthropic": usage(0, weekly: 17, weeklyReset: 352_000), "openai": usage(0, weekly: 3)])
+    #expect(fresh.member.id == "primary", "with room on both five-hour windows the week that resets first wins")
+  }
+
+  @Test func membersAheadOfPaceRankByTheirSlowestFiveHourPace() throws {
+    var doc = try groupDocument()
+    doc.providers["openai"]!.capacity = ["five_hour": 4, "seven_day": 2]
+    let nearlyFull = usage(90, reset: 103_600, weekly: 17, weeklyReset: 352_000)
+    let justStarted = usage(8, reset: 117_400, weekly: 3)
+    let placed = try pick(doc, ["anthropic": nearlyFull, "openai": justStarted])
+    #expect(placed.member.id == "secondary")
+    #expect(abs(try #require(placed.evidence[0].shortWindowPace) - 0.5) < 0.00001)
+  }
+
   @Test func theSevenDayResetWeightsHeadroomAndAFullFiveHourWindowExcludes() throws {
     let doc = try groupDocument()
     #expect(try pick(doc, ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 70, weeklyReset: 251_200)]).member.id == "secondary")
-    #expect(try pick(doc, ["anthropic": usage(50, weekly: 99), "openai": usage(70, weekly: 10)]).member.id == "secondary")
+    #expect(try pick(doc, ["anthropic": usage(0, weekly: 99), "openai": usage(0, weekly: 10)]).member.id == "secondary")
     let capped = try pick(doc, ["anthropic": usage(100), "openai": usage(0, weekly: 90)])
     #expect(capped.member.id == "secondary")
     #expect(capped.evidence[0].score == 0)
@@ -238,7 +267,9 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
 
   @Test func unknownRanksBelowKnownAndTiesAreStable() throws {
     var doc = try groupDocument()
-    #expect(try pick(doc, ["openai": usage(99)]).member.id == "secondary")
+    let ahead = try pick(doc, ["openai": usage(99)])
+    #expect(ahead.member.id == "secondary", "a known member ahead of pace beats an unknown one")
+    #expect(try #require(ahead.evidence[1].shortWindowPace) < 1)
     #expect(try pick(doc, [:]).member.id == "primary")
     doc.groups["work"]!.members.reverse()
     #expect(try pick(doc, [:], reason: .compaction).member.id == "primary")

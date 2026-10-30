@@ -68,7 +68,7 @@ import Testing
         let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { _ in held.withLock { $0 } })
         let id: SessionID
         if groupTarget {
-          let group = ModelsDocument.Group(members: [.init(id: "account", provider: "testing", model: "test-model")], defaultEffort: "high", policy: .quotaAware())
+          let group = ModelsDocument.Group(members: [.init(id: "account", provider: "testing", model: "test-model")], defaultEffort: "high", policy: .quotaAware)
           _ = try await harness.space.fs(.settings).write(ModelsDocument.groupPath, JSONEncoder().encode(["work": group]), ifMatch: nil)
           let created = try await harness.call("/v1/session", .object(["title": "Group replay", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
           id = SessionID(created.id)

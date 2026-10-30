@@ -25,8 +25,8 @@ extension Hub {
     case .inputEnqueued(let input): return try await .queuePosition(store.enqueue(id, input: input))
     case .pendingCacheWarmingDiscarded: return try await .transcript(store.discardPendingCacheWarming(id))
     case let .transcriptAppended(items, inputOrigin, claim): try await store.append(id, items: items, inputOrigin: inputOrigin, completingCompactRequest: claim)
-    case let .portableHandoff(generation, source, transcript, transition):
-      return try await .transcript(store.writePortableHandoff(id, expectedGeneration: generation, source: source, transcript: transcript, transition: transition))
+    case let .portableHandoff(generation, source, transcript):
+      return try await .transcript(store.writePortableHandoff(id, expectedGeneration: generation, source: source, transcript: transcript))
     case let .compacted(closing, head, kept, claim, transition):
       return try await .transcript(store.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: claim, transition: transition))
     case .interrupted: try await store.markInterrupted(id)

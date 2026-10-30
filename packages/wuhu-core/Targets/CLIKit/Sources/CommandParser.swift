@@ -1070,14 +1070,16 @@ extension Command {
     "use": """
     usage: wuhu use <host:port> [--pin] [--group <id>]
 
-    pins the nearest walk-up .wuhu wallet to <host:port>; creates ./.wuhu when none exists.
+    pins the current folder's ./.wuhu wallet (never an ancestor's) to <host:port>
+    and prints `pinned <server> -> <wallet>`, plus `as <persona>` on an enrolled device.
     the server certificate must pass system trust (OS trust store, hostname
     included); nothing is recorded on success. when the system does not trust
     the server, --pin records its certificate fingerprint (trust on first use)
     in the user-level ~/.wuhu/trust.json, honored from every working folder;
     later connections verify the pin instead of the system trust store.
-    --group records the group this wallet acts in (see wuhu group use); a pin
-    without it records none, so the server picks.
+    --group records the group this wallet acts in (see wuhu group use); without it,
+    re-pinning the same server keeps the folder's group, pinning another server
+    clears it with a note on stderr, and a new wallet starts with none.
     \(exitCodes)
     """,
     "trust": """
@@ -1200,8 +1202,8 @@ extension Command {
     usage: wuhu cat <path>
 
     writes <path>'s raw bytes to stdout over the byte route (GET /v1/f<path>),
-    unclamped and byte-exact. no line semantics, and no wallet token is
-    recorded — pair it with wuhu put --force, or wuhu read for text.
+    unclamped and byte-exact, with no line semantics. like wuhu read, it records
+    the file's token, so a later wuhu put overwrites only what was read.
     \(exitCodes)
     """,
     "web-search": """
@@ -1780,8 +1782,10 @@ extension Command {
     usage: wuhu script <file> [<argument>...]
 
     runs <file> on the server as a space script, as run_script runs its
-    source, as the session whose exec this is (WUHU_EXEC=1); a terminal
-    caller is refused. The arguments are the script's import.meta.args.
+    source, as the session whose exec this is (WUHU_EXEC=1), or from a
+    terminal as the signed-in person in the group they act in, its model
+    calls attributed to their personal group. The arguments are the
+    script's import.meta.args.
     Each update() and the result() print to stdout as they come. A first
     line of #!/usr/bin/env -S wuhu script makes the file run from a shell.
 

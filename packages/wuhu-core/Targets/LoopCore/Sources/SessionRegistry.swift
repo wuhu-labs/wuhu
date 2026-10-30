@@ -10,6 +10,7 @@ import TaskLifetime
 #endif
 import protocol MainHub.Main
 import enum MainHub.RevocationPolicy
+import func ServerTelemetry.untraced
 import struct SessionDomain.SessionID
 
 actor SessionRegistry {
@@ -75,7 +76,8 @@ actor SessionRegistry {
   nonisolated func send(_ action: SessionActor.ExternalAction, to id: SessionID) {
     admission.withLock { open in
       guard open else { return }
-      _ = try? taskScope.run("session-command") { await self.post(action, to: id) }
+      // A session mounted here is no part of its sender's trace.
+      _ = try? taskScope.run("session-command") { await untraced { await self.post(action, to: id) } }
     }
   }
 

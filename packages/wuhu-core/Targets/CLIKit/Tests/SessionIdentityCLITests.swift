@@ -1,4 +1,5 @@
 @testable import CLIKit
+import Credentials
 import Dependencies
 import DeterministicDependencies
 import Fetch
@@ -85,7 +86,7 @@ final class IdentityHarness: Sendable {
 
   deinit { self.serviceTask.cancel() }
 
-  init(v2: Bool = false) async throws {
+  init(v2: Bool = false, dev: Bool = true) async throws {
     self.scratch = try ScratchFolder("identity")
     let root = self.scratch.url
     self.home = root.appendingPathComponent("home", isDirectory: true)
@@ -125,12 +126,13 @@ final class IdentityHarness: Sendable {
     )
     let connection = MainConnection()
     let workers = WorkerRegistry(tokens: tokens, machines: nil)
-    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { _ in config }
+    let access = InferenceAccess(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "identity-fixture") })
+    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }, access: access) { _ in config }
     workers.announce(workers.mint().id, endpoint: worker)
     let service = SessionService(sessions: self.store, worker: workers)
     self.serviceTask = Task { try? await service.start() }
-    let runtime = SessionRuntime(space: space, service: service, workers: workers, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: connection)
-    let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens)
+    let runtime = SessionRuntime(space: space, service: service, workers: workers, attempts: AttemptHub(), owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: dev, execTokens: tokens)
     let inner = ServeTesting.client(upgrading: handler)
     let hosts = self.hosts
     self.fetch = FetchClient { request in
@@ -169,13 +171,13 @@ final class IdentityHarness: Sendable {
   }
 
   func run(
-    _ arguments: [String], environment: [String: String], fetch: FetchClient? = nil,
+    _ arguments: [String], environment: [String: String], fetch: FetchClient? = nil, stdin: String = "",
   ) async -> (code: Int32, stdout: String, stderr: String, hosts: [String]) {
     self.hosts.list.withLock { $0 = [] }
     let runner = CommandRunner(
       fetch: fetch ?? self.fetch,
       observeFetch: fetch ?? self.fetch,
-      stdin: { "" },
+      stdin: { stdin },
       stdout: { [stdout] text in await stdout.append(text) },
       stderr: { [stderr] text in await stderr.append(text) },
       environment: environment.merging(["TMPDIR": self.scratch.path]) { old, _ in old },
@@ -187,6 +189,22 @@ final class IdentityHarness: Sendable {
 
   func asSession(_ arguments: [String]) async -> (code: Int32, stdout: String, stderr: String, hosts: [String]) {
     await self.run(arguments, environment: self.sessionEnvironment)
+  }
+
+  /// A terminal enrolled as a new human by `wuhu login` with an invite link,
+  /// its wallet pinned to the space: the environment it runs in.
+  func signIn(_ name: String, kind: AccountKind = .human) async throws -> (environment: [String: String], account: AccountRecord) {
+    let account = try await self.space.addAccount(kind: kind, name: name)
+    let minted = try await self.space.mintJoinToken(account: account.id, capabilities: [.device], createdBy: nil, lifetime: 600)
+    let envelope = EnrollmentEnvelope(
+      server: Self.sessionSpace, token: minted.token.rawValue, space: try await self.space.identity().rawValue,
+      fingerprint: "sha256:" + String(repeating: "0", count: 64),
+    )
+    let environment = ["HOME": self.home.path, "WUHU_CONFIG_DIR": self.scratch.url.appendingPathComponent("config").path]
+    let login = await self.run(["login"], environment: environment, stdin: envelope.url)
+    #expect(login.code == 0, "\(login.stderr)")
+    try JSONEncoder().encode(["space": "space.test:5530"]).write(to: self.wallet.appendingPathComponent("config.json"), options: .atomic)
+    return (environment, account)
   }
 }
 
@@ -254,8 +272,6 @@ final class IdentityHarness: Sendable {
   @Test func theWalletOptInIgnoresMissingOrRejectedSessionCredentialsAndFindsAnAncestorWallet() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness()
-      var wallet = Wallet(directory: h.wallet)
-      try wallet.recordPersona("cedar-kite-lantern", space: "elsewhere.test")
       let nested = h.cwd.appendingPathComponent("nested/child", isDirectory: true)
       try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
       let output = Output()
@@ -291,7 +307,7 @@ final class IdentityHarness: Sendable {
       try Data("{".utf8).write(to: h.wallet.appendingPathComponent("config.json"))
       let config = await h.run(["ls", "/"], environment: environment)
       #expect(config.code == 64)
-      #expect(config.stderr.contains("malformed .wuhu/config.json"))
+      #expect(config.stderr.contains("malformed \(h.wallet.path)/config.json"))
       #expect(config.hosts.isEmpty)
     }
   }

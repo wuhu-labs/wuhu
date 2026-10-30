@@ -158,6 +158,84 @@ import Testing
     #expect(unchanged.content == "---\nk: 1\n---\n")
   }
 
+  /// Private `home` and `vault`, each with `/t.table`, the vault granting
+  /// home read only.
+  func homeReadingAVault(_ r: Rig) async throws -> (home: GroupID, vault: GroupID) {
+    let space = r.harness.space
+    let alice = Actor.person(persona: "alice", account: r.alice)
+    let home = try await space.createGroup(alias: "home", owner: r.alice)
+    let vault = try await space.createGroup(alias: "vault", owner: r.alice)
+    try await space.setVisibility(.private, of: home, by: alice, acting: home)
+    try await space.setVisibility(.private, of: vault, by: alice, acting: vault)
+    try await space.setGrant(.group, home.rawValue, role: .read, in: vault, by: alice, acting: vault)
+    for group in [home, vault] {
+      try await run(r, group, "table.create", ["path": "/t.table", "header": ["columns": [["name": "title", "type": "string"]]]])
+    }
+    return (home, vault)
+  }
+
+  func insert(_ r: Rig, on group: GroupID, into path: String, cookie: String?) async throws -> Response {
+    try await post(r, "\(group.rawValue).space.test:5530", "/_/space/rows", [
+      "path": .string(path), "ops": [["insert": ["title": "x"]]], "page": "/p.html",
+    ], cookie: cookie)
+  }
+
+  func count(_ r: Rig, _ table: String, in group: GroupID) async throws -> [[Cell]] {
+    try await r.harness.space.query("SELECT count(*) FROM \"\(table)\"", as: Principal(actor: .anonymous, group: group)).rows
+  }
+
+  @Test func aPageWritesOnlyWhereItsGroupWritesWhateverItsViewerHolds() async throws {
+    let r = try await rig()
+    let (home, vault) = try await homeReadingAVault(r)
+    let alice = Actor.person(persona: "alice", account: r.alice)
+    try await r.harness.space.setGrant(.account, r.bob.rawValue, role: .read, in: home, by: alice, acting: home)
+    try await r.harness.space.setGrant(.account, r.bob.rawValue, role: .write, in: vault, by: alice, acting: vault)
+    let note = try await run(r, vault, "write", ["path": "/n.md", "content": "---\nk: 1\n---\n"])
+    // Alice administers the vault and Bob writes it, yet the page's group only reads it.
+    for viewer in [r.alice, r.bob] {
+      let cookie = try await cookie(r, viewer, home)
+      let rows = try await insert(r, on: home, into: "wuhu://\(vault.rawValue).localspace/t.table", cookie: cookie)
+      let attributes = try await post(r, "\(home.rawValue).space.test:5530", "/_/space/attributes", [
+        "path": .string("wuhu://\(vault.rawValue).localspace/n.md"), "set": ["k": 2], "ifMatch": try #require(note.object?["token"]), "page": "/p.html",
+      ], cookie: cookie)
+      for refused in [rows, attributes] {
+        #expect(refused.status == .forbidden)
+        #expect(try await code(refused) == "unauthorized")
+      }
+      #expect(try await insert(r, on: home, into: "/t.table", cookie: cookie).status == .ok)
+    }
+    #expect(try await count(r, "/t.table", in: vault) == [[.integer(0)]])
+    #expect(try await count(r, "/t.table", in: home) == [[.integer(2)]])
+    let unchanged = try JSONValueDecoder().decode(ReadOutput.self, from: try await run(r, vault, "read", ["path": "/n.md"]))
+    #expect(unchanged.content == "---\nk: 1\n---\n")
+  }
+
+  @Test func aDevSeatPageWritesOnlyWhereItsGroupWrites() async throws {
+    let r = try await rig(dev: true)
+    let (home, vault) = try await homeReadingAVault(r)
+    let refused = try await insert(r, on: home, into: "wuhu://\(vault.rawValue).localspace/t.table", cookie: nil)
+    #expect(refused.status == .forbidden)
+    #expect(try await code(refused) == "unauthorized")
+    #expect(try await insert(r, on: home, into: "/t.table", cookie: nil).status == .ok)
+    #expect(try await count(r, "/t.table", in: vault) == [[.integer(0)]])
+  }
+
+  // Home's agents write the open shared group; its guest viewer cannot read it.
+  @Test func aPageWritesOnlyWhatItsViewerReads() async throws {
+    let r = try await rig()
+    let (home, _) = try await homeReadingAVault(r)
+    let guest = try await r.harness.space.addAccount(kind: .human, name: "guest", guest: true).id
+    try await r.harness.space.setGrant(
+      .account, guest.rawValue, role: .read, in: home, by: .person(persona: "alice", account: r.alice), acting: home,
+    )
+    let cookie = try await cookie(r, guest, home)
+    let refused = try await insert(r, on: home, into: "wuhu://shared.localspace/tasks.table", cookie: cookie)
+    #expect(refused.status == .notFound)
+    #expect(try await code(refused) == "notFound")
+    #expect(try await insert(r, on: home, into: "/t.table", cookie: cookie).status == .ok)
+    #expect(try await count(r, "/tasks.table", in: .shared) == [[.integer(0)]])
+  }
+
   @Test func aStaleIfMatchIsA409CarryingTheCurrentToken() async throws {
     let r = try await rig()
     let first = try await run(r, r.aliceGroup, "write", ["path": "/a.md", "content": "---\nk: 1\n---\n"])

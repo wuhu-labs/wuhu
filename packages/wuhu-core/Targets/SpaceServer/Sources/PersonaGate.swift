@@ -39,11 +39,6 @@ func personaVerdict(_ claimed: String?, key: KeyRecord, space: Space) async thro
     ))
   }
   guard let claimed else {
-    // Most requests find the persona already minted; only the first one from
-    // a new account takes the write lock to adopt it.
-    if let persona = try await space.persona(account: key.account) {
-      return .verified(persona: persona, key: key)
-    }
     return .verified(persona: try await space.adoptPersona(key: key), key: key)
   }
   guard claimed != ownerIdentity else { return .refused(ownerIdentityRefused()) }

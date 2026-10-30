@@ -106,19 +106,48 @@ public struct ScriptHandlerInvocation: Sendable {
   public static func scriptID(_ id: UUID) -> String { "handler-" + id.uuidString.lowercased() }
 }
 
-/// A file run as a space script by its session, from the CLI (`wuhu script`).
+/// A file run as a space script from the CLI (`wuhu script`): by a session
+/// from its exec, or by a signed-in person from a terminal.
 public struct ScriptRun: Sendable, Codable, Equatable {
-  public let session: SessionID
-  public let group: GroupID
+  public enum Runner: Sendable, Codable, Equatable {
+    case session(SessionID, group: GroupID)
+    case person(TerminalRun)
+  }
+
+  public let runner: Runner
   public let source: String
   public let arguments: [String]
+  /// What a terminal run calls main with, minted for this run alone by
+  /// whoever hands it to a worker.
+  public var token: String?
 
-  public init(session: SessionID, group: GroupID, source: String, arguments: [String]) {
-    self.session = session
-    self.group = group
+  public init(runner: Runner, source: String, arguments: [String], token: String? = nil) {
+    self.runner = runner
     self.source = source
     self.arguments = arguments
+    self.token = token
   }
+}
+
+/// A person's terminal script: the id its machine processes are owned by and
+/// its inferences name as their firing, the person, the group it acts in and
+/// the person's own group its inferences are attributed to.
+public struct TerminalRun: Hashable, Sendable, Codable {
+  public let id: String
+  public let persona: String
+  public let account: AccountID
+  public let group: GroupID
+  public let personalGroup: GroupID
+
+  public init(id: String, persona: String, account: AccountID, group: GroupID, personalGroup: GroupID) {
+    self.id = id
+    self.persona = persona
+    self.account = account
+    self.group = group
+    self.personalGroup = personalGroup
+  }
+
+  public var person: Person { Person(persona: persona, account: account, group: group) }
 }
 
 /// What main asks of a worker. A worker runs from when it is made until

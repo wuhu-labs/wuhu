@@ -14,7 +14,6 @@ exports_files([
     "rules-apple-visionos-dynamic-framework-constraints.patch",
     "snapshot-testing-visionos-image.patch",
     "snapshot-testing-image-format.patch",
-    "structured-queries-deployment-floors.patch",
     "swift-clocks-linux-lock.patch",
     "swift-dependencies-linux-lock.patch",
     "swift-dependencies-linux-typename.patch",

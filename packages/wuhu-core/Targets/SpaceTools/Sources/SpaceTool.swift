@@ -12,47 +12,43 @@ public struct SpaceToolContext: Sendable {
   public let space: Space
   let machines: MachineSeam?
   public let principal: Principal
-  /// The page acting, by its path in `principal`'s group: its writes are the
-  /// group's minus admin, and each revision records the viewer via the page.
-  public let page: SpacePath?
 
-  public init(space: Space, machines: MachineSeam? = nil, principal: Principal, page: SpacePath? = nil) {
+  public init(space: Space, machines: MachineSeam? = nil, principal: Principal) {
     self.space = space
     self.machines = machines.map { Self.gated($0, space: space, acting: principal.group) }
     self.principal = principal
-    self.page = page
   }
 
   var attribution: RevisionAttribution? {
-    if let page { return RevisionAttribution(actor: principal.member, via: page.rawValue) }
-    guard case let .observer(observer) = principal.actor else { return nil }
-    return RevisionAttribution(firing: observer)
+    switch principal.actor {
+    case let .page(page): RevisionAttribution(actor: page.viewer.principal.member, via: page.path.rawValue)
+    case let .observer(observer): RevisionAttribution(firing: observer)
+    case .session, .person, .anonymous: nil
+    }
   }
 
-  /// A page writes as a non-admin member agent of its group: never a session
-  /// home, instructions only its own group's, and never the settings group.
-  /// An observer never writes a session home either. Everyone else meets the
-  /// instructions rule as themselves.
+  /// Every write meets the group write check. Before it, a session or an
+  /// observer never writes another's home, and a page writes no home and only
+  /// its own group's instructions.
   func refuseWrite(_ path: SpacePath, in group: GroupID) async throws {
-    guard page != nil else {
-      switch principal.actor {
-      case let .session(session): try SessionHome.refuseForeignWrite(to: path, in: group, by: session, home: principal.group)
-      case .observer: if let owner = path.homeOwner { throw SpaceError.foreignHome(path: path.rawValue, owner: owner) }
-      case .person, .anonymous: break
+    switch principal.actor {
+    case let .session(session):
+      try SessionHome.refuseForeignWrite(to: path, in: group, by: session, home: principal.group)
+    case .observer:
+      if let owner = path.homeOwner { throw SpaceError.foreignHome(path: path.rawValue, owner: owner) }
+    case .page:
+      if path.homeOwner != nil {
+        throw ToolRunError.failed(
+          code: .unauthorized, message: "page scripts can't write session homes; keep page data outside /_/sessions/", hint: nil,
+        )
       }
-      try await space.refuseWrite(path, in: group, by: principal.actor, acting: principal.group)
-      return
+      if space.isGroupInstructions(path), group != principal.group {
+        throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue)
+      }
+    case .person, .anonymous:
+      break
     }
-    if path.homeOwner != nil {
-      throw ToolRunError.failed(
-        code: .unauthorized,
-        message: "page scripts can't write session homes; keep page data outside /_/sessions/",
-        hint: nil,
-      )
-    }
-    if group == .settings || (space.isGroupInstructions(path) && group != principal.group) {
-      throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue)
-    }
+    try await space.refuseWrite(path, in: group, by: principal.actor, acting: principal.group)
   }
 
   /// The seam as `acting` may use it: a machine it may not use is no machine at

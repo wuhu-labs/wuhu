@@ -79,16 +79,23 @@ public final class Scripts: Sendable {
     return execution
   }
 
-  /// Runs `script` for its caller alone: not in the session's running work,
+  /// Runs `script` for its caller alone: not in a session's running work,
   /// and killed when the call is cancelled or the scope closes. The run, its
   /// cleanup included, lives in the scope, so a cancelled caller still waits
   /// for its machine processes to be killed and released; `end` follows its
   /// span, as the caller's last word.
   public func run(_ script: ScriptRun, tools: ToolExecutor, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
-    let client = try await tools.client(script.session)
+    let (id, actor, root): (String, ScriptActor, SpanOwner)
+    switch script.runner {
+    case let .session(session, group): (id, actor, root) = (newScriptID(), .session(session), SpanOwner(session: session, group: group))
+    case let .person(run):
+      guard let token = script.token else { preconditionFailure("a terminal run reached the worker without its token") }
+      (id, actor, root) = (run.id, .person(run, token: token), SpanOwner(session: nil, group: run.personalGroup))
+    }
+    let client = try await tools.client(actor)
     let execution = ScriptExecution(
-      id: newScriptID(),
-      actor: .session(script.session),
+      id: id,
+      actor: actor,
       source: script.source,
       lifetime: .seconds(ToolLifetimes.scriptDefault),
       client: client,
@@ -97,7 +104,7 @@ public final class Scripts: Sendable {
       kind: .command { output($0.output) },
       arguments: script.arguments,
       limits: limits,
-      trace: .root(SpanOwner(session: script.session, group: script.group)),
+      trace: .root(root),
     )
     let run: Task<Void, Never>
     do { run = try scope.run("script \(execution.id)") { await execution.run(owner: self.owner) } }

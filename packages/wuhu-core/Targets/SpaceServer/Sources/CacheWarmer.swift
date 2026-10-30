@@ -77,7 +77,7 @@ struct CacheWarmer: Sendable {
     case .retired: return nil
     }
     @Dependency(\.date.now) var now
-    if let failure = try await space.sessions.modelRoute(record.id)?.failure, !failure.refusing, failure.evidenceExpiresAt > now { return nil }
+    if let failure = try await space.sessions.modelRoute(record.id)?.failure, !failure.refusing, failure.stands(at: now) { return nil }
     if try await space.sessions.modelProviderRefusing(provider: model.provider, model: model.model) { return nil }
     let entry = try ProviderCatalog(document: document, credentials: .unavailable).validate(model)
     return (model, document.providers[model.provider]!, entry)

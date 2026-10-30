@@ -26,7 +26,7 @@ extension Space {
       case let .person(_, account):
         guard let human = try GroupAccess.accountRow(account, in: db),
               try GroupAccess.Snapshot(db).isHumanAdmin(human, of: row.grp) else { throw SpaceError.groupForbidden(row.grp) }
-      case .session, .observer: throw SpaceError.groupForbidden(row.grp)
+      case .session, .observer, .page: throw SpaceError.groupForbidden(row.grp)
       }
       let rev = try Substrate.mintRevision(mtime: stamp, group: group, in: db)
       for node in try Substrate.descendantHeads(of: notes, group: group, in: db) {

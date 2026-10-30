@@ -6,12 +6,12 @@
 
 | Verb | Purpose |
 | --- | --- |
-| `wuhu use <host:port> [--pin] [--group <id>]` | Pin the current checkout wallet to a space server. The certificate must pass system trust; `--pin` instead records its fingerprint (trust on first use) in the user-level `~/.wuhu/trust.json`. `--group` records the wallet's group (see [Groups](#groups)); without it, re-pinning the same server (by `host:port`, however spelled) keeps its group, and pinning another server clears it with a note on stderr. |
+| `wuhu use <host:port> [--pin] [--group <id>]` | Pin the current folder's wallet (`./.wuhu`, never an ancestor's) to a space server and print `pinned <server> -> <wallet>`, plus `as <persona>` on an enrolled device. The certificate must pass system trust; `--pin` instead records its fingerprint (trust on first use) in the user-level `~/.wuhu/trust.json`. `--group` records the wallet's group (see [Groups](#groups)); without it, re-pinning the same server (by `host:port`, however spelled) keeps the folder's group, pinning another server clears it with a note on stderr, and a new wallet starts with none. When the server refuses this device's key, `use` still pins and says so on stderr. |
 | `wuhu trust <host:port>` | Re-record a pinned server's certificate fingerprint after an expected change (reinstall, moved tunnel target). |
 | `wuhu untrust <host:port>` | Forget the user-level trust record; the next connection falls back to system trust. |
 | `wuhu read <path> [--rev N] [--lines A-B]` | Print file text. Historical reads do not update the wallet etag. `--lines` is a 1-based inclusive range. Fails with `unsupported` on a file that is not UTF-8 text. |
 | `wuhu write <path> --body <text> [--force]` | Write UTF-8 `<text>` to a path. Without `--force`, the CLI sends the recorded token or refuses to overwrite an unread existing path. A bare `wuhu write <path>` is a usage error pointing at `put`. |
-| `wuhu cat <path>` | Write a path's raw bytes to stdout over `GET /v1/f<path>` — unclamped, byte-exact, no wallet token recorded. |
+| `wuhu cat <path>` | Write a path's raw bytes to stdout over `GET /v1/f<path>` — unclamped and byte-exact. Like `read`, it records the file's token, so a later `put` overwrites only what was read. |
 | `wuhu put <path> [--force]` | Write raw stdin bytes to a path over `PUT /v1/f<path>`. Same overwrite preflight as `write`; records the resulting token. |
 | `wuhu transcribe [<file>] [--language <code>]` | Upload an audio file to the space over `POST /v1/transcribe` and print the transcript. Accepts `.wav`, `.mp3`, `.mp4`, `.m4a`, `.webm` up to 25 MiB, refusing an oversized file before the upload. With no `<file>` it prints the provider and model the space would use (`GET /v1/transcribe`), or `no transcriber`. |
 | `wuhu edit <path> <old> <new> [--force]` | Apply one text replacement through the server edit tool. |
@@ -235,7 +235,7 @@ The box side (`machine-v2 join`, `run` and `install`) stores each identity under
 
 ## Wallet
 
-The CLI wallet is strictly a `.wuhu` directory found by walking up from the current working directory. If no walk-up wallet exists, `wuhu use <host:port>` creates `./.wuhu/config.json`; other bare-path commands fail with:
+The CLI wallet is strictly a `.wuhu` directory found by walking up from the current working directory. `wuhu use <host:port>` always writes `./.wuhu/config.json` in the current folder, leaving an ancestor's wallet alone. If no walk-up wallet exists, other bare-path commands fail with:
 
 ```text
 no space pinned; run: wuhu use <host:port>
@@ -279,12 +279,7 @@ over the old one, and one without drops the host's pin once the server passes
 system trust; when it does not, the existing pin carries the enrollment and
 stays.
 
-The wallet also caches the seat's messaging identity: a stable persona name
-drawn by the server (`POST /v1/persona`, allocator word-name genre) against
-this device's enrolled key, once per wallet × space, and reused on every
-subsequent verb. `send` and `inbox` act as that identity; two work folders
-are two distinguishable senders. An unenrolled seat has no persona and acts
-as the owner.
+A seat's messaging identity is its account's persona: a stable allocator word-name the server adopts for the account the first time one of its keys asks, shared by every key of that account. The server derives it from the enrolled key on every request, so `send`, `inbox` and `session` name no identity. The CLI asks the server (`POST /v1/persona`) only where it prints the name — `use`, `user profile` and the wallet announcement — and never caches it, so a revoked key never claims its old persona. An unenrolled seat has no persona and acts as the owner.
 
 ## Groups
 

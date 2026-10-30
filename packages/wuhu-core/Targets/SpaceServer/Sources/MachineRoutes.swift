@@ -11,7 +11,6 @@ import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import Serve
 import ServeRouting
-import struct ServerTelemetry.SpanOwner
 import struct ServerTelemetry.TraceParent
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
@@ -318,11 +317,13 @@ func addMachineRoutes(
     case let .success(resolved): admitted = resolved
     case let .failure(response): return .response(response)
     }
-    let leg = ExecLeg(admitted.principal.actor)
+    guard let leg = ExecLeg(admitted.principal.actor) else {
+      return .response(errorResponse(.forbidden, code: "forbidden", message: "a page attaches to no exec"))
+    }
     guard await hub.admitsCaller(admitted.record, leg: leg) else {
       return .response(errorResponse(.conflict, code: "execAttached", message: "exec \(admitted.record.id.rawValue) belongs to another caller"))
     }
-    let trace = TraceParent.propagated(request.headers.values, owner: SpanOwner(session: admitted.record.session, group: admitted.record.group))
+    let trace = TraceParent.enclosing
     return .webSocket { socket in
       await hub.runCallerSession(admitted.record, socket: socket, leg: leg, trace: trace)
     }
@@ -399,7 +400,7 @@ private func humanAdmits(_ principal: Principal, of group: GroupID, space: Space
   switch principal.actor {
   case .anonymous: true
   case let .person(_, account): try await space.isHumanAdmin(account, of: group)
-  case .session, .observer: false
+  case .session, .observer, .page: false
   }
 }
 

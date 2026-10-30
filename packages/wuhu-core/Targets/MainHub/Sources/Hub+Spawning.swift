@@ -59,7 +59,7 @@ extension Hub {
         let record = try await store.record(id)
         creator = record
         principal = Principal(actor: .session(id), group: record.group)
-      case let .page(person):
+      case let .person(person):
         try await admit(person)
         creator = nil
         principal = person.principal
@@ -140,7 +140,7 @@ extension Hub {
         guard let resolved = try await space.resolveGroup(spelling) else { throw SpaceError.notFound(spelling) }
         requested = resolved
       } else { requested = nil }
-      if case let .page(person) = caller, let requested, requested != person.group {
+      if case let .person(person) = caller, let requested, requested != person.group {
         throw outsidePageGroup(person.group, "creates sessions")
       }
       group = try await space.homeGroup(requested, creator: principal)

@@ -19,7 +19,7 @@ import WuhuAI
       let store = space.sessions
       let old = SessionModelRouteTests().route()
       let id = try await store.createSession(group: .shared, title: "switch", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: old)
-      let failure = ModelRouteFailure(reason: .quota, firstFailureAt: fixedDate, deadline: fixedDate.addingTimeInterval(1800), retryAt: fixedDate.addingTimeInterval(18000))
+      let failure = ModelRouteFailure(reason: .quota, firstFailureAt: fixedDate, retryAt: fixedDate.addingTimeInterval(18000))
       try await store.updateModelRouteFailure(id, expectedEpoch: old.epoch, failure: failure)
       var source = try await store.hydrate(id).transcript.kernel
       let assistant = TranscriptItem.assistant(.init(id: UUID(), timestamp: fixedDate, content: [.text("portable text"), .reasoning(.encrypted(.init(providerID: "anthropic", model: "m", summary: "readable", opaque: "signature-a", id: "native-a", replayScope: "scope-a")))], stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 2), toolCallIDs: [:], replayBinding: .init(identity: "scope-a", epoch: old.epoch)))
@@ -27,15 +27,15 @@ import WuhuAI
       try await store.append(id, items: [assistant], inputOrigin: source.cacheWarmingInputOrigin)
       let generation = try await store.generationState(id).generation
       var next = SessionModelRouteTests().route(member: "secondary", reason: .compaction)
-      next.switchCause = .quota
       next.specifier.provider = "alternate"
       let portable = try source.portableHandoff(binding: .init(identity: "scope-b", epoch: next.epoch), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [])
       let transition = ModelRouteTransition(expectedEpoch: old.epoch, route: next, transcript: portable)
+      guard case let .generationHead(head) = portable.items[0] else { Issue.record("missing head"); return }
       try await space.writer.write { db in
         try db.execute(sql: "CREATE TRIGGER fail_transition BEFORE INSERT ON session_pointers WHEN NEW.generation > \(generation) BEGIN SELECT RAISE(ABORT, 'injected crash before commit'); END")
       }
       await #expect(throws: DatabaseError.self) {
-        try await store.writePortableHandoff(id, expectedGeneration: generation, source: source, transcript: portable, transition: transition)
+        try await store.writeCompaction(id, head: head, kept: nil, transition: transition)
       }
       let beforeCommit = try Space.open(file: file)
       #expect(try await beforeCommit.sessions.modelRoute(id)?.epoch == old.epoch)
@@ -44,7 +44,7 @@ import WuhuAI
       #expect(try await beforeCommit.sessions.transcript(id).items == source.items)
       #expect(try await beforeCommit.sessions.modelRouteHistory(id) == [old])
       try await space.writer.write { db in try db.execute(sql: "DROP TRIGGER fail_transition") }
-      _ = try await store.writePortableHandoff(id, expectedGeneration: generation, source: source, transcript: portable, transition: transition)
+      _ = try await store.writeCompaction(id, head: head, kept: nil, transition: transition)
       let afterCommit = try Space.open(file: file)
       #expect(try await afterCommit.sessions.modelRoute(id) == next)
       #expect(try await afterCommit.sessions.generationState(id).generation == generation + 1)

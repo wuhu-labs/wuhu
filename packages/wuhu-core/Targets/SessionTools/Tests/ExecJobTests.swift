@@ -10,8 +10,10 @@ import struct MachineContract.MachineID
 import func MainHub.execHandle
 import class MainHub.Hub
 import OrderedCollections
+import ServerTelemetry
 import SessionDomain
 @testable import SessionTools
+import struct SpaceContract.GroupID
 @testable import SpaceCore
 @testable import SpaceServer
 import Testing
@@ -91,8 +93,11 @@ import struct WuhuAI.ToolArguments
   @Test(arguments: [false, true])
   func anUncommittedRunningResultRetriesIntoTheExitResult(_ exitsBeforeRetry: Bool) async throws {
     try await withToolDeps { time in
-      let acknowledgements = Box(0)
-      let scripted = ScriptedExecMachine(onTerminalAck: { _ in acknowledgements.withLock { $0 += 1 } })
+      let acknowledgements = Box(0), acknowledged = Gate()
+      let scripted = ScriptedExecMachine(onTerminalAck: { _ in
+        acknowledgements.withLock { $0 += 1 }
+        acknowledged.open()
+      })
       let rig = try await ExecJobRig(scripted: scripted)
       let release = Gate()
       let callID = "tc-running-retry"
@@ -109,7 +114,7 @@ import struct WuhuAI.ToolArguments
             await exec.exit(.exited(code: 7))
           }
         }
-        group.addTask { await ticking(time) }
+        group.addTask { try await time.wake("the first call's wait", after: 5) }
         defer { group.cancelAll() }
         guard case let .exec(first) = try await rig.world.retry("exec", arguments, id: callID) else { throw Mismatch("exec failed") }
         #expect(JSONValue.parse(first.output)?.object?["status"]?.stringValue == "running")
@@ -118,7 +123,7 @@ import struct WuhuAI.ToolArguments
         #expect(rig.executor.runningExecJobs(of: rig.session).isEmpty)
         if exitsBeforeRetry {
           release.open()
-          try await until("the uncommitted running result retains the exit") { job.ended.value != nil }
+          _ = await job.ended.wait()
         }
         #expect(try await rig.execMessages().isEmpty)
         #expect(acknowledgements.value == 0)
@@ -128,7 +133,7 @@ import struct WuhuAI.ToolArguments
             return try await world.run("exec", arguments, id: callID)
           }
           if !exitsBeforeRetry {
-            try await until("the retry takes its end back") { job.phase == .awaited }
+            try await time.asleep("the retry's wait, once it takes its end back", dueIn: 5)
             release.open()
           }
           let result = try await retry.next()
@@ -140,7 +145,7 @@ import struct WuhuAI.ToolArguments
         #expect(try await rig.execMessages().isEmpty)
         #expect(rig.jobs.jobs(of: rig.session).isEmpty)
         #expect(try await rig.space.execRecord(job.id)?.toolEndOwed == false)
-        try await until("the retried exit is acknowledged once") { acknowledgements.value == 1 }
+        await acknowledged.wait()
         #expect(scripted.startCount.value == 1)
         await rig.jobs.close()
         #expect(acknowledgements.value == 1)
@@ -377,11 +382,11 @@ import struct WuhuAI.ToolArguments
         group.addTask {
           await scripted.serve { exec in
             try? await exec.send(.stdout, Array("working\n".utf8))
-            try? await until("the kill") { !scripted.kills.value.isEmpty }
+            await scripted.killed(exec.start.id)
             await exec.exit(.signaled(signal: 15))
           }
         }
-        group.addTask { await ticking(time) }
+        group.addTask { try await time.wake("the call's wait", after: 5) }
         defer { group.cancelAll() }
 
         _ = try await rig.exec(["wait_seconds": 5], id: "tc-killed")
@@ -390,7 +395,7 @@ import struct WuhuAI.ToolArguments
           throw Mismatch("cancel failed")
         }
         #expect(cancelled.output == "\(handle) was killed (SIGTERM to its process group, SIGKILL 5 s later); it ended with exit code 143")
-        try await until("the job is forgotten") { rig.jobs.jobs(of: rig.session).isEmpty }
+        #expect(rig.jobs.jobs(of: rig.session).isEmpty)
         #expect(try await rig.execMessages().isEmpty)
 
         guard case let .failure(again) = try await rig.world.run("cancel", .object(["id": .string(handle)])) else {
@@ -452,7 +457,8 @@ import struct WuhuAI.ToolArguments
     }
   }
 
-  @Test func aServerRestartRejoinsTheRunningExecAndDeliversItsEndOnce() async throws {
+  // Another session's input mounts the restarted session: the rejoined relay stays out of that input's trace.
+  @Test func aServerRestartRejoinsTheRunningExecOutsideTheMountersTraceAndDeliversItsEndOnce() async throws {
     try await withToolDeps { time in
       var first = try await ExecJobRig()
       let scripted = first.scripted
@@ -478,8 +484,15 @@ import struct WuhuAI.ToolArguments
         await first.jobs.close()
         let second = try ExecJobRig(after: first)
         #expect(second.executor.runningExecJobs(of: second.session).isEmpty)
-        await second.executor.adoptExecJobs(of: second.session)
+        let dials = scripted.tracedDials.value.count
+        let worker = await scripted.worker(owner: Hub(space: second.space, machines: FakeMachineFS().seam), jobs: second.jobs)
+        group.addTask { await whenCancelled { await worker.shutdown() } }
+        try await TraceParent.root(SpanOwner(session: SessionID("sender"), group: GroupID(rawValue: "g"))).run {
+          try await worker.deliver(second.session, .wake)
+        }
         #expect(second.executor.runningExecJobs(of: second.session) == [handle])
+        try await until("the rejoined relay dials") { scripted.tracedDials.value.count > dials }
+        #expect(!scripted.tracedDials.value.contains(true))
 
         release.yield(())
         try await until("the end arrives as a message") { try await second.execMessages().count == 1 }
@@ -809,25 +822,17 @@ private struct ExecJobRig {
     return result
   }
 
-  /// Runs an exec that never ends while the clock stands still, then moves
-  /// it to just short of `seconds` and on to `seconds`: the call must return
-  /// only at the second step. Returns the call's output.
+  /// Runs an exec that never ends and moves the clock just past `seconds` once
+  /// a sleep due then is pending: the call's cut wait. Returns the call's output.
   mutating func waitCut(_ time: TimeControl, at seconds: Double, id: String) async throws -> String {
     let scripted = scripted
-    let past = Box(false)
     var this = self
     let output = try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await scripted.pump() }
       group.addTask { await scripted.serve { _ in for await _ in AsyncStream<Void>.makeStream().0 {} } }
-      group.addTask {
-        await time.advance(by: seconds - 1)
-        try? await ContinuousClock().sleep(for: .milliseconds(500))
-        past.withLock { $0 = true }
-        await time.advance(by: 1)
-      }
+      group.addTask { try await time.wake("the call's cut wait", after: seconds) }
       defer { group.cancelAll() }
       let result = try await this.exec(["wait_seconds": 1800, "max_lifetime_seconds": 3600], id: id)
-      #expect(past.value, "the call returned before \(seconds) s")
       return result.output
     }
     self = this

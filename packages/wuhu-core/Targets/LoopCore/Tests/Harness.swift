@@ -5,11 +5,10 @@ import Foundation
 import JSONValue
 import Logging
 @testable import LoopCore
-import class MainHub.Hub
-import protocol MainHub.Main
-import class MainHub.SessionService
+import MainHub
 import SessionDomain
 import SessionTools
+import enum SpaceContract.ScriptOutput
 @testable import SpaceCore
 import Synchronization
 import Testing
@@ -335,6 +334,7 @@ extension SessionService {
     main: any Main,
     loopConfig: LoopConfig,
     beforeArchive: @escaping @Sendable (SessionID) async throws -> Void = { _ in },
+    cancelled: (@Sendable (SessionID) -> Void)? = nil,
     log: Logger = Logger(label: "test.session-service"),
   ) async {
     let slot = Box(WeakService())
@@ -342,8 +342,29 @@ extension SessionService {
     config.scheduleWake = { id, due in
       await slot.withLock { $0.value }?.scheduleWake(id, at: due)
     }
-    let worker = await SessionExecution(main: main, loopConfig: config)
+    let execution = await SessionExecution(main: main, loopConfig: config)
+    let worker: any Worker = if let cancelled { CancelWatch(execution: execution, cancelled: cancelled) } else { execution }
     self.init(sessions: sessions, worker: worker, archiveGrace: .seconds(24 * 3600), beforeArchive: beforeArchive, log: log)
     slot.withLock { $0.value = self }
   }
+}
+
+// A failed wake marks the session errored, then cancels its loop: a verb
+// sent before that cancel has returned races it.
+private struct CancelWatch: Worker {
+  let execution: SessionExecution
+  let cancelled: @Sendable (SessionID) -> Void
+
+  func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool {
+    let revoked = try await execution.revoke(session, policy: policy)
+    if policy == .cancel { cancelled(session) }
+    return revoked
+  }
+
+  func deliver(_ session: SessionID, _ input: WorkerInput) async throws { try await execution.deliver(session, input) }
+  func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { try await execution.fire(invocation) }
+  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws { try await execution.run(script, output: output) }
+  func activity() async -> WorkerActivity { await execution.activity() }
+  func runningWork(_ session: SessionID) async throws -> [String] { try await execution.runningWork(session) }
+  func shutdown() async { await execution.shutdown() }
 }

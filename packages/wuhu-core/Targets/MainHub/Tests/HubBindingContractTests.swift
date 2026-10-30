@@ -25,7 +25,7 @@ import Testing
     } operation: {
       try source.portableHandoff(binding: .init(identity: "forwarded-binding", epoch: "forwarded-route"), budget: .init(maxInput: 10000, maxOutput: 1000), runningWork: [])
     }
-    let committed = try await owner.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: projected, transition: nil)).value(Transcript.self)
+    let committed = try await owner.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: projected)).value(Transcript.self)
     #expect(committed == projected)
     #expect(try await owner.hydrate(id).generation == hydration.generation + 1)
     #expect(try await owner.hydrate(id).transcript == .kernel(projected))

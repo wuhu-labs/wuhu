@@ -82,22 +82,8 @@ public struct TraceParent: Sendable {
     return TraceParent(context: context)
   }
 
-  /// Under the span whose propagation headers (`traceparent` under OTel) a caller sent, owned by `owner`; nil when it sent none.
-  public static func propagated(_ headers: [String: String], owner: SpanOwner) -> TraceParent? {
-    @Dependency(\.tracer) var tracer
-    let extractor = HeaderExtractor()
-    var parent = root(owner)
-    tracer.extract(headers, into: &parent.context, using: extractor)
-    return extractor.found.load(ordering: .relaxed) ? parent : nil
-  }
-
-  /// The current span's propagation headers, for a caller whose callee continues its trace: empty outside a span.
-  public static var headers: [String: String] {
-    @Dependency(\.tracer) var tracer
-    var headers: [String: String] = [:]
-    if let context = ServiceContext.current { tracer.inject(context, into: &headers, using: HeaderInjector()) }
-    return headers
-  }
+  /// The trace the caller runs in; nil outside one.
+  public static var enclosing: TraceParent? { ServiceContext.current.map(TraceParent.init) }
 
   /// Runs `body` under this parent, starting no span: what `body` traces nests under it.
   public func run<T>(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
@@ -105,18 +91,9 @@ public struct TraceParent: Sendable {
   }
 }
 
-private struct HeaderInjector: Injector {
-  func inject(_ value: String, forKey key: String, into headers: inout [String: String]) { headers[key] = value }
-}
-
-private final class HeaderExtractor: Extractor {
-  let found = Atomic(false)
-
-  func extract(key: String, from headers: [String: String]) -> String? {
-    let value = headers[key]
-    if value != nil { found.store(true, ordering: .relaxed) }
-    return value
-  }
+/// Runs `body` outside any trace, for work it starts that must not join the trace of whoever happened to start it.
+public func untraced<T>(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
+  try await ServiceContext.withValue(nil) { try await body() }
 }
 
 /// `tracer`, stamping the owner of the trace each span starts in on it: for code that traces on plain `Tracing`.

@@ -113,6 +113,17 @@ struct ClientServerFaithfulnessTests {
     #expect(await harness.stderr.text.contains("wuhu cat"))
   }
 
+  @Test func catCountsAsTheReadThatLetsPutOverwrite() async throws {
+    let harness = try ServerHarness()
+    _ = try await harness.space.fs(.shared).write("/logo.png", Data(onePixelPNG), ifMatch: nil)
+    #expect(await harness.run(["put", "/logo.png"], stdin: [1]) == 1)
+    #expect(await harness.stderr.text.contains("read it first"))
+
+    #expect(await harness.run(["cat", "/logo.png"]) == 0)
+    #expect(await harness.run(["put", "/logo.png"], stdin: [1, 2]) == 0)
+    #expect(try await harness.space.fs(.shared).read("/logo.png").1 == Data([1, 2]))
+  }
+
   @Test func writeTakesBodyAndABareWritePointsAtPut() async throws {
     let harness = try ServerHarness()
     #expect(await harness.run(["write", "/notes.md", "--body", "hello"]) == 0)

@@ -108,7 +108,7 @@ private final class Recorder: Worker, Sendable {
   @Test func aRunsOutputsCrossInOrderBeforeItsReply() async throws {
     let heard = Mutex<[ScriptOutput]>([])
     try await line(Recorder()) { client in
-      try await client.run(ScriptRun(session: SessionID("a"), group: GroupID(rawValue: "g"), source: "done", arguments: ["one", "two"])) { output in
+      try await client.run(ScriptRun(runner: .session(SessionID("a"), group: GroupID(rawValue: "g")), source: "done", arguments: ["one", "two"])) { output in
         heard.withLock { $0.append(output) }
       }
     }
@@ -122,7 +122,7 @@ private final class Recorder: Worker, Sendable {
         if firing {
           _ = try await client.fire(.init(id: UUID(), path: "/hold.js", runner: .session(SessionID("a")), input: .timer(Date(timeIntervalSince1970: 5)), stateJSON: nil))
         } else {
-          try await client.run(ScriptRun(session: SessionID("a"), group: GroupID(rawValue: "g"), source: "hold", arguments: [])) { _ in }
+          try await client.run(ScriptRun(runner: .session(SessionID("a"), group: GroupID(rawValue: "g")), source: "hold", arguments: [])) { _ in }
         }
       }
       while worker.asked.withLock({ $0.isEmpty }) { await Task.yield() }

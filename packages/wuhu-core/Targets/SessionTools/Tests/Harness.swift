@@ -7,6 +7,7 @@ import Fetch
 import FileSearch
 import Foundation
 import JSONValue
+import struct LoopCore.LoopConfig
 import struct LoopCore.SessionExecution
 import MachineChannel
 import struct MachineContract.Ack
@@ -24,6 +25,7 @@ import enum MachineContract.VFSResult
 import class MainHub.Hub
 import protocol MainHub.Worker
 import Serve
+import struct ServerTelemetry.TraceParent
 import SessionDomain
 @testable import SessionTools
 import struct SpaceClient.SpaceClient
@@ -370,8 +372,13 @@ let machineA = MachineID(rawValue: "mc_aaaaaaaa")
 // it left, and execs run side by side as they do behind the hub.
 final class ScriptedExecMachine: Sendable {
   let startCount = Box(0)
+  /// Script execs minted: a spawn returns once minted, while its start reaches `serve` later, if ever.
+  let scriptMints = Box(0)
   let kills = Box<[ExecID]>([])
+  private let killGates = Mutex<[ExecID: Gate]>([:])
   let failDelivered = Box(false)
+  /// Whether each dial was made in a trace.
+  let tracedDials = Box<[Bool]>([])
 
   private let endpoints = Mutex<[ExecID: ChannelEndpoint]>([:])
   private let links = Mutex<[ExecID: InMemoryTransport]>([:])
@@ -401,14 +408,41 @@ final class ScriptedExecMachine: Sendable {
     access: InferenceAccess = InferenceAccess(), origin: String? = nil, contentHostPattern: String? = nil,
     secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
   ) -> ToolExecutor {
-    let space = owner.space
-    self.space.withLock { $0 = space }
     let tokens = ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
     let executor = ToolExecutor(owner: owner, main: connection, credential: {
       guard reachable else { throw MainUnavailable() }
       return tokens.sessionToken($0)
     }, access: access, scripts: scripts, execJobs: jobs)
+    bind(
+      connection, owner: owner, tokens: tokens, reachable: reachable, access: access,
+      origin: origin, contentHostPattern: contentHostPattern, secrets: secrets, identity: identity,
+    )
+    return executor
+  }
+
+  // A worker that mounts its sessions as deliveries reach them, its execs reaching this machine.
+  func worker(owner: MainHub.Hub, jobs: ExecJobs) async -> SessionExecution {
+    let tokens = ExecTokens(spaceURL: "http://main")
+    let connection = MainConnection()
+    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }, execJobs: jobs) { tools in
+      LoopConfig(
+        executeTool: { try await tools.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
+        inference: { _ in throw Mismatch("unexpected inference") },
+        compact: { _, _ in throw Mismatch("unexpected compaction") },
+        budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
+      )
+    }
+    bind(connection, owner: owner, tokens: tokens)
+    return worker
+  }
+
+  private func bind(
+    _ connection: MainConnection, owner: MainHub.Hub, tokens: ExecTokens, reachable: Bool = true, access: InferenceAccess = InferenceAccess(),
+    origin: String? = nil, contentHostPattern: String? = nil, secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
+  ) {
+    let space = owner.space
+    self.space.withLock { $0 = space }
     let workers = WorkerRegistry(tokens: tokens, machines: nil)
     workers.announce(workers.mint().id, endpoint: ToolOnlyWorker())
     let fallback = FetchClient.inProcess(SessionRuntime.bindMain(
@@ -424,6 +458,7 @@ final class ScriptedExecMachine: Sendable {
           let input = try await request.json(ExecMintInput.self)
           if let script = input.script {
             let record = try await space.mintScriptExec(machine: input.machine, caller: session.rawValue, script: script)
+            scriptMints.withLock { $0 += 1 }
             return try Response.json(ExecMintOutput(id: record.id))
           }
           let callID = try #require(request.headers["wuhu-tool-call"])
@@ -451,15 +486,30 @@ final class ScriptedExecMachine: Sendable {
           return try Response.json(["code": "alreadyEnded", "message": "exec has already ended"], status: .unprocessableContent)
         }
         kills.withLock { $0.append(id) }
+        killGate(id).open()
         try await space.finishExec(id, .cancelled)
         return try Response.json(["ok": true])
       }
       return try Response.json(execStatus(of: record))
     }, dial: { [self] url, _ in
       guard reachable else { throw SpaceClient.DialRefusal(status: 422, body: []) }
+      tracedDials.withLock { $0.append(TraceParent.enclosing != nil) }
       return dial(ExecID(rawValue: url.lastPathComponent))
     })
-    return executor
+  }
+
+  /// Returns once `id` is killed.
+  func killed(_ id: ExecID) async {
+    await killGate(id).wait()
+  }
+
+  private func killGate(_ id: ExecID) -> Gate {
+    killGates.withLock { gates in
+      if let gate = gates[id] { return gate }
+      let gate = Gate()
+      gates[id] = gate
+      return gate
+    }
   }
 
   private func endpoint(for id: ExecID) -> ChannelEndpoint {

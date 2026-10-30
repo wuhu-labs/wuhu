@@ -124,10 +124,12 @@ extension MachineV2Service {
     try? await space.finishExec(record.id, .reaped)
   }
 
-  /// The actor an exec's endpoint belongs to: the session that minted it, else whoever sent its start, else whoever is attached. One
+  /// The actor an exec's endpoint belongs to: the session, person or observer that minted it, else whoever sent its start, else whoever is attached. One
   /// actor at a time, so no other actor can type into or read the exec; the owner may always reconnect.
   private func holder(_ record: ExecRecord) -> ExecLeg? {
-    if let caller = record.caller { return record.session.map(ExecLeg.session) ?? .observer(caller) }
+    if let caller = record.caller {
+      return record.session.map(ExecLeg.session) ?? Person.account(ofExecCaller: caller).map(ExecLeg.person) ?? .observer(caller)
+    }
     guard let entry = execEndpoints[record.id.rawValue] else { return nil }
     return entry.starter.sender ?? entry.callers.values.first
   }
@@ -672,12 +674,14 @@ public enum ExecLeg: Hashable, Sendable {
   case observer(String)
   case anonymous
 
-  public init(_ actor: SpaceCore.Actor) {
+  /// Nil for a page, which attaches to no exec.
+  public init?(_ actor: SpaceCore.Actor) {
     switch actor {
     case let .session(id): self = .session(id)
     case let .person(_, account): self = .person(account)
     case .anonymous: self = .anonymous
     case let .observer(observer): self = .observer(observer.member)
+    case .page: return nil
     }
   }
 

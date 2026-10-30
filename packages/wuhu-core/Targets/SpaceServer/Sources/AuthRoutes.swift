@@ -17,8 +17,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
   // Personas are allocator draws recorded against the minting key, so the
   // route re-verifies the bearer itself: even behind a --dev wall the draw
   // must trace persona -> key -> account or not happen at all. Adoption keeps
-  // the route idempotent: a wallet that lost its cache converges back onto
-  // the account's earliest persona instead of forking a new one.
+  // the route idempotent, so a client asks for its persona instead of caching it.
   router.post("/v1/persona") { request, _ in
     try request.requireNoBody()
     switch try await bearerVerdict(request: request, space: space, now: dateGen.now) {

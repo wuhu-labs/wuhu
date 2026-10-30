@@ -46,7 +46,7 @@ public func placeModelGroup(
   reason: ModelPlacementReason,
 ) throws -> ModelPlacement {
   let group = try ProviderCatalog(document: ModelsDocument(providers: providers, groups: [id: group]), credentials: .unavailable).validatedGroup(id).declaration
-  let evidence = group.members.map { member in
+  let placed = group.members.map { member -> ModelPlacementEvidence in
     let snapshot = usage[member.provider]
     let provider = providers[member.provider]!
     let windows = provider.models[member.model]!.bindingWindows.map { name -> (minutes: Int?, evidence: ModelHeadroomWindow) in
@@ -68,20 +68,22 @@ public func placeModelGroup(
     let score = windows.contains { $0.evidence.remaining == 0 } ? 0
       : windows.contains { $0.evidence.score == nil } ? nil
       : windows.filter { $0.minutes == longest }.compactMap(\.evidence.score).min()
-    return ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows.map(\.evidence), score: score)
+    let shortWindowPace = windows.filter { $0.minutes.map { $0 < longest! } == true }.compactMap { window in window.evidence.score.map { $0 / window.evidence.capacity } }.min()
+    return ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows.map(\.evidence), score: score, shortWindowPace: shortWindowPace)
   }
   let chosen: ModelsDocument.Member?
   switch group.policy {
   case let .select(member): chosen = group.members.first { $0.id == member }
   case .quotaAware:
-    let scores = Dictionary(uniqueKeysWithValues: evidence.map { ($0.member, $0.score) })
-    chosen = group.members.filter { (scores[$0.id] ?? nil).map { $0 > 0 } ?? true }.sorted { lhs, rhs in
-      let left = scores[lhs.id] ?? nil
-      let right = scores[rhs.id] ?? nil
-      if left != right { return (left ?? -1) > (right ?? -1) }
-      return lhs.id < rhs.id
-    }.first
+    let rank = { (evidence: ModelPlacementEvidence) -> (Int, Double) in
+      guard let score = evidence.score else { return (0, 0) }
+      guard let pace = evidence.shortWindowPace, pace < 1 else { return (2, score) }
+      return (1, pace)
+    }
+    chosen = zip(group.members, placed).filter { $1.score.map { $0 > 0 } ?? true }.max { lhs, rhs in
+      rank(lhs.1) != rank(rhs.1) ? rank(lhs.1) < rank(rhs.1) : lhs.0.id > rhs.0.id
+    }?.0
   }
   guard let chosen else { throw CatalogError.noUsableMembers(id) }
-  return ModelPlacement(member: chosen, reason: reason, evidence: evidence)
+  return ModelPlacement(member: chosen, reason: reason, evidence: placed)
 }

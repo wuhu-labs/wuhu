@@ -28,12 +28,7 @@ import Testing
     return persona
   }
 
-  func cachedPersonas(_ rig: EnrollRig) throws -> [String: String] {
-    let file = rig.walletDirectory.appendingPathComponent("personas.json")
-    return try JSONDecoder().decode([String: String].self, from: try Data(contentsOf: file))
-  }
-
-  @Test func useMintsAServerPersonaOnceAndReusesTheCache() async throws {
+  @Test func useNamesTheEnrolledAccountsServerPersonaEveryTime() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving { server in
@@ -43,10 +38,37 @@ import Testing
       let record = try #require(try await rig.space.persona(named: first))
       let keys = try await rig.space.keys(account: record.account)
       #expect(keys.map(\.pubkey) == [record.key])
-      #expect(try cachedPersonas(rig).values.contains(first))
 
       let again = try await usePersona(rig, port: server.port)
       #expect(again == first)
+    }
+  }
+
+  @Test func aRevokedKeyNeverActsAsItsOldPersonaAndReenrollingResolvesTheNewAccount() async throws {
+    let rig = try EnrollRig()
+    defer { rig.cleanUp() }
+    try await rig.serving { server in
+      try await enroll(rig, port: server.port, space: server.space, fingerprint: server.fingerprint)
+      let revoked = try await usePersona(rig, port: server.port)
+      let record = try #require(try await rig.space.persona(named: revoked))
+      #expect(await rig.run(["key", "revoke", record.key]) == 0)
+
+      let repinned = CLIIO()
+      #expect(await rig.run(["use", "127.0.0.1:\(server.port)"], io: repinned) == 0)
+      #expect(!(await repinned.stdoutText()).contains(" as "))
+      #expect(await repinned.stderrText().contains("refused this device's key"))
+      let profile = CLIIO()
+      #expect(await rig.run(["user", "profile"], io: profile) == 1)
+      #expect(await profile.stderrText().contains("unauthorized"))
+      let opted = CLIIO()
+      #expect(await rig.run(["ls", "/"], io: opted, environment: ["WUHU_EXEC": "1", "WUHU_IDENTITY": "wallet"]) == 1)
+      #expect(await opted.stderrText().contains("unauthorized"))
+      #expect(!(await opted.stderrText()).contains(revoked))
+
+      try await enroll(rig, port: server.port, space: server.space, fingerprint: server.fingerprint)
+      let fresh = try await usePersona(rig, port: server.port)
+      #expect(fresh != revoked)
+      #expect(try await rig.space.persona(named: fresh)?.account != record.account)
     }
   }
 
@@ -81,9 +103,9 @@ import Testing
       let code = await rig.run(["user", "list"], io: io, environment: ["WUHU_EXEC": "1", "WUHU_IDENTITY": "wallet"])
       let stderr = await io.stderrText()
       #expect(code == 0, "\(stderr)")
-      let persona = try #require(try cachedPersonas(rig).values.first)
-      #expect(await io.stderrText() == "acting as \(persona) (wallet)\n")
       let account = try #require(try await rig.space.accounts().first)
+      let persona = try #require(try await rig.space.persona(account: account.id))
+      #expect(stderr == "acting as \(persona.name) (wallet)\n")
       #expect(await io.stdoutText().contains(account.id.rawValue))
     }
   }
@@ -114,7 +136,6 @@ import Testing
       try await enroll(rig, port: server.port, space: server.space, fingerprint: server.fingerprint)
       try rig.pinWallet(to: "127.0.0.1:\(server.port)")
     }
-    #expect(!FileManager.default.fileExists(atPath: rig.walletDirectory.appendingPathComponent("personas.json").path))
     if malformed {
       try Data("{".utf8).write(to: rig.walletDirectory.appendingPathComponent("config.json"))
     }
@@ -133,7 +154,7 @@ import Testing
     }
   }
 
-  @Test func anAnonymousExplicitTargetNeverBorrowsThePinnedSpacesCachedPersona() async throws {
+  @Test func anAnonymousExplicitTargetNeverBorrowsThePinnedSpacesPersona() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     var oldPersona = ""
@@ -185,8 +206,6 @@ import Testing
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try rig.pinWallet(to: "old.test")
-    var wallet = Wallet(directory: rig.walletDirectory)
-    try wallet.recordPersona("old-pin-persona", space: "old.test")
     if unpinned {
       try FileManager.default.removeItem(at: rig.walletDirectory.appendingPathComponent("config.json"))
     }
@@ -199,26 +218,9 @@ import Testing
       let stderr = await io.stderrText()
       #expect(code == 0, "\(stderr)")
       #expect(await io.stdoutText() == "addressed target")
-      let target = try #require(try cachedPersonas(rig).first { $0.key != "old.test" }?.value)
-      #expect(try await rig.space.persona(named: target) != nil)
-      #expect(stderr == "acting as \(target) (wallet)\n")
-      #expect(!stderr.contains("old-pin-persona"))
-    }
-  }
-
-  @Test func aWalletOptInRejectsAMalformedPersonaCacheForItsAuthenticatedTarget() async throws {
-    let rig = try EnrollRig()
-    defer { rig.cleanUp() }
-    try await rig.serving { server in
-      try await enroll(rig, port: server.port, space: server.space, fingerprint: server.fingerprint)
-      try rig.pinWallet(to: "127.0.0.1:\(server.port)")
-      try Data("{".utf8).write(to: rig.walletDirectory.appendingPathComponent("personas.json"))
-      let io = CLIIO()
-      let code = await rig.run(["user", "list"], io: io, environment: ["WUHU_EXEC": "1", "WUHU_IDENTITY": "wallet"])
-      #expect(code == 64)
-      #expect(await io.stderrText().contains("personas.json; fix or remove it"))
-      #expect(!(await io.stderrText()).contains("acting as"))
-      #expect(await io.stdoutText().isEmpty)
+      let account = try #require(try await rig.space.accounts().first)
+      let target = try #require(try await rig.space.persona(account: account.id))
+      #expect(stderr == "acting as \(target.name) (wallet)\n")
     }
   }
 
@@ -235,15 +237,11 @@ import Testing
     }
   }
 
-  @Test func aServerRejectedKeyDegradesToOwnerInsteadOfCrashing() async throws {
+  @Test func useOverAServerRejectedKeyPinsAndSaysWhyItHasNoPersona() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving(dev: true) { server in
       try await enroll(rig, port: server.port, space: server.space, fingerprint: server.fingerprint)
-      // The documented reset: the space forgets the key while the device key
-      // file survives (the space id is unchanged), so bearerSource still
-      // loads it but the mint is rejected. An identity verb must still
-      // succeed — attributing to the owner — not 401-crash.
       let account = try #require(try await rig.space.accounts().first)
       let key = try #require(try await rig.space.keys(account: account.id).first)
       try await rig.space.removeKey(pubkey: key.pubkey)
@@ -252,10 +250,10 @@ import Testing
       #expect(await rig.run(["use", "127.0.0.1:\(server.port)"], io: io) == 0)
       let line = try #require(await io.stdoutText().split(separator: "\n").first.map(String.init))
       #expect(!line.contains(" as "))
-      #expect(await io.stderrText().isEmpty)
-      #expect(!FileManager.default.fileExists(
-        atPath: rig.walletDirectory.appendingPathComponent("personas.json").path,
-      ))
+      let stderr = await io.stderrText()
+      #expect(stderr.hasPrefix("note: 127.0.0.1:\(server.port) refused this device's key ("))
+      #expect(stderr.hasSuffix("); enroll again with: wuhu login < invite-link\n"))
+      #expect(stderr.split(separator: "\n").count == 1)
     }
   }
 
@@ -268,9 +266,6 @@ import Testing
       #expect(await rig.run(["use", "127.0.0.1:\(server.port)"], io: io) == 0)
       let line = try #require(await io.stdoutText().split(separator: "\n").first.map(String.init))
       #expect(!line.contains(" as "))
-      #expect(!FileManager.default.fileExists(
-        atPath: rig.walletDirectory.appendingPathComponent("personas.json").path,
-      ))
     }
   }
 }

@@ -85,6 +85,10 @@ struct SubscriptionRow {
     try of(owner).where { $0.subscriptionID.eq(subscription) }.delete().execute(db)
   }
 
+  /// Slots their own firing cancelled: when that firing is cut off rather
+  /// than finished, they go with it.
+  static let retiring = Self.where { #sql("json_type(\($0.payload), '$.handlerFiring.retiring') IS NOT NULL", as: Bool.self) }
+
   static func save(_ row: Self, in db: Database) throws {
     try Self.insert { row } onConflict: {
       ($0.ownerKind, $0.owner, $0.subscriptionID)
@@ -172,8 +176,9 @@ extension SessionStore {
       else { return nil }
       var slot = try Sessions.decode(SubscriptionSlot.self, from: row.payload)
       guard slot.handler != nil, slot.handlerIncarnation == incarnation else { return nil }
+      if case .retiring? = slot.handlerFiring { return nil }
       if let marker, marker == row.marker { return nil }
-      slot.handlerAttemptID = attemptID
+      slot.handlerFiring = .running(attemptID)
       row.payload = try Sessions.encode(slot)
       row.lastFiredAt = now
       try SubscriptionRow.save(row, in: db)
@@ -218,15 +223,19 @@ extension SessionStore {
       }
       var slot = try Sessions.decode(SubscriptionSlot.self, from: row.payload)
       guard slot.handler != nil, slot.handlerIncarnation == attempt.incarnation,
-            slot.handlerAttemptID == attempt.attemptID
+            let firing = slot.handlerFiring, firing.attempt == attempt.attemptID
       else {
         try Self.endFiring(attempt.firing, .cancelled, in: db)
         return (false, false)
       }
+      let retiring = firing == .retiring(attempt.attemptID)
       var advance: SubscriptionAdvance?
       var wakes: [SystemNotification]
       let failure: String?
       switch result {
+      case let .success(_, _, notifications) where retiring:
+        wakes = notifications
+        failure = nil
       case let .success(stateJSON, next, notifications):
         guard stateJSON.utf8.count <= 16 * 1024 else { throw SubscriptionHandlerStateError.tooLarge }
         guard let state = JSONValue.parse(stateJSON) else { throw SubscriptionHandlerStateError.invalidJSON }
@@ -246,23 +255,27 @@ extension SessionStore {
       }
       // An observer has no agent: its wakes and failures live in the log.
       if attempt.owner.session == nil { wakes = [] }
-      slot.handlerAttemptID = nil
-      if case let .reschedule(next) = advance {
-        let due = try row.nextFireAt.map(SQLiteDateFormat.date(from:))
-        guard let due, SQLiteDateFormat.string(from: next) > SQLiteDateFormat.string(from: due)
-        else { throw NonAdvancingSubscription(due: due, next: next) }
-        row.nextFireAt = SQLiteDateFormat.string(from: next)
+      let retires = retiring || advance == .retire
+      if retires {
+        for index in wakes.indices { wakes[index].endsSubscription = true }
       }
-      if let marker = advance?.marker { row.marker = marker }
-      row.payload = try Sessions.encode(slot)
       if let session = attempt.owner.session {
         for wake in wakes {
           _ = try Sessions.enqueue(session.rawValue, input: .notification(wake), nowDate: nowDate, in: db)
         }
       }
-      if case .retire = advance {
+      if retires {
         try SubscriptionRow.delete(attempt.owner, attempt.subscriptionID.rawValue, in: db)
       } else {
+        slot.handlerFiring = nil
+        if case let .reschedule(next) = advance {
+          let due = try row.nextFireAt.map(SQLiteDateFormat.date(from:))
+          guard let due, SQLiteDateFormat.string(from: next) > SQLiteDateFormat.string(from: due)
+          else { throw NonAdvancingSubscription(due: due, next: next) }
+          row.nextFireAt = SQLiteDateFormat.string(from: next)
+        }
+        if let marker = advance?.marker { row.marker = marker }
+        row.payload = try Sessions.encode(slot)
         try SubscriptionRow.save(row, in: db)
       }
       try Self.endFiring(attempt.firing, failure == nil ? .ok : .failed, error: failure, in: db)
@@ -274,15 +287,24 @@ extension SessionStore {
   }
 
   /// Ends a firing still logged as running: one cut off by a cancel whose
-  /// task stopped before its slot's write.
+  /// task stopped before its slot's write. A slot retiring after this
+  /// firing goes with it.
   public func cancelFiring(_ attempt: SubscriptionHandlerAttempt) async throws {
-    try await writer.write { db in try Self.endFiring(attempt.firing, .cancelled, in: db) }
+    try await writer.write { db in
+      if let row = try SubscriptionRow.find(attempt.owner, attempt.subscriptionID.rawValue, in: db),
+         try Sessions.decode(SubscriptionSlot.self, from: row.payload).handlerFiring == .retiring(attempt.attemptID)
+      {
+        try SubscriptionRow.delete(attempt.owner, attempt.subscriptionID.rawValue, in: db)
+      }
+      try Self.endFiring(attempt.firing, .cancelled, in: db)
+    }
   }
 
   /// Ends every firing still logged as running: what the server was doing
   /// when it stopped.
   public func interruptFirings() async throws {
     try await writer.write { db in
+      try SubscriptionRow.retiring.delete().execute(db)
       for id in try FiringRow.where({ $0.outcome.eq(FiringOutcome.running.rawValue) }).select(\.id).fetchAll(db) {
         try Self.endFiring(id, .interrupted, in: db)
       }
@@ -324,9 +346,11 @@ extension Sessions {
     var ids: Set<SubscriptionID> = []
     var handlers: Set<SubscriptionID> = []
     for row in rows {
+      let payload = JSONValue.parse(row.payload)?.object
+      if payload?["handlerFiring"]?.object?["retiring"] != nil { continue }
       let id = SubscriptionID(row.subscriptionID)
       ids.insert(id)
-      if case .string? = JSONValue.parse(row.payload)?.object?["handler"] { handlers.insert(id) }
+      if case .string? = payload?["handler"] { handlers.insert(id) }
     }
     return (ids, handlers)
   }

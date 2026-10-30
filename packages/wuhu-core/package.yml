@@ -116,7 +116,7 @@ externalPackages:
     products: [GRDB, GRDBSQLite]
   swift-structured-queries:
     url: https://github.com/wuhu-labs/swift-structured-queries
-    revision: 190fdfe482ecf70987d3d897f3eb93d5f83127d8
+    revision: 4f6be045f379601ef88924a3fa934555eca58327
     products: [StructuredQueries, StructuredQueriesCore, StructuredQueriesSQLite]
   swift-clocks:
     url: https://github.com/pointfreeco/swift-clocks

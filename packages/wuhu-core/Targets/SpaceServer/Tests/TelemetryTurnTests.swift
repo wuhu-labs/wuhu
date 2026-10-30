@@ -18,10 +18,11 @@ import Synchronization
 import Testing
 import Tracing
 
-// One traced story: an agent runs a script, an exec on a machine and a task
-// with a request; the task reports and the agent relays it. Every span names
-// its session, the request links the two sessions' turns, the machine call
-// carries the exec's context, and nothing said or run reaches a span.
+// One traced story: an agent runs a script that execs on a machine, an exec
+// there and a task with a request; the task reports and the agent relays it.
+// Every span names its session, the request links the two sessions' turns,
+// each relay's exchanges sit under its caller, the machine call carries the
+// exec's context, and nothing said or run reaches a span.
 @Test(.deterministicDependencies) func aTracedStoryLinksTurnsByTheirInputsAndRecordsNoContent() async throws {
   let tracer = InMemoryTracer()
   let machineCalls = Mutex<[String]>([])
@@ -33,9 +34,10 @@ import Tracing
         let box = try await story.machine { request in
           if let span = request.headers[HTTPField.Name(InMemoryTracer.spanIDKey)!] { machineCalls.withLock { $0.append(span) } }
         }
+        let source = "import {machine} from 'wuhu:machine'; result((await machine('\(box.id.rawValue)').exec('echo secret script')).code)"
         let agent = try await story.session()
         story.script([
-          .call("run_script", ["source": "result('secret script')", "wait_seconds": 30]),
+          .call("run_script", ["source": .string(source), "wait_seconds": 30]),
           .call("exec", ["machine": .string(box.id.rawValue), "cwd": .string(box.folder), "command": "echo secret output", "wait_seconds": 30]),
           .call("create_session", ["title": "secret task", "message": "secret brief", "expects_reply": true]),
           .say("secret waiting"),
@@ -83,7 +85,8 @@ import Tracing
 
   let script = try tool("run_script"), exec = try tool("exec"), create = try tool("create_session"), report = try tool("report")
   #expect([script, exec, create].allSatisfy { $0.parentSpanID == asked.spanID })
-  #expect(named("script.run").first?.parentSpanID == script.spanID)
+  let run = try #require(named("script.run").first)
+  #expect(run.parentSpanID == script.spanID)
   #expect(string(exec, "wuhu.machine") == machine.rawValue)
 
   let request = try #require(string(create, "wuhu.request.id"))
@@ -97,6 +100,7 @@ import Tracing
 
   let exchanges = named("machine.exchange")
   #expect(exchanges.contains { $0.parentSpanID == exec.spanID })
+  #expect(exchanges.contains { $0.parentSpanID == run.spanID && $0.attributes.get("machine.exchange.kind") == .string("poll") })
   #expect(machineCalls.withLock { $0 }.contains { call in exchanges.contains { $0.spanID == call && $0.parentSpanID == exec.spanID } })
 
   for span in spans {

@@ -3,6 +3,7 @@ import Fetch
 import Foundation
 import JSONValue
 import MachineContract
+import struct MainHub.TerminalRun
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -57,7 +58,7 @@ import Testing
       #expect(outsider.status == .forbidden)
       #expect(try await harness.store.observers(foreign).isEmpty)
 
-      let firing = tokens.firingToken(Observer(group: .shared, name: "nightly", firing: "f1"))
+      let firing = tokens.scriptToken(.observer(Observer(group: .shared, name: "nightly", firing: "f1")))
       for refused in [
         try await harness.get("/v1/group/shared/observers", bearer: firing),
         try await harness.post("/v1/group/shared/observers", body, bearer: firing),
@@ -85,7 +86,7 @@ import Testing
       try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
         let alice = try await harness.space.addAccount(kind: .human, name: "alice")
         let hers = (try await harness.space.addMachineV2(name: "hers", group: try await harness.space.ensurePersonalGroup(account: alice.id))).machine.id
-        let firing = tokens.firingToken(Observer(group: .shared, name: "nightly", firing: "f1"))
+        let firing = tokens.scriptToken(.observer(Observer(group: .shared, name: "nightly", firing: "f1")))
 
         let listed = try await harness.get("/v1/machine", bearer: firing)
         #expect(listed.status == .ok)
@@ -111,8 +112,57 @@ import Testing
           executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
         )
         #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: tokens.sessionToken(session)).status == .notFound)
-        let other = tokens.firingToken(Observer(group: .shared, name: "other", firing: "f2"))
+        let other = tokens.scriptToken(.observer(Observer(group: .shared, name: "other", firing: "f2")))
         #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: other).status == .notFound)
+      }
+    }
+  }
+
+  // A person's terminal run owns its execs under `@<account>`, which no
+  // observer member takes: an observer named after the persona neither lists
+  // nor reads them, and the run's token has no session verbs.
+  @Test func aTerminalRunsExecsAreItsOwnAndItHasNoSessionVerbs() async throws {
+    try await withSessionDeps {
+      let tokens = ExecTokens(spaceURL: "http://space")
+      let harness = try await SessionHarness(execTokens: tokens)
+      let common = (try await harness.space.addMachineV2(name: "common")).machine.id
+      try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
+        let alice = try await harness.space.addAccount(kind: .human, name: "alice")
+        let run = TerminalRun(
+          id: "terminal-1", persona: "nightly", account: alice.id, group: .shared,
+          personalGroup: try await harness.space.ensurePersonalGroup(account: alice.id),
+        )
+        let person = tokens.scriptToken(.person(run))
+        let namesake = tokens.scriptToken(.observer(Observer(group: .shared, name: "nightly", firing: "f1")))
+
+        let minted = try await harness.post("/v1/exec", ["machine": .string(common.rawValue), "script": .string(run.id)], bearer: person)
+        #expect(minted.status == .ok)
+        let id = try JSONValueDecoder().decode(ExecMintOutput.self, from: try #require(JSONValue.parse(try await minted.text()))).id
+        let record = try #require(try await harness.space.execRecord(id))
+        #expect(record.caller == "@\(alice.id.rawValue)")
+        #expect(record.session == nil)
+        #expect(record.group == .shared)
+        #expect(await harness.hub.admitsCaller(record, leg: .person(alice.id)))
+        #expect(await !harness.hub.admitsCaller(record, leg: .observer("nightly@shared")))
+
+        let own = try JSONValueDecoder().decode([ExecStatus].self, from: try #require(JSONValue.parse(try await harness.get("/v1/exec", bearer: person).text())))
+        #expect(own.map(\.id) == [id])
+        let theirs = try JSONValueDecoder().decode([ExecStatus].self, from: try #require(JSONValue.parse(try await harness.get("/v1/exec", bearer: namesake).text())))
+        #expect(theirs.isEmpty)
+        #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: namesake).status == .notFound)
+        #expect(try await harness.post("/v1/exec/\(id.rawValue)/kill", .null, bearer: namesake).status == .notFound)
+
+        let session = try await harness.store.createSession(
+          group: .shared, title: "agent", kind: .agent, createdBy: "owner",
+          executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
+        )
+        for refused in [
+          try await harness.post("/v1/session/\(session.rawValue)/archive", .null, bearer: person),
+          try await harness.get("/v1/group/shared/observers", bearer: person),
+          try await harness.post("/v1/scripts", ["source": "result(1)", "arguments": []], bearer: person),
+        ] {
+          #expect(refused.status == .forbidden)
+        }
       }
     }
   }

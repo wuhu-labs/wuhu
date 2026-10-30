@@ -76,7 +76,9 @@ func sessionGate(
     credentials: credentials, identity: identity, metrics: metrics, routed: routed,
   ).upgradingHandler
   let workerRoutes = workerRouter(owner: owner, runtime: runtime).upgradingHandler
-  let observerRoutes = observerRouter(space: space, hub: hub, machines: machines, owner: owner, metrics: metrics, routed: routed).upgradingHandler
+  let sessionlessRoutes = sessionlessRouter(
+    space: space, hub: hub, machines: machines, owner: owner, metrics: metrics, routed: routed,
+  ).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix) else {
@@ -87,12 +89,12 @@ func sessionGate(
       return .response(response)
     case .worker:
       return try await workerRoutes(request)
-    case let .observer(observer):
-      if let refused = try await groupMismatch(request, by: "observer \(observer.member)", group: observer.group, space: space) {
+    case let .script(script):
+      if let refused = try await groupMismatch(request, by: "script \(script.member)", group: script.group, space: space) {
         return .response(refused)
       }
-      return try await ObserverPrincipal.$current.withValue(observer) {
-        try await observerRoutes(request)
+      return try await SessionlessPrincipal.$current.withValue(script) {
+        try await sessionlessRoutes(request)
       }
     case let .session(holder):
       // An exec token acts in its session's group; naming another is refused
@@ -111,8 +113,8 @@ enum SessionVerdict {
   case session(GatedSession)
   /// The worker's own token: the loop's routes, never a session's.
   case worker
-  /// A firing's token: the observer's few verbs, as its group.
-  case observer(Observer)
+  /// A sessionless script's token: an observer's few verbs, as its principal.
+  case script(SessionlessScript)
   case refused(Response)
 }
 
@@ -128,7 +130,7 @@ func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
 
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
   if tokens.worker(ofBearer: bearer) != nil { return .worker }
-  if let observer = tokens.observer(ofBearer: bearer) { return .observer(observer) }
+  if let script = tokens.script(ofBearer: bearer) { return .script(script) }
   let session: SessionID
   var boundGroup: GroupID?
   var exec = true
@@ -410,21 +412,8 @@ private func sessionRouter(
   // The session's worker runs the file; the stream closing kills it.
   router.post("/v1/scripts") { request, _ in
     let input = try await request.json(ScriptRunInput.self)
-    let script = ScriptRun(session: principal().session, group: principal().group, source: input.source, arguments: input.arguments)
-    let events = AsyncStream<SSEEvent> { continuation in
-      let say: @Sendable (ScriptOutput) -> Void = { output in
-        if let event = try? SSEEvent.json(output) { continuation.yield(event) }
-      }
-      let task = try? streams.run("wuhu-script") {
-        do { try await workers.run(script, output: say) }
-        catch is CancellationError {}
-        catch { say(.failure(message: "the script did not run to its end: \(error)")) }
-        continuation.finish()
-      }
-      if task == nil { continuation.finish() }
-      continuation.onTermination = { _ in task?.cancel() }
-    }
-    return .sse(events)
+    let script = ScriptRun(runner: .session(principal().session, group: principal().group), source: input.source, arguments: input.arguments)
+    return scriptStream(in: streams) { say in try await workers.run(script, output: say) }
   }
   for (action, owed) in [("detach", true), ("delivered", false)] {
     router.post("/v1/exec/:id/\(action)") { _, parameters in
@@ -543,6 +532,24 @@ private func sessionRouter(
     try await postMessage(request, as: .session(principal().session), callID: callID(request), owner: owner)
   }
   return router
+}
+
+// What a script says, as server-sent events; the stream closing kills it.
+func scriptStream(in streams: TaskScope, _ run: @escaping @Sendable (@escaping @Sendable (ScriptOutput) -> Void) async throws -> Void) -> Response {
+  let events = AsyncStream<SSEEvent> { continuation in
+    let say: @Sendable (ScriptOutput) -> Void = { output in
+      if let event = try? SSEEvent.json(output) { continuation.yield(event) }
+    }
+    let task = try? streams.run("wuhu-script") {
+      do { try await run(say) }
+      catch is CancellationError {}
+      catch { say(.failure(message: "the script did not run to its end: \(error)")) }
+      continuation.finish()
+    }
+    if task == nil { continuation.finish() }
+    continuation.onTermination = { _ in task?.cancel() }
+  }
+  return .sse(events)
 }
 
 private func subscriptionOutput(_ payload: ToolResultPayload) -> SubscriptionOutput? {

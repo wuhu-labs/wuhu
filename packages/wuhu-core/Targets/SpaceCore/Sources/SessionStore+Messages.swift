@@ -58,7 +58,7 @@ extension SessionStore {
       ) {
         switch principal.actor {
         case let .person(_, account): guard account.rawValue == owner else { return false }
-        case .session, .observer, .anonymous: guard principal.group == group else { return false }
+        case .session, .observer, .page, .anonymous: guard principal.group == group else { return false }
         }
       }
       if group == principal.group { return true }

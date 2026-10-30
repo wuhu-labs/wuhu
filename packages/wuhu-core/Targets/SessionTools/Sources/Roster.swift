@@ -108,7 +108,7 @@ extension ToolExecutor {
     ),
     Tool(
       name: "cancel",
-      description: "Stop something you started, by the id it reported: an observation (obs.…) or a timer (timer.…) stops firing; a script (script.…) has its signal aborted and is killed if still running after 5 seconds; an exec (exec.…) has its process group sent TERM, then KILL 5 seconds later. The result names what ended and how. A subscription that is not armed (ended or never yours), an unknown id and one another session owns are notFound; a script or exec that already ended is alreadyEnded. <session-state> lists what is running.",
+      description: "Stop something you started, by the id it reported: an observation (obs.…) or a timer (timer.…) stops firing (a handler firing already running runs on: when it finishes its wakes arrive; if it fails or times out it ends failed); a script (script.…) has its signal aborted and is killed if still running after 5 seconds; an exec (exec.…) has its process group sent TERM, then KILL 5 seconds later. The result names what ended and how. A subscription that is not armed (ended or never yours), an unknown id and one another session owns are notFound; a script or exec that already ended is alreadyEnded. <session-state> lists what is running.",
       parameters: schema([
         ("id", string("The id: obs.…, timer.…, script.… or exec.…")),
       ], required: ["id"]),

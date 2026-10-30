@@ -32,7 +32,7 @@ import struct WuhuAI.ToolCall
 // Each test runs one script from Fixtures/Scripts and compares its transcript —
 // every tool result, every message the script sent, and the harness's own
 // probes, in order — with the checked-in <name>.expected.
-@Suite(.deterministicDependencies) struct ScriptTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct ScriptTests {
   @Test func executionEndsWithAnUnclosedObservation() async throws {
     try await withRig { rig in
       let result = try await rig.evaluate(#"""
@@ -65,8 +65,10 @@ import struct WuhuAI.ToolCall
 
       try await until("the watch list is read") { watchQueries.value > 0 }
       try await rig.apply("sample-done.sql")
+      try await rig.time.wake("the watch's poll", after: 60)
       try await rig.messages(1)
       try await rig.apply("sample-failed.sql")
+      try await rig.time.wake("the watch's next poll", after: 60)
       try await rig.messages(3)
       try await rig.released()
       try rig.expect("sample")
@@ -161,7 +163,9 @@ import struct WuhuAI.ToolCall
   @Test func stopScriptKillsAScriptThatIgnoresIt() async throws {
     try await withRig { rig in
       try await rig.run("stop-ignored")
-      try await rig.advancing { try await rig.stop(scriptID) }
+      async let stop: Void = rig.stop(scriptID)
+      try await rig.time.wake("the stop grace", after: 5)
+      try await stop
       try await rig.released()
       try await holds("nothing more is sent") { try await rig.delivered().isEmpty }
       try rig.expect("stop-ignored")
@@ -187,9 +191,11 @@ import struct WuhuAI.ToolCall
 
   @Test func pastTheWaitTheScriptRunsOn() async throws {
     try await withRig { rig in
-      try await rig.advancing {
-        try await rig.run("timeout", ["wait_seconds": 30])
-      }
+      async let run: Void = rig.run("timeout", ["wait_seconds": 30])
+      try await rig.time.asleep("the script's sleep", dueIn: 120)
+      try await rig.time.wake("the call's wait", after: 30)
+      try await run
+      try await rig.time.wake("the script's sleep", after: 90)
       try await rig.messages(1)
       try await rig.released()
       try rig.expect("timeout-detach")
@@ -202,9 +208,11 @@ import struct WuhuAI.ToolCall
         .box(rig.session), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: TimeZone(identifier: "UTC")!),
         content: .init(text: "are you there?"),
       )
-      try await rig.advancing {
-        try await rig.run("timeout", ["wait_seconds": 1800])
-      }
+      async let run: Void = rig.run("timeout", ["wait_seconds": 1800])
+      try await rig.time.asleep("the script's sleep", dueIn: 120)
+      try await rig.time.wake("the message's grace", after: 10)
+      try await run
+      try await rig.time.wake("the script's sleep", after: 110)
       try await rig.messages(1)
       try await rig.released()
       try rig.expect("grace-detach")
@@ -213,9 +221,8 @@ import struct WuhuAI.ToolCall
 
   @Test func timeoutSparesAScriptThatAnswered() async throws {
     try await withRig { rig in
-      try await rig.advancing {
-        try await rig.run("busy-after-result", ["wait_seconds": 30])
-      }
+      try await rig.run("busy-after-result", ["wait_seconds": 30])
+      await rig.time.advance(by: 30)
       try await rig.released()
       try rig.expect("busy-after-result")
     }
@@ -505,7 +512,7 @@ import struct WuhuAI.ToolCall
       _ = try await rig.space.addMachine(name: "away")
       try await rig.run("machine-refusals")
       try await rig.released()
-      rig.probe("killed when the script ended: \(world.execs.kills.value.count) of \(world.execs.startCount.value)")
+      rig.probe("killed when the script ended: \(world.execs.kills.value.count) of \(world.execs.scriptMints.value)")
       rig.probe("owner rows left: \(try await rig.scriptExecRows())")
       try rig.expect("machine-refusals")
     }
@@ -527,7 +534,7 @@ import struct WuhuAI.ToolCall
       try await world.attach("box", in: rig.space)
       try await rig.run("machine-lost")
       try await rig.released()
-      rig.probe("killed when the script ended: \(world.execs.kills.value.count) of \(world.execs.startCount.value)")
+      rig.probe("killed when the script ended: \(world.execs.kills.value.count) of \(world.execs.scriptMints.value)")
       try rig.expect("machine-lost")
     }
   }
@@ -596,21 +603,19 @@ import struct WuhuAI.ToolCall
     try await withRig(world: world) { rig in
       try await world.attach("box", in: rig.space)
       let (said, say) = AsyncStream<ScriptOutput>.makeStream()
-      try await rig.advancing {
-        await withTaskGroup(of: Void.self) { group in
-          group.addTask {
-            try? await rig.command("""
-            import { machine } from "wuhu:machine"
-            const sleeper = await machine("box").spawn("sleep")
-            result(`spawned ${sleeper.id}`)
-            await sleeper.wait()
-            """) { say.yield($0) }
-          }
-          for await output in said {
-            if case .result = output { break }
-          }
-          group.cancelAll()
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask {
+          try? await rig.command("""
+          import { machine } from "wuhu:machine"
+          const sleeper = await machine("box").spawn("sleep")
+          result(`spawned ${sleeper.id}`)
+          await sleeper.wait()
+          """) { say.yield($0) }
         }
+        for await output in said {
+          if case .result = output { break }
+        }
+        group.cancelAll()
       }
       #expect(world.execs.kills.value.count == 1)
       #expect(try await rig.scriptExecRows() == 0)
@@ -652,6 +657,7 @@ import struct WuhuAI.ToolCall
   @Test func autoRelease() async throws {
     try await withRig { rig in
       try await rig.run("auto-release")
+      try await rig.time.wake("the script's timer", after: 1)
       try await rig.messages(1)
       try await rig.released()
       try rig.expect("auto-release")
@@ -712,7 +718,7 @@ final class ScriptRig: Sendable {
 
   /// Runs `source` as `wuhu script` runs a file: for this caller alone.
   func command(_ source: String, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
-    try await scripts.run(ScriptRun(session: session, group: GroupID(rawValue: "g"), source: source, arguments: []), tools: executor, output: output)
+    try await scripts.run(ScriptRun(runner: .session(session, group: GroupID(rawValue: "g")), source: source, arguments: []), tools: executor, output: output)
   }
 
   func evaluate(_ source: String) async throws -> JSONValue {
@@ -775,7 +781,7 @@ final class ScriptRig: Sendable {
 
   func messages(_ total: Int) async throws {
     do {
-      try await untilAdvancing("\(total) script messages", time) {
+      try await until("\(total) script messages") {
         try await delivered().count + seen.value >= total
       }
     } catch {
@@ -798,29 +804,7 @@ final class ScriptRig: Sendable {
   }
 
   func released() async throws {
-    try await untilAdvancing("the execution is released", time) { scripts.activity.scripts.isEmpty }
-  }
-
-  // Runs `body` while nudging the clock a second at a time, for a call that
-  // waits on a timer without the test naming its offset. `ControlledTime.wake`
-  // could advance to it exactly instead.
-  func advancing<R: Sendable>(_ body: @Sendable @escaping () async throws -> R) async throws -> R {
-    try await withThrowingTaskGroup(of: R?.self) { group in
-      group.addTask { try await body() }
-      group.addTask { [time] in
-        let clock = ContinuousClock()
-        while !Task.isCancelled {
-          await time.advance(by: 1)
-          try? await clock.sleep(for: .milliseconds(2))
-        }
-        return nil
-      }
-      defer { group.cancelAll() }
-      while let next = try await group.next() {
-        if let next { return next }
-      }
-      throw Mismatch("the advancing call never finished")
-    }
+    try await until("the execution is released") { scripts.activity.scripts.isEmpty }
   }
 
   func children(of parent: SessionID, _ specs: [(title: String, model: String)]) async throws {

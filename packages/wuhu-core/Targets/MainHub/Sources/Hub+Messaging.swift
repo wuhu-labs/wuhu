@@ -18,7 +18,7 @@ extension Hub {
     _ callID: ToolCallID,
     _ arguments: SendMessageArguments,
   ) async throws -> ToolResultPayload {
-    if case let .page(person) = caller { try await admit(person) }
+    if case let .person(person) = caller { try await admit(person) }
     // Scoped like every receipt key: (caller, kernel tool call id).
     let messageID = MessageID(UUID.deterministic("post", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
     // A retry of a send that already committed must not read its attachments
@@ -210,7 +210,7 @@ extension Hub {
   nonisolated private func principal(of caller: Caller) async throws -> Principal {
     switch caller {
     case let .session(session): try await space.principal(of: session)
-    case let .page(person): person.principal
+    case let .person(person): person.principal
     case let .observer(observer): observer.principal
     }
   }

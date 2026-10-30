@@ -91,6 +91,11 @@ enum GroupAccess {
       return [held, entry(from: acting, in: group)].compactMap { $0 }.max()
     }
 
+    /// What a page may do in a group: its own group's role, minus admin.
+    func role(of page: Page, in group: String) -> GroupRole? {
+      role(from: page.group.rawValue, in: group).map { min($0, .write) }
+    }
+
     /// What a session may do in a group.
     func role(of session: GroupSessionRow, in group: String) -> GroupRole? {
       guard live(group) != nil, session.isLive else { return nil }
@@ -169,6 +174,8 @@ enum GroupAccess {
       // An observer writes only its own group, whatever that group may write elsewhere.
       let role = snapshot.role(from: observer.group.rawValue, in: group.rawValue)
       return group == observer.group ? role : role.map { min($0, .read) }
+    case let .page(page):
+      return snapshot.role(of: page, in: group.rawValue)
     case let .session(id):
       guard let session = try sessionRow(id, in: db) else { return nil }
       return snapshot.role(of: session, in: group.rawValue)
@@ -195,6 +202,8 @@ enum GroupAccess {
       return try reach(of: acting, in: db)
     case let .observer(observer):
       return try reach(of: observer.group, in: db)
+    case let .page(page):
+      return try readable(by: page.viewer.principal.actor, acting: page.group, in: db)
     case let .session(id):
       guard let session = try sessionRow(id, in: db) else { return [] }
       return Set(snapshot.all.filter { snapshot.role(of: session, in: $0.rawValue) != nil })

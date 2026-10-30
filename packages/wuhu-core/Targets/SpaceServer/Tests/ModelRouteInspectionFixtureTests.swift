@@ -6,8 +6,8 @@ import SpaceContract
 @testable import SpaceServer
 import Testing
 
-// The app and the web decode this checked-in inspection body, so a change to
-// the endpoint's encoding fails here before it reaches either client.
+// The checked-in inspection body: a change to the endpoint's encoding, which
+// the web and the CLI read, fails here before it reaches them.
 @Suite(.deterministicDependencies) struct ModelRouteInspectionFixtureTests {
   static let fixture = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -20,9 +20,9 @@ import Testing
       .init(name: "five_hour", usedPercent: 99, resetsAt: placed.addingTimeInterval(18000).timeIntervalSince1970, capacity: 1, remaining: 0.01, score: 0.01),
     ], score: 0.01)]
     let created = SessionModelRoute(group: "fleet", member: "backup", specifier: .init(provider: "openai", model: "gpt-backup", effort: "medium"), bindingFingerprint: "fp-backup", epoch: "epoch-1", reason: .create, placedAt: placed, evidence: evidence)
-    var waiting = SessionModelRoute(group: "fleet", member: "primary", specifier: .init(provider: "anthropic", model: "claude-primary", effort: "high"), bindingFingerprint: "fp-primary", epoch: "epoch-2", reason: .compaction, placedAt: placed.addingTimeInterval(60), evidence: evidence, switchCause: .quota)
+    var waiting = SessionModelRoute(group: "fleet", member: "primary", specifier: .init(provider: "anthropic", model: "claude-primary", effort: "high"), bindingFingerprint: "fp-primary", epoch: "epoch-2", reason: .compaction, placedAt: placed.addingTimeInterval(60), evidence: evidence)
     let history = [created, waiting]
-    waiting.failure = ModelRouteFailure(reason: .quota, firstFailureAt: failed, deadline: failed.addingTimeInterval(1800), retryAt: failed.addingTimeInterval(3600), consecutiveFailures: 2, lastFailureAt: failed.addingTimeInterval(30))
+    waiting.failure = ModelRouteFailure(reason: .quota, firstFailureAt: failed, retryAt: failed.addingTimeInterval(3600), consecutiveFailures: 2, lastFailureAt: failed.addingTimeInterval(30))
     return SessionModelRouteOutput(
       requestedTarget: .object(["modelGroup": "fleet", "effort": "high"]),
       activeProvider: "anthropic", activeModel: "claude-primary",

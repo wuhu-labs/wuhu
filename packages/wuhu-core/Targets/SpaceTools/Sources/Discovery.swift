@@ -28,7 +28,7 @@ extension SpaceToolContext {
     let member: Set<GroupID>
     let readable: Set<GroupID>
     switch caller.actor {
-    case .session, .observer:
+    case .session, .observer, .page:
       member = [caller.group]
       readable = try await space.reads(for: caller)
     case .person:

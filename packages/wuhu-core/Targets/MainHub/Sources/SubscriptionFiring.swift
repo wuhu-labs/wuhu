@@ -501,25 +501,27 @@ public struct SubscriptionFiring: Sendable {
         span.conclude(.ok)
         return result
       }
-    } catch is CancellationError {
-      try? await uncancellable("Log the cancelled firing") { try await space.sessions.cancelFiring(attempt) }
-      throw CancellationError()
     } catch {
-      guard try await space.sessions.finishSubscriptionHandler(
-        attempt, result: .failure(
-          error: "\(error)", notification: notification("handler \(path) for \(subscription.slot.id.rawValue) failed: \(error)"),
-        ),
-      ) else { throw CancellationError() }
+      // An aborted firing may answer with its script's error; either way it
+      // was cut off, not failed.
+      if error is CancellationError || Task.isCancelled {
+        try? await uncancellable("Log the cancelled firing") { try await space.sessions.cancelFiring(attempt) }
+        throw CancellationError()
+      }
+      guard try await finish(attempt, .failure(
+        error: "\(error)", notification: notification("handler \(path) for \(subscription.slot.id.rawValue) failed: \(error)"),
+      )) else { throw CancellationError() }
       return false
     }
-    var wakes = result.wakes.map(notification)
-    if advance == .retire {
-      for index in wakes.indices { wakes[index].endsSubscription = true }
-    }
-    guard try await space.sessions.finishSubscriptionHandler(
-      attempt, result: .success(stateJSON: result.stateJSON, advance: advance, wakes: wakes),
-    ) else { throw CancellationError() }
+    guard try await finish(attempt, .success(stateJSON: result.stateJSON, advance: advance, wakes: result.wakes.map(notification)))
+    else { throw CancellationError() }
     return true
+  }
+
+  // A firing's end is written even when its task is cancelled meanwhile: the
+  // write itself says whether its slot still takes it.
+  private func finish(_ attempt: SubscriptionHandlerAttempt, _ result: SubscriptionHandlerResult) async throws -> Bool {
+    try await uncancellable("End the firing") { try await space.sessions.finishSubscriptionHandler(attempt, result: result) }
   }
 
   private func principal(of subscription: ArmedSubscription) async throws -> Principal {

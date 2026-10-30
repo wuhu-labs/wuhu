@@ -11,35 +11,47 @@ import SpaceContract
 import SpaceCore
 import SpaceTools
 
-/// Who a gated request's machine verbs act for: a session, or an observer's
-/// firing, in its group.
+/// Who a gated request's machine verbs act for: a session, or a script
+/// without one, in its group.
 enum MachineUser: Sendable {
   case session(SessionID, group: GroupID)
-  case observer(Observer)
+  case script(SessionlessScript)
 
   var caller: Caller {
     switch self {
     case let .session(id, _): .session(id)
-    case let .observer(observer): .observer(observer)
+    case let .script(script): script.caller
     }
   }
 
   var group: GroupID {
     switch self {
     case let .session(_, group): group
-    case let .observer(observer): observer.group
+    case let .script(script): script.group
     }
   }
 
   var principal: Principal {
     switch self {
     case let .session(id, group): Principal(actor: .session(id), group: group)
-    case let .observer(observer): observer.principal
+    case let .script(script): script.principal
+    }
+  }
+
+  var session: SessionID? {
+    if case let .session(id, _) = self { id } else { nil }
+  }
+
+  /// Whom the execs it mints are recorded as.
+  var member: String {
+    switch self {
+    case let .session(id, _): id.rawValue
+    case let .script(script): script.member
     }
   }
 }
 
-// The machine verbs a session's and an observer's scripts share: the machines
+// The machine verbs a session's and a sessionless script share: the machines
 // its group may use, their directories, and the execs a script mints. Only a
 // session mints an exec outside a script (its exec tool's).
 func addMachineRoutes(
@@ -94,7 +106,7 @@ func addMachineRoutes(
     guard try await space.resolveMachine(id.rawValue, usableFrom: user().group) != nil else {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(id.rawValue)")
     }
-    let result = try await MachineSeam.$caller.withValue(user().caller.session) { try await machines.vfs(id, .mkdir(path: path)) }
+    let result = try await MachineSeam.$caller.withValue(user().session) { try await machines.vfs(id, .mkdir(path: path)) }
     switch result {
     case .ok: return jsonResponse(.object([:]))
     case let .error(error): return jsonResponse(machineFailure(error).payload, status: .unprocessableContent)
@@ -104,28 +116,28 @@ func addMachineRoutes(
 
   router.post("/v1/exec") { request, _ in
     let input = try await request.json(ExecMintInput.self)
-    let caller = user().caller
+    let acting = user()
     do {
-      guard try await space.resolveMachine(input.machine.rawValue, usableFrom: user().group) != nil else {
+      guard try await space.resolveMachine(input.machine.rawValue, usableFrom: acting.group) != nil else {
         return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
       }
       try await hub.requireExecKind(input.machine)
       let record: ExecRecord
       if let script = input.script {
         // A script's process: owned by the script, released when it ends.
-        record = try await space.mintScriptExec(machine: input.machine, caller: caller.name, script: script, group: user().group)
+        record = try await space.mintScriptExec(machine: input.machine, caller: acting.member, script: script, group: acting.group)
         await hub.noteMinted(record)
-      } else if caller.session == nil {
-        return errorResponse(.forbidden, code: "forbidden", message: "an observer's execs belong to its handler's script")
+      } else if acting.session == nil {
+        return errorResponse(.forbidden, code: "forbidden", message: "a script without a session mints execs only for that script")
       } else if let callID = request.headers[ToolCallHeader.name] {
         let claim = try await space.claimExec(
-          machine: input.machine, caller: caller.name,
+          machine: input.machine, caller: acting.member,
           toolCallID: ToolCallID(rawValue: callID), spec: input.spec?.jsonString(),
         )
         record = claim.record
         if !claim.rejoined { await hub.noteMinted(record) }
       } else {
-        record = try await space.mintExec(machine: input.machine, caller: caller.name)
+        record = try await space.mintExec(machine: input.machine, caller: acting.member)
         await hub.noteMinted(record)
       }
       return try Response.json(ExecMintOutput(id: record.id))
@@ -139,7 +151,7 @@ func addMachineRoutes(
     guard let script = parameters["script"], !script.isEmpty else {
       return errorResponse(.notFound, code: "notFound", message: "unknown script")
     }
-    try await space.releaseScriptExecs(script: script, caller: user().caller.name)
+    try await space.releaseScriptExecs(script: script, caller: user().member)
     return try Response.json([String: String]())
   }
   router.get("/v1/exec") { _, _ in

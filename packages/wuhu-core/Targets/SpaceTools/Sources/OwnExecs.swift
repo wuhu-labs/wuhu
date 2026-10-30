@@ -35,7 +35,8 @@ public extension SpaceToolContext {
     switch principal.actor {
     case let .session(session): return session.rawValue
     case let .observer(observer): return observer.member
-    case .person, .anonymous: throw .failed(code: .unauthorized, message: "exec ownership requires a session or an observer", hint: nil)
+    case let .person(_, account): return Person.execCaller(account)
+    case .page, .anonymous: throw .failed(code: .unauthorized, message: "exec ownership requires a session, an observer or a signed-in person", hint: nil)
     }
   }
 

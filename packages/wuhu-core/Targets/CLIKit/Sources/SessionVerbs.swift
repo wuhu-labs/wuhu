@@ -37,7 +37,6 @@ extension Executor {
       throw CLIError(message: "send \(command.wait ? "--wait" : "--attach"): \(sessionRefusal)")
     }
     let space = try self.wallet.pinnedSpace()
-    let identity = try await self.persona(space: space)
     let timezone = TimeZone.current.identifier
     let client = try await self.authenticated(space)
     let files = try self.attachmentFiles(command.attachments)
@@ -47,7 +46,6 @@ extension Executor {
       "session": .string(session),
       "timezone": .string(timezone),
     ])
-    body.set("identity", identity.map(JSONValue.string))
     body.set("viewing", command.viewing.map(JSONValue.string))
     let post = try await client.postMessage(body, files: files)
     guard command.wait else {
@@ -142,11 +140,9 @@ extension Executor {
 
   mutating func inbox() async throws {
     let space = try self.wallet.pinnedSpace()
-    let identity = try await self.persona(space: space)
     let cursor = self.wallet.inboxCursor(space: space)
-    let query = "after=\(cursor)" + (identity.map { "&identity=\($0)" } ?? "")
     let output: NotificationsOutput = try await self.authenticated(space).api(
-      .get, "/v1/notifications?\(query)",
+      .get, "/v1/notifications?after=\(cursor)",
     )
     for notification in output.notifications {
       await self.runner.stdout(rendered(notification))
@@ -158,7 +154,6 @@ extension Executor {
 
   mutating func sessionCreate(_ command: SessionCreateCommand) async throws {
     let space = try self.wallet.pinnedSpace()
-    let identity = try await self.persona(space: space)
     // A session's create defaults server-side to a child task; a human's to
     // a top-level agent, as before.
     var body: JSONValue = .object(["title": .string(command.title)])
@@ -175,7 +170,6 @@ extension Executor {
       }
       body.set("group", .string(group))
     }
-    body.set("identity", identity.map(JSONValue.string))
     body.set("provider", command.provider.map(JSONValue.string))
     body.set("model", command.model.map(JSONValue.string))
     body.set("modelGroup", command.modelGroup.map(JSONValue.string))
@@ -254,9 +248,7 @@ extension Executor {
   mutating func sessionRestart(_ command: SessionRestartCommand) async throws {
     let session = try sessionKey(command.id)
     let space = try self.wallet.pinnedSpace()
-    let identity = try await self.persona(space: space)
     var body: JSONValue = .object([:])
-    body.set("identity", identity.map(JSONValue.string))
     body.set("provider", command.provider.map(JSONValue.string))
     body.set("model", command.model.map(JSONValue.string))
     body.set("modelGroup", command.modelGroup.map(JSONValue.string))

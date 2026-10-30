@@ -34,12 +34,15 @@ public struct ModelPlacementEvidence: Hashable, Sendable, Codable {
   public var observedAt: Double?
   public var windows: [ModelHeadroomWindow]
   public var score: Double?
+  /// The lowest score ÷ capacity among windows shorter than the longest; below 1 the member burns ahead of its pace.
+  public var shortWindowPace: Double?
 
-  public init(member: String, observedAt: Double?, windows: [ModelHeadroomWindow], score: Double?) {
+  public init(member: String, observedAt: Double?, windows: [ModelHeadroomWindow], score: Double?, shortWindowPace: Double? = nil) {
     self.member = member
     self.observedAt = observedAt
     self.windows = windows
     self.score = score
+    self.shortWindowPace = shortWindowPace
   }
 }
 
@@ -53,12 +56,8 @@ public struct SessionModelRoute: Hashable, Sendable, Codable {
   public var placedAt: Date
   public var evidence: [ModelPlacementEvidence]
   public var failure: ModelRouteFailure?
-  public var switchCause: ModelRouteFailure.Reason?
 
-  public var decisionReason: String { switchCause.map { "lastResort:" + $0.rawValue } ?? reason.rawValue }
-
-  public init(group: String?, member: String?, specifier: ModelSpecifier, bindingFingerprint: String, epoch: String, reason: ModelPlacementReason, placedAt: Date, evidence: [ModelPlacementEvidence], failure: ModelRouteFailure? = nil, switchCause: ModelRouteFailure.Reason? = nil) {
-    self.switchCause = switchCause
+  public init(group: String?, member: String?, specifier: ModelSpecifier, bindingFingerprint: String, epoch: String, reason: ModelPlacementReason, placedAt: Date, evidence: [ModelPlacementEvidence], failure: ModelRouteFailure? = nil) {
     self.failure = failure
     self.group = group
     self.member = member
@@ -79,23 +78,28 @@ public struct ModelRouteFailure: Hashable, Sendable, Codable {
   public var reason: Reason
   public var firstFailureAt: Date
   public var lastFailureAt: Date?
-  public var deadline: Date
   public var retryAt: Date?
   public var consecutiveFailures: Int
 
-  public init(reason: Reason, firstFailureAt: Date, deadline: Date, retryAt: Date?, consecutiveFailures: Int = 1, source: Source = .upstream, code: String = "refusal", lastFailureAt: Date? = nil) {
+  public init(reason: Reason, firstFailureAt: Date, retryAt: Date?, consecutiveFailures: Int = 1, source: Source = .upstream, code: String = "refusal", lastFailureAt: Date? = nil) {
     self.lastFailureAt = lastFailureAt
     self.source = source
     self.code = code
     self.reason = reason
     self.firstFailureAt = firstFailureAt
-    self.deadline = deadline
     self.retryAt = retryAt
     self.consecutiveFailures = consecutiveFailures
   }
 
   public var refusing: Bool { reason != .upstreamOutage || consecutiveFailures >= 3 }
-  public var evidenceExpiresAt: Date { retryAt ?? max(deadline, (lastFailureAt ?? firstFailureAt).addingTimeInterval(60)) }
+
+  /// An authentication refusal stands until a success clears it; any other until its retry time, or a minute past the last failure without one.
+  public func stands(at now: Date) -> Bool {
+    switch reason {
+    case .authentication: true
+    case .quota, .upstreamOutage: (retryAt ?? (lastFailureAt ?? firstFailureAt).addingTimeInterval(60)) > now
+    }
+  }
 }
 
 public struct ModelRouteTransition: Sendable, Codable {
@@ -133,9 +137,9 @@ extension Transcript {
     append(.notification(.init(id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("model-route"), content: .init(text: "Model switched \(from) → \(to) (requested at compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."))))
   }
 
-  public mutating func appendRouteNotice(group: String, from: String, to: String, reason: String) {
+  public mutating func appendRouteNotice(group: String, from: String, to: String, reason: ModelPlacementReason) {
     @Dependency(\.uuid) var uuid
     @Dependency(\.date.now) var now
-    append(.notification(.init(id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("model-route"), content: .init(text: "Model group \(group) moved \(from) → \(to) (\(reason)). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."))))
+    append(.notification(.init(id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("model-route"), content: .init(text: "Model group \(group) moved \(from) → \(to) (\(reason.rawValue)). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."))))
   }
 }

@@ -19,7 +19,6 @@ import struct MachineContract.MachineStatus
 public struct ExecSession: Sendable {
   let client: SpaceClient
   let start: ExecStart
-  let headers: [String: String]
   private let execution = Execution()
 
   // The caller leg's handle; a call made before `run` has started waits for it.
@@ -76,11 +75,9 @@ public struct ExecSession: Sendable {
     case caller
   }
 
-  /// `headers` go with every dial of the caller leg.
-  public init(client: SpaceClient, start: ExecStart, headers: [String: String] = [:]) {
+  public init(client: SpaceClient, start: ExecStart) {
     self.client = client
     self.start = start
-    self.headers = headers
   }
 
   public enum Termination: Equatable, Sendable {
@@ -200,7 +197,7 @@ public struct ExecSession: Sendable {
     var drains = 0
     while !Task.isCancelled {
       do {
-        let transport = try await self.client.dial(url, headers.map { ($0.key, $0.value) })
+        let transport = try await self.client.dial(url, [])
         unreachable = 0
         attempt = 0
         await endpoint.run(transport)
