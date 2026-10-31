@@ -64,4 +64,20 @@ import Testing
     #expect(newBytes == oldBytes)
     #expect(!newBytes.contains("settleBoundary"))
   }
+
+  @Test func aHeadThatRecordedOpenRequestsDecodesWithoutThem() throws {
+    let settle = SettleState(owed: [.init("ch1"): .owed])
+    let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: .init(), settle: settle, runningWork: [])
+    let bytes = try Sessions.encode(TranscriptItem.generationHead(head))
+    let legacy = bytes.replacing(
+      #""settle":{"#,
+      with: #""settle":{"openRequests":["stale",{"id":"stale","conversation":"dm","openedAt":0,"parkReminderCount":2}],"closed":["done"],"#,
+    )
+    #expect(legacy != bytes)
+    guard case let .generationHead(decoded) = try Sessions.decode(TranscriptItem.self, from: legacy) else {
+      Issue.record("missing head")
+      return
+    }
+    #expect(decoded.settle == settle)
+  }
 }

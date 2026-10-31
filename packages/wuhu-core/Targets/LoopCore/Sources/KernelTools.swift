@@ -110,11 +110,11 @@ enum ParkRefusal: Error, Equatable, CustomStringConvertible {
   case owesReply(conversations: [ConversationID])
   case owesReport(requests: [RequestID])
 
-  init?(_ environment: SessionEnvironment, task: Bool) {
+  init?(_ environment: SessionEnvironment, task: Bool, openRequests: [OpenRequest]) {
     if !task, case let owed = environment.settle.owedConversations, !owed.isEmpty {
       self = .owesReply(conversations: owed)
-    } else if case let open = environment.settle.openRequests.keys.sorted(by: { $0.rawValue < $1.rawValue }), !open.isEmpty {
-      self = .owesReport(requests: open)
+    } else if !openRequests.isEmpty {
+      self = .owesReport(requests: openRequests.map(\.id).sorted { $0.rawValue < $1.rawValue })
     } else {
       return nil
     }

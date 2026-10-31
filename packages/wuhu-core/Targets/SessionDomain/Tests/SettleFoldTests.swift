@@ -41,56 +41,6 @@ import Testing
     #expect(redelivered.owedConversations == [ConversationID("ch1")])
   }
 
-  @Test func `a request opens and only its final closes it`() {
-    let open = SettleState(folding: [Fix.delivered(kind: .request, request: "r1", owesReply: false)])
-    #expect(open.openRequests[RequestID("r1")]?.conversation == ConversationID("ch1"))
-
-    let progressed = SettleState(folding: [
-      Fix.delivered(kind: .request, request: "r1", owesReply: false),
-      Fix.posted(kind: .progress, request: "r1", at: later),
-    ])
-    #expect(progressed.openRequests[RequestID("r1")] != nil)
-
-    let closed = SettleState(folding: [
-      Fix.delivered(kind: .request, request: "r1", owesReply: false),
-      Fix.posted(kind: .final, request: "r1", at: later),
-    ])
-    #expect(closed.openRequests.isEmpty)
-  }
-
-  @Test func `park reminders accumulate on the open request`() {
-    let folded = SettleState(folding: [
-      Fix.delivered(kind: .request, request: "r1", owesReply: false),
-      .parkReminder(request: RequestID("r1"), at: later),
-      .parkReminder(request: RequestID("r1"), at: muchLater),
-    ])
-    let open = folded.openRequests[RequestID("r1")]
-    #expect(open?.parkReminderCount == 2)
-    #expect(open?.lastParkReminderAt == muchLater)
-  }
-
-  @Test func `backoff is 1, 5, 15 minutes and then flat`() {
-    #expect(ParkBackoff.delay(after: 0) == .zero)
-    #expect(ParkBackoff.delay(after: 1) == .seconds(60))
-    #expect(ParkBackoff.delay(after: 2) == .seconds(300))
-    #expect(ParkBackoff.delay(after: 3) == .seconds(900))
-    #expect(ParkBackoff.delay(after: 9) == .seconds(900))
-  }
-
-  @Test func `the first park reminder is due immediately and the deadline ends the series`() {
-    let fresh = OpenRequest(id: .init("r1"), conversation: .init("ch1"), openedAt: Fix.instant)
-    #expect(ParkBackoff.nextFire(after: fresh, now: Fix.instant) == Fix.instant)
-
-    var second = fresh
-    second.parkReminderCount = 1
-    second.lastParkReminderAt = Fix.instant
-    #expect(ParkBackoff.nextFire(after: second, now: Fix.instant) == Fix.instant.addingTimeInterval(60))
-
-    var bounded = second
-    bounded.deadline = Fix.instant.addingTimeInterval(30)
-    #expect(ParkBackoff.nextFire(after: bounded, now: Fix.instant) == nil)
-  }
-
   @Test func `a queue input projects to the event the fold reads`() {
     let delivery = QueueInput.message(.init(
       id: UUID(),

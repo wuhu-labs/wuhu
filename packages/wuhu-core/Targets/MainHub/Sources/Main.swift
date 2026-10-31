@@ -18,6 +18,7 @@ import WuhuAI
 public protocol Main: Sendable {
   /// The session's execs whose ends it is still owed.
   func owedExecs(_ session: SessionID) async throws -> [ExecRecord]
+  func openRequests(_ session: SessionID) async throws -> [OpenRequest]
   /// For each urgency, the earliest item in the session's queue that the
   /// model has not seen yet: now, and again after every change.
   func pendingArrivals(_ session: SessionID) -> AsyncThrowingStream<[PendingArrival], any Error>

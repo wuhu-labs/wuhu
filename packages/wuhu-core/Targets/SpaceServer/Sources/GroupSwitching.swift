@@ -84,7 +84,7 @@ func compactionPlacement(owner: any Main, catalog: @escaping @Sendable (SessionI
     _ = try catalog.validateRoute(held, group: group, effort: held.specifier.effort)
     guard let definition = catalog.document.groups[group], case .quotaAware = definition.policy else { return nil }
     guard let (next, resolved) = try await resolvedPlacement(held, session: id, catalog: catalog, usage: usage) else { return nil }
-    var portable = try compactedHandoff(transcript, to: next, resolved: resolved)
+    var portable = try compactedHandoff(transcript, to: next, resolved: resolved, openRequests: try await owner.openRequests(id))
     portable.appendRouteNotice(group: group, from: held.member!, to: next.member!, reason: next.reason)
     guard portable.estimatedContextTokens(images: resolved.budget.images) <= resolved.budget.usableTokens else { throw PortableHandoffError.modelHandoffTooLarge }
     return .init(expectedEpoch: held.epoch, route: next, transcript: portable)
@@ -93,9 +93,9 @@ func compactionPlacement(owner: any Main, catalog: @escaping @Sendable (SessionI
 
 // The compacted generation projected onto a new binding, keeping the summary
 // and pre-reads the compaction produced.
-private func compactedHandoff(_ transcript: Transcript, to next: SessionModelRoute, resolved: ResolvedModel) throws -> Transcript {
+private func compactedHandoff(_ transcript: Transcript, to next: SessionModelRoute, resolved: ResolvedModel, openRequests: [OpenRequest]) throws -> Transcript {
   guard case let .generationHead(source)? = transcript.items.first else { throw PortableHandoffError.missingGenerationHead }
-  var portable = try transcript.portableHandoff(binding: .init(identity: resolved.bindingIdentity, epoch: next.epoch), budget: resolved.budget, runningWork: source.runningWork ?? [])
+  var portable = try transcript.portableHandoff(binding: .init(identity: resolved.bindingIdentity, epoch: next.epoch), budget: resolved.budget, runningWork: source.runningWork ?? [], openRequests: openRequests)
   guard case var .generationHead(head) = portable.items[0] else { preconditionFailure("portable handoff must start a generation") }
   head.summary = source.summary
   head.snapshot = source.snapshot
@@ -147,7 +147,7 @@ func requestedTransition(_ target: CompactionTarget, session id: SessionID, tran
     next = placed
     resolved = model
   }
-  var portable = try compactedHandoff(transcript, to: next, resolved: resolved)
+  var portable = try compactedHandoff(transcript, to: next, resolved: resolved, openRequests: try await owner.openRequests(id))
   if let group = next.group, group == held.group {
     portable.appendRouteNotice(group: group, from: held.member!, to: next.member!, reason: next.reason)
   } else {

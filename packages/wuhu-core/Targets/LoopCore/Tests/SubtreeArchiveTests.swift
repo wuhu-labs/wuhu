@@ -174,9 +174,9 @@ import Testing
           #expect(final.requestID == RequestID(request.rawValue))
           #expect(final.senderSession == id)
           #expect(final.content.text.contains("archived before reporting"))
-          #expect(try await sessions.settleState(id).openRequests.isEmpty)
+          #expect(try await sessions.openRequests(id).isEmpty)
           _ = try await sessions.drainQueue(id)
-          #expect(try await sessions.settleState(id).openRequests.isEmpty)
+          #expect(try await sessions.openRequests(id).isEmpty)
         }
         #expect(try await sessions.record(requester).lifecycle == .live)
         #expect(try await sessions.hydrate(requester).undrained.contains { entry in

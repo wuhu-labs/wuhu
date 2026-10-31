@@ -170,7 +170,7 @@ private final class ToolsWitness: Sendable {
             #expect(try await harness.store.settleState(agent).owedConversations.isEmpty)
             #expect(delegated.notifications(kind: .owedReply).isEmpty)
             #expect(delegating.undrained.isEmpty)
-            #expect(try await harness.store.settleState(task).openRequests.keys.map(\.self) == [request])
+            #expect(try await harness.store.openRequests(task).map(\.id) == [request])
 
             hold.gate.open()
 
@@ -184,7 +184,7 @@ private final class ToolsWitness: Sendable {
             }
             #expect(reports.map(\.kind) == [.final], "task transcript:\n\(reported.outline)")
             #expect(reports.map(\.requestID) == [request])
-            #expect(try await harness.store.settleState(task).openRequests.isEmpty)
+            #expect(try await harness.store.openRequests(task).isEmpty)
 
             try await until("the agent relays the final into its box", timeout: .seconds(300)) {
               guard try await harness.store.record(agent).work == .noWork else { return false }

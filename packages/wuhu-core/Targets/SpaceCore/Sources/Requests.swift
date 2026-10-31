@@ -139,6 +139,15 @@ extension SessionStore {
     }
   }
 
+  public func openRequests(_ id: SessionID) async throws -> [OpenRequest] {
+    try await writer.read { db in
+      _ = try Sessions.record(id.rawValue, in: db)
+      return try RequestRow.open(task: id.rawValue, in: db).map {
+        OpenRequest(id: RequestID($0.id), deadline: try $0.deadlineAt.map(SQLiteDateFormat.date(from:)))
+      }
+    }
+  }
+
   static func group(of caller: Caller, in db: Database) throws -> GroupID {
     switch caller {
     case let .session(id): try Sessions.group(of: id.rawValue, in: db)

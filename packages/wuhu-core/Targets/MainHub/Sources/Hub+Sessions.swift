@@ -85,4 +85,5 @@ extension Hub {
   }
 
   nonisolated public func owedExecs(_ session: SessionID) async throws -> [ExecRecord] { try await space.owedExecs(caller: session.rawValue) }
+  nonisolated public func openRequests(_ session: SessionID) async throws -> [OpenRequest] { try await store.openRequests(session) }
 }

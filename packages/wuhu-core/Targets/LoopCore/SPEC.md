@@ -79,7 +79,7 @@ Each `SessionActor` holds its session ID and `any Main`. Session reads and queue
 
 ## Parent-owned park reminders
 
-`SessionService` owns park-reminder deadlines independently of its execution actors. A settled actor may be evicted while a reminder is pending; expiry wakes execution through the service's execution client and hydrates fresh state before deciding whether a nag is still owed. Deadlines are derived from durable transcript/environment state on boot, requiring no new stored schema. Interrupt, successful archive and Start over cancel pending reminders; service shutdown cancels and joins them. Wake transport failures retry with injected-clock backoff and visibly error the session after exhaustion; failure persistence is logged.
+`SessionService` owns park-reminder deadlines independently of its execution actors. A settled actor may be evicted while a reminder is pending; expiry wakes execution through the service's execution client and hydrates fresh state before deciding whether a nag is still owed. Deadlines are derived from the durable transcript and the session's open request rows (`Main.openRequests`) on boot, requiring no new stored schema. Interrupt, successful archive and Start over cancel pending reminders; service shutdown cancels and joins them. Wake transport failures retry with injected-clock backoff and visibly error the session after exhaustion; failure persistence is logged.
 
 `LoopConfig.scheduleWake`, when supplied, delegates scheduling and cancellation (`nil`) outside the actor. A standalone `SessionExecution` without this callback retains actor-local scheduling. Service-managed executions always use parent-owned reminders.
 

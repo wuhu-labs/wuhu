@@ -28,7 +28,7 @@ import WuhuAI
       let receipt = Fix.result(.failure(.init(message: "write receipt")), provenance: .toolCall(.init(call.id)))
       let original = Transcript(items: [question, assistant, receipt])
       #expect(original.hasUnscopedReplay)
-      let portable = try original.portableHandoff(binding: binding, budget: budget, runningWork: ["script.running"])
+      let portable = try original.portableHandoff(binding: binding, budget: budget, runningWork: ["script.running"], openRequests: [OpenRequest(id: .init("r-1"))])
       guard case let .generationHead(head) = portable.items[0] else { Issue.record("missing head"); return }
       #expect(head.runningWork == ["script.running"])
       #expect(portable.replayBinding == binding)
@@ -57,14 +57,28 @@ import WuhuAI
     } operation: {
       let original = Transcript(items: [Fix.message(kind: .request, request: "r", text: String(repeating: "full task ", count: 2000))])
       #expect(throws: PortableHandoffError.modelHandoffTooLarge) {
-        try original.portableHandoff(binding: binding, budget: .init(maxInput: 1000, maxOutput: 100), runningWork: [])
+        try original.portableHandoff(binding: binding, budget: .init(maxInput: 1000, maxOutput: 100), runningWork: [], openRequests: [OpenRequest(id: .init("r"))])
       }
+    }
+  }
+
+  @Test func onlyTheOpenRequestsBriefsAreProtected() throws {
+    try withDependencies {
+      $0.uuid = UUIDGenerator { UUID() }
+      $0.date = DateGenerator { Fix.instant }
+    } operation: {
+      let open = Fix.message(id: "m-open", conversation: "dm-open", kind: .request, request: "r-open", owesReply: false, text: "open brief")
+      let closed = Fix.message(id: "m-closed", conversation: "dm-closed", kind: .request, request: "r-closed", owesReply: false, text: "closed brief")
+      let original = Transcript(items: [open, closed, Fix.assistant(totalTokens: 1)])
+      let portable = try original.portableHandoff(binding: binding, budget: budget, runningWork: [], openRequests: [OpenRequest(id: .init("r-open"))], recentTokens: 0)
+      #expect(portable.items.contains(open))
+      #expect(!portable.items.contains(closed))
     }
   }
 
   @Test func pendingSideEffectsMustCompleteBeforeCrossing() {
     let original = Transcript(items: [Fix.assistant(totalTokens: 1, toolCalls: [.init(id: "pending", name: "exec", arguments: .object([:]))])])
-    #expect(throws: PortableHandoffError.outstandingToolCalls) { try original.portableHandoff(binding: binding, budget: budget, runningWork: []) }
+    #expect(throws: PortableHandoffError.outstandingToolCalls) { try original.portableHandoff(binding: binding, budget: budget, runningWork: [], openRequests: []) }
   }
 
   @Test func noneModeProjectsEveryReplayWithoutRepeatedLegacyBoundaries() {
@@ -85,7 +99,7 @@ import WuhuAI
     } operation: {
       let old = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "previous summary", snapshot: .init(), replayBinding: .init(identity: "old", epoch: "old"), runningWork: [])
       let transcript = Transcript(items: [.generationHead(old), Fix.message(kind: .request, request: "r", text: "full task")])
-      let portable = try transcript.portableHandoff(binding: binding, budget: budget, runningWork: [])
+      let portable = try transcript.portableHandoff(binding: binding, budget: budget, runningWork: [], openRequests: [OpenRequest(id: .init("r"))])
       #expect(portable.replayBinding == binding)
       #expect(!portable.requiresReplayHandoff(to: binding.identity))
       #expect(portable.items.filter { if case .generationHead = $0 { return true }; return false }.count == 1)

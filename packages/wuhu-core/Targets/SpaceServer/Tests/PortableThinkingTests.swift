@@ -114,7 +114,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
             return
           } catch let required as ReplayBoundaryRequired {
             #expect(bodies.withLock { $0.isEmpty })
-            let portable = try source.portableHandoff(binding: required.binding, budget: required.budget, runningWork: [])
+            let portable = try source.portableHandoff(binding: required.binding, budget: required.budget, runningWork: [], openRequests: [])
             adopted = try await owner.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable)).value(Transcript.self)
           }
         }

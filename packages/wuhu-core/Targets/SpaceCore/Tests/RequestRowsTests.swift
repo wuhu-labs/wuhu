@@ -166,6 +166,7 @@ import Testing
     #expect(row["status"] == "failed")
     #expect(row["refusals"] == #"["f0","f1","f2"]"#)
     #expect(try await fleet.count("SELECT count(*) FROM messages WHERE kind = 'final'") == 1)
+    #expect(try await fleet.store.openRequests(fleet.task).isEmpty, "a failed request is owed no more")
   }
 
   @Test func `a retried refused attempt counts once, however late`() async throws {

@@ -429,10 +429,14 @@ extension SessionStore {
     let snapshot = try routingSnapshot(message, conversation: conversation, poster: poster, now: routingDate, in: db)
     let routed = try recipients(snapshot: snapshot, message: message, now: routingDate)
 
+    let requestTask = try message.kind == .request ? message.requestID.flatMap { try RequestRow.find($0, in: db) }?.task : nil
     var enqueued: [SessionID] = []
     for key in routed.woken {
       let recipient = key.rawValue
-      let owes = message.kind == .message && snapshot.sessions[key]?.kind == .agent && conversation.ownerSession == key
+      // Only the task is handed a request; anyone else it reaches reads a message.
+      let handed = message.kind != .request || requestTask == recipient
+      let kind = handed ? message.kind : .message
+      let owes = kind == .message && snapshot.sessions[key]?.kind == .agent && conversation.ownerSession == key
       let home = try Sessions.group(of: recipient, in: db)
       let input = QueueInput.message(ConversationMessage(
         id: .deterministic("deliver", message.id.rawValue, recipient),
@@ -441,9 +445,9 @@ extension SessionStore {
         sender: message.sender,
         senderSession: message.senderSession,
         timestamp: message.createdAt,
-        kind: message.kind,
-        requestID: message.requestID,
-        deadline: message.deadline,
+        kind: kind,
+        requestID: handed ? message.requestID : nil,
+        deadline: handed ? message.deadline : nil,
         replyTarget: message.replyTarget,
         owesReply: owes,
         senderGroup: poster.group == home ? nil : poster.group,

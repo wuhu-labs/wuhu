@@ -89,18 +89,19 @@ import Testing
   @Test(arguments: [false, true])
   func handlerTimerDoesNotSuppressRequestParkBackstop(cron: Bool) {
     let request = RequestID("r1")
+    let open = [OpenRequest(id: request)]
     let subscription = SubscriptionID("timer.handler")
     let schedule: TimerSchedule = cron ? .cron("* * * * *") : .oneShot(Fix.instant.addingTimeInterval(60))
     var transcript = Transcript(items: [
       Fix.message(id: "r1", conversation: "dm", kind: .request, request: "r1", owesReply: false),
       Fix.result(.timer(.init(subscriptionID: subscription, schedule: schedule, message: "tick"))),
     ])
-    #expect(transcript.environment.nag(task: true, now: Fix.instant) == nil, "plain timers remain guaranteed model wakes")
+    #expect(transcript.environment.nag(task: true, openRequests: open, now: Fix.instant) == nil, "plain timers remain guaranteed model wakes")
     transcript.handlerSubscriptions = [subscription]
     let park = Nag.park(request: request)
-    #expect(transcript.environment.nag(task: true, now: Fix.instant) == park)
+    #expect(transcript.environment.nag(task: true, openRequests: open, now: Fix.instant) == park)
     transcript.append(.notification(park.notification(id: UUID(), at: Fix.instant)))
-    #expect(transcript.environment.nextTimer(now: Fix.instant) == Fix.instant.addingTimeInterval(60))
+    #expect(transcript.environment.nextTimer(openRequests: open, now: Fix.instant) == Fix.instant.addingTimeInterval(60))
     let head = GenerationHead(
       id: UUID(), timestamp: Fix.instant, summary: "compact",
       snapshot: .init(carrying: transcript.environment.tools, preReads: []), settle: transcript.environment.settle,
@@ -108,8 +109,8 @@ import Testing
     )
     let compacted = transcript.compacted(head: head, kept: nil)
     #expect(compacted.handlerSubscriptions == [subscription])
-    #expect(compacted.environment.nextTimer(now: Fix.instant) == Fix.instant.addingTimeInterval(60))
+    #expect(compacted.environment.nextTimer(openRequests: open, now: Fix.instant) == Fix.instant, "a new generation starts the backoff over")
     transcript.append(Fix.result(.request(.init(requestID: .init("child"), task: .init("task"), conversationID: .init("child-dm"), deadline: Fix.instant.addingTimeInterval(60)))))
-    #expect(transcript.environment.nextTimer(now: Fix.instant) == nil, "outgoing request deadlines remain guaranteed wakes")
+    #expect(transcript.environment.nextTimer(openRequests: open, now: Fix.instant) == nil, "outgoing request deadlines remain guaranteed wakes")
   }
 }

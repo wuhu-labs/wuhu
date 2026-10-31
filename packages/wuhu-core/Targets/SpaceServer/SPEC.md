@@ -563,7 +563,7 @@ Single-hop HTTP connections disable automatic redirects and share the page pathâ
 View-provider routes (`/_/views/kanban`, `list`, `wall`, and `map`) refuse a `path` resolving under conversation attachments with 403 `attachmentViewForbidden`. They inspect the first `path` query value, matching the provider's URLSearchParams lookup, before returning a trusted provider frame. A malformed target URL receives 400 `invalidViewPath`. Copy an attachment definition to an ordinary space path before opening it as a view.
 
 
-Session Start over reports the number of unreadable queued inputs dropped in its restart note, appended to the normal catch-up text. Readable queued inputs retain FIFO order and dedup identity and still wake the new generation. Retained open requests have their park-reminder count and last-reminder time reset, so a restarted task does not inherit its previous park backoff.
+Session Start over reports the number of unreadable queued inputs dropped in its restart note, appended to the normal catch-up text. Readable queued inputs retain FIFO order and dedup identity and still wake the new generation. Open requests stay open; the new generation's park backoff starts over, since it counts only the reminders its own transcript shows.
 
 ## Removed Claude Code executor
 

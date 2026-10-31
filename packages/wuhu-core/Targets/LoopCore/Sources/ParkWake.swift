@@ -13,9 +13,10 @@ extension SessionActor {
       $0.parkWake?.task.cancel()
       $0.parkWake = nil
     }
+    let openRequests = try await main.openRequests(id)
     let now = date()
-    let nag = environment.nag(task: (try live).isTask, now: now)
-    let due = nag == nil ? environment.nextTimer(now: now) : nil
+    let nag = environment.nag(task: (try live).isTask, openRequests: openRequests, now: now)
+    let due = nag == nil ? environment.nextTimer(openRequests: openRequests, now: now) : nil
     if let schedule = loopConfig.scheduleWake {
       if try due != nil || live.delegatedWake {
         try await schedule(id, due)

@@ -57,12 +57,12 @@ extension Transcript {
     }
   }
 
-  public func portableHandoff(binding: ReplayBinding, budget: ContextBudget, runningWork: [String], recentTokens: Int = 8192) throws -> Transcript {
+  public func portableHandoff(binding: ReplayBinding, budget: ContextBudget, runningWork: [String], openRequests: [OpenRequest], recentTokens: Int = 8192) throws -> Transcript {
     guard pendingToolCallIDs.isEmpty else { throw PortableHandoffError.outstandingToolCalls }
     @Dependency(\.uuid) var uuid
     @Dependency(\.date.now) var now
     let environment = environment
-    let protected = protectedHandoffInputs(environment.settle)
+    let protected = protectedHandoffInputs(environment.settle, openRequests: Set(openRequests.map(\.id)))
     let projected = items.map { item -> TranscriptItem in
       guard case var .assistant(entry) = item else { return item }
       entry.id = uuid()
@@ -110,7 +110,7 @@ extension Transcript {
     }
   }
 
-  private func protectedHandoffInputs(_ settle: SettleState) -> Set<Int> {
+  private func protectedHandoffInputs(_ settle: SettleState, openRequests: Set<RequestID>) -> Set<Int> {
     var posted: [ConversationID: Int] = [:]
     var lastAssistant = -1
     for (index, item) in items.enumerated() {
@@ -130,7 +130,7 @@ extension Transcript {
       if protectLatestToolTurn, index >= lastAssistant { return true }
       switch items[index] {
       case let .message(message):
-        if let request = message.requestID, settle.openRequests[request] != nil { return true }
+        if let request = message.requestID, openRequests.contains(request) { return true }
         if settle.owed[message.conversationID] != nil, index > (posted[message.conversationID] ?? -1) { return true }
         return index > lastAssistant
       case .direct, .notification: return index > lastAssistant

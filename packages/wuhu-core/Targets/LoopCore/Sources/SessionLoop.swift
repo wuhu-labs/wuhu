@@ -218,15 +218,16 @@ extension SessionActor {
       let state = try live
       arguments = try decodeArguments(CompactArguments.self, from: toolCall)
       kept = try state.transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark)
-      if arguments.park, let refusal = ParkRefusal(state.transcript.environment, task: state.isTask) { throw refusal }
     } catch let notFound as BookmarkNotFound {
       return try await writeToolResult(.toolCall(callID), .failure(.init(message: "bookmark \"\(notFound.name)\" not found; name an existing bookmark or omit it to fold everything")))
-    } catch let refusal as ParkRefusal {
-      return try await writeToolResult(.toolCall(callID), .failure(.init(message: refusal.description)))
     } catch {
       return try await writeToolResult(.toolCall(callID), .failure(.init(message: "invalid compact arguments: \(error)")))
     }
     guard arguments.park else { return try await fold(callID, arguments, kept: kept) }
+    let state = try live
+    if let refusal = ParkRefusal(state.transcript.environment, task: state.isTask, openRequests: try await main.openRequests(id)) {
+      return try await writeToolResult(.toolCall(callID), .failure(.init(message: refusal.description)))
+    }
     return try await writeToolResult(.toolCall(callID), .compact(.init(summary: arguments.summary)))
   }
 
@@ -348,7 +349,7 @@ extension SessionActor {
         // The model tried to finish. A nag due now is written with its message,
         // so the session never reads settled while it owes one.
         let now = date()
-        if mode == .normal, entry.toolCalls.isEmpty, let nag = appended.environment.nag(task: (try live).isTask, now: now) {
+        if mode == .normal, entry.toolCalls.isEmpty, let nag = appended.environment.nag(task: (try live).isTask, openRequests: try await main.openRequests(id), now: now) {
           appended.append(.notification(nag.notification(id: uuid(), at: now)))
         }
         try await main.append(id, .transcriptAppended(items: Array(appended.items[before...]), inputOrigin: appended.cacheWarmingInputOrigin, completing: compactClaim)).value(Void.self)
@@ -372,7 +373,7 @@ extension SessionActor {
         let state = try live
         let compacted: Transcript
         do {
-          let portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: try await loopConfig.runningWork(id))
+          let portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: try await loopConfig.runningWork(id), openRequests: try await main.openRequests(id))
           compacted = try await main.append(id, .portableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable)).value(Transcript.self)
         } catch {
           try Task.checkCancellation()

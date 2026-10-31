@@ -4,30 +4,16 @@ public enum SettleEvent: Hashable, Sendable {
   case delivered(Delivered)
   case posted(Posted)
   case owedReminder(conversations: [ConversationID], at: Date)
-  case parkReminder(request: RequestID, at: Date)
 
   public struct Delivered: Hashable, Sendable {
     public var conversation: ConversationID
-    public var kind: MessageKind
-    public var request: RequestID?
-    public var deadline: Date?
     // Owed-reply scope, decided by the projection: an agent's own box and its
     // DMs with users, nothing else.
     public var owesReply: Bool
     public var at: Date
 
-    public init(
-      conversation: ConversationID,
-      kind: MessageKind,
-      request: RequestID? = nil,
-      deadline: Date? = nil,
-      owesReply: Bool,
-      at: Date,
-    ) {
+    public init(conversation: ConversationID, owesReply: Bool, at: Date) {
       self.conversation = conversation
-      self.kind = kind
-      self.request = request
-      self.deadline = deadline
       self.owesReply = owesReply
       self.at = at
     }
@@ -35,14 +21,10 @@ public enum SettleEvent: Hashable, Sendable {
 
   public struct Posted: Hashable, Sendable {
     public var conversation: ConversationID
-    public var kind: MessageKind
-    public var request: RequestID?
     public var at: Date
 
-    public init(conversation: ConversationID, kind: MessageKind, request: RequestID? = nil, at: Date) {
+    public init(conversation: ConversationID, at: Date) {
       self.conversation = conversation
-      self.kind = kind
-      self.request = request
       self.at = at
     }
   }
@@ -52,7 +34,6 @@ public enum SettleEvent: Hashable, Sendable {
     case let .delivered(event): event.at
     case let .posted(event): event.at
     case let .owedReminder(_, at): at
-    case let .parkReminder(_, at): at
     }
   }
 
@@ -60,38 +41,22 @@ public enum SettleEvent: Hashable, Sendable {
     switch self {
     case .delivered: 0
     case .posted: 1
-    case .owedReminder, .parkReminder: 2
+    case .owedReminder: 2
     }
   }
 }
 
+/// A request whose final report this session owes, as the requests table holds it.
 public struct OpenRequest: Hashable, Sendable, Codable {
   public var id: RequestID
-  public var conversation: ConversationID
   public var deadline: Date?
-  public var openedAt: Date
-  public var lastParkReminderAt: Date?
-  public var parkReminderCount: Int
 
-  public init(
-    id: RequestID,
-    conversation: ConversationID,
-    deadline: Date? = nil,
-    openedAt: Date,
-    lastParkReminderAt: Date? = nil,
-    parkReminderCount: Int = 0,
-  ) {
+  public init(id: RequestID, deadline: Date? = nil) {
     self.id = id
-    self.conversation = conversation
     self.deadline = deadline
-    self.openedAt = openedAt
-    self.lastParkReminderAt = lastParkReminderAt
-    self.parkReminderCount = parkReminderCount
   }
 }
 
-// The fold the design note calls "one function over one transcript with two
-// outputs, owed conversations and open requests". Nothing else reads it.
 public struct SettleState: Hashable, Sendable, Codable {
   public enum Owed: Hashable, Sendable, Codable {
     case owed
@@ -99,15 +64,9 @@ public struct SettleState: Hashable, Sendable, Codable {
   }
 
   public var owed: [ConversationID: Owed]
-  public var openRequests: [RequestID: OpenRequest]
-  // A final closes its request for good. Keeping the set makes the fold
-  // order-independent for requests, where the tie-break that keeps an owe
-  // conservative would otherwise re-open one a same-instant final closed.
-  private var closed: Set<RequestID> = []
 
-  public init(owed: [ConversationID: Owed] = [:], openRequests: [RequestID: OpenRequest] = [:]) {
+  public init(owed: [ConversationID: Owed] = [:]) {
     self.owed = owed
-    self.openRequests = openRequests
   }
 
   public init(folding events: some Sequence<SettleEvent>) {
@@ -119,29 +78,12 @@ public struct SettleState: Hashable, Sendable, Codable {
     switch event {
     case let .delivered(delivered):
       if delivered.owesReply { owed[delivered.conversation] = .owed }
-      if delivered.kind == .request, let request = delivered.request, !closed.contains(request) {
-        openRequests[request] = OpenRequest(
-          id: request,
-          conversation: delivered.conversation,
-          deadline: delivered.deadline,
-          openedAt: delivered.at,
-        )
-      }
     case let .posted(posted):
       owed[posted.conversation] = nil
-      if posted.kind == .final, let request = posted.request {
-        openRequests[request] = nil
-        closed.insert(request)
-      }
     case let .owedReminder(conversations, _):
       for conversation in conversations where owed[conversation] == .owed {
         owed[conversation] = .reminded
       }
-    case let .parkReminder(request, at):
-      guard var open = openRequests[request] else { break }
-      open.lastParkReminderAt = at
-      open.parkReminderCount += 1
-      openRequests[request] = open
     }
   }
 
@@ -150,19 +92,24 @@ public struct SettleState: Hashable, Sendable, Codable {
   }
 }
 
-public enum ParkBackoff {
+struct ParkReminders: Hashable, Sendable, Codable {
+  var count: Int
+  var last: Date
+}
+
+enum ParkBackoff {
   // 1, 5, 15 minutes, flat after: the nth reminder waits delay(n) past the
   // previous one. The first one goes out the moment the run settles.
-  public static let delays: [Duration] = [.seconds(60), .seconds(300), .seconds(900)]
+  static let delays: [Duration] = [.seconds(60), .seconds(300), .seconds(900)]
 
-  public static func delay(after reminders: Int) -> Duration {
+  static func delay(after reminders: Int) -> Duration {
     guard reminders > 0 else { return .zero }
     return delays[min(reminders, delays.count) - 1]
   }
 
-  public static func nextFire(after request: OpenRequest, now: Date) -> Date? {
-    let base = request.lastParkReminderAt ?? now
-    let interval = delay(after: request.parkReminderCount).seconds
+  static func nextFire(after request: OpenRequest, reminded: ParkReminders?, now: Date) -> Date? {
+    let base = reminded?.last ?? now
+    let interval = delay(after: reminded?.count ?? 0).seconds
     let due = max(now, base.addingTimeInterval(interval))
     guard let deadline = request.deadline else { return due }
     return due <= deadline ? due : nil
@@ -180,21 +127,12 @@ extension QueueInput {
   public var settleEvent: SettleEvent? {
     switch self {
     case let .message(message):
-      .delivered(.init(
-        conversation: message.conversationID,
-        kind: message.kind,
-        request: message.requestID,
-        deadline: message.deadline,
-        owesReply: message.owesReply,
-        at: message.timestamp,
-      ))
+      .delivered(.init(conversation: message.conversationID, owesReply: message.owesReply, at: message.timestamp))
     case let .notification(notification):
       switch notification.kind {
       case .owedReply:
         .owedReminder(conversations: notification.conversations, at: notification.timestamp)
-      case .parkReminder:
-        notification.requestID.map { .parkReminder(request: $0, at: notification.timestamp) }
-      case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .exec, .context:
+      case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .exec, .context, .parkReminder:
         nil
       }
     }

@@ -77,6 +77,7 @@ public struct MainClient: Main {
   private func session(_ id: SessionID, _ leaf: String) -> String { "/v1/worker/session/\(id.rawValue)/\(leaf)" }
 
   public func owedExecs(_ session: SessionID) async throws -> [ExecRecord] { try await require(.get, self.session(session, "owed-execs")) }
+  public func openRequests(_ session: SessionID) async throws -> [OpenRequest] { try await require(.get, self.session(session, "open-requests")) }
 
   public func pendingArrivals(_ session: SessionID) -> AsyncThrowingStream<[PendingArrival], any Error> {
     let path = self.session(session, "arrivals")

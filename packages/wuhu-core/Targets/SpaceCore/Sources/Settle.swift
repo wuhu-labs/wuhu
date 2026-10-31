@@ -31,12 +31,7 @@ extension Sessions {
       events.append(event)
     }
     for record in try Conversations.fetch(db, where: "sender_session_id = ? AND n > ?", arguments: [key, boundary?.messageTail ?? 0]) where record.createdAt <= through {
-      events.append(.posted(.init(
-        conversation: record.conversation,
-        kind: record.kind,
-        request: record.requestID,
-        at: record.createdAt,
-      )))
+      events.append(.posted(.init(conversation: record.conversation, at: record.createdAt)))
     }
     events.sortByTime()
     return events

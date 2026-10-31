@@ -112,7 +112,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
             && notifications.contains { $0.kind == .requestDeadline && $0.requestID == .init("restart-duty") }
         }
         #expect(try await space.sessions.armedSubscriptions(session).count == 2)
-        #expect(try await space.sessions.settleState(child).openRequests[.init("restart-duty")] != nil)
+        #expect(try await space.sessions.openRequests(child).map(\.id) == [.init("restart-duty")])
         await time.advance(by: 60)
         try await untilAdvancing("cron fires again", time) {
           try await space.sessions.hydrate(session).undrained.filter {

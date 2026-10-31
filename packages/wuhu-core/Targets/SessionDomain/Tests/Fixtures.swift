@@ -94,35 +94,11 @@ enum Fix {
     result(.sendMessage(.init(messageID: .init(id), conversationID: .init(conversation), n: 1)))
   }
 
-  static func delivered(
-    conversation: String = "ch1",
-    kind: MessageKind = .message,
-    request: String? = nil,
-    deadline: Date? = nil,
-    owesReply: Bool = true,
-    at: Date = instant,
-  ) -> SettleEvent {
-    .delivered(.init(
-      conversation: .init(conversation),
-      kind: kind,
-      request: request.map { RequestID($0) },
-      deadline: deadline,
-      owesReply: owesReply,
-      at: at,
-    ))
+  static func delivered(conversation: String = "ch1", owesReply: Bool = true, at: Date = instant) -> SettleEvent {
+    .delivered(.init(conversation: .init(conversation), owesReply: owesReply, at: at))
   }
 
-  static func posted(
-    conversation: String = "ch1",
-    kind: MessageKind = .message,
-    request: String? = nil,
-    at: Date = instant,
-  ) -> SettleEvent {
-    .posted(.init(
-      conversation: .init(conversation),
-      kind: kind,
-      request: request.map { RequestID($0) },
-      at: at,
-    ))
+  static func posted(conversation: String = "ch1", at: Date = instant) -> SettleEvent {
+    .posted(.init(conversation: .init(conversation), at: at))
   }
 }

@@ -43,7 +43,7 @@ import Testing
     #expect(delivery.message.kind == .request)
     #expect(delivery.message.requestID == RequestID("r1"))
     try await pair.drain(pair.task)
-    #expect(try await pair.store.settleState(pair.task).openRequests.keys.map(\.rawValue) == ["r1"])
+    #expect(try await pair.store.openRequests(pair.task) == [OpenRequest(id: RequestID("r1"))])
   }
 
   @Test func `a second request while one is open is refused`() async throws {
@@ -78,13 +78,13 @@ import Testing
     )
     #expect(progress.enqueued == [pair.parent])
     #expect(progress.message.kind == .progress)
-    #expect(try await pair.store.settleState(pair.task).openRequests.count == 1)
+    #expect(try await pair.store.openRequests(pair.task).count == 1)
 
     let final = try await pair.store.report(
       pair.task, request: .init("r1"), kind: .final, messageID: MessageID("f1"), text: "done",
     )
     #expect(final.enqueued == [pair.parent])
-    #expect(try await pair.store.settleState(pair.task).openRequests.isEmpty)
+    #expect(try await pair.store.openRequests(pair.task).isEmpty)
 
     // A second brief is legal once the first is answered.
     _ = try await pair.request("r2")
@@ -109,33 +109,6 @@ import Testing
     )
     #expect(try await pair.store.armedSubscriptions(pair.task).isEmpty, "the loop schedules its own park wake")
     #expect(try await pair.store.hydrate(pair.task).undrained.isEmpty)
-  }
-
-  @Test func `park reminders back off 1 then 5 minutes`() async throws {
-    let pair = try await Pair()
-    _ = try await pair.request("r1")
-    try await pair.drain(pair.task)
-    let start = pair.rig.store.dateGen.now
-
-    _ = try await pair.store.enqueue(pair.task, input: .notification(.init(
-      id: UUID(), timestamp: start, kind: .parkReminder,
-      subscriptionID: .park(.init("r1")), requestID: .init("r1"), content: .init(text: "nudge"),
-    )))
-    try await pair.drain(pair.task)
-    var open = try #require(try await pair.store.settleState(pair.task).openRequests[RequestID("r1")])
-    #expect(open.parkReminderCount == 1)
-    #expect(ParkBackoff.nextFire(after: open, now: start) == start.addingTimeInterval(60))
-
-    pair.rig.advance(120)
-    let second = pair.rig.store.dateGen.now
-    _ = try await pair.store.enqueue(pair.task, input: .notification(.init(
-      id: UUID(), timestamp: second, kind: .parkReminder,
-      subscriptionID: .park(.init("r1")), requestID: .init("r1"), content: .init(text: "nudge"),
-    )))
-    try await pair.drain(pair.task)
-    open = try #require(try await pair.store.settleState(pair.task).openRequests[RequestID("r1")])
-    #expect(open.parkReminderCount == 2)
-    #expect(ParkBackoff.nextFire(after: open, now: second) == second.addingTimeInterval(300))
   }
 
   @Test func `a deadline arms the parent's own subscription and a final cancels it`() async throws {
@@ -174,7 +147,7 @@ import Testing
     let rows = try await pair.store.notifications(recipient: Notifications.ownerRecipient)
     #expect(rows.map(\.kind) == [.childFailed])
     #expect(rows[0].payload.contains("boom"))
-    #expect(try await pair.store.settleState(pair.task).openRequests.count == 1)
+    #expect(try await pair.store.openRequests(pair.task).count == 1)
 
     let hydration = try await pair.store.hydrate(pair.parent)
     guard case let .notification(notification) = hydration.undrained.last?.input.transcriptItem else {

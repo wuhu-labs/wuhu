@@ -91,19 +91,19 @@ import Testing
       #expect(hydration.undrained.count == 1)
       #expect(hydration.queueHead > hydration.queueTail)
       #expect(hydration.transcript.kernel.items.count == 1)
-      #expect(hydration.transcript.kernel.environment.settle.openRequests[.init("r1")] != nil)
+      #expect(try await store.openRequests(task).map(\.id) == [.init("r1")])
       #expect(!hydration.transcript.kernel.environment.settle.owedConversations.contains(.init("ch1")))
       #expect(hydration.transcript.kernel.environment.settle == (try await store.settleState(task)))
       let drained = try await store.drainQueue(task)
       #expect(drained.items.count == 1)
       #expect(try await store.transcript(task).environment.settle.owedConversations.contains(.init("ch1")))
       _ = try await store.report(task, request: .init("r1"), kind: .final, messageID: .init("f1"), text: "done")
-      #expect(try await store.settleState(task).openRequests.isEmpty)
+      #expect(try await store.openRequests(task).isEmpty)
       _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("r2"), text: "new duty", deadline: nil)
       _ = try await store.drainQueue(task)
-      #expect(try await store.settleState(task).openRequests[.init("r2")] != nil)
+      #expect(try await store.openRequests(task).map(\.id) == [.init("r2")])
       _ = try await store.report(task, request: .init("r2"), kind: .final, messageID: .init("f2"), text: "done again")
-      #expect(try await store.settleState(task).openRequests.isEmpty)
+      #expect(try await store.openRequests(task).isEmpty)
     }
   }
 
@@ -205,29 +205,22 @@ import Testing
     }
   }
 
-  @Test func restartResetsOpenRequestParkPacingWithoutClosingTheRequest() async throws {
+  @Test func restartStartsParkRemindersOverWithoutClosingTheRequest() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let task = try await store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("parked"), text: "still owed", deadline: fixedDate.addingTimeInterval(3600))
+      let deadline = fixedDate.addingTimeInterval(3600)
+      _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("parked"), text: "still owed", deadline: deadline)
       _ = try await store.drainQueue(task)
-      for _ in 0 ..< 3 {
-        _ = try await store.enqueue(task, input: .notification(.init(id: UUID(), timestamp: fixedDate, kind: .parkReminder, subscriptionID: .park(.init("parked")), requestID: .init("parked"), content: .init(text: "park reminder"))))
-      }
-      _ = try await store.drainQueue(task)
-      let before = try #require(await store.settleState(task).openRequests[.init("parked")])
-      #expect(before.parkReminderCount == 3)
-      #expect(before.lastParkReminderAt == fixedDate)
+      let nag = Nag.park(request: .init("parked"))
+      try await store.append(task, items: (0 ..< 3).map { _ in .notification(nag.notification(id: UUID(), at: fixedDate)) }, inputOrigin: nil)
+      let open = try await store.openRequests(task)
+      #expect(try await store.transcript(task).environment.nextTimer(openRequests: open, now: fixedDate) == fixedDate.addingTimeInterval(900))
       try await store.markInterrupted(task)
       _ = try await store.restart(task)
-      let after = try #require(await store.settleState(task).openRequests[.init("parked")])
-      var expected = before
-      expected.parkReminderCount = 0
-      expected.lastParkReminderAt = nil
-      #expect(after == expected)
-      #expect(try await store.transcript(task).environment.settle.openRequests[.init("parked")] == expected)
-      #expect(ParkBackoff.nextFire(after: after, now: fixedDate) == fixedDate)
+      #expect(try await store.openRequests(task) == [OpenRequest(id: .init("parked"), deadline: deadline)])
+      #expect(try await store.transcript(task).environment.nextTimer(openRequests: open, now: fixedDate) == fixedDate)
     }
   }
 

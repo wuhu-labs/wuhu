@@ -94,6 +94,24 @@ func createRetiredSession(
   return id
 }
 
+// A task whose parent never runs, so its requests and finals wake nothing else.
+func createRequestedTask(in space: Space, title: String = "t") async throws -> SessionID {
+  let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "morgan")
+  return try await space.sessions.createSession(group: .shared, title: title, kind: .task, parent: requester, createdBy: "morgan", executor: .kernel(.test))
+}
+
+extension SessionStore {
+  @discardableResult
+  func openParentRequest(on task: SessionID, _ id: String = "r1") async throws -> MessageDelivery {
+    try await openRequest(on: task, from: .session(try #require(try await record(task).parent)), messageID: .init(id), text: "do it", deadline: nil)
+  }
+
+  func reportFinal(_ task: SessionID, _ request: String = "r1") async throws -> ToolResultPayload {
+    let posted = try await report(task, request: .init(request), kind: .final, messageID: .init("final-\(request)"), text: "done").message
+    return .report(.init(messageID: posted.id, requestID: .init(request), conversationID: posted.conversation, kind: .final))
+  }
+}
+
 func withKernelDeps<R>(
   seed: UInt64 = 7,
   _ body: (TimeControl) async throws -> R,

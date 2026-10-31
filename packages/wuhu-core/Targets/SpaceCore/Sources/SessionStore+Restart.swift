@@ -75,19 +75,9 @@ extension SessionStore {
       }
       var head = head
       do {
-        var settle: SettleState
-        do {
-          settle = try Sessions.settleState(key, through: nowDate, in: db)
-        } catch where isUnreadableSessionData(error) {
-          settle = SettleState()
-        }
-        settle.openRequests = settle.openRequests.mapValues { request in
-          var request = request
-          request.parkReminderCount = 0
-          request.lastParkReminderAt = nil
-          return request
-        }
-        head.settle = settle
+        head.settle = try Sessions.settleState(key, through: nowDate, in: db)
+      } catch where isUnreadableSessionData(error) {
+        head.settle = SettleState()
       }
       let queue = try Sessions.recoverRestartQueue(key, tail: runtime.queueTail, in: db)
       if queue.dropped > 0 {

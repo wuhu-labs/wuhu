@@ -41,8 +41,8 @@ public enum Nag: Hashable, Sendable, Codable {
 // its tools did, the settle state and the tool state together. It is reduced
 // in log order from stored effects, so it never depends on when anything ran.
 //
-// Order: requests merge through a tombstone set and subscriptions and file
-// reads by key, so parallel tool results commute. The owed map does not
+// Order: subscriptions and file reads merge by key, so parallel tool results
+// commute. The owed map does not
 // commute (a delivery sets it, a post clears it): it is ordered by log
 // position, which is what the caller's event order is.
 public struct SessionEnvironment: Hashable, Sendable, Codable {
@@ -54,11 +54,12 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
 
   public private(set) var settle: SettleState = .init()
   public private(set) var tools: ToolExecutionState = .init()
+  private var parkReminders: [RequestID: ParkReminders] = [:]
 
   public init() {}
 
   // A head that recorded its settle state already holds the tail it carried
-  // across, so the carried items touch only the tool state.
+  // across, so the carried items leave it alone.
   init(folding transcript: Transcript) {
     let carried = if case let .generationHead(head)? = transcript.items.first, head.settle != nil {
       1 ..< max(1, transcript.keptCount)
@@ -98,16 +99,16 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
       tools.apply(payload)
       switch payload {
       case let .sendMessage(result):
-        settle.apply(.posted(.init(conversation: result.conversationID, kind: .message, at: at)))
+        settle.apply(.posted(.init(conversation: result.conversationID, at: at)))
       case let .report(result):
-        settle.apply(.posted(.init(conversation: result.conversationID, kind: result.kind, request: result.requestID, at: at)))
+        settle.apply(.posted(.init(conversation: result.conversationID, at: at)))
       default:
         break
       }
     case let .nagged(.owedReply(conversations), at):
       settle.apply(.owedReminder(conversations: conversations, at: at))
     case let .nagged(.park(request), at):
-      settle.apply(.parkReminder(request: request, at: at))
+      parkReminders[request] = ParkReminders(count: (parkReminders[request]?.count ?? 0) + 1, last: at)
     }
   }
 
@@ -130,6 +131,7 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
     case let .generationHead(head):
       settle = head.settle ?? SettleState()
       tools = ToolExecutionState(resuming: head.snapshot)
+      parkReminders = [:]
     }
   }
 
@@ -146,18 +148,22 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
 
   // An agent owes replies in its conversations; any session a parent opened a
   // request on, agent or task, owes that request its final report.
-  public func nag(task: Bool, now: Date) -> Nag? {
+  public func nag(task: Bool, openRequests: [OpenRequest], now: Date) -> Nag? {
     if !task, !settle.owedConversations.isEmpty {
       return .owedReply(conversations: settle.owedConversations)
     }
     guard !hasArmedWake else { return nil }
-    return settle.openRequests.values.sorted { $0.id.rawValue < $1.id.rawValue }
-      .first { ParkBackoff.nextFire(after: $0, now: now) == now }
+    return openRequests.sorted { $0.id.rawValue < $1.id.rawValue }
+      .first { nextParkReminder($0, now: now) == now }
       .map { .park(request: $0.id) }
   }
 
-  public func nextTimer(now: Date) -> Date? {
+  public func nextTimer(openRequests: [OpenRequest], now: Date) -> Date? {
     guard !hasArmedWake else { return nil }
-    return settle.openRequests.values.compactMap { ParkBackoff.nextFire(after: $0, now: now) }.min()
+    return openRequests.compactMap { nextParkReminder($0, now: now) }.min()
+  }
+
+  private func nextParkReminder(_ request: OpenRequest, now: Date) -> Date? {
+    ParkBackoff.nextFire(after: request, reminded: parkReminders[request.id], now: now)
   }
 }

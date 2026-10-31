@@ -28,7 +28,7 @@ import WuhuAI
       let generation = try await store.generationState(id).generation
       var next = SessionModelRouteTests().route(member: "secondary", reason: .compaction)
       next.specifier.provider = "alternate"
-      let portable = try source.portableHandoff(binding: .init(identity: "scope-b", epoch: next.epoch), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [])
+      let portable = try source.portableHandoff(binding: .init(identity: "scope-b", epoch: next.epoch), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [], openRequests: [])
       let transition = ModelRouteTransition(expectedEpoch: old.epoch, route: next, transcript: portable)
       guard case let .generationHead(head) = portable.items[0] else { Issue.record("missing head"); return }
       try await space.writer.write { db in

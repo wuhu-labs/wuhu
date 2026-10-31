@@ -96,6 +96,10 @@ func workerRouter(owner: Hub, runtime: SessionRuntime) -> Router {
     guard let id = parameters["id"] else { return noSession() }
     return await answer { try await owner.owedExecs(SessionID(id)) }
   }
+  router.get("/v1/worker/session/:id/open-requests") { _, parameters in
+    guard let id = parameters["id"] else { return noSession() }
+    return await answer { try await owner.openRequests(SessionID(id)) }
+  }
   // The session's pending arrivals, now and after every change, as SSE.
   router.get("/v1/worker/session/:id/arrivals") { _, parameters in
     guard let id = parameters["id"] else { return noSession() }

@@ -107,19 +107,87 @@ private extension Transcript {
     }
   }
 
+  @Test func aRequestThatMentionsAnotherSessionReachesItAsAMessageAndLeavesItFreeToPark() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let bystander = try await sessions.createSession(group: .shared, title: "bystander", kind: .agent, createdBy: "morgan", model: .test)
+      let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "morgan")
+      let task = try await createRetiredSession(in: space, title: "task", kind: .task, parent: requester, createdBy: "morgan")
+      let script = InferenceScript([parks()])
+      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
+      try await runService(space, config) { _ in
+        _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "ask @\(bystander.rawValue) first", deadline: nil)
+        try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
+      }
+      let transcript = try await sessions.hydrate(bystander).transcript.kernel
+      guard case .foldPending = transcript.phase else { throw UnexpectedCall("the park was refused") }
+      let copy = try #require(transcript.items.lazy.compactMap { if case let .message(message) = $0 { message } else { nil } }.first)
+      #expect(copy.kind == .message)
+      #expect(copy.requestID == nil)
+      #expect(try await sessions.openRequests(bystander).isEmpty)
+      #expect(try await sessions.openRequests(task).map(\.id) == [RequestID("r1")])
+    }
+  }
+
+  @Test func aRequestBriefDeliveredToASessionThatIsNotItsTaskLeavesItFreeToPark() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let bystander = try await sessions.createSession(group: .shared, title: "bystander", kind: .agent, createdBy: "morgan", model: .test)
+      let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "morgan")
+      let task = try await createRetiredSession(in: space, title: "task", kind: .task, parent: requester, createdBy: "morgan")
+      _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "do it", deadline: nil)
+      let foreignBrief = QueueInput.message(.init(
+        id: UUID(), messageID: .init("r1"), conversationID: .init("dm-requester-task"), sender: Fix.sender,
+        timestamp: anchor, kind: .request, requestID: .init("r1"), owesReply: false, content: .init(text: "do it"),
+      ))
+      let script = InferenceScript([parks()])
+      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
+      try await runService(space, config) { service in
+        _ = try await service.enqueue(item: foreignBrief, to: bystander)
+        try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
+      }
+      guard case .foldPending = try await sessions.hydrate(bystander).transcript.kernel.phase else { throw UnexpectedCall("the park was refused") }
+      #expect(try await sessions.openRequests(task).map(\.id) == [RequestID("r1")])
+    }
+  }
+
+  @Test func aTaskWhoseRequestFailedParks() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let task = try await createRequestedTask(in: space, title: "fails its request")
+      let parent = try #require(try await sessions.record(task).parent)
+      let schema = try #require(JSONValue.parse(#"{"type":"object"}"#))
+      _ = try await sessions.openRequest(on: task, from: .session(parent), messageID: .init("r1"), text: "answer in JSON", deadline: nil, terms: RequestTerms(schema: schema))
+      for attempt in ["f1", "f2", "f3"] {
+        await #expect(throws: SessionStoreError.self) {
+          _ = try await sessions.report(task, request: .init("r1"), kind: .final, messageID: .init(attempt), text: "not an object")
+        }
+      }
+      #expect(try await sessions.openRequests(task).isEmpty)
+      let script = InferenceScript([parks()])
+      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
+      try await runService(space, config) { service in
+        try await service.wake(task)
+        try await until("the task's park settles") { try await sessions.settledWork(task) && script.count == 1 }
+      }
+      let transcript = try await sessions.hydrate(task).transcript.kernel
+      guard case .foldPending = transcript.phase else { throw UnexpectedCall("the park was refused") }
+      #expect(transcript.items.contains { if case let .message(message) = $0 { message.requestID == RequestID("r1") } else { false } })
+    }
+  }
+
   @Test(arguments: [SessionKind.agent, .task])
   func aParkIsRefusedWhileTheSessionOwesAndTheTurnGoesOn(kind: SessionKind) async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "parks owing", kind: kind, createdBy: "morgan", model: .test)
-      let owing: QueueInput = switch kind {
-      case .agent: Fix.message("please answer", conversation: id.rawValue, owesReply: true)
-      case .task: .message(.init(
-          id: UUID(), messageID: .init("r1"), conversationID: .init("dm"), sender: Fix.sender, timestamp: anchor,
-          kind: .request, requestID: .init("r1"), content: .init(text: "do it"),
-        ))
-      }
+      let id = try await kind == .agent
+        ? sessions.createSession(group: .shared, title: "parks owing", kind: kind, createdBy: "morgan", model: .test)
+        : createRequestedTask(in: space, title: "parks owing")
+      let owing: QueueInput? = kind == .agent ? Fix.message("please answer", conversation: id.rawValue, owesReply: true) : nil
       let script = InferenceScript([
         parks("parking without answering"),
         { request in
@@ -132,7 +200,7 @@ private extension Transcript {
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: owing, to: id)
+        if let owing { _ = try await service.enqueue(item: owing, to: id) } else { try await sessions.openParentRequest(on: id) }
         try await until("the refused park's turn goes on and its nag is answered") { try await sessions.settledWork(id) && script.count == 3 }
       }
       #expect(try await sessions.generationState(id).generation == 0)

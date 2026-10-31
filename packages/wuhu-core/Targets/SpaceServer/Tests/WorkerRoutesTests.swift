@@ -46,6 +46,11 @@ import Testing
       #expect(try await client.claimCompactRequest(session, generation: 0) == nil)
       #expect(try await client.registeredSubscriptions(session).ids.isEmpty)
       #expect(try await client.owedExecs(session).isEmpty)
+      #expect(try await client.openRequests(session).isEmpty)
+      let task = try await rig.harness.store.createSession(group: .shared, title: "task", kind: .task, parent: session, createdBy: "owner", executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")))
+      let deadline = Date(timeIntervalSince1970: 1_700_003_600)
+      _ = try await rig.harness.store.openRequest(on: task, from: .session(session), messageID: .init("r1"), text: "do it", deadline: deadline)
+      #expect(try await client.openRequests(task) == [OpenRequest(id: .init("r1"), deadline: deadline)])
 
       let position = try await client.append(session, .inputEnqueued(notice("first"))).value(Int.self)
       #expect(try await client.queueHead(session) == position)

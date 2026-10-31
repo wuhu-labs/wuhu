@@ -40,7 +40,8 @@ private struct OfflineRehearsalMedia: MediaResolver {
         #expect(!opaque.isEmpty)
         #expect(original.requiresReplayHandoff(to: binding.identity))
         #expect(original.pendingToolCallIDs.isEmpty)
-        let portable = try original.portableHandoff(binding: binding, budget: .init(maxInput: 1_000_000, maxOutput: 1000), runningWork: [])
+        let openRequests = try await space.sessions.openRequests(id)
+        let portable = try original.portableHandoff(binding: binding, budget: .init(maxInput: 1_000_000, maxOutput: 1000), runningWork: [], openRequests: openRequests)
         _ = try await space.sessions.writePortableHandoff(id, expectedGeneration: before, source: original, transcript: portable)
         let reopened = try Space.open(file: URL(fileURLWithPath: path))
         guard case let .kernel(adopted) = try await reopened.sessions.hydrate(id).transcript else {
@@ -66,9 +67,10 @@ private struct OfflineRehearsalMedia: MediaResolver {
         let receiptIDs = Set(latestReceipts.map(\.id))
         let retainedReceipts = Set(adopted.items.filter { receiptIDs.contains($0.id) }.map(\.id)) == receiptIDs
         #expect(retainedReceipts)
+        let open = Set(openRequests.map(\.id))
         let openRequestInputs = original.items.filter { item in
           guard case let .message(message) = item, let request = message.requestID else { return false }
-          return original.environment.settle.openRequests[request] != nil
+          return open.contains(request)
         }
         let requestIDs = Set(openRequestInputs.map(\.id))
         let retainedOpenInputs = Set(adopted.items.filter { requestIDs.contains($0.id) }.map(\.id)) == requestIDs
