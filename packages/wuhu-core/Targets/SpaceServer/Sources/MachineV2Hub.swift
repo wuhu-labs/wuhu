@@ -81,6 +81,16 @@ actor MachineV2Hub {
     remove(route.connection)
   }
 
+  func connection(_ machine: MachineID) -> UUID? { routes[machine.rawValue]?.connection }
+
+  /// Kicks the machine's route only while `connection` still holds it, so a tunnel that replaced it stays.
+  func kick(_ machine: MachineID, connection: UUID) -> Bool {
+    guard let route = routes[machine.rawValue], route.connection == connection else { return false }
+    route.abort()
+    remove(connection)
+    return true
+  }
+
   /// How many exchanges the machine's live tunnel carries at once; nil without one.
   func streams(_ machine: String) -> Int? { routes[machine]?.streams }
 

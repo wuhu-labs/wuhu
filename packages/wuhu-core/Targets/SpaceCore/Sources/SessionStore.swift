@@ -126,7 +126,7 @@ public struct SessionHydration: Hashable, Sendable, Codable {
 }
 
 public enum SessionStoreError: Error, Equatable, Sendable {
-  public static let humanAgentDirectMessageExplanation = "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID."
+  public static let humanAgentDirectMessageExplanation = "There is no DM between human and agent. To notify a human, post in your conversation box, optionally specifying the reply target's message ID: it notifies whoever wrote there last and anyone who wrote there in the past 24 hours."
 
   public static func reportRefusal(_ id: String, violations: [String], left: Int) -> String {
     "final report refused: request \(id) wants JSON matching its schema; " + violations.joined(separator: "; ")

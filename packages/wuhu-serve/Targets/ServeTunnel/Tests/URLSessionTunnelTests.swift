@@ -5,6 +5,7 @@ import Foundation
 import Serve
 import ServeNIO
 import ServeTunnel
+import Synchronization
 import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
@@ -19,7 +20,10 @@ struct URLSessionTunnelTests {
     defer { session.invalidateAndCancel() }
     do {
       let url = URL(string: "ws://127.0.0.1:\(try #require(server.boundAddress.port))/")!
-      let transport = try await TunnelURLSession.connect(url: url, session: session, limits: .init(messageBytes: 64 << 10))
+      let upgraded = Mutex(0)
+      let socket = try await TunnelURLSession.connect(url: url, session: session, limits: .init(messageBytes: 64 << 10), upgraded: { upgraded.withLock { $0 += 1 } })
+      #expect(upgraded.withLock { $0 } == 1)
+      let transport = socket.transport
       #expect(transport.maxMessageBytes == 64 << 10)
       #expect(throws: TunnelError.invalidConfiguration) { try Tunnel(over: transport, limits: .init(chunkBytes: 64 << 10)) }
       let tunnel = try Tunnel(over: transport)
@@ -27,6 +31,7 @@ struct URLSessionTunnelTests {
         group.addTask { try? await tunnel.run() }
         let response = try await tunnel.client(Request(url: URL(string: "https://example.test/query")!))
         #expect(try await response.body.text() == "phone-compatible")
+        try await socket.ping()
         await tunnel.abort()
         group.cancelAll()
       }

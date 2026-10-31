@@ -271,4 +271,49 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     #expect(rows.map(\.kind) == [.conversationMessage])
     #expect(rows[0].payload.contains("answered"))
   }
+
+  @Test func `a box post skips a member who last wrote over a day before it`() async throws {
+    let rig = try MovingClockSpace()
+    let owner = try await agent(rig.store)
+    _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("hazel"), content: .init(text: "once"))
+    rig.advance(RoutingSnapshot.boxNotificationSeconds + 1)
+    _ = try await rig.store.post(.box(owner), messageID: MessageID("m2"), sender: human("minsheng"), content: .init(text: "hello"))
+    rig.advance(3600)
+    _ = try await rig.store.post(
+      .box(owner), messageID: MessageID("m3"), sender: human(owner.rawValue), senderSession: owner, content: .init(text: "answered"),
+    )
+    #expect(try await rig.store.notifications(recipient: "hazel").isEmpty)
+    let minsheng = try await rig.store.notifications(recipient: "minsheng")
+    #expect(minsheng.count == 1 && minsheng[0].payload.contains("answered"))
+  }
+
+  @Test func `a box post notifies its latest writer and a writer from inside the window`() async throws {
+    let rig = try MovingClockSpace()
+    let owner = try await agent(rig.store)
+    _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("minsheng"), content: .init(text: "at 15:00"))
+    rig.advance(2 * 3600)
+    _ = try await rig.store.post(.box(owner), messageID: MessageID("m2"), sender: human("hazel"), content: .init(text: "at 17:00"))
+    rig.advance(1800)
+    _ = try await rig.store.post(
+      .box(owner), messageID: MessageID("m3"), sender: human(owner.rawValue), senderSession: owner, content: .init(text: "answered"),
+    )
+    #expect(try await rig.store.notifications(recipient: "minsheng").map(\.payload).map { $0.contains("answered") } == [false, true])
+    #expect(try await rig.store.notifications(recipient: "hazel").map(\.payload).map { $0.contains("answered") } == [true])
+  }
+
+  @Test func `an observer's box post is no person write`() async throws {
+    let rig = try MovingClockSpace()
+    let owner = try await agent(rig.store)
+    let observer = Observer(group: .shared, name: "watch", firing: "firing-1")
+    _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("hazel"), content: .init(text: "once"))
+    rig.advance(RoutingSnapshot.boxNotificationSeconds + 1)
+    _ = try await rig.store.post(
+      .box(owner), messageID: MessageID("m2"), sender: human(observer.member), content: .init(text: "observed"), acting: observer.principal,
+    )
+    _ = try await rig.store.post(
+      .box(owner), messageID: MessageID("m3"), sender: human(owner.rawValue), senderSession: owner, content: .init(text: "answered"),
+    )
+    #expect(try await rig.store.notifications(recipient: observer.member).isEmpty)
+    #expect(try await rig.store.notifications(recipient: "hazel").map(\.payload).map { $0.contains("answered") } == [false, true])
+  }
 }

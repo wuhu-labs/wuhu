@@ -15,7 +15,7 @@ import Testing
 
 @Suite(.deterministicDependencies)
 struct HumanAgentDMToolTests {
-  private let refusal = "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID."
+  private let refusal = "There is no DM between human and agent. To notify a human, post in your conversation box, optionally specifying the reply target's message ID: it notifies whoever wrote there last and anyone who wrote there in the past 24 hours."
 
   @Test func removedUserArgumentIsRefusedRatherThanSilentlyPostingIntoTheBox() async throws {
     try await withToolDeps { _ in

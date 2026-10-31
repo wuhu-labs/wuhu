@@ -19,9 +19,17 @@ struct RoutingSnapshot {
 
   typealias Session = (kind: SessionKind, reachable: Bool)
   typealias RecentSender = (session: SessionID, lastPostedAt: Date, messagesSince: Int)
+  typealias Write = (person: String, n: Int64, at: Date)
+
+  static let boxNotificationSeconds: TimeInterval = 86400
 
   var audience: Audience
   var people: [String]
+  /// A box's person posts before this one, each person's latest: the box's
+  /// latest one and those inside the notification window. Empty elsewhere.
+  var writes: [Write] = []
+  /// A person's own post, not a session's or a group observer's.
+  var postedByPerson = false
   var sessions: [SessionID: Session]
   var replySender: ReplySender
   var recentSenders: [RecentSender]
@@ -49,7 +57,7 @@ func recipients(snapshot: RoutingSnapshot, message: MessageRecord, now: Date) th
 
   var seen: Set<SessionID> = []
   keys = keys.filter { $0 != message.senderSession && seen.insert($0).inserted }
-  let notified = snapshot.people.filter { $0 != message.sender.id }
+  let notified = notifiable(snapshot, message: message, now: now).filter { $0 != message.sender.id }
   if message.senderSession == nil {
     let others = keys.filter { snapshot.sessions[$0]?.kind != .task }
     if let task = keys.first, others.isEmpty, notified.isEmpty {
@@ -58,6 +66,15 @@ func recipients(snapshot: RoutingSnapshot, message: MessageRecord, now: Date) th
     keys = others
   }
   return (keys, notified)
+}
+
+private func notifiable(_ snapshot: RoutingSnapshot, message: MessageRecord, now: Date) -> [String] {
+  guard case .box = snapshot.audience else { return snapshot.people }
+  let latest = snapshot.postedByPerson ? message.sender.id : snapshot.writes.max { $0.n < $1.n }?.person
+  let horizon = now.addingTimeInterval(-RoutingSnapshot.boxNotificationSeconds)
+  var writers = Set(snapshot.writes.filter { $0.at >= horizon }.map(\.person))
+  if let latest { writers.insert(latest) }
+  return snapshot.people.filter(writers.contains)
 }
 
 enum MentionScanner {

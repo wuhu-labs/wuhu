@@ -426,7 +426,7 @@ extension SessionStore {
     in db: Database,
   ) throws -> [SessionID] {
     let routingDate = try SQLiteDateFormat.date(from: now)
-    let snapshot = try routingSnapshot(message, conversation: conversation, poster: poster, in: db)
+    let snapshot = try routingSnapshot(message, conversation: conversation, poster: poster, now: routingDate, in: db)
     let routed = try recipients(snapshot: snapshot, message: message, now: routingDate)
 
     var enqueued: [SessionID] = []
@@ -477,7 +477,7 @@ extension SessionStore {
   }
 
   private func routingSnapshot(
-    _ message: MessageRecord, conversation: ConversationRecord, poster: Poster, in db: Database,
+    _ message: MessageRecord, conversation: ConversationRecord, poster: Poster, now: Date, in db: Database,
   ) throws -> RoutingSnapshot {
     let audience: RoutingSnapshot.Audience
     switch conversation.kind {
@@ -521,10 +521,50 @@ extension SessionStore {
         reachable: try reaches(row.id, from: readable, in: conversation, in: db),
       ))
     }
+    let postedByPerson: Bool = if case .observer? = poster.actor { false } else { message.senderSession == nil }
+    let writes = try conversation.kind == .box ? boxWrites(
+      conversationID, before: before, since: now.addingTimeInterval(-RoutingSnapshot.boxNotificationSeconds),
+      needsLatest: !postedByPerson, in: db,
+    ) : []
     return RoutingSnapshot(
       audience: audience, people: conversation.members.filter { $0.kind == .user }.map(\.member),
+      writes: writes, postedByPerson: postedByPerson,
       sessions: Dictionary(uniqueKeysWithValues: sessions), replySender: replySender, recentSenders: recent,
     )
+  }
+
+  // A person post has no sender session and no observer firing. The tail
+  // stops at the last post before `since`; only a window without one walks
+  // back to the latest. `+sender_session_id` keeps both on the box's index:
+  // unanalyzed, SQLite would pick `messages_by_sender_session` and scan the
+  // whole space's person posts.
+  private func boxWrites(
+    _ conversation: String, before: Int64, since: Date, needsLatest: Bool, in db: Database,
+  ) throws -> [RoutingSnapshot.Write] {
+    let horizon = SQLiteDateFormat.string(from: since)
+    var posts = try #sql("""
+    SELECT sender_id, n, created_at FROM messages
+    WHERE conversation_id = \(bind: conversation) AND n < \(bind: before)
+      AND +sender_session_id IS NULL AND firing IS NULL
+      AND n > COALESCE((
+        SELECT n FROM messages
+        WHERE conversation_id = \(bind: conversation) AND n < \(bind: before) AND created_at < \(bind: horizon)
+        ORDER BY n DESC LIMIT 1
+      ), 0)
+    ORDER BY n DESC
+    """, as: PersonPost.self).fetchAll(db)
+    if posts.isEmpty, needsLatest {
+      posts = try #sql("""
+      SELECT sender_id, n, created_at FROM messages
+      WHERE conversation_id = \(bind: conversation) AND n < \(bind: before)
+        AND +sender_session_id IS NULL AND firing IS NULL
+      ORDER BY n DESC LIMIT 1
+      """, as: PersonPost.self).fetchAll(db)
+    }
+    var seen: Set<String> = []
+    return try posts.filter { seen.insert($0.person).inserted }.map {
+      (person: $0.person, n: $0.n, at: try SQLiteDateFormat.date(from: $0.createdAt))
+    }
   }
 }
 
@@ -570,6 +610,13 @@ private struct RoutingSessionRow {
 @Selection
 private struct RoutingMessage {
   var session: String?
+  var createdAt: String
+}
+
+@Selection
+private struct PersonPost {
+  var person: String
+  var n: Int64
   var createdAt: String
 }
 

@@ -8,8 +8,10 @@ import Crypto
 import Dependencies
 import struct Fetch.FetchClient
 import enum JSONValue.JSONValue
+import Logging
 import MachineChannel
 import struct MachineContract.ExecID
+import struct MachineContract.MachineID
 import OperationClient
 import struct OperationClient.Operation
 import struct OperationClient.OperationOwner
@@ -323,11 +325,15 @@ actor MachineV2Service {
     await watch(machine, group: group, clock: clock)
   }
 
-  private func watch(_ machine: String, group: GroupID, clock: some Clock<Duration>) async {
+  private func watch<C: Clock<Duration>>(_ machine: String, group: GroupID, clock: C) async {
+    let id = MachineID(rawValue: machine)
     var lastAnswer = clock.now
     var lease = Duration.seconds(60)
+    var route: (connection: UUID?, since: C.Instant) = (nil, clock.now)
     while !Task.isCancelled {
       do {
+        let connection = await hub.connection(id)
+        if connection != route.connection { route = (connection, clock.now) }
         let operations = try await operations(group: group)
         do {
           let description = try await operations.describe(machine)
@@ -337,6 +343,10 @@ actor MachineV2Service {
         } catch let error as OperationError where Self.transient(error) {
           if lastAnswer.duration(to: clock.now) >= lease {
             try await space.recordMachineV2Presence(machine, group: group, state: .lost, reason: "leaseSilence")
+            // Only a route that has itself gone a lease unanswered: a tunnel that attached since gets its own lease.
+            if let connection = route.connection, route.since.duration(to: clock.now) >= lease, await hub.kick(id, connection: connection) {
+              Self.log.notice("route kicked", metadata: ["machine": "\(machine)", "reason": "leaseSilence"])
+            }
           }
         } catch let error as OperationError {
           try await space.recordMachineV2Presence(machine, group: group, state: .lost, reason: error.code.rawValue)
@@ -346,6 +356,8 @@ actor MachineV2Service {
       try? await clock.sleep(for: lease / 3)
     }
   }
+
+  private static let log = Logger(label: "wuhu.machine-v2")
 
   private static func transient(_ error: OperationError) -> Bool {
     [.transport, .requestDeadline, .requestCancelled, .capacityExceeded, .machineUnavailable, .supervisorUnavailable].contains(error.code)

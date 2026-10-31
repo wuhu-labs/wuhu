@@ -13,6 +13,8 @@ import Testing
     var reply: RoutingSnapshot.ReplySender = .unaddressed
     var recent: [RoutingSnapshot.RecentSender] = []
     var people: [String] = []
+    var writes: [RoutingSnapshot.Write] = []
+    var postedByPerson = false
     var expected: [SessionID] = []
     var notified: [String] = []
     var refused = false
@@ -27,6 +29,13 @@ import Testing
   private static func recent(_ session: SessionID = visitor, count: Int = 0, age: Double = 0) -> RoutingSnapshot.RecentSender {
     (session: session, lastPostedAt: now.addingTimeInterval(-age), messagesSince: count)
   }
+
+  private static func write(_ person: String, _ n: Int64, age: Double) -> RoutingSnapshot.Write {
+    (person: person, n: n, at: now.addingTimeInterval(-age))
+  }
+
+  private static let box = RoutingSnapshot.Audience.box(owner, messages: 10, seconds: 900)
+  private static let day = RoutingSnapshot.boxNotificationSeconds
 
   static let cases: [Case] = [
     .init(name: "box owner", audience: .box(owner, messages: 10, seconds: 900), expected: [owner]),
@@ -50,11 +59,20 @@ import Testing
     .init(name: "human task mention spared with person", text: "@child-task", people: ["reader"], notified: ["reader"]),
     .init(name: "notify people except sender", people: ["writer", "reader"], notified: ["reader"]),
     .init(name: "sender membership does not spare task-only post", text: "@child-task", people: ["writer"], refused: true),
+    .init(name: "box notifies its latest writer, however long ago", audience: box, sender: owner, people: ["hazel"], writes: [write("hazel", 1, age: 7 * day)], notified: ["hazel"]),
+    .init(name: "equal timestamps: the later position is the latest writer", audience: box, sender: owner, people: ["hazel", "minsheng"], writes: [write("hazel", 2, age: 2 * day), write("minsheng", 1, age: 2 * day)], notified: ["hazel"]),
+    .init(name: "a clock that stepped back: the later position is the latest writer", audience: box, sender: owner, people: ["hazel", "minsheng"], writes: [write("hazel", 2, age: 3 * day), write("minsheng", 1, age: 2 * day)], notified: ["hazel"]),
+    .init(name: "box notifies a writer exactly 24 h back", audience: box, sender: owner, people: ["minsheng", "hazel"], writes: [write("minsheng", 2, age: 60), write("hazel", 1, age: day)], notified: ["minsheng", "hazel"]),
+    .init(name: "box skips a writer just past 24 h", audience: box, sender: owner, people: ["minsheng", "hazel"], writes: [write("minsheng", 2, age: 60), write("hazel", 1, age: day + 1)], notified: ["minsheng"]),
+    .init(name: "box skips a member who never wrote", audience: box, sender: owner, people: ["minsheng", "reader"], writes: [write("minsheng", 1, age: 60)], notified: ["minsheng"]),
+    .init(name: "a person's post is the latest write: only other recent writers hear it", audience: box, people: ["writer", "hazel", "minsheng"], writes: [write("hazel", 3, age: 2 * day), write("writer", 2, age: 60), write("minsheng", 1, age: 60)], postedByPerson: true, expected: [owner], notified: ["minsheng"]),
+    .init(name: "an observer's post is no write: the latest person writer hears it", audience: box, people: ["hazel", "watch@shared"], writes: [write("hazel", 1, age: 2 * day)], expected: [owner], notified: ["hazel"]),
+    .init(name: "channel notifies every member, however quiet", people: ["hazel", "reader"], notified: ["hazel", "reader"]),
   ]
 
   @Test(arguments: cases) func routing(_ test: Case) throws {
     let snapshot = RoutingSnapshot(
-      audience: test.audience, people: test.people,
+      audience: test.audience, people: test.people, writes: test.writes, postedByPerson: test.postedByPerson,
       sessions: [
         Self.owner: (kind: .agent, reachable: true),
         Self.visitor: (kind: .agent, reachable: true),
