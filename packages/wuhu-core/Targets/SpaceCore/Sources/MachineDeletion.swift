@@ -14,7 +14,7 @@ extension Space {
   public func deleteMachine(_ id: MachineID, by principal: Principal) async throws {
     let notes = try SpacePath(validating: "/_/machines/\(id.rawValue)")
     let stamp = SQLiteDateFormat.string(from: dateGen.now)
-    try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+    let (group, rev) = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db),
             try MachineV2MemberRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) != nil
       else {
@@ -53,7 +53,9 @@ extension Space {
       try AliasRow.where { $0.kind.eq(AliasKind.machine) && $0.target.eq(id.rawValue) }.delete().execute(db)
       try MachineRow.where { $0.id.eq(id.rawValue) }.delete().execute(db)
       try GroupAccountRow.where { $0.id.eq(row.accountID) }.delete().execute(db)
+      return (group, rev)
     }
+    await wmd.drop(under: notes, in: group, rev: rev)
   }
 }
 

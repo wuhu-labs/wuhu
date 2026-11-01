@@ -55,6 +55,7 @@ extension SessionStore {
     let key = id.rawValue
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let p = try await LiveFS.validatedFileTarget(MachineFolders.stored(path, mutating: true, in: writer))
+    guard !p.isWmd else { throw SpaceError.wmdSyntax(path: p.rawValue, line: nil, reason: "a .wmd file is written through its live document") }
     let home = try await writer.read { db in try Sessions.group(of: key, in: db) }
     try SessionHome.refuseForeignWrite(to: p, in: group, by: id, home: home)
     try await writer.read { db in try GroupWrites.refuseWrite(p, in: group, by: .session(id), acting: home, in: db) }

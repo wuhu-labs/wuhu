@@ -13,7 +13,7 @@ import SpaceFS
 import SpaceSQL
 
 public actor Space {
-  nonisolated let taskScope = TaskScope()
+  nonisolated let taskScope: TaskScope
   let writer: any DatabaseWriter
   let reads: ReadPool
   let blobs: BlobStore
@@ -22,6 +22,7 @@ public actor Space {
   let archiveReservations = ArchiveReservations()
   let dateGen: DateGenerator
   let clock: any Clock<Duration>
+  let wmd: WmdHub
   let rng: WithRandomNumberGenerator
   let log: Logger
   var identityCache: SpaceIdentity?
@@ -39,17 +40,27 @@ public actor Space {
     try SpaceMeta.prepare(writer, identity: identity, log: log, date: date)
     @Dependency(\.continuousClock) var clock
     @Dependency(\.withRandomNumberGenerator) var rng
+    let taskScope = TaskScope()
+    self.taskScope = taskScope
     self.writer = writer
     self.reads = ReadPool(path: writer.path, catalog: catalog, trace: trace)
-    self.blobs = BlobStore(objects: objects)
-    self.broadcast = FSBroadcast()
+    let blobs = BlobStore(objects: objects)
+    let broadcast = FSBroadcast()
+    self.blobs = blobs
+    self.broadcast = broadcast
     self.dateGen = date
     self.clock = clock
+    let peers = rng
+    self.wmd = WmdHub(
+      store: WmdStore(writer: writer, blobs: blobs, broadcast: broadcast, dateGen: date), clock: clock, scope: taskScope,
+      newPeer: { peers { UInt64.random(in: 1 ... UInt64(Int64.max), using: &$0) } },
+    )
     self.rng = rng
     self.log = log
   }
 
   public func close() async throws {
+    await checkpointLiveDocuments()
     broadcast.close()
     await taskScope.close()
     var failure: (any Error)?
@@ -68,7 +79,9 @@ public actor Space {
     configuration.prepareDatabase { try $0.execute(sql: PageCache.pragmas(cacheKiB: PageCache.writerKiB)) }
     let queue = try DatabaseQueue(path: file.path, configuration: configuration)
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
-    return try Space(writer: queue, identity: identity, objects: store, log: log)
+    let space = try Space(writer: queue, identity: identity, objects: store, log: log)
+    _ = try? space.taskScope.run("wmd-recover") { await space.recoverLiveDocuments() }
+    return space
   }
 
   public static func inMemory(objects: (any ObjectStore)? = nil) throws -> Space {
@@ -115,7 +128,7 @@ public actor Space {
 
   func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) -> LiveFS {
     LiveFS(
-      group: group, acting: acting, writer: writer, blobs: blobs, broadcast: broadcast, dateGen: dateGen, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
+      group: group, acting: acting, writer: writer, blobs: blobs, broadcast: broadcast, dateGen: dateGen, wmd: wmd, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
     )
   }
 }

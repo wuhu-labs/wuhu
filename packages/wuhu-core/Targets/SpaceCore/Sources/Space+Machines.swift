@@ -268,7 +268,10 @@ extension Space {
     let notes = try SpacePath(validating: "/_/machines/\(id.rawValue)")
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let broadcast = broadcast
-    let record = try await blobs.write(
+    if let current = try await writer.read({ db in try MachineRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)?.grp }) {
+      try await wmd.settle(under: notes, in: GroupID(rawValue: current))
+    }
+    let (record, moved): (MachineRecord, (from: GroupID, rev: Int64)?) = try await blobs.write(
       writer, emittingTo: broadcast,
       prefetching: { db in
         guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else { return [] }
@@ -293,7 +296,7 @@ extension Space {
         try MachineV2PresenceRow.update(presence).execute(db)
       }
       let record = Self.machineRecord(from: movedRow)
-      guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return record }
+      guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return (record, nil) }
       let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
       try Substrate.ensureAncestorDirectories(notes, group: group, rev: rev, mtime: mtime, in: db)
       var moved: [(path: String, entry: Entry.Kind)] = []
@@ -312,6 +315,7 @@ extension Space {
         if node.kind == "table" {
           try Tables.reparent(from: path, in: from, to: path, in: group, rev: rev, in: db)
         }
+        try WmdStore.relocate(node, group: from, to: path, in: group, rev: rev, in: db)
         try LiveFS.tombstone(path: node.path, group: from, rev: rev, op: .delete, in: db)
         try Substrate.appendVersion(group: group, path: node.path, rev: rev, kind: node.kind, blobHash: node.blobHash, op: .write, in: db)
         try Substrate.upsertHead(
@@ -332,7 +336,11 @@ extension Space {
           MutationEvent(group: group, path: note.path, rev: Int(rev), kind: .write, entry: note.entry),
         ]
       }
-      return record
+      return (record, (from, rev))
+    }
+    if let moved {
+      await wmd.drop(under: notes, in: moved.from, rev: moved.rev)
+      await wmd.drop(under: notes, in: group, rev: moved.rev)
     }
     return record
   }

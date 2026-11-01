@@ -14,3 +14,7 @@ SpaceToolContext is the authority boundary shared by HTTP tool/file routes and s
 ## Owner filesystem values
 
 `FileBytes` and `FileVersion` expose value initializers so owner adapters can reconstruct the existing semantic result. Byte contents, revision/token guards and store failure behavior are unchanged; transport snapshots belong to the adapter, not the filesystem store.
+
+## Live document targets
+
+`wmdTarget(address)` resolves a `.wmd` socket's path like any file tool: the group must be readable, and its `access` is `write` unless the file tools would refuse the write by a role (`forbiddenWrite`), a foreign session home (`foreignHome`) or a page's home write (`unauthorized`), which connect read-only. Every other failure propagates. Its `name` is a person's display name, else handle, else persona; a session's title; an observer's member; `page` or `dev`.

@@ -4,6 +4,7 @@
 @import '@wuhu/ui/catalog.css';
 @import './settings.css';
 @import './editor.css';
+@import './wmd.css';
 
 @source '../../ui/src';
 

@@ -42,6 +42,10 @@ externalPackages:
     url: https://github.com/apple/swift-http-types.git
     from: "1.5.1"
     products: [HTTPTypes]
+  loro-swift:
+    url: https://github.com/loro-dev/loro-swift
+    exact: "1.17.1"
+    products: [Loro]
   swift-collections:
     url: https://github.com/apple/swift-collections
     from: "1.1.0"

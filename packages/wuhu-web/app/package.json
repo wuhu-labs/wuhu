@@ -21,6 +21,7 @@
     "@tiptap/suggestion": "^3.31.3",
     "@wuhu/ui": "*",
     "katex": "^0.18.5",
+    "loro-crdt": "1.17.1",
     "lowlight": "^3.3.0",
     "marked": "^17.0.6",
     "marked-cjk-friendly": "^0.1.3",

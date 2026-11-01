@@ -252,3 +252,9 @@ _Afterwards:_ `{sb}/feedback.html` imports `haptic` from `wuhu:device`, calls `h
 _Prompt:_ "Create a human-only channel titled bench-{tag}-unknown with the one person definitely_missing_person_{tag}. If that person is not in the directory, report the refusal; do not substitute another person, create an empty channel, or tell me it succeeded."
 
 _Afterwards:_ The channel API’s typed unknown-person refusal is reported. No channel is created. The subject does not claim success, invent a canonical id or retry with empty/substituted membership.
+
+## wmd-edit
+
+_Prompt:_ "Add 'Book the venue' to the to-do list in {fx}/launch/plan.wmd." _Follow-up:_ "Now mark 'Pick a date' as done."
+
+_Afterwards:_ `{fx}/launch/plan.wmd` still holds the original to-dos and the note, plus a `Book the venue` list item under `## To do`, and `Pick a date` is `- [x] Pick a date`, written in place with the ordinary file tools: a `.wmd` file reads and writes as markdown even while someone has it open live, and comes back canonical, so the second edit works from a fresh read. No copy beside it, no conversion to `.md`, nothing in `{sb}`. Each reply is a line or two.

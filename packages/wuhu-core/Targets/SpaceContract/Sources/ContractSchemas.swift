@@ -76,6 +76,11 @@ public enum ContractSchemas {
     ("WallConfig", WallConfig.jsonSchema),
     ("MapConfig", MapConfig.jsonSchema),
     ("DataView", DataView.jsonSchema),
+    ("WmdAccess", WmdAccess.jsonSchema),
+    ("WmdPeer", WmdPeer.jsonSchema),
+    ("WmdErrorCode", WmdErrorCode.jsonSchema),
+    ("WmdClientControl", WmdClientControl.jsonSchema),
+    ("WmdServerControl", WmdServerControl.jsonSchema),
 
     ("EnrollMintInput", EnrollMintInput.jsonSchema),
     ("EnrollMintOutput", EnrollMintOutput.jsonSchema),

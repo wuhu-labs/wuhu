@@ -95,7 +95,9 @@
 <script type="module">
   const board = document.getElementById("board");
   const status = document.getElementById("status");
-  const path = new URLSearchParams(location.search).get("path");
+  const query = new URLSearchParams(location.search);
+  const path = query.get("path");
+  const definition = query.get("def");
 
   function fail(message) {
     status.hidden = false;
@@ -155,14 +157,22 @@
   }
 
   async function boot() {
-    if (!path) return fail("missing ?path= target");
-    const response = await fetch(path, { cache: "no-cache" });
-    if (!response.ok) return fail(`cannot load ${path}: HTTP ${response.status}`);
     let doc;
-    try {
-      doc = await response.json();
-    } catch {
-      return fail(`${path} is not valid JSON`);
+    if (definition != null) {
+      try {
+        doc = JSON.parse(definition);
+      } catch {
+        return fail("?def= is not valid JSON");
+      }
+    } else {
+      if (!path) return fail("missing ?path= or ?def= target");
+      const response = await fetch(path, { cache: "no-cache" });
+      if (!response.ok) return fail(`cannot load ${path}: HTTP ${response.status}`);
+      try {
+        doc = await response.json();
+      } catch {
+        return fail(`${path} is not valid JSON`);
+      }
     }
     if (doc.view !== "kanban") return fail(`unsupported view kind: ${JSON.stringify(doc.view)}`);
     const config = doc.config;

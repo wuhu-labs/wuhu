@@ -34,6 +34,7 @@
     "npm:@types/react@^19.2.14": "19.2.17",
     "npm:babel-plugin-react-compiler@1.0.0": "1.0.0",
     "npm:katex@~0.18.5": "0.18.5",
+    "npm:loro-crdt@1.17.1": "1.17.1",
     "npm:lowlight@^3.3.0": "3.3.0",
     "npm:marked-cjk-friendly@~0.1.3": "0.1.3_marked@17.0.6",
     "npm:marked@^17.0.6": "17.0.6",
@@ -1440,6 +1441,9 @@
     "longest-streak@3.1.0": {
       "integrity": "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g=="
     },
+    "loro-crdt@1.17.1": {
+      "integrity": "sha512-83hWRYG6eMMpPezm+yXWlOqCuUsC0BYY1MVCPW9x2zlikgkHhL7GC7Q6JFH+Hjvauyn287Q1MiwTuRW0lUOUag=="
+    },
     "lowlight@3.3.0": {
       "integrity": "sha512-0JNhgFoPvP6U6lE/UdVsSq99tn6DhjjpAj5MxG49ewd2mOBVtwWYIT8ClyABhq198aXXODMU6Ox8DrGy/CpTZQ==",
       "dependencies": [
@@ -2478,6 +2482,7 @@
             "npm:@wuhu/ui@*",
             "npm:babel-plugin-react-compiler@1.0.0",
             "npm:katex@~0.18.5",
+            "npm:loro-crdt@1.17.1",
             "npm:lowlight@^3.3.0",
             "npm:marked-cjk-friendly@~0.1.3",
             "npm:marked@^17.0.6",

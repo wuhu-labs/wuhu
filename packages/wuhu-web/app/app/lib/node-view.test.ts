@@ -151,3 +151,20 @@ Deno.test('an HTML page carries the layout its stat names', async () => {
     layout: 'immersive',
   })
 })
+
+Deno.test('a missing .wmd path offers to create it', async () => {
+  const source = space({})
+  expectEqual(await loadNode(source, origin, '/notes/new.wmd', ''), {
+    state: 'missingWmd',
+    path: '/notes/new.wmd',
+    message: '/notes/new.wmd missing',
+  })
+})
+
+Deno.test('any other missing path still fails the load', async () => {
+  const failure = await loadNode(space({}), origin, '/notes/new.md', '').then(
+    () => null,
+    (error: unknown) => error,
+  )
+  expectEqual(failure instanceof ApiError && failure.code, 'notFound')
+})

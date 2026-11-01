@@ -1,3 +1,4 @@
+import { lazy, Suspense, useState } from 'react'
 import { Link, useOutletContext } from 'react-router'
 import { useShell } from '@wuhu/ui'
 import { ContentFrame } from '~/components/content-frame'
@@ -7,15 +8,20 @@ import { TableView } from '~/components/table-view'
 import type { QueryOutput } from '~/lib/contract.gen'
 import { fileHref } from '~/lib/links'
 import type { NodeView } from '~/lib/node-view'
+import { contentOriginString } from '~/lib/use-content-origin'
 import { useObserve } from '~/lib/use-observe'
 import { tableSubscription } from '~/sdk/subscriptions'
 import type { SpaceContext } from './space'
+
+const WmdDocument = lazy(() => import('~/components/wmd-document'))
 
 // Renders the page SpaceBody holds for this address (lib/use-shown-node.ts),
 // the same state a send names. The shell has already laid it out: Markdown
 // scrolls, HTML is framed or immersive, everything else is framed content.
 export default function Node() {
-  const { group, client, shown } = useOutletContext<SpaceContext>()
+  const { group, client, shown, contentOrigin } = useOutletContext<
+    SpaceContext
+  >()
   const { insets } = useShell()
   const view: NodeView = shown?.view ?? { state: 'loading' }
   switch (view.state) {
@@ -36,6 +42,21 @@ export default function Node() {
             initial={{ content: view.content, token: view.token }}
             breadcrumb={<Breadcrumb path={view.path} group={group} />}
           />
+        </div>
+      )
+    case 'wmd':
+    case 'missingWmd':
+      return (
+        <div className='wuhu-content wuhu-reader'>
+          {contentOrigin !== undefined && (
+            <WmdPage
+              key={view.path}
+              path={view.path}
+              group={group}
+              frameOrigin={contentOriginString(contentOrigin)}
+              missing={view.state === 'missingWmd' ? view.message : null}
+            />
+          )}
         </div>
       )
     case 'html':
@@ -80,6 +101,42 @@ export default function Node() {
         </div>
       )
   }
+}
+
+// A missing document opens only on Create, which asks its channel to create
+// it; once the path exists the page goes on as an ordinary `.wmd` page.
+function WmdPage({ path, group, frameOrigin, missing }: {
+  path: string
+  group: string
+  frameOrigin: string | null
+  missing: string | null
+}) {
+  const [creating, setCreating] = useState(false)
+  if (missing != null && !creating) {
+    return (
+      <>
+        <p className='wuhu-alert'>{missing}</p>
+        <button
+          type='button'
+          className='wuhu-button'
+          onClick={() => setCreating(true)}
+        >
+          Create
+        </button>
+      </>
+    )
+  }
+  return (
+    <Suspense>
+      <WmdDocument
+        path={path}
+        group={group}
+        frameOrigin={frameOrigin}
+        create={missing != null}
+        breadcrumb={<Breadcrumb path={path} group={group} />}
+      />
+    </Suspense>
+  )
 }
 
 // Where the document sits: its folders, each a link, then its name.

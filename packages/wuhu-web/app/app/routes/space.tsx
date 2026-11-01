@@ -146,12 +146,14 @@ export function pageLayout(
   const view = shown.view
   switch (view.state) {
     case 'markdown':
+    case 'wmd':
+    case 'missingWmd':
     case 'error':
       return 'scroll'
     case 'html':
       return view.layout === 'immersive' ? 'immersive' : 'framed'
     case 'loading':
-      return shown.requested.endsWith('.md') ? 'scroll' : null
+      return /\.w?md$/.test(shown.requested) ? 'scroll' : null
     default:
       return 'framed'
   }

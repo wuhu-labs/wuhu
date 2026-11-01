@@ -97,6 +97,16 @@ extension Space {
   public func checkout(_ path: SpacePath, rev target: Rev, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, ifMatch: VersionToken? = nil, createOnly: Bool = false) async throws -> (Rev, VersionToken) {
     let path = try await MachineFolders.stored(path, mutating: true, in: writer)
     guard !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
+    if path.isWmd, let restored = try await restoredWmd(path, rev: target, in: group) {
+      if let ifMatch, ifMatch.rev == nil { throw SpaceError.versionMismatch(path.rawValue) }
+      let base = ifMatch.map { WmdBase.current(Int64($0.rev!)) } ?? .latest
+      let rev = try await wmd.with(group, path) {
+        try await $0.write(
+          restored, base: base, createOnly: createOnly, acting: acting, attribution: attribution, checkout: Int64(target.value),
+        )
+      }
+      return (Rev(Int(rev)), VersionToken(rev: Int(rev)))
+    }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let broadcast = broadcast
     let (rev, token): (Rev, VersionToken) = try await blobs.write(writer, emittingTo: broadcast) { db, cache, pending in
@@ -135,6 +145,18 @@ extension Space {
         return (Rev(Int(newRev)), token)
       }
     }
+    await wmd.drop(under: path, in: group, rev: Int64(rev.value))
     return (rev, token)
+  }
+
+  /// The text a `.wmd` file had at `rev`, which its live node merges in; nil when it had none.
+  private func restoredWmd(_ path: SpacePath, rev target: Rev, in group: GroupID) async throws -> Data? {
+    try await blobs.read(writer) { db, cache in
+      let ceiling = Int64(target.value)
+      guard try Substrate.revisionExists(ceiling, in: db) else { throw SpaceError.invalidRevision(target.value) }
+      guard let resolved = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: ceiling, in: db) else { return nil }
+      guard resolved.kind == "file", let hash = resolved.blobHash else { throw SpaceError.notAFile(path.rawValue) }
+      return Data(try cache.blob(of: hash, in: db).content)
+    }
   }
 }

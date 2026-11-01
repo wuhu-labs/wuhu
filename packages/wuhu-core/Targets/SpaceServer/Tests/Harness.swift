@@ -1,3 +1,4 @@
+import Clocks
 import struct Credentials.CredentialResolver
 import Dependencies
 import Fetch
@@ -30,6 +31,7 @@ struct Harness {
   /// The same listener, with a request to any name off the content host
   /// sent to `shared.<host>`: the content of the shared group.
   let web: FetchClient
+  let handler: UpgradingHandler
 
   init(
     dev: Bool = true,
@@ -44,12 +46,13 @@ struct Harness {
     credentials: CredentialResolver = .unavailable,
     pageFetch: PageFetchHandler? = nil,
     identityJWKS: JSONValue? = nil,
+    clock: (any NonsendingClock<Duration>)? = nil,
     opening: () throws -> Space = { try Space.inMemory() },
   ) throws {
     let contentHost = ContentHost(origin: origin ?? "https://localhost", pattern: contentHostPattern)!
     let (space, handler) = try withDependencies {
       $0.date = .constant(fixedDate)
-      $0.continuousClock = ContinuousClock()
+      $0.continuousClock = clock ?? ContinuousClock()
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 11))
     } operation: {
       let space = try opening()
@@ -63,6 +66,7 @@ struct Harness {
       return (space, handler)
     }
     self.space = space
+    self.handler = handler
     self.context = SpaceToolContext(space: space, principal: .shared(.anonymous))
     self.api = ServeTesting.client(upgrading: handler)
     self.web = ServeTesting.client(upgrading: { request in

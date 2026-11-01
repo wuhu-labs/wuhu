@@ -640,6 +640,19 @@
         "reply_short"
       ],
       "judge": "PASS only if the reply names wuhu machine delete <machine> and DELETE /v1/machine/:id, requires a human admin of the owner group, says identity/account/keys/join tokens, v2 membership/presence and operation/channel buffers and notes are removed, names freed and devices unlinked, and distinguishes revoke (registration stays; rotate re-enables). Must not claim deletion uninstalls the remote agent or guarantees remote processes already stopped; a session/observer cannot use a privileged script export or switch to a wallet to bypass the human gate."
+    },
+    {
+      "id": "wmd-edit",
+      "issue": 531,
+      "title": "Edits a live document as markdown",
+      "prompt": "Add 'Book the venue' to the to-do list in {fx}/launch/plan.wmd.",
+      "followUp": "Now mark 'Pick a date' as done.",
+      "required": [
+        "item_added",
+        "marked_done",
+        "edited_in_place"
+      ],
+      "judge": "PASS only if the agent read {fx}/launch/plan.wmd and wrote it back in place with the new list item under To do, keeping the existing items and the note; then, on the follow-up, edited the file as it reads after the first write (re-reading it rather than editing from memory) so 'Pick a date' is a done to-do (`- [x] Pick a date`), and each reply says so in a line or two. Fail a copy or a converted .md beside it, a refusal because the file is a live document, a rewrite that drops content, or a claim of an edit the file does not show."
     }
   ]
 }

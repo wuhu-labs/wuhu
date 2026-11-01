@@ -1,6 +1,6 @@
 # `write`
 
-Create or replace a file with UTF-8 text. With `ifMatch`, the write succeeds only if the file is still at that version token.
+Create or replace a file with UTF-8 text. With `ifMatch`, the write succeeds only if the file is still at that version token. A `.wmd` is merged into its live document as edits made at the version `ifMatch` read, and its text comes back canonical.
 
 `POST /v1/tools/write` takes a [`WriteInput`](../../../SpaceContract/Tests/contract/write-input.schema.json) body and answers `200` with a [`WriteOutput`](../../../SpaceContract/Tests/contract/write-output.schema.json).
 

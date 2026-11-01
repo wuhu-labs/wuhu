@@ -18,6 +18,9 @@ export type NodeView =
     title?: string
   }
   | { state: 'table'; path: string }
+  | { state: 'wmd'; path: string }
+  // Not there; the page offers to create it, never just by being visited.
+  | { state: 'missingWmd'; path: string; message: string }
 
 interface NodeEntry {
   kind: EntryKind
@@ -50,6 +53,19 @@ async function homepage(
   return { path: '/', entry: { kind: 'directory' } }
 }
 
+async function entryAt(
+  source: NodeSource,
+  path: string,
+): Promise<NodeEntry | { missing: string }> {
+  try {
+    return await source.stat(path)
+  } catch (failure) {
+    const missing = failure instanceof ApiError && failure.code === 'notFound'
+    if (missing && path.endsWith('.wmd')) return { missing: failure.message }
+    throw failure
+  }
+}
+
 // What a node page shows: the view, and the path it resolved to, the
 // homepage for the root.
 export interface ShownNode {
@@ -80,7 +96,10 @@ export async function loadShownNode(
 ): Promise<ShownNode> {
   const { path, entry } = requested === '/'
     ? await homepage(source)
-    : { path: requested, entry: await source.stat(requested) }
+    : { path: requested, entry: await entryAt(source, requested) }
+  if ('missing' in entry) {
+    return { path, view: { state: 'missingWmd', path, message: entry.missing } }
+  }
   return {
     path,
     view: await resolvedView(
@@ -117,6 +136,7 @@ async function resolvedView(
     return { state: 'file', path, size, src: origin + encodeURI(path) }
   }
   if (kind === 'table') return { state: 'table', path }
+  if (path.endsWith('.wmd')) return { state: 'wmd', path }
   if (kind === 'directory') {
     const origin = resolvedContentOrigin(contentOrigin)
     if (origin === undefined) return { state: 'loading' }

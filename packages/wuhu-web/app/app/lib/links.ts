@@ -166,5 +166,5 @@ export function fileName(path: string): string {
   const last = names.at(-1)
   if (last === undefined) return '/'
   if (names.length > 1 && /^index\.[a-z]+$/i.test(last)) return names.at(-2)!
-  return last.replace(/\.(md|html?|view|table)$/i, '')
+  return last.replace(/\.(w?md|html?|view|table)$/i, '')
 }

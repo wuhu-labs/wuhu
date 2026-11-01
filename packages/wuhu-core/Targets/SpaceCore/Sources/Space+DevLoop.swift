@@ -31,9 +31,10 @@ extension Space {
       return text
     }
     let spec = try Templates.parse(text, path: templatePath)
-    let blob = try await blobs.stage(Array(spec.instanceContent.utf8))
+    let content = Array(spec.instanceContent.utf8)
+    let blob = try await blobs.stage(content)
     let broadcast = broadcast
-    let created: SpacePath = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+    let (created, written): (SpacePath, Bool) = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       let directory = try MachineFolders.stored(destination ?? templatePath.parent, mutating: true, in: db)
       let name = try Templates.allocateName(spec, in: directory, group: group, now: now, in: db)
       let target = try SpacePath(validating: directory.isRoot ? "/\(name)" : "\(directory.rawValue)/\(name)")
@@ -42,10 +43,16 @@ extension Space {
       {
         throw SpaceError.alreadyExists(target.rawValue)
       }
+      guard !target.isWmd else { return (target, false) }
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
       try Substrate.writeFile(target, group: group, blob: blob, rev: rev, mtime: mtime, in: db)
       pending += [MutationEvent(group: group, path: target.rawValue, rev: Int(rev), kind: .write, entry: .file)]
-      return target
+      return (target, true)
+    }
+    if !written {
+      _ = try await wmd.with(group, created) {
+        try await $0.write(Data(content), base: .latest, createOnly: true, acting: acting, attribution: attribution)
+      }
     }
     return created
   }

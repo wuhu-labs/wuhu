@@ -124,6 +124,7 @@ tests:
     - GRDB
     - Scratch
     - ScratchTesting
+    - WmdDocument
   data:
     - Targets/SpaceContract/Tests/contract
   resources:
