@@ -46,6 +46,7 @@ struct BlobStoreTests {
       return
     }
     #expect(try await objects(folder).list(ListQuery()).entries.isEmpty)
+    try await space.close()
   }
 
   @Test func largeContentExternalizesUnderAShardedKeyAndRoundTrips() async throws {
@@ -65,6 +66,7 @@ struct BlobStoreTests {
     }
     #expect(key.raw == "blobs/\(hash.prefix(2))/\(hash.dropFirst(2).prefix(2))/\(hash)")
     #expect(try await objects(folder).getBytes(key) == Data(content.utf8))
+    try await space.close()
   }
 
   @Test func thresholdSplitsInlineFromExternal() async throws {
@@ -87,6 +89,7 @@ struct BlobStoreTests {
     }
     #expect(try await space.readText("/at.bin") == atThreshold)
     #expect(try await space.readText("/over.bin") == overThreshold)
+    try await space.close()
   }
 
   @Test func identicalContentIsStoredOnceOnBothSidesOfTheSplit() async throws {
@@ -110,6 +113,7 @@ struct BlobStoreTests {
     #expect(inlineRows == 1)
     #expect(externalRows == 1)
     #expect(try await objects(folder).list(ListQuery()).entries.count == 1)
+    try await space.close()
   }
 
   @Test func historicalReadsResolveExternalContent() async throws {
@@ -128,6 +132,7 @@ struct BlobStoreTests {
     let (_, entries) = try await space.fs(.shared, at: Rev(rev)).list("/")
     let entry = try #require(entries.first { $0.name == "history.bin" })
     #expect(entry.size == first.utf8.count)
+    try await space.close()
   }
 
   @Test(arguments: [1024, BlobStore.inlineThreshold + 1])
@@ -145,5 +150,6 @@ struct BlobStoreTests {
     #expect(try await reader.read(at: 100, count: 0).isEmpty)
     let past = try await space.fs(.shared, at: Rev(try #require(token.rev))).reader("/file.bin")
     #expect(try await past.read(at: 500, count: 200) == content.dropFirst(500).prefix(200))
+    try await space.close()
   }
 }

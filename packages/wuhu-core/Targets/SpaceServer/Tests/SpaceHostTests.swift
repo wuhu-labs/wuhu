@@ -3,6 +3,7 @@ import Credentials
 import DeterministicDependencies
 import Fetch
 import Foundation
+import GRDB
 import Scratch
 import Serve
 import SpaceCore
@@ -108,6 +109,20 @@ import Testing
       catch { #expect(String(reflecting: error) == first) }
     }
   #endif
+
+  @Test func failedOpenReleasesTheDatabaseForAnExclusiveWriter() async throws {
+    let folder = try scratchURL("space-host-failed-open")
+    defer { try? FileManager.default.removeItem(at: folder) }
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data().write(to: folder.appendingPathComponent("identity"))
+    await #expect(throws: (any Error).self) {
+      try await SpaceHost.open(folder: folder, deployment: DeploymentRecord(origin: "https://failed.test", tlsFingerprint: "test", certificate: .provided), configDirectory: nil, allowEnvironmentCredentials: false)
+    }
+    var configuration = Configuration()
+    configuration.prepareDatabase { try $0.execute(sql: "PRAGMA locking_mode = EXCLUSIVE") }
+    let exclusive = try DatabaseQueue(path: folder.appendingPathComponent("space.sqlite").path, configuration: configuration)
+    try await exclusive.write { try $0.execute(sql: "CREATE TABLE reopened (id INTEGER)") }
+  }
 
   @Test func shutdownBeforeRunPreventsStarting() async throws {
     let folder = try scratchURL("space-host-stopped")

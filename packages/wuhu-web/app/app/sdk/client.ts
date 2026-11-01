@@ -6,6 +6,8 @@ import type { RevisionEvents } from '~/lib/contract.gen'
 import { api, authorizedRequest, inGroup, post, withAssertion } from './http'
 import type { ViewerCache, ViewerCaches } from './open-cache'
 import type {
+  FindInput,
+  FindOutput,
   GroupSummary,
   ListOutput,
   ReadOutput,
@@ -306,6 +308,10 @@ export class SpaceClient {
     const output = await this.tool<WriteOutput>('write', { path, content })
     await this.cache?.put('document', path, { token: output.token, content })
     return output
+  }
+
+  find(input: FindInput): Promise<FindOutput> {
+    return this.tool<FindOutput>('find', input)
   }
 
   observeURL(glob: string, from: number | null, batch = false): string {

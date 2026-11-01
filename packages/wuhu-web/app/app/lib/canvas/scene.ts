@@ -89,6 +89,10 @@ const palette: Record<CanvasColor, { fill: string; stroke: string }> = {
 
 export const connectorStroke: Stroke = { color: '#6B7280FF', width: 2 }
 
+export function swatchOf(color: CanvasColor): string {
+  return palette[color].fill
+}
+
 function rgba(hex: string, alpha = 1): string {
   const byte = Math.round(alpha * 255).toString(16).toUpperCase()
   return hex + byte.padStart(2, '0')
@@ -100,6 +104,12 @@ const inset = (r: Rect, dx: number, dy = dx): Rect => ({
   w: r.w - 2 * dx,
   h: r.h - 2 * dy,
 })
+
+// Where an item's text sits and how it is set, even while it has none.
+export function textLayoutOf(item: BoardItem, frame: Rect): SceneText {
+  const runs = item.text.length === 0 ? [{ text: '' }] : item.text
+  return sceneItem({ ...item, text: runs }, frame).text!
+}
 
 const imageExtensions = /\.(png|jpe?g|gif|webp|heic)$/i
 

@@ -15,8 +15,7 @@ public struct UserRecoveryError: Error, Equatable, CustomStringConvertible {
 // of trusting a localhost side channel.
 public enum UserRecovery {
   public static func add(folder: URL, name: String?, admin: Bool = false) async throws -> String {
-    let space = try open(folder: folder)
-    let record = try await add(space: space, name: name, admin: admin)
+    let record = try await withSpace(in: folder) { try await add(space: $0, name: name, admin: admin) }
     return "account \(record.id.rawValue)\(name.map { " (\($0))" } ?? "")\(record.isAdmin ? " admin" : "")\n"
   }
 
@@ -37,12 +36,13 @@ public enum UserRecovery {
     guard AccountID.isValid(account) else {
       throw UserRecoveryError(message: "malformed account id: \(account)")
     }
-    let space = try open(folder: folder)
     let id = AccountID(rawValue: account)
-    guard try await space.account(id) != nil else {
-      throw UserRecoveryError(message: "no account \(account) in \(folder.path)")
+    let removed = try await withSpace(in: folder) { space in
+      guard try await space.account(id) != nil else {
+        throw UserRecoveryError(message: "no account \(account) in \(folder.path)")
+      }
+      return try await space.resetCredentials(account: id)
     }
-    let removed = try await space.resetCredentials(account: id)
     return "reset \(account) keys \(removed.keys) read-sessions \(removed.readSessions)\n"
   }
 
@@ -50,8 +50,7 @@ public enum UserRecovery {
     guard AccountID.isValid(account) else {
       throw UserRecoveryError(message: "malformed account id: \(account)")
     }
-    let space = try open(folder: folder)
-    return try await makeInvite(space: space, account: account, server: server, ttl: ttl, location: folder.path)
+    return try await withSpace(in: folder) { try await makeInvite(space: $0, account: account, server: server, ttl: ttl, location: folder.path) }
   }
 
   public static func invite(space: Space, account: String, server: String?, ttl: TimeInterval?) async throws -> (output: String, note: String?) {
@@ -94,10 +93,17 @@ public enum UserRecovery {
 
   """
 
-  private static func open(folder: URL) throws -> Space {
+  private static func withSpace<R>(in folder: URL, _ body: (Space) async throws -> R) async throws -> R {
     guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
       throw UserRecoveryError(message: "no space folder at \(folder.path)")
     }
-    return try Space.open(file: folder.appendingPathComponent("space.sqlite"))
+    let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
+    let result: R
+    do { result = try await body(space) } catch {
+      try? await space.close()
+      throw error
+    }
+    try await space.close()
+    return result
   }
 }

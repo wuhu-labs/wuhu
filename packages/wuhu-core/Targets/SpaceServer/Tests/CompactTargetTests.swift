@@ -73,6 +73,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
         #expect(route.reason == .compaction)
         #expect(routeNotice(transition.transcript) == "Model switched work:\(old.member!) → alternate/test-model (requested at compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed.")
         _ = try await owner.append(id, .compacted(closing: nil, head: summaryHead, kept: nil, completing: nil, transition: transition)).value(Transcript.self)
+        try await space.close()
       }
       let reopened = try Space.open(file: file)
       #expect(try await reopened.sessions.record(id).executor == .kernel(route.specifier))
@@ -83,6 +84,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       guard case let .generationHead(head)? = transcript.items.first else { Issue.record("missing head"); return }
       #expect(head.summary == summaryHead.summary)
       #expect(head.snapshot.preReads == ["/task.md"])
+      try await reopened.close()
     }
   }
 

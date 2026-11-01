@@ -1,8 +1,9 @@
-import { EphemeralStore, LoroDoc } from 'loro-crdt/web'
-import { useEffect, useState } from 'react'
+import { EphemeralStore, LoroDoc, UndoManager } from 'loro-crdt/web'
+import { useEffect, useMemo, useState } from 'react'
+import { CanvasEditing } from '~/components/canvas-editing'
 import { CanvasView } from '~/components/canvas-view'
-import { boardOf } from '~/lib/canvas/board'
-import { type CanvasScene, sceneOf } from '~/lib/canvas/scene'
+import { type Board, boardOf, configuredBoard } from '~/lib/canvas/board'
+import { sceneOf } from '~/lib/canvas/scene'
 import {
   browserSocket,
   type ChannelState,
@@ -11,21 +12,29 @@ import {
   openChannel,
 } from '~/lib/wmd/channel'
 import type { Presence } from '~/lib/wmd/collab'
-import { configuredDoc, loadLoro } from '~/lib/wmd/loro'
+import { loadLoro } from '~/lib/wmd/loro'
 import { recoverFromClockRefusal, signedAssertion } from '~/sdk/auth'
 import { realTimer } from '~/sdk/observe'
 
 const presenceTimeoutMs = 30_000
 
-// A `.canvas` board, view-only and live: its Loro doc follows the document's
-// channel, and each import redraws the scene on the next frame. The view
-// mounts once the first sync lands, so its camera fits the real board.
-export default function CanvasDocument({ path, group, frameOrigin }: {
+interface Live {
+  doc: LoroDoc
+  undo: UndoManager
+  board: Board
+}
+
+// A live `.canvas` board: its Loro doc follows the document's channel, and
+// every change, ours or imported, redraws on the next frame. The view mounts
+// once the first sync lands, so its camera fits the real board; a channel that
+// grants write mounts the editor instead.
+export default function CanvasDocument({ path, group, frameOrigin, find }: {
   path: string
   group: string
   frameOrigin: string | null
+  find(glob: string, limit: number): Promise<string[]>
 }) {
-  const [scene, setScene] = useState<CanvasScene | null>(null)
+  const [live, setLive] = useState<Live | null>(null)
   const [channel, setChannel] = useState<ChannelState>({
     phase: 'connecting',
     editable: false,
@@ -38,7 +47,8 @@ export default function CanvasDocument({ path, group, frameOrigin }: {
     let teardown = () => {}
     loadLoro().then(() => {
       if (disposed) return
-      const doc = configuredDoc(new LoroDoc())
+      const doc = configuredBoard(new LoroDoc())
+      const undo = new UndoManager(doc, { mergeInterval: 0 })
       const presence = new EphemeralStore<Record<string, Presence>>(
         presenceTimeoutMs,
       )
@@ -48,9 +58,10 @@ export default function CanvasDocument({ path, group, frameOrigin }: {
         if (!synced) return
         frame ??= requestAnimationFrame(() => {
           frame = null
-          setScene(sceneOf(boardOf(doc)))
+          setLive({ doc, undo, board: boardOf(doc) })
         })
       }
+      const stopChanges = doc.subscribe(redraw)
       let clock: number | null = null
       const close = openChannel({
         url: liveChannelURL(path, globalThis.location),
@@ -64,10 +75,7 @@ export default function CanvasDocument({ path, group, frameOrigin }: {
           clock = signed?.clock ?? null
           return signed?.assertion ?? null
         },
-        importing: (change) => {
-          change()
-          redraw()
-        },
+        importing: (change) => change(),
         open: browserSocket,
         timer: realTimer,
         changed: (state) => {
@@ -80,8 +88,10 @@ export default function CanvasDocument({ path, group, frameOrigin }: {
       })
       teardown = () => {
         close()
+        stopChanges()
         if (frame !== null) cancelAnimationFrame(frame)
         presence.destroy()
+        undo.free()
         doc.free()
       }
     }, (error: unknown) => {
@@ -90,15 +100,28 @@ export default function CanvasDocument({ path, group, frameOrigin }: {
     return () => {
       disposed = true
       teardown()
-      setScene(null)
+      setLive(null)
     }
   }, [path, group])
 
   const imageSrc = (image: string) =>
     frameOrigin == null ? null : frameOrigin + encodeURI(image)
+  const board = live?.board
+  const scene = useMemo(() => board && sceneOf(board), [board])
   return (
     <section className='canvas-document' data-wuhu-document={path}>
-      {scene != null && <CanvasView scene={scene} imageSrc={imageSrc} />}
+      {live != null && channel.editable && (
+        <CanvasEditing
+          doc={live.doc}
+          board={live.board}
+          undo={live.undo}
+          imageSrc={imageSrc}
+          find={find}
+        />
+      )}
+      {scene != null && !channel.editable && (
+        <CanvasView scene={scene} imageSrc={imageSrc} />
+      )}
       <div className='canvas-document-status'>
         <span className='wmd-status' data-phase={channel.phase}>
           {channelStatus(channel)}

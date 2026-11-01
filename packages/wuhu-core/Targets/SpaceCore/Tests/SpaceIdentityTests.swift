@@ -17,9 +17,12 @@ struct SpaceIdentityTests {
     defer { scratch.remove() }
     let file = scratch.url.appendingPathComponent("space.sqlite")
 
-    let first = try await Space.open(file: file).identity()
-    let reopened = try await Space.open(file: file).identity()
-    #expect(first == reopened)
+    let space = try Space.open(file: file)
+    let first = try await space.identity()
+    try await space.close()
+    let reopened = try Space.open(file: file)
+    #expect(try await reopened.identity() == first)
+    try await reopened.close()
   }
 
   @Test func twoSpacesMintDistinctIdentities() async throws {
@@ -33,13 +36,19 @@ struct SpaceIdentityTests {
     defer { scratch.remove() }
     let file = scratch.url.appendingPathComponent("space.sqlite")
     let identity = SpaceIdentity(rawValue: "spc_" + String(repeating: "a", count: 32))
-    #expect(try await Space.open(file: file, identity: identity).identity() == identity)
-    #expect(try await Space.open(file: file).identity() == identity)
+    let seeded = try Space.open(file: file, identity: identity)
+    #expect(try await seeded.identity() == identity)
+    try await seeded.close()
+    let reopened = try Space.open(file: file)
+    #expect(try await reopened.identity() == identity)
+    try await reopened.close()
     let other = SpaceIdentity(rawValue: "spc_" + String(repeating: "b", count: 32))
     #expect(throws: SpaceIdentityError.mismatch(expected: other.rawValue, actual: identity.rawValue)) {
       try Space.open(file: file, identity: other)
     }
-    #expect(try await Space.open(file: file).identity() == identity)
+    let refused = try Space.open(file: file)
+    #expect(try await refused.identity() == identity)
+    try await refused.close()
   }
 
   @Test func invalidExplicitIdentityDoesNotCreateFile() throws {
@@ -62,5 +71,6 @@ struct SpaceIdentityTests {
       try String.fetchOne(db, sql: "PRAGMA journal_mode")
     }
     #expect(mode == "wal")
+    try await space.close()
   }
 }

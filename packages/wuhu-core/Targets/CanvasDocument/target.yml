@@ -16,6 +16,9 @@ dependencies:
   - WmdDocument
   - LiveDocument
 tests:
+  # The editor vectors are shared with the web editor tests.
+  externalData:
+    - "//packages/wuhu-core:Targets/CanvasDocument/Tests/Fixtures/editor-cases.json"
   dependencies:
     - WmdDocument
     - LiveDocument

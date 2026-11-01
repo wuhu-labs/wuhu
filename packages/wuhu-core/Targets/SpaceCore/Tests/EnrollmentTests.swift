@@ -224,5 +224,7 @@ struct EnrollmentTests {
     }
     #expect(try await reopened.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM join_token_receipts") } == 0)
     #expect(try await reopened.credential(pubkey: testPubkey("one"))?.account == owner)
+    try await reopened.close()
+    try await space.close()
   }
 }

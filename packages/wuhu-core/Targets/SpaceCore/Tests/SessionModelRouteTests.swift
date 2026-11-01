@@ -39,6 +39,8 @@ import Testing
       _ = try await reopened.sessions.restart(id, executor: .kernel(.test))
       #expect(try await reopened.sessions.modelRoute(id) == nil)
       #expect(try await reopened.sessions.modelRouteHistory(id) == [pin, next])
+      try await reopened.close()
+      try await space.close()
     }
   }
 

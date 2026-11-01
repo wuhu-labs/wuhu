@@ -57,6 +57,7 @@ import Testing
         #expect(head.snapshot.subscriptions.isEmpty)
         #expect(head.snapshot.preReads == ["/keep.md"])
         #expect(try await store.hydrate(id).undrained.isEmpty)
+        try await space.close()
         return id
       }
       let id = try await run()
@@ -64,6 +65,7 @@ import Testing
       #expect(try await reopened.sessions.hydrate(id).transcript.kernel.environment.tools.subscriptions.isEmpty)
       #expect(try await reopened.sessions.armedSubscriptions(id).isEmpty)
       #expect(try await reopened.sessions.hydrate(id).undrained.isEmpty)
+      try await reopened.close()
     }
   }
 
@@ -111,6 +113,8 @@ import Testing
       #expect(try await reopened.sessions.hydrate(id).undrained.isEmpty)
       try await reopened.sessions.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
       #expect(try await space.sessions.armedSubscriptions(id).isEmpty)
+      try await reopened.close()
+      try await space.close()
     }
   }
 
@@ -186,6 +190,7 @@ import Testing
         let compacted = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: snapshot, runningWork: []), kept: nil)
         #expect(compacted.handlerSubscriptions == registrations.handlers)
         #expect(compacted.environment.tools.handlerSubscriptions == registrations.handlers)
+        try await space.close()
         return id
       }
       let id = try await armAndCompact()
@@ -197,6 +202,7 @@ import Testing
       let registrations = try await space.sessions.registeredSubscriptions(id)
       #expect(registrations.ids == [.init("plain"), .init("observer")])
       #expect(registrations.handlers == [.init("observer")])
+      try await space.close()
     }
   }
 }

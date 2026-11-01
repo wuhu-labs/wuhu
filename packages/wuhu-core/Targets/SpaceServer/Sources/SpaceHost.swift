@@ -63,8 +63,10 @@ public actor SpaceHost {
   ) async throws -> SpaceHost {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
+    var hosted = false
+    defer { if !hosted { try? await space.close() } }
     let id = try await space.identity().rawValue
-    return try await SpaceLogContext.$spaceID.withValue(id) {
+    let host = try await SpaceLogContext.$spaceID.withValue(id) {
       let advertisedOrigin = deployment.origin
       let logger = Logger(label: "wuhu.serve")
       let identityDirectory = folder.appendingPathComponent("identity")
@@ -221,6 +223,8 @@ public actor SpaceHost {
         if let failure { throw failure }
       })
     }
+    hosted = true
+    return host
   }
 
   private init(

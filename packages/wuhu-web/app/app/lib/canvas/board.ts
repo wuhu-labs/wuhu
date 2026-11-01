@@ -3,7 +3,9 @@ import {
   LoroMap,
   LoroText,
   type LoroTreeNode,
+  type TreeID,
 } from 'loro-crdt/web'
+import { configuredDoc } from '../wmd/loro.ts'
 
 // The board of a `.canvas` Loro doc, as plain data. An item or connector
 // out of schema is skipped, never repaired; a colour or connector field out
@@ -80,7 +82,14 @@ export interface Board {
   connectors: BoardConnector[]
 }
 
-const idPattern = /^[0-9a-z]{6}$/
+export const idPattern = /^[0-9a-z]{6}$/
+
+// Every board doc needs it: `.wmd`'s mark expansion, and the tree's sibling
+// order, as CanvasSchema.configure sets them.
+export function configuredBoard(doc: LoroDoc): LoroDoc {
+  configuredDoc(doc).getTree('tree').enableFractionalIndex(0)
+  return doc
+}
 
 function member<T extends string>(
   values: readonly T[],
@@ -159,22 +168,33 @@ function connectorOf(id: string, value: unknown): BoardConnector | undefined {
 }
 
 export function boardOf(doc: LoroDoc): Board {
+  return readBoard(doc).board
+}
+
+// The board and the tree node of each item it holds.
+export function readBoard(
+  doc: LoroDoc,
+): { board: Board; nodes: Map<string, TreeID> } {
   const items: BoardItem[] = []
-  const ids = new Set<string>()
-  const add = (item: BoardItem | undefined): boolean => {
-    if (item === undefined || ids.has(item.id)) return false
-    ids.add(item.id)
+  const nodes = new Map<string, TreeID>()
+  const add = (
+    item: BoardItem | undefined,
+    node: LoroTreeNode,
+  ): boolean => {
+    if (item === undefined || nodes.has(item.id)) return false
+    nodes.set(item.id, node.id)
     items.push(item)
     return true
   }
   for (const node of doc.getTree('tree').roots()) {
     const item = itemOf(node.data, null)
-    if (!add(item) || item?.kind !== 'section') continue
+    if (!add(item, node) || item?.kind !== 'section') continue
     for (const child of node.children() ?? [] as LoroTreeNode[]) {
       const inner = itemOf(child.data, item.id)
-      if (inner?.kind !== 'section') add(inner)
+      if (inner?.kind !== 'section') add(inner, child)
     }
   }
+  const ids = nodes
   const connectors: BoardConnector[] = []
   for (const [id, value] of doc.getMap('connectors').entries()) {
     const connector = connectorOf(id, value)
@@ -183,5 +203,18 @@ export function boardOf(doc: LoroDoc): Board {
       ids.has(connector.to)
     ) connectors.push(connector)
   }
-  return { items, connectors }
+  return { board: { items, connectors }, nodes }
+}
+
+// An item's frame in board points.
+export function frameOf(board: Board, item: BoardItem) {
+  const parent = item.parent === null
+    ? undefined
+    : board.items.find((other) => other.id === item.parent)
+  return {
+    x: item.x + (parent?.x ?? 0),
+    y: item.y + (parent?.y ?? 0),
+    w: item.w,
+    h: item.h,
+  }
 }

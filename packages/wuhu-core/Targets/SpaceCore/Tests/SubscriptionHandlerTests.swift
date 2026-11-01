@@ -155,15 +155,15 @@ import Testing
     let folder = try ScratchFolder("subscription-handler-reopen")
     let file = folder.url.appending(path: "space.sqlite")
     try await withSessionDeps {
-      var space: Space? = try Space.open(file: file)
-      let id = try await owner(try #require(space).sessions)
-      let slot = try await arm(try #require(space).sessions, id)
-      let success = try await begin(try #require(space).sessions, slot)
-      _ = try await space?.sessions.finishSubscriptionHandler(success, result: .success(stateJSON: #"{"cursor":5}"#, advance: .observed(marker: "saved"), wakes: []))
-      let failed = try await begin(try #require(space).sessions, slot, marker: "pending")
-      _ = try await space?.sessions.finishSubscriptionHandler(failed, result: .failure(error: "offline", notification: wake(slot, "offline")))
-      let inFlight = try await begin(try #require(space).sessions, slot, marker: "pending")
-      space = nil
+      let space = try Space.open(file: file)
+      let id = try await owner(space.sessions)
+      let slot = try await arm(space.sessions, id)
+      let success = try await begin(space.sessions, slot)
+      _ = try await space.sessions.finishSubscriptionHandler(success, result: .success(stateJSON: #"{"cursor":5}"#, advance: .observed(marker: "saved"), wakes: []))
+      let failed = try await begin(space.sessions, slot, marker: "pending")
+      _ = try await space.sessions.finishSubscriptionHandler(failed, result: .failure(error: "offline", notification: wake(slot, "offline")))
+      let inFlight = try await begin(space.sessions, slot, marker: "pending")
+      try await space.close()
       let reopened = try Space.open(file: file)
       let restored = try #require(try await reopened.sessions.armedSubscriptions(id).first)
       #expect(restored.slot.handlerStateJSON == #"{"cursor":5}"#)
@@ -177,7 +177,10 @@ import Testing
       _ = try await reopened.sessions.finishSubscriptionHandler(replay, result: .failure(error: "still offline", notification: wake(slot, "still offline")))
       #expect(try await reopened.sessions.hydrate(id).undrained.count == 1)
       try await reopened.sessions.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
-      #expect(try await Space.open(file: file).sessions.armedSubscriptions(id).isEmpty)
+      try await reopened.close()
+      let cancelled = try Space.open(file: file)
+      #expect(try await cancelled.sessions.armedSubscriptions(id).isEmpty)
+      try await cancelled.close()
     }
   }
 
@@ -198,7 +201,9 @@ import Testing
       let late = try await begin(space.sessions, slot)
       _ = try await space.sessions.archive(id, grace: .seconds(100))
       #expect(try await !space.sessions.finishSubscriptionHandler(late, result: .success(stateJSON: "2", advance: .observed(marker: "late"), wakes: [wake(slot, "late")])))
-      let archived = try #require(try await Space.open(file: file).sessions.armedSubscriptions(id).first)
+      let concurrent = try Space.open(file: file)
+      let archived = try #require(try await concurrent.sessions.armedSubscriptions(id).first)
+      try await concurrent.close()
       #expect(archived.slot.handlerStateJSON == "1")
       #expect(archived.slot.handlerIncarnation == slot.slot.handlerIncarnation)
       #expect(archived.slot.handlerFiring == nil)
@@ -208,6 +213,7 @@ import Testing
       let resumed = try await begin(space.sessions, archived)
       #expect(resumed.stateJSON == "1")
       #expect(try await space.sessions.hydrate(id).undrained.isEmpty)
+      try await space.close()
     }
   }
 }

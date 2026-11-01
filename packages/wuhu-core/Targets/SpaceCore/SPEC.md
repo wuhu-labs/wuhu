@@ -138,6 +138,8 @@ An agent `write` of a live file is merged, not replaced: its text is diffed (a `
 
 `Space.open(file:identity:objects:log:)` optionally supplies the durable identity when provisioning a new database. A malformed identity throws `SpaceIdentityError.invalid` before creating the file; reopening an existing database with a different identity throws `SpaceIdentityError.mismatch` before schema preparation, without overwriting its identity. Omitting identity retains the existing entropy-generated id and reopen behavior. The supplied identity seeds only a database without an identity row.
 
+A file-backed space is closed before anything else uses its file. `Space.open` starts the crash sweep, which holds the space, so one dropped unclosed releases its connections later, on its own; the last WAL connection's close checkpoints under an exclusive lock, and an unretried open of the file meanwhile fails `SQLITE_BUSY`. Whoever opens a space closes it with `close()`, on a thrown error too.
+
 `UserRecovery.add(space:name:admin:)` returns the created AccountRecord and uses the same first-admin and reserved-name policy as the offline folder command. `UserRecovery.invite(space:account:server:ttl:)` validates the account and uses the same single-use device enrollment token, deployment origin/fingerprint and output/note format as the offline folder command. These overloads permit trusted in-process administration without opening a second database instance or requiring the server to stop; they add no HTTP authorization bypass.
 
 ## Machine v2 persistence and diagnostics

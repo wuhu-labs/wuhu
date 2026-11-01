@@ -83,7 +83,10 @@ function marksOf(
   return marks
 }
 
-function inlineOf(schema: Schema, delta: Delta<string>[]): PMNode[] {
+export function inlineOf(
+  schema: Schema,
+  delta: Delta<string>[],
+): PMNode[] {
   const nodes: PMNode[] = []
   for (const op of delta) {
     if (op.insert == null) continue
@@ -157,12 +160,12 @@ export function docOf(schema: Schema, doc: LoroDoc): PMNode {
 
 // ---- ProseMirror → Loro ----
 
-interface Flat {
+export interface Flat {
   text: string
   marks: Record<MarkKey, (MarkValue | null)[]>
 }
 
-function flatten(node: PMNode): Flat {
+export function flatten(node: PMNode): Flat {
   let text = ''
   const marks: Flat['marks'] = { bold: [], italic: [], link: [] }
   const push = (chunk: string, values: Record<MarkKey, MarkValue | null>) => {
@@ -234,7 +237,11 @@ function currentMarks(text: LoroText, length: number): Flat['marks'] {
   return marks
 }
 
-function syncMarks(text: LoroText, wanted: Flat['marks'], length: number) {
+export function syncMarks(
+  text: LoroText,
+  wanted: Flat['marks'],
+  length: number,
+) {
   const have = currentMarks(text, length)
   for (const key of markKeys) {
     let index = 0

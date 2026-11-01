@@ -192,27 +192,30 @@ enum Backcompat {
     let file = scratch.appending(path: "space.sqlite")
     try Data(contentsOf: fixture).write(to: file)
     if try !Wuhu45Migration.isApplied(to: file) { try Wuhu45Migration.apply(to: file) }
-    return try await answer(probe, file: file, meta: meta)
+    let web = switch probe {
+    case .tool, .observe: false
+    case .webQuery, .webObserve: true
+    }
+    let harness = try Harness(dev: !web, opening: { try Space.open(file: file) })
+    let answer = try await answer(probe, harness: harness, meta: meta)
+    try await harness.space.close()
+    return answer
   }
 
-  private static func answer(_ probe: Probe, file: URL, meta: Goldens.Meta) async throws -> String {
+  private static func answer(_ probe: Probe, harness: Harness, meta: Goldens.Meta) async throws -> String {
     switch probe {
     case let .tool(sql):
-      let harness = try Harness(opening: { try Space.open(file: file) })
       let response = try await harness.post("query", .object(["sql": .string(sql)]))
       return "\(response.status.code)\n" + (try await response.text())
     case let .observe(sql, mutation):
-      let harness = try Harness(opening: { try Space.open(file: file) })
       let response = try await harness.get(harness.api, "/v1/observe", query: ["sql": sql, "throttleMs": "0"])
       return try await frames(response, count: mutation == nil ? 1 : 2) {
         if let mutation { try await mutate(mutation, harness: harness, meta: meta) }
       }
     case let .webQuery(sql):
-      let harness = try Harness(dev: false, opening: { try Space.open(file: file) })
       let response = try await harness.web(cookied("/_/query", sql: sql, meta: meta))
       return "\(response.status.code)\n" + (try await response.text())
     case let .webObserve(sql):
-      let harness = try Harness(dev: false, opening: { try Space.open(file: file) })
       let response = try await harness.web(cookied("/_/observe", sql: sql, meta: meta))
       return try await frames(response, count: 1) {}
     }
@@ -325,13 +328,15 @@ enum Backcompat {
       )
       _ = try await space.issueDeviceCommand(device: device.id, payload: "{\"sidebar\":\"everything\"}", issuedBy: "owner")
       let cookie = try await space.createReadSession(account: owner.id, group: .shared, expiresAt: Date(timeIntervalSince1970: 4_102_444_800))
+      try await space.close()
       return Goldens.Meta(box: lead.rawValue, device: device.id, cookie: cookie.rawValue)
     }
 
     // A command the app's 60-second window keeps whenever the replay runs.
     try await fixtureDependencies(Date(timeIntervalSince1970: 4_102_444_800)) {
-      let later = try Space.open(file: file)
-      _ = try await later.issueDeviceCommand(device: meta.device, payload: "{\"sidebar\":\"/.sidebars/a.json\"}", issuedBy: "owner")
+      let space = try Space.open(file: file)
+      _ = try await space.issueDeviceCommand(device: meta.device, payload: "{\"sidebar\":\"/.sidebars/a.json\"}", issuedBy: "owner")
+      try await space.close()
     }
 
     let queue = try DatabaseQueue(path: file.path)

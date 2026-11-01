@@ -70,6 +70,10 @@ export default function Node() {
                 path={view.path}
                 group={group}
                 frameOrigin={contentOriginString(contentOrigin)}
+                find={(glob, limit) =>
+                  client.find({ glob, matchLimit: limit }).then((found) =>
+                    found.paths
+                  )}
               />
             </Suspense>
           )}

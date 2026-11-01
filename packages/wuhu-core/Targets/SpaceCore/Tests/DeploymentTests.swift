@@ -50,8 +50,12 @@ struct DeploymentTests {
     let file = scratch.url.appendingPathComponent("space.sqlite")
 
     let record = DeploymentRecord(origin: "https://wuhu.example", tlsFingerprint: fp, certificate: .generated)
-    try await Space.open(file: file).recordDeployment(record)
-    #expect(try await Space.open(file: file).deployment() == record)
+    let space = try Space.open(file: file)
+    try await space.recordDeployment(record)
+    try await space.close()
+    let reopened = try Space.open(file: file)
+    #expect(try await reopened.deployment() == record)
+    try await reopened.close()
   }
 
   // What a server from before the certificate kind was recorded leaves behind.
@@ -100,6 +104,7 @@ struct DeploymentTests {
     #expect(link.contains("&fp=\(fp)") == pinned)
     #expect(link.contains("fp=") == pinned)
     #expect(note?.hasPrefix(UserRecovery.unprovenCertificateNote) == (certificate == nil))
+    try await space.close()
   }
 
   private func olderServerBoot(_ space: Space, fingerprint: String) async throws {

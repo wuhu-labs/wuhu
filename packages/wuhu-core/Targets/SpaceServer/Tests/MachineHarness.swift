@@ -29,16 +29,13 @@ struct SeededRNG: RandomNumberGenerator, Sendable {
   }
 }
 
-func makeMachineSpace(file: URL? = nil, seed: UInt64 = 7) throws -> Space {
+func makeMachineSpace(seed: UInt64 = 7) throws -> Space {
   try withDependencies {
     $0.date = DateGenerator { Date() }
     $0.continuousClock = ContinuousClock()
     $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: seed))
   } operation: {
-    if let file {
-      return try Space.open(file: file)
-    }
-    return try Space.inMemory()
+    try Space.inMemory()
   }
 }
 

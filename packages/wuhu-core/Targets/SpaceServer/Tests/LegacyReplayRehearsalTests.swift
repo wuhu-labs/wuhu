@@ -98,7 +98,9 @@ private struct OfflineRehearsalMedia: MediaResolver {
         let noNativeReplay = emitted.allSatisfy { body in forbiddenFields.allSatisfy { !body.contains("\"\($0)\"") } }
         #expect(noNativeReplay)
         print("REPLAY_REHEARSAL case=\(index) generation=\(before)->\(after) opaque_before=\(opaque.count) opaque_after=0 binding_present=\(adopted.replayBinding != nil) requests=\(emitted.count) foreign_opaque=false native_reasoning_hosted=false boundary_repeats=false latest_receipts=\(latestReceipts.count) receipts_preserved=\(retainedReceipts) open_inputs=\(openRequestInputs.count) inputs_preserved=\(retainedOpenInputs)")
+        try await reopened.close()
       }
+      try await space.close()
     }
   }
 }

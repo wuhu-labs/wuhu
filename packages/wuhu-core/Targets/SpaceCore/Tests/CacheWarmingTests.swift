@@ -227,18 +227,21 @@ private final class WarmingTime: Sendable {
     try await withSessionDeps {
       try await withDependencies { $0.date = DateGenerator { time.now } } operation: {
         func firstRun() async throws -> SessionID {
-          let store = try Space.open(file: file).sessions
+          let space = try Space.open(file: file)
+          let store = space.sessions
           let id = try await store.createSession(group: .shared, title: "Warm", kind: .agent, createdBy: "morgan", model: .test)
           try await settle(store, id)
           try await store.scheduleCacheWarming(id, intervalSeconds: 3300)
           time.advance()
           #expect(try await ping(store, id, max: 2))
           try await settle(store, id)
+          try await space.close()
           return id
         }
         let id = try await firstRun()
         time.advance(3300 * 12)
-        let store = try Space.open(file: file).sessions
+        let space = try Space.open(file: file)
+        let store = space.sessions
         try await store.deferOverdueCacheWarming()
         #expect(try await !ping(store, id, max: 2))
         time.advance()
@@ -257,6 +260,7 @@ private final class WarmingTime: Sendable {
         try await settle(store, id)
         time.advance()
         #expect(try await ping(store, id, max: 2))
+        try await space.close()
       }
     }
   }

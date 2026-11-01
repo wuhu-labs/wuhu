@@ -106,7 +106,9 @@ private func serveAndCollect(folder: URL, certificate: URL? = nil, privateKey: U
   server.cancel()
   try await server.value
 
-  let recorded = try await Space.open(file: folder.appendingPathComponent("space.sqlite")).deployment()
+  let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
+  let recorded = try await space.deployment()
+  try await space.close()
   let (link, _) = try await UserRecovery.invite(folder: folder, account: account.id, server: nil, ttl: nil)
   let offline = link.split(separator: "&").first { $0.hasPrefix("fp=") }.map { String($0.dropFirst(3)).trimmingCharacters(in: .newlines) }
   return HandedOut(

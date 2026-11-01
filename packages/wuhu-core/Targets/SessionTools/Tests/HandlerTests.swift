@@ -132,9 +132,9 @@ func withHandlerFiring(
     let folder = try ScratchFolder("handler-runtime-restart")
     let file = folder.url.appending(path: "space.sqlite")
     try await withToolDeps { time in
-      var first: Space? = try Space.open(file: file)
-      let session = try await makeSession(try #require(first))
-      _ = try await #require(first).fs(.shared).write("/pending.js", Data("""
+      let first = try Space.open(file: file)
+      let session = try await makeSession(first)
+      _ = try await first.fs(.shared).write("/pending.js", Data("""
       import {writeText} from 'wuhu:space';
       export default async ({state,wake}) => {
         await writeText('/pending-started.md','started',{ifMatch:null});
@@ -143,17 +143,17 @@ func withHandlerFiring(
         return {cursor:99};
       }
       """.utf8), ifMatch: nil)
-      try await withHandlerFiring(try #require(first)) { worker, owner in
+      try await withHandlerFiring(first) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 1, "handler": "/pending.js"]))
         await time.advance(by: 2)
-        try await untilAdvancing("pending timer began", time) { (try? await first?.fs(.shared).stat("/pending-started.md")) != nil }
+        try await untilAdvancing("pending timer began", time) { (try? await first.fs(.shared).stat("/pending-started.md")) != nil }
       }
-      let savedState = try await #require(first).sessions.armedSubscriptions(session).first?.slot.handlerStateJSON
-      let notifications = try await handlerNotifications(try #require(first), session)
+      let savedState = try await first.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON
+      let notifications = try await handlerNotifications(first, session)
       #expect(savedState == nil)
       #expect(notifications.isEmpty)
-      first = nil
+      try await first.close()
       let reopened = try Space.open(file: file)
       let fs = await reopened.fs(.shared)
       let (token, _) = try await fs.read("/pending.js")
@@ -162,6 +162,7 @@ func withHandlerFiring(
         try await untilAdvancing("reopened firing finishes", time) { try await reopened.sessions.armedSubscriptions(session).isEmpty }
         #expect(try await handlerNotifications(reopened, session).map { $0.content.text } == ["resumed"])
       }
+      try await reopened.close()
     }
   }
 

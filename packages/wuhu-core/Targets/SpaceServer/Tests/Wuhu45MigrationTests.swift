@@ -70,6 +70,7 @@ import Testing
     #expect(try await !space.isHumanAdmin(Self.carol, of: bosses))
     #expect(try await space.reads(carols) == [carols, .shared, .settings])
     #expect(try await space.reads(.shared) == [.shared, .settings])
+    try await space.close()
   }
 
   @Test func anAdminWithoutAPersonaAbortsAndLeavesTheFileAsItWas() async throws {
@@ -86,14 +87,14 @@ import Testing
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space.open(file: file) }
   }
 
-  @Test func theMigratedSchemaMatchesFreshWithRetiredTablesRetained() throws {
+  @Test func theMigratedSchemaMatchesFreshWithRetiredTablesRetained() async throws {
     let folder = try scratch()
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = try copy(to: folder)
     try Wuhu45Migration.apply(to: file)
     let fresh = folder.appending(path: "fresh/space.sqlite")
     try FileManager.default.createDirectory(at: fresh.deletingLastPathComponent(), withIntermediateDirectories: true)
-    _ = try Space.open(file: fresh)
+    try await Space.open(file: fresh).close()
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
@@ -117,7 +118,7 @@ import Testing
           && !(table == "machine_execs" && (line.contains("tool_spec") || line.contains("tool_end_owed")))
       }, "\(table)")
     }
-    _ = try Space.open(file: file)
+    try await Space.open(file: file).close()
     let reopened = try Self.shape(file)
     #expect(reopened["session_space_layer"] == nil)
     #expect(reopened.filter { !retired.contains($0.key) } == expected)
@@ -210,7 +211,7 @@ import Testing
     return process.terminationStatus
   }
 
-  @Test(.enabled(if: sqlite3 != nil)) func throughThePlainCLIAFailedGuardLeavesTheFileByteIdentical() throws {
+  @Test(.enabled(if: sqlite3 != nil)) func throughThePlainCLIAFailedGuardLeavesTheFileByteIdentical() async throws {
     let folder = try scratch()
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = try copy(
@@ -224,7 +225,7 @@ import Testing
     let clean = try copy(to: folder.appending(path: "clean"))
     #expect(try Self.cli(Wuhu45Migration.spliced(for: clean), on: clean, in: folder) == 0)
     #expect(try Wuhu45Migration.isApplied(to: clean))
-    _ = try Space.open(file: clean)
+    try await Space.open(file: clean).close()
   }
 
   @Test func theFirstServeReinducesDocumentsAndSkipsUnreadableBlobs() async throws {
@@ -275,6 +276,7 @@ import Testing
     #expect(skipped.count == 2)
     #expect(skipped.contains { $0.contains("shared:/missing.md") })
     #expect(skipped.contains { $0.contains("shared:/unreadable.md") })
+    try await space.close()
   }
 
   static func tables(_ db: Database) throws -> [String] {

@@ -38,6 +38,7 @@ struct UserVerbTests {
     #expect(Set(accounts.map(\.id.rawValue)) == Set(ids))
     #expect(accounts.allSatisfy { $0.kind == .human && $0.name == "alice" })
     #expect(accounts.filter(\.isAdmin).count == 1)
+    try await space.close()
   }
 
   @Test func addAdminFlagMarksTheAccount() async throws {
@@ -49,6 +50,7 @@ struct UserVerbTests {
     #expect(lines.allSatisfy { $0.hasSuffix(" admin") })
     let space = try harness.openSpace()
     #expect(try await space.accounts().allSatisfy(\.isAdmin))
+    try await space.close()
   }
 
   @Test func addRefusesTheReservedOwnerName() async throws {
@@ -58,6 +60,7 @@ struct UserVerbTests {
     #expect(await harness.stderr.text.contains("Owner is reserved"))
     let space = try harness.openSpace()
     #expect(try await space.accounts().isEmpty)
+    try await space.close()
   }
 
   @Test func resetWipesKeysAndReadSessionsAgainstARealFolder() async throws {
@@ -66,6 +69,7 @@ struct UserVerbTests {
     let account = try await seeded.addAccount(kind: .human, name: "alice")
     _ = try await seeded.addKey("ed25519:" + Data(repeating: 1, count: 32).base64EncodedString(), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     let readSession = try await seeded.createReadSession(account: account.id, group: .shared, expiresAt: Date().addingTimeInterval(3600))
+    try await seeded.close()
 
     let code = await harness.run(["user", "reset", "--space", harness.folder.path, account.id.rawValue])
     #expect(code == 0)
@@ -75,11 +79,12 @@ struct UserVerbTests {
     #expect(try await space.account(account.id)?.name == "alice")
     #expect(try await space.keys(account: account.id) == [])
     #expect(try await space.account(readSession: readSession, in: .shared) == nil)
+    try await space.close()
   }
 
   @Test func resetUnknownAccountFails() async throws {
     let harness = try RecoveryHarness()
-    _ = try harness.openSpace()
+    try await harness.openSpace().close()
     let code = await harness.run(["user", "reset", "--space", harness.folder.path, "ac_missing0"])
     #expect(code == 1)
     #expect(await harness.stderr.text.contains("no account ac_missing0"))
@@ -91,6 +96,8 @@ struct UserVerbTests {
     let account = try await seeded.addAccount(kind: .human, name: "alice")
     let fp = "sha256:" + String(repeating: "ab", count: 32)
     try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example:5540", tlsFingerprint: fp, certificate: .generated))
+    let identity = try await seeded.identity()
+    try await seeded.close()
 
     let code = await harness.run(["user", "invite", "--space", harness.folder.path, account.id.rawValue])
     #expect(code == 0)
@@ -99,13 +106,14 @@ struct UserVerbTests {
     let lines = await harness.stdout.text.split(separator: "\n").map(String.init)
     #expect(lines.count == 1)
     let envelope = try #require(EnrollmentEnvelope.parse(lines[0]))
-    let identity = try await seeded.identity()
     #expect(envelope.server == "https://wuhu.example:5540")
     #expect(envelope.space == identity.rawValue)
     #expect(envelope.fingerprint == fp)
     #expect(await harness.stderr.text == "one-time link; it dies at first use or in 3600 seconds\n")
 
-    let key = try await harness.openSpace().consumeJoinToken(JoinToken(rawValue: envelope.token), pubkey: "ed25519:" + Data(repeating: 2, count: 32).base64EncodedString())
+    let space = try harness.openSpace()
+    let key = try await space.consumeJoinToken(JoinToken(rawValue: envelope.token), pubkey: "ed25519:" + Data(repeating: 2, count: 32).base64EncodedString())
+    try await space.close()
     #expect(key.account == account.id)
     #expect(key.capabilities == [.device])
     #expect(key.createdBy == nil)
@@ -117,6 +125,7 @@ struct UserVerbTests {
     let account = try await seeded.addAccount(kind: .human, name: nil)
     let fp = "sha256:" + String(repeating: "cd", count: 32)
     try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example:5540", tlsFingerprint: fp, certificate: .generated))
+    try await seeded.close()
 
     let code = await harness.run([
       "user", "invite", "--space", harness.folder.path, "--server", "https://lan.example:9443/", "--ttl", "60",
@@ -136,6 +145,7 @@ struct UserVerbTests {
     let account = try await seeded.addAccount(kind: .human, name: nil)
     let fp = "sha256:" + String(repeating: "ef", count: 32)
     try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example", tlsFingerprint: fp, certificate: .provided))
+    try await seeded.close()
 
     let code = await harness.run(["user", "invite", "--space", harness.folder.path, account.id.rawValue])
     #expect(code == 0)
@@ -153,6 +163,7 @@ struct UserVerbTests {
     let account = try await seeded.addAccount(kind: .human, name: nil)
     let fp = "sha256:" + String(repeating: "ef", count: 32)
     try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example", tlsFingerprint: fp, certificate: nil))
+    try await seeded.close()
 
     let code = await harness.run(["user", "invite", "--space", harness.folder.path, account.id.rawValue])
     #expect(code == 0)
@@ -172,6 +183,7 @@ struct UserVerbTests {
     let harness = try RecoveryHarness()
     let seeded = try harness.openSpace()
     let account = try await seeded.addAccount(kind: .human, name: nil)
+    try await seeded.close()
 
     let code = await harness.run([
       "user", "invite", "--space", harness.folder.path, "--server", "https://lan.example:9443", account.id.rawValue,
@@ -187,6 +199,7 @@ struct UserVerbTests {
     let harness = try RecoveryHarness()
     let seeded = try harness.openSpace()
     let account = try await seeded.addAccount(kind: .human, name: nil)
+    try await seeded.close()
 
     let code = await harness.run(["user", "invite", "--space", harness.folder.path, account.id.rawValue])
     #expect(code == 1)
@@ -198,7 +211,7 @@ struct UserVerbTests {
 
   @Test func inviteUnknownAccountFails() async throws {
     let harness = try RecoveryHarness()
-    _ = try harness.openSpace()
+    try await harness.openSpace().close()
     let code = await harness.run(["user", "invite", "--space", harness.folder.path, "ac_missing0"])
     #expect(code == 1)
     #expect(await harness.stderr.text.contains("no account ac_missing0"))

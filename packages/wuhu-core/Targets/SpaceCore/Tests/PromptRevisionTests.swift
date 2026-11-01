@@ -94,7 +94,10 @@ import Testing
       let id = try await space.sessions.createSession(group: .shared, title: "t2", kind: .agent, createdBy: "morgan", model: .test)
       let frozen = try await prompt(space, id)
       try await edit(space, id, "two")
-      #expect(try await prompt(try Space.open(file: file), id) == frozen, "a restart keeps the prompt")
+      try await space.close()
+      let reopened = try Space.open(file: file)
+      #expect(try await prompt(reopened, id) == frozen, "a restart keeps the prompt")
+      try await reopened.close()
     }
   }
 

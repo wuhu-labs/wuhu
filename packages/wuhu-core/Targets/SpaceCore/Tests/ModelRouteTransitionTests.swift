@@ -58,6 +58,9 @@ import WuhuAI
       let storedConfig = try await afterCommit.writer.read { db in try String.fetchOne(db, sql: "SELECT executor_config FROM sessions WHERE id = ?", arguments: [id.rawValue]) }
       #expect(storedConfig == SessionExecutor.kernel(next.specifier).configJSON)
       await #expect(throws: PortableHandoffConflict.routeChanged) { try await store.updateModelRouteFailure(id, expectedEpoch: old.epoch, failure: nil) }
+      try await afterCommit.close()
+      try await beforeCommit.close()
+      try await space.close()
     }
   }
 }

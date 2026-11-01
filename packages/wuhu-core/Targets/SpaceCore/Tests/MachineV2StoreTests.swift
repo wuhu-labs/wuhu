@@ -58,6 +58,8 @@ extension MachineV2StoreTests {
     #expect(try await restored.read(record.id).output.first?.payload.data == Data("private-output-marker".utf8))
     let wrong = try await reopened.machineV2Store(group: .shared, key: .init(size: .bits256))
     await #expect(throws: OperationError.self) { try await wrong.read(record.id) }
+    try await reopened.close()
+    try await space.close()
   }
 
   @Test func atomicAdmissionAndOwnerUniqueness() async throws {
@@ -268,6 +270,8 @@ extension MachineV2StoreTests {
       time.withLock { $0 += 1 }
       try await reopened.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .attached, description: description)
       #expect(try await reopened.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.observedAt == Date(timeIntervalSince1970: 1_000_000_101))
+      try await reopened.close()
+      try await space.close()
     }
   }
 

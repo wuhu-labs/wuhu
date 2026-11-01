@@ -13,11 +13,13 @@ import {
   dragged,
   fitted,
   keyZoomStep,
+  toBoard,
   visibleRect,
   wheeled,
   zoomedAt,
 } from '~/lib/canvas/camera'
 import { contains, grown, SpatialGrid } from '~/lib/canvas/grid'
+import { PointerRouter } from '~/lib/canvas/pointers'
 import type { TextRun } from '~/lib/canvas/board'
 import {
   arrowHead,
@@ -51,7 +53,21 @@ export interface CanvasViewProps {
   initialCamera?: Camera
   // Set while mounted: the camera, and a jump that draws it at once.
   control?: { current: CanvasControl | null }
+  // Editing: pointers it claims edit instead of panning.
+  input?: CanvasInput
+  // The item whose text an editor draws instead.
+  editingText?: string | null
+  // Screen-space chrome; pointers on it neither pan nor edit.
   children?: ReactNode
+}
+
+export interface CanvasInput {
+  down(event: PointerEvent, at: Point, camera: Camera): boolean
+  move(event: PointerEvent, at: Point, camera: Camera): void
+  up(event: PointerEvent, at: Point, camera: Camera, cancelled: boolean): void
+  doubleClick(at: Point, camera: Camera): void
+  // Runs before the zoom keys; preventDefault keeps them out.
+  key(event: KeyboardEvent): void
 }
 
 export interface CanvasControl {
@@ -86,6 +102,8 @@ export function CanvasView({
   onFrame,
   initialCamera,
   control,
+  input,
+  editingText = null,
   children,
 }: CanvasViewProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -117,14 +135,24 @@ export function CanvasView({
     frame: number | null
     rest: ReturnType<typeof setTimeout> | null
     grids: typeof grids
-  }>({ camera: null, cull: null, frame: null, rest: null, grids })
+    draw: (() => void) | null
+  }>({ camera: null, cull: null, frame: null, rest: null, grids, draw: null })
+  // The listeners outlive renders; they read the latest props here.
+  const latest = useRef({ scene, onFrame, initialCamera, control, input })
+  latest.current = { scene, onFrame, initialCamera, control, input }
+
+  useLayoutEffect(() => {
+    const state = controller.current
+    state.grids = grids
+    state.cull = null
+    state.draw?.()
+  }, [grids])
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current!
     const world = worldRef.current!
     const state = controller.current
-    state.grids = grids
-    state.cull = null
+    const { scene, initialCamera, control } = latest.current
     const size = () => ({ w: viewport.clientWidth, h: viewport.clientHeight })
 
     const remount = (camera: Camera) => {
@@ -159,7 +187,11 @@ export function CanvasView({
           cull.w * cull.h > shrinkRatio * visible.w * visible.h
         ) remount(state.camera!)
       }, restMs)
-      onFrame?.(camera)
+      latest.current.onFrame?.(camera)
+    }
+    state.draw = () => {
+      if (state.frame !== null) cancelAnimationFrame(state.frame)
+      draw()
     }
     const move = (camera: Camera) => {
       state.camera = camera
@@ -194,44 +226,64 @@ export function CanvasView({
       move(wheeled(state.camera!, event, pointerAt(event), size()))
     }
 
-    // One pointer drags the board; two pinch it about their midpoint.
-    const pointers = new Map<number, Point>()
-    const spread = () => {
-      const [a, b] = [...pointers.values()]
-      return {
-        mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-        distance: Math.hypot(a.x - b.x, a.y - b.y),
+    const onChrome = (event: Event) =>
+      (event.target as Element).closest('.canvas-chrome') !== null
+    const boardAt = (at: Point) => toBoard(state.camera!, at)
+    let current: PointerEvent | null = null
+    const router = new PointerRouter({
+      claim: (at) => {
+        const claimed =
+          latest.current.input?.down(current!, boardAt(at), state.camera!) ===
+            true
+        if (claimed) viewport.focus({ preventScroll: true })
+        return claimed
+      },
+      edit: (at) =>
+        latest.current.input?.move(current!, boardAt(at), state.camera!),
+      release: (at, cancelled) =>
+        latest.current.input?.up(
+          current!,
+          boardAt(at),
+          state.camera!,
+          cancelled,
+        ),
+      pan: (dx, dy) => move(dragged(state.camera!, dx, dy)),
+      pinch: (mid, dx, dy, ratio) =>
+        move(zoomedAt(dragged(state.camera!, dx, dy), mid, ratio)),
+    })
+    const routed = (event: PointerEvent, route: (at: Point) => void) => {
+      current = event
+      try {
+        route(pointerAt(event))
+      } finally {
+        current = null
       }
     }
     const down = (event: PointerEvent) => {
-      if (event.button !== 0 || (event.target as Element).closest('a')) return
-      viewport.setPointerCapture(event.pointerId)
-      pointers.set(event.pointerId, pointerAt(event))
+      if (event.button !== 0 || onChrome(event)) return
+      if (
+        latest.current.input === undefined &&
+        (event.target as Element).closest('a')
+      ) return
+      routed(event, (at) => {
+        if (router.down(event.pointerId, at)) {
+          viewport.setPointerCapture(event.pointerId)
+        }
+      })
     }
-    const moved = (event: PointerEvent) => {
-      const last = pointers.get(event.pointerId)
-      if (last === undefined) return
-      const before = pointers.size === 2 ? spread() : null
-      const now = pointerAt(event)
-      pointers.set(event.pointerId, now)
-      if (before === null) {
-        move(dragged(state.camera!, now.x - last.x, now.y - last.y))
-        return
-      }
-      const after = spread()
-      const panned = dragged(
+    const moved = (event: PointerEvent) =>
+      routed(event, (at) => router.move(event.pointerId, at))
+    const up = (event: PointerEvent) =>
+      routed(
+        event,
+        (at) => router.up(event.pointerId, at, event.type === 'pointercancel'),
+      )
+    const doubleClick = (event: MouseEvent) => {
+      if (onChrome(event)) return
+      latest.current.input?.doubleClick(
+        boardAt(pointerAt(event)),
         state.camera!,
-        after.mid.x - before.mid.x,
-        after.mid.y - before.mid.y,
       )
-      move(
-        before.distance === 0
-          ? panned
-          : zoomedAt(panned, after.mid, after.distance / before.distance),
-      )
-    }
-    const up = (event: PointerEvent) => {
-      pointers.delete(event.pointerId)
     }
 
     // Safari's trackpad pinch: non-standard gesture events with a running
@@ -245,7 +297,7 @@ export function CanvasView({
         clientY: number
       }
       if (event.type === 'gesturestart') gestureScale = 1
-      if (pointers.size >= 2 || event.type !== 'gesturechange') return
+      if (router.pinching || event.type !== 'gesturechange') return
       move(
         zoomedAt(
           state.camera!,
@@ -257,6 +309,9 @@ export function CanvasView({
     }
 
     const key = (event: KeyboardEvent) => {
+      if (onChrome(event)) return
+      latest.current.input?.key(event)
+      if (event.defaultPrevented) return
       if (!(event.metaKey || event.ctrlKey)) return
       const centre = { x: size().w / 2, y: size().h / 2 }
       const camera = state.camera!
@@ -280,6 +335,7 @@ export function CanvasView({
     viewport.addEventListener('pointerup', up)
     viewport.addEventListener('pointercancel', up)
     viewport.addEventListener('keydown', key)
+    viewport.addEventListener('dblclick', doubleClick)
     for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
       viewport.addEventListener(type, gesture)
     }
@@ -291,6 +347,7 @@ export function CanvasView({
       viewport.removeEventListener('pointerup', up)
       viewport.removeEventListener('pointercancel', up)
       viewport.removeEventListener('keydown', key)
+      viewport.removeEventListener('dblclick', doubleClick)
       for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
         viewport.removeEventListener(type, gesture)
       }
@@ -299,8 +356,9 @@ export function CanvasView({
       if (control) control.current = null
       state.frame = null
       state.rest = null
+      state.draw = null
     }
-  }, [grids])
+  }, [])
 
   const connectors = mounted.connectors.map((i) => scene.connectors[i])
     .filter((c) => c !== undefined)
@@ -318,6 +376,7 @@ export function CanvasView({
           <ItemView
             key={item.id}
             item={item}
+            hideText={item.id === editingText}
             imageSrc={item.image ? imageSrc(item.image.path) : null}
             crossOrigin={crossOrigin}
           />
@@ -388,8 +447,14 @@ const ConnectorPath = memo(function ConnectorPath({ connector, marker }: {
   )
 })
 
-const ItemView = memo(function ItemView({ item, imageSrc, crossOrigin }: {
+const ItemView = memo(function ItemView({
+  item,
+  hideText,
+  imageSrc,
+  crossOrigin,
+}: {
   item: SceneItem
+  hideText: boolean
   imageSrc: string | null
   crossOrigin?: 'use-credentials'
 }) {
@@ -440,7 +505,7 @@ const ItemView = memo(function ItemView({ item, imageSrc, crossOrigin }: {
           }}
         />
       )}
-      {item.text && (
+      {item.text && !hideText && (
         <FittedText
           text={item.text}
           origin={{ x: frame.x, y: frame.y }}

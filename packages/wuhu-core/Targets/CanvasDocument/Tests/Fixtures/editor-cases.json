@@ -1,0 +1,292 @@
+[
+  {
+    "name": "inserts read back in tree order with frames relative to their section",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [40, 60, 160, 160], "color": "yellow", "text": [{ "text": "Ship" }] },
+      { "op": "insert", "as": "s", "kind": "section", "frame": [600, 0, 900, 700], "color": "gray", "text": [{ "text": "Sprint" }] },
+      { "op": "insert", "as": "r", "kind": "rect", "frame": [640, 60, 200, 100], "color": "blue", "in": "s" },
+      { "op": "insert", "as": "t", "kind": "text", "frame": [40, 300, 320, 40], "color": "pink" }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 40, "y": 60, "w": 160, "h": 160, "color": "yellow", "text": [{ "text": "Ship" }] },
+        { "id": "s", "kind": "section", "x": 600, "y": 0, "w": 900, "h": 700, "color": "gray", "text": [{ "text": "Sprint" }] },
+        { "id": "r", "kind": "rect", "parent": "s", "x": 40, "y": 60, "w": 200, "h": 100, "color": "blue" },
+        { "id": "t", "kind": "text", "x": 40, "y": 300, "w": 320, "h": 40 }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "items go into sections only, and sections stay at the top level",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 100, 100], "color": "yellow" },
+      { "op": "insert", "kind": "rect", "frame": [10, 10, 50, 50], "color": "blue", "in": "a", "throws": "notASection" },
+      { "op": "insert", "as": "s", "kind": "section", "frame": [200, 0, 400, 400], "color": "gray" },
+      { "op": "insert", "kind": "section", "frame": [210, 10, 100, 100], "color": "gray", "in": "s", "throws": "nestedSection" },
+      { "op": "insert", "kind": "sticky", "frame": [210, 10, 100, 100], "color": "yellow", "in": "zzzzzz", "throws": "unknown" },
+      { "op": "reparent", "id": "s", "into": "s", "throws": "nestedSection" }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "s", "kind": "section", "x": 200, "y": 0, "w": 400, "h": 400, "color": "gray" }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "moving a section carries its contents; a child moves on its own",
+    "ops": [
+      { "op": "insert", "as": "s", "kind": "section", "frame": [0, 0, 400, 400], "color": "gray" },
+      { "op": "insert", "as": "i", "kind": "sticky", "frame": [20, 20, 100, 100], "color": "yellow", "in": "s" },
+      { "op": "move", "ids": ["s", "i"], "dx": 100, "dy": 50 },
+      { "op": "move", "ids": ["i"], "dx": -10, "dy": 5 },
+      { "op": "move", "ids": ["s", "i"], "dx": 0, "dy": 0, "noop": true }
+    ],
+    "expected": {
+      "items": [
+        { "id": "s", "kind": "section", "x": 100, "y": 50, "w": 400, "h": 400, "color": "gray" },
+        { "id": "i", "kind": "sticky", "parent": "s", "x": 10, "y": 25, "w": 100, "h": 100, "color": "yellow" }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "reparenting keeps where the item stands",
+    "ops": [
+      { "op": "insert", "as": "s", "kind": "section", "frame": [300, 300, 400, 400], "color": "gray" },
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [350, 360, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "b", "kind": "sticky", "frame": [500, 500, 100, 100], "color": "pink" },
+      { "op": "reparent", "id": "a", "into": "s" },
+      { "op": "reparent", "id": "b", "into": "s" },
+      { "op": "reparent", "id": "a", "into": "s", "noop": true },
+      { "op": "reparent", "id": "b", "into": null }
+    ],
+    "expected": {
+      "items": [
+        { "id": "s", "kind": "section", "x": 300, "y": 300, "w": 400, "h": 400, "color": "gray" },
+        { "id": "a", "kind": "sticky", "parent": "s", "x": 50, "y": 60, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "b", "kind": "sticky", "x": 500, "y": 500, "w": 100, "h": 100, "color": "pink" }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "a child's frame is set in board points",
+    "ops": [
+      { "op": "insert", "as": "s", "kind": "section", "frame": [100, 100, 400, 400], "color": "gray" },
+      { "op": "insert", "as": "c", "kind": "rect", "frame": [150, 150, 100, 50], "color": "blue", "in": "s" },
+      { "op": "setFrame", "id": "c", "frame": [200, 220, 120, 60] },
+      { "op": "setFrame", "id": "c", "frame": [200, 220, 120, 60], "noop": true }
+    ],
+    "expected": {
+      "items": [
+        { "id": "s", "kind": "section", "x": 100, "y": 100, "w": 400, "h": 400, "color": "gray" },
+        { "id": "c", "kind": "rect", "parent": "s", "x": 100, "y": 120, "w": 120, "h": 60, "color": "blue" }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "deleting a section takes its contents and every connector touching them",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "s", "kind": "section", "frame": [300, 0, 400, 400], "color": "gray" },
+      { "op": "insert", "as": "c", "kind": "sticky", "frame": [320, 20, 100, 100], "color": "green", "in": "s" },
+      { "op": "insert", "as": "b", "kind": "rect", "frame": [0, 300, 100, 100], "color": "blue" },
+      { "op": "connect", "as": "k1", "from": "a", "to": "c" },
+      { "op": "connect", "as": "k2", "from": "a", "to": "b" },
+      { "op": "delete", "ids": ["s"], "deleted": { "items": ["c", "s"], "connectors": ["k1"] } }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "b", "kind": "rect", "x": 0, "y": 300, "w": 100, "h": 100, "color": "blue" }
+      ],
+      "connectors": [
+        { "id": "k2", "from": "a", "to": "b", "style": "straight", "offset": 0, "arrow": "end" }
+      ]
+    }
+  },
+  {
+    "name": "a connector deletes alone, and an unknown one is refused",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "b", "kind": "sticky", "frame": [300, 0, 100, 100], "color": "yellow" },
+      { "op": "connect", "as": "k", "from": "a", "to": "b" },
+      { "op": "deleteConnector", "id": "k" },
+      { "op": "deleteConnector", "id": "zzzzzz", "throws": "unknown" },
+      { "op": "connect", "from": "a", "to": "zzzzzz", "throws": "unknown" }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "b", "kind": "sticky", "x": 300, "y": 0, "w": 100, "h": 100, "color": "yellow" }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "duplicating a section brings its contents and the connectors among them",
+    "ops": [
+      { "op": "insert", "as": "s", "kind": "section", "frame": [0, 0, 400, 400], "color": "gray", "text": [{ "text": "Group" }] },
+      { "op": "insert", "as": "c1", "kind": "sticky", "frame": [20, 20, 100, 100], "color": "yellow", "text": [{ "text": "one", "bold": true }], "in": "s" },
+      { "op": "insert", "as": "c2", "kind": "sticky", "frame": [200, 20, 100, 100], "color": "pink", "in": "s" },
+      { "op": "insert", "as": "a", "kind": "rect", "frame": [500, 0, 100, 100], "color": "blue" },
+      { "op": "connect", "as": "k1", "from": "c1", "to": "c2", "fromSide": "right", "toSide": "left", "style": "elbow", "arrow": "both", "label": [{ "text": "go" }] },
+      { "op": "connect", "as": "k2", "from": "c1", "to": "a" },
+      { "op": "updateConnector", "id": "k1", "set": { "offset": 30 } },
+      { "op": "duplicate", "ids": ["s"], "dx": 24, "dy": 24, "as": { "s": "s2", "c1": "d1", "c2": "d2" } },
+      { "op": "duplicate", "ids": ["c2"], "dx": 24, "dy": 24, "as": { "c2": "e2" } }
+    ],
+    "expected": {
+      "items": [
+        { "id": "s", "kind": "section", "x": 0, "y": 0, "w": 400, "h": 400, "color": "gray", "text": [{ "text": "Group" }] },
+        { "id": "c1", "kind": "sticky", "parent": "s", "x": 20, "y": 20, "w": 100, "h": 100, "color": "yellow", "text": [{ "text": "one", "bold": true }] },
+        { "id": "c2", "kind": "sticky", "parent": "s", "x": 200, "y": 20, "w": 100, "h": 100, "color": "pink" },
+        { "id": "e2", "kind": "sticky", "parent": "s", "x": 224, "y": 44, "w": 100, "h": 100, "color": "pink" },
+        { "id": "a", "kind": "rect", "x": 500, "y": 0, "w": 100, "h": 100, "color": "blue" },
+        { "id": "s2", "kind": "section", "x": 24, "y": 24, "w": 400, "h": 400, "color": "gray", "text": [{ "text": "Group" }] },
+        { "id": "d1", "kind": "sticky", "parent": "s2", "x": 20, "y": 20, "w": 100, "h": 100, "color": "yellow", "text": [{ "text": "one", "bold": true }] },
+        { "id": "d2", "kind": "sticky", "parent": "s2", "x": 200, "y": 20, "w": 100, "h": 100, "color": "pink" }
+      ],
+      "connectors": [
+        { "id": "k1", "from": "c1", "to": "c2", "fromSide": "right", "toSide": "left", "style": "elbow", "offset": 30, "arrow": "both", "label": [{ "text": "go" }] },
+        { "id": "k2", "from": "c1", "to": "a", "style": "straight", "offset": 0, "arrow": "end" },
+        { "id": "new", "from": "d1", "to": "d2", "fromSide": "right", "toSide": "left", "style": "elbow", "offset": 30, "arrow": "both", "label": [{ "text": "go" }] }
+      ]
+    }
+  },
+  {
+    "name": "a selected child comes along with its selected section, once",
+    "ops": [
+      { "op": "insert", "as": "s", "kind": "section", "frame": [0, 0, 400, 400], "color": "gray" },
+      { "op": "insert", "as": "c1", "kind": "sticky", "frame": [20, 20, 100, 100], "color": "yellow", "in": "s" },
+      { "op": "insert", "as": "c2", "kind": "sticky", "frame": [200, 20, 100, 100], "color": "pink", "in": "s" },
+      { "op": "duplicate", "ids": ["s", "c1"], "dx": 0, "dy": 500, "as": { "s": "s2", "c1": "d1", "c2": "d2" } }
+    ],
+    "expected": {
+      "items": [
+        { "id": "s", "kind": "section", "x": 0, "y": 0, "w": 400, "h": 400, "color": "gray" },
+        { "id": "c1", "kind": "sticky", "parent": "s", "x": 20, "y": 20, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "c2", "kind": "sticky", "parent": "s", "x": 200, "y": 20, "w": 100, "h": 100, "color": "pink" },
+        { "id": "s2", "kind": "section", "x": 0, "y": 500, "w": 400, "h": 400, "color": "gray" },
+        { "id": "d1", "kind": "sticky", "parent": "s2", "x": 20, "y": 20, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "d2", "kind": "sticky", "parent": "s2", "x": 200, "y": 20, "w": 100, "h": 100, "color": "pink" }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "colours: free text takes none, nil clears, the same colour writes nothing",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "t", "kind": "text", "frame": [0, 200, 200, 40], "color": null },
+      { "op": "insert", "as": "b", "kind": "ellipse", "frame": [200, 0, 160, 120], "color": "blue" },
+      { "op": "setColor", "ids": ["a", "t", "b"], "color": "green" },
+      { "op": "setColor", "ids": ["a", "t"], "color": "green", "noop": true },
+      { "op": "setColor", "ids": ["b"], "color": null }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 100, "h": 100, "color": "green" },
+        { "id": "t", "kind": "text", "x": 0, "y": 200, "w": 200, "h": 40 },
+        { "id": "b", "kind": "ellipse", "x": 200, "y": 0, "w": 160, "h": 120 }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "leaving the file kind drops the path",
+    "ops": [
+      { "op": "insert", "as": "f", "kind": "file", "frame": [0, 0, 240, 160], "color": null, "path": "/designs/hero.png" },
+      { "op": "insert", "as": "g", "kind": "file", "frame": [300, 0, 240, 160], "color": null, "path": "/a.md" },
+      { "op": "setKind", "id": "f", "kind": "file", "noop": true },
+      { "op": "setPath", "id": "g", "path": "/b.md" },
+      { "op": "setKind", "id": "f", "kind": "diamond" }
+    ],
+    "expected": {
+      "items": [
+        { "id": "f", "kind": "diamond", "x": 0, "y": 0, "w": 240, "h": 160 },
+        { "id": "g", "kind": "file", "x": 300, "y": 0, "w": 240, "h": 160, "path": "/b.md" }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "text takes .wmd marks, and the same text writes nothing",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 160, 160], "color": "yellow", "text": [{ "text": "Hi" }] },
+      { "op": "setText", "id": "a", "text": [{ "text": "Ship " }, { "text": "canvas", "bold": true }, { "text": " v1", "italic": true, "link": "https://wuhu.app" }, { "text": "\nnext line" }] },
+      { "op": "setText", "id": "a", "text": [{ "text": "Ship " }, { "text": "canvas", "bold": true }, { "text": " v1", "italic": true, "link": "https://wuhu.app" }, { "text": "\nnext line" }], "noop": true }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 160, "h": 160, "color": "yellow", "text": [{ "text": "Ship " }, { "text": "canvas", "bold": true }, { "text": " v1", "italic": true, "link": "https://wuhu.app" }, { "text": "\nnext line" }] }
+      ],
+      "connectors": []
+    }
+  },
+  {
+    "name": "a connector's fields change in place and its id stays",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "b", "kind": "sticky", "frame": [300, 200, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "c", "kind": "rect", "frame": [600, 0, 100, 100], "color": "blue" },
+      { "op": "connect", "as": "k", "from": "a", "to": "b", "fromSide": "right" },
+      { "op": "updateConnector", "id": "k", "set": { "style": "elbow", "offset": 40, "arrow": "both", "toSide": "left", "label": [{ "text": "depends on" }] } },
+      { "op": "updateConnector", "id": "k", "set": { "offset": 40 }, "noop": true },
+      { "op": "updateConnector", "id": "k", "set": { "to": "zzzzzz" }, "throws": "unknown" },
+      { "op": "updateConnector", "id": "zzzzzz", "set": { "offset": 1 }, "throws": "unknown" },
+      { "op": "updateConnector", "id": "k", "set": { "to": "c", "toSide": null } }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "b", "kind": "sticky", "x": 300, "y": 200, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "c", "kind": "rect", "x": 600, "y": 0, "w": 100, "h": 100, "color": "blue" }
+      ],
+      "connectors": [
+        { "id": "k", "from": "a", "to": "c", "fromSide": "right", "style": "elbow", "offset": 40, "arrow": "both", "label": [{ "text": "depends on" }] }
+      ]
+    }
+  },
+  {
+    "name": "an offset back to zero reads as the default",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "b", "kind": "sticky", "frame": [300, 200, 100, 100], "color": "yellow" },
+      { "op": "connect", "as": "k", "from": "a", "to": "b", "style": "elbow", "arrow": "none" },
+      { "op": "updateConnector", "id": "k", "set": { "offset": -25 } },
+      { "op": "updateConnector", "id": "k", "set": { "offset": 0, "style": "straight" } }
+    ],
+    "expected": {
+      "items": [
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 100, "h": 100, "color": "yellow" },
+        { "id": "b", "kind": "sticky", "x": 300, "y": 200, "w": 100, "h": 100, "color": "yellow" }
+      ],
+      "connectors": [
+        { "id": "k", "from": "a", "to": "b", "style": "straight", "offset": 0, "arrow": "none" }
+      ]
+    }
+  },
+  {
+    "name": "bringing to front paints above the siblings",
+    "ops": [
+      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 100, 100], "color": "yellow" },
+      { "op": "insert", "as": "b", "kind": "sticky", "frame": [50, 50, 100, 100], "color": "pink" },
+      { "op": "insert", "as": "c", "kind": "sticky", "frame": [80, 80, 100, 100], "color": "green" },
+      { "op": "bringToFront", "id": "a" },
+      { "op": "bringToFront", "id": "a", "noop": true }
+    ],
+    "expected": {
+      "items": [
+        { "id": "b", "kind": "sticky", "x": 50, "y": 50, "w": 100, "h": 100, "color": "pink" },
+        { "id": "c", "kind": "sticky", "x": 80, "y": 80, "w": 100, "h": 100, "color": "green" },
+        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 100, "h": 100, "color": "yellow" }
+      ],
+      "connectors": []
+    }
+  }
+]

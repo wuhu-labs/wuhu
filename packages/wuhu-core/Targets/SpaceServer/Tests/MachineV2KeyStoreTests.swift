@@ -39,6 +39,8 @@ import Testing
     #expect(info.st_mode & 0o777 == 0o600)
     #expect(lstat(directory.path, &info) == 0)
     #expect(info.st_mode & 0o777 == 0o700)
+    try await reopened.close()
+    try await space.close()
   }
 
   @Test func missingKeyNeverRecreatesEvenWithoutOperationRows() async throws {
