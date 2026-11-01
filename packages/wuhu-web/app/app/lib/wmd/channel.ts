@@ -1,10 +1,10 @@
 import { type LoroDoc, VersionVector } from 'loro-crdt/web'
 import type {
-  WmdAccess,
-  WmdClientControl,
-  WmdErrorCode,
-  WmdPeer,
-  WmdServerControl,
+  LiveAccess,
+  LiveClientControl,
+  LiveErrorCode,
+  LivePeer,
+  LiveServerControl,
 } from '~/lib/contract.gen'
 import type { Timer } from '~/sdk/observe'
 import type { PresenceStore } from './collab.ts'
@@ -16,11 +16,11 @@ export type ChannelPhase =
   | {
     phase: 'syncing' | 'live'
     name: string
-    access: WmdAccess
-    peers: WmdPeer[]
+    access: LiveAccess
+    peers: LivePeer[]
     rev: number | null
   }
-  | { phase: 'refused'; code: WmdErrorCode; message: string }
+  | { phase: 'refused'; code: LiveErrorCode; message: string }
   | { phase: 'offline'; retryInMs: number }
 
 export type ChannelState = ChannelPhase & {
@@ -32,7 +32,27 @@ export type ChannelState = ChannelPhase & {
   lostEdits: boolean
 }
 
-const controlTypes: ReadonlySet<string> = new Set<WmdServerControl['type']>([
+export function channelStatus(state: ChannelState): string {
+  switch (state.phase) {
+    case 'connecting':
+      return 'Connecting…'
+    case 'syncing':
+      return 'Syncing…'
+    case 'live': {
+      const others = state.peers.length - 1
+      const access = state.access === 'read' ? ' · read only' : ''
+      return others <= 0
+        ? `Live${access}`
+        : `Live with ${others} other${others === 1 ? '' : 's'}${access}`
+    }
+    case 'refused':
+      return 'Closed'
+    case 'offline':
+      return 'Offline — reconnecting…'
+  }
+}
+
+const controlTypes: ReadonlySet<string> = new Set<LiveServerControl['type']>([
   'welcome',
   'ack',
   'peers',
@@ -43,7 +63,7 @@ const controlTypes: ReadonlySet<string> = new Set<WmdServerControl['type']>([
 const tag = { sync: 1, update: 2, presence: 3, synced: 4 } as const
 
 // Codes a fresh handshake can cure; every other code is final.
-const transientCodes: ReadonlySet<WmdErrorCode> = new Set<WmdErrorCode>([
+const transientCodes: ReadonlySet<LiveErrorCode> = new Set<LiveErrorCode>([
   'internal',
   'missingDependencies',
 ])
@@ -59,7 +79,7 @@ export class WmdProtocolError extends Error {
   }
 }
 
-function decodeControl(text: string): WmdServerControl {
+function decodeControl(text: string): LiveServerControl {
   let value: unknown
   try {
     value = JSON.parse(text)
@@ -70,7 +90,7 @@ function decodeControl(text: string): WmdServerControl {
   if (typeof type !== 'string' || !controlTypes.has(type)) {
     throw new WmdProtocolError(`unknown control frame: ${text}`)
   }
-  return value as WmdServerControl
+  return value as LiveServerControl
 }
 
 export interface SocketEvents {
@@ -131,10 +151,10 @@ function framed(kind: number, payload: Uint8Array): Uint8Array {
   return frame
 }
 
-export function wmdChannelURL(path: string, location: Location): string {
+export function liveChannelURL(path: string, location: Location): string {
   const encoded = path.split('/').map(encodeURIComponent).join('/')
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${scheme}//${location.host}/v1/wmd${encoded}`
+  return `${scheme}//${location.host}/v1/live${encoded}`
 }
 
 type Connection =
@@ -199,7 +219,7 @@ export function openChannel(options: ChannelOptions): () => void {
   }
   refresh()
 
-  const refuse = (code: WmdErrorCode, message: string) => {
+  const refuse = (code: LiveErrorCode, message: string) => {
     closed = true
     drop()
     set({ phase: 'refused', code, message }, {
@@ -213,14 +233,14 @@ export function openChannel(options: ChannelOptions): () => void {
     cancelRetry = timer.schedule(backoff, () => void connect())
     backoff = Math.min(backoff * 2, maxBackoffMs)
   }
-  const prune = (peers: WmdPeer[]) => {
+  const prune = (peers: LivePeer[]) => {
     const present = new Set(peers.map((peer) => peer.peer))
     for (const key of presence.keys()) {
       if (key !== self && !present.has(key)) presence.delete(key)
     }
   }
 
-  const control = (message: WmdServerControl) => {
+  const control = (message: LiveServerControl) => {
     switch (message.type) {
       case 'welcome':
         welcomed = true
@@ -324,7 +344,7 @@ export function openChannel(options: ChannelOptions): () => void {
     const socket = options.open(options.url, {
       opened: () => {
         connection = { phase: 'open', socket }
-        const hello: WmdClientControl = {
+        const hello: LiveClientControl = {
           type: 'hello',
           authorization: authorization == null
             ? null

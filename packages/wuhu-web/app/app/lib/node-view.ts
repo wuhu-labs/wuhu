@@ -19,6 +19,7 @@ export type NodeView =
   }
   | { state: 'table'; path: string }
   | { state: 'wmd'; path: string }
+  | { state: 'canvas'; path: string }
   // Not there; the page offers to create it, never just by being visited.
   | { state: 'missingWmd'; path: string; message: string }
 
@@ -137,6 +138,7 @@ async function resolvedView(
   }
   if (kind === 'table') return { state: 'table', path }
   if (path.endsWith('.wmd')) return { state: 'wmd', path }
+  if (path.endsWith('.canvas')) return { state: 'canvas', path }
   if (kind === 'directory') {
     const origin = resolvedContentOrigin(contentOrigin)
     if (origin === undefined) return { state: 'loading' }

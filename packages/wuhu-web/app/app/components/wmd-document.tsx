@@ -7,8 +7,9 @@ import { realTimer } from '~/sdk/observe'
 import {
   browserSocket,
   type ChannelState,
+  channelStatus,
+  liveChannelURL,
   openChannel,
-  wmdChannelURL,
 } from '~/lib/wmd/channel'
 import {
   type Collab,
@@ -42,26 +43,6 @@ function colorOf(peer: string): string {
 interface Live {
   editor: Editor
   collab: Collab
-}
-
-function status(state: ChannelState): string {
-  switch (state.phase) {
-    case 'connecting':
-      return 'Connecting…'
-    case 'syncing':
-      return 'Syncing…'
-    case 'live': {
-      const others = state.peers.length - 1
-      const access = state.access === 'read' ? ' · read only' : ''
-      return others <= 0
-        ? `Live${access}`
-        : `Live with ${others} other${others === 1 ? '' : 's'}${access}`
-    }
-    case 'refused':
-      return 'Closed'
-    case 'offline':
-      return 'Offline — reconnecting…'
-  }
 }
 
 // A `.wmd` block document, edited live: every keystroke is a Loro op on the
@@ -127,7 +108,7 @@ export default function WmdDocument({
         },
       })
       const close = openChannel({
-        url: wmdChannelURL(path, globalThis.location),
+        url: liveChannelURL(path, globalThis.location),
         group,
         doc,
         presence,
@@ -179,7 +160,7 @@ export default function WmdDocument({
       <div className='wuhu-document-utility'>
         {breadcrumb}
         <span className='wmd-status' data-phase={channel.phase}>
-          {status(channel)}
+          {channelStatus(channel)}
         </span>
       </div>
       {failure != null && <p className='wuhu-alert' role='alert'>{failure}</p>}

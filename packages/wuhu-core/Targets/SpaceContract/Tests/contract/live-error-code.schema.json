@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"LiveErrorCode","type":"string","enum":["unauthorized","forbidden","notFound","notLive","protocolViolation","readOnly","invalidUpdate","missingDependencies","internal"]}

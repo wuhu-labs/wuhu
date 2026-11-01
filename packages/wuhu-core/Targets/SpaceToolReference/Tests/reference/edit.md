@@ -1,6 +1,6 @@
 # `edit`
 
-Apply exact text replacements in order. Each `old` must occur exactly once in the text as the earlier edits left it; otherwise nothing is written. A `.wmd` comes back canonical, so the next edit matches against a fresh read.
+Apply exact text replacements in order. Each `old` must occur exactly once in the text as the earlier edits left it; otherwise nothing is written. A `.wmd` or `.canvas` comes back canonical, so the next edit matches against a fresh read.
 
 `POST /v1/tools/edit` takes a [`EditInput`](../../../SpaceContract/Tests/contract/edit-input.schema.json) body and answers `200` with a [`EditOutput`](../../../SpaceContract/Tests/contract/edit-output.schema.json).
 

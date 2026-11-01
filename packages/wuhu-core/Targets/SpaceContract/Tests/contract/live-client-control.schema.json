@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"LiveClientControl","oneOf":[{"type":"object","properties":{"type":{"const":"hello"},"authorization":{"type":["string","null"]},"group":{"type":["string","null"]},"peer":{"type":"string"},"create":{"type":["boolean","null"]}},"required":["type","peer"],"additionalProperties":false}]}

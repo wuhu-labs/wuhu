@@ -269,7 +269,7 @@ extension Space {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let broadcast = broadcast
     if let current = try await writer.read({ db in try MachineRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)?.grp }) {
-      try await wmd.settle(under: notes, in: GroupID(rawValue: current))
+      try await live.settle(under: notes, in: GroupID(rawValue: current))
     }
     let (record, moved): (MachineRecord, (from: GroupID, rev: Int64)?) = try await blobs.write(
       writer, emittingTo: broadcast,
@@ -315,7 +315,7 @@ extension Space {
         if node.kind == "table" {
           try Tables.reparent(from: path, in: from, to: path, in: group, rev: rev, in: db)
         }
-        try WmdStore.relocate(node, group: from, to: path, in: group, rev: rev, in: db)
+        try LiveStore.relocate(node, group: from, to: path, in: group, rev: rev, in: db)
         try LiveFS.tombstone(path: node.path, group: from, rev: rev, op: .delete, in: db)
         try Substrate.appendVersion(group: group, path: node.path, rev: rev, kind: node.kind, blobHash: node.blobHash, op: .write, in: db)
         try Substrate.upsertHead(
@@ -339,8 +339,8 @@ extension Space {
       return (record, (from, rev))
     }
     if let moved {
-      await wmd.drop(under: notes, in: moved.from, rev: moved.rev)
-      await wmd.drop(under: notes, in: group, rev: moved.rev)
+      await live.drop(under: notes, in: moved.from, rev: moved.rev)
+      await live.drop(under: notes, in: group, rev: moved.rev)
     }
     return record
   }

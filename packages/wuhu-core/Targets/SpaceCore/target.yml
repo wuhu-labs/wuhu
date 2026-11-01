@@ -19,6 +19,8 @@ dependencies:
   - SpaceContract
   - SpaceSQL
   - WmdDocument
+  - CanvasDocument
+  - LiveDocument
 
   - WuhuAI
   - JSONValue
@@ -64,6 +66,8 @@ tests:
     - SpaceContract
     - SpaceSQL
     - WmdDocument
+    - CanvasDocument
+    - LiveDocument
     - WuhuAI
     - JSONValue
     - GRDB

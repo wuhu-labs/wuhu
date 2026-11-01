@@ -26,11 +26,11 @@ public enum ToolReference {
     ),
     Entry(
       tool: "write", input: "WriteInput", output: "WriteOutput",
-      summary: "Create or replace a file with UTF-8 text. With `ifMatch`, the write succeeds only if the file is still at that version token. A `.wmd` is merged into its live document as edits made at the version `ifMatch` read, and its text comes back canonical.",
+      summary: "Create or replace a file with UTF-8 text. With `ifMatch`, the write succeeds only if the file is still at that version token. A `.wmd` or `.canvas` is merged into its live document as edits made at the version `ifMatch` read, and its text comes back canonical.",
     ),
     Entry(
       tool: "edit", input: "EditInput", output: "EditOutput",
-      summary: "Apply exact text replacements in order. Each `old` must occur exactly once in the text as the earlier edits left it; otherwise nothing is written. A `.wmd` comes back canonical, so the next edit matches against a fresh read.",
+      summary: "Apply exact text replacements in order. Each `old` must occur exactly once in the text as the earlier edits left it; otherwise nothing is written. A `.wmd` or `.canvas` comes back canonical, so the next edit matches against a fresh read.",
     ),
     Entry(
       tool: "sync", input: "SyncInput", output: "SyncOutput",

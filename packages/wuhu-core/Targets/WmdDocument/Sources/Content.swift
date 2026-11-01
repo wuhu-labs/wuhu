@@ -9,7 +9,7 @@ struct Content: Hashable {
 enum Block: Hashable {
   case heading(level: Int, text: Inline)
   case paragraph(Inline)
-  case list(level: Int, style: ListStyle, text: Inline)
+  case list(level: Int, style: WmdSchema.ListStyle, text: Inline)
   case code(String)
   case view(view: String, config: JSONValue, sql: String)
 
@@ -31,37 +31,42 @@ enum Block: Hashable {
   }
 }
 
-enum ListStyle: String, Hashable, CaseIterable {
-  case unordered
-  case ordered
-  case todo
-  case done
+public struct InlineMarks: Hashable, Sendable {
+  public var bold: Bool
+  public var italic: Bool
+  public var link: String?
+
+  public init(bold: Bool = false, italic: Bool = false, link: String? = nil) {
+    self.bold = bold
+    self.italic = italic
+    self.link = link
+  }
 }
 
-struct Marks: Hashable {
-  var bold = false
-  var italic = false
-  var link: String?
+public struct InlineRun: Hashable, Sendable {
+  public var text: String
+  public var marks: InlineMarks
+
+  public init(text: String, marks: InlineMarks = InlineMarks()) {
+    self.text = text
+    self.marks = marks
+  }
 }
 
-struct Run: Hashable {
-  var text: String
-  var marks: Marks
-}
+/// Marked text, as a `.wmd` block or a canvas item holds it. Runs have no empty member and no two
+/// neighbours share marks, so equal text compares equal.
+public struct Inline: Hashable, Sendable {
+  public private(set) var runs: [InlineRun] = []
 
-/// Runs with no empty member and no two neighbours sharing marks, so equal text compares equal.
-struct Inline: Hashable {
-  private(set) var runs: [Run] = []
-
-  init(_ runs: [Run] = []) {
+  public init(_ runs: [InlineRun] = []) {
     for run in runs { self.append(run) }
   }
 
-  init(plain: String) {
-    self.init([Run(text: plain, marks: Marks())])
+  public init(plain: String) {
+    self.init([InlineRun(text: plain)])
   }
 
-  mutating func append(_ run: Run) {
+  public mutating func append(_ run: InlineRun) {
     guard !run.text.isEmpty else { return }
     if let last = self.runs.last, last.marks == run.marks {
       self.runs[self.runs.count - 1].text += run.text
@@ -70,6 +75,6 @@ struct Inline: Hashable {
     }
   }
 
-  var plain: String { self.runs.map(\.text).joined() }
-  var isEmpty: Bool { self.runs.isEmpty }
+  public var plain: String { self.runs.map(\.text).joined() }
+  public var isEmpty: Bool { self.runs.isEmpty }
 }

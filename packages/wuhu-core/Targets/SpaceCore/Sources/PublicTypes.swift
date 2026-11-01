@@ -203,8 +203,8 @@ public enum SpaceError: Error, Equatable, Sendable {
   /// Administering the settings group is the account admin verb's, alone, so
   /// the last-admin guard cannot be skipped.
   case settingsGroupAccess
-  /// Text a `.wmd` node cannot hold: `line` is nil when the whole text is refused.
-  case wmdSyntax(path: String, line: Int?, reason: String)
+  /// Text a live node (`.wmd`, `.canvas`) cannot hold: `line` is nil when the whole text is refused.
+  case liveSyntax(path: String, line: Int?, reason: String)
 }
 
 extension VersionToken {

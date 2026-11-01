@@ -1,5 +1,5 @@
 import { EphemeralStore, LoroDoc, VersionVector } from 'loro-crdt/web'
-import type { WmdAccess, WmdServerControl } from '~/lib/contract.gen'
+import type { LiveAccess, LiveServerControl } from '~/lib/contract.gen'
 import type { Timer } from '~/sdk/observe'
 import {
   type ChannelState,
@@ -85,7 +85,7 @@ class FakeTimer implements Timer {
   }
 }
 
-const welcome = (access: WmdAccess = 'write'): WmdServerControl => ({
+const welcome = (access: LiveAccess = 'write'): LiveServerControl => ({
   type: 'welcome',
   connection: 'c1',
   name: 'Ada',
@@ -125,7 +125,7 @@ function harness(
   const imports: number[] = []
   const first = net.next()
   const close = openChannel({
-    url: 'wss://space/v1/wmd/a.wmd',
+    url: 'wss://space/v1/live/a.wmd',
     group: 'g',
     doc,
     presence,
@@ -151,7 +151,7 @@ function harness(
 async function goLive(
   socket: FakeSocket,
   server: LoroDoc,
-  access?: WmdAccess,
+  access?: LiveAccess,
 ) {
   socket.events.opened()
   socket.control(welcome(access))

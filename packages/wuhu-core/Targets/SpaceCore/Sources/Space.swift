@@ -22,7 +22,7 @@ public actor Space {
   let archiveReservations = ArchiveReservations()
   let dateGen: DateGenerator
   let clock: any Clock<Duration>
-  let wmd: WmdHub
+  let live: LiveHub
   let rng: WithRandomNumberGenerator
   let log: Logger
   var identityCache: SpaceIdentity?
@@ -51,8 +51,8 @@ public actor Space {
     self.dateGen = date
     self.clock = clock
     let peers = rng
-    self.wmd = WmdHub(
-      store: WmdStore(writer: writer, blobs: blobs, broadcast: broadcast, dateGen: date), clock: clock, scope: taskScope,
+    self.live = LiveHub(
+      store: LiveStore(writer: writer, blobs: blobs, broadcast: broadcast, dateGen: date), clock: clock, scope: taskScope,
       newPeer: { peers { UInt64.random(in: 1 ... UInt64(Int64.max), using: &$0) } },
     )
     self.rng = rng
@@ -128,7 +128,7 @@ public actor Space {
 
   func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) -> LiveFS {
     LiveFS(
-      group: group, acting: acting, writer: writer, blobs: blobs, broadcast: broadcast, dateGen: dateGen, wmd: wmd, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
+      group: group, acting: acting, writer: writer, blobs: blobs, broadcast: broadcast, dateGen: dateGen, live: live, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
     )
   }
 }

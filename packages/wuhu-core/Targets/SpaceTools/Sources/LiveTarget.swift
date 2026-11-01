@@ -1,28 +1,28 @@
 import struct SpaceContract.GroupID
-import enum SpaceContract.WmdAccess
+import enum SpaceContract.LiveAccess
 import SpaceCore
 import SpaceFS
 
-public struct WmdTarget: Sendable {
+public struct LiveTarget: Sendable {
   public let group: GroupID
   public let path: SpacePath
-  public let access: WmdAccess
+  public let access: LiveAccess
   /// The principal as its presence names it.
   public let name: String
 }
 
 extension SpaceToolContext {
   /// The live document a socket opens: readable, or the address answers as missing.
-  public func wmdTarget(_ address: String) async throws -> WmdTarget {
+  public func liveTarget(_ address: String) async throws -> LiveTarget {
     let (group, path, _) = try await spaceTarget(address)
-    let access: WmdAccess
+    let access: LiveAccess
     do {
       try await refuseWrite(path, in: group)
       access = .write
     } catch SpaceError.forbiddenWrite, SpaceError.foreignHome, ToolRunError.failed(code: .unauthorized, _, _, _) {
       access = .read
     }
-    return WmdTarget(group: group, path: path, access: access, name: try await presenceName())
+    return LiveTarget(group: group, path: path, access: access, name: try await presenceName())
   }
 
   private func presenceName() async throws -> String {

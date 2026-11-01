@@ -27,7 +27,7 @@ extension Content {
 struct Numbering {
   private var counters: [Int] = []
 
-  mutating func next(level: Int, style: ListStyle?) -> Int {
+  mutating func next(level: Int, style: WmdSchema.ListStyle?) -> Int {
     guard let style else {
       self.counters = []
       return 0
@@ -95,11 +95,11 @@ private func fence(for code: String) -> String {
 extension Inline {
   /// Every change of marks closes all and reopens bold outside italic, the one spelling the parser
   /// reads back without guessing; a link closes the marks around both of its brackets.
-  func markdown(continuation: String) -> String {
+  public func markdown(continuation: String) -> String {
     var out = ""
-    var current = Marks()
+    var current = InlineMarks()
     var atLineStart = true
-    func transition(to next: Marks) {
+    func transition(to next: InlineMarks) {
       if current.italic { out += "*" }
       if current.bold { out += "**" }
       if current.link != next.link {
@@ -114,7 +114,7 @@ extension Inline {
       if run.marks != current { transition(to: run.marks) }
       out += escape(run.text, continuation: continuation, atLineStart: &atLineStart)
     }
-    transition(to: Marks())
+    transition(to: InlineMarks())
     return out
   }
 }

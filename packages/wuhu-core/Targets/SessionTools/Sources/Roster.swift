@@ -15,7 +15,7 @@ extension ToolExecutor {
     ),
     Tool(
       name: "write",
-      description: "Create or replace a file: /<path> is the space, machines://<name-or-id>/<path> a machine. Writing an ordinary file path creates it (.table paths use wuhu:space createTable in run_script), parent directories are implicit, and there is no mkdir. Overwriting requires a prior read at the file's current version; stale or missing reads fail and ask you to re-read. A .wmd is a live document: the write merges into it as edits against the version you read, and the file comes back canonical, so re-read it before an edit.",
+      description: "Create or replace a file: /<path> is the space, machines://<name-or-id>/<path> a machine. Writing an ordinary file path creates it (.table paths use wuhu:space createTable in run_script), parent directories are implicit, and there is no mkdir. Overwriting requires a prior read at the file's current version; stale or missing reads fail and ask you to re-read. A .wmd or .canvas is a live document: the write merges into it as edits against the version you read, and the file comes back canonical, so re-read it before an edit.",
       parameters: schema([
         ("path", string("/<path> in the space or machines://<name-or-id>/<path>.")),
         ("content", string("Full file content to write.")),
@@ -23,7 +23,7 @@ extension ToolExecutor {
     ),
     Tool(
       name: "edit",
-      description: "Apply exact old/new text replacements to a file you have read at its current version. Each old string must match exactly once. A .wmd comes back canonical, which may differ from your text: re-read it before the next edit.",
+      description: "Apply exact old/new text replacements to a file you have read at its current version. Each old string must match exactly once. A .wmd or .canvas comes back canonical, which may differ from your text: re-read it before the next edit.",
       parameters: schema([
         ("path", string("/<path> in the space or machines://<name-or-id>/<path>.")),
         ("edits", .object([

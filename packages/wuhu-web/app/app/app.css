@@ -5,6 +5,7 @@
 @import './settings.css';
 @import './editor.css';
 @import './wmd.css';
+@import './canvas.css';
 
 @source '../../ui/src';
 

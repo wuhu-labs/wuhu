@@ -258,3 +258,9 @@ _Afterwards:_ The channel API’s typed unknown-person refusal is reported. No c
 _Prompt:_ "Add 'Book the venue' to the to-do list in {fx}/launch/plan.wmd." _Follow-up:_ "Now mark 'Pick a date' as done."
 
 _Afterwards:_ `{fx}/launch/plan.wmd` still holds the original to-dos and the note, plus a `Book the venue` list item under `## To do`, and `Pick a date` is `- [x] Pick a date`, written in place with the ordinary file tools: a `.wmd` file reads and writes as markdown even while someone has it open live, and comes back canonical, so the second edit works from a fresh read. No copy beside it, no conversion to `.md`, nothing in `{sb}`. Each reply is a line or two.
+
+## canvas-edit
+
+_Prompt:_ "On the board {fx}/launch/board.canvas, add a sticky 'Book the venue' inside the Venue section and draw an arrow from 'Pick a date' to it." _Follow-up:_ "Now remove the 'Draft the announcement' sticky."
+
+_Afterwards:_ `{fx}/launch/board.canvas` holds a `Book the venue` sticky under `## Venue`, a connector `p1ckd8 -> <its id>`, and no `dr4ft1` (its connector went with it), while `Pick a date`, the Venue section and its Budget rect keep their ids; written in place with the ordinary file tools after reading the `canvas` skill, the second edit from a fresh read. No copy, nothing in `{sb}`. Each reply is a line or two.

@@ -219,7 +219,7 @@ public enum Wire {
       .failed(code: .invalidArgument, message: "\(account) is not a human account; only a person is an admin", hint: nil)
     case let .groupForbidden(group):
       .failed(code: .unauthorized, message: "groupForbidden: group \(group) is not readable from here", hint: nil)
-    case let .wmdSyntax(path, line, reason):
+    case let .liveSyntax(path, line, reason):
       .failed(code: .invalidArgument, message: "\(path)\(line.map { ":\($0)" } ?? ""): \(reason)", hint: nil)
     case let .invalidCellValue(message):
       .failed(code: .invalidArgument, message: message, hint: nil)

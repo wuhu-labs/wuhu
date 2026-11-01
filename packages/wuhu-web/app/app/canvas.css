@@ -1,0 +1,177 @@
+/* The zoomable canvas (components/canvas-view.tsx). The world div is moved
+   by a JS-set transform and deliberately has no will-change, so text
+   re-rasters at every scale. */
+.canvas-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  background-color: var(--color-paper);
+  background-image: radial-gradient(
+    circle,
+    rgba(var(--wui-border-ink), 0.16) 1px,
+    transparent 1.2px
+  );
+  font-family: var(--font-text, var(--font-sans));
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.canvas-viewport:active {
+  cursor: grabbing;
+}
+
+.canvas-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.canvas-item {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.canvas-diamond,
+.canvas-connectors {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+}
+
+.canvas-connectors {
+  pointer-events: none;
+}
+
+.canvas-connectors polyline {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.canvas-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.canvas-text {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  line-height: 1.3;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.canvas-text > div {
+  width: 100%;
+}
+
+.canvas-text[data-alignment='center'] {
+  justify-content: center;
+  text-align: center;
+}
+
+.canvas-text[data-alignment='bottomLeading'] {
+  justify-content: flex-end;
+}
+
+.canvas-item[data-kind='section'] > .canvas-text {
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.canvas-text a {
+  color: var(--color-mint-deep);
+  text-decoration: underline;
+}
+
+.canvas-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fff;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.canvas-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 2px 8px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--wui-fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-lab {
+  position: fixed;
+  inset: 0;
+}
+
+.canvas-lab-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--wui-material-shadow);
+  font-size: 12px;
+}
+
+.canvas-lab-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.canvas-lab-actions a[aria-current='true'] {
+  font-weight: 700;
+}
+
+.canvas-lab-results {
+  font-variant-numeric: tabular-nums;
+  caption-side: bottom;
+  text-align: right;
+}
+
+.canvas-lab-results td:first-child,
+.canvas-lab-results th:first-child {
+  text-align: left;
+  padding-right: 8px;
+}
+
+/* A `.canvas` page (components/canvas-document.tsx). */
+.canvas-page,
+.canvas-document {
+  position: relative;
+  height: 100%;
+}
+
+.canvas-document-status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}

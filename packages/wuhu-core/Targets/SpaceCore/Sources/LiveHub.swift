@@ -1,27 +1,27 @@
 import GRDB
 import Logging
 import struct SpaceContract.GroupID
-import enum SpaceContract.WmdAccess
-import enum SpaceContract.WmdErrorCode
+import enum SpaceContract.LiveAccess
+import enum SpaceContract.LiveErrorCode
 import SpaceFS
 import Synchronization
 import TaskLifetime
 
-/// The space's live `.wmd` nodes, one actor each, created on first touch and
+/// The space's live nodes (`.wmd`, `.canvas`), one actor each, created on first touch and
 /// gone once they retire.
-final class WmdHub: Sendable {
+final class LiveHub: Sendable {
   private struct Key: Hashable {
     let group: GroupID
     let path: SpacePath
   }
 
-  private let nodes = Mutex<[Key: WmdNode]>([:])
-  private let store: WmdStore
+  private let nodes = Mutex<[Key: LiveNode]>([:])
+  private let store: LiveStore
   private let clock: any Clock<Duration>
   private let scope: TaskScope
   private let newPeer: @Sendable () -> UInt64
 
-  init(store: WmdStore, clock: any Clock<Duration>, scope: TaskScope, newPeer: @escaping @Sendable () -> UInt64) {
+  init(store: LiveStore, clock: any Clock<Duration>, scope: TaskScope, newPeer: @escaping @Sendable () -> UInt64) {
     self.store = store
     self.clock = clock
     self.scope = scope
@@ -29,10 +29,10 @@ final class WmdHub: Sendable {
   }
 
   /// Runs one node operation on the live node at `path`, on a fresh one when it retired first.
-  func with<T>(_ group: GroupID, _ path: SpacePath, _ operation: (WmdNode) async throws -> T) async throws -> T {
-    precondition(path.isWmd)
+  func with<T>(_ group: GroupID, _ path: SpacePath, _ operation: (LiveNode) async throws -> T) async throws -> T {
+    precondition(path.isLive)
     while true {
-      do { return try await operation(node(Key(group: group, path: path))) } catch is WmdNodeRetired {}
+      do { return try await operation(node(Key(group: group, path: path))) } catch is LiveNodeRetired {}
     }
   }
 
@@ -61,7 +61,7 @@ final class WmdHub: Sendable {
   /// Every node a stop left with logged edits.
   func logged() async throws -> [(group: GroupID, path: SpacePath)] { try await store.logged() }
 
-  private func live(under path: SpacePath, in group: GroupID) -> [Key: WmdNode] {
+  private func live(under path: SpacePath, in group: GroupID) -> [Key: LiveNode] {
     nodes.withLock { nodes in
       nodes.filter { key, _ in
         key.group == group && (path.isRoot || key.path == path || key.path.rawValue.hasPrefix(path.rawValue + "/"))
@@ -69,10 +69,10 @@ final class WmdHub: Sendable {
     }
   }
 
-  private func node(_ key: Key) -> WmdNode {
+  private func node(_ key: Key) -> LiveNode {
     nodes.withLock { nodes in
       if let node = nodes[key] { return node }
-      let node = WmdNode(
+      let node = LiveNode(
         group: key.group, path: key.path, store: store, clock: clock, scope: scope, newPeer: newPeer,
         retired: { [weak self] node in self?.remove(node, at: key) },
       )
@@ -81,7 +81,7 @@ final class WmdHub: Sendable {
     }
   }
 
-  private func remove(_ node: WmdNode, at key: Key) {
+  private func remove(_ node: LiveNode, at key: Key) {
     nodes.withLock { nodes in if nodes[key] === node { nodes[key] = nil } }
   }
 }
@@ -93,21 +93,21 @@ extension Space {
   /// refused `notFound` unless `create` asks for it, empty. Whenever the
   /// space's groups or roles change, `reauthorize` answers the principal's
   /// access anew; a connection that lost what it holds closes.
-  public func wmdChannel(
-    _ group: GroupID, _ path: SpacePath, peer: String, name: String, access: WmdAccess, create: Bool,
-    frames: AsyncStream<WmdInbound>, reauthorize: @escaping @Sendable () async -> WmdAccess?,
-  ) async -> AsyncStream<WmdOutbound> {
-    guard path.isWmd else { return Self.refused(.notWmd, "\(path.rawValue) does not end in .wmd") }
+  public func liveChannel(
+    _ group: GroupID, _ path: SpacePath, peer: String, name: String, access: LiveAccess, create: Bool,
+    frames: AsyncStream<LiveInbound>, reauthorize: @escaping @Sendable () async -> LiveAccess?,
+  ) async -> AsyncStream<LiveOutbound> {
+    guard path.isLive else { return Self.refused(.notLive, "\(path.rawValue) is no live document: those end in .wmd or .canvas") }
     let stored: SpacePath
     do { stored = try await MachineFolders.stored(path, mutating: false, in: writer) } catch {
       return Self.refused(.notFound, "\(path.rawValue) does not exist")
     }
     guard !stored.isReserved else { return Self.refused(.forbidden, "\(path.rawValue) is the space's own") }
-    let node: WmdNode
+    let node: LiveNode
     let id: String?
-    let outbound: AsyncStream<WmdOutbound>
+    let outbound: AsyncStream<LiveOutbound>
     do {
-      (node, id, outbound) = try await wmd.with(group, stored) { node in
+      (node, id, outbound) = try await live.with(group, stored) { node in
         let (id, outbound) = try await node.join(peer: peer, name: name, access: access, create: create)
         return (node, id, outbound)
       }
@@ -143,14 +143,14 @@ extension Space {
 
   /// Leaves no edit only in the log: a graceful stop's first step.
   func checkpointLiveDocuments() async {
-    await uncancellable("A stop must not strand edits in memory") { [wmd] in await wmd.checkpointAll() }
+    await uncancellable("A stop must not strand edits in memory") { [live] in await live.checkpointAll() }
   }
 
   /// Brings the files of documents a stop left with logged edits up to them.
   func recoverLiveDocuments() async {
     do {
-      for (group, path) in try await wmd.logged() {
-        do { try await wmd.settle(group, path) } catch {
+      for (group, path) in try await live.logged() {
+        do { try await live.settle(group, path) } catch {
           log.warning("Live document recovery failed", metadata: ["group": "\(group.rawValue)", "path": "\(path.rawValue)", "error": "\(error)"])
         }
       }
@@ -159,7 +159,7 @@ extension Space {
     }
   }
 
-  private static func refused(_ code: WmdErrorCode, _ message: String) -> AsyncStream<WmdOutbound> {
+  private static func refused(_ code: LiveErrorCode, _ message: String) -> AsyncStream<LiveOutbound> {
     AsyncStream { continuation in
       continuation.yield(.control(.error(code: code, message: message)))
       continuation.finish()

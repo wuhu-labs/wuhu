@@ -1,35 +1,35 @@
 import Contract
 import JSONValue
 
-/// The live channel of one `.wmd` document: `GET /v1/wmd/<path>` upgraded to
-/// a WebSocket. Text frames carry these JSON controls; binary frames carry
-/// ``WmdFrame``. The first frame is always a client `hello`.
-public enum WmdChannel {
-  public static let routePrefix: String = "/v1/wmd"
+/// The live channel of one `.wmd` or `.canvas` document: `GET /v1/live/<path>`
+/// upgraded to a WebSocket. Text frames carry these JSON controls; binary frames carry
+/// ``LiveFrame``. The first frame is always a client `hello`.
+public enum LiveChannel {
+  public static let routePrefix: String = "/v1/live"
   /// A presence entry not refreshed for this long expires in every store.
   public static let presenceTimeoutMilliseconds: Int = 30000
 }
 
 @Contract
-public enum WmdAccess: String, Codable, Equatable, Sendable {
+public enum LiveAccess: String, Codable, Equatable, Sendable {
   case read
   case write
 }
 
 @Contract
-public struct WmdPeer: Codable, Equatable, Sendable {
+public struct LivePeer: Codable, Equatable, Sendable {
   public let connection: String
   public let peer: String
   public let name: String
-  public let access: WmdAccess
+  public let access: LiveAccess
 }
 
 @Contract
-public enum WmdErrorCode: String, Codable, Equatable, Sendable {
+public enum LiveErrorCode: String, Codable, Equatable, Sendable {
   case unauthorized
   case forbidden
   case notFound
-  case notWmd
+  case notLive
   case protocolViolation
   case readOnly
   case invalidUpdate
@@ -38,21 +38,21 @@ public enum WmdErrorCode: String, Codable, Equatable, Sendable {
 }
 
 @Contract(discriminator: "type")
-public enum WmdClientControl: Codable, Equatable, Sendable {
+public enum LiveClientControl: Codable, Equatable, Sendable {
   case hello(authorization: String?, group: String?, peer: String, create: Bool?)
 }
 
 @Contract(discriminator: "type")
-public enum WmdServerControl: Codable, Equatable, Sendable {
-  case welcome(connection: String, name: String, access: WmdAccess, peers: [WmdPeer], rev: Int?)
+public enum LiveServerControl: Codable, Equatable, Sendable {
+  case welcome(connection: String, name: String, access: LiveAccess, peers: [LivePeer], rev: Int?)
   case ack(count: Int)
-  case peers(peers: [WmdPeer])
+  case peers(peers: [LivePeer])
   case checkpoint(rev: Int)
-  case error(code: WmdErrorCode, message: String)
+  case error(code: LiveErrorCode, message: String)
 }
 
 /// A binary frame: one tag byte, then raw Loro bytes.
-public enum WmdFrame: Equatable, Sendable {
+public enum LiveFrame: Equatable, Sendable {
   /// Client → server, once after `welcome`: `VersionVector.encode()` of the client's doc.
   case sync(versionVector: [UInt8])
   /// Both ways: Loro update bytes.

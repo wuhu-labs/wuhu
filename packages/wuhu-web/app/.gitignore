@@ -10,6 +10,8 @@
 /app/lib/contract.gen.ts
 /app/lib/space-url.vectors.json
 /app/lib/viewing.vectors.json
+# Canvas scene fixture (in-graph from //packages/wuhu-core CanvasDocument)
+/app/lib/canvas/scene-cases.json
 
 # QuickJS for scripts (in-graph via //tools/quickjs-wasm:quickjs)
 /app/lib/widgets/quickjs/emscripten-module.browser.mjs

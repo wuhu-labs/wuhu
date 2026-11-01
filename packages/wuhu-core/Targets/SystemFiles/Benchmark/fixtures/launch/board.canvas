@@ -1,0 +1,8 @@
+- sticky {#dr4ft1 @40,40 160x160 yellow} Draft the announcement
+- sticky {#p1ckd8 @240,40 160x160 pink} Pick a date
+
+## Venue {#v3nue0 @0,280 600x400 gray}
+- rect {#bdg7t2 @40,340 200x100 blue} Budget: 2k
+
+# Connectors
+dr4ft1 -> p1ckd8 {#c0nn01}

@@ -1,1 +1,0 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"WmdPeer","type":"object","properties":{"connection":{"type":"string"},"peer":{"type":"string"},"name":{"type":"string"},"access":{"type":"string","enum":["read","write"]}},"required":["connection","peer","name","access"],"additionalProperties":false}

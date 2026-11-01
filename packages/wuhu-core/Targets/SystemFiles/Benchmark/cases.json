@@ -653,6 +653,23 @@
         "edited_in_place"
       ],
       "judge": "PASS only if the agent read {fx}/launch/plan.wmd and wrote it back in place with the new list item under To do, keeping the existing items and the note; then, on the follow-up, edited the file as it reads after the first write (re-reading it rather than editing from memory) so 'Pick a date' is a done to-do (`- [x] Pick a date`), and each reply says so in a line or two. Fail a copy or a converted .md beside it, a refusal because the file is a live document, a rewrite that drops content, or a claim of an edit the file does not show."
+    },
+    {
+      "id": "canvas-edit",
+      "issue": 537,
+      "title": "Edits a canvas board as text",
+      "prompt": "On the board {fx}/launch/board.canvas, add a sticky 'Book the venue' inside the Venue section and draw an arrow from 'Pick a date' to it.",
+      "followUp": "Now remove the 'Draft the announcement' sticky.",
+      "required": [
+        "item_added",
+        "connected",
+        "removed",
+        "edited_in_place"
+      ],
+      "skills": {
+        "canvas": true
+      },
+      "judge": "PASS only if the agent read {fx}/launch/board.canvas and wrote it back in place with the ordinary file tools: a sticky 'Book the venue' under the `## Venue` heading, a connector line `p1ckd8 -> <its id>` under `# Connectors`, and the rest of the board kept; then, on the follow-up, worked from a fresh read so the 'Draft the announcement' line (and with it its connector) is gone while 'Pick a date', the Venue section and its Budget rect stay. Each reply says what changed in a line or two. Fail a copy or a converted file beside it, a refusal, a rewrite that drops or re-creates existing items with new ids, or a claim the file does not show."
     }
   ]
 }

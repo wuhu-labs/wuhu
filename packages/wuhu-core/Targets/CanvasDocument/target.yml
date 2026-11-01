@@ -1,0 +1,29 @@
+name: CanvasDocument
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac, ios, visionos]
+  test: [linux, mac]
+dependencies:
+  - name: Loro
+    platforms: [mac, ios, visionos]
+  - name: "@loro_swift//:LoroLinux"
+    platforms: [linux]
+    swiftpm:
+      binaryTarget:
+        url: https://github.com/loro-dev/loro-swift/releases/download/1.17.1/loroFFI.xcframework.zip
+        checksum: f2d172602cf43e0667d57067d5c8a93650ee0bc91139cce6aced8f469352daaf
+  - WmdDocument
+  - LiveDocument
+tests:
+  dependencies:
+    - WmdDocument
+    - LiveDocument
+    - name: Loro
+      platforms: [mac]
+    - name: "@loro_swift//:LoroLinux"
+      platforms: [linux]
+      swiftpm:
+        binaryTarget:
+          url: https://github.com/loro-dev/loro-swift/releases/download/1.17.1/loroFFI.xcframework.zip
+          checksum: f2d172602cf43e0667d57067d5c8a93650ee0bc91139cce6aced8f469352daaf

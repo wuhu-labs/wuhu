@@ -14,6 +14,7 @@ import { tableSubscription } from '~/sdk/subscriptions'
 import type { SpaceContext } from './space'
 
 const WmdDocument = lazy(() => import('~/components/wmd-document'))
+const CanvasDocument = lazy(() => import('~/components/canvas-document'))
 
 // Renders the page SpaceBody holds for this address (lib/use-shown-node.ts),
 // the same state a send names. The shell has already laid it out: Markdown
@@ -56,6 +57,21 @@ export default function Node() {
               frameOrigin={contentOriginString(contentOrigin)}
               missing={view.state === 'missingWmd' ? view.message : null}
             />
+          )}
+        </div>
+      )
+    case 'canvas':
+      return (
+        <div className='wuhu-content canvas-page'>
+          {contentOrigin !== undefined && (
+            <Suspense fallback={null}>
+              <CanvasDocument
+                key={view.path}
+                path={view.path}
+                group={group}
+                frameOrigin={contentOriginString(contentOrigin)}
+              />
+            </Suspense>
           )}
         </div>
       )

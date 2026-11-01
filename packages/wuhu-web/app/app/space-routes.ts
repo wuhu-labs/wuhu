@@ -3,6 +3,7 @@ import { index, route, type RouteConfigEntry } from '@react-router/dev/routes'
 export const spaceRoutes: RouteConfigEntry[] = [
   route('/_/enroll', 'routes/enroll.tsx'),
   route('/_/login', 'routes/login.tsx'),
+  route('/_/canvas-lab', 'routes/canvas-lab.tsx'),
   route('/', 'routes/space.tsx', [
     index('routes/node.tsx', { id: 'routes/home' }),
     route('_/settings', 'routes/settings.tsx'),

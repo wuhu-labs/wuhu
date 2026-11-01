@@ -55,7 +55,7 @@ extension Space {
       try GroupAccountRow.where { $0.id.eq(row.accountID) }.delete().execute(db)
       return (group, rev)
     }
-    await wmd.drop(under: notes, in: group, rev: rev)
+    await live.drop(under: notes, in: group, rev: rev)
   }
 }
 

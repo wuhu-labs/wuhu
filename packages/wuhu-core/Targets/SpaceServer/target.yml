@@ -125,6 +125,7 @@ tests:
     - Scratch
     - ScratchTesting
     - WmdDocument
+    - LiveDocument
   data:
     - Targets/SpaceContract/Tests/contract
   resources:

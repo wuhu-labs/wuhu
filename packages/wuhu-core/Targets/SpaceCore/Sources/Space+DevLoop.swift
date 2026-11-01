@@ -43,14 +43,14 @@ extension Space {
       {
         throw SpaceError.alreadyExists(target.rawValue)
       }
-      guard !target.isWmd else { return (target, false) }
+      guard !target.isLive else { return (target, false) }
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
       try Substrate.writeFile(target, group: group, blob: blob, rev: rev, mtime: mtime, in: db)
       pending += [MutationEvent(group: group, path: target.rawValue, rev: Int(rev), kind: .write, entry: .file)]
       return (target, true)
     }
     if !written {
-      _ = try await wmd.with(group, created) {
+      _ = try await live.with(group, created) {
         try await $0.write(Data(content), base: .latest, createOnly: true, acting: acting, attribution: attribution)
       }
     }

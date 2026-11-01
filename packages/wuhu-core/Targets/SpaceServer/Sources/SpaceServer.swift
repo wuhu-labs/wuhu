@@ -29,7 +29,7 @@ import SpaceClient
 import struct SpaceContract.AIDisclosure
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupID
-import enum SpaceContract.WmdChannel
+import enum SpaceContract.LiveChannel
 import SpaceCore
 import SpaceTools
 import WebPush
@@ -152,7 +152,7 @@ public enum SpaceServer {
       }
     }
     addFileRoutes(&router, compiler: JSXCompiler(), contextOf: contextOf)
-    addWmdRoutes(&router, space: space, keyStreams: keyStreams, dev: dev, contextOf: contextOf)
+    addLiveRoutes(&router, space: space, keyStreams: keyStreams, dev: dev, contextOf: contextOf)
     router.post("/v1/fetch") { request, _ in
       switch try await requestPrincipal(request, space: space, date: clock) {
       case let .principal(principal): await widgetFetchResponse(space: space, principal: principal, proxy: pageFetch, request: request)
@@ -305,9 +305,9 @@ public enum SpaceServer {
         (request.method == .get && v2Path.count == 3) || (request.method == .get && v2Path.count == 4 && v2Path[3] == "upgrade")
           || (request.method == .post && v2Path.count == 4 && v2Path[3] == "revoke")
       )
-      // A .wmd socket's first frame carries its assertion: browsers put no header on an upgrade.
-      let wmdUpgrade = request.method == .get && request.url.path.hasPrefix(WmdChannel.routePrefix + "/")
-      if selfAuthenticating.contains(request.url.path) || (request.method == .get && request.url.path == "/v1/groups") || v2KeySigned || wmdUpgrade {
+      // A live socket's first frame carries its assertion: browsers put no header on an upgrade.
+      let liveUpgrade = request.method == .get && liveRoutePrefixes.contains { request.url.path.hasPrefix($0 + "/") }
+      if selfAuthenticating.contains(request.url.path) || (request.method == .get && request.url.path == "/v1/groups") || v2KeySigned || liveUpgrade {
         return try await routed(request)
       }
       if webContent.webApp != nil, request.method == .get, !isAPIPath(request.url) {

@@ -8,7 +8,7 @@ import Loro
 /// are deleted and inserted, so concurrent typing never lands in another block's container.
 func apply(_ target: Content, to doc: LoroDoc) throws {
   let (current, placed) = project(doc)
-  let frontmatter = doc.getMap(id: Key.frontmatter)
+  let frontmatter = doc.getMap(id: WmdSchema.Key.frontmatter)
   for (key, value) in target.frontmatter where current.frontmatter[key] != value {
     try frontmatter.insert(key: key, v: loro(value))
   }
@@ -17,7 +17,7 @@ func apply(_ target: Content, to doc: LoroDoc) throws {
   }
   let visible = placed.compactMap(Visible.init)
   let plan = Plan(base: visible, target: target.blocks)
-  let list = doc.getMovableList(id: Key.blocks)
+  let list = doc.getMovableList(id: WmdSchema.Key.blocks)
   for (base, next) in plan.updates {
     try write(target.blocks[next], into: list.get(index: visible[base].position)!.asLoroMap()!)
   }
@@ -202,62 +202,65 @@ extension Block {
 }
 
 private func write(_ block: Block, into map: LoroMap) throws {
-  if map.get(key: Key.kind)?.asValue() != .string(value: block.kind) { try map.insert(key: Key.kind, v: block.kind) }
+  if map.get(key: WmdSchema.Key.kind)?.asValue() != .string(value: block.kind) { try map.insert(key: WmdSchema.Key.kind, v: block.kind) }
   if case let .list(level, style, _) = block {
-    if map.get(key: Key.level)?.asValue() != .i64(value: Int64(level)) { try map.insert(key: Key.level, v: Int64(level)) }
-    if map.get(key: Key.style)?.asValue() != .string(value: style.rawValue) { try map.insert(key: Key.style, v: style.rawValue) }
+    if map.get(key: WmdSchema.Key.level)?.asValue() != .i64(value: Int64(level)) { try map.insert(key: WmdSchema.Key.level, v: Int64(level)) }
+    if map.get(key: WmdSchema.Key.style)?.asValue() != .string(value: style.rawValue) { try map.insert(key: WmdSchema.Key.style, v: style.rawValue) }
   } else {
-    if map.get(key: Key.level) != nil { try map.delete(key: Key.level) }
-    if map.get(key: Key.style) != nil { try map.delete(key: Key.style) }
+    if map.get(key: WmdSchema.Key.level) != nil { try map.delete(key: WmdSchema.Key.level) }
+    if map.get(key: WmdSchema.Key.style) != nil { try map.delete(key: WmdSchema.Key.style) }
   }
   switch block {
   case let .view(view, config, sql):
-    if map.get(key: Key.view)?.asValue() != .string(value: view) { try map.insert(key: Key.view, v: view) }
-    if map.get(key: Key.config)?.asValue().map(json) != config { try map.insert(key: Key.config, v: loro(config)) }
-    if map.get(key: Key.sql)?.asValue() != .string(value: sql) { try map.insert(key: Key.sql, v: sql) }
+    if map.get(key: WmdSchema.Key.view)?.asValue() != .string(value: view) { try map.insert(key: WmdSchema.Key.view, v: view) }
+    if map.get(key: WmdSchema.Key.config)?.asValue().map(json) != config { try map.insert(key: WmdSchema.Key.config, v: loro(config)) }
+    if map.get(key: WmdSchema.Key.sql)?.asValue() != .string(value: sql) { try map.insert(key: WmdSchema.Key.sql, v: sql) }
   case let .code(code):
-    try sync(map.getOrCreateTextContainer(key: Key.text, child: LoroText()), to: Inline(plain: code))
+    try map.getOrCreateTextContainer(key: WmdSchema.Key.text, child: LoroText()).sync(to: Inline(plain: code))
   case let .heading(_, text), let .paragraph(text), let .list(_, _, text):
-    try sync(map.getOrCreateTextContainer(key: Key.text, child: LoroText()), to: text)
+    try map.getOrCreateTextContainer(key: WmdSchema.Key.text, child: LoroText()).sync(to: text)
   }
 }
 
 private typealias Attributes = [String: LoroValue]
 
-private func sync(_ text: LoroText, to inline: Inline) throws {
-  let plain = inline.plain
-  if text.toString() != plain { try text.update(s: plain, options: UpdateOptions(timeoutMs: nil, useRefinedDiff: true)) }
-  let desired: [Attributes] = inline.runs.flatMap { run in Array(repeating: attributes(run.marks), count: run.text.utf16.count) }
-  let actual: [Attributes] = text.toDelta().flatMap { delta -> [Attributes] in
-    guard case let .insert(string, attributes) = delta else { return [] }
-    let present = (attributes ?? [:]).filter { $0.value != .null && $0.value != .bool(value: false) }
-    return Array(repeating: present, count: string.utf16.count)
-  }
-  precondition(desired.count == actual.count, "a synced text has the target's length")
-  for key in [Key.bold, Key.italic, Key.link] {
-    var start = 0
-    while start < desired.count {
-      let value = desired[start][key]
-      guard actual[start][key] != value else {
-        start += 1
-        continue
+extension LoroText {
+  /// Makes the text read `inline`, as a refined text diff plus the mark changes it needs.
+  public func sync(to inline: Inline) throws {
+    let plain = inline.plain
+    if self.toString() != plain { try self.update(s: plain, options: UpdateOptions(timeoutMs: nil, useRefinedDiff: true)) }
+    let desired: [Attributes] = inline.runs.flatMap { run in Array(repeating: attributes(run.marks), count: run.text.utf16.count) }
+    let actual: [Attributes] = self.toDelta().flatMap { delta -> [Attributes] in
+      guard case let .insert(string, attributes) = delta else { return [] }
+      let present = (attributes ?? [:]).filter { $0.value != .null && $0.value != .bool(value: false) }
+      return Array(repeating: present, count: string.utf16.count)
+    }
+    precondition(desired.count == actual.count, "a synced text has the target's length")
+    for key in [WmdSchema.Key.bold, WmdSchema.Key.italic, WmdSchema.Key.link] {
+      var start = 0
+      while start < desired.count {
+        let value = desired[start][key]
+        guard actual[start][key] != value else {
+          start += 1
+          continue
+        }
+        var end = start + 1
+        while end < desired.count, desired[end][key] == value, actual[end][key] != value { end += 1 }
+        if let value {
+          try self.markUtf16(from: UInt32(start), to: UInt32(end), key: key, value: value)
+        } else {
+          try self.unmarkUtf16(from: UInt32(start), to: UInt32(end), key: key)
+        }
+        start = end
       }
-      var end = start + 1
-      while end < desired.count, desired[end][key] == value, actual[end][key] != value { end += 1 }
-      if let value {
-        try text.markUtf16(from: UInt32(start), to: UInt32(end), key: key, value: value)
-      } else {
-        try text.unmarkUtf16(from: UInt32(start), to: UInt32(end), key: key)
-      }
-      start = end
     }
   }
 }
 
-private func attributes(_ marks: Marks) -> Attributes {
+private func attributes(_ marks: InlineMarks) -> Attributes {
   var result: Attributes = [:]
-  if marks.bold { result[Key.bold] = .bool(value: true) }
-  if marks.italic { result[Key.italic] = .bool(value: true) }
-  if let link = marks.link { result[Key.link] = .string(value: link) }
+  if marks.bold { result[WmdSchema.Key.bold] = .bool(value: true) }
+  if marks.italic { result[WmdSchema.Key.italic] = .bool(value: true) }
+  if let link = marks.link { result[WmdSchema.Key.link] = .string(value: link) }
   return result
 }

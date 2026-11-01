@@ -1,7 +1,10 @@
-/// Reads `**bold**`, `*italic*`, `[text](url)` and backslash escapes; `line` is where `text` starts.
-func inline(_ text: String, line: Int) throws(WmdSyntaxError) -> Inline {
-  var reader = InlineReader(Array(text), line: line)
-  return try reader.read()
+extension Inline {
+  /// Reads `**bold**`, `*italic*`, `[text](url)` and backslash escapes; `line` is where `markdown`
+  /// starts in the agent's text.
+  public init(markdown: String, line: Int) throws(WmdSyntaxError) {
+    var reader = InlineReader(Array(markdown), line: line)
+    self = try reader.read()
+  }
 }
 
 private enum Emphasis: Equatable {
@@ -16,7 +19,7 @@ private struct InlineReader {
   var stack: [Emphasis] = []
   var result = Inline()
   /// Runs inside an open `[`, waiting for the url its `](…)` names.
-  var linked: [Run]?
+  var linked: [InlineRun]?
   var linkLine = 0
 
   init(_ characters: [Character], line: Int) {
@@ -31,8 +34,8 @@ private struct InlineReader {
   }
 
   mutating func literal(_ character: Character) {
-    let marks = Marks(bold: self.stack.contains(.bold), italic: self.stack.contains(.italic))
-    let run = Run(text: String(character), marks: marks)
+    let marks = InlineMarks(bold: self.stack.contains(.bold), italic: self.stack.contains(.italic))
+    let run = InlineRun(text: String(character), marks: marks)
     if self.linked != nil { self.linked!.append(run) } else { self.result.append(run) }
   }
 
@@ -129,7 +132,7 @@ private struct InlineReader {
     for run in runs {
       var marks = run.marks
       marks.link = url
-      self.result.append(Run(text: run.text, marks: marks))
+      self.result.append(InlineRun(text: run.text, marks: marks))
     }
   }
 }

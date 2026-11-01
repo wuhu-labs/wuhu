@@ -55,7 +55,7 @@ private struct Parser {
         text += nextBody
         self.index = next + 1
       }
-      return .list(level: indent / 4, style: item.style, text: try inline(text, line: number))
+      return .list(level: indent / 4, style: item.style, text: try Inline(markdown: text, line: number))
     }
     if indent >= 4 { throw self.failure(.indentedCode) }
     if let level = headingLevel(body) {
@@ -66,7 +66,7 @@ private struct Parser {
         text += self.lines[self.index]
         self.index += 1
       }
-      return .heading(level: level, text: try inline(text, line: number))
+      return .heading(level: level, text: try Inline(markdown: text, line: number))
     }
     if let fence = fenceLength(body) { return try self.code(fence: fence, info: body.dropFirst(fence)) }
     var text = String(body)
@@ -78,7 +78,7 @@ private struct Parser {
       text += next.drop { $0 == " " }
       self.index += 1
     }
-    return .paragraph(try inline(text, line: number))
+    return .paragraph(try Inline(markdown: text, line: number))
   }
 
   private mutating func code(fence: Int, info: Substring) throws(WmdSyntaxError) -> Block {
@@ -171,8 +171,8 @@ private func fenceLength(_ body: Substring) -> Int? {
   return count >= 3 ? count : nil
 }
 
-private func listItem(_ body: Substring) -> (style: ListStyle, text: Substring)? {
-  for (marker, style) in [("- [ ]", ListStyle.todo), ("- [x]", .done), ("- [X]", .done), ("-", .unordered)] {
+private func listItem(_ body: Substring) -> (style: WmdSchema.ListStyle, text: Substring)? {
+  for (marker, style) in [("- [ ]", WmdSchema.ListStyle.todo), ("- [x]", .done), ("- [X]", .done), ("-", .unordered)] {
     guard body.hasPrefix(marker) else { continue }
     let rest = body.dropFirst(marker.count)
     if rest.isEmpty { return (style, rest) }

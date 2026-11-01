@@ -139,6 +139,19 @@ Deno.test('a table opens without attempting a text read', async () => {
   })
 })
 
+Deno.test('a .canvas file opens as a board, never read as text', async () => {
+  const source: NodeSource = {
+    stat: () => Promise.resolve({ kind: 'file', size: 10 }),
+    read: () => {
+      throw new Error('must not read a board as text')
+    },
+  }
+  expectEqual(await loadNode(source, origin, '/plans/q4.canvas', ''), {
+    state: 'canvas',
+    path: '/plans/q4.canvas',
+  })
+})
+
 Deno.test('an HTML page carries the layout its stat names', async () => {
   const source: NodeSource = {
     stat: () => Promise.resolve({ kind: 'file', layout: 'immersive' }),

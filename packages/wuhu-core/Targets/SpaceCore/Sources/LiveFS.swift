@@ -23,14 +23,14 @@ struct LiveFS: SpaceVFS {
   let blobs: BlobStore
   let broadcast: FSBroadcast
   let dateGen: DateGenerator
-  let wmd: WmdHub
+  let live: LiveHub
   var listingLimit: Int?
   var listingByteLimit: Int?
   var attribution: RevisionAttribution?
 
   func read(_ path: String) async throws -> (VersionToken, Data) {
     let p = try Self.validated(path)
-    if p.isWmd { try await wmd.settle(group, p) }
+    if p.isLive { try await live.settle(group, p) }
     let group = group
     return try await blobs.read(writer) { db, cache in
       guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
@@ -41,7 +41,7 @@ struct LiveFS: SpaceVFS {
 
   func reader(_ path: String) async throws -> any SpaceFileReader {
     let p = try Self.validated(path)
-    if p.isWmd { try await wmd.settle(group, p) }
+    if p.isLive { try await live.settle(group, p) }
     let group = group
     let hash = try await writer.read { db in
       guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
@@ -57,11 +57,11 @@ struct LiveFS: SpaceVFS {
 
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?, createOnly: Bool) async throws -> VersionToken {
     let p = try Self.validatedFileTarget(path)
-    if p.isWmd {
+    if p.isLive {
       if let ifMatch, ifMatch.rev == nil { throw SpaceError.versionMismatch(p.rawValue) }
       let (acting, attribution) = (acting, attribution)
-      let base = ifMatch.map { WmdBase.read(Int64($0.rev!)) } ?? .latest
-      let rev = try await wmd.with(group, p) {
+      let base = ifMatch.map { LiveBase.read(Int64($0.rev!)) } ?? .latest
+      let rev = try await live.with(group, p) {
         try await $0.write(data, base: base, createOnly: createOnly, acting: acting, attribution: attribution)
       }
       return VersionToken(rev: Int(rev))
@@ -123,7 +123,7 @@ struct LiveFS: SpaceVFS {
       }
       return rev
     }
-    await wmd.drop(under: p, in: group, rev: rev)
+    await live.drop(under: p, in: group, rev: rev)
   }
 
   func move(_ path: String, to destination: String) async throws {
@@ -142,7 +142,7 @@ struct LiveFS: SpaceVFS {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let (group, acting, attribution, broadcast) = (group, acting, attribution, broadcast)
     let across = destinationGroup != group
-    try await wmd.settle(under: src, in: group)
+    try await live.settle(under: src, in: group)
     let rev = try await blobs.write(
       writer, emittingTo: broadcast,
       prefetching: { db in
@@ -172,7 +172,7 @@ struct LiveFS: SpaceVFS {
             from: try SpacePath(validating: node.path), in: group, to: newPath, in: destinationGroup, rev: rev, in: db,
           )
         }
-        try WmdStore.relocate(node, group: group, to: newPath, in: destinationGroup, rev: rev, in: db)
+        try LiveStore.relocate(node, group: group, to: newPath, in: destinationGroup, rev: rev, in: db)
         if across {
           try Self.tombstone(path: node.path, group: group, rev: rev, op: .delete, in: db)
         } else {
@@ -206,8 +206,8 @@ struct LiveFS: SpaceVFS {
       pending += events
       return rev
     }
-    await wmd.drop(under: src, in: group, rev: rev)
-    await wmd.drop(under: dst, in: destinationGroup, rev: rev)
+    await live.drop(under: src, in: group, rev: rev)
+    await live.drop(under: dst, in: destinationGroup, rev: rev)
   }
 
   func list(_ path: String) async throws -> (VersionToken, [Entry]) {
@@ -284,7 +284,7 @@ struct LiveFS: SpaceVFS {
     try db.execute(sql: "DELETE FROM fs_heads WHERE grp = ? AND path = ?", arguments: [group.rawValue, path])
     if let p = try? SpacePath(validating: path) {
       try Induction.remove(path: p, group: group, in: db)
-      try WmdStore.forget(p, group: group, in: db)
+      try LiveStore.forget(p, group: group, in: db)
     }
   }
 

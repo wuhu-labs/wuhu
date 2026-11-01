@@ -1,3 +1,4 @@
+import CanvasDocument
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
@@ -7,11 +8,12 @@ import DeterministicDependencies
   import Foundation
 #endif
 import GRDB
+import LiveDocument
 import struct SpaceContract.GroupID
-import enum SpaceContract.WmdAccess
-import enum SpaceContract.WmdErrorCode
-import enum SpaceContract.WmdFrame
-import enum SpaceContract.WmdServerControl
+import enum SpaceContract.LiveAccess
+import enum SpaceContract.LiveErrorCode
+import enum SpaceContract.LiveFrame
+import enum SpaceContract.LiveServerControl
 @testable import SpaceCore
 import SpaceFS
 import Synchronization
@@ -19,20 +21,43 @@ import Testing
 import WmdDocument
 
 @Suite(.deterministicDependencies)
-struct WmdNodeTests {
+struct LiveNodeTests {
   private let plan = "/notes/plan.wmd"
 
   @Test func anAgentReadSeesLiveEditsAsCanonicalMarkdown() async throws {
     let space = try makeSpace(clock: VirtualClock())
     _ = try await space.fs(.shared).write(plan, bytes("# Plan\n\nHello\n"), ifMatch: nil)
     var client = try await Client.join(space, plan)
-    #expect(client.replica.markdown == "# Plan\n\nHello\n")
+    #expect(client.replica.text == "# Plan\n\nHello\n")
 
     try client.edit("# Plan\n\nHello there\n")
     #expect(await client.next() == .control(.ack(count: 1)))
     let (token, data) = try await space.fs(.shared).read(plan)
     #expect(text(data) == "# Plan\n\nHello there\n")
     #expect(await client.next() == .control(.checkpoint(rev: try #require(token.rev))))
+  }
+
+  @Test func aCanvasIsALiveNodeWhoseAgentWritesMergeByID() async throws {
+    let space = try makeSpace(clock: VirtualClock())
+    let board = "/boards/plan.canvas"
+    let fs = await space.fs(.shared)
+    _ = try await fs.write(board, bytes("- sticky {@0,0} Ship\n"), ifMatch: nil)
+    var client = try await Client.join(space, board)
+    let (read, data) = try await fs.read(board)
+    #expect(text(data).hasPrefix("- sticky {#"))
+    #expect(client.replica.text == text(data))
+
+    try client.edit(text(data).replacing("@0,0", with: "@300,200"))
+    #expect(await client.next() == .control(.ack(count: 1)))
+    _ = try await fs.write(board, bytes(text(data).replacing("Ship", with: "Ship **v1**")), ifMatch: read)
+    #expect(text(try await fs.read(board).1).contains("@300,200 160x160 yellow} Ship **v1**\n"))
+    await #expect(throws: SpaceError.liveSyntax(path: board, line: 1, reason: "#zzzzzz is not on this board; omit the id to create a new item or connector")) {
+      try await fs.write(board, bytes("- sticky {#zzzzzz} x\n"), ifMatch: nil)
+    }
+    let copy = "/boards/copy.canvas"
+    let copied = text(try await fs.read(board).1)
+    _ = try await fs.write(copy, bytes(copied), ifMatch: nil)
+    #expect(text(try await fs.read(copy).1) == copied, "a write that creates a board keeps the ids it names")
   }
 
   @Test func anAgentWriteMergesWithEditsMadeSinceItsRead() async throws {
@@ -52,7 +77,7 @@ struct WmdNodeTests {
     #expect(token == wrote)
     guard case let .frame(.update(update)) = await client.next() else { Issue.record("no agent update"); return }
     try client.replica.importUpdate(Data(update))
-    #expect(client.replica.markdown == merged)
+    #expect(client.replica.text == merged)
     #expect(await client.next() == .control(.checkpoint(rev: try #require(wrote.rev))))
   }
 
@@ -75,7 +100,7 @@ struct WmdNodeTests {
     let space = try makeSpace(clock: VirtualClock())
     _ = try await space.fs(.shared).write(plan, bytes("Hello\n"), ifMatch: nil)
     var client = try await Client.join(space, plan, access: .read)
-    #expect(client.replica.markdown == "Hello\n")
+    #expect(client.replica.text == "Hello\n")
     try client.edit("Hello there\n")
     guard case .control(.error(code: .readOnly, _)) = await client.next() else { Issue.record("a reader updated"); return }
     #expect(await client.next() == nil)
@@ -95,7 +120,7 @@ struct WmdNodeTests {
     #expect(await bo.next() == .control(.ack(count: 1)))
     guard case let .frame(.update(update)) = await ada.next() else { Issue.record("no relay"); return }
     try ada.replica.importUpdate(Data(update))
-    #expect(ada.replica.markdown == "Hello, Ada\n")
+    #expect(ada.replica.text == "Hello, Ada\n")
 
     bo.leave()
     guard case let .control(.peers(after)) = await ada.next() else { Issue.record("no roster after leaving"); return }
@@ -124,8 +149,8 @@ struct WmdNodeTests {
     try client.edit("Hello, idle\n")
     #expect(await client.next() == .control(.ack(count: 1)))
 
-    try await clock.sleeping { $0 == WmdNode.idleCheckpoint }
-    await clock.advance(by: WmdNode.idleCheckpoint)
+    try await clock.sleeping { $0 == LiveNode.idleCheckpoint }
+    await clock.advance(by: LiveNode.idleCheckpoint)
     guard case let .control(.checkpoint(rev)) = await client.next() else { Issue.record("no idle checkpoint"); return }
     let (_, data) = try await space.fs(.shared, at: Rev(rev)).read(plan)
     #expect(text(data) == "Hello, idle\n")
@@ -139,7 +164,7 @@ struct WmdNodeTests {
     try client.edit("Hello there\n")
     #expect(await client.next() == .control(.ack(count: 1)))
     #expect(try await space.currentRevision() == before)
-    #expect(try await space.writer.read { db in try WmdLogRow.all.fetchCount(db) } == 1)
+    #expect(try await space.writer.read { db in try LiveLogRow.all.fetchCount(db) } == 1)
   }
 
   @Test func aNodeTheServerClosesLastCheckpointsBeforeItRetires() async throws {
@@ -153,7 +178,7 @@ struct WmdNodeTests {
     client.sink.yield(.text("not a frame"))
     guard case .control(.error(code: .protocolViolation, _)) = await client.next() else { Issue.record("no refusal"); return }
     #expect(await client.next() == nil)
-    for await _ in logChanges where try await space.writer.read({ db in try WmdLogRow.all.fetchCount(db) }) == 0 { break }
+    for await _ in logChanges where try await space.writer.read({ db in try LiveLogRow.all.fetchCount(db) }) == 0 { break }
     #expect(text(try await space.fs(.shared).read(plan).1) == "Hello there\n")
   }
 
@@ -169,7 +194,7 @@ struct WmdNodeTests {
 
     try await first.close()
     guard case .control(.checkpoint) = await client.next() else { Issue.record("the stop did not checkpoint"); return }
-    #expect(try await second.writer.read { db in try WmdLogRow.all.fetchCount(db) } == 0)
+    #expect(try await second.writer.read { db in try LiveLogRow.all.fetchCount(db) } == 0)
     #expect(text(try await second.fs(.shared).read(plan).1) == "Hello, stop\n")
   }
 
@@ -184,7 +209,7 @@ struct WmdNodeTests {
     #expect(await client.next() == .control(.ack(count: 1)))
 
     await second.recoverLiveDocuments()
-    #expect(try await second.writer.read { db in try WmdLogRow.all.fetchCount(db) } == 0)
+    #expect(try await second.writer.read { db in try LiveLogRow.all.fetchCount(db) } == 0)
     let head = try await second.writer.read { db in try Substrate.head(SpacePath(validating: plan), group: .shared, in: db) }
     #expect(try await space(second, blobOf: try #require(head)) == "Hello, again\n")
   }
@@ -207,7 +232,7 @@ struct WmdNodeTests {
     let (_, restored) = try await space.checkout(SpacePath(validating: plan), rev: Rev(try #require(first.rev)), in: .shared, acting: .shared)
     guard case let .frame(.update(update)) = await client.next() else { Issue.record("no merged checkout"); return }
     try client.replica.importUpdate(Data(update))
-    #expect(client.replica.markdown == "One\n")
+    #expect(client.replica.text == "One\n")
     #expect(await client.next() == .control(.checkpoint(rev: try #require(restored.rev))))
     #expect(text(try await fs.read(plan).1) == "One\n")
   }
@@ -227,7 +252,7 @@ struct WmdNodeTests {
     guard case .control(.error(code: .notFound, _)) = await reconnect.next() else { Issue.record("a reconnect resurrected the node"); return }
     await #expect(throws: SpaceError.self) { try await fs.read(plan) }
     let again = try await Client.join(space, plan, peer: "3", create: true)
-    #expect(again.replica.markdown == "")
+    #expect(again.replica.text == "")
     #expect(text(try await fs.read(plan).1) == "")
   }
 
@@ -259,7 +284,7 @@ struct WmdNodeTests {
     try await space.move("/theirs.wmd", in: team, to: plan, in: .shared, replacing: true, acting: .shared)
     guard case .control(.error(code: .notFound, _)) = await client.next() else { Issue.record("the replaced node lived on"); return }
     var again = try await Client.join(space, plan, peer: "2")
-    #expect(again.replica.markdown == "Theirs\n")
+    #expect(again.replica.text == "Theirs\n")
     try again.edit("Theirs, edited\n")
     #expect(await again.next() == .control(.ack(count: 1)))
     #expect(text(try await space.fs(.shared).read(plan).1) == "Theirs, edited\n")
@@ -270,7 +295,7 @@ struct WmdNodeTests {
     do {
       _ = try await space.fs(.shared).write(plan, bytes("Hello\n\n<div>\n"), ifMatch: nil)
       Issue.record("HTML was accepted")
-    } catch let SpaceError.wmdSyntax(path, line, _) {
+    } catch let SpaceError.liveSyntax(path, line, _) {
       #expect(path == plan && line == 3)
     }
   }
@@ -281,7 +306,7 @@ struct WmdNodeTests {
     let stale = try await fs.write("/raw.md", bytes("Hello\n\n<div>\n"), ifMatch: nil)
     try await fs.move("/raw.md", to: plan)
     var client = await Client.connect(space, plan)
-    guard case .control(.error(code: .notWmd, _)) = await client.next() else { Issue.record("a foreign file opened live"); return }
+    guard case .control(.error(code: .notLive, _)) = await client.next() else { Issue.record("a foreign file opened live"); return }
     let (raw, data) = try await fs.read(plan)
     #expect(text(data) == "Hello\n\n<div>\n")
 
@@ -289,7 +314,7 @@ struct WmdNodeTests {
     _ = try await fs.write(plan, bytes("Fresh\n"), ifMatch: raw)
     #expect(text(try await fs.read(plan).1) == "Fresh\n")
     let again = try await Client.join(space, plan, peer: "2")
-    #expect(again.replica.markdown == "Fresh\n")
+    #expect(again.replica.text == "Fresh\n")
   }
 
   @Test func aWriteMergesOnlyAtARevisionACheckpointWrote() async throws {
@@ -304,8 +329,8 @@ struct WmdNodeTests {
     let space = try makeSpace(clock: VirtualClock())
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     _ = try await space.fs(.shared).write(plan, bytes("Hello\n"), ifMatch: nil)
-    let access = Mutex<WmdAccess?>(.write)
-    let reauthorize: @Sendable () async -> WmdAccess? = { access.withLock { $0 } }
+    let access = Mutex<LiveAccess?>(.write)
+    let reauthorize: @Sendable () async -> LiveAccess? = { access.withLock { $0 } }
     var writer = try await Client.join(space, plan, peer: "1", reauthorize: reauthorize)
     var reader = try await Client.join(space, plan, access: .read, peer: "2", reauthorize: reauthorize)
     guard case .control(.peers) = await writer.next() else { Issue.record("no roster"); return }
@@ -340,9 +365,9 @@ struct WmdNodeTests {
     let space = try makeSpace(clock: VirtualClock())
     _ = try await space.fs(.shared).write(plan, bytes("Hello\n"), ifMatch: nil)
     var client = try await Client.join(space, plan)
-    let unsent = try #require(try client.replica.merge(markdown: "Hello there\n", base: nil, peer: 900))
+    let unsent = try #require(try client.replica.merge(text: "Hello there\n", base: nil, peer: 900)?.update)
     try client.replica.importUpdate(unsent)
-    client.send(.update(Array(try #require(try client.replica.merge(markdown: "Hello there, you\n", base: nil, peer: 901)))))
+    client.send(.update(Array(try #require(try client.replica.merge(text: "Hello there, you\n", base: nil, peer: 901)?.update))))
     guard case .control(.error(code: .missingDependencies, _)) = await client.next() else { Issue.record("a dangling update was taken"); return }
   }
 
@@ -392,27 +417,27 @@ struct WmdNodeTests {
 
 /// A client of one node, holding its own replica.
 private struct Client {
-  let replica: WmdReplica
-  let sink: AsyncStream<WmdInbound>.Continuation
-  var outbound: AsyncStream<WmdOutbound>.AsyncIterator
+  let replica: LiveReplica
+  let sink: AsyncStream<LiveInbound>.Continuation
+  var outbound: AsyncStream<LiveOutbound>.AsyncIterator
   var nextPeer: UInt64
 
   static func connect(
-    _ space: Space, _ path: String, group: GroupID = .shared, access: WmdAccess = .write, peer: String = "1", create: Bool = false,
-    reauthorize: @escaping @Sendable () async -> WmdAccess? = { .write },
+    _ space: Space, _ path: String, group: GroupID = .shared, access: LiveAccess = .write, peer: String = "1", create: Bool = false,
+    reauthorize: @escaping @Sendable () async -> LiveAccess? = { .write },
   ) async -> Client {
-    let (frames, sink) = AsyncStream.makeStream(of: WmdInbound.self)
-    let outbound = await space.wmdChannel(
+    let (frames, sink) = AsyncStream.makeStream(of: LiveInbound.self)
+    let outbound = await space.liveChannel(
       group, try! SpacePath(validating: path), peer: peer, name: "peer " + peer, access: access, create: create, frames: frames,
       reauthorize: reauthorize,
     )
-    return Client(replica: WmdReplica(), sink: sink, outbound: outbound.makeAsyncIterator(), nextPeer: UInt64(peer)! << 32)
+    return Client(replica: LiveReplica(path.hasSuffix(".canvas") ? .canvas : .wmd), sink: sink, outbound: outbound.makeAsyncIterator(), nextPeer: UInt64(peer)! << 32)
   }
 
   /// Through welcome, the catch-up and synced.
   static func join(
-    _ space: Space, _ path: String, group: GroupID = .shared, access: WmdAccess = .write, peer: String = "1", create: Bool = false,
-    reauthorize: @escaping @Sendable () async -> WmdAccess? = { .write },
+    _ space: Space, _ path: String, group: GroupID = .shared, access: LiveAccess = .write, peer: String = "1", create: Bool = false,
+    reauthorize: @escaping @Sendable () async -> LiveAccess? = { .write },
   ) async throws -> Client {
     var client = await connect(space, path, group: group, access: access, peer: peer, create: create, reauthorize: reauthorize)
     guard case .control(.welcome) = await client.next() else { throw Unexpected() }
@@ -426,13 +451,13 @@ private struct Client {
     return client
   }
 
-  mutating func next() async -> WmdOutbound? { await outbound.next() }
+  mutating func next() async -> LiveOutbound? { await outbound.next() }
 
-  func send(_ frame: WmdFrame) { sink.yield(.binary(frame.bytes)) }
+  func send(_ frame: LiveFrame) { sink.yield(.binary(frame.bytes)) }
 
   mutating func edit(_ markdown: String) throws {
     nextPeer += 1
-    let update = try #require(try replica.merge(markdown: markdown, base: nil, peer: nextPeer))
+    let update = try #require(try replica.merge(text: markdown, base: nil, peer: nextPeer)?.update)
     try replica.importUpdate(update)
     send(.update(Array(update)))
   }

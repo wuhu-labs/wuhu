@@ -8,7 +8,7 @@ import Testing
   @Test func theBinaryCarriesTheSystemInstructionsAndSkills() {
     #expect(SystemFiles.files["/AGENTS.md"] != nil)
     #expect(SystemFiles.instructions.skills.map(\.name) == [
-      "ai-scripts", "avatar", "data-organization", "data-views", "devices", "machine-scripts", "monitor", "observe-group-channel", "read-box", "script-runtime", "secret-scripts", "sessions", "sidebars", "space-html-pages", "space-scripts", "web-search", "widgets", "writing-style",
+      "ai-scripts", "avatar", "canvas", "data-organization", "data-views", "devices", "machine-scripts", "monitor", "observe-group-channel", "read-box", "script-runtime", "secret-scripts", "sessions", "sidebars", "space-html-pages", "space-scripts", "web-search", "widgets", "writing-style",
     ])
     #expect(SystemFiles.instructions.skills.allSatisfy { !$0.description.isEmpty })
     #expect(SystemFiles.instructions.skills.first?.path == "wuhu://system/skills/ai-scripts/SKILL.md")
