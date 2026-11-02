@@ -18,6 +18,7 @@ import struct OperationProtocol.Verdict
 import struct OperationRuntime.OperationCancellation
 import struct OperationRuntime.OperationChannels
 import protocol OperationRuntime.OperationKind
+import struct SecretMasking.SecretMasker
 
 struct ExecInput: Codable, Sendable {
   struct Credential: Codable, Sendable { let token: String; let spaceURL: String; var expiresAt: Double? = nil }

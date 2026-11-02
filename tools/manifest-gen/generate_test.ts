@@ -47,6 +47,7 @@ import {
   validateTargetLinkedFrameworks,
   validateTargetRelease,
   viewPilotProducts,
+  withPackageSwiftSettings,
 } from './generate.ts'
 import { join } from '@std/path'
 import { parse } from '@std/yaml'
@@ -1871,6 +1872,32 @@ Deno.test('package target copts load rule symbols once and reject literal flags'
       }]),
     Error,
     'target copts entry is not a rules.bzl symbol',
+  )
+})
+
+Deno.test('package swiftSettings lead every Swift target and test target', async () => {
+  const flag = { enableUpcomingFeature: 'NonisolatedNonsendingByDefault' }
+  const own = { define: 'OWN' }
+  const lib = withPackageSwiftSettings([flag], {
+    ...minimalTarget('Lib', 'library'),
+    swiftSettings: [own],
+    tests: {},
+    additionalTestTargets: [{ sources: 'Extra' }],
+  })
+  assertEquals(lib.swiftSettings, [flag, own])
+  assertEquals(lib.tests && lib.tests.swiftSettings, [flag])
+  assertEquals(lib.additionalTestTargets?.[0].swiftSettings, [flag])
+  const c = minimalTarget('C', 'cLibrary')
+  assertEquals(withPackageSwiftSettings([flag], c), c)
+
+  const build = await generateBuildBazel(basePkg, [lib])
+  assertStringIncludes(
+    build,
+    '"-enable-upcoming-feature",\n        "NonisolatedNonsendingByDefault",\n        "-DOWN",',
+  )
+  assertStringIncludes(
+    generatePackageSwift(basePkg, '.', [lib]),
+    '.enableUpcomingFeature("NonisolatedNonsendingByDefault")',
   )
 })
 

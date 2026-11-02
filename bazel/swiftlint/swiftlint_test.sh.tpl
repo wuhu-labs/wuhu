@@ -12,6 +12,9 @@ if ((status != 2)); then
   echo "expected lint to fail with violations of: ${expected[*]} (exit $status)" >&2
   exit 1
 fi
-for rule in "${expected[@]}"; do
-  grep -qF "($rule)" <<<"$output" || { echo "expected a $rule violation" >&2; exit 1; }
+# A rule listed n times must report at least n violations.
+for rule in $(printf '%s\n' "${expected[@]}" | sort -u); do
+  want=$(printf '%s\n' "${expected[@]}" | grep -cxF -- "$rule")
+  got=$(grep -cF -- "($rule)" <<<"$output" || true)
+  ((got >= want)) || { echo "expected $want $rule violation(s), got $got" >&2; exit 1; }
 done

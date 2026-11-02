@@ -154,9 +154,9 @@ extension ServeNIOServer {
             send: { message in
               try await channel.writeAndFlush(webSocketFrame(for: message, allocator: channel.allocator)).get()
             },
-            close: {
+            closeWithCode: { code in
               var buffer = channel.allocator.buffer(capacity: 2)
-              buffer.write(webSocketErrorCode: .normalClosure)
+              buffer.write(webSocketErrorCode: WebSocketErrorCode(codeNumber: Int(code)))
               let frame = WebSocketFrame(fin: true, opcode: .connectionClose, data: buffer)
               channel.writeAndFlush(frame).whenComplete { _ in
                 channel.close(promise: nil)

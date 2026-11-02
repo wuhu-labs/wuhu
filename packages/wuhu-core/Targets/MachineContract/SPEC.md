@@ -32,7 +32,7 @@ Opcode → payload: `control`→`ControlMessage`, `exec-start`→`ExecStart`, `s
 
 - `ExecStart.cwd` is an **absolute path on the machine**. The `machines://<id>/<path>` addressing is resolved caller/server-side to pick the machine; only the machine-local path crosses this wire.
 - `command` is argv: `command[0]` is the executable; no shell interpretation.
-- `env` and `secrets` absent mean empty. `secrets` maps environment names to names in the executing machine's group. The server resolves these names into `secretValues` for the v2 operation; missing names fail before spawn. The machine injects the values and masks non-empty values from output.
+- `env` and `secrets` absent mean empty. `secrets` maps environment names to names in the executing machine's group. The server resolves these names into `secretValues` for the v2 operation; missing names fail before spawn. The machine injects the values and masks them from output in every form `SecretMasking` knows (raw, trimmed, JSON-escaped).
 - `session` (`ExecSessionCredential {token, spaceURL}`) and `secretValues` remain in the exec frame schema. The v2 relay does not trust caller-supplied credentials or resolved secret values: it mints the operation credential from the authenticated session and resolves `secrets` names itself.
 - `window` absent means `ExecDefaults.window` (4 MiB); it is the un-acked flow-control window and the reconnect replay buffer, always finite.
 - `maxOutput` is a total-output byte cap; on exceed the exec is killed and the caller sees `ExecEvent.truncated(limit:)` before the exit event. `timeout` is wall-clock **seconds**, fractional. Both absent mean unlimited.

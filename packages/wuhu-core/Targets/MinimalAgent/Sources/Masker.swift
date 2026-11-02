@@ -5,19 +5,21 @@
 #endif
 import JSONValue
 import OrderedCollections
+import struct SecretMasking.SecretMasker
 import WuhuAI
 
 /// Replaces every credential the agent knows of with `***`: the request's credential and the session token it was started under.
 struct Masker {
-  /// Longest first, so a secret containing another is replaced whole.
   let secrets: [String]
+  private let masker: SecretMasker
 
   init(credential: AgentRequest.Credential, environment: [String: String]) {
-    secrets = (credential.secrets + [environment["WUHU_TOKEN"] ?? ""]).filter { !$0.isEmpty }.sorted { $0.count > $1.count }
+    secrets = (credential.secrets + [environment["WUHU_TOKEN"] ?? ""]).filter { !$0.isEmpty }
+    masker = SecretMasker(secrets: secrets)
   }
 
   func callAsFunction(_ text: String) -> String {
-    secrets.reduce(text) { $0.replacing($1, with: "***") }
+    masker.masked(text)
   }
 
   /// Masks the strings where they live, never the encoded message: escaping cannot hide a secret from it and a short secret cannot hit a field name.

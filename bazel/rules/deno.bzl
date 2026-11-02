@@ -321,7 +321,7 @@ def _exported_dir_impl(ctx):
         inputs = depset(ctx.files.srcs),
         outputs = [out],
         command = 'cp -RL "{root}/." "{out}/"'.format(
-            root = "{}/{}".format(ctx.label.package, ctx.attr.path),
+            root = "/".join([part for part in [ctx.label.workspace_root, ctx.label.package, ctx.attr.path] if part]),
             out = out.path,
         ),
         mnemonic = "WuhuExportDir",

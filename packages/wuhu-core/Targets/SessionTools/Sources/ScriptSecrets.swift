@@ -1,6 +1,7 @@
 import struct Credentials.SpaceSecrets
 import Dependencies
 import JSONValue
+import struct SecretMasking.SecretMasker
 import SpaceClient
 import struct SpaceContract.SecretsOutput
 import Synchronization
@@ -16,11 +17,10 @@ import Synchronization
 // session, so their refusals are the script's errors.
 final class ScriptSecrets: Sendable {
   private static let prefix = Array("wuhu-secret.".utf8)
-  private static let mask = Array("***".utf8)
 
   private let client: SpaceClient
   private let suffix: [UInt8]
-  private let sent = Mutex<[[UInt8]]>([])
+  private let sent = Mutex(SecretMasker(secrets: []))
 
   init(client: SpaceClient) {
     @Dependency(\.uuid) var uuid
@@ -108,29 +108,20 @@ final class ScriptSecrets: Sendable {
   }
 
   func protect(_ text: String) {
-    let value = Array(text.utf8)
-    guard !value.isEmpty else { return }
-    sent.withLock { sent in
-      if !sent.contains(value) { sent.append(value) }
-      sent.sort { $0.count > $1.count }
-    }
+    let added = SecretMasker(secrets: [text])
+    sent.withLock { $0.formUnion(added) }
+  }
+
+  var masker: SecretMasker {
+    sent.withLock { $0 }
   }
 
   func mask(_ text: String) -> String {
-    String(decoding: mask(Array(text.utf8)), as: UTF8.self)
+    masker.masked(text)
   }
 
   func mask(_ bytes: [UInt8]) -> [UInt8] {
-    sent.withLock { $0 }.reduce(bytes) { masked, value in
-      guard masked.firstRange(of: value) != nil else { return masked }
-      var output: [UInt8] = []
-      var rest = masked[...]
-      while let found = rest.firstRange(of: value) {
-        output += rest[..<found.lowerBound] + Self.mask
-        rest = rest[found.upperBound...]
-      }
-      return output + rest
-    }
+    masker.masked(bytes)
   }
 
   private func placeholder(in bytes: [UInt8], at start: Int) -> (group: String?, name: String, end: Int)? {

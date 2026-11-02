@@ -39,6 +39,7 @@ dependencies:
   - Clocks
   - Logging
   - GRDB
+  - SecretMasking
 tests:
   exclude:
     - Fixtures/**

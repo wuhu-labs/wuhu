@@ -280,15 +280,15 @@ final class ScriptMachineBindings: Sendable {
   private func next(_ arguments: [JSONValue]) async throws -> JSONValue {
     let process = try execution.processes.process(string(arguments, 0))
     let lines = string(arguments, 1) == "lines"
-    let take = try await lines ? process.lines() : process.chunks()
     let secrets = execution.secrets
+    let take = try await lines ? process.lines { secrets.masker } : process.chunks { secrets.masker }
     return .object([
       "items": .array(take.items.map { output in
-        let masked = secrets.mask(output.bytes)
+        let bytes = output.bytes
         let data: JSONValue = if lines {
-          .string(String(decoding: masked.last == 0x0D ? masked.dropLast() : masked[...], as: UTF8.self))
+          .string(String(decoding: bytes.last == 0x0D ? bytes.dropLast() : bytes[...], as: UTF8.self))
         } else {
-          .string(Data(masked).base64EncodedString())
+          .string(Data(bytes).base64EncodedString())
         }
         return .object(["stream": .string(output.stream == .stdout ? "out" : "err"), lines ? "text" : "data": data])
       }),

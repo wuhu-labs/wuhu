@@ -20,13 +20,22 @@ public typealias UpgradingHandler = @Sendable (Request) async throws -> UpgradeR
 public struct WebSocket: Sendable {
   public let inbound: AsyncStream<WebSocketMessage>
   private let sink: @Sendable (WebSocketMessage) async throws -> Void
-  private let terminator: @Sendable () -> Void
+  private let terminator: @Sendable (UInt16) -> Void
   private let aborter: @Sendable () -> Void
 
   public init(
     inbound: AsyncStream<WebSocketMessage>,
     send: @escaping @Sendable (WebSocketMessage) async throws -> Void,
     close: @escaping @Sendable () -> Void,
+    abort: @escaping @Sendable () -> Void,
+  ) {
+    self.init(inbound: inbound, send: send, closeWithCode: { _ in close() }, abort: abort)
+  }
+
+  public init(
+    inbound: AsyncStream<WebSocketMessage>,
+    send: @escaping @Sendable (WebSocketMessage) async throws -> Void,
+    closeWithCode close: @escaping @Sendable (UInt16) -> Void,
     abort: @escaping @Sendable () -> Void,
   ) {
     self.inbound = inbound
@@ -40,7 +49,11 @@ public struct WebSocket: Sendable {
   }
 
   public func close() {
-    terminator()
+    terminator(1000)
+  }
+
+  public func close(code: UInt16) {
+    terminator(code)
   }
 
   public func abort() {

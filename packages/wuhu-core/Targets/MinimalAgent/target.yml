@@ -15,6 +15,7 @@ dependencies:
   - Dependencies
   - Subprocess
   - SystemPackage
+  - SecretMasking
 tests:
   dependencies:
     - CProcessIdentity

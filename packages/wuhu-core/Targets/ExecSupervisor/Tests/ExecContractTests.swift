@@ -209,6 +209,16 @@ enum TestFailure: Error { case timeout }
       #expect(out.payload?.data == Data("***".utf8))
     }
   }
+
+  @Test func masksTrimmedAndJSONEscapedSecret() async throws {
+    try await withExec { agent in
+      let id = UUID()
+      try await startExec(agent, id: id, script: #"printf '%s|%s|%s' "$MASK" fake-key 'fake-key\n'"#, secrets: ["MASK": "fake-key\n"])
+      _ = try await waitExit(agent, id: id)
+      let out = try await waitOutputEnd(agent, id: id)
+      #expect(out.payload?.data == Data("***|***|***".utf8))
+    }
+  }
 }
 
 extension ExecContractTests {

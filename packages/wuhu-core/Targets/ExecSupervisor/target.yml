@@ -23,6 +23,7 @@ dependencies:
   - NIOCore
   - NIOPosix
   - Clocks
+  - SecretMasking
 tests:
   size: large
   # Retirement tests run real supervisor processes: `wuhu machine-v2 supervise`.

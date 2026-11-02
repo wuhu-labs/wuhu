@@ -4,6 +4,7 @@ import enum MachineContract.ExecOutputStream
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineID
 import struct MainHub.ScriptError
+import struct SecretMasking.SecretMasker
 import SessionDomain
 import SpaceClient
 import SpaceCore
@@ -133,6 +134,7 @@ final class ScriptProcess: Sendable {
     var received = 0
     var acknowledged = 0
     var partials: [ExecOutputStream: Partial] = [:]
+    var maskers: [ExecOutputStream: SecretMasker] = [:]
     var ready: [Output] = []
     var end: End?
     var stdinClosed = false
@@ -237,8 +239,8 @@ final class ScriptProcess: Sendable {
   // un-acknowledged; when the held bytes fill the whole window with no line
   // complete, the oldest open line is handed over as it stands, so a process
   // that never prints a newline cannot stall its reader.
-  func lines() async throws -> Take<Output> {
-    try await take { state in
+  func lines(masking secrets: () -> SecretMasker) async throws -> Take<Output> {
+    let taken: Take<Output> = try await take { state in
       state.split()
       if !state.ready.isEmpty {
         defer { state.ready = [] }
@@ -262,27 +264,46 @@ final class ScriptProcess: Sendable {
       state.partials[oldest.key] = nil
       return (Take(items: [Output(stream: oldest.key, bytes: oldest.value.bytes)], done: false), state.heldFrom)
     }
+    let masker = secrets()
+    return Take(items: taken.items.map { Output(stream: $0.stream, bytes: masker.masked($0.bytes)) }, done: taken.done)
   }
 
-  // Raw chunks in arrival order, adjacent chunks of one stream joined.
-  func chunks() async throws -> Take<Output> {
+  // Raw chunks in arrival order, adjacent chunks of one stream joined. Each
+  // stream is masked as one stream, so a secret split across chunks is
+  // masked too; its held-back tail comes out at the end.
+  func chunks(masking secrets: () -> SecretMasker) async throws -> Take<Output> {
     try await take { state in
-      if !state.pending.isEmpty {
-        var chunks: [Output] = []
-        for chunk in state.pending {
-          if chunks.last?.stream == chunk.stream {
-            chunks[chunks.count - 1].bytes += chunk.bytes
-          } else {
-            chunks.append(Output(stream: chunk.stream, bytes: chunk.bytes))
-          }
+      let secrets = secrets()
+      var chunks: [Output] = []
+      func append(_ stream: ExecOutputStream, _ bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        if chunks.last?.stream == stream {
+          chunks[chunks.count - 1].bytes += bytes
+        } else {
+          chunks.append(Output(stream: stream, bytes: bytes))
         }
-        state.pending = []
-        return (Take(items: chunks, done: false), state.received)
+      }
+      for chunk in state.pending {
+        var masker = state.maskers[chunk.stream] ?? secrets
+        masker.formUnion(secrets)
+        append(chunk.stream, masker.mask(chunk.bytes))
+        state.maskers[chunk.stream] = masker
+      }
+      state.pending = []
+      if state.end != nil {
+        for stream in [ExecOutputStream.stdout, .stderr] {
+          guard var masker = state.maskers.removeValue(forKey: stream) else { continue }
+          append(stream, masker.flush())
+        }
       }
       switch state.end {
-      case .exited?: return (Take(items: [], done: true), state.received)
-      case let .lost(reason)?: throw lostError(reason)
-      case nil: return nil
+      case .exited?: return (Take(items: chunks, done: true), state.received)
+      case let .lost(reason)?:
+        guard !chunks.isEmpty else { throw lostError(reason) }
+        return (Take(items: chunks, done: false), state.received)
+      case nil:
+        guard !chunks.isEmpty else { return nil }
+        return (Take(items: chunks, done: false), state.received)
       }
     }
   }
@@ -334,6 +355,7 @@ final class ScriptProcess: Sendable {
       state.discarding = true
       state.pending = []
       state.partials = [:]
+      state.maskers = [:]
       state.ready = []
       guard state.received > state.acknowledged else { return nil }
       state.acknowledged = state.received

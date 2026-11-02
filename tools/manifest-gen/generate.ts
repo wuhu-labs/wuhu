@@ -60,6 +60,8 @@ export interface PackageManifest {
   platforms?: Record<string, string>
   checks?: Checks
   externalPackages?: Record<string, ExternalPackage>
+  // Prepended to every Swift target's and test target's own swiftSettings.
+  swiftSettings?: SwiftSetting[]
 }
 
 export interface ExternalPackage {
@@ -152,6 +154,7 @@ interface EmbeddedResource {
 
 interface SwiftSetting {
   enableExperimentalFeature?: string
+  enableUpcomingFeature?: string
   define?: string
   unsafeFlags?: string[]
 }
@@ -1018,8 +1021,36 @@ async function replaceFile(path: string, content: string): Promise<void> {
   await Deno.rename(temporary, path)
 }
 
+const swiftTargetKinds: TargetKind[] = ['library', 'executable', 'macro']
+
+export function withPackageSwiftSettings(
+  settings: SwiftSetting[] | undefined,
+  target: TargetManifest,
+): TargetManifest {
+  if (!settings?.length || !swiftTargetKinds.includes(target.kind)) {
+    return target
+  }
+  const merged = (own: SwiftSetting[] | undefined) => [
+    ...settings,
+    ...(own ?? []),
+  ]
+  return {
+    ...target,
+    swiftSettings: merged(target.swiftSettings),
+    tests: target.tests &&
+      { ...target.tests, swiftSettings: merged(target.tests.swiftSettings) },
+    additionalTestTargets: target.additionalTestTargets?.map((test) => ({
+      ...test,
+      swiftSettings: merged(test.swiftSettings),
+    })),
+  }
+}
+
 async function discoverTargets(root: string): Promise<TargetManifest[]> {
   const targets: TargetManifest[] = []
+  const { swiftSettings } = await readYaml<PackageManifest>(
+    join(root, 'package.yml'),
+  )
 
   for (
     const manifestPath of await globFiles(`${root}/Targets/*/target.yml`)
@@ -1032,7 +1063,7 @@ async function discoverTargets(root: string): Promise<TargetManifest[]> {
     validateTargetRelease(resolved)
     validateTargetInfo(resolved)
     validateTargetLinkedFrameworks(resolved)
-    targets.push(resolved)
+    targets.push(withPackageSwiftSettings(swiftSettings, resolved))
   }
 
   return targets.sort((lhs, rhs) => lhs.name.localeCompare(rhs.name))
@@ -1430,6 +1461,9 @@ function swiftSettingsExpr(settings: SwiftSetting[] | undefined): string {
     if (s.enableExperimentalFeature) {
       return `.enableExperimentalFeature("${s.enableExperimentalFeature}")`
     }
+    if (s.enableUpcomingFeature) {
+      return `.enableUpcomingFeature("${s.enableUpcomingFeature}")`
+    }
     if (s.define) return `.define("${s.define}")`
     if (s.unsafeFlags) return `.unsafeFlags(${JSON.stringify(s.unsafeFlags)})`
     throw new Error('invalid swiftSetting')
@@ -1448,6 +1482,8 @@ function swiftSettingsCopts(settings: SwiftSetting[] | undefined): string[] {
   for (const s of settings ?? []) {
     if (s.enableExperimentalFeature) {
       copts.push('-enable-experimental-feature', s.enableExperimentalFeature)
+    } else if (s.enableUpcomingFeature) {
+      copts.push('-enable-upcoming-feature', s.enableUpcomingFeature)
     } else if (s.define) {
       copts.push('-D' + s.define)
     } else if (s.unsafeFlags) {

@@ -505,6 +505,28 @@ import struct WuhuAI.ToolCall
     }
   }
 
+  @Test func machineChunksMaskASecretSplitAcrossThem() async throws {
+    let world = MachineWorld()
+    let accept = FetchClient { _ in Response(status: .ok, headers: [:], body: .string("")) }
+    try await withRig(fetch: accept, world: world) { rig in
+      try await world.attach("box", in: rig.space)
+      try await rig.run("machine-secret-chunks")
+      try await rig.released()
+      try rig.expect("machine-secret-chunks")
+    }
+  }
+
+  @Test func machineOutputMasksASecretSentAfterItStarted() async throws {
+    let world = MachineWorld()
+    let accept = FetchClient { _ in Response(status: .ok, headers: [:], body: .string("")) }
+    try await withRig(fetch: accept, world: world) { rig in
+      try await world.attach("box", in: rig.space)
+      try await rig.run("machine-secret-late")
+      try await rig.released()
+      try rig.expect("machine-secret-late")
+    }
+  }
+
   @Test func machineRefusals() async throws {
     let world = MachineWorld()
     try await withRig(world: world) { rig in
@@ -855,6 +877,13 @@ private let playbook: @Sendable (IncomingExec, ScriptedExecMachine) async -> Voi
   case "bytes":
     try? await exec.send(.stdout, [0xFF, 0x00, 0x41])
     try? await exec.send(.stderr, [0x0A])
+    await exec.exit(.exited(code: 0))
+  case "split-secret":
+    try? await exec.send(.stdout, Array("fake-".utf8))
+    try? await exec.send(.stderr, Array("e1".utf8))
+    try? await exec.send(.stdout, Array("key\n|fake-key\\".utf8))
+    try? await exec.send(.stderr, Array("e2".utf8))
+    try? await exec.send(.stdout, Array("n|fake-key".utf8))
     await exec.exit(.exited(code: 0))
   case "upper":
     do {
