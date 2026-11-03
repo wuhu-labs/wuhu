@@ -1,11 +1,11 @@
 import Dependencies
 import Fetch
 import Foundation
-import enum InferenceKit.CatalogError
-import struct InferenceKit.ModelsDocument
 import JSONValue
 import LoopCore
 import MainHub
+import enum ModelProviders.CatalogError
+import struct ModelProviders.ModelsDocument
 import Serve
 import ServeRouting
 import SessionDomain

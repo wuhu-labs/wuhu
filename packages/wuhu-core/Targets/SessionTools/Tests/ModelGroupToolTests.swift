@@ -8,8 +8,8 @@ import class MainHub.Hub
 #else
   import Foundation
 #endif
-import enum InferenceKit.CatalogError
 import JSONValue
+import enum ModelProviders.CatalogError
 import SessionDomain
 import SpaceCore
 import Testing

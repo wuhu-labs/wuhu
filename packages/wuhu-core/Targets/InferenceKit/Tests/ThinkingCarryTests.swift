@@ -9,6 +9,7 @@ import Fetch
 #endif
 import InferenceKit
 import JSONValue
+import ModelProviders
 import SessionDomain
 import Synchronization
 import Testing

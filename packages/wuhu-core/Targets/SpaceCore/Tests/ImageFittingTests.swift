@@ -142,6 +142,21 @@ import Testing
     }
   }
 
+  @Test func `only an image whose every pixel decodes counts as decodable`() throws {
+    let png = try #require(Self.png(width: 64, height: 32))
+    let jpeg = try #require(Self.jpeg(png))
+    #expect(ImageFitting.decodes(png) == true && ImageFitting.decodes(jpeg) == true)
+    for truncated in [Data(png.prefix(33)), Data(png.prefix(png.count - 20))] {
+      #expect(ImageFitting.decodes(truncated) == false)
+    }
+    #if os(Linux)
+      #expect(ImageFitting.decodes(Data(jpeg.prefix(jpeg.count / 2))) == false)
+      #expect(ImageFitting.decodes(Self.gif) == nil)
+    #elseif canImport(ImageIO)
+      #expect(ImageFitting.decodes(Self.gif) == true)
+    #endif
+  }
+
   @Test func `JPEG EXIF orientation is applied when fitting`() throws {
     let png = try #require(Self.png(width: 80, height: 40))
     let jpeg = try #require(Self.jpeg(png))
@@ -319,6 +334,9 @@ import Testing
       return nil
     #endif
   }
+
+  /// A 1x1 GIF89a.
+  static let gif = Data(base64Encoded: "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==")!
 
   static func png(width: Int, height: Int, noise: Bool = false) -> Data? {
     #if canImport(ImageIO)

@@ -1,0 +1,10 @@
+name: ModelProviders
+kind: library
+sources: Sources
+dependencies:
+  - Credentials
+  - Crypto
+  - JSONValue
+  - WuhuAI
+swiftSettings:
+  - enableExperimentalFeature: NonisolatedNonsendingByDefault

@@ -73,7 +73,13 @@ final class Wire: Sendable {
   /// What happens to the next matching request: the machine applies it and the answer is lost, it is refused unapplied, or
   /// it never arrives and never ends.
   enum Fault: Sendable { case loseAnswer, refuse(OperationError.Code), hang }
-  let fault = Mutex<(match: @Sendable (Request) -> Bool, fault: Fault)?>(nil)
+  let fault = Mutex<Armed?>(nil)
+  // Not a tuple: `withLock` would reabstract its function on every read and nest one more thunk.
+  struct Armed {
+    let match: @Sendable (Request) -> Bool
+    let fault: Fault
+  }
+
   /// How many answers carrying a verdict still go out without their final offsets, as an agent answers when its verdict is
   /// published before its channels' tails.
   let verdictsWithoutFinalOffsets = Mutex(0)
@@ -331,7 +337,7 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
     let wire = try Wire()
     let store = MemoryOperationStore()
     let operations = try wire.operations(store: store)
-    wire.fault.withLock { $0 = ({ $0.url.query?.contains("terminalAck=") == true }, .loseAnswer) }
+    wire.fault.withLock { $0 = .init(match: { $0.url.query?.contains("terminalAck=") == true }, fault: .loseAnswer) }
     let operation = try await operations.open(.init(scope: "test", key: "settled"), machine: "disk", start: emit(chunks: 2, size: 100))
     #expect(try await drain(operation) == expected(chunks: 2, size: 100))
     #expect(try await eventually { await operations.running == 0 })
@@ -369,7 +375,7 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
     let operation = try await operations.open(.init(scope: "test", key: "concluded"), machine: "disk", start: emit(chunks: 1, size: 200, wait: true))
     #expect(try await eventually { try await store.read(operation.id).retainedBytes("out") == 200 })
     // The output lane waits for the consumer now; the state poll gets the conclusive answer.
-    wire.fault.withLock { $0 = ({ ($0.url.query ?? "").contains("holdMs") && !($0.url.query ?? "").contains("channel=") }, .refuse(.invalidInput)) }
+    wire.fault.withLock { $0 = .init(match: { ($0.url.query ?? "").contains("holdMs") && !($0.url.query ?? "").contains("channel=") }, fault: .refuse(.invalidInput)) }
     await #expect(throws: OperationError.self) { try await operation.verdict() }
     try await operation.abandon("gone")
     #expect(try await eventually { await wire.agent.inspect(operation.id)?.verdict?.reason == "gone" })
@@ -707,7 +713,7 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
   @Test func lostStartAnswerRunsOnce() async throws {
     let wire = try Wire()
     let operations = try wire.operations()
-    wire.fault.withLock { $0 = ({ $0.method == .post }, .loseAnswer) }
+    wire.fault.withLock { $0 = .init(match: { $0.method == .post }, fault: .loseAnswer) }
     let operation = try await operations.open(.init(scope: "test", key: "lost-start"), machine: "disk", start: emit(chunks: 2, size: 100))
     #expect(try await drain(operation) == expected(chunks: 2, size: 100))
     #expect(try await operation.verdict().tag == .completed)
@@ -719,7 +725,7 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
   @Test func refusedStartIsTheOpenersError() async throws {
     let wire = try Wire()
     let operations = try wire.operations()
-    wire.fault.withLock { $0 = ({ $0.method == .post }, .refuse(.capacityExceeded)) }
+    wire.fault.withLock { $0 = .init(match: { $0.method == .post }, fault: .refuse(.capacityExceeded)) }
     await #expect { _ = try await operations.open(.init(scope: "test", key: "refused"), machine: "disk", start: emit(chunks: 1, size: 10)) } throws: {
       ($0 as? OperationError)?.code == .capacityExceeded
     }
@@ -735,7 +741,7 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
     let store = MemoryOperationStore()
     let owner = OperationOwner(scope: "test", key: "unsent")
     let first = try wire.operations(store: store)
-    wire.fault.withLock { $0 = ({ $0.method == .post }, .hang) }
+    wire.fault.withLock { $0 = .init(match: { $0.method == .post }, fault: .hang) }
     let opening = Task { try await first.open(owner, machine: "disk", start: emit(chunks: 1, size: 10)) }
     #expect(try await eventually { try await store.lookup(owner) != nil })
     await first.shutdown()
@@ -755,7 +761,7 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
     let wire = try Wire()
     let operations = try wire.operations()
     let operation = try await operations.open(.init(scope: "test", key: "input"), machine: "disk", start: emit(echo: true))
-    wire.fault.withLock { $0 = ({ $0.method == .put && $0.url.path.contains("/inputs/") }, .loseAnswer) }
+    wire.fault.withLock { $0 = .init(match: { $0.method == .put && $0.url.path.contains("/inputs/") }, fault: .loseAnswer) }
     try await operation.write("in", .init(data: Data("hello ".utf8)))
     try await operation.write("in", .init(data: Data("world".utf8)), end: true)
     #expect(wire.fault.withLock { $0 == nil })

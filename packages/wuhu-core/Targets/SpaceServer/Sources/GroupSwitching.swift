@@ -9,6 +9,7 @@ import SessionTools
 #endif
 import InferenceKit
 import LoopCore
+import ModelProviders
 import SessionDomain
 import WuhuAI
 

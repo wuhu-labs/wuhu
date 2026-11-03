@@ -7,10 +7,10 @@ import Fetch
 #else
   import Foundation
 #endif
-import struct InferenceKit.ModelsDocument
 import struct InferenceKit.ProviderCatalog
 import JSONValue
 import Logging
+import struct ModelProviders.ModelsDocument
 import struct SpaceContract.ProviderUsage
 import struct SpaceContract.UsageWindow
 import SpaceCore

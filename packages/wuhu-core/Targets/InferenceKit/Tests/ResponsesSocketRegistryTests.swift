@@ -3,6 +3,7 @@ import ControlledTime
 import Credentials
 import Dependencies
 import DeterministicDependencies
+import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

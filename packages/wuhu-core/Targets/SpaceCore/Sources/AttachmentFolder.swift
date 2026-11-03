@@ -18,7 +18,7 @@ public struct AttachmentUpload: Sendable {
   public let name: String
   public let bytes: [UInt8]
   public let mimeType: String
-  let isImage: Bool
+  public let isImage: Bool
 
   public init(name: String, bytes: [UInt8], declaredType: String? = nil) {
     let name = Self.fileName(name)
@@ -47,7 +47,7 @@ public struct AttachmentUpload: Sendable {
 
   // A name becomes one path component, so what a component forbids is
   // replaced rather than refused.
-  static func fileName(_ name: String) -> String {
+  public static func fileName(_ name: String) -> String {
     let last = name.split(separator: "/").last.map(String.init) ?? ""
     var cleaned = String.UnicodeScalarView()
     for scalar in last.unicodeScalars {

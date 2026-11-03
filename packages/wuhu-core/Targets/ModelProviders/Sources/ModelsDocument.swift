@@ -4,8 +4,6 @@
   import Foundation
 #endif
 import JSONValue
-import struct SessionDomain.ContextBudget
-import struct SessionDomain.ImageLimits
 
 public struct ModelsDocument: Hashable, Sendable, Codable {
   public var providers: [String: Provider]
@@ -36,8 +34,6 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
   public struct Provider: Hashable, Sendable, Codable {
     public var dialect: Dialect
     public var imageFamily: ImageFamily?
-
-    public var images: ImageLimits { imageFamily?.limits ?? dialect.images }
     public var baseURL: URL
     public var originator: String?
     public var transport: Transport?
@@ -68,13 +64,6 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
   public enum ImageFamily: String, Hashable, Sendable, Codable {
     case claude
     case openAI
-
-    var limits: ImageLimits {
-      switch self {
-      case .claude: .claude
-      case .openAI: .openAI
-      }
-    }
   }
 
   public enum OpaqueReplay: String, Hashable, Sendable, Codable {
@@ -101,13 +90,6 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     case anthropic
     case responses
     case codex
-
-    var images: ImageLimits {
-      switch self {
-      case .anthropic: .claude
-      case .responses, .codex: .openAI
-      }
-    }
   }
 
   public struct Model: Hashable, Sendable, Codable {
@@ -119,7 +101,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     public var cacheWarming: CacheWarmingPolicy?
     public var usageWindows: [String]?
 
-    var bindingWindows: [String] { usageWindows ?? ["five_hour", "seven_day"] }
+    public var bindingWindows: [String] { usageWindows ?? ["five_hour", "seven_day"] }
 
     public init(
       maxInput: Int,
@@ -157,10 +139,6 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
         catch { throw CatalogError.invalidCacheWarming(String(describing: error)) }
       } else { cacheWarming = nil }
     }
-
-    public func budget(images: ImageLimits) -> ContextBudget {
-      ContextBudget(maxInput: maxInput, maxOutput: maxOutput, headroomOverride: headroomOverride, images: images)
-    }
   }
 }
 
@@ -195,7 +173,7 @@ extension ModelsDocument.Provider {
     }
   }
 
-  func validateConfiguration(providerID: String) throws(CatalogError) {
+  public func validateConfiguration(providerID: String) throws(CatalogError) {
     guard ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""), baseURL.host != nil,
           baseURL.user == nil, baseURL.password == nil
     else {

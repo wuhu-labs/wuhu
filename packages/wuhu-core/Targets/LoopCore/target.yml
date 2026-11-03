@@ -41,6 +41,7 @@ tests:
     - Logging
     - GRDB
     - InferenceKit
+    - ModelProviders
     - Credentials
     - FetchWebSocket
     - Serve

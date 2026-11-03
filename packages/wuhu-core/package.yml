@@ -11,10 +11,14 @@ products:
   - OperationClientTestSupport
   - SpaceFS
   - DocIndex
+  - FileSearch
   - Instructions
   - SpaceCore
   - SystemFiles
   - Credentials
+  - ModelProviders
+  - SecretMasking
+  - ScriptWebPlatform
   - SpaceClient
   - SpaceContract
   - LiveDocument

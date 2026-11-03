@@ -6,9 +6,9 @@ import struct Credentials.CredentialResolver
 #endif
 import struct InferenceKit.AttemptTraceClient
 import struct InferenceKit.InferenceMetric
-import struct InferenceKit.ModelsDocument
 import struct InferenceKit.ProviderCatalog
 import JSONValue
+import struct ModelProviders.ModelsDocument
 import SessionDomain
 import SpaceClient
 import SpaceContract

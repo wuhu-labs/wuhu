@@ -6,6 +6,7 @@ import Fetch
 import FetchURLSession
 import Foundation
 @testable import InferenceKit
+import ModelProviders
 import Scratch
 import SessionDomain
 import Testing

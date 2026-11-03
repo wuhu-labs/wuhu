@@ -7,6 +7,7 @@ import Dependencies
 #endif
 import InferenceKit
 import JSONValue
+import ModelProviders
 import OrderedCollections
 import QuickJSKit
 import ServerTelemetry

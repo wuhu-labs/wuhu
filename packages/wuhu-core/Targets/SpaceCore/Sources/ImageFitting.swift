@@ -35,6 +35,22 @@ public enum ImageFitting {
     return refusal(data, size: size, limits: limits)
   }
 
+  /// Whether a codec here decodes every pixel of `data`: `fit` hands back an image already within
+  /// the limits without decoding it. Nil for a format this server has no codec for.
+  public static func decodes(_ data: Data) -> Bool? {
+    #if canImport(ImageIO)
+      guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+            let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+      else { return false }
+      return image.dataProvider?.data != nil
+    #elseif os(Linux)
+      guard ["image/png", "image/jpeg"].contains(ImageMedia.mimeType(ofBytes: data)) else { return nil }
+      return LinuxImage(data) != nil
+    #else
+      return nil
+    #endif
+  }
+
   private static func refusal(_ data: Data, size: PixelSize?, limits: ImageLimits) -> FittedImage {
     let shape = size.map { "\($0.width)x\($0.height) px, " } ?? ""
     return .note(

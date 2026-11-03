@@ -1,10 +1,10 @@
 import enum Credentials.ChatGPTAuthError
+import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import Crypto
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.SessionModelRoute
 
@@ -95,22 +95,6 @@ extension ProviderCatalog {
     _ = try validateGroup(id, effort: effort)
     _ = try validate(route.specifier)
     return route.specifier
-  }
-}
-
-extension ModelsDocument.Provider {
-  func validateCapacity(providerID: String) throws(CatalogError) {
-    let binding = Set(models.values.flatMap(\.bindingWindows))
-    for (window, size) in capacity ?? [:] {
-      guard !window.isEmpty, binding.contains(window), size.isFinite, size > 0 else {
-        throw CatalogError.invalidCapacity(provider: providerID, window: window)
-      }
-    }
-  }
-
-  public var routeFingerprint: String {
-    let binding = [dialect.rawValue, baseURL.absoluteString, transport?.rawValue ?? "sse", auth?.rawValue ?? "credential", originator ?? "wuhu"].map { "\($0.utf8.count):\($0)" }.joined(separator: "|")
-    return SHA256.hash(data: Data(binding.utf8)).map { ("0" + String($0, radix: 16)).suffix(2) }.joined()
   }
 }
 

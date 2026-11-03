@@ -5,8 +5,8 @@ import Foundation
 // this exact list, so any edit after that breaks every issued name. The
 // allocation_freeze row pins the digest and allocate() refuses on mismatch.
 // Exactly 256 words, so every stratum is a power-of-two Feistel domain.
-enum AllocationVocabulary {
-  static let words: [String] = [
+public enum AllocationVocabulary {
+  public static let words: [String] = [
     "anchor", "apple", "arctic", "arrow", "autumn", "bacon", "badge", "ball", "bamboo", "banana",
     "barrel", "basket", "beach", "bean", "bike", "bird", "blade", "blue", "boat", "book", "brave",
     "bread", "breeze", "bright", "broom", "brown", "brush", "bulb", "butter", "cabin", "cable",

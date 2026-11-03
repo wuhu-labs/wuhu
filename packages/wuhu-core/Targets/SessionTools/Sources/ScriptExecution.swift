@@ -10,6 +10,7 @@ import func MainHub.seconds
 import enum MainHub.WaitCut
 import OrderedCollections
 import QuickJSKit
+import enum ScriptWebPlatform.ScriptWebPlatform
 import ServerTelemetry
 import SessionDomain
 import struct SpaceClient.SpaceClient
@@ -380,11 +381,13 @@ final class ScriptExecution: Sendable {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)
       try engine.defineModule("wuhu:space", source: spaceModule + spaceFilesModule)
       try engine.defineModule("wuhu:secret", source: secretModule)
-      try ScriptAI(actor: actor, tools: tools, execution: self).install(in: engine)
-      try ScriptSessions(actor: actor, tools: tools).install(in: engine)
+      ScriptAI(actor: actor, tools: tools, execution: self).install(in: engine)
+      ScriptSessions(actor: actor, tools: tools).install(in: engine)
       try engine.execute(scriptPrelude, name: "<prelude>")
       if let handler { try handler.install(in: engine) }
-      try engine.defineModule("wuhu:machine", source: machineModule)
+      try engine.defineModule("wuhu:host", source: hostModule)
+      for module in ScriptWebPlatform.modules { try engine.defineModule(module.name, source: module.source) }
+      try engine.execute("delete globalThis.__wuhu_kernel", name: "<host>")
       let modules = scriptModules(client: client, snapshot: try await ScriptModuleSnapshot.load(client), typedErrors: handler != nil)
       var meta: OrderedDictionary<String, JSONValue> = ["session": actor.session.map { .string($0.rawValue) } ?? .null]
       if case .command = kind { meta["args"] = .array(arguments.map(JSONValue.string)) }

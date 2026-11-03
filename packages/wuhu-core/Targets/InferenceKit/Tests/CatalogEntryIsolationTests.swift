@@ -2,6 +2,7 @@ import Credentials
 import Dependencies
 import DeterministicDependencies
 import Fetch
+import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

@@ -5,9 +5,9 @@
 #endif
 import CProcessIdentity
 import struct Credentials.CredentialResolver
-import enum InferenceKit.CatalogError
-import struct InferenceKit.ModelsDocument
 import struct InferenceKit.ProviderCatalog
+import enum ModelProviders.CatalogError
+import struct ModelProviders.ModelsDocument
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.SessionID
 import WuhuAI

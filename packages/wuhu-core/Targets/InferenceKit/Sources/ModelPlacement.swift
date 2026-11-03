@@ -1,3 +1,4 @@
+import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

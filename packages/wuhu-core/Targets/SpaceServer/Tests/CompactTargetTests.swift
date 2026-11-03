@@ -6,6 +6,7 @@ import Foundation
 import InferenceKit
 import LoopCore
 import class MainHub.Hub
+import ModelProviders
 import Scratch
 import SessionDomain
 import SessionTools

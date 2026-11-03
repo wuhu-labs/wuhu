@@ -3,6 +3,7 @@ kind: library
 sources: Sources
 dependencies:
   - SpaceFS
+  - SpaceContract
   - JSONValue
   - OrderedCollections
   - Markdown

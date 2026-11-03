@@ -2,7 +2,7 @@ import enum Credentials.ChatGPTAuthError
 import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
 import enum Credentials.ProviderCredential
-import Crypto
+import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -12,72 +12,6 @@ import struct SessionDomain.ContextBudget
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.SessionID
 import WuhuAI
-
-public indirect enum CatalogError: Error, Hashable, Sendable, CustomStringConvertible {
-  case invalidDocument
-  case invalidProvider(provider: String, reason: String)
-  case invalidGroupsDocument
-  case unknownProvider(String)
-  case unsupportedTarget(String)
-  case unknownGroup(String)
-  case noUsableMembers(String)
-  case invalidCapacity(provider: String, window: String)
-  case invalidGroup(group: String, reason: String)
-  case groupMember(group: String, member: String, reason: CatalogError)
-  case credentialLoginRequired(provider: String)
-  case modelRouteInvalid(group: String, member: String)
-  case invalidModel(provider: String, model: String)
-  case oidcNotConfigured(provider: String)
-  case unknownModel(provider: String, model: String)
-  case unknownEffort(provider: String, model: String, effort: String)
-  case missingCredential(provider: String)
-  case credentialMismatch(provider: String)
-  case invalidEndpoint(provider: String)
-  case invalidTransport(provider: String)
-  case invalidCacheWarming(String)
-  case invalidOIDCDialect(provider: String)
-  case invalidUsageSource(provider: String)
-  case invalidOpaqueReplay(provider: String, value: String)
-
-  public var description: String {
-    switch self {
-    case .invalidGroupsDocument: "invalid /model-groups.json catalog shape"
-    case let .invalidProvider(provider, reason): "invalid provider \(provider): \(reason)"
-    case .invalidDocument: "invalid /models.json catalog shape"
-    case let .unsupportedTarget(target): "unsupported model target: \(target); this operation requires a concrete provider/model"
-    case let .noUsableMembers(group): "model group \(group) has no usable member"
-    case let .invalidCapacity(provider, window): "invalid capacity for provider \(provider), window \(window): use a model's binding window name and a positive finite number"
-    case let .unknownGroup(group): "unknown model group: \(group)"
-    case let .invalidGroup(group, reason): "invalid model group \(group): \(reason)"
-    case let .groupMember(group, member, reason): "model group \(group) member \(member): \(reason.description)"
-    case let .credentialLoginRequired(provider): "credentialLoginRequired: \(provider) requires login after credential refresh refusal"
-    case let .modelRouteInvalid(group, member): "modelRouteInvalid: model group \(group) pinned member \(member) was removed or rebound; restore it or Start over"
-    case let .invalidModel(provider, model): "invalid context/output limits for \(provider)/\(model)"
-    case let .oidcNotConfigured(provider): "OIDC authentication is not configured for provider \(provider)"
-    case let .invalidCacheWarming(reason):
-      "invalid cacheWarming configuration: \(reason)"
-    case let .invalidOpaqueReplay(provider, value):
-      "invalid opaqueReplay \"\(value)\" for provider \(provider); expected affine or none"
-    case let .invalidOIDCDialect(provider):
-      "OIDC authentication is unsupported for Codex providers: \(provider)"
-    case let .invalidEndpoint(provider): "provider endpoint must be an HTTP(S) URL without user information: \(provider)"
-    case let .invalidTransport(provider):
-      "websocket transport requires a Responses or Codex provider: \(provider)"
-    case let .invalidUsageSource(provider):
-      "usage \"gateway\" requires a Responses provider with a stored credential, not OIDC: \(provider)"
-    case let .unknownProvider(provider):
-      "unknown provider: \(provider) (edit \(ModelsDocument.spacePath) or run `wuhu models update`)"
-    case let .unknownModel(provider, model):
-      "unknown model: \(provider)/\(model)"
-    case let .unknownEffort(provider, model, effort):
-      "unknown effort \"\(effort)\" for \(provider)/\(model)"
-    case let .missingCredential(provider):
-      "no credentials for provider \(provider) (run `wuhu auth set \(provider)` or `wuhu auth login \(provider)`)"
-    case let .credentialMismatch(provider):
-      "credentials for provider \(provider) are the wrong kind for its dialect (api key vs chatgpt login)"
-    }
-  }
-}
 
 public struct ResolvedModel: Sendable {
   public var specifier: ModelSpecifier
@@ -130,31 +64,7 @@ public struct ProviderCatalog: Sendable {
 
   @discardableResult
   public func validate(_ specifier: ModelSpecifier) throws(CatalogError) -> ModelsDocument.Model {
-    if let error = document.providerErrors[specifier.provider] { throw error }
-    if document.groupErrors[specifier.provider] != nil || document.groups[specifier.provider] != nil { throw CatalogError.unsupportedTarget(specifier.provider) }
-    guard let provider = document.providers[specifier.provider] else {
-      throw CatalogError.unknownProvider(specifier.provider)
-    }
-    try provider.validateCapacity(providerID: specifier.provider)
-    try provider.validateConfiguration(providerID: specifier.provider)
-    guard let model = provider.models[specifier.model] else {
-      throw CatalogError.unknownModel(provider: specifier.provider, model: specifier.model)
-    }
-    guard model.maxInput > 0, model.maxOutput > 0, model.maxOutput < model.maxInput,
-          (model.headroomOverride ?? model.maxOutput) >= 0,
-          (model.headroomOverride ?? model.maxOutput) < model.maxInput,
-          model.efforts.contains(model.defaultEffort)
-    else {
-      throw CatalogError.invalidModel(provider: specifier.provider, model: specifier.model)
-    }
-    guard model.efforts.contains(specifier.effort) else {
-      throw CatalogError.unknownEffort(
-        provider: specifier.provider,
-        model: specifier.model,
-        effort: specifier.effort,
-      )
-    }
-    return model
+    try document.validated(provider: specifier.provider, model: specifier.model, effort: specifier.effort).model
   }
 
   public func defaultSpecifier(provider providerID: String, model modelName: String) throws(CatalogError) -> ModelSpecifier {
@@ -181,10 +91,8 @@ public struct ProviderCatalog: Sendable {
     let model: ModelsDocument.Model
     do {
       model = try validate(specifier)
-    } catch let error as CatalogError {
-      throw .invalidInput(status: 422, body: error.description)
     } catch {
-      throw InferenceError.normalize(error)
+      throw .invalidInput(status: 422, body: error.description)
     }
     let provider = document.providers[specifier.provider]!
     if provider.auth == .oidc {
@@ -245,39 +153,12 @@ public struct ProviderCatalog: Sendable {
     let replayScope = provider.effectiveOpaqueReplay == .affine && binding.permitsOpaqueReplay ? bindingIdentity : nil
     let cacheKey = replayCacheKey(session: session, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
     let endpoint: any ModelEndpoint
-    switch (provider.dialect, credential) {
-    case let (.anthropic, .apiKey(key)) where specifier.provider == "deepseek":
-      endpoint = DeepSeekAnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key)
-    case let (.anthropic, .apiKey(key)):
-      endpoint = AnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour)
-    case let (.responses, .apiKey(key)):
-      endpoint = OpenAIGPTEndpoint(
-        model: specifier.model,
-        replayScope: replayScope,
-        routeEpoch: routeEpoch,
-        baseURL: provider.baseURL,
-        apiKey: key,
-        promptCacheKey: cacheKey,
-      )
-    case let (.codex, .chatGPT(accessToken, accountID)):
-      endpoint = OpenAICodexEndpoint(
-        model: specifier.model,
-        replayScope: replayScope,
-        routeEpoch: routeEpoch,
-        baseURL: provider.baseURL,
-        jwt: accessToken,
-        chatgptAccountID: accountID,
-        sessionID: cacheKey,
-        originator: provider.originator ?? "wuhu",
-        receiveResponseHeaders: { headers in
-          await receiveCodexResponseHeaders(specifier.provider, headers)
-        },
-      )
-    case (.codex, .apiKey), (.anthropic, .chatGPT), (.responses, .chatGPT):
-      throw .invalidInput(
-        status: 401,
-        body: CatalogError.credentialMismatch(provider: specifier.provider).description,
-      )
+    do {
+      endpoint = try provider.endpoint(providerID: specifier.provider, model: specifier.model, credential: credential, replayScope: replayScope, routeEpoch: routeEpoch, cacheKey: cacheKey) { headers in
+        await receiveCodexResponseHeaders(specifier.provider, headers)
+      }
+    } catch {
+      throw .invalidInput(status: 401, body: error.description)
     }
     var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(images: provider.images), transport: provider.transport ?? .sse, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
     resolved.socketIdentity = SocketRegistryIdentity(provider: specifier.provider, model: specifier.model, configuration: provider, credential: credential, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
@@ -294,19 +175,6 @@ extension ChatGPTAuthError {
       .transient(status: nil, body: description)
     case .loginRequired, .authorizationTimedOut:
       .invalidInput(status: 401, body: description)
-    }
-  }
-}
-
-extension CatalogError {
-  public var code: String {
-    switch self {
-    case .credentialLoginRequired: "credentialLoginRequired"
-    case .modelRouteInvalid: "modelRouteInvalid"
-    case .noUsableMembers: "modelGroupUnavailable"
-    case .unsupportedTarget: "unsupportedTarget"
-    case .invalidDocument, .invalidGroupsDocument, .invalidProvider, .invalidGroup, .unknownGroup, .groupMember, .invalidCapacity: "modelGroupConfiguration"
-    default: "invalidArgument"
     }
   }
 }

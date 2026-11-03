@@ -9,6 +9,7 @@ import SessionTools
 import InferenceKit
 import Logging
 import LoopCore
+import ModelProviders
 import ServerTelemetry
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding

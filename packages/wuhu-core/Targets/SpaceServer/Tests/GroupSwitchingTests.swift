@@ -8,6 +8,7 @@ import InferenceKit
 import JSONValue
 import LoopCore
 import class MainHub.Hub
+import ModelProviders
 import SessionDomain
 import SessionTools
 import SpaceContract

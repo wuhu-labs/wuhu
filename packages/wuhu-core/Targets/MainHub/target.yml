@@ -16,6 +16,7 @@ dependencies:
   - GRDB
   - HTTPTypes
   - InferenceKit
+  - ModelProviders
   - JSONValue
   - Logging
   - MachineChannel

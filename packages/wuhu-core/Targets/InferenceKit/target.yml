@@ -5,6 +5,7 @@ dependencies:
   - Clocks
   - Credentials
   - Crypto
+  - ModelProviders
   - SessionDomain
   - WuhuAI
   - JSONValue
@@ -22,6 +23,7 @@ tests:
     - DeterministicDependencies
     - ExecutionOwner
     - Credentials
+    - ModelProviders
     - SessionDomain
     - WuhuAI
     - JSONValue

@@ -2,6 +2,7 @@ import Dependencies
 import Fetch
 import InferenceKit
 import JSONValue
+import ModelProviders
 import Serve
 import ServeRouting
 import struct SpaceContract.CatalogEntryError

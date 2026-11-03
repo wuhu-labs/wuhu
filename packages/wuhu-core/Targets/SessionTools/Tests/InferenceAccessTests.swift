@@ -5,6 +5,7 @@ import Credentials
   import Foundation
 #endif
 import InferenceKit
+import ModelProviders
 import SessionDomain
 import SessionTools
 import Synchronization

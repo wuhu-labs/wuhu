@@ -13,12 +13,12 @@ import enum Credentials.UserConfig
 import Dependencies
 import struct ExecutionOwner.AttemptLogConfig
 import Fetch
-import struct InferenceKit.ModelsDocument
 import JSONValue
 import Logging
 import MachineChannel
 import MachineContract
 import class MainHub.Hub
+import struct ModelProviders.ModelsDocument
 import NIOCore
 import OrderedCollections
 import Serve

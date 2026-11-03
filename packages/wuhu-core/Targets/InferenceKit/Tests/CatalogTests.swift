@@ -6,6 +6,7 @@ import DeterministicDependencies
 import enum Fetch.FetchError
 import Foundation
 @testable import InferenceKit
+import ModelProviders
 import SessionDomain
 import Testing
 import WuhuAI

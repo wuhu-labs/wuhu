@@ -2,6 +2,7 @@ import Credentials
 import DeterministicDependencies
 import Foundation
 import InferenceKit
+import ModelProviders
 import SessionDomain
 import Testing
 

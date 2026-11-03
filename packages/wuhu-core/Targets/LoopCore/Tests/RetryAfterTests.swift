@@ -4,6 +4,7 @@ import Fetch
 import Foundation
 import InferenceKit
 @testable import LoopCore
+import ModelProviders
 import SessionDomain
 import SpaceCore
 import Testing

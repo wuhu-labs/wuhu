@@ -1,6 +1,7 @@
 import Clocks
 import enum Credentials.ProviderCredential
 import Dependencies
+import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

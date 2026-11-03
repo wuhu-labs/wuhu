@@ -86,7 +86,7 @@ private func inTrace<T>(_ tracer: InMemoryTracer, _ body: () async throws -> T) 
   @Test func theRequestCarriesTheExchangeSpanContext() async throws {
     let wire = try Wire()
     let sent = Mutex<[String?]>([])
-    wire.fault.withLock { $0 = (match: { request in sent.withLock { $0.append(request.headers["in-memory-span-id"]) }; return false }, fault: .hang) }
+    wire.fault.withLock { $0 = .init(match: { request in sent.withLock { $0.append(request.headers["in-memory-span-id"]) }; return false }, fault: .hang) }
     let tracer = InMemoryTracer()
     let operations = try wire.operations(tracer: tracer)
     _ = try await inTrace(tracer) { try await operations.describe("disk") }

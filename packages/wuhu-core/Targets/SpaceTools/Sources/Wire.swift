@@ -1,4 +1,5 @@
 import enum DocIndex.FrontmatterError
+import struct DocIndex.PageHead
 import struct Foundation.Data
 import JSONValue
 import OrderedCollections

@@ -7,6 +7,7 @@ import Fetch
 import Foundation
 @testable import InferenceKit
 import JSONValue
+import ModelProviders
 import Scratch
 import SessionDomain
 import Synchronization

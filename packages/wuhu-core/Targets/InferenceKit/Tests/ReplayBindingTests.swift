@@ -1,5 +1,6 @@
 import Credentials
 import DeterministicDependencies
+import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

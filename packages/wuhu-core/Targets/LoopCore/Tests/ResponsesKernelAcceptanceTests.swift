@@ -14,6 +14,7 @@ import SessionTools
 import InferenceKit
 import JSONValue
 @testable import LoopCore
+import ModelProviders
 import Serve
 import SessionDomain
 import SpaceCore

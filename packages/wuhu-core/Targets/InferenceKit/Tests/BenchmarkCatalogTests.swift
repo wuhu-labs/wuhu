@@ -5,6 +5,7 @@ import DeterministicDependencies
   import Foundation
 #endif
 import InferenceKit
+import ModelProviders
 import SessionDomain
 import Testing
 

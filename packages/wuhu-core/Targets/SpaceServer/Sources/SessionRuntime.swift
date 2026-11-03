@@ -28,6 +28,7 @@ import JSONValue
 import Logging
 import LoopCore
 import struct MachineContract.ExecID
+import ModelProviders
 import struct OperationProtocol.OperationError
 import Serve
 import SessionDomain
@@ -443,12 +444,17 @@ private func machineOperationFailure(_ error: OperationError) -> ToolRunError {
 /// Main's API handler, as `configuredHandler` builds it: what the worker
 /// socket serves.
 final class MainAPI: Sendable {
-  private let handler = Mutex<UpgradingHandler?>(nil)
+  // Not a bare function: `withLock` would reabstract it on every read and nest one more thunk.
+  private let handler = Mutex<Handler?>(nil)
 
-  func bind(_ api: @escaping UpgradingHandler) { handler.withLock { $0 = api } }
+  private struct Handler {
+    let serve: UpgradingHandler
+  }
+
+  func bind(_ api: @escaping UpgradingHandler) { handler.withLock { $0 = Handler(serve: api) } }
 
   func callAsFunction(_ request: Request) async throws -> UpgradeResult {
     guard let api = handler.withLock({ $0 }) else { return .response(Response(status: .serviceUnavailable)) }
-    return try await api(request)
+    return try await api.serve(request)
   }
 }

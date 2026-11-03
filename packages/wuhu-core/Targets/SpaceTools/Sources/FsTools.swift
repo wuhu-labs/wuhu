@@ -1,3 +1,4 @@
+import struct DocIndex.PageHead
 import struct Foundation.Data
 import JSONValue
 import SpaceContract

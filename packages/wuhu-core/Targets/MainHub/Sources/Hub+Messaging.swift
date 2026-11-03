@@ -4,7 +4,7 @@ import Dependencies
 #else
   import Foundation
 #endif
-import enum InferenceKit.CatalogError
+import enum ModelProviders.CatalogError
 import SessionDomain
 import struct SpaceContract.AttachmentTally
 import struct SpaceContract.GroupID

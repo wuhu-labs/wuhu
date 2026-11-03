@@ -9,8 +9,8 @@ import struct Credentials.ChatGPTTokens
 import struct Credentials.CredentialsStore
 import enum Credentials.StoredCredential
 import Dependencies
-import struct InferenceKit.ModelsDocument
 import JSONValue
+import struct ModelProviders.ModelsDocument
 import struct SpaceContract.GroupID
 import struct SpaceContract.ReadOutput
 

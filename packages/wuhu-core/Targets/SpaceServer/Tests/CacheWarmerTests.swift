@@ -2,6 +2,7 @@ import Dependencies
 import DeterministicDependencies
 import Foundation
 import InferenceKit
+import ModelProviders
 import SessionDomain
 import SpaceContract
 import SpaceCore

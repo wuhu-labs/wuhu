@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import InferenceKit
+import ModelProviders
 import Testing
 
 @Suite(.deterministicDependencies) struct CacheWarmingPolicyTests {

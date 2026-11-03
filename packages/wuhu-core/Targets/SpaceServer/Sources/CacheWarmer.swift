@@ -6,6 +6,7 @@ import Dependencies
 #endif
 import InferenceKit
 import Logging
+import ModelProviders
 import SessionDomain
 import SpaceCore
 

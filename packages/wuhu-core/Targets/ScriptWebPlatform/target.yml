@@ -1,0 +1,10 @@
+name: ScriptWebPlatform
+kind: library
+sources: Sources
+embeddedResources:
+  - name: ScriptWebPlatform
+    path: Resources
+    typeName: EmbeddedScriptWeb
+    symbolName: scriptweb
+checks:
+  build: [linux, mac]

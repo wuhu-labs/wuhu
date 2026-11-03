@@ -4,9 +4,9 @@
   import Foundation
 #endif
 
-import struct InferenceKit.ModelsDocument
 import struct InferenceKit.ProviderCatalog
 import JSONValue
+import struct ModelProviders.ModelsDocument
 import SpaceClient
 import struct SpaceContract.GroupID
 import struct SpaceContract.ReadOutput

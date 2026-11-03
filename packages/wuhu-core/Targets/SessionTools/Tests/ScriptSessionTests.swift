@@ -1,8 +1,8 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
-import enum InferenceKit.CatalogError
 import JSONValue
+import enum ModelProviders.CatalogError
 import SessionDomain
 @testable import SessionTools
 @testable @_spi(Testing) import SpaceCore

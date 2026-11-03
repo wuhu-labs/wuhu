@@ -33,6 +33,7 @@ dependencies:
   - SessionTools
   - LoopCore
   - InferenceKit
+  - ModelProviders
   - ExecutionOwner
   - FetchAsyncHTTPClient
   - FetchWebSocket
@@ -93,6 +94,7 @@ tests:
     - SessionTools
     - LoopCore
     - InferenceKit
+    - ModelProviders
     - ExecutionOwner
     - WuhuAI
     - SpaceClient

@@ -4,3 +4,5 @@ sources: Sources
 dependencies:
   - Clocks
   - Dependencies
+checks:
+  build: [linux, mac, ios, tvos, visionos]

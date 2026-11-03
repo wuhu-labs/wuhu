@@ -4,6 +4,7 @@ import struct Instructions.InstructionSourceFailure
 import LoopCore
 import class MainHub.Hub
 import protocol MainHub.Main
+import ModelProviders
 import SessionDomain
 import SessionTools
 import struct SpaceContract.PromptSession

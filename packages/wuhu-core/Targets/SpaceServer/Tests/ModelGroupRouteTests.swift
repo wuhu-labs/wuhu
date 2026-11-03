@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Foundation
 import InferenceKit
 import JSONValue
+import ModelProviders
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore

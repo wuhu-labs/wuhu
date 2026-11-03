@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import struct SessionDomain.ModelSpecifier
 
 extension ModelsDocument {
   public struct Group: Hashable, Sendable, Codable {

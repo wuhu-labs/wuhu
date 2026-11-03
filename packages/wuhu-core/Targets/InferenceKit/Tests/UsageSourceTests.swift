@@ -1,6 +1,7 @@
 import Credentials
 import Foundation
 import InferenceKit
+import ModelProviders
 import SessionDomain
 import Testing
 

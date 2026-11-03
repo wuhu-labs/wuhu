@@ -4,7 +4,7 @@
   import Foundation
 #endif
 import enum Credentials.ProviderCredential
-import struct InferenceKit.ModelsDocument
+import struct ModelProviders.ModelsDocument
 
 public struct AgentError: Error, Equatable, Sendable, CustomStringConvertible {
   public enum Code: String, Sendable {

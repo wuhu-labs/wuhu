@@ -30,7 +30,7 @@ struct ScriptSessions {
   let actor: ScriptActor
   let tools: ToolExecutor
 
-  func install(in engine: JSEngine) throws {
+  func install(in engine: JSEngine) {
     engine.define("__wuhu_session_create", promising: { [actor, tools] arguments in
       try await scripted {
         guard case let .object(options)? = arguments.first else {
@@ -184,7 +184,6 @@ struct ScriptSessions {
         }
       }
     })
-    try engine.defineModule("wuhu:session", source: sessionModule)
   }
 }
 
@@ -241,102 +240,3 @@ private func scripted(_ body: () async throws -> JSONValue) async throws -> JSON
     throw ScriptError(renderedFailure(Wire.failure(error)))
   }
 }
-
-private let sessionModule = #"""
-import { failure } from "wuhu:space-core"
-const discover = __wuhu_discovery
-const create = __wuhu_session_create
-const ask = __wuhu_session_request
-const send = __wuhu_session_send
-const retag = __wuhu_session_tags
-const act = __wuhu_session_control
-const stop = __wuhu_session_cancel
-const observer = __wuhu_session_observer
-
-export async function toolRoster() {
-  const reply = await discover("toolRoster")
-  if (reply.error) throw failure(reply.error)
-  return reply.ok
-}
-
-export async function createSession(options) {
-  if (options === null || typeof options !== "object") {
-    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, key, request }")
-  }
-  const made = await create(options)
-  if (made.error !== undefined) {
-    const error = new Error(made.error)
-    if (made.id !== undefined) error.id = made.id
-    if (made.code !== undefined) error.code = made.code
-    throw error
-  }
-  const result = made.requestId === undefined ? { id: made.id } : { id: made.id, requestId: made.requestId }
-  for (const key of ["existing", "modelGroup", "member", "provider", "model"]) {
-    if (made[key] !== undefined) result[key] = made[key]
-  }
-  return result
-}
-
-function answered(reply) {
-  if (reply !== null && typeof reply === "object" && reply.error !== undefined) {
-    const error = new Error(reply.error)
-    if (reply.code !== undefined) error.code = reply.code
-    throw error
-  }
-  return reply
-}
-
-export async function sendMessage(options) {
-  return answered(await send(options))
-}
-
-export async function request(id, message, { deadlineSeconds, stallSeconds, kind, key, schema, fields } = {}) {
-  return answered(await ask(String(id), String(message), deadlineSeconds ?? null, stallSeconds ?? null, { kind, key, schema, fields }))
-}
-
-export async function setTags(id, tags) {
-  if (!Array.isArray(tags)) throw new TypeError("setTags(id, tags) wants an array of strings")
-  await retag(String(id), tags)
-}
-
-export async function archive(id, { force = false } = {}) {
-  await act("archive", String(id), force)
-}
-
-export async function unarchive(id) {
-  await act("unarchive", String(id))
-}
-
-export async function interrupt(id) {
-  await act("interrupt", String(id))
-}
-
-export async function resume(id) {
-  await act("resume", String(id))
-}
-
-export async function createObserver(group, options) {
-  if (options === null || typeof options !== "object") {
-    throw new TypeError("createObserver(group, { name, handler, observe: { sql | url, throttleSeconds } | timer: { inSeconds | cron }, sessionsPerHour })")
-  }
-  return answered(await observer("createObserver", String(group), options))
-}
-
-export async function cancelObserver(group, name) {
-  return answered(await observer("cancelObserver", String(group), String(name)))
-}
-
-export async function observers(group) {
-  return answered(await observer("observers", String(group)))
-}
-
-export async function cancel(id) {
-  const reply = await stop(String(id))
-  if (reply.error !== undefined) {
-    const error = new Error(reply.error)
-    error.code = reply.code
-    throw error
-  }
-  return reply
-}
-"""#
