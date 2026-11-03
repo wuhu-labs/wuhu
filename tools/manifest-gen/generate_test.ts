@@ -24,6 +24,7 @@ import {
   generateDenoBuildBazel,
   generatePackageSwift,
   isRemovableLegacyPackages,
+  main,
   mergeLoads,
   type PackageManifest,
   partitionBazelDeps,
@@ -51,6 +52,44 @@ import {
 } from './generate.ts'
 import { join } from '@std/path'
 import { parse } from '@std/yaml'
+
+Deno.test('--help names every flag and writes nothing', async () => {
+  const dir = await Deno.makeTempDir()
+  const cwd = Deno.cwd()
+  const printed: unknown[] = []
+  const log = console.log
+  console.log = (...line: unknown[]) => printed.push(...line)
+  Deno.chdir(dir)
+  try {
+    await main(['--help'])
+  } finally {
+    Deno.chdir(cwd)
+    console.log = log
+  }
+  assertEquals(await Array.fromAsync(Deno.readDir(dir)), [])
+  await Deno.remove(dir)
+  const usage = printed.join('\n')
+  for (
+    const flag of [
+      '--apply',
+      '--all',
+      '--umbrella',
+      '--module',
+      '--swiftpm',
+      '--schemes',
+      '--workspace <package>',
+      '--public-tree',
+      '--help',
+      '-h',
+    ]
+  ) {
+    assertStringIncludes(usage, flag)
+  }
+})
+
+Deno.test('an unknown manifest option points at --help', async () => {
+  await assertRejects(() => main(['--apps']), Error, '(see --help)')
+})
 
 Deno.test('ViewPilot defaults on, opt-out is honored, and previews cannot opt out', () => {
   const target: AppManifest['targets'][number] = {
@@ -1387,6 +1426,29 @@ Deno.test('partitionBazelDeps splits a macro sibling by consumer kind', () => {
   assertEquals(
     partitionBazelDeps(basePkg, targetNames, kindByName, ['Lib']),
     { deps: [`":Lib"`], plugins: [] },
+  )
+})
+
+// A product mapped to a raw label takes that label whole on the Bazel side;
+// a plain mapped name still hangs off the external's repo.
+Deno.test('partitionBazelDeps takes a product mapped to a raw label verbatim', () => {
+  const pkg: PackageManifest = {
+    ...basePkg,
+    externalPackages: {
+      'loro-swift': {
+        url: 'https://github.com/loro-dev/loro-swift',
+        exact: '1.17.1',
+        bazelRepo: 'swiftpkg_loro_swift',
+        products: { Loro: '@loro_swift//:Loro', LoroFFI: 'loroFFI' },
+      },
+    },
+  }
+  assertEquals(
+    partitionBazelDeps(pkg, new Set(), new Map(), ['Loro', 'LoroFFI']),
+    {
+      deps: ['"@loro_swift//:Loro"', '"@swiftpkg_loro_swift//:loroFFI"'],
+      plugins: [],
+    },
   )
 })
 

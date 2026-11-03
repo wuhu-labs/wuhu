@@ -1,6 +1,7 @@
 import DocIndex
 import Foundation
 import GRDB
+import enum Instructions.InstructionFile
 import JSONValue
 import struct SpaceContract.GroupID
 import SpaceFS
@@ -26,7 +27,7 @@ enum Templates {
     else { throw SpaceError.templateInvalid(path.rawValue) }
 
     let strategy = try parseStrategy(object, path: path)
-    let (frontmatter, body) = splitFrontmatter(text)
+    let (frontmatter, body) = InstructionFile.splitFrontmatter(text)
     let stripped = removeTopLevelKey(frontmatter ?? "", key: "template")
     let content = stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       ? body
@@ -85,20 +86,6 @@ enum Templates {
     let day = String(format: "%02d", parts.day ?? 0)
     let time = minute ? String(format: "-%02d-%02d", parts.hour ?? 0, parts.minute ?? 0) : ""
     return folders ? "\(year)/\(month)/\(day)\(time).md" : "\(year)-\(month)-\(day)\(time).md"
-  }
-
-  static func splitFrontmatter(_ content: String) -> (yaml: String?, body: String) {
-    let stripped = content.hasPrefix("\u{FEFF}") ? String(content.dropFirst()) : content
-    let normalized = stripped.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-    let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false)
-    guard let first = lines.first, first == "---" else { return (nil, content) }
-    var closeIndex: Int?
-    for index in 1 ..< lines.count where lines[index] == "---" || lines[index] == "..." {
-      closeIndex = index
-      break
-    }
-    guard let close = closeIndex else { return (nil, content) }
-    return (lines[1 ..< close].joined(separator: "\n"), lines[(close + 1)...].joined(separator: "\n"))
   }
 
   private static func removeTopLevelKey(_ yaml: String, key: String) -> String {

@@ -1,4 +1,6 @@
 import InferenceKit
+import struct Instructions.InstructionRenderer
+import struct Instructions.InstructionSourceFailure
 import LoopCore
 import class MainHub.Hub
 import protocol MainHub.Main

@@ -48,7 +48,7 @@ public struct InstructionRenderer: Sendable {
   }
 
   private func render(_ text: String, path: String, scope: Mustache.Scope, including: [String]) async -> String {
-    let (yaml, body) = Templates.splitFrontmatter(text)
+    let (yaml, body) = InstructionFile.splitFrontmatter(text)
     let template: Mustache
     do { template = try Mustache(yaml == nil ? body : String(body.drop { $0 == "\n" })) } catch { return errorLine(path, error.message) }
     var names: OrderedDictionary<String, JSONValue> = [:]
@@ -146,7 +146,7 @@ public enum SkillCondition: Hashable, Sendable {
   case malformed(String)
 
   public init(skill markdown: String) {
-    switch InstructionRenderer.declared("wuhu_when", in: markdown, yaml: Templates.splitFrontmatter(markdown).yaml) {
+    switch InstructionRenderer.declared("wuhu_when", in: markdown, yaml: InstructionFile.splitFrontmatter(markdown).yaml) {
     case .none: self = .always
     case let .failure(message): self = .malformed(message)
     case let .value(.object(fields)):
@@ -199,19 +199,7 @@ private func glob(_ pattern: String, matches text: String) -> Bool {
 }
 
 extension PromptSession {
-  public init(_ record: SessionRecord) {
-    let model: String? = switch record.executor {
-    case let .kernel(specifier): "\(specifier.provider)/\(specifier.model)"
-    case let .modelGroup(id, _): id
-    case .retired: nil
-    }
-    self.init(
-      id: record.id.rawValue, title: record.title, kind: record.kind == .task ? .task : .agent,
-      model: model, tags: record.tags, home: SessionHome.path(of: record.id),
-    )
-  }
-
-  var templateValue: JSONValue {
+  public var templateValue: JSONValue {
     .object([
       "id": .string(id),
       "title": .string(title),
@@ -221,5 +209,51 @@ extension PromptSession {
       "tags": .object(OrderedDictionary(tags.map { ($0, JSONValue.bool(true)) }, uniquingKeysWith: { first, _ in first })),
       "home": .string(home),
     ])
+  }
+}
+
+/// Instruction files' text: the frontmatter they drop and the line a skill lists.
+public enum InstructionFile {
+  public static func splitFrontmatter(_ content: String) -> (yaml: String?, body: String) {
+    let stripped = content.hasPrefix("\u{FEFF}") ? String(content.dropFirst()) : content
+    let normalized = stripped.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false)
+    guard let first = lines.first, first == "---" else { return (nil, content) }
+    var closeIndex: Int?
+    for index in 1 ..< lines.count where lines[index] == "---" || lines[index] == "..." {
+      closeIndex = index
+      break
+    }
+    guard let close = closeIndex else { return (nil, content) }
+    return (lines[1 ..< close].joined(separator: "\n"), lines[(close + 1)...].joined(separator: "\n"))
+  }
+
+  // A skill's one-line description is its frontmatter `description:` when the
+  // file has one, else the first non-empty line after the `#` title.
+  public static func skillDescription(_ text: String) -> String {
+    var lines = text.split(separator: "\n", omittingEmptySubsequences: false)[...]
+    if lines.first?.trimmingCharacters(in: .whitespaces) == "---" {
+      lines = lines.dropFirst()
+      while let line = lines.first, line.trimmingCharacters(in: .whitespaces) != "---" {
+        lines = lines.dropFirst()
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("description:") {
+          return String(trimmed.dropFirst("description:".count)).trimmingCharacters(in: .whitespaces)
+        }
+      }
+      lines = lines.dropFirst()
+    }
+    var sawTitle = false
+    for line in lines {
+      let trimmed = line.trimmingCharacters(in: .whitespaces)
+      if trimmed.isEmpty { continue }
+      if trimmed.hasPrefix("#") {
+        if sawTitle { break }
+        sawTitle = true
+        continue
+      }
+      return trimmed
+    }
+    return ""
   }
 }

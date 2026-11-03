@@ -1,5 +1,9 @@
 import Crypto
 import struct Fetch.Method
+import enum Instructions.InstructionFile
+import struct Instructions.InstructionRenderer
+import struct Instructions.InstructionSourceFailure
+import enum Instructions.SkillCondition
 import JSONValue
 import struct MachineContract.MachineID
 import struct MachineContract.MachineStatus
@@ -11,10 +15,6 @@ import SpaceClient
 import struct SpaceContract.GroupID
 import struct SpaceContract.ListOutput
 import struct SpaceContract.ReadOutput
-import struct SpaceCore.InstructionRenderer
-import struct SpaceCore.InstructionScope
-import struct SpaceCore.InstructionSourceFailure
-import enum SpaceCore.SkillCondition
 import struct WuhuAI.ToolArguments
 import struct WuhuAI.ToolCall
 
@@ -260,7 +260,7 @@ struct ContextInstructions {
       var descriptor: (name: String, description: String)
       switch style {
       case .machineNotes:
-        descriptor = (name, InstructionScope.skillDescription(markdown))
+        descriptor = (name, InstructionFile.skillDescription(markdown))
       case .repository:
         let front = frontmatter(of: markdown)
         descriptor = (front["name"] ?? name, front["description"] ?? "")

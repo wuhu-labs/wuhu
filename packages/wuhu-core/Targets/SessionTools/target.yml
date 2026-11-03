@@ -23,6 +23,7 @@ dependencies:
   - SessionDomain
   - SpaceClient
   - SpaceContract
+  - Instructions
   - SpaceCore
   - SpaceTools
   - SpaceFS
@@ -62,6 +63,7 @@ tests:
     - Fetch
     - SessionDomain
     - SpaceContract
+    - Instructions
     - SpaceCore
     - SpaceTools
     - SpaceFS

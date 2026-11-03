@@ -1,6 +1,6 @@
 # WmdDocument
 
-One `.wmd` document as a Loro doc, and its two faces: the live doc clients edit and the canonical markdown agents read and write. Loro enters as the `Loro` SwiftPM product on Apple and as `@loro_swift//:LoroLinux` (an http_archive of the loro-swift sources over a prebuilt Linux FFI) on Linux.
+One `.wmd` document as a Loro doc, and its two faces: the live doc clients edit and the canonical markdown agents read and write. Loro enters as the `Loro` product (docs/manifests.md, "Rust FFI").
 
 ## Document schema
 

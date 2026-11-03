@@ -124,6 +124,151 @@ http_archive(
     url = "https://github.com/denoland/deno/releases/download/v2.9.1/deno-aarch64-unknown-linux-gnu.zip",
 )
 
+# Wasmtime's C API and Loro's FFI in one Rust staticlib, so one binary links one
+# Rust std: `rust-ffi/` in github.com/wuhu-labs/loro-upstreams, released by its
+# workflow with build.sh, PROVENANCE.md and both licenses (Apache-2.0 WITH
+# LLVM-exception, MIT) in the archive. Bumping: docs/manifests.md, "Rust FFI".
+_RUST_FFI_BUILD = """
+load("@build_bazel_rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_import(
+    name = "archive",
+    static_library = "lib/libwuhu_rust_ffi.a",
+)
+
+cc_library(
+    name = "runtime",
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread", "-ldl", "-lm"],
+        "//conditions:default": [],
+    }),
+    deps = [":archive"],
+)
+
+swift_interop_hint(
+    name = "CWasmtime_interop",
+    module_name = "CWasmtime",
+)
+
+cc_library(
+    name = "CWasmtime",
+    hdrs = [
+        "include/wasi.h",
+        "include/wasm.h",
+        "include/wasmtime.h",
+    ],
+    textual_hdrs = glob(["include/wasmtime/**/*.h"]),
+    aspect_hints = [":CWasmtime_interop"],
+    includes = ["include"],
+    deps = [":runtime"],
+)
+
+swift_interop_hint(
+    name = "loroFFI_interop",
+    module_name = "loroFFI",
+)
+
+cc_library(
+    name = "loroFFI",
+    hdrs = ["include/loroFFI.h"],
+    aspect_hints = [":loroFFI_interop"],
+    includes = ["include"],
+    deps = [":runtime"],
+)
+"""
+
+http_archive(
+    name = "rust_ffi_linux_x86_64",
+    build_file_content = _RUST_FFI_BUILD,
+    sha256 = "4fff755edb56be03037e8026e8e1704cf9eb56eac78281cba0a8e0962c634401",
+    strip_prefix = "wuhu-rust-ffi",
+    url = "https://github.com/wuhu-labs/loro-upstreams/releases/download/rust-ffi-1.17.1-50.0.1-2/wuhu-rust-ffi-1.17.1-50.0.1-2-x86_64-linux-gnu.tar.gz",
+)
+
+http_archive(
+    name = "rust_ffi_macos_arm64",
+    build_file_content = _RUST_FFI_BUILD,
+    sha256 = "79585da12aee47ccb7a11d59303f865d4041d6ba2c067668e4735bd29948981a",
+    strip_prefix = "wuhu-rust-ffi",
+    url = "https://github.com/wuhu-labs/loro-upstreams/releases/download/rust-ffi-1.17.1-50.0.1-2/wuhu-rust-ffi-1.17.1-50.0.1-2-aarch64-apple-darwin.tar.gz",
+)
+
+# `@wasmtime//:CWasmtime` and `@loro_ffi_linux//:loroFFI` select the host lane's
+# archive (linux x86_64 or macOS arm64) and fail analysis anywhere else.
+_RUST_FFI_HUB = """
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+config_setting(
+    name = "macos_arm64",
+    constraint_values = ["@platforms//os:macos", "@platforms//cpu:arm64"],
+)
+
+alias(
+    name = "TARGET",
+    actual = select(
+        {
+            ":linux_x86_64": "@rust_ffi_linux_x86_64//:TARGET",
+            ":macos_arm64": "@rust_ffi_macos_arm64//:TARGET",
+        },
+        no_match_error = "the Rust FFI archive exists for linux x86_64 and macOS arm64 only",
+    ),
+    visibility = ["//visibility:public"],
+)
+"""
+
+build_file_repository = use_repo_rule("//bazel/rules:repositories.bzl", "build_file_repository")
+
+build_file_repository(
+    name = "wasmtime",
+    build_file_content = _RUST_FFI_HUB.replace("TARGET", "CWasmtime"),
+)
+
+build_file_repository(
+    name = "loro_ffi_linux",
+    build_file_content = _RUST_FFI_HUB.replace("TARGET", "loroFFI"),
+)
+
+# Loro (github.com/loro-dev/loro-swift 1.17.1, MIT). `@loro_swift//:Loro` is the
+# `Loro` product: upstream's uniffi Swift bindings over the Rust FFI archive on
+# the host lanes, upstream's xcframework (`@swiftpkg_loro_swift`) everywhere else.
+# The patch keeps the bindings off full Foundation on Linux.
+http_archive(
+    name = "loro_swift",
+    build_file_content = """
+load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
+
+package(default_visibility = ["//visibility:public"])
+
+swift_library(
+    name = "LoroRust",
+    srcs = glob(["Sources/Loro/*.swift"]),
+    module_name = "Loro",
+    copts = ["-swift-version", "5"],
+    deps = ["@loro_ffi_linux//:loroFFI"],
+)
+
+alias(
+    name = "Loro",
+    actual = select({
+        "@//bazel/constraints:linux": ":LoroRust",
+        "@//bazel/constraints:mac": ":LoroRust",
+        "//conditions:default": "@swiftpkg_loro_swift//:Loro",
+    }),
+)
+""",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:loro-swift-foundation-essentials.patch"],
+    sha256 = "f6d086cbaf825c368b38aa963135659a5cc9ce82bde5ecbc002402f617e4ecaf",
+    strip_prefix = "loro-swift-1.17.1",
+    url = "https://github.com/loro-dev/loro-swift/archive/refs/tags/1.17.1.tar.gz",
+)
+
 {{package_modules}}
 
 # quickjs-ng v0.15.1 (github.com/quickjs-ng/quickjs, tag v0.15.1), the

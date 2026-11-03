@@ -1,4 +1,5 @@
 import Foundation
+import Instructions
 import SessionDomain
 import struct SpaceContract.GroupID
 import struct SpaceContract.PromptSession
@@ -42,35 +43,6 @@ public struct InstructionScope: Hashable, Sendable {
       return shown
     }.reversed()
   }
-
-  // A skill's one-line description is its frontmatter `description:` when the
-  // file has one, else the first non-empty line after the `#` title.
-  public static func skillDescription(_ text: String) -> String {
-    var lines = text.split(separator: "\n", omittingEmptySubsequences: false)[...]
-    if lines.first?.trimmingCharacters(in: .whitespaces) == "---" {
-      lines = lines.dropFirst()
-      while let line = lines.first, line.trimmingCharacters(in: .whitespaces) != "---" {
-        lines = lines.dropFirst()
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("description:") {
-          return String(trimmed.dropFirst("description:".count)).trimmingCharacters(in: .whitespaces)
-        }
-      }
-      lines = lines.dropFirst()
-    }
-    var sawTitle = false
-    for line in lines {
-      let trimmed = line.trimmingCharacters(in: .whitespaces)
-      if trimmed.isEmpty { continue }
-      if trimmed.hasPrefix("#") {
-        if sawTitle { break }
-        sawTitle = true
-        continue
-      }
-      return trimmed
-    }
-    return ""
-  }
 }
 
 public struct SessionHome: Hashable, Sendable {
@@ -92,7 +64,7 @@ public struct SessionHome: Hashable, Sendable {
 
     public init(name: String, markdown: String, path: String) {
       self.name = name
-      description = InstructionScope.skillDescription(markdown)
+      description = InstructionFile.skillDescription(markdown)
       self.path = path
       condition = SkillCondition(skill: markdown)
     }
@@ -193,5 +165,19 @@ extension SpaceVFS {
     } catch SpaceError.notFound, SpaceError.notADirectory {
       return []
     }
+  }
+}
+
+extension PromptSession {
+  public init(_ record: SessionRecord) {
+    let model: String? = switch record.executor {
+    case let .kernel(specifier): "\(specifier.provider)/\(specifier.model)"
+    case let .modelGroup(id, _): id
+    case .retired: nil
+    }
+    self.init(
+      id: record.id.rawValue, title: record.title, kind: record.kind == .task ? .task : .agent,
+      model: model, tags: record.tags, home: SessionHome.path(of: record.id),
+    )
   }
 }

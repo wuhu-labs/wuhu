@@ -1,6 +1,8 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+import struct Instructions.InstructionRenderer
+import struct Instructions.InstructionSourceFailure
 import JSONValue
 @testable import MainHub
 import class MainHub.Hub

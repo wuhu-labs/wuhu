@@ -39,6 +39,7 @@ dependencies:
   - SpaceContract
   - SpaceClient
   - SpaceTools
+  - Instructions
   - SpaceCore
   - SpaceFS
   - SystemFiles

@@ -82,7 +82,9 @@ export interface ExternalPackage {
   // same-named Bazel target label (the rspm convention for fetched packages and
   // our own `wuhu_swift_library(name = target.name)` emission for local ones). A
   // map `{ product: targetLabel }` is the escape hatch for the rare product
-  // whose target label differs from its product name.
+  // whose target label differs from its product name; a raw Bazel label value
+  // (`@repo//:target`) replaces the whole Bazel label, while SwiftPM still takes
+  // the product.
   products: string[] | Record<string, string>
   // Resolved during load, never authored: the SwiftPM package identity used as
   // the `package:` argument in `.product(...)` and as the dedup key for the
@@ -859,16 +861,11 @@ let generateSwiftPM = false
 let workspacePackage: string | undefined
 let swiftPMPackages: string[] = []
 let packageArgs: string[] = []
-// --public-tree: generating the exported public repo (tools/public/export.ts
-// writes the flag into that tree's generate tasks), which carries no internal
-// packages such as view-pilot.
 let publicTree = false
 
-// `--workspace <dir>` is the only value-taking flag; everything else is a
-// boolean, so a bare scan keeps the value out of the positional package list.
 export function takeFlagValue(
   rawArgs: string[],
-  flag: string,
+  flag: ValueFlag,
 ): { value?: string; rest: string[] } {
   const rest: string[] = []
   let value: string | undefined
@@ -894,37 +891,83 @@ export function takeFlagValue(
   return { value, rest }
 }
 
+type ManifestFlag = { value?: string; help: string }
+
+const manifestFlags = {
+  '--apply': {
+    help:
+      'write the real outputs; without it each goes to a *.generated.* side file',
+  },
+  '--all': {
+    help:
+      "every package under packages/ (positional dirs ignored), plus packages/BUILD.bazel, .bazelignore and the deno packages' BUILD.bazel",
+  },
+  '--umbrella': { help: 'bazel/umbrella/Package.swift' },
+  '--module': { help: 'MODULE.bazel' },
+  '--swiftpm': {
+    help:
+      'packages/*/Package.swift, for SourceKit-LSP or Xcode only; a run without it or --workspace deletes them',
+  },
+  '--schemes': {
+    help:
+      'Xcode schemes in packages/*/.swiftpm/xcode/xcshareddata/xcschemes; implies --swiftpm',
+  },
+  '--workspace': {
+    value: '<package>',
+    help:
+      '<package>.xcworkspace and its Apps/*/<Shell>.xcodeproj; implies --swiftpm for that package and every package it reaches by path',
+  },
+  '--public-tree': {
+    help:
+      'generate for the exported public repo, which has no internal packages (tools/public sets it)',
+  },
+  '--help': { help: 'print this help and exit; also -h' },
+} satisfies Record<`--${string}`, ManifestFlag>
+
+type ValueFlag = {
+  [Flag in keyof typeof manifestFlags]: typeof manifestFlags[Flag] extends
+    { value: string } ? Flag : never
+}[keyof typeof manifestFlags]
+
+function manifestUsage(): string {
+  const entries = Object.entries<ManifestFlag>(manifestFlags).map((
+    [flag, { value, help }],
+  ) => [value ? `${flag} ${value}` : flag, help])
+  const width = Math.max(...entries.map(([usage]) => usage.length)) + 2
+  return [
+    'Usage: deno task generate-manifests [--swiftpm] [--schemes] [--workspace <package>]',
+    '       deno run -A tools/manifest-gen/generate.ts [options] [package-dir...]',
+    '',
+    'Generates Bazel and SwiftPM manifests from package.yml, target.yml and app.yml; docs/manifests.md is the reference.',
+    'The deno task already passes --apply --all --umbrella --module, so it regenerates every package; add only editor flags.',
+    '',
+    'Options:',
+    ...entries.map(([usage, help]) => `  ${usage.padEnd(width)}${help}`),
+    '',
+    'Positional package dirs (e.g. packages/arcroom) apply only to generate.ts run directly without --all: they choose what to generate, and with none it is packages/wuhu-core, or nothing extra with --workspace.',
+  ].join('\n')
+}
+
 function configure(rawArgs: string[]): void {
   const taken = takeFlagValue(rawArgs, '--workspace')
   workspacePackage = taken.value
   rawArgs = taken.rest
-  const args = new Set(rawArgs)
-  const knownFlags = new Set([
-    '--apply',
-    '--all',
-    '--umbrella',
-    '--module',
-    '--apps',
-    '--schemes',
-    '--swiftpm',
-    '--public-tree',
-  ])
   const unknown = rawArgs.find((arg) =>
-    arg.startsWith('--') && !knownFlags.has(arg)
+    arg.startsWith('--') && !Object.hasOwn(manifestFlags, arg)
   )
-  if (unknown) throw new Error(`Unknown manifest option: ${unknown}`)
-  apply = args.has('--apply')
-  generateAll = args.has('--all')
-  generateUmbrella = args.has('--umbrella')
-  generateModule = args.has('--module')
-  publicTree = args.has('--public-tree')
-  // The Xcode app targets consume the same generated Info.plists the Bazel
-  // shells do, so the workspace cannot be built without them.
-  generateSchemes = args.has('--schemes')
-  // Per-package Package.swift is editor ergonomics only: no Bazel target reads
-  // it, and `swift build` against it resolves a different graph than Bazel
-  // (upstream traits unpatched, versions unpinned). Xcode schemes need it.
-  generateSwiftPM = args.has('--swiftpm') || generateSchemes
+  if (unknown) {
+    throw new Error(`Unknown manifest option: ${unknown} (see --help)`)
+  }
+  const args = new Set(rawArgs)
+  const has = (flag: Exclude<keyof typeof manifestFlags, ValueFlag>) =>
+    args.has(flag)
+  apply = has('--apply')
+  generateAll = has('--all')
+  generateUmbrella = has('--umbrella')
+  generateModule = has('--module')
+  publicTree = has('--public-tree')
+  generateSchemes = has('--schemes')
+  generateSwiftPM = has('--swiftpm') || generateSchemes
   packageArgs = rawArgs.filter((arg) => !arg.startsWith('--'))
 }
 
@@ -1358,6 +1401,7 @@ function bazelDependency(
   }
   const [, external] = externalForProduct(pkg, name)
   const target = productTargetLabel(external, name)
+  if (isRawLabel(target)) return `"${target}"`
   if (external.bazelPackage) return `"${external.bazelPackage}:${target}"`
   if (!external.bazelRepo) {
     throw new Error(`External package for ${name} has no bazelRepo`)
@@ -5198,6 +5242,10 @@ export async function assertNoManualDependencies(root = '.'): Promise<void> {
 }
 
 export async function main(rawArgs: string[] = Deno.args): Promise<void> {
+  if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
+    console.log(manifestUsage())
+    return
+  }
   generatedOutputs.clear()
   configure(rawArgs)
   await removeLegacyPackagesIfNeeded()

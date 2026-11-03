@@ -9,6 +9,7 @@ exports_files([
     "concurrency-extras-linux-lockisolated.patch",
     "issue-reporting-linux-app-host.patch",
     "issue-reporting-linux-lock.patch",
+    "loro-swift-foundation-essentials.patch",
     "perception-bindable-obsoleted-extensions.patch",
     "quickjs-pending-module-free.patch",
     "rules-apple-visionos-dynamic-framework-constraints.patch",

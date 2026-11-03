@@ -1,0 +1,170 @@
+diff --git a/Sources/Loro/Ephemeral.swift b/Sources/Loro/Ephemeral.swift
+index 3eb18bd..b7d9ec5 100644
+--- a/Sources/Loro/Ephemeral.swift
++++ b/Sources/Loro/Ephemeral.swift
+@@ -5,7 +5,11 @@
+ //  Created by Leon Zhao on 2025/6/4.
+ //
+ 
++#if canImport(FoundationEssentials)
++import FoundationEssentials
++#else
+ import Foundation
++#endif
+ 
+ class ClosureEphemeralSubscriber: EphemeralSubscriber {
+     private let closure: (EphemeralStoreEvent) -> Void
+diff --git a/Sources/Loro/Event.swift b/Sources/Loro/Event.swift
+index e66d146..963a925 100644
+--- a/Sources/Loro/Event.swift
++++ b/Sources/Loro/Event.swift
+@@ -1,4 +1,8 @@
++#if canImport(FoundationEssentials)
++import FoundationEssentials
++#else
+ import Foundation
++#endif
+ 
+ class ClosureSubscriber: Subscriber {
+     private let closure: (DiffEvent) -> Void
+diff --git a/Sources/Loro/Loro.swift b/Sources/Loro/Loro.swift
+index d7e298b..b2f700e 100644
+--- a/Sources/Loro/Loro.swift
++++ b/Sources/Loro/Loro.swift
+@@ -7,7 +7,11 @@
+ 
+ 
+ 
++#if canImport(FoundationEssentials)
++import FoundationEssentials
++#else
+ import Foundation
++#endif
+ 
+ extension LoroDoc{
+     public func travelChangeAncestors(ids: [Id], f:  @escaping (ChangeMeta)->Bool) throws  {
+diff --git a/Sources/Loro/LoroFFI.swift b/Sources/Loro/LoroFFI.swift
+index 5e085c9..51ac6bf 100644
+--- a/Sources/Loro/LoroFFI.swift
++++ b/Sources/Loro/LoroFFI.swift
+@@ -2,7 +2,11 @@
+ // Trust me, you don't want to mess with it!
+ 
+ // swiftlint:disable all
++#if canImport(FoundationEssentials)
++import FoundationEssentials
++#else
+ import Foundation
++#endif
+ 
+ // Depending on the consumer's build setup, the low-level FFI code
+ // might be in a separate module, or it might be compiled inline into
+@@ -240,14 +244,6 @@ fileprivate enum UniffiInternalError: LocalizedError {
+     }
+ }
+ 
+-fileprivate extension NSLock {
+-    func withLock<T>(f: () throws -> T) rethrows -> T {
+-        self.lock()
+-        defer { self.unlock() }
+-        return try f()
+-    }
+-}
+-
+ fileprivate let CALL_SUCCESS: Int8 = 0
+ fileprivate let CALL_ERROR: Int8 = 1
+ fileprivate let CALL_UNEXPECTED_ERROR: Int8 = 2
+@@ -359,7 +355,7 @@ fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
+ 
+ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
+     // All mutation happens with this lock held, which is why we implement @unchecked Sendable.
+-    private let lock = NSLock()
++    private let lock = UniffiLock()
+     private var map: [UInt64: T] = [:]
+     private var currentHandle: UInt64 = UNIFFI_HANDLEMAP_INITIAL
+ 
+@@ -13924,7 +13920,7 @@ public func FfiConverterTypeVersionVectorDiff_lower(_ value: VersionVectorDiff)
+ }
+ 
+ 
+-public enum CannotFindRelativePosition: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
++public enum CannotFindRelativePosition: Swift.Error, Equatable, Hashable, LocalizedError {
+ 
+     
+     
+@@ -14022,7 +14018,7 @@ public func FfiConverterTypeCannotFindRelativePosition_lower(_ value: CannotFind
+ }
+ 
+ 
+-public enum ChangeTravelError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
++public enum ChangeTravelError: Swift.Error, Equatable, Hashable, LocalizedError {
+ 
+     
+     
+@@ -14837,7 +14833,7 @@ public func FfiConverterTypeIndex_lower(_ value: Index) -> RustBuffer {
+ 
+ 
+ 
+-public enum JsonPathError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
++public enum JsonPathError: Swift.Error, Equatable, Hashable, LocalizedError {
+ 
+     
+     
+@@ -15014,7 +15010,7 @@ public func FfiConverterTypeListDiffItem_lower(_ value: ListDiffItem) -> RustBuf
+ 
+ 
+ 
+-public enum LoroEncodeError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
++public enum LoroEncodeError: Swift.Error, Equatable, Hashable, LocalizedError {
+ 
+     
+     
+@@ -15120,7 +15116,7 @@ public func FfiConverterTypeLoroEncodeError_lower(_ value: LoroEncodeError) -> R
+ }
+ 
+ 
+-public enum LoroError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
++public enum LoroError: Swift.Error, Equatable, Hashable, LocalizedError {
+ 
+     
+     
+@@ -16200,7 +16196,7 @@ public func FfiConverterTypeUndoOrRedo_lower(_ value: UndoOrRedo) -> RustBuffer
+ 
+ 
+ 
+-public enum UpdateTimeoutError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
++public enum UpdateTimeoutError: Swift.Error, Equatable, Hashable, LocalizedError {
+ 
+     
+     
+diff --git a/Sources/Loro/UniffiLock.swift b/Sources/Loro/UniffiLock.swift
+new file mode 100644
+index 0000000..7ba0995
+--- /dev/null
++++ b/Sources/Loro/UniffiLock.swift
+@@ -0,0 +1,9 @@
++import Synchronization
++
++final class UniffiLock: Sendable {
++    private let mutex = Mutex(())
++
++    func withLock<T, E: Error>(f: () throws(E) -> T) throws(E) -> T {
++        try mutex.withLock { _ throws(E) in try f() }
++    }
++}
+diff --git a/Sources/Loro/Value.swift b/Sources/Loro/Value.swift
+index 6737485..89c991e 100644
+--- a/Sources/Loro/Value.swift
++++ b/Sources/Loro/Value.swift
+@@ -4,7 +4,11 @@
+ //
+ //  Created by Leon Zhao on 2024/8/6.
+ //
++#if canImport(FoundationEssentials)
++import FoundationEssentials
++#else
+ import Foundation
++#endif
+ 
+ extension LoroValue: LoroValueLike {
+     public func asLoroValue() -> LoroValue {

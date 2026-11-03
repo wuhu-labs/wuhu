@@ -17,7 +17,8 @@ public final class VirtualClock: NonsendingClock, Sendable {
   private struct Sleeper {
     let id: UInt64
     let deadline: Instant
-    let continuation: CheckedContinuation<Void, any Error>
+    /// Resumed with whether the clock moving woke it.
+    let continuation: CheckedContinuation<Bool, any Error>
   }
 
   private struct Waiter {
@@ -34,6 +35,9 @@ public final class VirtualClock: NonsendingClock, Sendable {
     var driver: CheckedContinuation<Void, Never>?
     /// A sleep started since the driver last looked.
     var started = false
+    /// Sleeps the clock woke that have not returned yet, and who waits for them to.
+    var waking = 0
+    var awoken: [AsyncStream<Never>.Continuation] = []
 
     mutating func takeMetWaiters() -> [Waiter] {
       let met = waiters.filter { _, waiter in sleepers.contains { waiter.isDue(now.duration(to: $0.deadline)) } }
@@ -52,13 +56,15 @@ public final class VirtualClock: NonsendingClock, Sendable {
   /// The instant `offset` after the clock's start.
   public static func at(_ offset: Duration) -> Instant { Instant(offset: offset) }
 
-  public func sleep(until deadline: Instant, tolerance _: Duration? = nil) async throws {
+  /// Called on this type, returns on the caller's executor, which ``awoken()`` relies on; through `Clock` or `NonsendingClock`,
+  /// Swift runs it on the global executor.
+  nonisolated(nonsending) public func sleep(until deadline: Instant, tolerance _: Duration? = nil) async throws {
     let id = state.withLock { state in
       state.nextID += 1
       return state.nextID
     }
-    try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    let woken = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
         enum Start { case sleeping(CheckedContinuation<Void, Never>?, met: [Waiter]), due, cancelled }
         let start = state.withLock { state -> Start in
           if Task.isCancelled { return .cancelled }
@@ -72,7 +78,7 @@ public final class VirtualClock: NonsendingClock, Sendable {
         case let .sleeping(driver, met):
           driver?.resume()
           for waiter in met { waiter.continuation.resume() }
-        case .due: continuation.resume()
+        case .due: continuation.resume(returning: false)
         case .cancelled: continuation.resume(throwing: CancellationError())
         }
       }
@@ -83,6 +89,28 @@ public final class VirtualClock: NonsendingClock, Sendable {
       }
       cancelled?.continuation.resume(throwing: CancellationError())
     }
+    guard woken else { return }
+    let awoken = state.withLock { state -> [AsyncStream<Never>.Continuation] in
+      state.waking -= 1
+      guard state.waking == 0 else { return [] }
+      defer { state.awoken = [] }
+      return state.awoken
+    }
+    for waiter in awoken {
+      waiter.finish()
+    }
+  }
+
+  /// Returns once every sleep the clock has woken so far has returned to its caller, which then runs on the caller's executor.
+  public func awoken() async {
+    let awoken = state.withLock { state -> AsyncStream<Never>? in
+      guard state.waking > 0 else { return nil }
+      let (awoken, waiter) = AsyncStream<Never>.makeStream()
+      state.awoken.append(waiter)
+      return awoken
+    }
+    guard let awoken else { return }
+    for await _ in awoken {}
   }
 
   /// Runs `body` while moving time forward: to the earliest pending sleep due by `limit`, waking every sleep due by then, and
@@ -99,13 +127,14 @@ public final class VirtualClock: NonsendingClock, Sendable {
             let now = state.now
             let due = state.sleepers.filter { $0.deadline <= now }
             state.sleepers.removeAll { $0.deadline <= now }
+            state.waking += due.count
             return (due, state.takeMetWaiters())
           }
           for waiter in met { waiter.continuation.resume() }
           if due.isEmpty {
             await self.nextStart()
           } else {
-            for sleeper in due { sleeper.continuation.resume() }
+            for sleeper in due { sleeper.continuation.resume(returning: true) }
             await Task.yield()
           }
         }
@@ -122,9 +151,10 @@ public final class VirtualClock: NonsendingClock, Sendable {
       let now = state.now
       let due = state.sleepers.filter { $0.deadline <= now }
       state.sleepers.removeAll { $0.deadline <= now }
+      state.waking += due.count
       return (due, state.takeMetWaiters())
     }
-    for sleeper in due { sleeper.continuation.resume() }
+    for sleeper in due { sleeper.continuation.resume(returning: true) }
     for waiter in met { waiter.continuation.resume() }
   }
 

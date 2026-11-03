@@ -49,19 +49,19 @@ custom_rules:
     message: 'Use Swift Observation and TCA stores instead of Combine'
     severity: error
   wuwei_object_task_group:
-    included: '.*/(wuwei/Targets/WuweiExamples/Sources|testdata/WuweiObjects)/.*\.swift$'
+    included: '.*/(wuwei/Targets/(WuweiExamples|MiniWuhu)/Sources|testdata/WuweiObjects)/.*\.swift$'
     regex: '(?<!ctx\.)\bwith(Throwing)?(Discarding)?TaskGroup\b'
     match_kinds: [identifier]
     message: 'Use ctx.withTaskGroup: a stock group body runs off the object, where touching ctx traps'
     severity: error
   wuwei_object_unstructured_task:
-    included: '.*/(wuwei/Targets/WuweiExamples/Sources|testdata/WuweiObjects)/.*\.swift$'
+    included: '.*/(wuwei/Targets/(WuweiExamples|MiniWuhu)/Sources|testdata/WuweiObjects)/.*\.swift$'
     regex: '\bTask\b(?=\s*(<[^>]*>)?\s*(\{|\(|\.\s*(detached|immediate|immediateDetached)\b))|\bDispatchQueue\b'
     match_kinds: [identifier, typeidentifier]
-    message: 'Use ctx.withTaskGroup for parallel work; work that outlives the method is an outbox message to ctx.this (no outbox yet)'
+    message: 'Use ctx.withTaskGroup for parallel work; work that outlives the method is an outbox message to ctx.this'
     severity: error
   wuwei_object_direct_io:
-    included: '.*/(wuwei/Targets/WuweiExamples/Sources|testdata/WuweiObjects)/.*\.swift$'
+    included: '.*/(wuwei/Targets/(WuweiExamples|MiniWuhu)/Sources|testdata/WuweiObjects)/.*\.swift$'
     regex: '\b(FileManager|FileHandle|URLSession|Process)\b|\bimport\s+(NIO\w*|Network|AsyncHTTPClient)\b|\b(Data|String)\s*\(\s*contentsOf(File)?\b|\.write\s*\(\s*to\b'
     match_kinds: [identifier, typeidentifier, keyword, argument]
     message: 'Wuwei objects reach the outside only through ctx and other objects'

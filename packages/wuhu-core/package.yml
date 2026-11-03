@@ -11,8 +11,13 @@ products:
   - OperationClientTestSupport
   - SpaceFS
   - DocIndex
+  - Instructions
+  - SpaceCore
+  - SystemFiles
+  - Credentials
   - SpaceClient
   - SpaceContract
+  - LiveDocument
   - WmdDocument
   - CanvasDocument
   - MachineContract
@@ -47,7 +52,7 @@ externalPackages:
   loro-swift:
     url: https://github.com/loro-dev/loro-swift
     exact: "1.17.1"
-    products: [Loro]
+    products: { Loro: "@loro_swift//:Loro" }
   swift-collections:
     url: https://github.com/apple/swift-collections
     from: "1.1.0"

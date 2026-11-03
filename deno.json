@@ -5,7 +5,7 @@
     "proseWrap": "preserve"
   },
   "tasks": {
-    "generate-manifests": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com --allow-run=git,tar,which,xcodegen tools/manifest-gen/generate.ts --apply --all --umbrella --module --apps --public-tree"
+    "generate-manifests": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com --allow-run=git,tar,which,xcodegen tools/manifest-gen/generate.ts --apply --all --umbrella --module --public-tree"
   },
   "imports": {
     "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
