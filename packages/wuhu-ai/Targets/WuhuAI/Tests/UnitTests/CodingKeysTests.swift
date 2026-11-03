@@ -66,14 +66,22 @@ import Testing
     #expect(decoded == block)
   }
 
-  @Test func contentBlockHostedToolRoundTrips() throws {
-    let payload = try #require(JSONValue.parse(#"{ "type":"web_search_call", "action":{ "type":"search" } }"#))
+  @Test func contentBlockHostedToolRoundTripsInTheProvidersKeyOrder() throws {
+    let text = #"{"type":"web_search_call","zeta":1,"id":"ws_1","alpha":2,"status":"completed","mu":3,"action":{"type":"search","query":"q","nu":4,"beta":5}}"#
+    let payload = try #require(JSONValue.parse(text))
     let item = try #require(HostedToolContent(providerID: "codex", payload: payload))
     let block = ContentBlock.hostedTool(item)
     let decoded = try JSONDecoder().decode(ContentBlock.self, from: JSONEncoder().encode(block))
     #expect(decoded == block)
     guard case let .hostedTool(decodedItem) = decoded else { return }
-    #expect(decodedItem.payload == payload)
+    #expect(decodedItem.payload.jsonString() == text)
+  }
+
+  @Test func hostedToolStoredAsAnObjectStillDecodes() throws {
+    let stored = #"{"provider_id":"codex","type":"web_search_call","action":"search","payload":{"type":"web_search_call","action":{"type":"search"}}}"#
+    let item = try JSONDecoder().decode(HostedToolContent.self, from: Data(stored.utf8))
+    #expect(item.payload == JSONValue.parse(#"{"type":"web_search_call","action":{"type":"search"}}"#))
+    #expect(item.action == "search")
   }
 
   @Test func toolKindsRoundTrip() throws {

@@ -6,14 +6,14 @@ public enum VFSDefaults {
 }
 
 @Contract
-public enum MachineEntryKind: String, Codable, Equatable, Sendable {
+public enum MachineEntryKind: String, Codable, Hashable, Sendable {
   case file
   case directory
   case symlink
 }
 
 @Contract
-public struct MachineEntry: Codable, Equatable, Sendable {
+public struct MachineEntry: Codable, Hashable, Sendable {
   public let name: String
   public let kind: MachineEntryKind
   public let size: Int

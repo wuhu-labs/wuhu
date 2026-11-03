@@ -14,13 +14,13 @@ import Tracing
 
 /// What one exchange came back with. `answered` says the machine itself answered (its instance header was valid), so the
 /// operation's lease was renewed, even when the answer is a typed error.
-struct Exchanged<T: Sendable>: Sendable {
-  let result: Result<T, OperationError>
-  let answered: Bool
+public struct Exchanged<T: Sendable>: Sendable {
+  public let result: Result<T, OperationError>
+  public let answered: Bool
 }
 
 /// What one exchange asks of a machine; it decides the request's path, method and the span's `machine.exchange.kind`.
-enum MachineExchange: Sendable {
+public enum MachineExchange: Sendable {
   case describe
   case start(UUID)
   case poll(UUID, query: [URLQueryItem])
@@ -61,13 +61,21 @@ private struct HeaderInjector: Injector {
 /// doing, and the fetch is cancelled behind it. Nothing here limits how many exchanges run at once. Each exchange made in a
 /// trace is one content-free `machine.exchange` client span under the current one, its context sent as the tracer's
 /// propagation headers (`traceparent` under OTel); outside a trace, such as a presence poll, it starts none.
-struct MachineLink: Sendable {
+public struct MachineLink: Sendable {
   let taskScope = TaskScope()
   let origin: URL
   let fetch: FetchClient
   let clock: OperationClock
   let ids: @Sendable () -> UUID
   let tracer: any Tracer
+
+  public init(origin: URL, fetch: FetchClient, clock: OperationClock, ids: @escaping @Sendable () -> UUID, tracer: any Tracer) {
+    self.origin = origin
+    self.fetch = fetch
+    self.clock = clock
+    self.ids = ids
+    self.tracer = tracer
+  }
 
   func url(_ machine: String, _ exchange: MachineExchange) -> URL {
     var url = origin.appendingPathComponent("machine/v2/machines").appendingPathComponent(machine)
@@ -83,7 +91,7 @@ struct MachineLink: Sendable {
     }
   }
 
-  func send<T: Decodable & Sendable>(
+  public func send<T: Decodable & Sendable>(
     _ type: T.Type,
     _ machine: String,
     _ exchange: MachineExchange,

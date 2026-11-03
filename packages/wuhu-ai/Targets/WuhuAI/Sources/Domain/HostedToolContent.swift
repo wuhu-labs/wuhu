@@ -40,7 +40,14 @@ extension HostedToolContent: Codable {
     providerID = try container.decode(String.self, forKey: .providerID)
     type = try container.decode(String.self, forKey: .type)
     action = try container.decode(String.self, forKey: .action)
-    payload = try container.decode(JSONValue.self, forKey: .payload)
+    if let text = try? container.decode(String.self, forKey: .payload) {
+      guard let parsed = JSONValue.parse(text) else {
+        throw DecodingError.dataCorruptedError(forKey: .payload, in: container, debugDescription: "payload is not JSON")
+      }
+      payload = parsed
+    } else {
+      payload = try container.decode(JSONValue.self, forKey: .payload)
+    }
   }
 
   public func encode(to encoder: any Encoder) throws {
@@ -49,6 +56,8 @@ extension HostedToolContent: Codable {
     try container.encode(providerID, forKey: .providerID)
     try container.encode(type, forKey: .type)
     try container.encode(action, forKey: .action)
-    try container.encode(payload, forKey: .payload)
+    // Text, not a nested object: Foundation coders reorder object keys, and the
+    // provider must get back the bytes' order it sent or its prompt cache breaks.
+    try container.encode(payload.jsonString(), forKey: .payload)
   }
 }
