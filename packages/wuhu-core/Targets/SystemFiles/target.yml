@@ -10,9 +10,11 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - FileSearch
   - SpaceCore
   - SpaceFS
 tests:
   dependencies:
+    - FileSearch
     - SpaceCore
     - SpaceFS

@@ -3,8 +3,8 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import Foundation
-import enum InferenceKit.TranscriptionLimits
 import JSONValue
+import enum ProviderCapabilities.TranscriptionLimits
 import SpaceContract
 import SpaceFS
 @testable import SpaceServer

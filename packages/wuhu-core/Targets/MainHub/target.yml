@@ -17,6 +17,7 @@ dependencies:
   - HTTPTypes
   - InferenceKit
   - ModelProviders
+  - ProviderCapabilities
   - JSONValue
   - Logging
   - MachineChannel

@@ -3,6 +3,7 @@ import DeterministicDependencies
 import Foundation
 import InferenceKit
 import ModelProviders
+import ProviderCapabilities
 import SessionDomain
 import Testing
 

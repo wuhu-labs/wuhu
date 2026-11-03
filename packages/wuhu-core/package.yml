@@ -14,11 +14,13 @@ products:
   - FileSearch
   - JSXCompile
   - ContentLane
+  - WebBundle
   - Instructions
   - SpaceCore
   - SystemFiles
   - Credentials
   - ModelProviders
+  - ProviderCapabilities
   - SecretMasking
   - ScriptWebPlatform
   - SpaceClient

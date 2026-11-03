@@ -6,13 +6,13 @@
 
 import struct Credentials.CredentialResolver
 import Fetch
-import struct InferenceKit.AudioClip
-import enum InferenceKit.AudioMediaType
-import struct InferenceKit.CapabilityClient
-import struct InferenceKit.CapabilityError
-import struct InferenceKit.CapabilityOptions
-import enum InferenceKit.TranscriptionLimits
 import JSONValue
+import struct ProviderCapabilities.AudioClip
+import enum ProviderCapabilities.AudioMediaType
+import struct ProviderCapabilities.CapabilityClient
+import struct ProviderCapabilities.CapabilityError
+import struct ProviderCapabilities.CapabilityOptions
+import enum ProviderCapabilities.TranscriptionLimits
 import ServeRouting
 import SpaceContract
 import SpaceCore

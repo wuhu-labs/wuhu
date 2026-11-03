@@ -481,6 +481,9 @@ def wuhu_swift_macro(name, srcs, deps, **kwargs):
         **kwargs
     )
 
+# Swift Testing otherwise starts every case of a process at once (docs/bazel.md, Test parallelism).
+WUHU_SWIFT_TEST_WIDTH = "8"
+
 def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, **kwargs):
     copy_resources = copy_resources or []
     process_resources = process_resources or []
@@ -492,6 +495,7 @@ def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, proce
         copts = _swift_6_copts(kwargs),
         data = data + copy_resources + (extra_data or []),
         deps = deps,
+        env = {"SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH": WUHU_SWIFT_TEST_WIDTH} | kwargs.pop("env", {}),
         module_name = name.replace("-", "_"),
         package_name = package_name,
         # IssueReporting discovers its test bridge with dlsym; an archive dependency alone is stripped.

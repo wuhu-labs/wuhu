@@ -24,6 +24,7 @@ tests:
     - ExecutionOwner
     - Credentials
     - ModelProviders
+    - ProviderCapabilities
     - SessionDomain
     - WuhuAI
     - JSONValue

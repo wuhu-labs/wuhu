@@ -4,8 +4,8 @@
   import Foundation
 #endif
 
-import enum InferenceKit.TranscriptionLimits
 import JSONValue
+import enum ProviderCapabilities.TranscriptionLimits
 
 let audioContentTypes: [String: String] = [
   "wav": "audio/wav",

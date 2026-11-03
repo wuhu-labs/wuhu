@@ -117,18 +117,30 @@ extension TLSIdentity {
     )
   }
 
+  /// The pair under `directory`, made there when missing or near expiry, under an exclusive lock
+  /// on `directory` so processes racing on it all return the one pair it ends up holding.
   public static func loadOrCreate(directory: URL, hosts: [String], now: Date = Date()) async throws -> TLSIdentity {
     let certificateURL = directory.appendingPathComponent("cert.pem")
     let privateKeyURL = directory.appendingPathComponent("key.pem")
-    if let identity = try loadUsable(certificateURL: certificateURL, privateKeyURL: privateKeyURL, now: now) {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    return try exclusively(directory) {
+      if let identity = try loadUsable(certificateURL: certificateURL, privateKeyURL: privateKeyURL, now: now) {
+        return identity
+      }
+      let identity = try selfSigned(hosts: hosts, now: now)
+      try Data(identity.privateKeyPEM.utf8).write(to: privateKeyURL, options: .atomic)
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: privateKeyURL.path)
+      try Data(identity.certificatePEM.utf8).write(to: certificateURL, options: .atomic)
       return identity
     }
-    let identity = try selfSigned(hosts: hosts, now: now)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    try Data(identity.certificatePEM.utf8).write(to: certificateURL)
-    try Data(identity.privateKeyPEM.utf8).write(to: privateKeyURL)
-    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: privateKeyURL.path)
-    return identity
+  }
+
+  private static func exclusively<T>(_ directory: URL, _ body: () throws -> T) throws -> T {
+    let descriptor = open(directory.path, O_RDONLY)
+    guard descriptor >= 0 else { throw TLSIdentityError.unusable("could not open \(directory.path): \(String(cString: strerror(errno)))") }
+    defer { close(descriptor) }
+    guard flock(descriptor, LOCK_EX) == 0 else { throw TLSIdentityError.unusable("could not lock \(directory.path): \(String(cString: strerror(errno)))") }
+    return try body()
   }
 
   private static func loadUsable(certificateURL: URL, privateKeyURL: URL, now: Date) throws -> TLSIdentity? {

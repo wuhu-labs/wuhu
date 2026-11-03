@@ -10,6 +10,7 @@ import InferenceKit
 import Logging
 import LoopCore
 import ModelProviders
+import enum ProviderCapabilities.PlanUsage
 import ServerTelemetry
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
@@ -53,7 +54,7 @@ func kernelInference(
       var includeGroups = false
       if case .modelGroup = record.executor { includeGroups = true }
       let selectedCatalog = try await executor.catalog(request.sessionID, includeGroups: includeGroups) { providerID, headers in
-        usage.record(providerID, plan: headers["x-codex-plan-type"], windows: codexUsage(headers: headers), at: date.now)
+        usage.record(providerID, plan: headers["x-codex-plan-type"], windows: PlanUsage.codex(headers: headers), at: date.now)
       }
       routingCatalog = selectedCatalog
       let model: ModelSpecifier
@@ -119,7 +120,7 @@ func kernelInference(
         metrics: metrics,
         webSocket: lease?.session,
         receiveQuota: { event in
-          let parsed = codexSocketUsage(event)
+          let parsed = PlanUsage.codexSocket(event)
           if !parsed.windows.isEmpty {
             usage.record(resolved.specifier.provider, plan: parsed.plan, windows: parsed.windows, at: date.now)
           }

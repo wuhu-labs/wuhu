@@ -32,12 +32,16 @@ public struct SecretMasker: Sendable {
     return process(held.isEmpty ? chunk : held + chunk, flushing: false)
   }
 
+  /// How many of the bytes fed to `mask` it holds back, undecided: the stream's last bytes, unchanged.
+  public var holding: Int { held.count }
+
   public mutating func flush() -> [UInt8] {
     guard !held.isEmpty else { return [] }
     return process(held, flushing: true)
   }
 
-  private static func forms(of secret: String) -> [String] {
+  /// The spellings of `secret` a masker replaces, in a stable order.
+  public static func forms(of secret: String) -> [String] {
     let start = secret.firstIndex { !$0.isWhitespace } ?? secret.endIndex
     let end = secret.lastIndex { !$0.isWhitespace }.map(secret.index(after:)) ?? start
     guard start < end else { return [] }

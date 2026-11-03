@@ -1563,6 +1563,8 @@ extension Command {
     as a space admin; the first account of an adminless space becomes admin
     without the flag — offline add is also the recovery path when every
     admin is gone.
+    every --space verb refuses a folder holding records.sqlite: that is
+    another server's storage, recovered by that server's own user verbs.
     \(exitCodes)
     """,
     "user admin": """

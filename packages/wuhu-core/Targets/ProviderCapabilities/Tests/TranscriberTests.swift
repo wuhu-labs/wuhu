@@ -3,7 +3,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import Foundation
-@testable import InferenceKit
+@testable import ProviderCapabilities
 import Testing
 
 private struct EmittedRequest: Sendable {

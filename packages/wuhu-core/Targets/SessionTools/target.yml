@@ -19,6 +19,7 @@ dependencies:
   - FileSearch
   - InferenceKit
   - ModelProviders
+  - ProviderCapabilities
   - Fetch
   - FetchSSE
   - SessionDomain

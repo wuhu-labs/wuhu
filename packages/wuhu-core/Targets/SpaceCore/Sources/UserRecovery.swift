@@ -15,6 +15,7 @@ public struct UserRecoveryError: Error, Equatable, CustomStringConvertible {
 // of trusting a localhost side channel.
 public enum UserRecovery {
   public static func add(folder: URL, name: String?, admin: Bool = false) async throws -> String {
+    try requireSpaceFolder(folder)
     let record = try await withSpace(in: folder) { try await add(space: $0, name: name, admin: admin) }
     return "account \(record.id.rawValue)\(name.map { " (\($0))" } ?? "")\(record.isAdmin ? " admin" : "")\n"
   }
@@ -33,6 +34,7 @@ public enum UserRecovery {
   }
 
   public static func reset(folder: URL, account: String) async throws -> String {
+    try requireSpaceFolder(folder)
     guard AccountID.isValid(account) else {
       throw UserRecoveryError(message: "malformed account id: \(account)")
     }
@@ -47,6 +49,7 @@ public enum UserRecovery {
   }
 
   public static func invite(folder: URL, account: String, server: String?, ttl: TimeInterval?) async throws -> (output: String, note: String?) {
+    try requireSpaceFolder(folder)
     guard AccountID.isValid(account) else {
       throw UserRecoveryError(message: "malformed account id: \(account)")
     }
@@ -93,10 +96,21 @@ public enum UserRecovery {
 
   """
 
-  private static func withSpace<R>(in folder: URL, _ body: (Space) async throws -> R) async throws -> R {
+  /// A folder with `records.sqlite` is the storage of a server that keeps no `space.sqlite`:
+  /// opening one there would make an account that server never reads.
+  private static func requireSpaceFolder(_ folder: URL) throws {
     guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
       throw UserRecoveryError(message: "no space folder at \(folder.path)")
     }
+    guard !FileManager.default.fileExists(atPath: folder.appendingPathComponent("records.sqlite").path) else {
+      throw UserRecoveryError(message: """
+      \(folder.path) is another server's storage (it holds records.sqlite), not a space folder; \
+      with that server stopped, recover it with its own user add|invite|reset
+      """)
+    }
+  }
+
+  private static func withSpace<R>(in folder: URL, _ body: (Space) async throws -> R) async throws -> R {
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
     let result: R
     do { result = try await body(space) } catch {

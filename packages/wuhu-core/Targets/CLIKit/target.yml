@@ -25,6 +25,7 @@ dependencies:
   - Credentials
   - InferenceKit
   - ModelProviders
+  - ProviderCapabilities
   - MinimalAgent
   - SpaceClient
   - PinnedTLS

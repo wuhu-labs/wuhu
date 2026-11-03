@@ -5,6 +5,7 @@ import Foundation
 import InferenceKit
 import JSONValue
 import ModelProviders
+import enum ProviderCapabilities.PlanUsage
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
@@ -88,7 +89,7 @@ import Testing
           "seven_day": .object(["used_percent": 10, "window_minutes": 10080, "reset_at": .number(reset)]),
           "model_week": .object(["used_percent": .number(Double(used)), "window_minutes": 10080, "reset_at": .number(reset)]),
         ])])])
-        let parsed = codexSocketUsage(event)
+        let parsed = PlanUsage.codexSocket(event)
         harness.runtime.usage.record(provider, plan: parsed.plan, windows: parsed.windows, at: date.now)
       }
       let limited = try await harness.call("/v1/session", .object(["title": "Limited", "kind": "agent", "modelGroup": "limited"]), as: SessionCreateOutput.self)

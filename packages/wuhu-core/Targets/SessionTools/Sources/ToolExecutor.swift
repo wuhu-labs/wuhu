@@ -19,11 +19,11 @@ import struct MainHub.ToolProblem
   import Foundation
 #endif
 import Fetch
-import struct InferenceKit.CapabilityError
 import JSONValue
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
 import struct OperationProtocol.OperationError
+import struct ProviderCapabilities.CapabilityError
 import SessionDomain
 import SpaceClient
 import enum SpaceContract.ToolCallHeader

@@ -1,0 +1,24 @@
+name: ProviderCapabilities
+kind: library
+sources: Sources
+dependencies:
+  - Clocks
+  - Credentials
+  - Dependencies
+  - Fetch
+  - JSONValue
+  - ModelProviders
+  - OrderedCollections
+  - SpaceContract
+swiftSettings:
+  - enableExperimentalFeature: NonisolatedNonsendingByDefault
+tests:
+  dependencies:
+    - Clocks
+    - ControlledTime
+    - Credentials
+    - Dependencies
+    - DeterministicDependencies
+    - Fetch
+    - JSONValue
+    - SpaceContract

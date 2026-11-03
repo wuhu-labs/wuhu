@@ -3,6 +3,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import ModelProviders
+import ProviderCapabilities
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -72,7 +73,7 @@ private let mixedCatalogCredentials = CredentialResolver.bound { provider in
     let provider = try await CapabilityClient.load(read: { path in
       path == ModelsDocument.spacePath ? mixedReplayCatalogJSON(policy: policy) : nil
     }, credentials: mixedCatalogCredentials)
-    #expect(try provider.capability("image")["provider"] == .string("codex"))
+    #expect(try provider.capability("image").object?["provider"] == .string("codex"))
     let fetch = FetchClient { request in
       #expect(request.url.absoluteString == "https://configured-codex.test/backend-api/codex/images/generations")
       #expect(request.headers["originator"] == "configured-originator")

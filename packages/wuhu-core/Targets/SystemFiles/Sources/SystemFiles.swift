@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import protocol FileSearch.SearchSource
 import SpaceCore
 import SpaceFS
 
@@ -22,7 +23,12 @@ public enum SystemFiles {
   /// `/skills/<name>/…`. Empty in a SwiftPM build, which embeds nothing.
   static let files: [String: Data] = embedded
 
-  public static let vfs: any SpaceVFS = SystemVFS(files: files)
+  private static let system = SystemVFS(files: files)
+
+  public static let vfs: any SpaceVFS = system
+
+  /// The files as find and grep walk them; dot-names are hidden.
+  public static let search: any SearchSource = system
 
   /// The system AGENTS.md and the system skills, with their `wuhu://system/`
   /// addresses: the head of every prompt.
@@ -68,8 +74,8 @@ public enum SystemFiles {
 struct SystemVFS: SpaceVFS {
   static let token: VersionToken = VersionToken(Data("system".utf8))
 
-  private let files: [String: Data]
-  private let directories: [String: Set<String>]
+  let files: [String: Data]
+  let directories: [String: Set<String>]
 
   init(files: [String: Data]) {
     self.files = files

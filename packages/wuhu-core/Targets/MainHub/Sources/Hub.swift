@@ -6,12 +6,12 @@ import Synchronization
 #else
   import Foundation
 #endif
-import struct InferenceKit.CapabilityError
 import struct InferenceKit.ProviderCatalog
 import JSONValue
 import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
+import struct ProviderCapabilities.CapabilityError
 import SessionDomain
 import SpaceCore
 import SpaceTools

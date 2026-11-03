@@ -6,9 +6,9 @@
 
 import struct Credentials.CredentialResolver
 import Fetch
-import struct InferenceKit.CapabilityError
-import struct InferenceKit.CapabilityOptions
 import JSONValue
+import struct ProviderCapabilities.CapabilityError
+import struct ProviderCapabilities.CapabilityOptions
 import ServeRouting
 import SpaceCore
 

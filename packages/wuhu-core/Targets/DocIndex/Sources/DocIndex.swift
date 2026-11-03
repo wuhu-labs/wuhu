@@ -107,7 +107,7 @@ private func onLargeStack(_ work: @escaping @Sendable () -> DocMeta) -> DocMeta 
 
 // MARK: - Frontmatter
 
-private func splitFrontmatter(_ content: String) -> (yaml: String?, body: String) {
+func splitFrontmatter(_ content: String) -> (yaml: String?, body: String) {
   let stripped = content.hasPrefix("\u{FEFF}") ? String(content.dropFirst()) : content
   let normalized = stripped.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
   let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false)

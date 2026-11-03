@@ -4,12 +4,12 @@
   import Foundation
 #endif
 
-import struct InferenceKit.CapabilityError
-import struct InferenceKit.CapabilityOptions
 import JSONValue
 import enum MainHub.Address
 import enum MainHub.Addressing
 import struct MainHub.ToolProblem
+import struct ProviderCapabilities.CapabilityError
+import struct ProviderCapabilities.CapabilityOptions
 import SessionDomain
 import SpaceClient
 import struct SpaceContract.WriteOutput

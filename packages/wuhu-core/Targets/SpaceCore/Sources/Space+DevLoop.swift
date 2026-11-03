@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import struct DocIndex.DocumentTemplate
 import GRDB
 import JSONValue
 import struct SpaceContract.GroupID
@@ -30,13 +31,16 @@ extension Space {
       }
       return text
     }
-    let spec = try Templates.parse(text, path: templatePath)
-    let content = Array(spec.instanceContent.utf8)
+    guard let template = DocumentTemplate(markdown: text, at: templatePath) else { throw SpaceError.templateInvalid(templatePath.rawValue) }
+    let content = Array(template.instance.utf8)
     let blob = try await blobs.stage(content)
     let broadcast = broadcast
     let (created, written): (SpacePath, Bool) = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       let directory = try MachineFolders.stored(destination ?? templatePath.parent, mutating: true, in: db)
-      let name = try Templates.allocateName(spec, in: directory, group: group, now: now, in: db)
+      let files = try FSHeadRow.where {
+        $0.grp.eq(group.rawValue) && $0.parentPath.eq(directory.rawValue) && $0.kind.eq("file")
+      }.fetchAll(db).map { SpacePath.lastComponent(of: $0.path) }
+      let name = template.name(among: files, at: now, in: .current)
       let target = try SpacePath(validating: directory.isRoot ? "/\(name)" : "\(directory.rawValue)/\(name)")
       if try target.isReserved || Substrate.head(target, group: group, in: db) != nil
         || Substrate.tableExists(target, group: group, in: db)

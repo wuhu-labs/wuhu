@@ -225,6 +225,18 @@ struct UserVerbTests {
     #expect(await harness.stderr.text.contains("no space folder"))
   }
 
+  @Test func anotherServersStorageIsRefusedAndKeepsNoSpaceDatabase() async throws {
+    for args in [["user", "add", "--name", "bob"], ["user", "reset", "tower-juice-badge"], ["user", "invite", "tower-juice-badge"]] {
+      let harness = try RecoveryHarness()
+      try Data().write(to: harness.folder.appendingPathComponent("records.sqlite"))
+      let code = await harness.run(args.prefix(2) + ["--space", harness.folder.path] + args.dropFirst(2))
+      #expect(code == 1)
+      #expect(await harness.stderr.text.contains("is another server's storage (it holds records.sqlite), not a space folder"))
+      #expect(await harness.stdout.text == "")
+      #expect(!FileManager.default.fileExists(atPath: harness.folder.appendingPathComponent("space.sqlite").path))
+    }
+  }
+
   @Test func liveVerbsWithoutAPinnedWalletRefuseBeforeAnyRequest() async throws {
     for args in [
       ["user", "add", "--name", "bob"],

@@ -72,6 +72,58 @@ import X509
     let reloaded = try await TLSIdentity.loadOrCreate(directory: directory, hosts: ["localhost"], now: nearExpiry)
     #expect(regenerated.certificatePEM == reloaded.certificatePEM)
   }
+
+  @Test func concurrentFirstLaunchesAllReturnThePairOnDisk() async throws {
+    let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: parent) }
+    let directory = parent.appendingPathComponent("tls")
+
+    let identities = try await loadConcurrently(directory: directory, at: now)
+    let stored = try onDisk(directory)
+    #expect(identities.allSatisfy { $0.certificatePEM == stored.certificatePEM && $0.privateKeyPEM == stored.privateKeyPEM })
+    try stored.validate()
+    #expect(try FileManager.default.contentsOfDirectory(atPath: parent.path) == ["tls"])
+  }
+
+  @Test func concurrentRenewalsAllReturnThePairOnDisk() async throws {
+    let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: parent) }
+    let directory = parent.appendingPathComponent("tls")
+    let expiring = try await TLSIdentity.loadOrCreate(directory: directory, hosts: ["localhost"], now: now)
+
+    let identities = try await loadConcurrently(directory: directory, at: now.addingTimeInterval(364 * 24 * 3600))
+    let stored = try onDisk(directory)
+    #expect(stored.certificatePEM != expiring.certificatePEM)
+    #expect(identities.allSatisfy { $0.certificatePEM == stored.certificatePEM && $0.privateKeyPEM == stored.privateKeyPEM })
+    #expect(try FileManager.default.contentsOfDirectory(atPath: parent.path) == ["tls"])
+  }
+
+  @Test func loadOrCreateReplacesHalfAPair() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let created = try await TLSIdentity.loadOrCreate(directory: directory, hosts: ["localhost"], now: now)
+    try FileManager.default.removeItem(at: directory.appendingPathComponent("key.pem"))
+
+    let replaced = try await TLSIdentity.loadOrCreate(directory: directory, hosts: ["localhost"], now: now)
+    #expect(replaced.certificatePEM != created.certificatePEM)
+    #expect(try onDisk(directory).certificatePEM == replaced.certificatePEM)
+  }
+
+  private func loadConcurrently(directory: URL, at now: Date) async throws -> [TLSIdentity] {
+    try await withThrowingTaskGroup(of: TLSIdentity.self) { group in
+      for _ in 0 ..< 8 {
+        group.addTask { try await TLSIdentity.loadOrCreate(directory: directory, hosts: ["localhost"], now: now) }
+      }
+      return try await group.reduce(into: []) { $0.append($1) }
+    }
+  }
+
+  private func onDisk(_ directory: URL) throws -> TLSIdentity {
+    TLSIdentity(
+      certificatePEM: try String(contentsOf: directory.appendingPathComponent("cert.pem"), encoding: .utf8),
+      privateKeyPEM: try String(contentsOf: directory.appendingPathComponent("key.pem"), encoding: .utf8),
+    )
+  }
 }
 
 // A P-256 key and self-signed leaf spelled with explicit curve parameters

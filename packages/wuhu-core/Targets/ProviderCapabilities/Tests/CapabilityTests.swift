@@ -5,8 +5,8 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import Foundation
-@testable import InferenceKit
 import JSONValue
+@testable import ProviderCapabilities
 import Testing
 
 private let bothCredentials = CredentialResolver { id in
