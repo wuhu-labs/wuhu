@@ -4,9 +4,19 @@
   import Foundation
 #endif
 
+import struct SpaceContract.Entry
+import enum SpaceContract.EntryKind
 import struct SpaceFS.Entry
 
-func directoryListing(path: String, entries: [Entry]) -> Data {
+public func directoryListing(path: String, entries: [SpaceFS.Entry]) -> Data {
+  listing(path: path, entries: entries.map { ($0.name, $0.kind) })
+}
+
+public func directoryListing(path: String, entries: [SpaceContract.Entry]) -> Data {
+  listing(path: path, entries: entries.map { ($0.name, SpaceFS.Entry.Kind($0.kind)) })
+}
+
+private func listing(path: String, entries: [(name: String, kind: SpaceFS.Entry.Kind)]) -> Data {
   let ordered = entries.sorted {
     (($0.kind == .directory ? 0 : 1), $0.name) < (($1.kind == .directory ? 0 : 1), $1.name)
   }
@@ -119,7 +129,7 @@ private func row(href: String, glyph: String, name: String) -> String {
 
 private let parentGlyph = #"<path d="m6 14 6-6 6 6"/>"#
 
-private func glyph(for kind: Entry.Kind) -> String {
+private func glyph(for kind: SpaceFS.Entry.Kind) -> String {
   switch kind {
   case .directory: #"<path d="M4 7h6l2 2h8v10H4z"/>"#
   case .table: #"<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16M10 10v9"/>"#
@@ -180,5 +190,16 @@ extension UInt8 {
 extension String {
   fileprivate func leftPadded(to width: Int) -> String {
     count >= width ? self : String(repeating: "0", count: width - count) + self
+  }
+}
+
+extension SpaceFS.Entry.Kind {
+  fileprivate init(_ kind: EntryKind) {
+    self = switch kind {
+    case .file: .file
+    case .directory: .directory
+    case .table: .table
+    case .symlink: .symlink
+    }
   }
 }

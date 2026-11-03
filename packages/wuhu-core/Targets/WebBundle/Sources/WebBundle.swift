@@ -4,8 +4,8 @@
   import Foundation
 #endif
 
-import struct SpaceServer.WebApp
-import struct SpaceServer.WebContent
+import struct ContentLane.WebApp
+import struct ContentLane.WebContent
 
 public enum WebBundle {
   public enum MissingFile: Error { case index, shell, worker }

@@ -4,6 +4,7 @@
   import Foundation
 #endif
 
+import ContentLane
 import Fetch
 import HTTPTypes
 import JSONValue

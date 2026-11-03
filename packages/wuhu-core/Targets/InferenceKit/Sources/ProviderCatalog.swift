@@ -118,15 +118,12 @@ public struct ProviderCatalog: Sendable {
       }
       let bindingIdentity = provider.bindingIdentity(providerID: specifier.provider, credentialEpoch: epoch)
       let replayScope = provider.effectiveOpaqueReplay == .affine && identity != nil ? bindingIdentity : nil
-      let cacheKey = replayCacheKey(session: session, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
+      let cacheKey = replayCacheKey(session: session.rawValue, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
       let endpoint: any ModelEndpoint
-      switch provider.dialect {
-      case .responses:
-        endpoint = OpenAIGPTEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: token, promptCacheKey: cacheKey)
-      case .anthropic:
-        endpoint = OIDCAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, token: token, deepSeek: specifier.provider == "deepseek", replayScope: replayScope, routeEpoch: routeEpoch)
-      case .codex:
-        throw .invalidInput(status: 422, body: CatalogError.invalidOIDCDialect(provider: specifier.provider).description)
+      do {
+        endpoint = try provider.endpoint(providerID: specifier.provider, model: specifier.model, credential: .apiKey(token), replayScope: replayScope, routeEpoch: routeEpoch, cacheKey: cacheKey)
+      } catch {
+        throw .invalidInput(status: 422, body: error.description)
       }
       var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(images: provider.images), transport: provider.transport ?? .sse, replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
       resolved.socketIdentity = SocketRegistryIdentity(provider: specifier.provider, model: specifier.model, configuration: provider, credential: .apiKey(token), replayScope: replayScope, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
@@ -151,7 +148,7 @@ public struct ProviderCatalog: Sendable {
     let credential = binding.credential
     let bindingIdentity = provider.bindingIdentity(providerID: specifier.provider, credentialEpoch: binding.identityEpoch)
     let replayScope = provider.effectiveOpaqueReplay == .affine && binding.permitsOpaqueReplay ? bindingIdentity : nil
-    let cacheKey = replayCacheKey(session: session, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
+    let cacheKey = replayCacheKey(session: session.rawValue, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
     let endpoint: any ModelEndpoint
     do {
       endpoint = try provider.endpoint(providerID: specifier.provider, model: specifier.model, credential: credential, replayScope: replayScope, routeEpoch: routeEpoch, cacheKey: cacheKey) { headers in

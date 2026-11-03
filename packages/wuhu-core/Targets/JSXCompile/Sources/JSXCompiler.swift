@@ -1,5 +1,9 @@
-import Dispatch
-import Foundation
+#if canImport(Glibc)
+  import Glibc
+#elseif canImport(Darwin)
+  import Darwin
+#endif
+import Crypto
 import JSONValue
 import OrderedCollections
 import QuickJSKit
@@ -7,10 +11,10 @@ import Synchronization
 
 /// Sidebar and widget scripts are JSX with no build step: `GET /v1/f/<path>?as=js`
 /// serves a `.jsx` file compiled to plain JS by the bundled transform
-/// (packages/jsx-compile), once per file version.
-actor JSXCompiler {
-  struct Failure: Error {
-    let message: String
+/// (packages/jsx-compile), once per file name and source.
+public actor JSXCompiler {
+  public struct Failure: Error {
+    public let message: String
   }
 
   // Only ever touched under its lock, from the compile thread.
@@ -28,13 +32,14 @@ actor JSXCompiler {
   private var compiled: OrderedDictionary<String, Result<String, Failure>> = [:]
   private static let kept = 256
 
-  init(stepBudget: Int = 100_000) {
+  public init(stepBudget: Int = 100_000) {
     self.stepBudget = stepBudget
   }
 
-  /// `version` is the file's version token: a file compiles once per version.
-  func javaScript(_ source: String, file: String, version: String) throws(Failure) -> String {
-    let key = file + "\n" + version
+  // Keyed by the source's digest, never a version token: one process serves many groups and
+  // spaces, whose revisions and paths collide.
+  public func javaScript(_ source: String, file: String) throws(Failure) -> String {
+    let key = file + "\n" + SHA256.hash(data: Array(source.utf8)).map { String($0, radix: 16) }.joined(separator: ".")
     if let hit = compiled[key] { return try hit.get() }
     let result: Result<String, Failure>
     do {
@@ -56,22 +61,16 @@ actor JSXCompiler {
   }
 
   private func onLargeStack(_ call: String) throws -> JSONValue {
-    let result = Mutex<Result<JSONValue, any Error>?>(nil)
-    let done = DispatchSemaphore(value: 0)
     let budget = stepBudget
-    let thread = Thread {
-      let value = Result { try self.engine.withLock { engine in
+    let work = Work {
+      Result { try self.engine.withLock { engine in
         let loaded = engine ?? Self.loaded(stepBudget: budget)
         engine = loaded
         return try loaded.evaluate(call, name: "compile")
       } }
-      result.withLock { $0 = value }
-      done.signal()
     }
-    thread.stackSize = Self.threadStackBytes
-    thread.start()
-    done.wait()
-    return try result.withLock { $0! }.get()
+    work.joined(stackBytes: Self.threadStackBytes)
+    return try work.result.withLock { $0! }.get()
   }
 
   // The bundle loads on the compile thread too.
@@ -83,5 +82,45 @@ actor JSXCompiler {
     // A bundle that does not load is a build defect, not a request failure.
     try! engine.execute(String(decoding: EmbeddedJSXCompiler.bytes(for: file), as: UTF8.self), name: "compile.js")
     return engine
+  }
+}
+
+/// One compile, run on a thread of its own: a raw pthread, since Foundation's `Thread` would
+/// pull full Foundation into the server.
+private final class Work: Sendable {
+  let body: @Sendable () -> Result<JSONValue, any Error>
+  let result = Mutex<Result<JSONValue, any Error>?>(nil)
+
+  init(_ body: @escaping @Sendable () -> Result<JSONValue, any Error>) {
+    self.body = body
+  }
+
+  /// Runs on a fresh thread of `stackBytes` and waits for it.
+  func joined(stackBytes: Int) {
+    var attributes = pthread_attr_t()
+    precondition(pthread_attr_init(&attributes) == 0)
+    defer { pthread_attr_destroy(&attributes) }
+    precondition(pthread_attr_setstacksize(&attributes, stackBytes) == 0)
+    let context = Unmanaged.passRetained(self).toOpaque()
+    #if canImport(Darwin)
+      var thread: pthread_t?
+      precondition(pthread_create(&thread, &attributes, { context in
+        Unmanaged<Work>.fromOpaque(context).takeRetainedValue().run()
+        return nil
+      }, context) == 0)
+      precondition(pthread_join(thread!, nil) == 0)
+    #else
+      var thread = pthread_t()
+      precondition(pthread_create(&thread, &attributes, { context in
+        Unmanaged<Work>.fromOpaque(context!).takeRetainedValue().run()
+        return nil
+      }, context) == 0)
+      precondition(pthread_join(thread, nil) == 0)
+    #endif
+  }
+
+  private func run() {
+    let value = body()
+    result.withLock { $0 = value }
   }
 }

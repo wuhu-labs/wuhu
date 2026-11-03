@@ -60,10 +60,6 @@ func errorResponse(_ status: Status, code: String, message: String, hint: String
   return jsonResponse(.object(fields), status: status)
 }
 
-func plainStatus(_ status: Status) -> Response {
-  Response(status: status, body: .string("\(status.code) \(status.reasonPhrase)\n"))
-}
-
 func queryValues(of url: URL) -> [String: String] {
   var values: [String: String] = [:]
   for item in URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? [] {

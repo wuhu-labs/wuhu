@@ -1,4 +1,3 @@
-import Crypto
 import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -6,38 +5,6 @@ import ModelProviders
   import Foundation
 #endif
 import JSONValue
-import struct SessionDomain.SessionID
-
-extension ModelsDocument.Provider {
-  func bindingIdentity(providerID: String, credentialEpoch: String) -> String {
-    replayDigest([
-      providerID,
-      credentialEpoch,
-      dialect.rawValue,
-      baseURL.absoluteString,
-      auth?.rawValue ?? "credential",
-      transport?.rawValue ?? "sse",
-      originator ?? "wuhu",
-      effectiveOpaqueReplay.rawValue,
-    ])
-  }
-}
-
-func replayCacheKey(session: SessionID, bindingIdentity: String, routeEpoch: String) -> String {
-  replayDigest([session.rawValue, bindingIdentity, routeEpoch])
-}
-
-private func replayDigest(_ fields: [String]) -> String {
-  let data = fields.reduce(into: Data()) { data, field in
-    let bytes = Data(field.utf8)
-    data.append(contentsOf: "\(bytes.count):".utf8)
-    data.append(bytes)
-  }
-  return SHA256.hash(data: data).map { byte in
-    let hex = String(byte, radix: 16)
-    return hex.count == 1 ? "0" + hex : hex
-  }.joined()
-}
 
 actor UnverifiedOIDCIdentities {
   static let shared = UnverifiedOIDCIdentities()

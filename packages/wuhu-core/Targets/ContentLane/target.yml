@@ -1,0 +1,14 @@
+name: ContentLane
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Crypto
+  - Fetch
+  - HTTPTypes
+  - JSONValue
+  - Serve
+  - SpaceContract
+  - SpaceFS

@@ -18,7 +18,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
-  - SpaceServer
+  - ContentLane
 tests:
   dependencies:
     - DeterministicDependencies

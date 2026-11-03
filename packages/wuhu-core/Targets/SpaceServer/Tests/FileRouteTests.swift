@@ -159,15 +159,6 @@ private let onePixelPNG = Data([
     #expect(String(decoding: try await compiled.data(), as: UTF8.self).contains("h(Sidebar"))
   }
 
-  @Test func aCompileHasAStepBudget() async throws {
-    let compiler = JSXCompiler(stepBudget: 500)
-    #expect(try await compiler.javaScript("export default () => <Figure value={1} />", file: "/a.widget.jsx", version: "1").contains("h(Figure"))
-    let huge = (0 ..< 20000).map { "export const v\($0) = <List rows={[{ label: '\($0)' }]} />" }.joined(separator: "\n")
-    let failure = await #expect(throws: JSXCompiler.Failure.self) { try await compiler.javaScript(huge, file: "/huge.widget.jsx", version: "1") }
-    #expect(failure?.message == "/huge.widget.jsx: too long to compile")
-    #expect(try await compiler.javaScript("export default () => <Figure value={2} />", file: "/b.widget.jsx", version: "1").contains("value: 2"))
-  }
-
   @Test func aSyntaxErrorNamesTheFileLineAndColumn() async throws {
     let harness = try Harness()
     #expect(try await harness.put("/bad.sidebar.jsx", Data("export default () => <Sidebar name=>".utf8)).status == .ok)

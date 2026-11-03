@@ -41,13 +41,13 @@ public struct WebApp: Sendable {
 }
 
 // Fails closed: an unparsable path stays behind the auth wall.
-func isAPIPath(_ url: URL) -> Bool {
+public func isAPIPath(_ url: URL) -> Bool {
   guard let rawPath = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return true }
   guard let first = rawPath.split(separator: "/", omittingEmptySubsequences: true).first else { return false }
   return String(first).removingPercentEncoding.map { $0 == "v1" } ?? true
 }
 
-func webAppResponse(_ webApp: WebApp, request: Request, contentHostPattern: ContentHostPattern? = nil) -> Response {
+public func webAppResponse(_ webApp: WebApp, request: Request, contentHostPattern: ContentHostPattern? = nil) -> Response {
   guard let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false) else {
     return plainStatus(.badRequest)
   }
@@ -114,4 +114,8 @@ private func staticHeaders(path: String, length: Int) -> Headers {
   headers[.contentType] = mimeType(for: path)
   headers[.contentLength] = String(length)
   return headers
+}
+
+public func plainStatus(_ status: Status) -> Response {
+  Response(status: status, body: .string("\(status.code) \(status.reasonPhrase)\n"))
 }

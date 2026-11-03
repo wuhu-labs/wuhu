@@ -12,6 +12,10 @@ extension ModelsDocument.Provider {
     receiveCodexResponseHeaders: @escaping @Sendable ([String: String]) async -> Void = { _ in },
   ) throws(CatalogError) -> any ModelEndpoint {
     switch (dialect, credential) {
+    case let (.anthropic, .apiKey(token)) where auth == .oidc:
+      OIDCAnthropicEndpoint(model: model, baseURL: baseURL, token: token, deepSeek: providerID == "deepseek", replayScope: replayScope, routeEpoch: routeEpoch)
+    case (.codex, _) where auth == .oidc:
+      throw .invalidOIDCDialect(provider: providerID)
     case let (.anthropic, .apiKey(key)) where providerID == "deepseek":
       DeepSeekAnthropicEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: baseURL, apiKey: key)
     case let (.anthropic, .apiKey(key)):

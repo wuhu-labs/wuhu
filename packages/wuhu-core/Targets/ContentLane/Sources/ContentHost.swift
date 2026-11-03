@@ -9,18 +9,18 @@ import struct SpaceContract.GroupID
 
 /// The host a space's content lives under: the bare host serves the API and
 /// the web app, `<group>.<host>` serves that group's content.
-struct ContentHost: Sendable, Equatable {
+public struct ContentHost: Sendable, Equatable {
   /// The bare host, lowercased.
-  let host: String
+  public let host: String
   /// `host[:port]` as a client writes it after `<group>.`.
-  let base: String
+  public let base: String
   /// The bare host's origin, where the web app runs.
-  let origin: String
-  let pattern: ContentHostPattern?
+  public let origin: String
+  public let pattern: ContentHostPattern?
 
   /// The host of `origin`, which is --origin or, without one,
   /// `https://localhost:<port>`.
-  init?(origin: String, pattern: String? = nil) {
+  public init?(origin: String, pattern: String? = nil) {
     guard let url = URL(string: origin), let host = url.host.map(withoutTrailingDot)?.lowercased(), !host.isEmpty
     else { return nil }
     if let pattern {
@@ -38,7 +38,7 @@ struct ContentHost: Sendable, Equatable {
   /// no group: a connection the certificate lets a browser reuse for it gets
   /// 421, and the browser retries on a fresh one. Every other name — an IP
   /// address, a LAN name a machine dials — reaches the API.
-  func plane(of requestHost: String?) -> HostPlane {
+  public func plane(of requestHost: String?) -> HostPlane {
     if let pattern {
       guard let requested = requestHost.map(withoutTrailingDot)?.lowercased() else { return .misdirected }
       if requested == host { return .api }
@@ -51,7 +51,7 @@ struct ContentHost: Sendable, Equatable {
   }
 }
 
-enum HostPlane: Equatable {
+public enum HostPlane: Equatable, Sendable {
   case api
   case content(GroupID)
   case misdirected

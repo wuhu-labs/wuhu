@@ -4,9 +4,11 @@
   import Foundation
 #endif
 
+import ContentLane
 import Fetch
 import HTTPTypes
 import JSONValue
+import JSXCompile
 import Serve
 import ServeRouting
 import SpaceContract
@@ -48,7 +50,7 @@ func addFileRoutes(_ router: inout Router, compiler: JSXCompiler, contextOf: @es
       var (data, token, contentType) = (file.data, file.token, mimeType(for: address))
       if form != nil {
         do throws(JSXCompiler.Failure) {
-          data = Data(try await compiler.javaScript(String(decoding: data, as: UTF8.self), file: address, version: token).utf8)
+          data = Data(try await compiler.javaScript(String(decoding: data, as: UTF8.self), file: address).utf8)
         } catch {
           return fileRouteFailure(.failed(code: .invalidArgument, message: error.message, hint: nil))
         }

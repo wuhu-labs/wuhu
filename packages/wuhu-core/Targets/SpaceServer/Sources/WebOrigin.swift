@@ -4,7 +4,7 @@
   import Foundation
 #endif
 
-import Crypto
+import ContentLane
 import Fetch
 import HTTPTypes
 import JSONValue
@@ -12,7 +12,6 @@ import class MainHub.Hub
 import Serve
 import struct SessionDomain.ConversationID
 import struct SpaceContract.GroupID
-import enum SpaceContract.MediaType
 import SpaceCore
 import SpaceFS
 import SpaceTools
@@ -69,117 +68,7 @@ func webResponse(
   } else {
     response = errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(group.rawValue)")
   }
-  response.headers[.vary] = request.method == .options
-    ? "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
-    : "Origin"
-  if let origin = paired {
-    response.headers[.accessControlAllowOrigin] = origin
-    response.headers[.accessControlAllowCredentials] = "true"
-    if request.method == .options {
-      response.headers[.accessControlAllowMethods] = "GET, POST, DELETE"
-      response.headers[.accessControlAllowHeaders] = "Authorization"
-    }
-  }
-  // Sibling hosts are same-site: only the host itself and the SPAs it pairs
-  // with may frame a group's pages, even by a navigation the cookie wall lets
-  // through.
-  if resolved != .shared {
-    let framing = (["frame-ancestors 'self'"] + pairs.map(\.serialized)).joined(separator: " ")
-    response.headers[contentSecurityPolicy] = [response.headers[contentSecurityPolicy], framing]
-      .compactMap(\.self).joined(separator: "; ")
-  }
-  return response
-}
-
-private let contentSecurityPolicy = HTTPField.Name("Content-Security-Policy")!
-
-// Browsers require CORS for cross-origin font fetches and the credentialed
-// /_/session bootstrap, so this reflection carries Allow-Credentials: true.
-// A group host `<g>.<host>` pairs with the bare host, where the SPA of every
-// group a person reads runs: the advertised --origin (the browser origin
-// behind a TLS-terminating proxy) and the bare host at this request's own
-// scheme and port. Reflecting only that pairing keeps space content
-// unreadable to arbitrary websites. Match is exact on scheme+host+effective
-// port — never widen to *, a suffix/prefix match, or a sibling group host,
-// or any website could read space content with the visitor's read-session
-// cookie.
-private func allowedOrigin(request: Request, pairs: [OriginEndpoint]) -> String? {
-  guard let origin = request.headers[.origin],
-        let requester = URL(string: origin).flatMap(originEndpoint),
-        pairs.contains(requester)
-  else { return nil }
-  return origin
-}
-
-private func pairedOrigins(request: Request, contentHost: ContentHost, advertisedOrigin: String?) -> [OriginEndpoint] {
-  var pairs: [OriginEndpoint] = []
-  if let advertised = advertisedOrigin.flatMap(URL.init(string:)).flatMap(originEndpoint) { pairs.append(advertised) }
-  if let own = originEndpoint(request.url) {
-    // Without --origin the web app is also opened by loopback address.
-    let hosts = [contentHost.host] + (advertisedOrigin == nil ? ["127.0.0.1", "::1"] : [])
-    for host in hosts {
-      let bare = OriginEndpoint(scheme: own.scheme, host: host, port: own.port)
-      if !pairs.contains(bare) { pairs.append(bare) }
-    }
-  }
-  return pairs
-}
-
-private struct OriginEndpoint: Equatable {
-  let scheme: String
-  let host: String
-  let port: Int
-
-  var serialized: String {
-    let defaultPort = scheme == "https" ? 443 : 80
-    let name = host.contains(":") ? "[\(host)]" : host
-    return port == defaultPort ? "\(scheme)://\(name)" : "\(scheme)://\(name):\(port)"
-  }
-}
-
-private func originEndpoint(_ url: URL) -> OriginEndpoint? {
-  guard let scheme = url.scheme, let host = url.host else { return nil }
-  let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
-  return OriginEndpoint(scheme: scheme, host: bare.lowercased(), port: url.port ?? (scheme == "https" ? 443 : 80))
-}
-
-/// The content origin a page on this host has, in its serialized form.
-private func contentOrigins(request: Request) -> [String] {
-  originEndpoint(request.url).map { [$0.serialized] } ?? []
-}
-
-/// The group a web request reads, from its Host, whether its caller is a
-/// cross-origin script the cookie must not serve, and the origin a page on
-/// this host has.
-enum ContentCookies {
-  case legacy
-  case hostOnly
-
-  var read: String { self == .legacy ? "wuhu_read" : "__Host-wuhu_read" }
-  var viewer: String { self == .legacy ? "wuhu_viewer" : "__Host-wuhu_viewer" }
-}
-
-struct WebCaller {
-  let group: GroupID
-  let crossOrigin: Bool
-  let contentOrigins: [String]
-  /// The bare host's origin, where the web app runs.
-  var webApp: String? = nil
-  let cookies: ContentCookies
-}
-
-// Sibling group hosts are same-site, so SameSite=Lax still attaches a host's
-// cookie to a script, image or stylesheet request from its neighbour. The
-// cookie serves same-origin callers, the paired SPA and navigations; a caller
-// that sends no Sec-Fetch-Site (the native app, the CLI) is no browser. A
-// navigation into a frame is left to frame-ancestors.
-private let secFetchSite = HTTPField.Name("Sec-Fetch-Site")!
-private let secFetchMode = HTTPField.Name("Sec-Fetch-Mode")!
-
-private func crossOrigin(_ request: Request, paired: Bool) -> Bool {
-  guard !paired, let site = request.headers[secFetchSite] else { return false }
-  if site == "same-origin" || site == "none" { return false }
-  return request.headers[secFetchMode] != "navigate"
+  return pairedHeaders(response, request: request, pairs: pairs, group: resolved)
 }
 
 /// A cookie-admitted cross-origin request: refused on script routes of every
@@ -301,44 +190,6 @@ private func routedWebResponse(
   }
   return response
 }
-
-// A share link is `https://<host>/<path>?group=<g>`, the web app's own URL;
-// a link written before that named `https://<g>.<host>/<path>`. Opened in a
-// tab with no read session, the group host sends it to the web app, which
-// signs in and shows the document; a frame, a fetch, or a navigation the
-// cookie admits gets the content.
-private let secFetchDest = HTTPField.Name("Sec-Fetch-Dest")!
-
-private func openedInWebApp(_ request: Request, caller: WebCaller) -> Response? {
-  guard request.method == .get, request.headers[secFetchDest] == "document", request.headers[secFetchMode] == "navigate",
-        let webApp = caller.webApp,
-        let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)
-  else { return nil }
-  var items = components.percentEncodedQuery.map { $0.split(separator: "&").map(String.init) } ?? []
-  items.removeAll { $0.hasPrefix("group=") }
-  if caller.group != .shared { items.append("group=" + caller.group.rawValue) }
-  var headers = Headers()
-  headers[.location] = webApp + components.percentEncodedPath + (items.isEmpty ? "" : "?" + items.joined(separator: "&"))
-  headers[.cacheControl] = "no-store"
-  return Response(status: .seeOther, headers: headers)
-}
-
-private let contentDisposition = HTTPField.Name("Content-Disposition")!
-
-/// RFC 8187 `ext-value` bytes: attr-char stays, every other UTF-8 byte is `%XX`.
-private func extValue(_ name: String) -> String {
-  var encoded = ""
-  for byte in name.utf8 {
-    if attrChars.contains(byte) {
-      encoded.unicodeScalars.append(Unicode.Scalar(byte))
-    } else {
-      encoded += (byte < 0x10 ? "%0" : "%") + String(byte, radix: 16, uppercase: true)
-    }
-  }
-  return encoded
-}
-
-private let attrChars = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$&+-.^_`|~".utf8)
 
 private let systemFolders: Set<String> = ["sessions", "machines", "conversations"]
 private let pageWriteRoutes: Set<String> = ["/_/space/rows", "/_/space/attributes"]
@@ -568,24 +419,6 @@ func scriptAdmission(space: Space, caller: WebCaller, dev: Bool, publicRead: Boo
 
 private let serviceWorkerAllowed = HTTPField.Name("Service-Worker-Allowed")!
 
-/// A query result has no single revision, so its tag is a digest of the result itself.
-func revalidatedJSON(_ value: JSONValue, ifNoneMatch: String?) -> Response {
-  let data = Data(value.jsonString().utf8)
-  let digest = SHA256.hash(data: data).prefix(16).map { byte in
-    (byte < 16 ? "0" : "") + String(byte, radix: 16)
-  }
-  let tag = "\"" + digest.joined() + "\""
-  var headers = Headers()
-  headers[.eTag] = tag
-  headers[.cacheControl] = "private, no-cache"
-  if let ifNoneMatch, matches(ifNoneMatch, tag) { return Response(status: .notModified, headers: headers) }
-  headers[.contentType] = "application/json"
-  headers[.contentLength] = String(data.count)
-  return Response(status: .ok, headers: headers, body: .bytes(data, contentType: "application/json"))
-}
-
-private let drawnFlatByTheListProvider = ["wall": "list", "map": "list"]
-
 private func providerResponse(_ views: [String: Data], shell: [String: Data]?, group: GroupID, file: String, request: Request) -> Response {
   if let target = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value {
     guard let resolved = URL(string: target, relativeTo: request.url)?.absoluteURL.standardized else {
@@ -596,8 +429,7 @@ private func providerResponse(_ views: [String: Data], shell: [String: Data]?, g
     }
   }
   guard !file.isEmpty else { return plainStatus(.notFound) }
-  let asset = drawnFlatByTheListProvider[file] ?? file
-  guard let (name, data) = views[asset].map({ (asset, $0) }) ?? views[asset + ".html"].map({ (asset + ".html", $0) }) else {
+  guard let (name, data) = viewAsset(views, file: file) else {
     return plainStatus(.notFound)
   }
   return resourceResponse(
@@ -626,40 +458,10 @@ private func contentResponse(
   let fs = await space.fs(files ?? group)
 
   func served(_ data: Data, contentType: String, token: VersionToken? = nil) -> Response {
-    let bytes = injected(data, contentType: contentType, shell: shell, group: group)
-    var headers = Headers()
-    headers[.contentType] = contentType
-    headers[.acceptRanges] = "bytes"
-    headers[.cacheControl] = "no-cache"
-    var tag: String?
-    if let token {
-      let current = entityTag(token, bootstrap: bytes.count != data.count ? bootstrapVersion(group) : nil)
-      tag = current
-      headers[.eTag] = current
-      if let ifNoneMatch, matches(ifNoneMatch, current) { return Response(status: .notModified, headers: headers) }
-    }
-    // A range is only honoured against the representation the client holds:
-    // an If-Range that is not this strong tag (a date included) gets the
-    // whole body.
-    let honouredRange = ifRange == nil || ifRange?.trimmingCharacters(in: .whitespaces) == tag ? range : nil
-    let status: Status
-    let body: Data
-    switch ByteRange(header: honouredRange, length: bytes.count) {
-    case .whole:
-      status = .ok
-      body = bytes
-    case let .partial(slice):
-      status = .partialContent
-      body = bytes.subdata(in: bytes.startIndex + slice.lowerBound ..< bytes.startIndex + slice.upperBound + 1)
-      headers[.contentRange] = "bytes \(slice.lowerBound)-\(slice.upperBound)/\(bytes.count)"
-    case .unsatisfiable:
-      headers[.contentRange] = "bytes */\(bytes.count)"
-      headers[.contentLength] = "0"
-      return Response(status: .rangeNotSatisfiable, headers: headers)
-    }
-    headers[.contentLength] = String(body.count)
-    if headOnly { return Response(status: status, headers: headers) }
-    return Response(status: status, headers: headers, body: .bytes(body, contentType: contentType))
+    ContentLane.served(
+      data, contentType: contentType, version: token.map { String(decoding: $0.bytes, as: UTF8.self) }, shell: shell, group: group,
+      headOnly: headOnly, range: range, ifNoneMatch: ifNoneMatch, ifRange: ifRange,
+    )
   }
 
   func file(_ candidate: String) async -> Response? {
@@ -693,116 +495,4 @@ private func contentResponse(
   case .table, .symlink:
     return plainStatus(.notFound)
   }
-}
-
-/// The injections change the bytes without changing the file, so the tag
-/// carries their version too: a new import map or shell reaches a cached page.
-private func entityTag(_ token: VersionToken, bootstrap: String?) -> String {
-  "\"\(String(decoding: token.bytes, as: UTF8.self))\(bootstrap.map { "-shell-" + $0 } ?? "")\""
-}
-
-private func bootstrapVersion(_ group: GroupID) -> String {
-  SHA256.hash(data: importMapInjection + groupShellInjection(group)).prefix(6).map { byte in
-    (byte < 16 ? "0" : "") + String(byte, radix: 16)
-  }.joined()
-}
-
-private func matches(_ ifNoneMatch: String, _ tag: String) -> Bool {
-  ifNoneMatch.split(separator: ",").contains { candidate in
-    let trimmed = candidate.trimmingCharacters(in: .whitespaces)
-    return trimmed == "*" || trimmed == tag || trimmed == "W/" + tag
-  }
-}
-
-private let shellInjection = Data(#"<script type="module" src="/_/shell.js"></script>"#.utf8)
-
-/// A group host tells shell.js its group in a meta ahead of the script;
-/// `shared.`'s bytes are unchanged.
-private func groupShellInjection(_ group: GroupID) -> Data {
-  guard group != .shared else { return shellInjection }
-  return Data(#"<meta name="wuhu-group" content="\#(group.rawValue)">"#.utf8) + shellInjection
-}
-
-/// `wuhu:space` resolves through an import map, which must precede every
-/// module a page authors, so it opens `<head>`; shell.js closes `<body>`.
-private let importMapInjection = Data(#"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js","wuhu:device":"/_/device.js"}}</script>"#.utf8)
-
-private func injected(_ data: Data, contentType: String, shell: [String: Data]?, group: GroupID) -> Data {
-  guard shell != nil, contentType.hasPrefix("text/html") else { return data }
-  var served = data
-  let injection = groupShellInjection(group)
-  if let index = lastIndexOfBodyClose(data) {
-    served.insert(contentsOf: injection, at: index)
-  } else {
-    served += injection
-  }
-  served.insert(contentsOf: importMapInjection, at: headStart(served))
-  return served
-}
-
-/// Just past the `<head>` tag; without one, past the doctype; else the start.
-private func headStart(_ data: Data) -> Data.Index {
-  let bytes = [UInt8](data)
-  func tagEnd(_ name: String) -> Int? {
-    let needle = Array(name.utf8)
-    var start = 0
-    while start + needle.count <= bytes.count {
-      var matched = true
-      for (offset, expected) in needle.enumerated() {
-        let byte = bytes[start + offset]
-        if (expected.isASCIILetter ? byte | 0x20 : byte) != expected {
-          matched = false
-          break
-        }
-      }
-      let next = start + needle.count
-      if matched, next < bytes.count, [UInt8(ascii: ">"), UInt8(ascii: " "), 0x09, 0x0A, 0x0C, 0x0D, UInt8(ascii: "/")].contains(bytes[next]) {
-        guard let close = bytes[next...].firstIndex(of: UInt8(ascii: ">")) else { return nil }
-        return close + 1
-      }
-      start += 1
-    }
-    return nil
-  }
-  let offset = tagEnd("<head") ?? tagEnd("<!doctype") ?? 0
-  return data.index(data.startIndex, offsetBy: offset)
-}
-
-private func lastIndexOfBodyClose(_ data: Data) -> Data.Index? {
-  let needle = Array("</body>".utf8)
-  guard data.count >= needle.count else { return nil }
-  func matches(_ start: Data.Index) -> Bool {
-    for (offset, expected) in needle.enumerated() {
-      let byte = data[data.index(start, offsetBy: offset)]
-      let lowered = expected.isASCIILetter ? byte | 0x20 : byte
-      if lowered != expected { return false }
-    }
-    return true
-  }
-  var start = data.index(data.endIndex, offsetBy: -needle.count)
-  while true {
-    if matches(start) { return start }
-    if start == data.startIndex { return nil }
-    start = data.index(before: start)
-  }
-}
-
-extension UInt8 {
-  fileprivate var isASCIILetter: Bool {
-    (self | 0x20) >= UInt8(ascii: "a") && (self | 0x20) <= UInt8(ascii: "z")
-  }
-}
-
-private func resourceResponse(name: String, data: Data, cacheControl: String) -> Response {
-  let contentType = mimeType(for: name)
-  var headers = Headers()
-  headers[.contentType] = contentType
-  headers[.contentLength] = String(data.count)
-  headers[.cacheControl] = cacheControl
-  return Response(status: .ok, headers: headers, body: .bytes(data, contentType: contentType))
-}
-
-func mimeType(for path: String) -> String {
-  let type = MediaType.of(path: path)
-  return type.hasPrefix("text/") ? type + "; charset=utf-8" : type
 }

@@ -6,6 +6,7 @@ import struct OperationProtocol.OperationError
   import Foundation
 #endif
 
+import ContentLane
 import struct Credentials.CredentialResolver
 import struct Credentials.CredentialsStore
 import struct Credentials.SpaceSecretStores
@@ -14,6 +15,7 @@ import Dependencies
 import struct ExecutionOwner.AttemptLogConfig
 import Fetch
 import JSONValue
+import JSXCompile
 import Logging
 import MachineChannel
 import MachineContract

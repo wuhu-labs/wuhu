@@ -2,10 +2,6 @@ name: SpaceServer
 kind: library
 sources: Sources
 embeddedResources:
-  - name: JSXCompiler
-    target: //packages/jsx-compile:bundle
-    typeName: EmbeddedJSXCompiler
-    symbolName: jsxcompiler
   - name: Provisioned
     path: Provisioned
     typeName: EmbeddedProvisioned
@@ -14,6 +10,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - ContentLane
   - MainHub
   - TaskLifetime
   - ServerTelemetry
@@ -48,7 +45,7 @@ dependencies:
   - Crypto
   - JSONValue
   - OrderedCollections
-  - QuickJSKit
+  - JSXCompile
   - Fetch
   - Serve
   - ServeRouting
@@ -67,6 +64,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - ContentLane
     - DeterministicDependencies
     - MainHub
     - ServeTLS

@@ -152,7 +152,7 @@ private let chatGPTOnly = CredentialResolver { _ in
     #expect((anthropic.endpoint as? AnthropicEndpoint)?.promptCache == .oneHour)
 
     let openai = try await catalog.resolve(.init(provider: "openai", model: "gpt-5.4", effort: "high"), session: SessionID("catalog-tests"))
-    #expect((openai.endpoint as? OpenAIGPTEndpoint)?.promptCacheKey == replayCacheKey(session: .init("catalog-tests"), bindingIdentity: openai.bindingIdentity, routeEpoch: "0"))
+    #expect((openai.endpoint as? OpenAIGPTEndpoint)?.promptCacheKey == replayCacheKey(session: "catalog-tests", bindingIdentity: openai.bindingIdentity, routeEpoch: "0"))
   }
 
   @Test func resolvesCodexEndpointFromChatGPTCredential() async throws {
@@ -173,7 +173,7 @@ private let chatGPTOnly = CredentialResolver { _ in
       session: SessionID("broom-happy-crane"),
     )
     let endpoint = try #require(codex.endpoint as? OpenAICodexEndpoint)
-    #expect(endpoint.sessionID == replayCacheKey(session: .init("broom-happy-crane"), bindingIdentity: codex.bindingIdentity, routeEpoch: "0"))
+    #expect(endpoint.sessionID == replayCacheKey(session: "broom-happy-crane", bindingIdentity: codex.bindingIdentity, routeEpoch: "0"))
   }
 
   @Test func resolveRequiresCredential() async throws {

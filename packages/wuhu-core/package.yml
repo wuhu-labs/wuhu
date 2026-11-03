@@ -12,6 +12,8 @@ products:
   - SpaceFS
   - DocIndex
   - FileSearch
+  - JSXCompile
+  - ContentLane
   - Instructions
   - SpaceCore
   - SystemFiles

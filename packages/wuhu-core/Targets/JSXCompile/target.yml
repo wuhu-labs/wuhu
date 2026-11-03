@@ -1,0 +1,17 @@
+name: JSXCompile
+kind: library
+sources: Sources
+embeddedResources:
+  - name: JSXCompiler
+    target: //packages/jsx-compile:bundle
+    typeName: EmbeddedJSXCompiler
+    symbolName: jsxcompiler
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Crypto
+  - JSONValue
+  - OrderedCollections
+  - QuickJSKit
+tests: {}

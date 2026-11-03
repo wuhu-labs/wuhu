@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import AsyncHTTPClient
+import ContentLane
 import Dependencies
 import Dispatch
 import Fetch
