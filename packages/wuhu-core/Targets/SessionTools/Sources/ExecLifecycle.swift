@@ -110,7 +110,7 @@ extension ToolExecutor {
   public func release(session: SessionID, callID: ToolCallID) async -> Bool {
     guard let job = execJobs.job(session, callID) else { return false }
     let released = try? await job.gate.holding { () -> Bool in
-      guard job.phase == .awaited, let driver = job.driver.withLock({ $0 }) else { return false }
+      guard let driver = job.driver.withLock({ $0 }), job.release(from: .awaited) else { return false }
       execJobs.remove(job)
       driver.cancel()
       return true
@@ -140,8 +140,7 @@ extension ToolExecutor {
   public func releaseExecJobs(of session: SessionID) async {
     for job in execJobs.jobs(of: session) {
       try? await job.gate.holding {
-        guard job.phase == .detached || job.phase == .detaching, job.ended.value == nil else { return }
-        job.phase = .released
+        guard job.release(from: .detached, .detaching) else { return }
         execJobs.remove(job)
         job.driver.withLock { $0 }?.cancel()
       }

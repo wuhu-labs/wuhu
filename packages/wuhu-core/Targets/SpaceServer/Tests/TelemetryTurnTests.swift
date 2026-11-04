@@ -58,6 +58,9 @@ import Tracing
           return created.sessionID
         }.first)
         try await story.settled(task)
+        // A session settles inside its last turn, before the turn's span ends.
+        try await until("every turn's span ends") { !tracer.activeSpans.contains { $0.operationName == "agent.turn" } }
+        try await story.machineOperationsEnded()
         return (agent, task, box.id)
       }
     }

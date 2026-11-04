@@ -118,6 +118,7 @@ final class Story: Sendable {
   private let jobs: AsyncStream<@Sendable () async -> Void>
   private let host: AsyncStream<@Sendable () async -> Void>.Continuation
   private let scratch = Mutex<[ScratchFolder]>([])
+  private let machineServices = Mutex<[MachineV2Service]>([])
   // Each serialized worker's line, open until the story ends.
   private let lines = TaskScope()
 
@@ -207,6 +208,7 @@ final class Story: Sendable {
       fetch: { _ in FetchClient { request in seeing(request); return try await agent.handler(request) } },
     )
     await hub.configureV2(service)
+    machineServices.withLock { $0.append(service) }
     host.yield { await agent.run() }
     host.yield {
       do { try await service.run() }
@@ -215,6 +217,14 @@ final class Story: Sendable {
       await service.shutdown()
     }
     return (added.id, work.path)
+  }
+
+  /// Every machine operation's driver has ended: an operation's terminal acknowledgement goes out after its verdict reached the caller.
+  func machineOperationsEnded() async throws {
+    for service in machineServices.withLock({ $0 }) {
+      let operations = try await service.operations(group: .shared)
+      try await until("the machine's operations end") { await operations.running == 0 }
+    }
   }
 
   func running<R: Sendable>(_ body: () async throws -> R) async throws -> R {

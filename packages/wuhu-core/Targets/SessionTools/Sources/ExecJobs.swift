@@ -83,7 +83,7 @@ public final class ExecJobs: Sendable {
 
   func finish(_ job: ExecJob, _ outcome: ExecJob.Outcome) {
     remove(job)
-    job.ended.fulfill(outcome)
+    job.end(outcome)
   }
 
   /// The cancel ids of `session`'s exec jobs whose call already returned.
@@ -132,7 +132,13 @@ final class ExecJob: Sendable {
   let deliveryRecorded = OneShot<Bool>()
   // The end and the call’s running return cannot both claim the job.
   let gate = Turnstile()
-  private let state: Mutex<Phase>
+  private struct State {
+    var phase: Phase
+    /// Claimed by the end that answers the call, before it is fulfilled outside the lock.
+    var endClaimed = false
+  }
+
+  private let state: Mutex<State>
   private let tailBytes = Mutex<[UInt8]>([])
   static let tailCapacity = 16384
 
@@ -144,20 +150,40 @@ final class ExecJob: Sendable {
     self.notice = notice
     self.spec = spec
     self.adopted = adopted
-    state = Mutex(phase)
+    state = Mutex(State(phase: phase))
   }
 
   var handle: String { execHandle(id) }
 
   var phase: Phase {
-    get { state.withLock { $0 } }
-    set { state.withLock { $0 = newValue } }
+    get { state.withLock { $0.phase } }
+    set { state.withLock { $0.phase = newValue } }
   }
 
   func received(_ bytes: [UInt8]) {
     tailBytes.withLock { tail in
       tail += bytes
       if tail.count > Self.tailCapacity { tail.removeFirst(tail.count - Self.tailCapacity) }
+    }
+  }
+
+  /// The one way an end reaches the call: a released job's end belongs to the
+  /// next worker, so it stays unanswered here.
+  func end(_ outcome: Outcome) {
+    let claimed = state.withLock { state in
+      guard state.phase != .released, !state.endClaimed else { return false }
+      state.endClaimed = true
+      return true
+    }
+    if claimed { ended.fulfill(outcome) }
+  }
+
+  /// False once the end is in, which is then owed here.
+  func release(from phases: Phase...) -> Bool {
+    state.withLock { state in
+      guard phases.contains(state.phase), !state.endClaimed else { return false }
+      state.phase = .released
+      return true
     }
   }
 

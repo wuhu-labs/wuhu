@@ -48,8 +48,8 @@ import Testing
         ))
         #expect(armed.owner == .group(.shared))
         await time.advance(by: 11)
-        try await untilAdvancing("the retried firing writes its result", time) {
-          (try? await space.fs(.shared).read("/result.json")) != nil
+        try await untilAdvancing("the retried firing finishes and retires its one-shot observer", time) {
+          try await space.sessions.observers(.shared).isEmpty
         }
         let first = String(decoding: try await space.fs(.shared).read("/first.md").1, as: UTF8.self)
         let result = try #require(JSONValue.parse(String(decoding: try await space.fs(.shared).read("/result.json").1, as: UTF8.self))?.object)
@@ -74,7 +74,6 @@ import Testing
         #expect(effects["revisions"]?.array?.isEmpty == false)
         let stamped = try await space.query("SELECT firing FROM sessions WHERE id = ?", arguments: [.string(made.rawValue)], as: principal).rows
         #expect(stamped == [[firings[1][0]]])
-        #expect(try await space.sessions.observers(.shared).isEmpty)
       }
     }
   }

@@ -17,6 +17,7 @@ products:
   - WebBundle
   - Instructions
   - SpaceCore
+  - SessionDomain
   - SystemFiles
   - Credentials
   - ModelProviders
@@ -29,6 +30,7 @@ products:
   - WmdDocument
   - CanvasDocument
   - MachineContract
+  - MachineChannel
   - ExecSupervisor
   - Assertion
   - CLIKit

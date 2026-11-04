@@ -28,6 +28,26 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     try container.encode(providers)
   }
 
+  /// Every provider entry that fails its configuration, its capacity, one of its models or
+  /// `check` leaves `providers` for `providerErrors`, so the rest stay usable.
+  public func isolatingInvalidProviders(_ check: (String, Provider) throws(CatalogError) -> Void = { _, _ in }) -> ModelsDocument {
+    var document = self
+    for (id, provider) in providers.sorted(by: { $0.key < $1.key }) {
+      do throws(CatalogError) {
+        try provider.validateCapacity(providerID: id)
+        try provider.validateConfiguration(providerID: id)
+        for model in provider.models.keys.sorted() {
+          _ = try validated(provider: id, model: model, effort: nil)
+        }
+        try check(id, provider)
+      } catch {
+        document.providers[id] = nil
+        document.providerErrors[id] = error
+      }
+    }
+    return document
+  }
+
   public static let spacePath: String = "/models.json"
   public static let groupPath: String = "/model-groups.json"
 

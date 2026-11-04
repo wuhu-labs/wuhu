@@ -17,11 +17,11 @@ public struct SessionTemplate: Hashable, Sendable {
 
   public var path: String { "\(Self.root)/\(name)" }
 
-  static func isValidName(_ name: String) -> Bool {
+  public static func isValidName(_ name: String) -> Bool {
     !name.isEmpty && name.allSatisfy { ($0.isASCII && $0.isLowercase && $0.isLetter) || ($0.isASCII && $0.isNumber) || $0 == "-" }
   }
 
-  init(name: String, group: GroupID, manifest: Data) throws {
+  public init(name: String, group: GroupID, manifest: Data) throws {
     guard let json = JSONValue.parse(String(decoding: manifest, as: UTF8.self)), var fields = json.object else {
       throw ExecutorSpecError("template \(name): \(Self.manifest) is not a JSON object")
     }

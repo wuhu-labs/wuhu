@@ -377,6 +377,8 @@ final class ScriptedExecMachine: Sendable {
   let kills = Box<[ExecID]>([])
   private let killGates = Mutex<[ExecID: Gate]>([:])
   let failDelivered = Box(false)
+  /// Holds the next read of an exec's status, as an end's settlement makes.
+  let statusHold = Box<StatusHold?>(nil)
   /// Whether each dial was made in a trace.
   let tracedDials = Box<[Bool]>([])
 
@@ -490,6 +492,13 @@ final class ScriptedExecMachine: Sendable {
         try await space.finishExec(id, .cancelled)
         return try Response.json(["ok": true])
       }
+      if let hold = statusHold.withLock({ hold in
+        defer { hold = nil }
+        return hold
+      }) {
+        hold.reached.open()
+        await hold.resume.wait()
+      }
       return try Response.json(execStatus(of: record))
     }, dial: { [self] url, _ in
       guard reachable else { throw SpaceClient.DialRefusal(status: 422, body: []) }
@@ -555,6 +564,11 @@ final class ScriptedExecMachine: Sendable {
       }
     }
   }
+}
+
+struct StatusHold: Sendable {
+  let reached = Gate()
+  let resume = Gate()
 }
 
 struct Gate: Sendable {

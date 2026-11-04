@@ -135,10 +135,7 @@ extension ToolExecutor {
         await buffer.received(bytes)
         job.received(bytes)
       }, onEvent: { event in await buffer.event(event) }, onTermination: { termination in
-        guard !Task.isCancelled else {
-          self.execJobs.finish(job, .problem(ToolProblem("the server stopped while \(job.handle) ran; it is followed again when it starts")))
-          return
-        }
+        guard !Task.isCancelled else { return self.stopped(job) }
         let drive = await buffer.outcome(termination)
         let outcome = await self.outcome(of: drive, job: job, spec: spec, client: client)
         do {
@@ -153,10 +150,14 @@ extension ToolExecutor {
         }
       })
     } catch is CancellationError {
-      execJobs.finish(job, .problem(ToolProblem("the server stopped while \(job.handle) ran; it is followed again when it starts")))
+      stopped(job)
     } catch {
       execJobs.finish(job, .problem(ToolProblem("\(job.handle) could not record its end: \(error)")))
     }
+  }
+
+  private func stopped(_ job: ExecJob) {
+    execJobs.finish(job, .problem(ToolProblem("the server stopped while \(job.handle) ran; it is followed again when it starts")))
   }
 
   func settle(_ job: ExecJob, _ outcome: ExecJob.Outcome) async throws {
@@ -164,7 +165,7 @@ extension ToolExecutor {
       switch job.phase {
       case .awaited, .detaching:
         // Keep the job until the loop commits, so its result can carry the ack.
-        job.ended.fulfill(outcome)
+        job.end(outcome)
       case .detached:
         try await settleDetached(job, outcome)
       case .cancelled:
@@ -172,7 +173,6 @@ extension ToolExecutor {
         execJobs.finish(job, outcome)
         job.committed.fulfill(true)
       case .released:
-        execJobs.finish(job, outcome)
         job.committed.fulfill(false)
       }
     }

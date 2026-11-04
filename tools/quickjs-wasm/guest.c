@@ -63,7 +63,7 @@ static JSValue encode(JSContext *ctx, JSValueConst this, int argc, JSValueConst 
   return buffer;
 }
 
-/// The prelude's one call: `{receive, fail, main, kernel}` stay in C, off the global object, and
+/// The prelude's one call: `{receive, fail, main, kernel, meta}` stay in C, off the global object, and
 /// `kernel` reaches only `wuhu:host`, as its `import.meta.kernel`.
 static JSValue seal(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
   if (sealed) return JS_ThrowTypeError(ctx, "the prelude is sealed");
@@ -236,6 +236,16 @@ static JSValue evaluate(const char *bytes, size_t length) {
   JSValue compiled = JS_Eval(context, bytes, length, "main", JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
   if (JS_IsException(compiled)) return compiled;
   JSModuleDef *module = JS_VALUE_GET_PTR(compiled);
+  JSValue meta = JS_GetImportMeta(context, module);
+  JSValue join = hook("meta");
+  JSValue joined = JS_IsFunction(context, join) ? JS_Call(context, join, JS_UNDEFINED, 1, &meta) : JS_UNDEFINED;
+  JS_FreeValue(context, join);
+  JS_FreeValue(context, meta);
+  if (JS_IsException(joined)) {
+    JS_FreeValue(context, compiled);
+    return joined;
+  }
+  JS_FreeValue(context, joined);
   JSValue promise = JS_EvalFunction(context, compiled);
   if (JS_IsException(promise)) return promise;
   JSValue arguments[2] = {promise, JS_GetModuleNamespace(context, module)};

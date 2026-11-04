@@ -406,6 +406,67 @@ import struct WuhuAI.ToolArguments
     }
   }
 
+  // A hand-off releases the call mid-wait and cancels it; the next worker's retry rejoins the exec by the call id.
+  // The cancellation arrives last here, so an end the released worker took would answer the call first.
+  @Test(arguments: [false, true])
+  func aReleasedCallIsAnsweredOnceByTheNextWorker(_ endingWhenReleased: Bool) async throws {
+    try await withToolDeps { time in
+      let acknowledgements = Box(0), acknowledged = Gate()
+      let scripted = ScriptedExecMachine(onTerminalAck: { _ in
+        acknowledgements.withLock { $0 += 1 }
+        acknowledged.open()
+      })
+      let first = try await ExecJobRig(scripted: scripted)
+      let finish = Gate()
+      let callID = "tc-handoff"
+      let arguments = ToolArguments(.object(["machine": .string(first.machine.rawValue), "cwd": "/work", "command": "make", "wait_seconds": 1800]))
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await scripted.pump() }
+        group.addTask {
+          await scripted.serve { exec in
+            try? await exec.send(.stdout, Array("working\n".utf8))
+            await finish.wait()
+            try? await exec.send(.stdout, Array("done\n".utf8))
+            await exec.exit(.exited(code: 0))
+          }
+        }
+        defer { group.cancelAll() }
+
+        let call = Task { [world = first.world] in
+          var world = world
+          return try await world.run("exec", arguments, id: callID)
+        }
+        try await time.asleep("the call's wait", dueIn: 1800)
+        if endingWhenReleased {
+          let hold = StatusHold()
+          scripted.statusHold.withLock { $0 = hold }
+          finish.open()
+          await hold.reached.wait()
+          #expect(await first.executor.release(session: first.session, callID: ToolCallID(callID)))
+          hold.resume.open()
+        } else {
+          #expect(await first.executor.release(session: first.session, callID: ToolCallID(callID)))
+          finish.open()
+        }
+        await first.jobs.close()
+        #expect(acknowledgements.value == 0)
+
+        let second = try ExecJobRig(after: first)
+        var world = second.world
+        guard case let .exec(ended) = try await world.run("exec", arguments, id: callID) else { throw Mismatch("the retry did not return the exit") }
+        #expect(ended.output == "working\ndone\n")
+        #expect(ended.exitCode == 0)
+        await acknowledged.wait()
+        await second.jobs.close()
+        #expect(acknowledgements.value == 1)
+        call.cancel()
+        await #expect(throws: CancellationError.self, "the released worker answered the call") { try await call.value }
+        #expect(scripted.kills.value.isEmpty)
+        #expect(scripted.startCount.value == 1)
+      }
+    }
+  }
+
   @Test func aWaitOfZeroIsRefused() async throws {
     try await withToolDeps { _ in
       var rig = try await ExecJobRig()

@@ -123,6 +123,7 @@ import WuhuAI
         #expect(a.inferences.count == 1 && b.inferences.count == 1)
         let told = try await story.transcript(session)
         #expect(told == ["hears", "calls exec", "result", "says"], "\(told)")
+        try await story.machineOperationsEnded()
         #expect(try await story.execOutputs(session) == ["started\nfinished\n"])
         let ended = try await story.space.execRecord(exec)
         #expect(ended?.terminal == .exited(code: 0) && ended?.toolCallID != nil, "the same exec ended: \(String(describing: ended))")
