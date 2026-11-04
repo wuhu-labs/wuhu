@@ -84,6 +84,8 @@ public actor MachineOperations {
   /// (holding a tunnel lane). `open` reattaches to one, and `shutdown` and `setAside` end it.
   private var kept: [UUID: Kept] = [:]
   private var opening: [OperationOwner: Task<Operation, any Error>] = [:]
+  /// The admission describe in flight per machine, shared by every start waiting on it.
+  private var describing: [String: Task<MachineDescription, any Error>] = [:]
   private var descriptions: [String: (description: MachineDescription, at: Duration)] = [:]
   private var closed = false
 
@@ -106,6 +108,9 @@ public actor MachineOperations {
 
   public func describe(_ machine: String) async throws -> MachineDescription {
     let outcome = await link.send(MachineDescription.self, machine, .describe, correlation: nil, deadline: Self.describeDeadline, limit: 1024 * 1024)
+    if case let .failure(error) = outcome.result, error.code == .requestDeadline, !outcome.answered {
+      throw OperationError(.requestDeadline, message: "Machine \(machine) did not describe itself within \(Self.describeDeadline.components.seconds) s")
+    }
     let description = try outcome.result.get()
     guard description.version == 2, description.limits.isValid,
           description.kinds.allSatisfy({ $0.schemaDialect == "https://json-schema.org/draft/2020-12/schema" }) else { throw OperationError(.unsupportedProtocol) }
@@ -173,9 +178,21 @@ public actor MachineOperations {
     return operation
   }
 
-  /// A fresh description for a start, so admission sees the machine as it is now; transient failures are retried within one
-  /// describe deadline.
+  /// A fresh description for a start, so admission sees the machine as it is now. Concurrent starts on one machine share one
+  /// describe and its outcome; a failure is not kept, so the next start describes afresh.
   private func admissionDescription(_ machine: String) async throws -> MachineDescription {
+    // A claim that waited out a shutdown in the store must not leave a describe that shutdown never saw.
+    guard !closed else { throw OperationError(.requestCancelled) }
+    let shared = try describing[machine] ?? taskScope.run("machine-describe") {
+      defer { self.describing[machine] = nil }
+      return try await self.describeRetrying(machine)
+    }
+    describing[machine] = shared
+    return try await shared.value
+  }
+
+  /// A retry starts only within one describe deadline of the first attempt; each attempt has a full deadline of its own.
+  private func describeRetrying(_ machine: String) async throws -> MachineDescription {
     let end = link.clock.now() + Self.describeDeadline
     var delay = OperationDriver.backoff.first
     while true {
@@ -317,6 +334,7 @@ public actor MachineOperations {
   public func shutdown() async {
     closed = true
     let claims = Array(opening.values)
+    for shared in describing.values { shared.cancel() }
     for task in claims { task.cancel() }
     for task in claims { _ = try? await task.value }
     let current = drivers

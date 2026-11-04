@@ -9,8 +9,8 @@ import Credentials
 import Fetch
 import JSONValue
 
-public struct CapabilityError: Error, Sendable, Codable, Equatable, CustomStringConvertible {
-  public enum Code: String, Sendable, Codable {
+public struct CapabilityError: Error, Sendable, Codable, Hashable, CustomStringConvertible {
+  public enum Code: String, Sendable, Codable, Hashable {
     case providerNotConfigured = "provider_not_configured"
     case providerAuth = "provider_auth"
     case providerRegion = "provider_region"
@@ -34,8 +34,8 @@ public struct CapabilityError: Error, Sendable, Codable, Equatable, CustomString
   }
 }
 
-struct CapabilitiesDocument: Sendable, Codable {
-  static let spacePath: String = "/capabilities.json"
+public struct CapabilitiesDocument: Sendable, Codable {
+  public static let spacePath: String = "/capabilities.json"
 
   struct Selection: Sendable, Codable {
     var active: String?
@@ -72,13 +72,13 @@ struct CapabilitiesDocument: Sendable, Codable {
     case webSearch = "web_search", image, transcription
   }
 
-  init(json: Data) throws {
+  public init(json: Data) throws {
     do { self = try JSONDecoder().decode(Self.self, from: json) }
     catch { throw CapabilityError(.providerNotConfigured, "Invalid /capabilities.json.") }
   }
 }
 
-public struct CapabilityOptions: Sendable, Codable {
+public struct CapabilityOptions: Sendable, Codable, Hashable {
   public var provider: String?
   public var model: String?
   public var quality: String?
@@ -105,13 +105,24 @@ public struct CapabilityClient: Sendable {
   let models: ModelsDocument
   let credentials: CredentialResolver
 
-  init(document: CapabilitiesDocument?, models: ModelsDocument = .init(providers: [:]), credentials: CredentialResolver) {
+  public init(document: CapabilitiesDocument?, models: ModelsDocument = .init(providers: [:]), credentials: CredentialResolver) {
     self.document = document
     self.models = models
     self.credentials = credentials
   }
 
-  enum Kind { case search, image, transcription }
+  enum Kind {
+    case search, image, transcription
+
+    init(_ name: String) throws {
+      switch name {
+      case "web_search": self = .search
+      case "image": self = .image
+      case "transcription": self = .transcription
+      default: throw CapabilityError(.invalidArgument, "Capability kind is image, transcription or web_search.")
+      }
+    }
+  }
 
   struct Resolved: Sendable {
     let provider: String
@@ -132,13 +143,7 @@ public struct CapabilityClient: Sendable {
   }
 
   public func capability(_ kind: String) throws -> JSONValue {
-    let selected: Kind = switch kind {
-    case "web_search": .search
-    case "image": .image
-    case "transcription": .transcription
-    default: throw CapabilityError(.invalidArgument, "Capability kind is image, transcription or web_search.")
-    }
-    let config = try configuration(selected, options: .init())
+    let config = try configuration(Kind(kind), options: .init())
     return .object([
       "kind": .string(kind),
       "provider": .string(config.provider),
@@ -151,6 +156,11 @@ public struct CapabilityClient: Sendable {
         "diarize": .bool(config.facts.diarize ?? false),
       ]),
     ])
+  }
+
+  /// The provider whose credential a `kind` call with `options` resolves, as `resolve` asks for it.
+  public func credentialID(for kind: String, options: CapabilityOptions) throws -> String {
+    try configuration(Kind(kind), options: options).credentialID
   }
 
   func resolve(_ kind: Kind, options: CapabilityOptions) async throws -> Resolved {
