@@ -2,6 +2,7 @@ import JSONValue
 import struct MainHub.ToolProblem
 import struct ProviderCapabilities.CapabilityError
 import struct ProviderCapabilities.CapabilityOptions
+import enum ProviderCapabilities.FrameSelection
 import QuickJSKit
 import SessionDomain
 import SpaceTools
@@ -43,6 +44,24 @@ struct ScriptAI {
         return try await tools.generateImage(session, prompt: prompt, destination: destination, claims: claims, images: paths, options: options)
       }
     })
+    engine.define("__wuhu_inspect_image", promising: { [actor, tools] arguments in
+      try await capabilityAnswer {
+        let session = try capabilitySession(actor)
+        guard case let .string(path)? = arguments.first else { throw CapabilityError(.invalidArgument, "inspectImage needs an image path.") }
+        return try await tools.inspectImage(session, path)
+      }
+    })
+    engine.define("__wuhu_render_frames", promising: { [actor, tools] arguments in
+      try await capabilityAnswer {
+        let session = try capabilitySession(actor)
+        guard case let .string(path)? = arguments.first, let options = arguments[safe: 1]?.object,
+              case let .string(destination)? = options["destination"], options.keys.allSatisfy(["destination", "frames"].contains)
+        else {
+          throw CapabilityError(.invalidArgument, "renderFrames needs a GIF path and { destination, frames? }.")
+        }
+        return try await tools.renderFrames(session, path, frames: frameSelection(options["frames"]), destination: destination, claims: claims)
+      }
+    })
     engine.define("__wuhu_transcribe", promising: { [actor, tools] arguments in
       try await capabilityAnswer {
         let session = try capabilitySession(actor)
@@ -65,6 +84,19 @@ private func capabilitySession(_ actor: ScriptActor) throws -> SessionID {
     throw CapabilityError(.invalidArgument, "Capabilities run as a session; a script without one has complete() only.")
   }
   return session
+}
+
+private func frameSelection(_ value: JSONValue?) throws -> FrameSelection {
+  switch value {
+  case nil, .null?: return .count(9)
+  case let .integer(count)?: return .count(count)
+  case let .array(indices)?:
+    return try .indices(indices.map {
+      guard case let .integer(index) = $0 else { throw CapabilityError(.invalidArgument, "Frame indices are whole numbers.") }
+      return index
+    })
+  default: throw CapabilityError(.invalidArgument, "frames is a count or a list of frame indices.")
+  }
 }
 
 private func capabilityOptions(_ value: JSONValue?, allowed: Set<String>) throws -> CapabilityOptions {

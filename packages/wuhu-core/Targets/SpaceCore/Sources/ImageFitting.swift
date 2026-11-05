@@ -51,6 +51,25 @@ public enum ImageFitting {
     #endif
   }
 
+  /// Unpremultiplied RGBA8 rows as a PNG; nil where this server has no PNG encoder.
+  public static func png(rgba: [UInt8], size: PixelSize) -> Data? {
+    precondition(rgba.count == size.width * size.height * 4)
+    #if canImport(ImageIO)
+      guard let provider = CGDataProvider(data: Data(rgba) as CFData),
+            let image = CGImage(
+              width: size.width, height: size.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size.width * 4,
+              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+              provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent,
+            )
+      else { return nil }
+      return encode(image, as: "public.png")
+    #elseif os(Linux)
+      return LinuxImage(pixels: rgba, size: size, isPNG: true).encoded(png: true)
+    #else
+      return nil
+    #endif
+  }
+
   private static func refusal(_ data: Data, size: PixelSize?, limits: ImageLimits) -> FittedImage {
     let shape = size.map { "\($0.width)x\($0.height) px, " } ?? ""
     return .note(

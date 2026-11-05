@@ -276,3 +276,9 @@ _Afterwards:_ `{fx}/launch/board.canvas` holds a `Book the venue` sticky under `
 _Prompt:_ "I'd like a script to make a short looping GIF of a waving cat at {sb}/cat.gif. How do I ask wuhu:ai for it: which call, which options, and which provider and model can do it? What does the call give back? Don't generate or write anything yet."
 
 _Afterwards:_ nothing written. The reply, after reading the `ai-scripts` skill, says `generateImage` with a `.gif` destination is the whole switch (no format option), names `frames` (2–16) and `frameMs` (20–2000), says only OpenAI's `gpt-image-2.6-*` models make GIFs and every other provider, model or `editImage` is refused before spending with no PNG fallback, and lists the answer: path, `mimeType: 'image/gif'`, bytes, width, height, `frames`, `durationMs`.
+
+## gif-frames
+
+_Prompt:_ "What happens in the animation {sb}/lights.gif? A line or two is enough." The `rgb-gif` setup writes a 2×2 GIF of a red, a green and a blue frame shown 100, 200 and 300 ms.
+
+_Afterwards:_ the agent, after reading the `ai-scripts` skill, called `renderFrames` on the GIF with a `.png` destination in its own home and read the sheet; `{sb}` holds only the GIF. The short reply says red, then green, then blue. A description from the first frame or the file name alone fails.

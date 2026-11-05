@@ -83,7 +83,7 @@
       return Data(bytes: output, count: count)
     }
 
-    private init(pixels: [UInt8], size: PixelSize, isPNG: Bool) {
+    init(pixels: [UInt8], size: PixelSize, isPNG: Bool) {
       self.pixels = pixels
       self.size = size
       self.isPNG = isPNG

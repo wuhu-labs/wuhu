@@ -8,9 +8,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-#if os(Linux)
-  import CImageCodec
-#endif
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
@@ -20,6 +17,28 @@ import Testing
   @Test func `an image within the limits goes out byte for byte`() throws {
     let png = try #require(Self.png(width: 64, height: 32))
     #expect(ImageFitting.fit(png, mimeType: "image/png", limits: .claude) == .image(png, mimeType: "image/png"))
+  }
+
+  @Test func `RGBA pixels encode to a PNG that decodes to the same pixels`() throws {
+    let rgba: [UInt8] = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 0]
+    let png = try #require(ImageFitting.png(rgba: rgba, size: PixelSize(width: 2, height: 2)))
+    #expect(ImageMedia.mimeType(ofBytes: png) == "image/png" && ImageMedia.pixelSize(ofBytes: png) == PixelSize(width: 2, height: 2))
+    #if canImport(ImageIO)
+      let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+      let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+      var decoded = [UInt8](repeating: 1, count: 16)
+      try decoded.withUnsafeMutableBytes { buffer in
+        let context = try #require(CGContext(
+          data: buffer.baseAddress, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 8,
+          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue,
+        ))
+        context.clear(CGRect(x: 0, y: 0, width: 2, height: 2))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+      #expect(decoded == rgba)
+    #elseif os(Linux)
+      #expect(try #require(LinuxImage(png)).pixels == rgba)
+    #endif
   }
 
   @Test func `bytes no codec can size are left for the provider`() {
@@ -339,51 +358,18 @@ import Testing
   static let gif = Data(base64Encoded: "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==")!
 
   static func png(width: Int, height: Int, noise: Bool = false) -> Data? {
-    #if canImport(ImageIO)
-      guard let context = CGContext(
-        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue,
-      ) else { return nil }
-      if noise, let pixels = context.data?.assumingMemoryBound(to: UInt32.self) {
-        var state: UInt32 = 2_463_534_242
-        for index in 0 ..< context.bytesPerRow / 4 * height {
-          state ^= state << 13
-          state ^= state >> 17
-          state ^= state << 5
-          pixels[index] = state
-        }
+    var pixels = [UInt8](repeating: 255, count: width * height * 4)
+    var state: UInt32 = 2_463_534_242
+    for index in stride(from: 0, to: pixels.count, by: 4) {
+      if noise {
+        state ^= state << 13
+        state ^= state >> 17
+        state ^= state << 5
+        (pixels[index], pixels[index + 1], pixels[index + 2]) = (UInt8(truncatingIfNeeded: state), UInt8(truncatingIfNeeded: state >> 8), UInt8(truncatingIfNeeded: state >> 16))
       } else {
-        context.setFillColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        (pixels[index], pixels[index + 1], pixels[index + 2]) = (51, 102, 204)
       }
-      guard let image = context.makeImage() else { return nil }
-      let output = NSMutableData()
-      guard let destination = CGImageDestinationCreateWithData(output as CFMutableData, "public.png" as CFString, 1, nil)
-      else { return nil }
-      CGImageDestinationAddImage(destination, image, nil)
-      guard CGImageDestinationFinalize(destination) else { return nil }
-      return output as Data
-    #elseif os(Linux)
-      var pixels = [UInt8](repeating: 255, count: width * height * 4)
-      var state: UInt32 = 2_463_534_242
-      for index in stride(from: 0, to: pixels.count, by: 4) {
-        if noise {
-          state ^= state << 13
-          state ^= state >> 17
-          state ^= state << 5
-          pixels[index] = UInt8(truncatingIfNeeded: state)
-          pixels[index + 1] = UInt8(truncatingIfNeeded: state >> 8)
-          pixels[index + 2] = UInt8(truncatingIfNeeded: state >> 16)
-        } else {
-          pixels[index] = 51; pixels[index + 1] = 102; pixels[index + 2] = 204
-        }
-      }
-      var count = 0
-      guard let output = pixels.withUnsafeBufferPointer({ image_encode_png($0.baseAddress, Int32(width), Int32(height), &count) }) else { return nil }
-      defer { image_codec_free(output) }
-      return Data(bytes: output, count: count)
-    #else
-      return nil
-    #endif
+    }
+    return ImageFitting.png(rgba: pixels, size: PixelSize(width: width, height: height))
   }
 }

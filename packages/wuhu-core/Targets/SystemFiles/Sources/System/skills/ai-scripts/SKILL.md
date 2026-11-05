@@ -1,7 +1,7 @@
 ---
 name: ai-scripts
-description: Use wuhu:ai — tool-free completion, capability probes, private image generation/editing and transcription.
-script_exports: {"wuhu:ai":["CapabilityError","CompletionError","capability","complete","editImage","generateImage","transcribe"],"wuhu:web_search":["CapabilityError"]}
+description: Use wuhu:ai — tool-free completion, capability probes, private image generation/editing, a GIF's frames as one PNG (you see only frame 1) and transcription.
+script_exports: {"wuhu:ai":["CapabilityError","CompletionError","capability","complete","editImage","generateImage","inspectImage","renderFrames","transcribe"],"wuhu:web_search":["CapabilityError"]}
 ---
 
 # AI scripts
@@ -38,6 +38,17 @@ References must be private PNG paths in your group, a readable group's `wuhu://<
 Outputs are create-only: an existing destination, system path or another session's home is refused before provider spending. Space writes are atomic create-only; machine writes retain the existing stat/write guards and claims within a script run, not a cross-process atomic guarantee. Up to four image calls in one script run concurrently. Cancellation is propagated and failed calls do not write. `generate_image` uses the same resolver and supports the same optional provider/model/quality/size fields.
 
 Unsupported editing/tier requests use `unsupported_feature`.
+
+## Looking at a GIF
+
+You see only a GIF's first frame. To see what happens in one, render its frames to a PNG and `read` that:
+
+```js
+import { renderFrames } from 'wuhu:ai'
+result(await renderFrames('/art/fox.gif', { frames: 6, destination: '/_/sessions/<me>/fox-frames.png' }))
+```
+
+`renderFrames(path, { frames?, destination })` draws the frames as a browser shows them at that moment (disposal applied) and returns `{ path, width, height, frames: [{ index, atMs }] }`. `frames` is a list of frame indices or a count spaced evenly in time (default 9; a frame held across two picks shows once); one frame is a plain PNG, several tile left to right, top to bottom, ⌈√k⌉ columns, long edge ≤ 2000 px. `inspectImage(path)` returns `{ mimeType, bytes, width, height, frames, durationMs, delaysMs }` for a PNG, JPEG, GIF or WebP; a still image is one frame with no delays. Paths follow the reference rules above; the destination is a create-only `.png`, as for `generateImage`. Both run on the server without a provider and don't count toward the four concurrent image calls.
 
 CLI: `wuhu image 'a lunar garden' --destination ./garden.png [--provider qwen] [--quality standard]`; editing adds one or more `--image ./reference.png`. CLI local output is created exclusively and never overwritten. The CLI uploads bytes privately to the authenticated server; it does not publish references.
 

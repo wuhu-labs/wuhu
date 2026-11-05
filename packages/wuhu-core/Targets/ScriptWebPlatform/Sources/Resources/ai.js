@@ -46,4 +46,6 @@ export const editImage = (images, prompt, options) => {
   if (!Array.isArray(images) || images.length === 0) throw new CapabilityError({ code: "invalid_argument", message: "editImage needs reference image paths", hint: "Pass an array of one to five private PNG paths." })
   return image(prompt, options, images)
 }
+export const inspectImage = async (path) => answer(await call(() => host.inspect_image(path)))
+export const renderFrames = async (path, options) => answer(await call(() => host.render_frames(path, options)))
 export const transcribe = async (audio, options = {}) => answer(await call(() => host.transcribe(audio, options)))

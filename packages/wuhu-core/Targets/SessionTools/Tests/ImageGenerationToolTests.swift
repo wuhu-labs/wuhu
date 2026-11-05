@@ -224,7 +224,7 @@ private let ModelsPath = "/models.json"
         } operation: {
           try await world.run("generate_image", .object(["prompt": "a tiny moon", "destination": .string(destination)]))
         }
-        #expect(try failureMessage(refused) == "\(destination) already exists; generate_image never overwrites")
+        #expect(try failureMessage(refused) == "\(destination) already exists and is never overwritten")
       }
       #expect(recorder.snapshots.withLock(\.count) == 0)
       #expect(try await space.fs(.shared).read("/art/moon.png").1 == Data("kept".utf8))

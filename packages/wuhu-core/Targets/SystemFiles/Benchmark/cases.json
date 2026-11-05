@@ -696,6 +696,22 @@
         "ai-scripts": true
       },
       "judge": "PASS only if the reply, grounded in the ai-scripts skill, says to call generateImage with a destination ending in .gif (no separate format option), names the GIF-only options frames (2–16) and frameMs (20–2000), says only the OpenAI provider with a gpt-image-2.6-* model makes GIFs and anything else is refused before spending (no fallback to PNG), and says the answer reports path, mimeType image/gif, bytes, width, height, frames and durationMs read from the written file. Fail an invented format option, a claimed PNG fallback, a claim that editImage or Codex can make a GIF, or any file written."
+    },
+    {
+      "id": "gif-frames",
+      "issue": 630,
+      "title": "Looks at a GIF's frames before describing it",
+      "setup": "rgb-gif",
+      "prompt": "What happens in the animation {sb}/lights.gif? A line or two is enough.",
+      "required": [
+        "rendered_frames",
+        "sheet_in_home",
+        "reply_short"
+      ],
+      "skills": {
+        "ai-scripts": true
+      },
+      "judge": "PASS only if the agent looked at the frames rather than guessing from the file: it called renderFrames from wuhu:ai on {sb}/lights.gif with a .png destination in its own home (inspectImage for the timing is fine), read that sheet, and the short reply says the 2×2 animation shows red, then green, then blue (about 100, 200 and 300 ms, 600 ms in all). Fail a description from the first frame or the file name alone, a sheet or any other file written into {sb}, or invented content."
     }
   ]
 }

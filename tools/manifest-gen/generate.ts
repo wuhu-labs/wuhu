@@ -4019,6 +4019,9 @@ function profileName(
     if (hmr && target.platform === 'macOS') {
       return variant === 'dev' ? `Wuhu Dev ${target.bundleID}` : undefined
     }
+    if (target.platform === 'tvOS') {
+      return variant === 'dev' ? 'Wuhu Dev Previews tvOS' : undefined
+    }
     if (target.platform !== 'iOS' && !(hmr && target.platform === 'visionOS')) {
       return undefined
     }
@@ -4861,7 +4864,7 @@ export function resolvedEntitlements(
     }
     if (
       target.platform !== 'macOS' &&
-      (!preview || target.platform === 'iOS' ||
+      (!preview || target.platform === 'iOS' || target.platform === 'tvOS' ||
         (hmr && target.platform === 'visionOS'))
     ) {
       values['get-task-allow'] = true

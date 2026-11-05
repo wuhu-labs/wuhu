@@ -4,6 +4,8 @@ import Fetch
 import Foundation
 import JSONValue
 @testable import SessionTools
+import enum SpaceContract.ImageMedia
+import struct SpaceContract.PixelSize
 import Testing
 
 private let scriptPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13]) + Data("IHDR".utf8) + Data([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])
@@ -68,4 +70,21 @@ private let scriptWAV = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8
       #expect(try await rig.space.fs(.shared).read("/art/fox.gif").1 == scriptGIF)
     }
   }
+
+  @Test func aGIFIsInspectedAndItsFramesRenderedToAPNGWithoutAProvider() async throws {
+    try await withRig { rig in
+      for (path, bytes) in [("/lights.gif", lightsGIF), ("/still.png", scriptPNG), ("/notes.txt", Data("red, green, blue".utf8))] {
+        _ = try await rig.space.fs(.shared).write(path, bytes, ifMatch: nil)
+      }
+      try await rig.run("gif-frames")
+      try rig.expect("gif-frames")
+      for (path, size) in [("/art/lights.png", PixelSize(width: 4, height: 4)), ("/art/picked.png", PixelSize(width: 4, height: 2))] {
+        let png = try await rig.space.fs(.shared).read(path).1
+        #expect(ImageMedia.mimeType(ofBytes: png) == "image/png" && ImageMedia.pixelSize(ofBytes: png) == size)
+      }
+    }
+  }
 }
+
+// Pillow's 2×2 GIF of a red, a green and a blue frame shown 100, 200 and 300 ms.
+private let lightsGIF = Data(base64Encoded: "R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBFAABACwAAAAAAgACAIEA/wAAAAAAAAAAAAAIBgABCAQQEAAh+QQBHgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7")!

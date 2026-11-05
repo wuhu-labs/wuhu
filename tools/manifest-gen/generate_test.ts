@@ -33,6 +33,7 @@ import {
   populateAppBundleInfo,
   productTargets,
   rawLabelLowering,
+  referencedProfileNames,
   resolvedEntitlements,
   swiftlintSuiteBuildBazel,
   swiftPMIdentityFromUrl,
@@ -630,6 +631,39 @@ Deno.test('an iOS preview builds adhoc on the wildcard AdHoc profile', () => {
   })
 })
 
+Deno.test('a tvOS preview device build signs dev on the tvOS wildcard profile', () => {
+  const preview: AppManifest['targets'][number] = {
+    name: 'ExamplePreviewTV',
+    platform: 'tvOS',
+    bundleID: 'tech.lakeridge.previews.example',
+    bundleName: 'ExamplePreview',
+    entitlements: {},
+    families: ['tv'],
+    appIcons: [],
+    infoPlist: 'Sources/Info.plist',
+    minimumOSVersion: '26.0',
+    dependencies: [],
+    info: {},
+  }
+  const app: AppManifest = {
+    name: 'ExamplePreview',
+    signingTeamID: 'TEAM123456',
+    targets: [preview],
+  }
+  const build = generateAppBuildBazel(app)
+  assertStringIncludes(build, 'profile_name = "Wuhu Dev Previews tvOS"')
+  assertStringIncludes(
+    build,
+    '"//bazel/signing:dev": ":ExamplePreviewTV_dev_profile__run_deno_task_prepare_profiles"',
+  )
+  assertStringIncludes(build, '"//bazel/signing:dev_simulator": None')
+  assertEquals(referencedProfileNames([app]), ['Wuhu Dev Previews tvOS'])
+  assertEquals(resolvedEntitlements(preview, 'dev', 'TEAM123456'), {
+    'application-identifier': 'TEAM123456.tech.lakeridge.previews.example',
+    'get-task-allow': true,
+  })
+})
+
 Deno.test('entitlement overlays inject only variant-owned signing values', () => {
   const target: AppManifest['targets'][number] = {
     name: 'ExampleiOS',
@@ -713,18 +747,6 @@ Deno.test('entitlement overlays inject only variant-owned signing values', () =>
       'TEAM123456',
     ),
     {},
-  )
-  assertEquals(
-    resolvedEntitlements(
-      {
-        ...target,
-        platform: 'tvOS',
-        bundleID: 'tech.lakeridge.previews.example',
-      },
-      'dev',
-      'TEAM123456',
-    )['get-task-allow'],
-    undefined,
   )
 })
 

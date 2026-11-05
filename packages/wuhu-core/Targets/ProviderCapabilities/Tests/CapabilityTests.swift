@@ -365,11 +365,18 @@ private let audio = AudioClip(bytes: Data(base64Encoded: "UklGRiYAAABXQVZFZm10IB
   }
 
   @Test func imageInfoReadsFormatSizeAndFrames() throws {
-    #expect(ImageInfo(gif).map { [$0.format.rawValue, "\($0.width)x\($0.height)", "\($0.frames)", "\($0.durationMs)", "\($0.bytes)"] } == ["gif", "3x2", "2", "240", "111"])
-    #expect(ImageInfo(png).map { [$0.format.rawValue, "\($0.width)x\($0.height)", "\($0.frames)"] } == ["png", "1x1", "1"])
-    #expect(ImageInfo(gif.dropLast()) == nil && ImageInfo(Data("GIF89a".utf8)) == nil && ImageInfo(Data()) == nil)
-    #expect(ImageInfo(gif)?.answer(path: "/fox.gif") == ["path": "/fox.gif", "mimeType": "image/gif", "bytes": 111, "width": 3, "height": 2, "frames": 2, "durationMs": 240])
-    #expect(ImageInfo(png)?.answer(path: "/moon.png") == ["path": "/moon.png", "mimeType": "image/png", "bytes": .integer(png.count), "width": 1, "height": 1])
+    let jpeg = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x03, 0x00, 0x05, 0x03, 0x01, 0x22, 0x00])
+    let webp = Data(base64Encoded: "UklGRjoAAABXRUJQVlA4IC4AAAAQAgCdASoFAAMAAUAmJaACdLoB+AH4AAPIAP7Lt//TRRhTH3Jv/u82AMJf8IAA")!
+    let read = try [gif, png, jpeg, webp].map { try ImageInfo($0).map { [$0.mimeType, "\($0.width)x\($0.height)", "\($0.frames)", "\($0.delaysMs)", "\($0.durationMs)", "\($0.bytes)"] } }
+    #expect(read == [
+      ["image/gif", "3x2", "2", "[120, 120]", "240", "111"], ["image/png", "1x1", "1", "[]", "0", "69"],
+      ["image/jpeg", "5x3", "1", "[]", "0", "15"], ["image/webp", "5x3", "1", "[]", "0", "66"],
+    ])
+    #expect(try ImageInfo(gif.dropLast()) == nil && ImageInfo(Data("GIF89a".utf8)) == nil && ImageInfo(Data()) == nil)
+    #expect(try ImageInfo(gif)?.inspection == ["mimeType": "image/gif", "bytes": 111, "width": 3, "height": 2, "frames": 2, "durationMs": 240, "delaysMs": [120, 120]])
+    #expect(try ImageInfo(jpeg)?.inspection == ["mimeType": "image/jpeg", "bytes": 15, "width": 5, "height": 3, "frames": 1, "durationMs": 0, "delaysMs": []])
+    #expect(try ImageInfo(gif)?.answer(path: "/fox.gif") == ["path": "/fox.gif", "mimeType": "image/gif", "bytes": 111, "width": 3, "height": 2, "frames": 2, "durationMs": 240])
+    #expect(try ImageInfo(png)?.answer(path: "/moon.png") == ["path": "/moon.png", "mimeType": "image/png", "bytes": .integer(png.count), "width": 1, "height": 1])
   }
 
   @Test func theDestinationExtensionNamesTheFormat() throws {

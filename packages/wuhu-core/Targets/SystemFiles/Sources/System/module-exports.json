@@ -6,6 +6,8 @@
     "complete",
     "editImage",
     "generateImage",
+    "inspectImage",
+    "renderFrames",
     "transcribe"
   ],
   "wuhu:machine": [
