@@ -8,7 +8,7 @@ import { inlineNodes, runsOf } from '~/lib/canvas/text-edit'
 import { type CameraStore, useCamera, viewRect } from './canvas-chrome'
 
 // An item's text, edited in place: one paragraph whose hard breaks are
-// newlines, with `.wmd`'s bold, italic and link marks.
+// newlines, with `.wmd`'s bold, italic, link and code marks.
 
 const OneParagraph = Node.create({
   name: 'doc',
@@ -25,7 +25,6 @@ const extensions = [
     orderedList: false,
     listItem: false,
     listKeymap: false,
-    code: false,
     codeBlock: false,
     strike: false,
     underline: false,

@@ -1,0 +1,4 @@
+=== run_script
+{"gif":{"path":"/art/fox.gif","mimeType":"image/gif","bytes":111,"width":3,"height":2,"frames":2,"durationMs":240},"refusals":["unsupported_feature","unsupported_feature","invalid_argument","invalid_argument","unsupported_feature"]}
+
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]

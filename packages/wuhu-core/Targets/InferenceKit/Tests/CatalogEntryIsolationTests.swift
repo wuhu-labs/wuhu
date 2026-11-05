@@ -78,10 +78,10 @@ private let mixedCatalogCredentials = CredentialResolver.bound { provider in
       #expect(request.url.absoluteString == "https://configured-codex.test/backend-api/codex/images/generations")
       #expect(request.headers["originator"] == "configured-originator")
       #expect(request.headers.sensitiveValues["authorization"] == "Bearer fixture-token")
-      return Response(status: .ok, body: .string(#"{"data":[{"b64_json":"UE5H"}]}"#))
+      return Response(status: .ok, body: .string(#"{"data":[{"b64_json":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="}]}"#))
     }
     let image = try await withDependencies { $0.fetch = fetch } operation: { try await provider.image("moon") }
-    #expect(image == Data("PNG".utf8))
+    #expect(image == Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="))
   }
 }
 

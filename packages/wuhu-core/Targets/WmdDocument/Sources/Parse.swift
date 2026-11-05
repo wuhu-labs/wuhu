@@ -168,7 +168,7 @@ private func headingLevel(_ body: Substring) -> Int? {
 
 private func fenceLength(_ body: Substring) -> Int? {
   let count = body.prefix { $0 == "`" }.count
-  return count >= 3 ? count : nil
+  return count >= 3 && !body.dropFirst(count).contains("`") ? count : nil
 }
 
 private func listItem(_ body: Substring) -> (style: WmdSchema.ListStyle, text: Substring)? {

@@ -177,6 +177,14 @@ extension ModelsDocument {
       }
     } catch { throw CatalogError.invalidGroupsDocument }
   }
+
+  /// This document's providers with `other`'s groups and group errors.
+  public func withGroups(of other: ModelsDocument) -> ModelsDocument {
+    var document = self
+    document.groups = other.groups
+    document.groupErrors = other.groupErrors
+    return document
+  }
 }
 
 extension ModelsDocument.Provider {

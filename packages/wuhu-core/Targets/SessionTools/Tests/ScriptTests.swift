@@ -15,6 +15,7 @@ import class MainHub.Hub
 import func MainHub.resolveScriptModule
 import struct MainHub.ScriptError
 import struct MainHub.ScriptRun
+import enum ModelProviders.ModelPlacementReason
 import OrderedCollections
 import Scratch
 import SessionDomain

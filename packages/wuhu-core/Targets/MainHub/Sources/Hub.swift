@@ -11,6 +11,7 @@ import JSONValue
 import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
+import enum ModelProviders.ModelPlacementReason
 import struct ProviderCapabilities.CapabilityError
 import SessionDomain
 import SpaceCore

@@ -1,4 +1,4 @@
-import { LoroDoc } from 'loro-crdt/web'
+import { LoroDoc, type LoroMap, type LoroText } from 'loro-crdt/web'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { docOf, writeDocument } from './binding.ts'
 import { configuredDoc, loadLoro } from './loro.ts'
@@ -133,4 +133,31 @@ Deno.test('a split adds a block and a join removes one', () => {
   assertEquals(b.getMovableList('blocks').toJSON(), [
     { kind: 'paragraph', text: 'ab' },
   ])
+})
+
+Deno.test('inline code is the code mark, both ways', () => {
+  const a = peer()
+  const b = peer()
+  const code = schema.marks.code.create()
+  edit(
+    a,
+    docOf(schema, a),
+    page(schema.nodes.paragraph.create(null, [
+      schema.text('a '),
+      schema.text('b', [code]),
+      schema.text(' c'),
+    ])),
+  )
+  sync(a, b)
+  const text = b.getMovableList('blocks').get(0) as LoroMap
+  assertEquals((text.get('text') as LoroText).toDelta(), [
+    { insert: 'a ' },
+    { insert: 'b', attributes: { code: true } },
+    { insert: ' c' },
+  ])
+  assertEquals(shape(b), shape(a))
+  assertEquals(
+    docOf(schema, b).child(0).child(1).marks.map((mark) => mark.type.name),
+    ['code'],
+  )
 })

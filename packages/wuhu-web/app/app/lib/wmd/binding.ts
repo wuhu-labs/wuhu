@@ -27,7 +27,7 @@ export class WmdDocumentError extends Error {
   }
 }
 
-const markKeys = ['bold', 'italic', 'link'] as const
+const markKeys = ['bold', 'italic', 'link', 'code'] as const
 type MarkKey = typeof markKeys[number]
 type MarkValue = string | true
 
@@ -75,6 +75,7 @@ function marksOf(
 ): Mark[] {
   const marks: Mark[] = []
   if (attributes == null) return marks
+  if (attributes.code === true) return [schema.marks.code.create()]
   if (attributes.bold === true) marks.push(schema.marks.bold.create())
   if (attributes.italic === true) marks.push(schema.marks.italic.create())
   if (typeof attributes.link === 'string') {
@@ -165,9 +166,16 @@ export interface Flat {
   marks: Record<MarkKey, (MarkValue | null)[]>
 }
 
+export const noMarks = (): Flat['marks'] => ({
+  bold: [],
+  italic: [],
+  link: [],
+  code: [],
+})
+
 export function flatten(node: PMNode): Flat {
   let text = ''
-  const marks: Flat['marks'] = { bold: [], italic: [], link: [] }
+  const marks = noMarks()
   const push = (chunk: string, values: Record<MarkKey, MarkValue | null>) => {
     text += chunk
     for (const key of markKeys) {
@@ -176,7 +184,7 @@ export function flatten(node: PMNode): Flat {
   }
   node.forEach((child) => {
     if (child.type.name === 'hardBreak') {
-      push('\n', { bold: null, italic: null, link: null })
+      push('\n', { bold: null, italic: null, link: null, code: null })
       return
     }
     if (!child.isText || child.text == null) return
@@ -186,6 +194,7 @@ export function flatten(node: PMNode): Flat {
       bold: has('bold') ? true : null,
       italic: has('italic') ? true : null,
       link: link ? String(link.attrs.href) : null,
+      code: has('code') ? true : null,
     })
   })
   return { text, marks }
@@ -219,7 +228,7 @@ function syncString(text: LoroText, next: string) {
 }
 
 function currentMarks(text: LoroText, length: number): Flat['marks'] {
-  const marks: Flat['marks'] = { bold: [], italic: [], link: [] }
+  const marks = noMarks()
   for (const op of text.toDelta()) {
     if (op.insert == null) continue
     const attributes = op.attributes ?? {}
@@ -295,7 +304,7 @@ function writeBlock(block: LoroMap, node: PMNode) {
   const flat = flatten(node)
   syncString(text, flat.text)
   if (kind === 'code') {
-    syncMarks(text, { bold: [], italic: [], link: [] }, flat.text.length)
+    syncMarks(text, noMarks(), flat.text.length)
   } else syncMarks(text, flat.marks, flat.text.length)
 }
 

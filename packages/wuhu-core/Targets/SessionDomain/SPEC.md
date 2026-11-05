@@ -64,3 +64,7 @@ For every provider, past rendered messages are an exact prefix of every later re
 ## Durable tool outcomes
 
 `ToolOutcome.committed` is an optional asynchronous acknowledgement of durable admission, not tool execution. The worker invokes it only after successfully appending the outcome's tool result and optional context notice, for both ordinary calls and compaction re-establishment calls. A failed append or discarded outcome never invokes it. The callback may release retained external evidence (such as an exec caller leg) once the transcript owns the result.
+
+`ToolResultPayload.text` is a tool result as plain text, for a runtime that keeps no per-tool result shape (the Wuwei Session); a failed call of that runtime is `.failure`. It renders, estimates and backstops like a script result and changes no tool state.
+
+`estimateTokens` (a quarter token per UTF-8 byte, rounded up) and `ContentBlock.estimatedTokens` are public so the Wuwei Session estimates its own transcript by the rule `Transcript.estimatedContextTokens` uses.

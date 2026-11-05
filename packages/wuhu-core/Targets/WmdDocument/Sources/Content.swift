@@ -31,23 +31,17 @@ enum Block: Hashable {
   }
 }
 
-public struct InlineMarks: Hashable, Sendable {
-  public var bold: Bool
-  public var italic: Bool
-  public var link: String?
-
-  public init(bold: Bool = false, italic: Bool = false, link: String? = nil) {
-    self.bold = bold
-    self.italic = italic
-    self.link = link
-  }
+/// A run's marks: code text carries no other mark.
+public enum InlineMarks: Hashable, Sendable {
+  case text(bold: Bool = false, italic: Bool = false, link: String? = nil)
+  case code
 }
 
 public struct InlineRun: Hashable, Sendable {
   public var text: String
   public var marks: InlineMarks
 
-  public init(text: String, marks: InlineMarks = InlineMarks()) {
+  public init(text: String, marks: InlineMarks = .text()) {
     self.text = text
     self.marks = marks
   }

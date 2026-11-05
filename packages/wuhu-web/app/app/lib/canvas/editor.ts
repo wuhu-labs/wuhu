@@ -6,7 +6,7 @@ import {
   type LoroTreeNode,
   type TreeID,
 } from 'loro-crdt/web'
-import { type Flat, syncMarks } from '../wmd/binding.ts'
+import { noMarks, syncMarks } from '../wmd/binding.ts'
 import {
   type BoardConnector,
   type CanvasColor,
@@ -97,7 +97,8 @@ export function sameRuns(a: TextRun[], b: TextRun[]): boolean {
   return a.length === b.length &&
     a.every((run, i) =>
       run.text === b[i].text && run.bold === b[i].bold &&
-      run.italic === b[i].italic && run.link === b[i].link
+      run.italic === b[i].italic && run.link === b[i].link &&
+      run.code === b[i].code
     )
 }
 
@@ -105,12 +106,13 @@ export function sameRuns(a: TextRun[], b: TextRun[]): boolean {
 export function syncText(text: LoroText, runs: TextRun[]) {
   const plain = runs.map((run) => run.text).join('')
   if (text.toString() !== plain) text.update(plain, { useRefinedDiff: true })
-  const marks: Flat['marks'] = { bold: [], italic: [], link: [] }
+  const marks = noMarks()
   for (const run of runs) {
     for (let i = 0; i < run.text.length; i++) {
       marks.bold.push(run.bold ? true : null)
       marks.italic.push(run.italic ? true : null)
       marks.link.push(run.link ?? null)
+      marks.code.push(run.code ? true : null)
     }
   }
   syncMarks(text, marks, plain.length)

@@ -22,6 +22,8 @@ public func served(
   let bytes = injected(data, contentType: contentType, shell: shell, group: group)
   var headers = Headers()
   headers[.contentType] = contentType
+  // An SVG or XML file opened directly is a document that would run its scripts on this origin.
+  if [MediaType.svg, MediaType.xml].contains(contentType) { headers[contentSecurityPolicy] = "sandbox" }
   headers[.acceptRanges] = "bytes"
   headers[.cacheControl] = "no-cache"
   var tag: String?

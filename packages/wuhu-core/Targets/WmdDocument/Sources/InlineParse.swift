@@ -1,6 +1,6 @@
 extension Inline {
-  /// Reads `**bold**`, `*italic*`, `[text](url)` and backslash escapes; `line` is where `markdown`
-  /// starts in the agent's text.
+  /// Reads `**bold**`, `*italic*`, `[text](url)`, `` `code` `` and backslash escapes; `line` is
+  /// where `markdown` starts in the agent's text.
   public init(markdown: String, line: Int) throws(WmdSyntaxError) {
     var reader = InlineReader(Array(markdown), line: line)
     self = try reader.read()
@@ -34,8 +34,10 @@ private struct InlineReader {
   }
 
   mutating func literal(_ character: Character) {
-    let marks = InlineMarks(bold: self.stack.contains(.bold), italic: self.stack.contains(.italic))
-    let run = InlineRun(text: String(character), marks: marks)
+    self.add(InlineRun(text: String(character), marks: .text(bold: self.stack.contains(.bold), italic: self.stack.contains(.italic))))
+  }
+
+  mutating func add(_ run: InlineRun) {
     if self.linked != nil { self.linked!.append(run) } else { self.result.append(run) }
   }
 
@@ -59,6 +61,8 @@ private struct InlineReader {
           self.index += 1
         }
         try self.emphasis(count)
+      case "`":
+        self.code()
       case "!" where next == "[":
         throw self.failure(.image)
       case "[":
@@ -106,6 +110,32 @@ private struct InlineReader {
     }
   }
 
+  /// A run of n backticks opens code that the next run of exactly n closes, a newline inside
+  /// staying outside the mark; with no such run, it is literal.
+  mutating func code() {
+    let fence = self.backticks(at: self.index)
+    var close = self.index + fence
+    while close < self.characters.count, self.characters[close] != "`" || self.backticks(at: close) != fence {
+      close += self.characters[close] == "`" ? self.backticks(at: close) : 1
+    }
+    guard close < self.characters.count else {
+      for _ in 0 ..< fence { self.literal("`") }
+      self.index += fence
+      return
+    }
+    var code = self.characters[self.index + fence ..< close]
+    if code.first == " ", code.last == " ", code.contains(where: { $0 != " " }) { code = code.dropFirst().dropLast() }
+    for (number, line) in code.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+      if number > 0 { self.literal("\n") }
+      self.add(InlineRun(text: String(line), marks: .code))
+    }
+    self.index = close + fence
+  }
+
+  func backticks(at start: Int) -> Int {
+    self.characters[start...].prefix { $0 == "`" }.count
+  }
+
   mutating func closeLink() throws(WmdSyntaxError) {
     guard let runs = self.linked else { throw self.failure(.strayBracket) }
     self.index += 1
@@ -130,9 +160,11 @@ private struct InlineReader {
     }
     self.linked = nil
     for run in runs {
-      var marks = run.marks
-      marks.link = url
-      self.result.append(InlineRun(text: run.text, marks: marks))
+      guard case let .text(bold, italic, _) = run.marks else {
+        self.result.append(run)
+        continue
+      }
+      self.result.append(InlineRun(text: run.text, marks: .text(bold: bold, italic: italic, link: url)))
     }
   }
 }

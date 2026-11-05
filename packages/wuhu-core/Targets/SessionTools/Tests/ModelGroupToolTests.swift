@@ -10,6 +10,7 @@ import class MainHub.Hub
 #endif
 import JSONValue
 import enum ModelProviders.CatalogError
+import enum ModelProviders.ModelPlacementReason
 import SessionDomain
 import SpaceCore
 import Testing

@@ -19,6 +19,7 @@ export function configuredDoc<
     bold: { expand: 'after' },
     italic: { expand: 'after' },
     link: { expand: 'none' },
+    code: { expand: 'none' },
   })
   return doc
 }

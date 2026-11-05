@@ -13,12 +13,13 @@ function assertEquals<T>(actual: T, expected: T): void {
   if (a !== e) throw new Error(`expected ${e}, got ${a}`)
 }
 
-Deno.test('runs survive the editor paragraph, newlines and marks included', () => {
+Deno.test('runs survive the editor paragraph, newlines and marks (code too) included', () => {
   const runs: TextRun[] = [
     { text: 'Ship ' },
     { text: 'it', bold: true },
     { text: '\nnow', italic: true },
     { text: ' here', link: 'https://example.com' },
+    { text: 'make', code: true },
   ]
   const paragraph = schema.nodes.paragraph.create(
     null,
@@ -30,6 +31,7 @@ Deno.test('runs survive the editor paragraph, newlines and marks included', () =
     { text: '\n' },
     { text: 'now', italic: true },
     { text: ' here', link: 'https://example.com' },
+    { text: 'make', code: true },
   ])
 })
 

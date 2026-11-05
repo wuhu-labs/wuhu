@@ -5,6 +5,7 @@ dependencies:
   - WuhuAI
   - Dependencies
   - JSONValue
+  - ModelProviders
   - OrderedCollections
   - SpaceContract
 swiftSettings:

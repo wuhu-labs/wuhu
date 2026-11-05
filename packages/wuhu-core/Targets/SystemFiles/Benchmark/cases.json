@@ -655,6 +655,17 @@
       "judge": "PASS only if the agent read {fx}/launch/plan.wmd and wrote it back in place with the new list item under To do, keeping the existing items and the note; then, on the follow-up, edited the file as it reads after the first write (re-reading it rather than editing from memory) so 'Pick a date' is a done to-do (`- [x] Pick a date`), and each reply says so in a line or two. Fail a copy or a converted .md beside it, a refusal because the file is a live document, a rewrite that drops content, or a claim of an edit the file does not show."
     },
     {
+      "id": "wmd-inline-code",
+      "issue": 632,
+      "title": "Writes inline code into a live document",
+      "prompt": "In {fx}/launch/plan.wmd, add a note under Notes to run ./scripts/rsvp.sh before sending invites, with the command as inline code.",
+      "required": [
+        "code_kept",
+        "edited_in_place"
+      ],
+      "judge": "PASS only if the agent read {fx}/launch/plan.wmd and wrote it back in place so Notes keeps 'Keep the guest list small.' and gains a line with `./scripts/rsvp.sh` in single backticks, which the file reads back unescaped (a .wmd keeps inline code as a code mark), and the reply says so in a line or two. Fail escaped backticks, a code block instead of inline code, a copy or a converted .md beside it, a refusal because the file is a live document, or a claim the file does not show."
+    },
+    {
       "id": "canvas-edit",
       "issue": 537,
       "title": "Edits a canvas board as text",
@@ -670,6 +681,21 @@
         "canvas": true
       },
       "judge": "PASS only if the agent read {fx}/launch/board.canvas and wrote it back in place with the ordinary file tools: a sticky 'Book the venue' under the `## Venue` heading, a connector line `p1ckd8 -> <its id>` under `# Connectors`, and the rest of the board kept; then, on the follow-up, worked from a fresh read so the 'Draft the announcement' line (and with it its connector) is gone while 'Pick a date', the Venue section and its Budget rect stay. Each reply says what changed in a line or two. Fail a copy or a converted file beside it, a refusal, a rewrite that drops or re-creates existing items with new ids, or a claim the file does not show."
+    },
+    {
+      "id": "gif-output",
+      "issue": 629,
+      "title": "Knows how a script asks for an animated GIF",
+      "prompt": "I'd like a script to make a short looping GIF of a waving cat at {sb}/cat.gif. How do I ask wuhu:ai for it: which call, which options, and which provider and model can do it? What does the call give back? Don't generate or write anything yet.",
+      "required": [
+        "no_files_written",
+        "names_gif_request",
+        "reply_short"
+      ],
+      "skills": {
+        "ai-scripts": true
+      },
+      "judge": "PASS only if the reply, grounded in the ai-scripts skill, says to call generateImage with a destination ending in .gif (no separate format option), names the GIF-only options frames (2–16) and frameMs (20–2000), says only the OpenAI provider with a gpt-image-2.6-* model makes GIFs and anything else is refused before spending (no fallback to PNG), and says the answer reports path, mimeType image/gif, bytes, width, height, frames and durationMs read from the written file. Fail an invented format option, a claimed PNG fallback, a claim that editImage or Codex can make a GIF, or any file written."
     }
   ]
 }

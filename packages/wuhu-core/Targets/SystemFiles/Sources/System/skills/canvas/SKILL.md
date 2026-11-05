@@ -22,7 +22,7 @@ A `.canvas` file is a live whiteboard people draw on in the apps. You see it as 
 a1k9z0 -> b2c4v6 {#c5n7r8 elbow right:left} "depends on"
 ```
 
-- An item is `- <kind> {<attributes>} <text>`. Kinds: `sticky`, `text`, `rect`, `ellipse`, `diamond`, `file`. Text uses `.wmd` inline markdown (`**bold**`, `*italic*`, `[label](url)`); more lines continue indented 2 spaces. A `file` card's text is one space path.
+- An item is `- <kind> {<attributes>} <text>`. Kinds: `sticky`, `text`, `rect`, `ellipse`, `diamond`, `file`. Text uses `.wmd` inline markdown (`**bold**`, `*italic*`, `` `code` ``, `[label](url)`); more lines continue indented 2 spaces. A `file` card's text is one space path.
 - Attributes: `#id` (6 base-36 characters), `@x,y` (top-left, absolute, in points), `WxH`, and a colour: `yellow`, `pink`, `green`, `blue`, `purple`, `gray`. Free `text` has no colour.
 - A section is a `## Title {…}` heading; the item lines under it are inside it. Sections don't nest. Top-level items come first, then the sections, then `# Connectors`.
 - A connector is `from -> to {#id …} "label"` between item ids: `->` arrow at the end, `<->` both ends, `--` none. Optional `elbow` (default straight), `fromSide:toSide` (`top right bottom left auto`), an elbow offset (a number like `40` or `-20` that slides its middle segment), and a quoted label.

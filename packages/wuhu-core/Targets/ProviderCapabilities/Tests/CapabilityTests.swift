@@ -28,10 +28,14 @@ private struct CapabilityRequest: Sendable {
 
 private final class CapabilityRecorder: Sendable {
   let requests = LockIsolated<[CapabilityRequest]>([])
-  let replies: [String]
+  let replies: [Data]
   let statuses: [Status]
 
-  init(_ replies: [String], statuses: [Status] = []) {
+  convenience init(_ replies: [String], statuses: [Status] = []) {
+    self.init(bytes: replies.map { Data($0.utf8) }, statuses: statuses)
+  }
+
+  init(bytes replies: [Data], statuses: [Status] = []) {
     self.replies = replies
     self.statuses = statuses
   }
@@ -45,12 +49,15 @@ private final class CapabilityRecorder: Sendable {
         return count
       }
       let reply = self.replies[min(index, self.replies.count - 1)]
-      return Response(status: self.statuses.indices.contains(index) ? self.statuses[index] : .ok, body: .string(reply))
+      return Response(status: self.statuses.indices.contains(index) ? self.statuses[index] : .ok, body: .bytes(reply))
     }
   }
 }
 
-private let imageReply = #"{"data":[{"b64_json":"UE5H"}]}"#
+private let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgZGIGAAAOAAfXb+R4AAAAAElFTkSuQmCC")!
+private let gif = Data(base64Encoded: "R0lGODlhAwACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQADAAAACwAAAAAAwACAAAIBgABCBwYEAAh+QQBDAABACwAAAAAAwACAIEAAP8AAAAAAAAAAAAIBgABCBwYEAA7")!
+private func generationReply(_ image: Data) -> String { #"{"data":[{"b64_json":"\#(image.base64EncodedString())"}]}"# }
+private let imageReply = generationReply(png)
 private let audio = AudioClip(bytes: Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==")!, mediaType: .wav)
 
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct CapabilityTests {
@@ -58,7 +65,7 @@ private let audio = AudioClip(bytes: Data(base64Encoded: "UklGRiYAAABXQVZFZm10IB
     let recorder = CapabilityRecorder([imageReply])
     let provider = CapabilityClient(document: nil, credentials: bothCredentials)
     let image = try await withDependencies { $0.fetch = recorder.fetch } operation: { try await provider.image("moon") }
-    #expect(image == Data("PNG".utf8))
+    #expect(image == png)
     #expect(recorder.requests.value.first?.url == "https://chatgpt.com/backend-api/codex/images/generations")
     #expect(recorder.requests.value.first?.headers.sensitiveValues["chatgpt-account-id"] == "private-account")
   }
@@ -166,7 +173,7 @@ private let audio = AudioClip(bytes: Data(base64Encoded: "UklGRiYAAABXQVZFZm10IB
   @Test(arguments: ["draft", "standard", "fine", "ultra"])
   func qwenQualityMapsToExactModels(quality: String) async throws {
     let provider = try client("image", dialect: "dashscope")
-    let recorder = CapabilityRecorder([#"{"output":{"choices":[{"message":{"content":[{"image":"https://storage/image?signature=fixture"}]}}]}}"#, "PNG"])
+    let recorder = CapabilityRecorder(bytes: [Data(#"{"output":{"choices":[{"message":{"content":[{"image":"https://storage/image?signature=fixture"}]}}]}}"#.utf8), png])
     _ = try await withDependencies { $0.fetch = recorder.fetch } operation: { try await provider.image("moon", options: .init(quality: quality, size: "1536x1024")) }
     let requests = recorder.requests.value
     let body = try #require(JSONValue.parse(requests[0].body))
@@ -183,7 +190,7 @@ private let audio = AudioClip(bytes: Data(base64Encoded: "UklGRiYAAABXQVZFZm10IB
   }
 
   @Test func qwenEditUsesNativeImageContent() async throws {
-    let recorder = CapabilityRecorder([#"{"output":{"choices":[{"message":{"content":[{"image":"https://storage/image"}]}}]}}"#, "PNG"])
+    let recorder = CapabilityRecorder(bytes: [Data(#"{"output":{"choices":[{"message":{"content":[{"image":"https://storage/image"}]}}]}}"#.utf8), png])
     _ = try await withDependencies { $0.fetch = recorder.fetch } operation: { try await client("image", dialect: "dashscope").image("blue moon", images: [Data([1, 2])]) }
     let first = recorder.requests.value[0]
     #expect(first.url == "https://fake.provider/v1/services/aigc/multimodal-generation/generation")
@@ -299,5 +306,77 @@ private let audio = AudioClip(bytes: Data(base64Encoded: "UklGRiYAAABXQVZFZm10IB
     wav += little(16) + Data([1, 0, 1, 0]) + little(1) + little(2) + Data([2, 0, 16, 0]) + Data("data".utf8) + little(14402)
     #expect(AudioDuration.seconds(.init(bytes: wav, mediaType: .wav)) == 7201)
     await #expect(throws: CapabilityError.self) { _ = try await provider.transcribe(.init(bytes: wav, mediaType: .wav)) }
+  }
+
+  @Test func aGIFSendsTheFrameFieldsAndNoSizeUnlessAsked() async throws {
+    let provider = try client("image", dialect: "openai-images", model: "gpt-image-2.6-flare")
+    let recorder = CapabilityRecorder([generationReply(gif)])
+    let image = try await withDependencies { $0.fetch = recorder.fetch } operation: {
+      try await provider.image("fox", format: .gif, options: .init(frames: 4, frameMs: 120))
+    }
+    #expect(image == gif)
+    let request = try #require(recorder.requests.value.first)
+    #expect(request.url == "https://fake.provider/v1/images/generations")
+    #expect(JSONValue.parse(request.body) == ["prompt": "fox", "model": "gpt-image-2.6-flare", "n": 1, "output_format": "gif", "frame_count": 4, "frame_duration_ms": 120])
+    _ = try await withDependencies { $0.fetch = recorder.fetch } operation: { try await provider.image("fox", format: .gif, options: .init(size: "1536x1024")) }
+    #expect(JSONValue.parse(recorder.requests.value[1].body) == ["prompt": "fox", "model": "gpt-image-2.6-flare", "n": 1, "size": "1536x1024", "output_format": "gif"])
+  }
+
+  @Test func gifRefusalsComeBeforeAnyRequest() async throws {
+    let recorder = CapabilityRecorder([generationReply(gif)])
+    let flare = try client("image", dialect: "openai-images", model: "gpt-image-2.6-flare")
+    let cases: [(CapabilityClient, [Data], ImageFormat, CapabilityOptions, CapabilityError.Code)] = [
+      (try client("image", dialect: "openai-images", model: "gpt-image-2"), [], .gif, .init(), .unsupportedFeature),
+      (try client("image", dialect: "codex"), [], .gif, .init(), .unsupportedFeature),
+      (try client("image", dialect: "dashscope"), [], .gif, .init(), .unsupportedFeature),
+      (flare, [png], .gif, .init(), .unsupportedFeature),
+      (flare, [], .png, .init(frames: 4), .invalidArgument),
+      (flare, [], .png, .init(frameMs: 100), .invalidArgument),
+      (flare, [], .gif, .init(frames: 17), .invalidArgument),
+      (flare, [], .gif, .init(frameMs: 10), .invalidArgument),
+    ]
+    for (provider, images, format, options, code) in cases {
+      do {
+        _ = try await withDependencies { $0.fetch = recorder.fetch } operation: { try await provider.image("fox", images: images, format: format, options: options) }
+        Issue.record("A refused GIF request succeeded")
+      } catch let error as CapabilityError { #expect(error.code == code) }
+    }
+    #expect(recorder.requests.value.isEmpty)
+  }
+
+  @Test func bytesOfAnotherFormatAreUnavailable() async throws {
+    let flare = try client("image", dialect: "openai-images", model: "gpt-image-2.6-flare")
+    for (reply, format) in [(png, ImageFormat.gif), (gif, .png), (Data("PNG".utf8), .png), (gif.dropLast(), .gif)] {
+      let recorder = CapabilityRecorder([generationReply(reply)])
+      do {
+        _ = try await withDependencies { $0.fetch = recorder.fetch } operation: { try await flare.image("fox", format: format) }
+        Issue.record("A mismatched image was returned")
+      } catch let error as CapabilityError { #expect(error.code == .providerUnavailable) }
+    }
+  }
+
+  @Test func gpt26ModelsEditAndReportGIF() async throws {
+    let flare = try client("image", dialect: "openai-images", model: "gpt-image-2.6-sunburst")
+    #expect(try flare.capability("image")["features"] == ["edit": true, "formats": ["png", "gif"], "timestamps": [], "diarize": false])
+    #expect(try client("image", dialect: "dashscope").capability("image")["features"]["formats"] == ["png"])
+    let recorder = CapabilityRecorder([imageReply])
+    _ = try await withDependencies { $0.fetch = recorder.fetch } operation: { try await flare.image("blue fox", images: [png]) }
+    #expect(recorder.requests.value.first?.url == "https://fake.provider/v1/images/edits")
+  }
+
+  @Test func imageInfoReadsFormatSizeAndFrames() throws {
+    #expect(ImageInfo(gif).map { [$0.format.rawValue, "\($0.width)x\($0.height)", "\($0.frames)", "\($0.durationMs)", "\($0.bytes)"] } == ["gif", "3x2", "2", "240", "111"])
+    #expect(ImageInfo(png).map { [$0.format.rawValue, "\($0.width)x\($0.height)", "\($0.frames)"] } == ["png", "1x1", "1"])
+    #expect(ImageInfo(gif.dropLast()) == nil && ImageInfo(Data("GIF89a".utf8)) == nil && ImageInfo(Data()) == nil)
+    #expect(ImageInfo(gif)?.answer(path: "/fox.gif") == ["path": "/fox.gif", "mimeType": "image/gif", "bytes": 111, "width": 3, "height": 2, "frames": 2, "durationMs": 240])
+    #expect(ImageInfo(png)?.answer(path: "/moon.png") == ["path": "/moon.png", "mimeType": "image/png", "bytes": .integer(png.count), "width": 1, "height": 1])
+  }
+
+  @Test func theDestinationExtensionNamesTheFormat() throws {
+    #expect(try ImageFormat(destination: "/art/fox.GIF") == .gif)
+    #expect(try ImageFormat(destination: "machines://studio/tmp/moon.png") == .png)
+    #expect(try ImageFormat(destination: "/art.gif/moon") == .png)
+    do { _ = try ImageFormat(destination: "/art/logo.svg"); Issue.record("An SVG destination was accepted") }
+    catch { #expect(error.code == .unsupportedFeature) }
   }
 }

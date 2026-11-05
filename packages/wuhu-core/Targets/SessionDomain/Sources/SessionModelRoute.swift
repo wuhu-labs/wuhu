@@ -1,50 +1,11 @@
 import Dependencies
+import struct ModelProviders.ModelPlacementEvidence
+import enum ModelProviders.ModelPlacementReason
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-
-public enum ModelPlacementReason: String, Hashable, Sendable, Codable {
-  case create
-  case startOver
-  case compaction
-}
-
-public struct ModelHeadroomWindow: Hashable, Sendable, Codable {
-  public var name: String
-  public var usedPercent: Double?
-  public var resetsAt: Double?
-  public var capacity: Double
-  public var remaining: Double?
-  public var score: Double?
-
-  public init(name: String, usedPercent: Double?, resetsAt: Double?, capacity: Double, remaining: Double?, score: Double?) {
-    self.name = name
-    self.usedPercent = usedPercent
-    self.resetsAt = resetsAt
-    self.capacity = capacity
-    self.remaining = remaining
-    self.score = score
-  }
-}
-
-public struct ModelPlacementEvidence: Hashable, Sendable, Codable {
-  public var member: String
-  public var observedAt: Double?
-  public var windows: [ModelHeadroomWindow]
-  public var score: Double?
-  /// The lowest score ÷ capacity among windows shorter than the longest; below 1 the member burns ahead of its pace.
-  public var shortWindowPace: Double?
-
-  public init(member: String, observedAt: Double?, windows: [ModelHeadroomWindow], score: Double?, shortWindowPace: Double? = nil) {
-    self.member = member
-    self.observedAt = observedAt
-    self.windows = windows
-    self.score = score
-    self.shortWindowPace = shortWindowPace
-  }
-}
 
 public struct SessionModelRoute: Hashable, Sendable, Codable {
   public var group: String?

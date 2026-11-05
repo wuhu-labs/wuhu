@@ -94,43 +94,78 @@ private func fence(for code: String) -> String {
 
 extension Inline {
   /// Every change of marks closes all and reopens bold outside italic, the one spelling the parser
-  /// reads back without guessing; a link closes the marks around both of its brackets.
-  public func markdown(continuation: String) -> String {
+  /// reads back without guessing; a link closes the marks around both of its brackets. Code sits
+  /// inside whatever is open, as the parser gives it no other mark. Plain backticks are escaped
+  /// only in text that has code, where a fence could take them. `escaping` adds characters
+  /// written with a backslash outside code.
+  public func markdown(continuation: String, escaping: Set<Character> = []) -> String {
+    let textEscaping = self.runs.contains { $0.marks == .code } ? escaping.union(["`"]) : escaping
     var out = ""
-    var current = InlineMarks()
+    var current = (bold: false, italic: false, link: String?.none)
     var atLineStart = true
-    func transition(to next: InlineMarks) {
+    func transition(bold: Bool, italic: Bool, link: String?) {
       if current.italic { out += "*" }
       if current.bold { out += "**" }
-      if current.link != next.link {
-        if let link = current.link { out += "](" + escapeURL(link) + ")" }
-        if next.link != nil { out += "[" }
+      if current.link != link {
+        if let old = current.link { out += "](" + escapeURL(old, escaping: escaping) + ")" }
+        if link != nil { out += "[" }
       }
-      if next.bold { out += "**" }
-      if next.italic { out += "*" }
-      current = next
+      if bold { out += "**" }
+      if italic { out += "*" }
+      current = (bold, italic, link)
     }
     for run in self.runs {
-      if run.marks != current { transition(to: run.marks) }
-      out += escape(run.text, continuation: continuation, atLineStart: &atLineStart)
+      switch run.marks {
+      case let .text(bold, italic, link):
+        if current != (bold, italic, link) { transition(bold: bold, italic: italic, link: link) }
+        out += escape(run.text, continuation: continuation, escaping: textEscaping, atLineStart: &atLineStart)
+      case .code:
+        for (number, line) in run.text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+          if number > 0 {
+            out += continuation
+            atLineStart = true
+          }
+          guard !line.isEmpty else { continue }
+          out += codeSpan(line)
+          atLineStart = false
+        }
+      }
     }
-    transition(to: InlineMarks())
+    transition(bold: false, italic: false, link: nil)
     return out
   }
 }
 
-private func escapeURL(_ url: String) -> String {
+/// The shortest fence whose length no backtick run inside matches, padded where the code's own
+/// edge would otherwise be read as part of the fence or stripped.
+private func codeSpan(_ code: Substring) -> String {
+  var runs: Set<Int> = []
+  var run = 0
+  for character in code + " " {
+    if character == "`" {
+      run += 1
+    } else if run > 0 {
+      runs.insert(run)
+      run = 0
+    }
+  }
+  let fence = String(repeating: "`", count: (1...).first { !runs.contains($0) }!)
+  let padded = code.first == "`" || code.last == "`" || (code.first == " " && code.last == " " && code.contains { $0 != " " })
+  return fence + (padded ? " " + code + " " : code) + fence
+}
+
+private func escapeURL(_ url: String, escaping: Set<Character>) -> String {
   var out = ""
   for character in url {
-    if character == "\\" || character == ")" || character == "(" { out.append("\\") }
+    if character == "\\" || character == ")" || character == "(" || escaping.contains(character) { out.append("\\") }
     out.append(character)
   }
   return out
 }
 
-private let lineStartSpecials: Set<Character> = ["#", "-", "+", ">", "|", "`", "~", "=", " ", "\t"]
+private let lineStartSpecials: Set<Character> = ["#", "-", "+", ">", "|", "~", "=", " ", "\t"]
 
-private func escape(_ text: String, continuation: String, atLineStart: inout Bool) -> String {
+private func escape(_ text: String, continuation: String, escaping: Set<Character>, atLineStart: inout Bool) -> String {
   var out = ""
   let characters = Array(text)
   var index = 0
@@ -146,6 +181,12 @@ private func escape(_ text: String, continuation: String, atLineStart: inout Boo
       atLineStart = false
       if lineStartSpecials.contains(character) || startsThematicUnderscores(characters, at: index) {
         out += "\\" + String(character)
+        continue
+      }
+      if character == "`", !escaping.contains("`") {
+        let fence = characters[index...].prefix { $0 == "`" }.count
+        out += String(repeating: fence >= 3 ? "\\`" : "`", count: fence)
+        index += fence - 1
         continue
       }
       if character.isASCII, character.isNumber {
@@ -166,6 +207,7 @@ private func escape(_ text: String, continuation: String, atLineStart: inout Boo
     case "<" where index + 1 < characters.count && opensTag(characters[index + 1]):
       out += "\\<"
     default:
+      if escaping.contains(character) { out += "\\" }
       out.append(character)
     }
   }

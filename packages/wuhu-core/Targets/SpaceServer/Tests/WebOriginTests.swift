@@ -339,7 +339,7 @@ import Testing
     let response = try await harness.get(web, path)
     #expect(response.status == .ok)
     #expect(response.headers[HTTPField.Name("Content-Disposition")!] == "attachment; filename*=UTF-8''proof.\(suffix)")
-    #expect(response.headers[HTTPField.Name("Content-Security-Policy")!] == "sandbox allow-scripts")
+    #expect(response.headers[HTTPField.Name("Content-Security-Policy")!] == (["svg", "xml"].contains(suffix) ? "sandbox" : "sandbox allow-scripts"))
     #expect(try await response.text() == "<html>proof</html>")
   }
 

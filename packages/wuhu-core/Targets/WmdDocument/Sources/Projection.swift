@@ -42,7 +42,7 @@ private func block(of map: LoroMap) -> Block? {
 }
 
 extension Inline {
-  /// The text with its `bold`, `italic` and `link` marks; nil reads as empty.
+  /// The text with its `bold`, `italic`, `link` and `code` marks; nil reads as empty.
   public init(_ text: LoroText?) {
     guard let text else {
       self.init()
@@ -56,11 +56,9 @@ extension Inline {
 }
 
 private func marks(_ attributes: [String: LoroValue]) -> InlineMarks {
-  var marks = InlineMarks()
-  marks.bold = attributes[WmdSchema.Key.bold] == .bool(value: true)
-  marks.italic = attributes[WmdSchema.Key.italic] == .bool(value: true)
-  if case let .string(url)? = attributes[WmdSchema.Key.link] { marks.link = url }
-  return marks
+  if attributes[WmdSchema.Key.code] == .bool(value: true) { return .code }
+  let link: String? = if case let .string(url)? = attributes[WmdSchema.Key.link] { url } else { nil }
+  return .text(bold: attributes[WmdSchema.Key.bold] == .bool(value: true), italic: attributes[WmdSchema.Key.italic] == .bool(value: true), link: link)
 }
 
 func json(_ value: LoroValue) -> JSONValue {

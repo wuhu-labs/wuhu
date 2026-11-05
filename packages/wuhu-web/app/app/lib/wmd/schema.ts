@@ -370,7 +370,6 @@ export function wmdExtensions(frame: ViewFrame) {
       orderedList: false,
       listItem: false,
       listKeymap: false,
-      code: false,
       strike: false,
       underline: false,
       horizontalRule: false,

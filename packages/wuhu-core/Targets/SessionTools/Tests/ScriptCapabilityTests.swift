@@ -7,6 +7,7 @@ import JSONValue
 import Testing
 
 private let scriptPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13]) + Data("IHDR".utf8) + Data([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])
+private let scriptGIF = Data(base64Encoded: "R0lGODlhAwACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQADAAAACwAAAAAAwACAAAIBgABCBwYEAAh+QQBDAABACwAAAAAAwACAIEAAP8AAAAAAAAAAAAIBgABCBwYEAA7")!
 private let scriptWAV = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==")!
 
 @Suite(.deterministicDependencies) struct ScriptCapabilityTests {
@@ -48,6 +49,23 @@ private let scriptWAV = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8
       #expect(seen.value.count == 8)
       #expect(seen.value.allSatisfy { !$0.contains("chatgpt") })
       #expect(try await rig.space.fs(.shared).read("/art/edited.png").1 == scriptPNG)
+    }
+  }
+
+  @Test func aGIFDestinationSendsTheFrameFieldsAndAnswersFromTheBytes() async throws {
+    let bodies = Box<[JSONValue]>([])
+    let fetch = FetchClient { request in
+      let body = JSONValue.parse(try await request.body?.text() ?? "") ?? .null
+      bodies.withLock { $0.append(body) }
+      return Response(status: .ok, body: .string(#"{"data":[{"b64_json":"\#(scriptGIF.base64EncodedString())"}]}"#))
+    }
+    try await withRig(fetch: fetch, credentials: CredentialResolver { _ in .apiKey("private-key") }) { rig in
+      try await rig.write("/capabilities.json", #"{"image":{"active":"openai","providers":{"openai":{"dialect":"openai-images","baseURL":"https://fake.provider"}}}}"#)
+      _ = try await rig.space.fs(.shared).write("/reference.png", scriptPNG, ifMatch: nil)
+      try await rig.run("gif-capability")
+      try rig.expect("gif-capability")
+      #expect(bodies.value == [["prompt": "a fox waving", "model": "gpt-image-2.6-flare", "n": 1, "output_format": "gif", "frame_count": 2, "frame_duration_ms": 120]])
+      #expect(try await rig.space.fs(.shared).read("/art/fox.gif").1 == scriptGIF)
     }
   }
 }

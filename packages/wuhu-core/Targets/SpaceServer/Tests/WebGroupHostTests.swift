@@ -294,6 +294,38 @@ import Testing
     }
   }
 
+  // An SVG or XML file opened directly is a document; it never runs its scripts. A page still does.
+  @Test(arguments: [("svg", "image/svg+xml"), ("xml", "application/xml")])
+  func aScriptedDocumentIsServedSandboxedOnEveryHost(extension suffix: String, contentType: String) async throws {
+    let r = try await rig(publicRead: true)
+    let csp = HTTPField.Name("Content-Security-Policy")!
+    let path = "/art/logo.\(suffix)"
+    try await put(r, r.aliceGroup, path, "<svg xmlns='http://www.w3.org/2000/svg'><script xmlns='http://www.w3.org/1999/xhtml'>1</script></svg>")
+    try await put(r, r.aliceGroup, "/page.html", "<p>page</p>")
+    try await put(r, .shared, "/logo.\(suffix)", "<svg/>")
+    let alices = try await cookie(r, r.alice, r.aliceGroup)
+    let sandboxed = "sandbox; frame-ancestors 'self' \(Self.origin)"
+    let document = try await get(r, r.aliceHost, path, cookie: alices, site: "none", mode: "navigate")
+    #expect(document.status == .ok)
+    #expect(document.headers[.contentType] == contentType)
+    #expect(document.headers[csp] == sandboxed)
+    #expect(try await get(r, r.aliceHost, path, cookie: alices, method: .head).headers[csp] == sandboxed)
+    func conditional(_ field: HTTPField.Name, _ value: String) async throws -> Response {
+      var request = Request(url: URL(string: "https://\(r.aliceHost)\(path)")!)
+      request.headers[.cookie] = alices
+      request.headers[field] = value
+      return try await r.harness.web(request)
+    }
+    let partial = try await conditional(.range, "bytes=0-15")
+    #expect(partial.status == .partialContent)
+    #expect(partial.headers[csp] == sandboxed)
+    let unchanged = try await conditional(.ifNoneMatch, try #require(document.headers[.eTag]))
+    #expect(unchanged.status == .notModified)
+    #expect(unchanged.headers[csp] == sandboxed)
+    #expect(try await get(r, Self.sharedHost, "/logo.\(suffix)").headers[csp] == "sandbox")
+    #expect(try await get(r, r.aliceHost, "/page.html", cookie: alices).headers[csp] == "frame-ancestors 'self' \(Self.origin)")
+  }
+
   // `shared.<host>` keeps what the shared content origin served: the SPA's
   // cross-origin calls and navigations to /_/query with the cookie.
   @Test func theSharedHostsCrossOriginFlowsStillPass() async throws {

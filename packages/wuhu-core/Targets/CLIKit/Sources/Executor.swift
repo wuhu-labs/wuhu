@@ -110,8 +110,8 @@ struct Executor {
       try await self.script(file: file, arguments: arguments)
     case let .webSearch(query, provider, count):
       try await self.webSearch(query: query, provider: provider, count: count)
-    case let .image(prompt, images, destination, provider, model, quality, size):
-      try await self.image(prompt: prompt, images: images, destination: destination, provider: provider, model: model, quality: quality, size: size)
+    case let .image(prompt, images, destination, options):
+      try await self.image(prompt: prompt, images: images, destination: destination, options: options)
     case .transcriber:
       try await self.transcriber()
     case let .cat(path):

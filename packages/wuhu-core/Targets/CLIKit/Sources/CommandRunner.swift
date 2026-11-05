@@ -9,6 +9,7 @@ import JSONValue
 import MachineChannel
 import enum MinimalAgent.AgentLog
 import enum MinimalAgent.MinimalAgent
+import struct ProviderCapabilities.CapabilityOptions
 import SpaceClient
 import struct SpaceContract.ObserverInput
 import struct SpaceContract.RequestTermsInput
@@ -272,7 +273,7 @@ enum Command: Equatable {
   case script(file: String, arguments: [String])
   case transcribe(file: String, language: String?, provider: String? = nil, model: String? = nil, timestamps: String? = nil, diarize: Bool = false, json: Bool = false)
   case webSearch(query: String, provider: String?, count: Int?)
-  case image(prompt: String, images: [String], destination: String, provider: String?, model: String?, quality: String?, size: String?)
+  case image(prompt: String, images: [String], destination: String, options: CapabilityOptions)
   case transcriber
   case put(path: String, force: Bool)
   case edit(path: String, old: String, new: String, force: Bool)

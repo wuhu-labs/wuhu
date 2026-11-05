@@ -30,7 +30,7 @@ public struct CompactionThresholds: Hashable, Sendable {
   }
 }
 
-func estimateTokens(_ text: String) -> Int {
+public func estimateTokens(_ text: String) -> Int {
   Int((Double(text.utf8.count) / 4.0).rounded(.up))
 }
 
@@ -101,7 +101,7 @@ extension TranscriptItem {
 }
 
 extension ContentBlock {
-  func estimatedTokens(_ images: ImageLimits) -> Int {
+  public func estimatedTokens(_ images: ImageLimits) -> Int {
     switch self {
     case .media:
       images.tokens(nil)
@@ -174,6 +174,8 @@ extension ToolResultPayload {
     case let .query(result):
       result.output
     case let .script(result):
+      result.output
+    case let .text(result):
       result.output
     case let .sendMessage(result):
       "posted \(result.messageID.rawValue) to conversation \(result.conversationID.rawValue)"

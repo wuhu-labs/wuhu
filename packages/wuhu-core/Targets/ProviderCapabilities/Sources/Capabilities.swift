@@ -60,6 +60,7 @@ public struct CapabilitiesDocument: Sendable, Codable {
 
   struct Facts: Sendable, Codable {
     var edit: Bool?
+    var formats: [ImageFormat]?
     var timestamps: [String]?
     var diarize: Bool?
   }
@@ -87,12 +88,16 @@ public struct CapabilityOptions: Sendable, Codable, Hashable {
   public var timestamps: [String]?
   public var diarize: Bool?
   public var count: Int?
+  public var frames: Int?
+  public var frameMs: Int?
 
-  public init(provider: String? = nil, model: String? = nil, quality: String? = nil, size: String? = nil, language: String? = nil, timestamps: [String]? = nil, diarize: Bool? = nil, count: Int? = nil) {
+  public init(provider: String? = nil, model: String? = nil, quality: String? = nil, size: String? = nil, frames: Int? = nil, frameMs: Int? = nil, language: String? = nil, timestamps: [String]? = nil, diarize: Bool? = nil, count: Int? = nil) {
     self.provider = provider
     self.model = model
     self.quality = quality
     self.size = size
+    self.frames = frames
+    self.frameMs = frameMs
     self.language = language
     self.timestamps = timestamps
     self.diarize = diarize
@@ -152,6 +157,7 @@ public struct CapabilityClient: Sendable {
       "authentication": .string("not_checked"),
       "features": .object([
         "edit": config.facts.edit.map(JSONValue.bool) ?? .bool(false),
+        "formats": .array((config.facts.formats ?? []).map { .string($0.rawValue) }),
         "timestamps": .array((config.facts.timestamps ?? []).map(JSONValue.string)),
         "diarize": .bool(config.facts.diarize ?? false),
       ]),
@@ -242,7 +248,7 @@ public struct CapabilityClient: Sendable {
     }
     let known = modelFacts(model, dialect: variant.dialect, kind: kind)
     let configured = variant.models?[model]
-    let facts = CapabilitiesDocument.Facts(edit: configured?.edit ?? known.edit, timestamps: configured?.timestamps ?? known.timestamps, diarize: configured?.diarize ?? known.diarize)
+    let facts = CapabilitiesDocument.Facts(edit: configured?.edit ?? known.edit, formats: configured?.formats ?? known.formats, timestamps: configured?.timestamps ?? known.timestamps, diarize: configured?.diarize ?? known.diarize)
     return .init(provider: id, dialect: variant.dialect, baseURL: baseURL, model: model, facts: facts, credentialID: credentialID)
   }
 
@@ -261,9 +267,10 @@ public struct CapabilityClient: Sendable {
 
   func modelFacts(_ model: String, dialect: String, kind: Kind) -> CapabilitiesDocument.Facts {
     switch (kind, dialect) {
-    case (.image, "codex"): .init(edit: model == "gpt-image-2")
-    case (.image, "openai-images"): .init(edit: ["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].contains(model))
-    case (.image, "dashscope"): .init(edit: ["qwen-image-3.0", "qwen-image-3.0-pro", "wan2.7-image-pro", "qwen-image-edit-plus", "qwen-image-edit-max"].contains(model))
+    case (.image, "codex"): .init(edit: model == "gpt-image-2", formats: [.png])
+    case (.image, "openai-images") where model.hasPrefix("gpt-image-2.6-"): .init(edit: true, formats: [.png, .gif])
+    case (.image, "openai-images"): .init(edit: ["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].contains(model), formats: [.png])
+    case (.image, "dashscope"): .init(edit: ["qwen-image-3.0", "qwen-image-3.0-pro", "wan2.7-image-pro", "qwen-image-edit-plus", "qwen-image-edit-max"].contains(model), formats: [.png])
     case (.transcription, "dashscope") where ["qwen-audio-3.1-asr-flash-filetrans", "qwen3-asr-flash-filetrans"].contains(model): .init(timestamps: ["words", "segments"], diarize: model == "qwen-audio-3.1-asr-flash-filetrans")
     case (.transcription, "openai-audio") where model == "whisper-1": .init(timestamps: ["words", "segments"], diarize: false)
     case (.transcription, "openai-audio") where model == "gpt-4o-transcribe-diarize": .init(timestamps: ["segments"], diarize: true)

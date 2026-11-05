@@ -21,24 +21,28 @@ export function runsOf(paragraph: PMNode): TextRun[] {
   const { text, marks } = flatten(paragraph)
   const runs: TextRun[] = []
   for (let i = 0; i < text.length; i++) {
+    const code = marks.code[i] === true
     const bold = marks.bold[i] === true
     const italic = marks.italic[i] === true
     const link = marks.link[i]
     const href = typeof link === 'string' ? link : undefined
     const last = runs.at(-1)
     if (
-      last !== undefined && (last.bold === true) === bold &&
-      (last.italic === true) === italic && last.link === href
+      last !== undefined && (last.code === true) === code &&
+      (last.bold === true) === bold && (last.italic === true) === italic &&
+      last.link === href
     ) {
       last.text += text[i]
       continue
     }
-    runs.push({
-      text: text[i],
-      ...(bold ? { bold: true } : {}),
-      ...(italic ? { italic: true } : {}),
-      ...(href === undefined ? {} : { link: href }),
-    })
+    runs.push(
+      code ? { text: text[i], code: true } : {
+        text: text[i],
+        ...(bold ? { bold: true } : {}),
+        ...(italic ? { italic: true } : {}),
+        ...(href === undefined ? {} : { link: href }),
+      },
+    )
   }
   return runs
 }

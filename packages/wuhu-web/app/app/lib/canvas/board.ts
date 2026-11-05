@@ -41,12 +41,10 @@ export type ConnectorStyle = typeof connectorStyles[number]
 export const arrows = ['none', 'end', 'both'] as const
 export type Arrow = typeof arrows[number]
 
-export interface TextRun {
-  text: string
-  bold?: true
-  italic?: true
-  link?: string
-}
+// `.wmd`'s marks on a run of text: code carries no other.
+export type TextRun =
+  | { text: string; code: true; bold?: never; italic?: never; link?: never }
+  | { text: string; code?: never; bold?: true; italic?: true; link?: string }
 
 export interface BoardItem {
   id: string
@@ -108,6 +106,10 @@ function runsOf(value: unknown): TextRun[] | undefined {
   const runs: TextRun[] = []
   for (const { insert, attributes } of value.toDelta()) {
     if (typeof insert !== 'string' || insert === '') continue
+    if (attributes?.code === true) {
+      runs.push({ text: insert, code: true })
+      continue
+    }
     const run: TextRun = { text: insert }
     if (attributes?.bold === true) run.bold = true
     if (attributes?.italic === true) run.italic = true

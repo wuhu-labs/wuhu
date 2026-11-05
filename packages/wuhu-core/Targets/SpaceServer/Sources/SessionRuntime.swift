@@ -29,6 +29,7 @@ import Logging
 import LoopCore
 import struct MachineContract.ExecID
 import ModelProviders
+import enum ModelProviders.ModelPlacementReason
 import struct OperationProtocol.OperationError
 import Serve
 import SessionDomain
@@ -423,6 +424,7 @@ extension ToolResultPayload {
     case .manipulateUI: "manipulate_ui"
     case .compact: "compact"
     case .script: "script"
+    case .text: "text"
     case .failure: "failure"
     }
   }

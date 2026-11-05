@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import JSONValue
+import struct ModelProviders.ModelPlacementEvidence
 import SessionDomain
 import SpaceContract
 @testable import SpaceServer

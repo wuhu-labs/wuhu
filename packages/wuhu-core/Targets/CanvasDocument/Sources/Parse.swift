@@ -186,24 +186,46 @@ private struct Reader {
   }
 }
 
-/// A heading's title and the text of its `{…}`, which starts at the first unescaped `{`.
+/// A heading's title and the text of its `{…}`, which starts at the first `{` neither escaped nor
+/// in code.
 private func heading(_ text: String, line: Int) throws(CanvasSyntaxError) -> (title: String, attributes: String?) {
-  var escaped = false
-  for index in text.indices {
-    let character = text[index]
-    if escaped {
-      escaped = false
-    } else if character == "\\" {
-      escaped = true
-    } else if character == "{" {
-      let rest = text[text.index(after: index)...].trimmingTrailingSpaces
+  let characters = Array(text)
+  var index = 0
+  while index < characters.count {
+    switch characters[index] {
+    case "\\":
+      index += 2
+    case "`":
+      index = endOfCode(characters, at: index)
+    case "{":
+      let rest = String(characters[(index + 1)...]).trimmingTrailingSpaces
       guard rest.hasSuffix("}"), !rest.dropLast().contains("}") else {
         throw CanvasSyntaxError(line: line, problem: .attribute("{" + rest))
       }
-      return (String(text[..<index]).trimmingTrailingSpaces, String(rest.dropLast()))
+      return (String(characters[..<index]).trimmingTrailingSpaces, String(rest.dropLast()))
+    default:
+      index += 1
     }
   }
   return (text.trimmingTrailingSpaces, nil)
+}
+
+/// Past the code a run of backticks opens, closed by the next run of the same length; past the
+/// run alone when none closes it.
+private func endOfCode(_ characters: [Character], at start: Int) -> Int {
+  func run(at index: Int) -> Int { characters[index...].prefix { $0 == "`" }.count }
+  let fence = run(at: start)
+  var index = start + fence
+  while index < characters.count {
+    guard characters[index] == "`" else {
+      index += 1
+      continue
+    }
+    let length = run(at: index)
+    if length == fence { return index + length }
+    index += length
+  }
+  return start + fence
 }
 
 extension Draft.Item {

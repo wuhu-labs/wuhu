@@ -174,14 +174,16 @@ extension ToolExecutor {
     ),
     Tool(
       name: "generate_image",
-      description: "Generate an image from a text prompt and save it as a png at destination. Never overwrites: it fails when a file already exists there.",
+      description: "Generate an image from a text prompt and save it at destination: a .gif destination makes an animated GIF, any other a png. Never overwrites: it fails when a file already exists there.",
       parameters: schema([
         ("prompt", string("Image description.")),
-        ("destination", string("Where to save the png: /<path> in the space or machines://<name-or-id>/<path>.")),
+        ("destination", string("Where to save it: /<path> in the space or machines://<name-or-id>/<path>; .gif for a GIF, otherwise png.")),
         ("provider", string("Optional configured capability provider override.")),
         ("model", string("Optional model override; unsupported features fail.")),
         ("quality", string("draft, standard, fine or ultra.")),
-        ("size", string("1024x1024, 1536x1024 or 1024x1536.")),
+        ("size", string("1024x1024, 1536x1024 or 1024x1536; a GIF omits it for the provider's own size.")),
+        ("frames", integer("GIF only: 2 to 16 frames.")),
+        ("frame_ms", integer("GIF only: each frame's duration, 20 to 2000 ms.")),
       ], required: ["prompt", "destination"]),
     ),
     Tool(

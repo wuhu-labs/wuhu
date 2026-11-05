@@ -578,7 +578,7 @@ function FittedText({ text, origin, strokeInset }: {
 
 function Runs({ runs }: { runs: TextRun[] }) {
   return runs.map((run, index) => {
-    let node: ReactNode = run.text
+    let node: ReactNode = run.code ? <code>{run.text}</code> : run.text
     if (run.italic) node = <em>{node}</em>
     if (run.bold) node = <strong>{node}</strong>
     if (run.link !== undefined) {

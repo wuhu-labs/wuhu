@@ -1,5 +1,7 @@
 public enum MediaType {
   public static let fallback: String = "application/octet-stream"
+  public static let svg: String = "image/svg+xml"
+  public static let xml: String = "application/xml"
 
   public static func of(path: String) -> String {
     let name = path.split(separator: "/").last ?? ""
@@ -41,7 +43,7 @@ public enum MediaType {
     "png": "image/png",
     "ppt": "application/vnd.ms-powerpoint",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "svg": "image/svg+xml",
+    "svg": svg,
     "tar": "application/x-tar",
     "tgz": "application/gzip",
     "txt": "text/plain",
@@ -55,7 +57,7 @@ public enum MediaType {
     "woff2": "font/woff2",
     "xls": "application/vnd.ms-excel",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "xml": "application/xml",
+    "xml": xml,
     "zip": "application/zip",
   ]
 }

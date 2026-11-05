@@ -9,6 +9,7 @@ import Fetch
 import JSONValue
 import struct ProviderCapabilities.CapabilityError
 import struct ProviderCapabilities.CapabilityOptions
+import enum ProviderCapabilities.ImageFormat
 import ServeRouting
 import SpaceCore
 
@@ -37,9 +38,10 @@ func addCapabilityRoutes(_ router: inout Router, space: Space, credentials: Cred
         return bytes
       }
       guard images.allSatisfy({ $0.count <= 25 * 1024 * 1024 }) else { throw CapabilityError(.invalidArgument, "Each image reference is at most 25 MiB.") }
-      let result = try await spaceCapabilities(space: space, credentials: credentials).image(input.prompt, images: images, options: .init(provider: input.provider, model: input.model, quality: input.quality, size: input.size))
-      guard result.count >= 24, result.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else { throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.") }
-      return try .json(ImageOutput(b64JSON: result.base64EncodedString(), mimeType: "image/png"))
+      let format = input.format ?? .png
+      let options = CapabilityOptions(provider: input.provider, model: input.model, quality: input.quality, size: input.size, frames: input.frames, frameMs: input.frameMs)
+      let result = try await spaceCapabilities(space: space, credentials: credentials).image(input.prompt, images: images, format: format, options: options)
+      return try .json(ImageOutput(b64JSON: result.base64EncodedString(), mimeType: format.mimeType))
     } catch let error as CapabilityError { return capabilityFailure(error) }
     catch { return capabilityFailure(.init(.invalidArgument, "Malformed image request.")) }
   }
@@ -58,6 +60,9 @@ private struct ImageInput: Decodable {
   var model: String?
   var quality: String?
   var size: String?
+  var format: ImageFormat?
+  var frames: Int?
+  var frameMs: Int?
 }
 
 private struct ImageOutput: Encodable {

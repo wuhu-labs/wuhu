@@ -43,6 +43,7 @@ public enum ToolResultPayload: Hashable, Sendable, Codable {
   case manipulateUI(ManipulateUIResult)
   case compact(CompactResult)
   case script(ScriptResult)
+  case text(TextResult)
   case failure(ToolFailure)
 }
 
@@ -208,6 +209,15 @@ public struct GrepResult: Hashable, Sendable, Codable {
 }
 
 public struct ScriptResult: Hashable, Sendable, Codable {
+  public var output: String
+
+  public init(output: String) {
+    self.output = output
+  }
+}
+
+/// A result as plain text, for a runtime that keeps no per-tool shape.
+public struct TextResult: Hashable, Sendable, Codable {
   public var output: String
 
   public init(output: String) {

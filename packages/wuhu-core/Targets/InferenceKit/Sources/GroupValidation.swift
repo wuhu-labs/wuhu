@@ -1,4 +1,3 @@
-import enum Credentials.ChatGPTAuthError
 import ModelProviders
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,57 +9,17 @@ import struct SessionDomain.SessionModelRoute
 
 extension ProviderCatalog {
   public func validateGroup(_ id: String, effort: String? = nil) throws(CatalogError) -> String {
-    let group = try validatedGroup(id, effort: effort).declaration
-    return effort ?? group.defaultEffort
+    try document.validateGroup(id, effort: effort)
   }
 
   public func validatedGroup(_ id: String, effort: String? = nil) throws(CatalogError) -> (declaration: ModelsDocument.Group, memberErrors: [String: CatalogError]) {
-    if let error = document.groupErrors[id] { throw error }
-    guard !id.isEmpty, var group = document.groups[id] else { throw .unknownGroup(id) }
-    guard document.providerErrors[id] == nil, document.providers[id] == nil, !group.members.isEmpty else {
-      throw .invalidGroup(group: id, reason: "group must have members and cannot also be a provider")
-    }
-    var ids: Set<String> = []
-    var pairs: Set<ModelSpecifier> = []
-    for member in group.members {
-      guard !member.id.isEmpty, !member.provider.isEmpty, !member.model.isEmpty,
-            ids.insert(member.id).inserted,
-            pairs.insert(ModelSpecifier(provider: member.provider, model: member.model, effort: "")).inserted
-      else {
-        throw .groupMember(group: id, member: member.id, reason: .invalidGroup(group: id, reason: "empty or duplicate member id/provider/model pair"))
-      }
-    }
-    if case let .select(member) = group.policy, !ids.contains(member) {
-      throw .invalidGroup(group: id, reason: "select member \(member) does not exist")
-    }
-    var errors: [String: CatalogError] = [:]
-    for member in group.members {
-      do {
-        _ = try validate(.init(provider: member.provider, model: member.model, effort: group.defaultEffort))
-        if let effort { _ = try validate(.init(provider: member.provider, model: member.model, effort: effort)) }
-      } catch { errors[member.id] = .groupMember(group: id, member: member.id, reason: error) }
-    }
-    if case let .select(member) = group.policy, let error = errors[member] { throw error }
-    let firstError = group.members.compactMap { errors[$0.id] }.first
-    if let firstError, errors.count == group.members.count { throw firstError }
-    group.members.removeAll { errors[$0.id] != nil }
-    return (group, errors)
+    try document.validatedGroup(id, effort: effort)
   }
 
   public func validateGroupReadiness(_ id: String, effort: String? = nil) async throws -> String {
-    let effort = try validateGroup(id, effort: effort)
-    for member in try validatedGroup(id, effort: effort).declaration.members {
-      do {
-        try await validateReadiness(.init(provider: member.provider, model: member.model, effort: effort))
-      } catch ChatGPTAuthError.loginRequired {
-        throw CatalogError.groupMember(group: id, member: member.id, reason: .credentialLoginRequired(provider: member.provider))
-      } catch let error as CatalogError {
-        throw CatalogError.groupMember(group: id, member: member.id, reason: error)
-      } catch {
-        throw CatalogError.groupMember(group: id, member: member.id, reason: .invalidGroup(group: id, reason: "credential readiness failed"))
-      }
+    try await document.validateGroupReadiness(id, effort: effort) { member, effort in
+      try await validateReadiness(.init(provider: member.provider, model: member.model, effort: effort))
     }
-    return effort
   }
 
   public func validateReadiness(_ specifier: ModelSpecifier) async throws {
@@ -114,19 +73,10 @@ extension ProviderCatalog {
   }
 
   public var groupMemberErrors: [String: [String: CatalogError]] {
-    var errors: [String: [String: CatalogError]] = [:]
-    for id in document.groups.keys {
-      if let members = try? validatedGroup(id).memberErrors, !members.isEmpty { errors[id] = members }
-    }
-    return errors
+    document.groupMemberErrors
   }
 
   public var groupErrors: [String: CatalogError] {
-    var errors = document.groupErrors
-    for id in document.groups.keys {
-      do { _ = try validateGroup(id) }
-      catch { errors[id] = error }
-    }
-    return errors
+    document.invalidGroups
   }
 }

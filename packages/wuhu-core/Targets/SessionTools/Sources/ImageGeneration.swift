@@ -10,6 +10,8 @@ import enum MainHub.Addressing
 import struct MainHub.ToolProblem
 import struct ProviderCapabilities.CapabilityError
 import struct ProviderCapabilities.CapabilityOptions
+import enum ProviderCapabilities.ImageFormat
+import struct ProviderCapabilities.ImageInfo
 import SessionDomain
 import SpaceClient
 import struct SpaceContract.WriteOutput
@@ -18,31 +20,8 @@ import enum SpaceCore.SpaceError
 import struct SpaceFS.SpacePath
 import Synchronization
 
-struct GeneratedImage: Equatable {
-  let path: String
-  let bytes: Int
-  let width: Int
-  let height: Int
-}
-
 func neverOverwrites(_ path: String) -> ToolProblem {
   ToolProblem("\(path) already exists; generate_image never overwrites")
-}
-
-struct PNGHeader: Equatable {
-  let width: Int
-  let height: Int
-
-  init?(_ data: Data) {
-    let bytes = [UInt8](data.prefix(24))
-    guard bytes.count == 24,
-          bytes[0 ..< 8].elementsEqual([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
-          bytes[12 ..< 16].elementsEqual(Array("IHDR".utf8))
-    else { return nil }
-    func word(_ at: Int) -> Int { bytes[at ..< at + 4].reduce(0) { $0 << 8 | Int($1) } }
-    width = word(16)
-    height = word(20)
-  }
 }
 
 // A machine write is stat-then-write, so two calls of one script run racing to
@@ -78,11 +57,12 @@ extension ToolExecutor {
     if let answer = try await receipt(recorded, for: destination) {
       return .write(.init(path: destination.rendered, revision: try revision(answer.token, at: destination)))
     }
+    let format = try ImageFormat(destination: destination.rendered)
     try await refuseForeignHome(destination, session)
     try await refuseExisting(destination, session)
-    let options = CapabilityOptions(provider: arguments.provider, model: arguments.model, quality: arguments.quality, size: arguments.size)
-    let image = try await image(session, arguments.prompt, images: [], options: options)
-    return try await place(image, at: destination, recorded)
+    let options = CapabilityOptions(provider: arguments.provider, model: arguments.model, quality: arguments.quality, size: arguments.size, frames: arguments.frames, frameMs: arguments.frameMs)
+    let image = try await image(session, arguments.prompt, images: [], format: format, options: options)
+    return try await place(image.bytes, at: destination, recorded)
   }
 
   // The run_script side of generate_image: the same checks, provider and
@@ -94,9 +74,10 @@ extension ToolExecutor {
     claims: MachineWriteClaims,
     images: [String] = [],
     options: CapabilityOptions = .init(),
-  ) async throws -> GeneratedImage {
+  ) async throws -> JSONValue {
     let destination = try await resolvedAddress(raw, as: session)
     try Addressing.refuseSystem(destination)
+    let format = try ImageFormat(destination: destination.rendered)
     try claims.claim(destination)
     do {
       try await refuseForeignHome(destination, session)
@@ -105,15 +86,12 @@ extension ToolExecutor {
       var input: [Data] = []
       for path in images {
         let bytes = try await capabilityInput(session, path, limit: 25 * 1024 * 1024)
-        guard PNGHeader(bytes) != nil else { throw CapabilityError(.invalidArgument, "Reference images must be PNG files.") }
+        guard ImageInfo(bytes)?.format == .png else { throw CapabilityError(.invalidArgument, "Reference images must be PNG files.") }
         input.append(bytes)
       }
-      let image = try await image(session, prompt, images: input, options: options)
-      guard let header = PNGHeader(image) else {
-        throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.")
-      }
-      _ = try await place(image, at: destination, try await client(session))
-      return GeneratedImage(path: destination.rendered, bytes: image.count, width: header.width, height: header.height)
+      let image = try await image(session, prompt, images: input, format: format, options: options)
+      _ = try await place(image.bytes, at: destination, try await client(session))
+      return image.info.answer(path: destination.rendered)
     } catch {
       claims.release(destination)
       throw error

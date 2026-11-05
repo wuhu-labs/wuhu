@@ -17,6 +17,7 @@ import Testing
   \\# not a heading, # mid-line, 1. mid-line, \\[x\\] \\* \\\\ \\<b> a < b.
   \\- not a list
   1\\. not ordered
+  \\`\\`\\`not a fence, `code`, ``a`b``, `` `x` ``, `` ` ``, ` `, **bold `c` text** and [link `d`](u).
 
   ## Lists
 
@@ -29,7 +30,7 @@ import Testing
   1. one
   2. two
 
-  ### Code
+  ### Code and `spans`
 
   ````
   let fence = ```
@@ -69,11 +70,51 @@ import Testing
     ("- a\n\n- b\n", "- a\n- b\n"),
     ("- a\n\n\n    b\n", "- a\n\n\n    b\n"),
     ("- a\n    - b\n\n        c\n- d\n", "- a\n    - b\n\n        c\n- d\n"),
+    ("`a\nb`\n", "`a`\n`b`\n"),
+    ("` a `\n", "`a`\n"),
+    ("a ` b ``c`\n", "a ` b ``c`\n"),
+    ("```x``` y\n", "`x` y\n"),
+    ("*a `*` b*\n", "*a `*` b*\n"),
+    ("`\\*`\n", "`\\*`\n"),
+    ("\\`x\\`\n", "`x`\n"),
   ])
   func normalizes(_ input: String, _ expected: String) throws {
     let output = try WmdMarkdown.canonical(input)
     #expect(output == expected)
     #expect(try WmdMarkdown.canonical(output) == output)
+  }
+
+  @Test(arguments: [
+    [InlineRun(text: "`"), InlineRun(text: "*", marks: .code)],
+    [InlineRun(text: "a", marks: .code), InlineRun(text: "`")],
+    [InlineRun(text: "a ` b "), InlineRun(text: "c", marks: .code)],
+    [InlineRun(text: "``"), InlineRun(text: "`", marks: .code), InlineRun(text: "x\n`")],
+  ])
+  func literalBackticksBesideCodeRoundTrip(_ runs: [InlineRun]) throws {
+    let text = Inline(runs)
+    #expect(try Inline(markdown: text.markdown(continuation: "\n"), line: 1) == text)
+  }
+
+  @Test func textWithCodeRoundTrips() throws {
+    var random = SplitMix(seed: 1)
+    let pieces = ["a", " ", "`", "``", "*", "\\", "[", "]", "{", "\n"]
+    for _ in 0 ..< 2000 {
+      let runs = (0 ..< Int.random(in: 1 ... 5, using: &random)).map { _ in
+        let code = Bool.random(using: &random)
+        let text = (0 ..< Int.random(in: 1 ... 4, using: &random)).map { _ in
+          pieces[Int.random(in: 0 ..< pieces.count - (code ? 1 : 0), using: &random)]
+        }.joined()
+        let marks = code ? InlineMarks.code : .text(
+          bold: Bool.random(using: &random),
+          italic: Bool.random(using: &random),
+          link: Bool.random(using: &random) ? "u" : nil,
+        )
+        return InlineRun(text: text, marks: marks)
+      }
+      let text = Inline(runs + [InlineRun(text: "c", marks: .code)])
+      let markdown = text.markdown(continuation: "\n")
+      #expect(try Inline(markdown: markdown, line: 1) == text, "\(markdown)")
+    }
   }
 
   @Test(arguments: [
@@ -101,5 +142,17 @@ import Testing
   ])
   func refuses(_ input: String, _ line: Int, _ problem: WmdSyntaxError.Problem) {
     #expect(throws: WmdSyntaxError(line: line, problem: problem)) { try WmdMarkdown.canonical(input) }
+  }
+}
+
+private struct SplitMix: RandomNumberGenerator {
+  var seed: UInt64
+
+  mutating func next() -> UInt64 {
+    self.seed &+= 0x9E37_79B9_7F4A_7C15
+    var z = self.seed
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
   }
 }

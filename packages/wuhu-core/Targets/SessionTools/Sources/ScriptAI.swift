@@ -31,7 +31,7 @@ struct ScriptAI {
         else {
           throw CapabilityError(.invalidArgument, "generateImage needs a prompt and { destination }.")
         }
-        let options = try capabilityOptions(arguments[safe: 1], allowed: ["destination", "provider", "model", "quality", "size"])
+        let options = try capabilityOptions(arguments[safe: 1], allowed: ["destination", "provider", "model", "quality", "size", "frames", "frameMs"])
         let paths: [String]
         if case let .array(values)? = arguments[safe: 2] {
           paths = try values.map {
@@ -40,8 +40,7 @@ struct ScriptAI {
           }
           guard !paths.isEmpty else { throw CapabilityError(.invalidArgument, "editImage needs at least one reference image.") }
         } else { paths = [] }
-        let image = try await tools.generateImage(session, prompt: prompt, destination: destination, claims: claims, images: paths, options: options)
-        return .object(["path": .string(image.path), "mimeType": .string("image/png"), "bytes": .integer(image.bytes), "width": .integer(image.width), "height": .integer(image.height)])
+        return try await tools.generateImage(session, prompt: prompt, destination: destination, claims: claims, images: paths, options: options)
       }
     })
     engine.define("__wuhu_transcribe", promising: { [actor, tools] arguments in

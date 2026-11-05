@@ -13,6 +13,8 @@ import OrderedCollections
 import enum ProviderCapabilities.AudioMediaType
 import struct ProviderCapabilities.CapabilityError
 import struct ProviderCapabilities.CapabilityOptions
+import enum ProviderCapabilities.ImageFormat
+import struct ProviderCapabilities.ImageInfo
 import SessionDomain
 import SpaceClient
 import struct SpaceContract.GroupID
@@ -32,19 +34,20 @@ extension ToolExecutor {
     return try await capabilityCall { try await client(session).api(.post, "/v1/web-search", body: .object(body)) }
   }
 
-  /// A PNG from the image provider, with up to five PNG references.
-  func image(_ session: SessionID, _ prompt: String, images: [Data], options: CapabilityOptions) async throws -> Data {
+  /// A `format` image from the image provider, with up to five PNG references.
+  func image(_ session: SessionID, _ prompt: String, images: [Data], format: ImageFormat, options: CapabilityOptions) async throws -> (bytes: Data, info: ImageInfo) {
     var body: OrderedDictionary<String, JSONValue> = ["prompt": .string(prompt)]
     if !images.isEmpty { body["images"] = .array(images.map { .string($0.base64EncodedString()) }) }
+    if format != .png { body["format"] = .string(format.rawValue) }
     body["provider"] = options.provider.map(JSONValue.string)
     body["model"] = options.model.map(JSONValue.string)
     body["quality"] = options.quality.map(JSONValue.string)
     body["size"] = options.size.map(JSONValue.string)
+    body["frames"] = options.frames.map(JSONValue.integer)
+    body["frameMs"] = options.frameMs.map(JSONValue.integer)
     let output: ImageOutput = try await capabilityCall { try await client(session).api(.post, "/v1/image", body: .object(body)) }
-    guard let image = Data(base64Encoded: output.b64JSON), PNGHeader(image) != nil else {
-      throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.")
-    }
-    return image
+    let image = Data(base64Encoded: output.b64JSON) ?? Data()
+    return (image, try ImageInfo.returned(image, as: format))
   }
 
   func transcribe(_ session: SessionID, audio: String, options: CapabilityOptions) async throws -> JSONValue {

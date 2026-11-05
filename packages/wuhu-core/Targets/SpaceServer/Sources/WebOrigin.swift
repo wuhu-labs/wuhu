@@ -184,7 +184,7 @@ private func routedWebResponse(
     ifNoneMatch: request.headers[.ifNoneMatch],
     ifRange: request.headers[.ifRange],
   ).viewed(by: viewer)
-  if attachment { response.headers[contentSecurityPolicy] = attachmentSandbox }
+  if attachment { response.headers[contentSecurityPolicy] = response.headers[contentSecurityPolicy] ?? attachmentSandbox }
   if download || (attachment && isActiveAttachment(path)), let name = segments.last {
     response.headers[contentDisposition] = "attachment; filename*=UTF-8''" + extValue(name)
   }

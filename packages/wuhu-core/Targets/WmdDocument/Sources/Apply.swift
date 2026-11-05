@@ -229,6 +229,11 @@ extension LoroText {
   public func sync(to inline: Inline) throws {
     let plain = inline.plain
     if self.toString() != plain { try self.update(s: plain, options: UpdateOptions(timeoutMs: nil, useRefinedDiff: true)) }
+    try self.syncMarks(to: inline)
+  }
+
+  /// Marks the text as `inline` is marked, for a text that already reads `inline.plain`.
+  public func syncMarks(to inline: Inline) throws {
     let desired: [Attributes] = inline.runs.flatMap { run in Array(repeating: attributes(run.marks), count: run.text.utf16.count) }
     let actual: [Attributes] = self.toDelta().flatMap { delta -> [Attributes] in
       guard case let .insert(string, attributes) = delta else { return [] }
@@ -236,7 +241,7 @@ extension LoroText {
       return Array(repeating: present, count: string.utf16.count)
     }
     precondition(desired.count == actual.count, "a synced text has the target's length")
-    for key in [WmdSchema.Key.bold, WmdSchema.Key.italic, WmdSchema.Key.link] {
+    for key in [WmdSchema.Key.bold, WmdSchema.Key.italic, WmdSchema.Key.link, WmdSchema.Key.code] {
       var start = 0
       while start < desired.count {
         let value = desired[start][key]
@@ -258,9 +263,10 @@ extension LoroText {
 }
 
 private func attributes(_ marks: InlineMarks) -> Attributes {
+  guard case let .text(bold, italic, link) = marks else { return [WmdSchema.Key.code: .bool(value: true)] }
   var result: Attributes = [:]
-  if marks.bold { result[WmdSchema.Key.bold] = .bool(value: true) }
-  if marks.italic { result[WmdSchema.Key.italic] = .bool(value: true) }
-  if let link = marks.link { result[WmdSchema.Key.link] = .string(value: link) }
+  if bold { result[WmdSchema.Key.bold] = .bool(value: true) }
+  if italic { result[WmdSchema.Key.italic] = .bool(value: true) }
+  if let link { result[WmdSchema.Key.link] = .string(value: link) }
   return result
 }

@@ -259,8 +259,20 @@ _Prompt:_ "Add 'Book the venue' to the to-do list in {fx}/launch/plan.wmd." _Fol
 
 _Afterwards:_ `{fx}/launch/plan.wmd` still holds the original to-dos and the note, plus a `Book the venue` list item under `## To do`, and `Pick a date` is `- [x] Pick a date`, written in place with the ordinary file tools: a `.wmd` file reads and writes as markdown even while someone has it open live, and comes back canonical, so the second edit works from a fresh read. No copy beside it, no conversion to `.md`, nothing in `{sb}`. Each reply is a line or two.
 
+## wmd-inline-code
+
+_Prompt:_ "In {fx}/launch/plan.wmd, add a note under Notes to run ./scripts/rsvp.sh before sending invites, with the command as inline code."
+
+_Afterwards:_ `{fx}/launch/plan.wmd` keeps its content and its Notes gain a line with `` `./scripts/rsvp.sh` ``, written in place with the ordinary file tools; the file reads back with the same single backticks, unescaped, because a `.wmd` holds inline code as a `code` mark. No copy, nothing in `{sb}`. The reply is a line or two.
+
 ## canvas-edit
 
 _Prompt:_ "On the board {fx}/launch/board.canvas, add a sticky 'Book the venue' inside the Venue section and draw an arrow from 'Pick a date' to it." _Follow-up:_ "Now remove the 'Draft the announcement' sticky."
 
 _Afterwards:_ `{fx}/launch/board.canvas` holds a `Book the venue` sticky under `## Venue`, a connector `p1ckd8 -> <its id>`, and no `dr4ft1` (its connector went with it), while `Pick a date`, the Venue section and its Budget rect keep their ids; written in place with the ordinary file tools after reading the `canvas` skill, the second edit from a fresh read. No copy, nothing in `{sb}`. Each reply is a line or two.
+
+## gif-output
+
+_Prompt:_ "I'd like a script to make a short looping GIF of a waving cat at {sb}/cat.gif. How do I ask wuhu:ai for it: which call, which options, and which provider and model can do it? What does the call give back? Don't generate or write anything yet."
+
+_Afterwards:_ nothing written. The reply, after reading the `ai-scripts` skill, says `generateImage` with a `.gif` destination is the whole switch (no format option), names `frames` (2–16) and `frameMs` (20–2000), says only OpenAI's `gpt-image-2.6-*` models make GIFs and every other provider, model or `editImage` is refused before spending with no PNG fallback, and lists the answer: path, `mimeType: 'image/gif'`, bytes, width, height, `frames`, `durationMs`.

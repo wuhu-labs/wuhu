@@ -16,6 +16,7 @@ private struct Run: Codable, Equatable, Sendable {
   var bold: Bool?
   var italic: Bool?
   var link: String?
+  var code: Bool?
 }
 
 private struct Change: Decodable, Sendable {
@@ -140,11 +141,16 @@ private struct Case: Decodable, Sendable, CustomTestStringConvertible {
 }
 
 private func inline(_ runs: [Run]?) -> Inline {
-  Inline((runs ?? []).map { InlineRun(text: $0.text, marks: InlineMarks(bold: $0.bold ?? false, italic: $0.italic ?? false, link: $0.link)) })
+  Inline((runs ?? []).map { InlineRun(text: $0.text, marks: $0.code == true ? .code : .text(bold: $0.bold ?? false, italic: $0.italic ?? false, link: $0.link)) })
 }
 
 private func runs(_ inline: Inline) -> [Run]? {
-  inline.isEmpty ? nil : inline.runs.map { Run(text: $0.text, bold: $0.marks.bold ? true : nil, italic: $0.marks.italic ? true : nil, link: $0.marks.link) }
+  inline.isEmpty ? nil : inline.runs.map { run in
+    switch run.marks {
+    case .code: Run(text: run.text, code: true)
+    case let .text(bold, italic, link): Run(text: run.text, bold: bold ? true : nil, italic: italic ? true : nil, link: link)
+    }
+  }
 }
 
 private struct Runner {

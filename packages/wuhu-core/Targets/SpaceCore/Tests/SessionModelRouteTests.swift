@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
+import enum ModelProviders.ModelPlacementReason
 import Scratch
 import SessionDomain
 @testable import SpaceCore

@@ -9,15 +9,28 @@ import JSONValue
 import OrderedCollections
 
 extension CapabilityClient {
-  public func image(_ prompt: String, images: [Data] = [], options: CapabilityOptions = .init()) async throws -> Data {
+  /// A whole `format` image, checked before it is returned.
+  public func image(_ prompt: String, images: [Data] = [], format: ImageFormat = .png, options: CapabilityOptions = .init()) async throws -> Data {
     guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, images.count <= 5,
           images.allSatisfy({ !$0.isEmpty && $0.count <= 25 * 1024 * 1024 })
     else {
       throw CapabilityError(.invalidArgument, "Images need a nonempty prompt and at most five references of at most 25 MiB each.")
     }
+    guard format == .gif || (options.frames == nil && options.frameMs == nil) else {
+      throw CapabilityError(.invalidArgument, "frames and frameMs need a .gif destination.")
+    }
+    guard options.frames.map((2 ... 16).contains) != false, options.frameMs.map((20 ... 2000).contains) != false else {
+      throw CapabilityError(.invalidArgument, "frames is 2 to 16 and frameMs 20 to 2000.")
+    }
     let provider = try await resolve(.image, options: options)
     if !images.isEmpty, provider.facts.edit != true {
       throw CapabilityError(.unsupportedFeature, "Model '\(provider.model)' cannot edit images.", hint: "Choose an editing model such as qwen-image-3.0, qwen-image-edit-plus or gpt-image-2; draft is generation-only.")
+    }
+    if format == .gif, !images.isEmpty {
+      throw CapabilityError(.unsupportedFeature, "Image edits write PNG only.", hint: "Edit to a .png destination, or generate the GIF without references.")
+    }
+    guard provider.facts.formats?.contains(format) == true, format == .png || provider.dialect != "dashscope" else {
+      throw CapabilityError(.unsupportedFeature, "Model '\(provider.model)' cannot make \(format.rawValue.uppercased()) images.", hint: "Choose an OpenAI gpt-image-2.6 model, such as gpt-image-2.6-flare, for GIF.")
     }
     let size = options.size ?? "1024x1024"
     guard ["1024x1024", "1536x1024", "1024x1536"].contains(size) else {
@@ -53,11 +66,19 @@ extension CapabilityClient {
       guard let url = payload["output"]["choices"].list.first?["message"]["content"].list.compactMap({ $0["image"].text }).first else {
         throw CapabilityError(.providerUnavailable, "DashScope returned no image.")
       }
-      return try await download(url)
+      let bytes = try await download(url)
+      _ = try ImageInfo.returned(bytes, as: format)
+      return bytes
     }
     if images.isEmpty || provider.dialect == "codex" {
-      var body: OrderedDictionary<String, JSONValue> = ["prompt": .string(prompt), "model": .string(provider.model), "n": .integer(1), "size": .string(size)]
+      var body: OrderedDictionary<String, JSONValue> = ["prompt": .string(prompt), "model": .string(provider.model), "n": .integer(1)]
+      if format == .png || options.size != nil { body["size"] = .string(size) }
       if options.quality != nil { body["quality"] = .string(quality) }
+      if format == .gif {
+        body["output_format"] = "gif"
+        body["frame_count"] = options.frames.map(JSONValue.integer)
+        body["frame_duration_ms"] = options.frameMs.map(JSONValue.integer)
+      }
       if !images.isEmpty { body["images"] = .array(imageURLs.map { .object(["image_url": .string($0)]) }) }
       payload = try await post(provider, images.isEmpty ? "images/generations" : "images/edits", .object(body))
     } else {
@@ -78,6 +99,7 @@ extension CapabilityClient {
     guard let encoded = payload["data"].list.first?["b64_json"].text, let bytes = Data(base64Encoded: encoded), !bytes.isEmpty else {
       throw CapabilityError(.providerUnavailable, "The capability provider returned no decodable image.")
     }
+    _ = try ImageInfo.returned(bytes, as: format)
     return bytes
   }
 }

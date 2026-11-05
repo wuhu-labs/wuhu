@@ -164,4 +164,27 @@ private func text(_ list: LoroMovableList, _ position: UInt32) throws -> LoroTex
     try live.write(markdown.replacing("more", with: "most"), peer: 124)
     #expect(live.text == "- one\n\n    most\n    - two\n\n\n        nested\n")
   }
+
+  @Test func backticksAreTheCodeMark() throws {
+    let live = LiveReplica(.wmd)
+    try live.write("a `b` c\n", peer: 125)
+    #expect(live.text == "a `b` c\n")
+    #expect(Inline(try text(live.doc.getMovableList(id: "blocks"), 0)) == Inline([InlineRun(text: "a "), InlineRun(text: "b", marks: .code), InlineRun(text: " c")]))
+    try live.importUpdate(live.type { try text($0, 0).markUtf16(from: 4, to: 5, key: "code", value: LoroValue.bool(value: true)) })
+    #expect(live.text == "a `b` `c`\n")
+  }
+
+  @Test func literalBackticksBecomeTheMarkWhenTheirBlockIsNextWritten() throws {
+    let live = LiveReplica(.wmd)
+    try live.write("Apple\n", peer: 126)
+    try live.importUpdate(live.type { list in
+      let old = try list.insertMapContainer(pos: 1, child: LoroMap())
+      try old.insert(key: "kind", v: "paragraph")
+      try old.getOrCreateTextContainer(key: "text", child: LoroText()).insert(pos: 0, s: "run `make` now")
+    })
+    #expect(live.text == "Apple\n\nrun `make` now\n")
+    #expect(try live.merge(text: live.text, base: nil, peer: 127) == nil)
+    try live.write("Apple\n\nrun `make` now!\n", peer: 128)
+    #expect(Inline(try text(live.doc.getMovableList(id: "blocks"), 1)) == Inline([InlineRun(text: "run "), InlineRun(text: "make", marks: .code), InlineRun(text: " now!")]))
+  }
 }

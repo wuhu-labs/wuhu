@@ -5,6 +5,7 @@
 #endif
 
 import JSONValue
+import struct ProviderCapabilities.CapabilityOptions
 import struct SpaceClient.ObserveRequest
 import SpaceContract
 
@@ -187,13 +188,16 @@ extension Command {
       let model = try parser.option("--model", verb: verb)
       let quality = try parser.option("--quality", verb: verb)
       let size = try parser.option("--size", verb: verb)
+      let frames = try parser.intOption("--frames", verb: verb)
+      let frameMs = try parser.intOption("--frame-ms", verb: verb)
       let destination = try parser.option("--destination", verb: verb)
       var images: [String] = []
       while let path = try parser.option("--image", verb: verb) { images.append(path) }
       let prompt = try parser.required("prompt", verb: verb)
       try parser.finish(verb: verb)
-      guard let destination else { throw UsageError(message: "image: --destination <local-png-path> is required") }
-      return .image(prompt: prompt, images: images, destination: destination, provider: provider, model: model, quality: quality, size: size)
+      guard let destination else { throw UsageError(message: "image: --destination <local-path> is required") }
+      let options = CapabilityOptions(provider: provider, model: model, quality: quality, size: size, frames: frames, frameMs: frameMs)
+      return .image(prompt: prompt, images: images, destination: destination, options: options)
     case "transcribe":
       let language = try parser.option("--language", verb: verb)
       let provider = try parser.option("--provider", verb: verb)
@@ -1213,10 +1217,12 @@ extension Command {
     a persistent search corpus or use Brave results to train/evaluate models.
     """,
     "image": """
-    usage: wuhu image <prompt> --destination <local-png-path> [--image <local-png-path>]... [--provider <id>] [--model <id>] [--quality draft|standard|fine|ultra] [--size 1024x1024|1536x1024|1024x1536]
+    usage: wuhu image <prompt> --destination <local-path> [--image <local-png-path>]... [--provider <id>] [--model <id>] [--quality draft|standard|fine|ultra] [--size 1024x1024|1536x1024|1024x1536] [--frames 2-16] [--frame-ms 20-2000]
 
-    generates a PNG, or edits when --image is present. Uploads private reference
-    bytes internally and creates the local output exclusively; never overwrites.
+    generates a PNG, or an animated GIF when --destination ends in .gif (with
+    --frames and --frame-ms; OpenAI gpt-image-2.6 models only), or edits a PNG
+    when --image is present. Uploads private reference bytes internally and
+    creates the local output exclusively; never overwrites.
     """,
     "transcribe": """
     usage: wuhu transcribe [<file>] [--language <code>] [--provider <id>] [--model <id>] [--timestamps words,segments] [--diarize] [--json]

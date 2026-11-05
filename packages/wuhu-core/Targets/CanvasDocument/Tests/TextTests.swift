@@ -87,6 +87,16 @@ private func ids(_ text: String) -> [String] {
     #expect(try live.merge(text: live.text, base: nil, peer: 2) == nil)
   }
 
+  @Test func codeKeepsItsBracesUnescapedAndOutOfTheAttributes() throws {
+    let live = LiveReplica(.canvas)
+    try live.write("## `{x}` and \\{y} {@0,0 400x300}\n- sticky {@40,60} run `f{}` [a](u\\{)\n", peer: 40)
+    #expect(live.text.hasPrefix("## `{x}` and \\{y} {#"))
+    #expect(live.text.contains("yellow} run `f{}` [a](u\\{)\n"))
+    let board = CanvasBoard(doc: try drawnDoc(live))
+    #expect(board.items.first { $0.kind == .section }?.text == Inline([InlineRun(text: "{x}", marks: .code), InlineRun(text: " and {y}")]))
+    #expect(try live.merge(text: live.text, base: nil, peer: 41) == nil)
+  }
+
   @Test func connectorsJoinItemsTheBoardAlreadyHas() throws {
     let live = LiveReplica(.canvas)
     try live.write(Self.example, peer: 3)

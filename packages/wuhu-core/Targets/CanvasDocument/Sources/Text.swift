@@ -69,10 +69,10 @@ private func join(_ head: String, _ body: [String]) -> String {
   return out
 }
 
-/// Item text in `.wmd`'s inline markdown, one entry per line; `{` is escaped, since a heading's
-/// attributes start at its first bare one.
+/// Item text in `.wmd`'s inline markdown, one entry per line; `{` outside code is escaped, since
+/// a heading's attributes start at its first bare one.
 func bodyLines(_ text: Inline) -> [String] {
-  text.markdown(continuation: "\n").replacing("{", with: "\\{")
+  text.markdown(continuation: "\n", escaping: ["{"])
     .split(separator: "\n", omittingEmptySubsequences: false)
     .map { $0.allSatisfy { $0 == " " } ? "" : String($0) }
 }

@@ -131,7 +131,7 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> CanvasR
     var editor = CanvasEditor(doc)
     let sticky = try editor.insert(.sticky, frame: rect(0, 0, 100, 100), color: .yellow)
     let file = try editor.insert(.file, frame: rect(200, 0, 240, 160), color: nil, path: "/a.png")
-    let bold = Inline([InlineRun(text: "Ship "), InlineRun(text: "v1", marks: InlineMarks(bold: true))])
+    let bold = Inline([InlineRun(text: "Ship "), InlineRun(text: "v1", marks: .text(bold: true))])
     try editor.setText(sticky, bold)
     try editor.setColor([sticky], .green)
     try editor.setPath(file, "/designs/hero.png")

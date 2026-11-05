@@ -21,6 +21,7 @@ products:
   - SystemFiles
   - Credentials
   - ModelProviders
+  - InferenceKit
   - ProviderCapabilities
   - SecretMasking
   - ScriptWebPlatform

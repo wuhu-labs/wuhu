@@ -12,9 +12,10 @@ public enum WmdSchema {
     static let view = "view"
     public static let config = "config"
     static let sql = "sql"
-    public static let bold = "bold"
-    public static let italic = "italic"
-    public static let link = "link"
+    static let bold = "bold"
+    static let italic = "italic"
+    static let link = "link"
+    static let code = "code"
   }
 
   public enum ListStyle: String, Hashable, Sendable {
@@ -66,6 +67,7 @@ public enum WmdSchema {
     styles.insert(key: Key.bold, value: StyleConfig(expand: .after))
     styles.insert(key: Key.italic, value: StyleConfig(expand: .after))
     styles.insert(key: Key.link, value: StyleConfig(expand: .none))
+    styles.insert(key: Key.code, value: StyleConfig(expand: .none))
     doc.configTextStyle(textStyle: styles)
   }
 
