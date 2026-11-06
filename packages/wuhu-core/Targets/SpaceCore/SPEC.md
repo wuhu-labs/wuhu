@@ -213,6 +213,8 @@ The existing `session_worker_incarnations`, `execution_worker_owners`, `session_
 
 Message handles and device names are resolved when queued inputs enter the transcript, in the drain transaction. Stored attribution survives hydration unchanged; directory renames affect only messages admitted afterwards.
 
+The same drain transaction decides each delivered message's earlier exchange, so the delivered text can differ from the conversation's. The first message drained from a conversation in a generation carries the session's last message there and the one it answered (its reply target, else the message before it) when that last message predates the generation's head (compaction or Start over) and no message from that conversation is already in the generation, kept by compaction or delivered earlier; a session's first generation, which has no head, carries none. The decision and the quoted text, attributed as of the drain, are stored with the transcript item: hydration, reopening and re-rendering never recompute them, and later posts or renames never touch them. `StaleExchangeTests` pins this.
+
 Receipt writes accept a synchronous `onCommit` effect, invoked on the database writer after successful commit, before a subsequent database read can observe the result. Rollback does not invoke it. Tool-call exec results use the worker’s transcript append boundary instead of a separate receipt. The legacy `exec_jobs` table, when present, is retained empty and unused for rollback compatibility.
 
 ## Tool-call exec claims

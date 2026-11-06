@@ -116,16 +116,9 @@ public struct MessageHeader: Hashable, Sendable {
   }
 
   public func render() -> String {
-    var formattingZone = timeZone
-    // CoreFoundation resolves fixed zones by their minute-rounded GMT name.
-    if timeZone.identifier.hasPrefix("GMT") {
-      let minutes = (Double(timeZone.secondsFromGMT(for: timestamp)) / 60).rounded()
-      formattingZone = TimeZone(secondsFromGMT: Int(minutes) * 60)!
-    }
-    let style = Date.ISO8601FormatStyle(timeZoneSeparator: .colon, timeZone: formattingZone)
     var tags = [
       "<sender>\(escaped(senderHandle.map { "\($0) (\(sender))" } ?? sender))</sender>",
-      "<timestamp>\(style.format(timestamp))</timestamp>",
+      "<timestamp>\(timestamp.stamped(in: timeZone))</timestamp>",
       "<source>\(escaped(source.rendered))</source>",
       "<type>\(kind.rendered)</type>",
     ]
@@ -149,13 +142,25 @@ public struct MessageHeader: Hashable, Sendable {
     }
     return tags.joined(separator: "\n")
   }
+}
 
-  /// A value someone else named, such as a device name, must not close its tag
-  /// and open a trusted one.
-  private func escaped(_ value: String) -> String {
-    value.replacingOccurrences(of: "&", with: "&amp;")
-      .replacingOccurrences(of: "<", with: "&lt;")
-      .replacingOccurrences(of: ">", with: "&gt;")
+/// A value someone else named, such as a device name, must not close its tag
+/// and open a trusted one.
+func escaped(_ value: String) -> String {
+  value.replacingOccurrences(of: "&", with: "&amp;")
+    .replacingOccurrences(of: "<", with: "&lt;")
+    .replacingOccurrences(of: ">", with: "&gt;")
+}
+
+extension Date {
+  func stamped(in timeZone: TimeZone) -> String {
+    var formattingZone = timeZone
+    // CoreFoundation resolves fixed zones by their minute-rounded GMT name.
+    if timeZone.identifier.hasPrefix("GMT") {
+      let minutes = (Double(timeZone.secondsFromGMT(for: self)) / 60).rounded()
+      formattingZone = TimeZone(secondsFromGMT: Int(minutes) * 60)!
+    }
+    return Date.ISO8601FormatStyle(timeZoneSeparator: .colon, timeZone: formattingZone).format(self)
   }
 }
 

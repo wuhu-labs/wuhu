@@ -1,6 +1,6 @@
 ---
 name: machine-scripts
-description: Use wuhu:machine — machine files, commands, script-local streaming processes and durable exec ownership.
+description: Use wuhu:machine — machine files, commands, script-local streaming processes and durable exec ownership — and what deleting a machine for good (`wuhu machine delete`, by a human admin of its group) removes, unlike `revoke`.
 script_exports: {"wuhu:machine":["execStatus","execs","killExec","machine","machines"]}
 ---
 

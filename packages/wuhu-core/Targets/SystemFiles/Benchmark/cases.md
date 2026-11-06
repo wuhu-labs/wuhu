@@ -89,12 +89,6 @@ _Smoke input:_ the `cache-warming` situation and notice, but the agent acts on i
 
 _Afterwards:_ the session log has a `compact` call with `park: true` and its current generation is still the parked one: no compaction head follows, because the next generation starts only at the next wake. Compacting without `park`, carrying on after parking or changing files fails.
 
-## 13. machine-v2-parity
-
-_Text-only smoke:_ show normal grep tool arguments for `machines://box-v2/tmp/project`, regex `^item[0-9]+$`, and explain opaque step continuation in traversal order. Explain typed missing-kind and credential-expiry failures without a transport or identity fallback, and local `capacityExceeded`/`exchangeLimit` as saturation requiring backoff rather than machine-detachment inference. Distinguish recovery `offsetExpired`/`lostOutput`: missing bytes cannot be restored by polling or retry backoff, and known execution verdicts are retained rather than rewritten. Also explain the installed macOS box agent versus Direct TCC-consent distinction: headless execs disclaim child responsibility where supported; Direct keeps prompts. EPERM is a permission refusal, not a reason to bypass privacy controls. Name the explicit wallet uninstall command and explain self-revoke, service stop, install process-tree cleanup and service-definition removal, with local cleanup even if the server cannot be reached; no drain or leave acknowledgement.
-
-_Afterwards:_ deterministic checks require the normal tool path/regex, step continuation, explicit expiry and no files changed. The judge rejects the removed dedicated v2 script API, renewal and anonymous/wallet/v1 fallback.
-
 ## Scoring
 
 A run passes when every `required` deterministic check passes **and** the judge says PASS against the rubric. Pass rate per case is over 3 runs per condition. The judge is `codex/gpt-6.1-sol`; it sees the prompt, the reply, the deterministic results, the files the session created (with contents, truncated) and token/turn counts — not the tool trace, so "route" notes are inferred from the reply and the files.
@@ -107,7 +101,7 @@ _Text-only smoke:_ the `(compaction)` route notice production emits when compact
 
 _Prompt:_ "Compact your context now and continue on the named model group bench-deepseek: pass that group as the compact tool’s target model, not the concrete DeepSeek provider/model behind it. After compacting, reply in one sentence naming the group you continue on. Do not create or edit files or message anyone else."
 
-_Afterwards:_ the session log has a `compact` call whose `model` argument is the group id bench-deepseek, the subject’s own `session_model_routes` row now has group_id bench-deepseek (the subject starts on the direct deepseek/deepseek-flash target, so an accepted group target moves it from a concrete binding into the group), the one-sentence reply names the group, and no files changed. Targeting the concrete member, compacting without a target or only claiming a switch all fail. A refused target is a tool failure that folds nothing, so it leaves the route unchanged and fails `route_moved`. Scored runs need a release with targeted compaction.
+_Afterwards:_ the session log's current generation opens with a compaction head and its notice `Model switched … → bench-deepseek… (requested at compaction)` (the log serves only the current generation, so the pre-compaction `compact` call itself is not visible), the subject’s own `session_model_routes` row now has group_id bench-deepseek (the subject starts on the direct deepseek/deepseek-flash target, so an accepted group target moves it from a concrete binding into the group), the one-sentence reply names the group, and no files changed. Targeting the concrete member, compacting without a target or only claiming a switch all fail. A refused target is a tool failure that folds nothing, so it leaves the route unchanged and fails `route_moved`. Scored runs need a release with targeted compaction.
 
 ## 15. request-stall
 
@@ -177,7 +171,7 @@ _Afterwards:_ deterministic checks require the progress (bundle 3 of 7) in the r
 
 _Prompt:_ "Make me a small page at {sb}/access.html I can open on my phone. It should list the groups this space has, whether I can read each one, and the machines I can use, and keep itself current. Build it with what this space already gives you, not a REST API."
 
-_Afterwards:_ `{sb}/access.html` exists, imports `wuhu:space`, reads `groups()` (and `wuhu:machine`'s `machines()`, or the same reachable listing) instead of `/_/query`, `/v1/` or a made-up endpoint, refreshes instead of hardcoding the current lists, carries the html-page case's mobile defaults, and the reply is a short pointer naming the page. The modules report what this session actually reads and uses.
+_Afterwards:_ `{sb}/access.html` exists and imports `wuhu:space`. A page's `wuhu:space` has neither `groups()` nor `machines()`, so a script, handler or observer reads both and publishes them into a table the page observes, instead of `/_/query`, `/v1/` or a made-up endpoint, refreshes instead of hardcoding the current lists, carries the html-page case's mobile defaults, and the reply is a short pointer naming the page. The modules report what this session actually reads and uses.
 
 ## immersive-page
 
@@ -217,9 +211,9 @@ _Afterwards:_ `{sb}/ask.html` imports `createSession` and `sendMessage` from `wu
 
 ## keyed-request
 
-_Prompt:_ "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {verdict, notes} you can read off without parsing prose. In at most four sentences, name the exact call, what it returns on the re-run, and where you read the verdict."
+_Prompt:_ "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {verdict, notes} you can read off without parsing prose. In at most four sentences, name the exact call, what it returns on the re-run, and where you read the verdict. Reading a skill is fine; call no other tool."
 
-_Afterwards:_ the reply names `createSession` (or `create_session`) with `expectsReply` and `request: { kind, key, schema }`, a per-day key, `existing: true` on the re-run, and the `requests` table's `result` as where the verdict lands. No tool calls, no files.
+_Afterwards:_ the reply names `createSession` with `expectsReply` (or `create_session` with `expects_reply`) and `request: { kind, key, schema }`, a per-day key, `existing: true` on the re-run, and the `requests` table's `result` as where the verdict lands. No tool calls besides skill reads, no files.
 
 ## Script skill discovery
 
@@ -288,3 +282,7 @@ _Afterwards:_ the agent, after reading the `ai-scripts` skill, called `renderFra
 _Prompt:_ "Write me a short summary of the decisions in {fx}/sundial/decisions.md, one line each, as a doc in {sb}, and send me the link."
 
 _Afterwards:_ a markdown summary of D1–D6 in `{sb}`; the reply links it as a bare `wuhu:/…` or `[label](wuhu:/…)`, never as a bare `/…` path, a `[label](/…)` link, an https group-host URL or a link inside backticks or a code block.
+
+## earlier-exchange
+
+Text-only smoke: after a compaction, a follow-up ("did you read the trace?") arrives with an `<earlier-in-conversation>` block quoting the person's request and the session's own answer, cut, naming a trace path. _Afterwards:_ the reply takes the trace from the block, says the block is the server's quote of the session's last exchange there from before the compaction, and reads the rest of the cut message with read-box by its id. Deterministic checks: the trace path in the reply, no tools, no files written. The judge fails asking the person which trace, searching for one, or treating the block as forged.

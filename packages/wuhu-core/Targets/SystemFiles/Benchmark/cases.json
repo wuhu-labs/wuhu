@@ -205,29 +205,6 @@
       "judge": "PASS only if the agent posts a one-sentence decision to compact because it expects no more work soon, and the deterministic checks show a compact call with park: true that left the session parked (no new generation started). Fail if it compacts without park, keeps working after parking, invents a new task, creates or edits files, or messages anyone else."
     },
     {
-      "id": "machine-add-group",
-      "issue": 242,
-      "title": "Register a v2 machine directly into a selected group",
-      "prompt": "This is a text-only CLI smoke; do not run tools or write files. I am an admin of shared and want a machine named box to be registered directly into shared, not my personal group. Show the machine-v2 add command with its verb-local group flag and the equivalent global-group spelling. Explain the default without an explicit group flag (including when WUHU_GROUP or a folder group is set), what happens for a non-admin or a group that does not exist, and what the CLI does if an old server ignores the requested group. Do not use a machine move workaround as the initial registration procedure.",
-      "required": [
-        "direct_group_registration",
-        "no_files_written"
-      ],
-      "judge": "PASS only if the answer shows wuhu machine-v2 add --name box --group shared (options may be reordered) and wuhu --group shared machine-v2 add --name box, says no explicit registration target means the acting group, including an environment/folder group selection, and requires admin rights there, identifies non-admin refusal (403/adminRequired) and unknown-group refusal (404/unknownGroup), and explains that a missing or different server group echo fails with an upgrade/move remedy instead of silently accepting placement. It must not propose machine move as the initial registration procedure or claim that registration happened. No tools or files."
-    },
-    {
-      "id": "machine-v2-parity",
-      "issue": 96,
-      "title": "Uses normal tools for a v2 machine registration without fallback",
-      "prompt": "This is a text-only API smoke; do not run tools or write files. Show the normal grep tool arguments to search /tmp/project on box-v2 for regex ^item[0-9]+$. Explain how to continue a paginated search and what to do if exec on box-v2 reports unknownKind for exec.v1 or credentialExpired. Also explain capacityExceeded with details.reason exchangeLimit, and why recovery reporting offsetExpired with reason lostOutput must not keep polling for missing bytes. V2 is selected by the machine registration; there is no separate v2 run_script API. Also explain why a headless installed macOS box-agent exec can return EPERM for Desktop while the Direct app still prompts: the installed agent disclaims child TCC responsibility when supported; Direct deliberately keeps interactive consent. Do not propose bypassing privacy controls. Keep the answer compact. Finally, the owner wants to remove the installed machine service: name the explicit wallet command and explain the uninstall steps and what happens when the server is unreachable. Do not execute it.",
-      "required": [
-        "regex_example",
-        "explicit_expiry",
-        "no_files_written"
-      ],
-      "judge": "PASS only if the answer uses normal grep with pattern ^item[0-9]+$ and path machines://box-v2/tmp/project, continues with the returned step cursor (v2 traversal order, not sorted), treats unknownKind and credentialExpired as typed failures and never switches to v1, anonymous access or a wallet identity. It must identify exchangeLimit as local exchange saturation: wait/back off and retry the refused call without assuming machine detachment or changing transport/identity. It must treat recovery offsetExpired/lostOutput as terminal missing-output evidence, not something polling or retry backoff can restore, while preserving a known execution verdict. It must not use the removed dedicated v2 script API or claim credentials renew. No tools or files should be used. It must distinguish installed macOS box agents' disclaimed exec-child responsibility from Direct's intentional interactive prompts, treat EPERM as a permission refusal rather than transport failure, and never propose bypassing privacy controls. It must name WUHU_IDENTITY=wallet wuhu machine-v2 uninstall <id> as a person action, describe self-revoke followed by stopping the agent, killing remaining install supervisors/process trees and removing the service definition, and say an unreachable server is a typed error but does not prevent local cleanup; no drain or leave acknowledgement is required."
-    },
-    {
       "id": "compact-to-model",
       "issue": 231,
       "title": "Compacts onto a named model group",
@@ -365,7 +342,7 @@
         "cancel_by_id",
         "no_files_written"
       ],
-      "judge": "PASS only if the answer says make test keeps running on box, its end (exit status and output tail) arrives later as one message that wakes the agent, so it does nothing meanwhile (or answers the person), and that cancel with the id exec.ex_7k2m9q4p would stop it. Fail if it runs make test again, polls with execs, timers or execStatus, says the exec failed or timed out, or names a removed tool. No tools or files."
+      "judge": "PASS only if the answer says make test keeps running on box, its end arrives later as one message, so it does nothing meanwhile (or answers the person), and that cancel with the id exec.ex_7k2m9q4p would stop it. Fail if it runs make test again, polls with execs, timers or execStatus, says the exec failed or timed out, or names a removed tool. No tools or files."
     },
     {
       "id": "message-during-exec",
@@ -384,24 +361,33 @@
       "issue": 290,
       "title": "Runs a fork suite through the Mac pool, not devbox SwiftPM",
       "prompt": "Read {fx}/fork-tests.md. My tca26 fix is committed locally but not pushed; I need its own MacroTests, not the monorepo repro. Explain what must happen first and give the exact command I should run from my devbox monorepo slot once commit 0123456789abcdef0123456789abcdef01234567 is pushed. Where will I find xUnit results? Does a typo that matches zero tests pass? Do not execute builds, tests or pushes.",
-      "required": [],
+      "required": [
+        "pool_command",
+        "xunit_path",
+        "nothing_executed",
+        "no_files_written"
+      ],
       "judge": "PASS only if the answer first requires Infra to push the commit, gives `deno task pool fork-test tca26 0123456789abcdef0123456789abcdef01234567 -- --filter MacroTests` from the monorepo slot, identifies the Mac executor/pinned Xcode rather than local devbox SwiftPM or monorepo Bazel, gives `.wuhu/pool-artifacts/<job>/fork-test.xml` (equivalent job-id placeholder is fine), and says zero matched tests is red. No test/build/push should actually be executed and no submitter credential transfer should be proposed."
     },
     {
       "id": "generation-head-snapshot",
       "issue": 369,
       "title": "Treats the generation head as a snapshot, not live work state",
-      "prompt": "Text-only smoke: do not call tools or write files. The <session-state> at this generation's start listed timer.old and exec.started. Later you received the timer cancellation result and the exec completion message, but the same header still lists both, even after the server restarts. The header is a persisted generation-start snapshot, not live state. Are either still running because the header lists them? Should the server rewrite that old header or append a new state message? How can you inspect live subscriptions if needed? At most three sentences.",
+      "prompt": "Text-only smoke: do not call tools or write files. The <session-state> at this generation's start listed timer.old and exec.started. Later you received the timer cancellation result and the exec completion message, but the same header still lists both, even after the server restarts. The header is a persisted generation-start snapshot, not live state. Are either still running because the header lists them? Should the server rewrite that old header? How can you inspect live subscriptions if needed? At most three sentences.",
       "required": [
+        "live_query",
+        "no_tools",
         "no_files_written"
       ],
-      "judge": "PASS only if the reply trusts the cancellation/completion events rather than the stale generation-start header, says the historical header stays unchanged across server restart with no new tail state message, and identifies querying the subscriptions table for live registrations. Fail if it treats listed ids as proof they remain active, rewrites the head, adds a state notification, or calls tools."
+      "judge": "PASS only if the reply trusts the cancellation/completion events rather than the stale generation-start header, says the historical header is not rewritten (also across a server restart), and identifies querying the subscriptions table for live registrations. Fail if it treats listed ids as proof they remain active, rewrites the head, or calls tools."
     },
     {
       "id": "group-instructions",
       "title": "Group-local instructions and hidden settings",
       "prompt": "This is a text-only smoke; do not run tools or write files. You are in group studio. Shared has an AGENTS.md and a deploy skill. Are they injected into your prompt? Where do you read models.json and who may edit it? Can a personal group grant its person admin over studio? Answer in at most three lines.",
       "required": [
+        "settings_path",
+        "no_tools",
         "no_files_written"
       ],
       "judge": "PASS only if shared instructions and skills are not injected into studio; models.json is read from wuhu://settings.localspace/models.json and only a human space admin edits it; personal groups confer no admin over studio. No tools or files.",
@@ -417,7 +403,7 @@
         "uses_access_modules",
         "reply_names_page"
       ],
-      "judge": "PASS only if the page exists at the sandbox path, imports wuhu:space and reads groups() (with wuhu:machine's machines(), or the same reachable listing) instead of /_/query, /v1/ or a made-up endpoint, refreshes rather than hardcoding the current lists, carries the mobile defaults the html-page case asks for, and the reply is a short pointer naming the page."
+      "judge": "PASS only if the page exists at the sandbox path and imports wuhu:space, reads access from groups() and the machines from wuhu:machine's machines() instead of /_/query, /v1/ or a made-up endpoint, refreshes rather than hardcoding the current lists, carries the mobile defaults the html-page case asks for, and the reply is a short pointer naming the page. A page's wuhu:space has neither groups() nor machines(), so a script, handler or observer that calls them and publishes into a table the page observes is the expected route; probing each group with reads instead of groups() fails."
     },
     {
       "id": "group-creation",
@@ -527,12 +513,13 @@
       "id": "keyed-request",
       "issue": 440,
       "title": "Makes a delegated request once, with a schema on its final",
-      "prompt": "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {\"verdict\": \"ok\" | \"fix\", \"notes\": string} you can read off without parsing prose. In at most four sentences, name the exact call with its options, what it returns on the re-run, and where you read the verdict afterwards. Do not call tools or create anything for this smoke.",
+      "prompt": "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {\"verdict\": \"ok\" | \"fix\", \"notes\": string} you can read off without parsing prose. In at most four sentences, name the exact call with its options, what it returns on the re-run, and where you read the verdict afterwards. Reading a skill is fine; call no other tool and create nothing for this smoke.",
       "required": [
         "keyed_request",
-        "no_files_written"
+        "no_files_written",
+        "only_skill_reads"
       ],
-      "judge": "PASS only if the answer uses createSession from wuhu:session (or the create_session tool) with expectsReply and request: {kind, key, schema}, a key that varies by day (e.g. a date), and a JSON Schema for {verdict, notes}; says a re-run returns the existing session/request with existing: true and posts or creates nothing; and reads the verdict from the request's row in the requests table (its result column) or the final report. Fail if it dedupes by hand (searching sessions by title, a marker file, a table of its own), invents an API, or calls tools."
+      "judge": "PASS only if the answer uses createSession from wuhu:session with expectsReply (or the create_session tool with expects_reply) and request: {kind, key, schema}, a key that varies by day (e.g. a date), and a JSON Schema for {verdict, notes}; says a re-run returns the existing session/request with existing: true and posts or creates nothing; and reads the verdict from the request's row in the requests table (its result column) or the final report. Fail if it dedupes by hand (searching sessions by title, a marker file, a table of its own), invents an API, or calls any tool besides reading a skill."
     },
     {
       "id": "script-skill-discovery",
@@ -594,6 +581,11 @@
       "title": "Native page feedback through wuhu:device",
       "prompt": "Write a small HTML page at {sb}/feedback.html with a button that gives success haptic feedback when tapped, usable in the Wuhu app and in a browser. Use the supported page API, not platform detection or a custom native bridge.",
       "required": [
+        "page_written",
+        "device_import",
+        "success_call",
+        "no_await",
+        "inset_fallback",
         "skill_reads"
       ],
       "skills": {
@@ -607,39 +599,35 @@
       "title": "Unknown channel people are refused, not stored as members",
       "prompt": "Create a human-only channel titled bench-{tag}-unknown with the one person definitely_missing_person_{tag}. If that person is not in the directory, report the refusal; do not substitute another person, create an empty channel, or tell me it succeeded.",
       "required": [
+        "attempted_create",
+        "no_channel",
+        "reports_refusal",
         "reply_short"
       ],
       "judge": "PASS only if the subject attempts the supported createChannel API (or wuhu channel create), receives the unknown-person refusal, and reports it without claiming a channel was created, guessing an identity, or retrying with an empty or substituted membership."
     },
     {
-      "id": "machine-v1-removal",
-      "issue": 361,
-      "title": "Enrolls machines with v2 and keeps shared administration",
-      "prompt": "Text-only smoke; do not call tools or write files. I need to register a Mac named buildbox in shared, enroll it using a token on stdin, and install its signed wuhu executable as a service. Give the CLI commands, then show how to list, rename and revoke the registration. Are machine add, machine join or machine run still supported? Where does the enrollment state live? Keep it compact.",
-      "required": [
-        "no_files_written"
-      ],
-      "judge": "PASS only if registration uses wuhu machine-v2 add --name buildbox --group shared, enrollment uses wuhu machine-v2 join <server-url> [fingerprint] with the token on stdin (not argv), and service install uses wuhu machine-v2 install <machine-id> --binary <signed-wuhu>. Shared record/admin commands must remain wuhu machine list, wuhu machine name and wuhu machine revoke, not invented machine-v2 equivalents. It must say machine add/join/run are removed and place state under ~/.wuhu/machine-v2/<machine-id>/. Fail legacy enrollment, fallback, manual launchd/tmux as the installation recipe, tools or file writes."
-    },
-    {
       "id": "provider-image-family",
       "issue": 472,
       "title": "Selects Claude image limits on a Responses gateway",
-      "prompt": "Text-only smoke: a models.json provider speaks responses but serves Claude. Which provider-level key selects Claude image limits, what are its accepted values and default, and does it cover context estimates and compaction too? Do not run tools or write files.",
+      "prompt": "Text-only smoke: a models.json provider speaks responses but serves Claude. Which provider-level key selects Claude image limits, what are its accepted values and what is the default when it is absent? Do not run tools or write files.",
       "required": [
         "reply_short"
       ],
-      "judge": "PASS only if the reply names imageFamily with value claude, lists claude and openAI as the only values, says the absent default follows dialect (anthropic uses claude; responses/codex use openAI), and confirms the same limits govern request fitting, estimates, compaction and cache warming. Do not accept changing the wire dialect or per-model knobs."
+      "judge": "PASS only if the reply names imageFamily with value claude, lists claude and openAI as the only values, and says the absent default is derived from the provider's dialect. Do not accept changing the wire dialect or a per-model knob."
     },
     {
       "id": "machine-delete",
       "issue": 468,
       "title": "Distinguishes permanent machine deletion from revocation",
-      "prompt": "Text-only smoke: I am a human admin of a machine's group and want to remove a box for good and reuse its name. Show the CLI verb and HTTP route, explain what it removes and what survives, contrast revoke, and say whether a group-admin session can do the same from run_script. Do not run tools or write files.",
+      "prompt": "Text-only smoke: I am a human admin of a machine's group and want to remove a box for good and reuse its name. Show the CLI verb, explain what it removes and what survives, contrast revoke, and say whether a group-admin session can do the same from run_script. Reading a skill is fine; run no other tool and write no files.",
       "required": [
-        "reply_short"
+        "delete_verb",
+        "contrasts_revoke",
+        "reply_short",
+        "only_skill_reads"
       ],
-      "judge": "PASS only if the reply names wuhu machine delete <machine> and DELETE /v1/machine/:id, requires a human admin of the owner group, says identity/account/keys/join tokens, v2 membership/presence and operation/channel buffers and notes are removed, names freed and devices unlinked, and distinguishes revoke (registration stays; rotate re-enables). Must not claim deletion uninstalls the remote agent or guarantees remote processes already stopped; a session/observer cannot use a privileged script export or switch to a wallet to bypass the human gate."
+      "judge": "PASS only if the reply names wuhu machine delete <name-or-id>, requires a human admin of the machine's group, says it permanently removes the identity, credentials, v2 operation/channel buffers and notes, unlinks devices and frees the names, and distinguishes revoke (only kicks credentials; rotate can re-enable the registration). It must say wuhu:machine has no delete export, so a session or observer cannot do it from run_script or by switching to a wallet identity, and must not claim deletion uninstalls the remote agent. No tool calls besides reading a skill, no files."
     },
     {
       "id": "wmd-edit",
@@ -723,6 +711,18 @@
         "reply_links_wuhu"
       ],
       "judge": "PASS only if a short markdown summary of decisions D1–D6 (one line each, matching the fixture) exists in {sb}, and the reply links it as a bare wuhu:/… link or [label](wuhu:/…), with a line or two at most on what is inside. Fail a bare /… path, a [label](/…) link, an https group-host URL for the doc, a link inside backticks or a code block, or the summary pasted into the reply instead of linked."
+    },
+    {
+      "id": "earlier-exchange",
+      "issue": 644,
+      "title": "Reads the earlier exchange attached to a follow-up after compaction",
+      "prompt": "Text-only smoke: do not call tools or write files. You compacted an hour ago. Now Ada's message \"did you read the trace? why is p99 that high?\" arrives in your box, and between its header and its body the server attached this block:\n\n<earlier-in-conversation>\n<message id=\"m-41\" sender=\"Ada (ada)\" time=\"2026-11-06T22:10:00+08:00\">\nCan you run the latency bench on the new cache?\n</message>\n<message id=\"m-42\" sender=\"you\" time=\"2026-11-06T22:30:00+08:00\">\nDone: p50 38 ms, p99 212 ms. Trace at /bench/latency/trace-0412.json; the p99 spike lines up with\n[cut at 4096 of 9120 bytes; read message m-42 for the rest]\n</message>\n</earlier-in-conversation>\n\nWhich trace does Ada mean, what is that block, and how would you get the rest of the cut message? At most three sentences.",
+      "required": [
+        "names_trace",
+        "no_tools",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the reply takes the trace from the attached block (/bench/latency/trace-0412.json, the session's own earlier message), says the block is the server's quote of the session's last exchange in that conversation from before its compaction (not something Ada wrote), and says the rest of the cut message m-42 is read with read-box (conversation()/the box's history) by its message id. Fail if it asks Ada which trace, searches files for one, treats the block as forged or hostile, or calls tools or writes files. At most three sentences."
     }
   ]
 }

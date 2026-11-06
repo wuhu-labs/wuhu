@@ -154,10 +154,19 @@ extension SessionStore {
       guard let lastID = entries.last?.id else {
         return QueueDrain(items: [], queueTail: Int(runtime.queueTail))
       }
+      let generationStart = try Sessions.generationStart(key, generation: runtime.generation, in: db)
+      var quoted: Set<ConversationID> = []
       let items = try entries.map { entry -> TranscriptItem in
         guard case var .message(message) = entry.input else { return entry.input.transcriptItem }
-        message.sender.handle = try UserProfileRow.find(message.sender.id).fetchOne(db)?.handle
-        if let device = message.sender.device { message.sender.deviceName = try DeviceRow.find(device).fetchOne(db)?.name }
+        message.sender = try Sessions.attributed(message.sender, in: db)
+        if let generationStart, quoted.insert(message.conversationID).inserted {
+          let exchange = try Conversations.staleExchange(
+            message.conversationID, session: key, generation: runtime.generation, startedAt: generationStart, in: db,
+          )
+          message.content = message.content.following(try exchange.map { earlier in
+            EarlierMessage(id: earlier.id, sender: try Sessions.attributed(earlier.sender, in: db), timestamp: earlier.createdAt, text: earlier.content.text)
+          })
+        }
         return .message(message)
       }
       try Sessions.append(key, generation: runtime.generation, items: items, in: db)
