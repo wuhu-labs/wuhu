@@ -722,7 +722,7 @@
         "doc_written",
         "reply_links_wuhu"
       ],
-      "judge": "PASS only if a short markdown summary of decisions D1–D6 (one line each, matching the fixture) exists in {sb}, and the reply links it as a bare wuhu:/… link or [label](wuhu:/…), with a line or two at most on what is inside. Fail a bare /… path, an https group-host URL for the doc, or the summary pasted into the reply instead of linked."
+      "judge": "PASS only if a short markdown summary of decisions D1–D6 (one line each, matching the fixture) exists in {sb}, and the reply links it as a bare wuhu:/… link or [label](wuhu:/…), with a line or two at most on what is inside. Fail a bare /… path, a [label](/…) link, an https group-host URL for the doc, a link inside backticks or a code block, or the summary pasted into the reply instead of linked."
     }
   ]
 }

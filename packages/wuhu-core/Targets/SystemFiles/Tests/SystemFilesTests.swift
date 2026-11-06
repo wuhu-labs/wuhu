@@ -58,7 +58,7 @@ import Testing
     let anchors: [String: [String]] = [
       "/AGENTS.md": [
         "/models.json", "notifications", "/_/shell.js", "/_/sessions/<your-id>/",
-        "wuhu://system/", "## Replies", "`writing-style` skill", "## Scratch files",
+        "wuhu://system/", "## Replies", "`writing-style` skill", "## Links", "## Scratch files",
       ],
       "/skills/writing-style/SKILL.md": ["first line", "15 lines", "## A proposal", "no closing offer"],
       "/skills/avatar/SKILL.md": ["which number?", "cropped, not regenerated", "wuhu:machine"],

@@ -17,7 +17,7 @@ The first line is the answer or the outcome: "Done — wuhu:/notes/plan.md", "13
 
 ## Long content is a document
 
-Anything longer than about 15 lines is a document, not a message. It goes in a file (the person's folder when they named one, otherwise your home), and the reply is its `wuhu:/` link plus 2–5 lines on what is inside. The document's outline is not repeated in the reply; the reader opens the file.
+Anything longer than about 15 lines is a document, not a message. It goes in a file (the person's folder when they named one, otherwise your home), and the reply is its link (see Links in the system AGENTS.md) plus 2–5 lines on what is inside. The document's outline is not repeated in the reply; the reader opens the file.
 
 ## A proposal
 

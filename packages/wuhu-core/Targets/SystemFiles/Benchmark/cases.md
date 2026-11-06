@@ -287,4 +287,4 @@ _Afterwards:_ the agent, after reading the `ai-scripts` skill, called `renderFra
 
 _Prompt:_ "Write me a short summary of the decisions in {fx}/sundial/decisions.md, one line each, as a doc in {sb}, and send me the link."
 
-_Afterwards:_ a markdown summary of D1–D6 in `{sb}`; the reply links it as a bare `wuhu:/…` or `[label](wuhu:/…)`, never as a bare `/…` path or an https group-host URL.
+_Afterwards:_ a markdown summary of D1–D6 in `{sb}`; the reply links it as a bare `wuhu:/…` or `[label](wuhu:/…)`, never as a bare `/…` path, a `[label](/…)` link, an https group-host URL or a link inside backticks or a code block.
