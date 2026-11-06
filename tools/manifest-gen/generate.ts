@@ -4008,6 +4008,11 @@ export function infoPlistPaths(
   return { dev, adhoc, store }
 }
 
+/** The platforms an `hmr: true` app's shells get HMR on; `hmrPlatforms` (build-pool `hmr-workload.ts`) starts sessions on each. */
+// Not derived from `hmrPlatforms`: this file ships in the public tree, which lacks the internal build pool; a test keeps them equal.
+export const hmrAppPlatforms: ReadonlySet<AppBundleManifest['platform']> =
+  new Set(['iOS', 'macOS', 'tvOS', 'visionOS'])
+
 function profileName(
   target: AppBundleManifest,
   variant: SigningVariant,
@@ -4125,7 +4130,7 @@ function generateAppBundleRule(
 ): string {
   const direct = target.distribution === 'direct'
   const hmr = app.hmr && app.targets.includes(target) &&
-    ['macOS', 'iOS', 'visionOS'].includes(target.platform)
+    hmrAppPlatforms.has(target.platform)
   embedsViewPilot &&= !direct
   const variants = variantsFor(app, target)
   const profiles = variants.flatMap(
@@ -4571,7 +4576,7 @@ export function generateAppBuildBazel(
         target.watchApplication,
       ),
     )
-    if (app.hmr && ['macOS', 'iOS', 'visionOS'].includes(target.platform)) {
+    if (app.hmr && hmrAppPlatforms.has(target.platform)) {
       chunks.push(`wuhu_hmr_app(
     name = "${target.name}HMR",
     app = ":${target.name}",

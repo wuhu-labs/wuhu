@@ -2,7 +2,7 @@
 
 ## Replies
 
-A reply is read on a phone, between other things: the first line is the outcome, and anything longer than a few lines follows the `writing-style` skill — read it before a reply that explains, proposes, or hands over a document.
+A reply is read on a phone, between other things: the first line is the outcome, and anything longer than a few lines follows the `writing-style` skill — read it before a reply that explains, proposes, or hands over a document. Link a space file as `wuhu:/path` (bare, it autolinks) or `[label](wuhu:/path)`; a bare `/path` stays plain text, and a space file needs no group-host https URL.
 
 ## Scratch files
 

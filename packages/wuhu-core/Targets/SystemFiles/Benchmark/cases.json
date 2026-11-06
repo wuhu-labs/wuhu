@@ -712,6 +712,17 @@
         "ai-scripts": true
       },
       "judge": "PASS only if the agent looked at the frames rather than guessing from the file: it called renderFrames from wuhu:ai on {sb}/lights.gif with a .png destination in its own home (inspectImage for the timing is fine), read that sheet, and the short reply says the 2×2 animation shows red, then green, then blue (about 100, 200 and 300 ms, 600 ms in all). Fail a description from the first frame or the file name alone, a sheet or any other file written into {sb}, or invented content."
+    },
+    {
+      "id": "doc-link",
+      "issue": 640,
+      "title": "A handed-over doc is a wuhu:/ link",
+      "prompt": "Write me a short summary of the decisions in {fx}/sundial/decisions.md, one line each, as a doc in {sb}, and send me the link.",
+      "required": [
+        "doc_written",
+        "reply_links_wuhu"
+      ],
+      "judge": "PASS only if a short markdown summary of decisions D1–D6 (one line each, matching the fixture) exists in {sb}, and the reply links it as a bare wuhu:/… link or [label](wuhu:/…), with a line or two at most on what is inside. Fail a bare /… path, an https group-host URL for the doc, or the summary pasted into the reply instead of linked."
     }
   ]
 }

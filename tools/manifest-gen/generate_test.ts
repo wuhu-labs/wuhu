@@ -3251,37 +3251,58 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
   )
 })
 
-Deno.test('HMR preview variants support visionOS without enabling the ordinary target', () => {
-  const app: AppManifest = {
-    name: 'VisionPreview',
-    hmr: true,
-    libraries: [{
-      name: 'PreviewLibrary',
-      sources: 'Sources',
-      dependencies: [],
-    }],
-    targets: [{
-      name: 'PreviewVision',
-      platform: 'visionOS',
-      bundleID: 'test.preview.vision',
-      bundleName: 'VisionPreview',
-      entitlements: {},
-      families: ['vision'],
-      appIcons: [],
-      infoPlist: 'Info.plist',
-      minimumOSVersion: '26.0',
-      info: {},
-      dependencies: [':PreviewLibrary'],
-    }],
+Deno.test('HMR preview variants support visionOS and tvOS without enabling the ordinary target', () => {
+  for (
+    const [platform, lane, family, profile] of [
+      ['visionOS', 'visionos', 'vision', 'Wuhu Dev Previews'],
+      ['tvOS', 'tvos', 'tv', 'Wuhu Dev Previews tvOS'],
+    ] as const
+  ) {
+    const app: AppManifest = {
+      name: 'Preview',
+      hmr: true,
+      libraries: [{
+        name: 'PreviewLibrary',
+        sources: 'Sources',
+        dependencies: [],
+      }],
+      targets: [{
+        name: `Preview${platform}`,
+        platform,
+        bundleID: 'tech.lakeridge.previews.example',
+        bundleName: 'Preview',
+        entitlements: {},
+        families: [family],
+        appIcons: [],
+        infoPlist: 'Info.plist',
+        minimumOSVersion: '26.0',
+        info: {},
+        dependencies: [':PreviewLibrary'],
+      }],
+    }
+    const build = generateAppBuildBazel(app)
+    assertStringIncludes(
+      build,
+      `wuhu_hmr_app(\n    name = "Preview${platform}HMR",\n    app = ":Preview${platform}",\n    tags = ["manual"],\n    target_compatible_with = wuhu_platforms([\n        "${lane}",\n    ]),\n)`,
+    )
+    assertStringIncludes(
+      build,
+      `infoplists = [":Preview${platform}_hmr_plist"],`,
+    )
+    assertEquals(referencedProfileNames([app]), [profile])
+    assertEquals(
+      resolvedEntitlements(app.targets[0]!, 'dev', 'TEAM123456', true)[
+        'get-task-allow'
+      ],
+      true,
+    )
+    assertEquals(
+      generateAppBuildBazel({ ...app, hmr: false }).includes(
+        `Preview${platform}HMR`,
+      ),
+      false,
+    )
   }
-  assertStringIncludes(
-    generateAppBuildBazel(app),
-    'wuhu_hmr_app(\n    name = "PreviewVisionHMR",\n    app = ":PreviewVision",\n    tags = ["manual"],\n    target_compatible_with = wuhu_platforms([\n        "visionos",\n    ]),\n)',
-  )
-  assertEquals(
-    generateAppBuildBazel({ ...app, hmr: false }).includes('PreviewVisionHMR'),
-    false,
-  )
 })
 
 Deno.test('ad hoc honors an explicit Dev CloudKit environment without changing Store or Direct', () => {

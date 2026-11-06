@@ -122,7 +122,7 @@ extension ToolExecutor {
     ),
     Tool(
       name: "send_message",
-      description: "Post a message into a conversation. With no target argument it posts into your own box — the public surface people comment on. Pass conversation for a group you are in, session to DM another session; another agent's box is reachable only by its conversation id. reply_target points at one earlier message in the same conversation; it is decoration, not a requirement. The text renders as markdown; a bare URL becomes a link, a URL inside inline code does not.",
+      description: "Post a message into a conversation. With no target argument it posts into your own box — the public surface people comment on. Pass conversation for a group you are in, session to DM another session; another agent's box is reachable only by its conversation id. reply_target points at one earlier message in the same conversation; it is decoration, not a requirement. The text renders as markdown: link a space file as wuhu:/path or [label](wuhu:/path), never a bare /path; a bare URL becomes a link, one inside inline code does not.",
       parameters: schema([
         ("message", string("Message text.")),
         ("conversation", string("Conversation id to post into.")),

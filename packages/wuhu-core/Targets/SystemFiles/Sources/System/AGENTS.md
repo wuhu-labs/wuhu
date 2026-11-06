@@ -37,7 +37,7 @@ Sessions reach people only through conversation boxes, never through a person–
 
 ## Replies
 
-A reply is read on a phone, between other things: the first line is the outcome, and anything longer than a few lines follows the `writing-style` skill — read it before a reply that explains, proposes, or hands over a document. A reply renders as markdown: a bare URL becomes a link, a URL inside backticks does not, so a link the reader should open goes bare.
+A reply is read on a phone, between other things: the first line is the outcome, and anything longer than a few lines follows the `writing-style` skill — read it before a reply that explains, proposes, or hands over a document. A reply renders as markdown: link a space file as `wuhu:/path` (bare, it autolinks) or `[label](wuhu:/path)`; a bare `/path` stays plain text, and a space file needs no group-host https URL. A bare web URL becomes a link, one inside backticks does not.
 
 {{/session.agent}}
 ## Scratch files

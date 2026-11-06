@@ -282,3 +282,9 @@ _Afterwards:_ nothing written. The reply, after reading the `ai-scripts` skill, 
 _Prompt:_ "What happens in the animation {sb}/lights.gif? A line or two is enough." The `rgb-gif` setup writes a 2×2 GIF of a red, a green and a blue frame shown 100, 200 and 300 ms.
 
 _Afterwards:_ the agent, after reading the `ai-scripts` skill, called `renderFrames` on the GIF with a `.png` destination in its own home and read the sheet; `{sb}` holds only the GIF. The short reply says red, then green, then blue. A description from the first frame or the file name alone fails.
+
+## doc-link
+
+_Prompt:_ "Write me a short summary of the decisions in {fx}/sundial/decisions.md, one line each, as a doc in {sb}, and send me the link."
+
+_Afterwards:_ a markdown summary of D1–D6 in `{sb}`; the reply links it as a bare `wuhu:/…` or `[label](wuhu:/…)`, never as a bare `/…` path or an https group-host URL.
