@@ -361,12 +361,14 @@ export interface EntitlementOverlays {
 
 // The identity the dev and adhoc variants sign as, so a development build
 // installs beside the store app instead of replacing it. Each field overrides
-// the bundle's own; `entitlements` merges over `entitlements.common`.
+// the bundle's own; `entitlements` merges over `entitlements.common`, after
+// the `omitEntitlements` keys of `entitlements.common` are dropped.
 export interface DevIdentityManifest {
   bundleID: string
   displayName?: string
   appIcons?: string[]
   entitlements?: { [key: string]: PlistValue }
+  omitEntitlements?: string[]
   info?: { [key: string]: PlistValue }
 }
 
@@ -727,6 +729,16 @@ function validateDevIdentities(app: AppManifest, source: string): void {
       throw new Error(
         `${source}: ${target.name}.devIdentity.bundleID repeats the store bundle ID`,
       )
+    }
+    for (const key of identity.omitEntitlements ?? []) {
+      if (
+        target.entitlements.common?.[key] === undefined ||
+        identity.entitlements?.[key] !== undefined
+      ) {
+        throw new Error(
+          `${source}: ${target.name}.devIdentity.omitEntitlements.${key} must name a common entitlement the identity does not set`,
+        )
+      }
     }
   }
   const extensions = new Map(
@@ -3833,11 +3845,23 @@ export function variantBundle<T extends AppBundleManifest>(
     appIcons: identity.appIcons ?? target.appIcons,
     entitlements: {
       ...target.entitlements,
-      common: { ...target.entitlements.common, ...identity.entitlements },
+      common: {
+        ...omitting(target.entitlements.common, identity.omitEntitlements),
+        ...identity.entitlements,
+      },
     },
     info: { ...target.info, ...identity.info },
     devIdentity: undefined,
   }
+}
+
+function omitting<Value>(
+  values: { [key: string]: Value } | undefined,
+  keys: readonly string[] | undefined,
+): { [key: string]: Value } {
+  return Object.fromEntries(
+    Object.entries(values ?? {}).filter(([key]) => !keys?.includes(key)),
+  )
 }
 
 export function appEmbedsViewPilot(app: AppManifest): boolean {

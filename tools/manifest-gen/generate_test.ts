@@ -554,6 +554,54 @@ Deno.test('a devIdentity signs dev and adhoc as a second app beside store', () =
   ])
 })
 
+Deno.test('a devIdentity can drop common entitlements it must not claim', () => {
+  const app = (omit: string[]): AppManifest => ({
+    name: 'Example',
+    targets: [{
+      name: 'ExampleiOS',
+      platform: 'iOS',
+      bundleID: 'tech.example.app',
+      bundleName: 'Example',
+      entitlements: {
+        common: {
+          'com.apple.developer.icloud-container-identifiers': ['iCloud.x'],
+          'com.apple.developer.icloud-services': ['CloudKit'],
+        },
+        release: { 'aps-environment': 'production' },
+      },
+      devIdentity: { bundleID: 'tech.example.app.dev', omitEntitlements: omit },
+      families: ['iphone'],
+      appIcons: [],
+      infoPlist: 'Info.plist',
+      minimumOSVersion: '18.0',
+      dependencies: [],
+      info: {},
+    }],
+  })
+  const valid = app([
+    'com.apple.developer.icloud-container-identifiers',
+    'com.apple.developer.icloud-services',
+  ])
+  validateAppEntitlements(valid, 'app.yml')
+  const target = valid.targets[0]!
+  assertEquals(resolvedEntitlements(target, 'adhoc', 'TEAM123456'), {
+    'aps-environment': 'production',
+    'application-identifier': 'TEAM123456.tech.example.app.dev',
+    'com.apple.developer.team-identifier': 'TEAM123456',
+  })
+  assertEquals(
+    resolvedEntitlements(target, 'store', 'TEAM123456')[
+      'com.apple.developer.icloud-container-identifiers'
+    ],
+    ['iCloud.x'],
+  )
+  assertThrows(
+    () => validateAppEntitlements(app(['aps-environment']), 'app.yml'),
+    Error,
+    'omitEntitlements.aps-environment must name a common entitlement',
+  )
+})
+
 Deno.test('a devIdentity must cover the whole app and extend its bundle ID', () => {
   const extension = {
     name: 'ExampleWidgets',

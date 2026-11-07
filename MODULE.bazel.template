@@ -26,6 +26,7 @@ single_version_override(
         "//bazel/patches:rules-apple-visionos-dynamic-framework-constraints.patch",
         "//bazel/patches:rules-apple-app-intents-single-module-shortcuts.patch",
         "//bazel/patches:rules-apple-visionos-test-rule-keywords.patch",
+        "//bazel/patches:rules-apple-xcstrings-binary.patch",
         # One target file per patch: Bazel's native patcher (ctx.patch) rejects these identical
         # profile-guard hunks when several files share one patch (CONTENT_DOES_NOT_MATCH_TARGET),
         # though GNU patch applies the combined file cleanly.

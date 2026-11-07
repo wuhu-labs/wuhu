@@ -1,0 +1,12 @@
+--- a/apple/internal/resource_actions/xcstrings.bzl	2026-11-07 14:48:54.827320762 +0000
++++ b/apple/internal/resource_actions/xcstrings.bzl	2026-11-07 14:48:54.838321393 +0000
+@@ -21,6 +21,9 @@
+         "compile",
+         "--output-directory",
+         xctoolrunner_support.prefixed_path(output_dir.path),
++        # A text table costs CFBundle a whole XML parse every time it loads it.
++        "--serialization-format",
++        "binary",
+         xctoolrunner_support.prefixed_path(input_file.path),
+     ]
+ 

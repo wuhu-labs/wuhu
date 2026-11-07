@@ -70,7 +70,7 @@ import Testing
     try await withSessionDeps {
       let s = try await space()
       #expect(try await standing(s, bearer: s.bearer) == [
-        "shared": "member+readable", "team": "member+readable", "library": "",
+        s.alice.rawValue: "member+readable", "shared": "member+readable", "team": "member+readable", "library": "",
       ])
     }
   }
@@ -152,10 +152,9 @@ import Testing
   @Test func adminNamesTheGroupsTheCallerAdministers() async throws {
     try await withSessionDeps {
       let s = try await space()
-      // A personal group is not listed, so administering it shows nowhere here.
-      #expect(try await administered(s, bearer: s.bearer) == [])
+      #expect(try await administered(s, bearer: s.bearer) == [s.alice.rawValue])
       _ = try await s.harness.space.setAdmin(s.account, admin: true)
-      #expect(try await administered(s, bearer: s.bearer) == ["shared", "team", "library"])
+      #expect(try await administered(s, bearer: s.bearer) == [s.alice.rawValue, "shared", "team", "library"])
       #expect(try await administered(s, bearer: try await sessionToken(s, in: Self.team)) == ["team"])
       #expect(try await administered(s, bearer: nil) == [])
       let dev = try await space(dev: true)

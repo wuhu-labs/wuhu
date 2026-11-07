@@ -45,8 +45,9 @@ extension SpaceToolContext {
     } else {
       try await space.administeredGroups(by: caller.actor, acting: caller.group)
     }
+    let own: AccountID? = if case let .person(_, account) = caller.actor { account } else { nil }
     return live
-      .filter { $0.id != .settings && $0.personalAccount == nil }
+      .filter { $0.id != .settings && ($0.personalAccount == nil || $0.personalAccount == own) }
       .map { group in
         GroupSummary(
           id: group.id.rawValue, member: member.contains(group.id), readable: readable.contains(group.id),
