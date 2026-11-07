@@ -33,7 +33,7 @@ the server's certificate legitimately changed and commands fail with a
 `server certificate changed` message, re-record it with `wuhu trust host:port`
 — no flag skips verification. `wuhu untrust host:port` forgets the record.
 
-A member creates an open group with `wuhu group create <alias>` and becomes its admin; guests cannot create groups. A group admin renames it with `wuhu group rename <id-or-alias> <alias>`. Aliases contain no hyphens and share one reserved namespace with people and machines; retired spellings keep resolving. A session instead uses `createGroup({alias, owner})` from `wuhu:space` in `run_script`, where the human owner becomes admin and the creating session gains no role.
+A member creates an open group with `wuhu group create <alias>` and becomes its admin; guests cannot create groups. A group admin renames it with `wuhu group rename <id-or-alias> <alias>` and changes the name the apps show with `wuhu group name <id-or-alias> <name>` (`group create --name` sets it up front; it defaults to the alias). Aliases contain no hyphens and share one reserved namespace with people and machines; retired spellings keep resolving. A session instead uses `createGroup({alias, owner})` from `wuhu:space` in `run_script`, where the human owner becomes admin and the creating session gains no role.
 
 A space may hold several groups. `wuhu group list` prints them, `wuhu group
 use <id>` (or `wuhu use host:port --group <id>`) records the one this wallet

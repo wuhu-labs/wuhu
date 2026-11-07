@@ -75,8 +75,9 @@ extension Space {
     }
   }
 
-  public func createGroup(alias raw: String, owner: AccountID) async throws -> GroupID {
+  public func createGroup(alias raw: String, name: String? = nil, owner: AccountID) async throws -> GroupID {
     guard let alias = normalizedLabel(raw, allowing: ["_"], length: 1 ... 63) else { throw AliasError.invalid(raw) }
+    let name = try name.map(GroupName.checked) ?? alias
     let created = SQLiteDateFormat.string(from: dateGen.now)
     let rng = rng
     return try await writer.write { db in
@@ -88,7 +89,7 @@ extension Space {
       let allocation = try Allocations.draw(.group, createdBy: owner.rawValue, created: created, minted: minted, in: db)
       let group = GroupID(rawValue: allocation.name)
       try GroupRow.insert {
-        GroupRow(id: group.rawValue, createdAt: created, visibility: "open", secretsScope: "owner", alias: alias)
+        GroupRow(id: group.rawValue, createdAt: created, visibility: "open", secretsScope: "owner", alias: alias, name: name)
       }.execute(db)
       try Groups.grant(.admin, in: group, to: owner, created: created, in: db)
       return group
@@ -104,6 +105,17 @@ extension Space {
       }
       try Aliases.requireFree(alias, kind: .group, target: group.rawValue, in: db)
       try GroupRow.where { $0.id.eq(group.rawValue) }.update { $0.alias = #bind(alias) }.execute(db)
+    }
+  }
+
+  public func nameGroup(_ group: GroupID, name raw: String, by principal: Principal) async throws {
+    let name = try GroupName.checked(raw)
+    try await writer.write { db in
+      try GroupAccess.requireAdmin(principal.actor, of: group, acting: principal.group, in: db)
+      guard let row = try GroupRow.where({ $0.id.eq(group.rawValue) }).fetchOne(db), row.personalAccount == nil, row.removedAt == nil else {
+        throw SpaceError.groupForbidden(group.rawValue)
+      }
+      try GroupRow.where { $0.id.eq(group.rawValue) }.update { $0.name = #bind(name) }.execute(db)
     }
   }
 }

@@ -19,8 +19,9 @@ import Testing
   func user(
     name: String? = nil,
     admin: Bool = false,
+    guest: Bool = false,
   ) async throws -> (record: AccountRecord, key: Curve25519.Signing.PrivateKey) {
-    let record = try await harness.space.addAccount(kind: .human, name: name, admin: admin)
+    let record = try await harness.space.addAccount(kind: .human, name: name, admin: admin, guest: guest)
     let key = Curve25519.Signing.PrivateKey()
     _ = try await harness.space.addKey(key.pubkeyLabel, account: record.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     return (record, key)
@@ -146,13 +147,31 @@ import Testing
     #expect(ghost.status == .notFound)
   }
 
+  @Test func everyMemberButAGuestListsAccountsWithNoMoreThanTheirPublicFields() async throws {
+    let alice = try await user(name: "alice")
+    _ = try await user(name: "root", admin: true)
+    let guest = try await user(name: "visitor", guest: true)
+
+    let listed = try await send(.get, "/v1/accounts", key: alice.key)
+    #expect(listed.status == .ok)
+    let accounts = try #require((try await json(listed)).arrayValue(at: "accounts"))
+    #expect(Set(accounts.compactMap { $0.stringValue(at: "name") }).isSuperset(of: ["alice", "root", "visitor"]))
+    for account in accounts {
+      guard case let .object(fields) = account else { Issue.record("not an object: \(account)"); continue }
+      #expect(Set(fields.keys).isSubset(of: ["id", "kind", "name", "admin", "createdAt", "guest"]))
+    }
+
+    let refused = try await send(.get, "/v1/accounts", key: guest.key)
+    #expect(refused.status == .forbidden)
+    #expect((try await json(refused)).stringValue(at: "code") == "memberRequired")
+  }
+
   @Test func accountLifecycleIsAdminOnly() async throws {
     let alice = try await user(name: "alice")
     let root = try await user(name: "root", admin: true)
 
     for (method, path, body): (Fetch.Method, String, JSONValue?) in [
       (.post, "/v1/accounts", .object(["name": .string("carol")])),
-      (.get, "/v1/accounts", nil),
       (.delete, "/v1/accounts/\(alice.record.id.rawValue)", nil),
       (.post, "/v1/accounts/\(alice.record.id.rawValue)/admin", .object(["admin": .bool(true)])),
     ] {

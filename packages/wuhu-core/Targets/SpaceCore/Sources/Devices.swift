@@ -209,6 +209,15 @@ extension Space {
 }
 
 /// A device name is shown on one line inside a message header.
+enum GroupName {
+  static func checked(_ raw: String) throws -> String {
+    let name = raw.trimmingCharacters(in: .whitespaces)
+    if name.isEmpty { throw SpaceError.invalidGroupName("a group name may not be empty") }
+    if let problem = DeviceName.problem(name) { throw SpaceError.invalidGroupName("group name \(name) \(problem)") }
+    return name
+  }
+}
+
 enum DeviceName {
   static let maxCharacters = 64
 

@@ -55,6 +55,10 @@ public struct MachineStatus: Codable, Equatable, Sendable {
   public let attached: Bool
   /// `owner` (its own group only) or `reachable` (every group that can reach it).
   public let scope: String?
+  /// The device whose owner's app runs this machine (a Mac's own), when one is linked.
+  public let device: String?
+  /// Unix seconds it was last seen connected, when it is not attached now.
+  public let lastSeen: Double?
 }
 
 @Contract

@@ -109,7 +109,7 @@ admin-only rule get `403 adminRequired`.
 | Route | Purpose |
 | --- | --- |
 | `POST /v1/accounts` | Admin: create a human account `{name?, admin?}` → `AccountPayload`. |
-| `GET /v1/accounts` | Admin: the live roster (removed accounts are tombstoned out). |
+| `GET /v1/accounts` | Any member but a guest (`403 memberRequired`): the live roster `{accounts: [AccountPayload]}` (removed accounts are tombstoned out); each entry is id, kind, name, admin, createdAt and guest, never a key, token or invite. |
 | `DELETE /v1/accounts/:id` | Admin: remove a human account — its keys, browser logins, and outstanding invites die; the row stays as a tombstone so attribution history keeps resolving. Refuses the last admin (`409 lastAdmin`) and machine accounts (their own verbs manage them). |
 | `POST /v1/accounts/:id/admin` | Admin: grant or revoke the admin flag `{admin}`. Demoting the last admin is `409 lastAdmin`; revoking from an account that stays an admin of `shared` through a team group it belongs to changes nothing and is `409 adminThroughGroup`, naming the group; offline recovery (`wuhu user add --space <folder> --admin`, server stopped) remains the bedrock. |
 | `GET /v1/keys?account=` | List enrolled keys. Default: the bearer's own account; another account's keys need admin. |

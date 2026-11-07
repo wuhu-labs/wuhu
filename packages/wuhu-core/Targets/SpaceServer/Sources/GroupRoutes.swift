@@ -40,7 +40,7 @@ func addGroupRoutes(
   router.post("/v1/groups") { request, _ in
     let input: GroupCreateInput
     do { input = try await request.json(GroupCreateInput.self) }
-    catch { return errorResponse(.badRequest, code: "invalidArgument", message: "expected {alias, owner?}") }
+    catch { return errorResponse(.badRequest, code: "invalidArgument", message: "expected {alias, name?, owner?}") }
     let owner: AccountID
     switch try await requestCredential(request, space: space, date: clock) {
     case let .credential(.person(credential)):
@@ -57,7 +57,7 @@ func addGroupRoutes(
     case let .refused(response): return response
     }
     do {
-      let id = try await space.createGroup(alias: input.alias, owner: owner)
+      let id = try await space.createGroup(alias: input.alias, name: input.name, owner: owner)
       let principal = Principal(actor: .person(persona: "", account: owner), group: id)
       return try await Response.json(try groupDetail(id, principal: principal, space: space), status: .created)
     } catch { return groupErrorResponse(error) }
@@ -88,7 +88,7 @@ func addGroupRoutes(
     } catch {
       return errorResponse(
         .badRequest, code: "invalidArgument",
-        message: "expected a group body {\"open\": bool, \"secrets\": \"owner\" | \"reachable\"}: \(error)",
+        message: "expected a group body {\"alias\", \"name\", \"open\": bool, \"secrets\": \"owner\" | \"reachable\"}: \(error)",
       )
     }
     let principal: Principal
@@ -96,8 +96,8 @@ func addGroupRoutes(
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
-    guard input.alias != nil || input.open != nil || input.secrets != nil else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "a group update names alias, open, or secrets")
+    guard input.alias != nil || input.name != nil || input.open != nil || input.secrets != nil else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "a group update names alias, name, open, or secrets")
     }
     let secrets: ReachScope?
     if let raw = input.secrets {
@@ -111,6 +111,9 @@ func addGroupRoutes(
     do {
       if let alias = input.alias {
         try await space.renameGroup(group, alias: alias, by: principal)
+      }
+      if let name = input.name {
+        try await space.nameGroup(group, name: name, by: principal)
       }
       if let open = input.open {
         try await space.setVisibility(open ? .open : .private, of: group, by: principal.actor, acting: principal.group)
@@ -176,6 +179,7 @@ private func groupDetail(_ group: GroupID, principal: Principal, space: Space) a
   return GroupDetail(
     id: record.id.rawValue,
     alias: record.alias,
+    name: record.name,
     open: record.visibility == .open,
     secrets: record.secretsScope.rawValue,
     personal: record.personalAccount != nil,
@@ -195,6 +199,8 @@ private func groupErrorResponse(_ error: any Error) -> Response {
     return errorResponse(.badRequest, code: "invalidAlias", message: "invalid alias: \(alias); use lowercase letters, digits, underscores, no hyphens")
   case let AliasError.taken(alias):
     return errorResponse(.conflict, code: "aliasTaken", message: "alias \(alias) is reserved")
+  case let SpaceError.invalidGroupName(reason):
+    return errorResponse(.badRequest, code: "invalidName", message: reason)
   case SpaceError.notFound:
     return errorResponse(.notFound, code: "notFound", message: "no such account or group")
   case SpaceError.groupForbidden(let group):

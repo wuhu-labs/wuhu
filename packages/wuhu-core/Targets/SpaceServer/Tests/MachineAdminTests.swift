@@ -29,11 +29,27 @@ import Testing
 
     for state in [MachineV2Presence.detached, .lost] {
       try await space.recordMachineV2Presence(id.rawValue, group: .shared, state: state)
-      let detached = MachineStatus(id: id, name: "box", group: "shared", attached: false, scope: "owner")
-      #expect(try await server.http(.get, "/v1/machine").json([MachineStatus].self) == [detached])
+      let listed = try await server.http(.get, "/v1/machine").json([MachineStatus].self)
+      let seen = try #require(listed.first?.lastSeen)
+      let detached = MachineStatus(id: id, name: "box", group: "shared", attached: false, scope: "owner", lastSeen: seen)
+      #expect(listed == [detached])
       #expect(try await server.http(.get, "/v1/machine/box/status").json(MachineStatus.self) == detached)
     }
     #expect(try await server.http(.get, "/v1/machine/unknown/status").status == .notFound)
+  }
+
+  @Test func aMachineReportsTheDeviceLinkedToIt() async throws {
+    let space = try makeMachineSpace()
+    let server = TestServer(space: space, clock: ContinuousClock())
+    let (id, _) = try await addMachine(server)
+    #expect(try await server.http(.get, "/v1/machine/box/status").json(MachineStatus.self).device == nil)
+    let owner = try await space.addAccount(kind: .human, name: "Morgan")
+    let pubkey = "ed25519:" + Data(repeating: 7, count: 32).base64EncodedString()
+    _ = try await space.addKey(pubkey, account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let device = try await space.upsertDevice(pubkey: pubkey, installation: "install", kind: "mac", name: "Studio")
+    _ = try await space.annotateDevice(device.id, name: nil, machine: id)
+    #expect(try await server.http(.get, "/v1/machine/box/status").json(MachineStatus.self).device == device.id)
+    #expect(try await server.http(.get, "/v1/machine").json([MachineStatus].self).map(\.device) == [device.id])
   }
 
   @Test func machineNamesNormalizeAndResolveAcrossRenames() async throws {

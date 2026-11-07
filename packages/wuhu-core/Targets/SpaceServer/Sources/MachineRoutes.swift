@@ -41,20 +41,30 @@ func addMachineRoutes(
     return .success((principal, record))
   }
 
+  // Each machine's device link, and when it was last seen if it is not attached now.
+  @Sendable func status(of records: [MachineRecord]) async throws -> [MachineStatus] {
+    let attached = await hub.attachedMachines()
+    let links = Dictionary(try await space.devices().compactMap { device in device.machine.map { ($0, device.id) } }, uniquingKeysWith: min)
+    var statuses: [MachineStatus] = []
+    for record in records {
+      let online = attached.contains(record.id)
+      let evidence = online ? nil : try await space.machineV2PresenceEvidence(record.id.rawValue, group: record.group)
+      let lastSeen = evidence.flatMap { $0.reason == "neverAttached" ? nil : $0.observedAt.timeIntervalSince1970 }
+      statuses.append(MachineStatus(
+        id: record.id, name: record.name, group: record.group.rawValue, attached: online, scope: record.scope.rawValue,
+        device: links[record.id], lastSeen: lastSeen,
+      ))
+    }
+    return statuses
+  }
+
   router.get("/v1/machine") { request, _ in
     let principal: Principal
     switch try await principalOf(request) {
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
-    let attached = await hub.attachedMachines()
-    let statuses = try await space.machines(usableFrom: principal.group).map { record in
-      MachineStatus(
-        id: record.id, name: record.name, group: record.group.rawValue, attached: attached.contains(record.id),
-        scope: record.scope.rawValue,
-      )
-    }
-    return try Response.json(statuses)
+    return try await Response.json(status(of: try await space.machines(usableFrom: principal.group)))
   }
 
   router.get("/v1/machine/:id/status") { request, parameters in
@@ -63,10 +73,7 @@ func addMachineRoutes(
     case let .success((_, resolved)): record = resolved
     case let .failure(response): return response
     }
-    return try Response.json(MachineStatus(
-      id: record.id, name: record.name, group: record.group.rawValue,
-      attached: await hub.attachedMachines().contains(record.id), scope: record.scope.rawValue,
-    ))
+    return try await Response.json(status(of: [record])[0])
   }
 
   router.put("/v1/machine/:id/name") { request, parameters in
@@ -87,10 +94,7 @@ func addMachineRoutes(
     }
     do {
       let renamed = try await space.renameMachine(record.id, name: input.name)
-      return try Response.json(MachineStatus(
-        id: renamed.id, name: renamed.name, group: renamed.group.rawValue, attached: await hub.attachedMachines().contains(renamed.id),
-        scope: renamed.scope.rawValue,
-      ))
+      return try await Response.json(status(of: [renamed])[0])
     } catch let SpaceError.invalidMachineName(raw) {
       return errorResponse(
         .badRequest,
@@ -197,10 +201,7 @@ func addMachineRoutes(
       )
     }
     let moved = try await space.moveMachine(record.id, to: target)
-    return try Response.json(MachineStatus(
-      id: moved.id, name: moved.name, group: moved.group.rawValue, attached: await hub.attachedMachines().contains(moved.id),
-      scope: moved.scope.rawValue,
-    ))
+    return try await Response.json(status(of: [moved])[0])
   }
 
   // The switch: its own group alone, or every group that can reach it. Like a
@@ -233,10 +234,7 @@ func addMachineRoutes(
     case let .failure(response): return response
     }
     let switched = try await space.setMachineScope(record.id, scope: scope)
-    return try Response.json(MachineStatus(
-      id: switched.id, name: switched.name, group: switched.group.rawValue, attached: await hub.attachedMachines().contains(switched.id),
-      scope: switched.scope.rawValue,
-    ))
+    return try await Response.json(status(of: [switched])[0])
   }
 
   router.post("/v1/exec") { request, _ in

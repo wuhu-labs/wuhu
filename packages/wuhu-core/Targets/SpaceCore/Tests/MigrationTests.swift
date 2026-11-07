@@ -355,6 +355,24 @@ import Testing
     try await freshSpace.close()
   }
 
+  @Test func groupsAreNamedAfterTheirAliasAndSharedIsShared() async throws {
+    let database = try database()
+    let original = try Space(writer: database)
+    let owner = try await original.addAccount(kind: .human, name: "Morgan").id
+    let lab = try await original.createGroup(alias: "lab", owner: owner)
+    let personal = try await original.ensurePersonalGroup(account: owner)
+    try await database.write { db in
+      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('bare', '2026-01-01T00:00:00.000Z')")
+      try db.execute(sql: "ALTER TABLE groups DROP COLUMN name")
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '015'")
+    }
+    let upgraded = try Space(writer: try DatabaseQueue(path: database.path))
+    let names = Dictionary(uniqueKeysWithValues: try await upgraded.groups().map { ($0.id, $0.name) })
+    #expect(names == [.shared: "Shared", .settings: "settings", lab: "lab", GroupID(rawValue: "bare"): "bare", personal: nil])
+    try await original.close()
+    try await upgraded.close()
+  }
+
   @Test func newerDatabaseIsRefusedWithoutChanges() async throws {
     let database = try database()
     let original = try Space(writer: database)
@@ -362,7 +380,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015", "998", "999"])
     try await original.close()
   }
 

@@ -261,6 +261,15 @@ struct RequestMappingTests {
       let input = try await requestBodyJSON(request)
       #expect(input == ["alias": "science"])
     }
+    try await assertRequest(
+      ["group", "name", "science", "Science"],
+      response: .object(["id": "amber-river-stone", "alias": "science", "name": "Science", "open": true, "secrets": "owner", "personal": false, "entries": []]),
+    ) { request in
+      #expect(request.method == .put)
+      #expect(request.url.path == "/v1/group/science")
+      let input = try await requestBodyJSON(request)
+      #expect(input == ["name": "Science"])
+    }
   }
 
   @Test func namingVerbsSendTheReferenceThroughUntouched() async throws {

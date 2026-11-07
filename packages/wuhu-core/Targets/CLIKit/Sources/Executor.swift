@@ -336,8 +336,10 @@ struct Executor {
       try await self.groupUse(group)
     case .groupCurrent:
       try await self.groupCurrent()
-    case let .groupCreate(alias):
-      try await self.groupCreate(alias)
+    case let .groupCreate(alias, name):
+      try await self.groupCreate(alias, name: name)
+    case let .groupName(group, name):
+      try await self.groupName(group, name: name)
     case let .groupRename(group, alias):
       try await self.groupRename(group, alias: alias)
     case let .groupShow(group):

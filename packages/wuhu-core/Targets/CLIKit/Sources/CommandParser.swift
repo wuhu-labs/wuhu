@@ -553,14 +553,20 @@ extension Command {
       try parser.finish(verb: "group current")
       return .groupCurrent
     case "create":
+      let name = try parser.option("--name", verb: "group create")
       let alias = try parser.required("alias", verb: "group create")
       try parser.finish(verb: "group create")
-      return .groupCreate(alias)
+      return .groupCreate(alias, name: name)
     case "rename":
       let id = try parser.required("group", verb: "group rename")
       let alias = try parser.required("alias", verb: "group rename")
       try parser.finish(verb: "group rename")
       return .groupRename(id, alias: alias)
+    case "name":
+      let id = try parser.required("group", verb: "group name")
+      let name = try parser.required("name", verb: "group name")
+      try parser.finish(verb: "group name")
+      return .groupName(id, name: name)
     case "show":
       let id = try parser.required("group", verb: "group show")
       try parser.finish(verb: "group show")
@@ -1584,7 +1590,7 @@ extension Command {
     "user list": """
     usage: wuhu user list
 
-    lists the pinned space's accounts (admin only): id, kind, admin marker,
+    lists the pinned space's accounts (any member but a guest): id, kind, admin marker,
     and name, one per line.
     \(exitCodes)
     """,
@@ -1701,6 +1707,7 @@ extension Command {
       list              list group ids and readable aliases
       create <alias>    create an open group as its human admin
       rename <g> <alias>  change a group alias as its admin
+      name <g> <name>   change a group's display name as its admin
       show <g>          show a group by id or alias
       use <id>|--clear  record the group this wallet acts in, or clear it
       current           print the acting group and where it comes from
@@ -1728,9 +1735,10 @@ extension Command {
     \(exitCodes)
     """,
     "group create": """
-    usage: wuhu group create <alias>
+    usage: wuhu group create <alias> [--name <name>]
 
     creates an open group owned by the calling space member, never a guest.
+    its name, what the apps show, defaults to the alias.
     sessions use createGroup({alias, owner}) in run_script instead.
     \(exitCodes)
     """,
@@ -1739,6 +1747,13 @@ extension Command {
 
     changes the group's alias as its admin. old aliases keep resolving.
     aliases use letters, digits and underscores, without hyphens.
+    \(exitCodes)
+    """,
+    "group name": """
+    usage: wuhu group name <id-or-alias> <name>
+
+    changes the group's name, what the apps show, as its admin: 1 to 64
+    characters, no line breaks, control characters, <, > or &.
     \(exitCodes)
     """,
     "group list": """

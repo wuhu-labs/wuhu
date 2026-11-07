@@ -40,17 +40,20 @@ extension SpaceToolContext {
       readable = all
     }
     // The dev seat acts in every group, so it administers every group too.
-    let administered: Set<GroupID> = if case .anonymous = caller.actor {
-      dev ? Set(live.map(\.id)) : []
+    let administered: Set<GroupID>
+    let named: Bool
+    if case .anonymous = caller.actor {
+      administered = dev ? Set(live.map(\.id)) : []
+      named = dev
     } else {
-      try await space.administeredGroups(by: caller.actor, acting: caller.group)
+      administered = try await space.administeredGroups(by: caller.actor, acting: caller.group)
+      named = true
     }
-    let own: AccountID? = if case let .person(_, account) = caller.actor { account } else { nil }
     return live
-      .filter { $0.id != .settings && ($0.personalAccount == nil || $0.personalAccount == own) }
+      .filter { $0.id != .settings && $0.personalAccount == nil }
       .map { group in
         GroupSummary(
-          id: group.id.rawValue, member: member.contains(group.id), readable: readable.contains(group.id),
+          id: group.id.rawValue, name: named ? group.name : nil, member: member.contains(group.id), readable: readable.contains(group.id),
           admin: administered.contains(group.id),
         )
       }

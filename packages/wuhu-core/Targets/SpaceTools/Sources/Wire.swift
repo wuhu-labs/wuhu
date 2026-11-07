@@ -240,7 +240,7 @@ public enum Wire {
         message: "the settings group's admins are accounts, not list entries",
         hint: "grant or revoke a space admin with POST /v1/accounts/:id/admin, or wuhu user admin",
       )
-    case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .invalidDeviceName,
+    case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .invalidDeviceName, .invalidGroupName,
          .notAFile, .notADirectory, .pathIsDirectory, .invalidRevision,
          .columnCountMismatch, .columnTypeChanged, .invalidTableHeader, .reservedTablePath,
          .queryNotReadOnly, .templateInvalid, .importInvalid:

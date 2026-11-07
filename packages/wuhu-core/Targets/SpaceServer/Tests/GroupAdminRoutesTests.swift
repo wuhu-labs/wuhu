@@ -49,12 +49,13 @@ import Testing
       let created = try await response.json(GroupDetail.self)
       let id = created.id
       #expect(created.alias == "research_notes")
+      #expect(created.name == "research_notes")
       #expect(created.open)
       #expect(created.entries == [GroupAccessEntry(kind: "account", id: w.account.rawValue, role: "admin")])
       #expect(id.split(separator: "-").count == 3)
       let listed = try await send(w, .get, "/v1/groups").json(JSONValue.self)
       let summary = try #require(listed.array?.first { $0.object?["id"] == .string(id) }?.object)
-      #expect(Set(summary.keys) == ["id", "member", "readable", "admin"])
+      #expect(Set(summary.keys) == ["id", "name", "member", "readable", "admin"])
       let detail = try await send(w, .get, "/v1/group/research_notes").json(GroupDetail.self)
       #expect(detail.id == id)
       #expect(detail.alias == "research_notes")
@@ -147,6 +148,32 @@ import Testing
       var request = Request(url: URL(string: "https://space.test/v1/group/\(w.group.rawValue)")!, method: .get)
       request.headers[.authorization] = "Bearer " + strangerBearer
       #expect(try await w.harness.api(request).status == .notFound)
+    }
+  }
+
+  @Test func anAdminNamesAGroupWithoutTouchingItsAlias() async throws {
+    try await withSessionDeps {
+      let w = try await world()
+      let created = try await send(w, .post, "/v1/groups", ["alias": "lab", "name": " Field Lab "]).json(GroupDetail.self)
+      #expect(created.name == "Field Lab")
+      let renamed = try await send(w, .put, "/v1/group/lab", ["name": "实验室"]).json(GroupDetail.self)
+      #expect(renamed.name == "实验室")
+      #expect(renamed.alias == "lab")
+      let listed = try await send(w, .get, "/v1/groups").json([GroupSummary].self)
+      #expect(listed.first { $0.id == created.id }?.name == "实验室")
+      #expect(listed.first { $0.id == "shared" }?.name == "Shared")
+      for bad: JSONValue in ["", "   ", "a\nb", .string(String(repeating: "x", count: 65))] {
+        let refused = try await send(w, .put, "/v1/group/lab", ["name": bad])
+        #expect(refused.status == .badRequest)
+        #expect(try await json(refused).object?["code"] == "invalidName")
+      }
+      #expect(try await send(w, .post, "/v1/groups", ["alias": "lab2", "name": ""]).status == .badRequest)
+      let own = try #require(try await w.harness.space.personalGroup(of: w.account))
+      #expect(try await send(w, .put, "/v1/group/\(own.rawValue)", ["name": "Mine"]).status == .forbidden)
+      let other = try await w.harness.space.addAccount(kind: .human, name: "Other")
+      let theirs = try await w.harness.space.createGroup(alias: "theirs", owner: other.id)
+      #expect(try await send(w, .put, "/v1/group/\(theirs.rawValue)", ["name": "Taken over"]).status == .forbidden)
+      #expect(try await w.harness.space.group(theirs)?.name == "theirs")
     }
   }
 

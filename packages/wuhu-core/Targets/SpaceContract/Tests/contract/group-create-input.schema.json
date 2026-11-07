@@ -1,1 +1,1 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GroupCreateInput","type":"object","properties":{"alias":{"type":"string"},"owner":{"type":["string","null"]}},"required":["alias"],"additionalProperties":false}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GroupCreateInput","type":"object","properties":{"alias":{"type":"string"},"name":{"type":["string","null"]},"owner":{"type":["string","null"]}},"required":["alias"],"additionalProperties":false}

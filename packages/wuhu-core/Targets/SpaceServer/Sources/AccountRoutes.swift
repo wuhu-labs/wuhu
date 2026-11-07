@@ -43,8 +43,9 @@ func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStream
     case let .refused(response):
       return response
     case let .actor(actor):
-      guard actor.isAdmin else {
-        return adminRequired("listing accounts")
+      // Every member reads the roster; the payload carries no key, token or invite state.
+      if case let .account(record) = actor, record.guest {
+        return errorResponse(.forbidden, code: "memberRequired", message: "listing accounts requires a space member, not a guest")
       }
       let records = try await space.accounts()
       return try Response.json(AccountListOutput(accounts: records.map(accountPayload)))

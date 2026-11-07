@@ -269,6 +269,16 @@ private func sessionRouter(
     }
     return try await forward(request, parameters)
   }
+  // A session names a group it administers; its alias and access stay a person's.
+  router.put("/v1/group/:id") { request, parameters in
+    let text = try await request.body?.text() ?? ""
+    guard !principal().exec, case let .object(fields)? = JSONValue.parse(text), Array(fields.keys) == ["name"] else {
+      return errorResponse(.forbidden, code: "unauthorized", message: "a session changes only a group's name, through setGroupName in run_script")
+    }
+    var named = request
+    named.body = .bytes(Data(text.utf8), contentType: "application/json")
+    return try await forward(named, parameters)
+  }
   router.get("/v1/templates", use: forward)
   router.get("/v1/secret", use: forward)
   // A value is for the worker's script, which masks what it got; an exec's

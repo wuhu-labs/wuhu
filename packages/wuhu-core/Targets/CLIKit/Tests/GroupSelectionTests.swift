@@ -372,7 +372,9 @@ import Testing
   }
 
   @Test func groupAccessVerbsParseTheirSubjects() throws {
-    #expect(try Command.parse(["group", "create", "research_notes"]) == .groupCreate("research_notes"))
+    #expect(try Command.parse(["group", "create", "research_notes"]) == .groupCreate("research_notes", name: nil))
+    #expect(try Command.parse(["group", "create", "--name", "Research notes", "research_notes"]) == .groupCreate("research_notes", name: "Research notes"))
+    #expect(try Command.parse(["group", "name", "studio", "The Studio"]) == .groupName("studio", name: "The Studio"))
     #expect(try Command.parse(["group", "rename", "studio", "research_notes"]) == .groupRename("studio", alias: "research_notes"))
     #expect(try Command.parse(["group", "open", "studio"]) == .groupOpen("studio", open: true))
     #expect(try Command.parse(["group", "close", "studio"]) == .groupOpen("studio", open: false))

@@ -58,15 +58,22 @@ extension Executor {
   }
 
   // A group's access state: open or private, the secrets switch, the list.
-  mutating func groupCreate(_ alias: String) async throws {
+  mutating func groupCreate(_ alias: String, name: String?) async throws {
     let space = try self.wallet.pinnedSpace()
-    let result: JSONValue = try await self.authenticated(space).api(.post, "/v1/groups", body: .object(["alias": .string(alias)]))
+    let body: JSONValue = if let name { ["alias": .string(alias), "name": .string(name)] } else { ["alias": .string(alias)] }
+    let result: JSONValue = try await self.authenticated(space).api(.post, "/v1/groups", body: body)
     await self.runner.stdout(result.jsonString() + "\n")
   }
 
   mutating func groupRename(_ group: String, alias: String) async throws {
     let space = try self.wallet.pinnedSpace()
     let detail: GroupDetail = try await self.authenticated(space).api(.put, "/v1/group/\(group)", body: .object(["alias": .string(alias)]))
+    await self.runner.stdout(detailLines(detail))
+  }
+
+  mutating func groupName(_ group: String, name: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let detail: GroupDetail = try await self.authenticated(space).api(.put, "/v1/group/\(group)", body: .object(["name": .string(name)]))
     await self.runner.stdout(detailLines(detail))
   }
 
@@ -115,6 +122,7 @@ extension Executor {
 
   private func detailLines(_ detail: GroupDetail) -> String {
     var lines = ["group \(detail.id) alias \(detail.alias ?? "none") \(detail.open ? "open" : "private") secrets \(detail.secrets)"]
+    if let name = detail.name { lines.append("name \(name)") }
     lines += detail.entries.map { "\($0.kind) \($0.id) \($0.role)" }
     return lines.joined(separator: "\n") + "\n"
   }

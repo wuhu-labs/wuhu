@@ -1,7 +1,7 @@
 ---
 name: space-scripts
 description: Use wuhu:space in run_script — tables, files, search, revisions, groups and channels; conversation reading is in read-box.
-script_exports: {"wuhu:space":["addChannelMembers","alterTable","checkout","context","createChannel","createGroup","createTable","find","grep","groups","history","identity","instantiateTemplate","list","move","mutateRows","observe","patchAttributes","query","readAttributes","readBytes","readText","remove","removeChannelMembers","renameChannel","stat","tableSchema","watch","writeBytes","writeText"]}
+script_exports: {"wuhu:space":["addChannelMembers","alterTable","checkout","context","createChannel","createGroup","createTable","find","grep","groups","history","identity","instantiateTemplate","list","move","mutateRows","observe","patchAttributes","query","readAttributes","readBytes","readText","remove","removeChannelMembers","renameChannel","setGroupName","stat","tableSchema","watch","writeBytes","writeText"]}
 ---
 
 # Space scripts
@@ -54,8 +54,9 @@ result(await query(`SELECT * FROM "${path}"`))
 ## Discovery and groups
 
 - `context()` returns `{ session, group, contentHost }` for the caller.
-- `groups()` returns live `{ id, member, readable, admin }` entries.
-- `createGroup({ alias, owner })` returns `{ id, alias }` for a new open group. The owner is a live non-guest human account id, persona id or person alias, and becomes admin; the creating session does not. Alias naming follows the shared group-address rules.
+- `groups()` returns live `{ id, name, member, readable, admin }` entries; `name` is what the apps call the group (a project).
+- `createGroup({ alias, name?, owner })` returns the new open group's `{ id, alias, name, … }`; `name` defaults to the alias. The owner is a live non-guest human account id, persona id or person alias, and becomes admin; the creating session does not. Alias naming follows the shared group-address rules.
+- `setGroupName(group, name)` renames a group (by id or alias) for the apps and returns its detail; it takes admin of that group. A name is 1–64 characters with no line breaks, control characters, `<`, `>` or `&`; the alias, the address, is unchanged.
 - `identity()` returns resolved `{ defaultIssuer, overrides, issuerFor(origin) }` for verifier trust, read-only.
 
 ## Channels

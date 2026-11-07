@@ -196,6 +196,8 @@ public struct AIProviderDisclosure: Codable, Equatable, Sendable {
 @Contract
 public struct GroupSummary: Codable, Equatable, Sendable {
   public let id: String
+  /// What people call it; absent for an anonymous caller.
+  public let name: String?
   /// The caller writes here: an open group, or one listing its group or its account.
   public let member: Bool?
   /// The caller reads this group.
@@ -219,6 +221,7 @@ public struct GroupAccessEntry: Codable, Equatable, Sendable {
 public struct GroupDetail: Codable, Equatable, Sendable {
   public let id: String
   public let alias: String?
+  public let name: String?
   public let open: Bool
   public let secrets: String
   public let personal: Bool
@@ -228,6 +231,7 @@ public struct GroupDetail: Codable, Equatable, Sendable {
 @Contract
 public struct GroupUpdateInput: Codable, Equatable, Sendable {
   public let alias: String?
+  public let name: String?
   public let open: Bool?
   /// `owner` or `reachable`.
   public let secrets: String?
@@ -245,6 +249,8 @@ public struct GroupAccessInput: Codable, Equatable, Sendable {
 @Contract
 public struct GroupCreateInput: Codable, Equatable, Sendable {
   public let alias: String
+  /// Defaults to the alias.
+  public let name: String?
   public let owner: String?
 }
 

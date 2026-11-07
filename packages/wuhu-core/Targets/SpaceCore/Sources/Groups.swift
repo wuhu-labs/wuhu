@@ -57,6 +57,8 @@ public struct Principal: Hashable, Sendable {
 public struct GroupRecord: Hashable, Sendable {
   public let id: GroupID
   public let alias: String?
+  /// What people call it; nil for a personal group.
+  public let name: String?
   public let createdAt: Date
   /// The person whose own group this is; nil for an ordinary group.
   public let personalAccount: AccountID?
@@ -299,6 +301,7 @@ extension Space {
     GroupRecord(
       id: GroupID(rawValue: row.id),
       alias: row.alias,
+      name: row.name,
       createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
       personalAccount: row.personalAccount.map(AccountID.init(rawValue:)),
       visibility: GroupVisibility(rawValue: row.visibility)!,

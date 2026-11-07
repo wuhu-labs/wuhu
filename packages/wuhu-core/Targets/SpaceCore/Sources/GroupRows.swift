@@ -10,6 +10,7 @@ struct GroupRow {
   var visibility: String
   @Column("secrets_scope") var secretsScope: String
   var alias: String? = nil
+  var name: String? = nil
 }
 
 @Table("group_roles")

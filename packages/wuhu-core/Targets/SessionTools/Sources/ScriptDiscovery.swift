@@ -35,6 +35,14 @@ struct ScriptDiscovery: Sendable {
         return try await client.api(.post, "/v1/groups", body: input)
       }
     })
+    engine.define("__wuhu_set_group_name", promising: { arguments in
+      await spaceAnswer {
+        guard arguments.count == 2, case let .string(group) = arguments[0], case let .string(name) = arguments[1],
+              !group.isEmpty, group.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") })
+        else { throw ToolRunError.failed(code: .invalidArgument, message: "setGroupName takes (group id or alias, name)", hint: nil) }
+        return try await client.api(.put, "/v1/group/\(group)", body: .object(["name": .string(name)]))
+      }
+    })
     engine.define("__wuhu_discovery", promising: { arguments in
       await spaceAnswer {
         let path = switch arguments.first {

@@ -32,7 +32,7 @@ import Testing
       #expect(actual.object?["context"]?.object?["session"] == .string(rig.session.rawValue))
       #expect(actual.object?["context"]?.object?["group"] == "alice")
       #expect(expectedGroups.array?.first { $0.object?["id"] == "hidden" } == ["id": "hidden", "member": false, "readable": false, "admin": false])
-      #expect(expectedGroups.array?.first { $0.object?["id"] == "shared" } == ["id": "shared", "member": false, "readable": true, "admin": false])
+      #expect(expectedGroups.array?.first { $0.object?["id"] == "shared" } == ["id": "shared", "name": "Shared", "member": false, "readable": true, "admin": false])
       let forgedGroup = SpaceToolContext(space: rig.space, principal: Principal(actor: .session(rig.session), group: .shared))
       #expect(try await forgedGroup.discoveryContext(contentHost: nil).object?["group"] == "alice")
       let hidden = GroupID(rawValue: "hidden")
@@ -62,11 +62,31 @@ import Testing
       let id = try #require(actual.object?["created"]?.object?["id"]?.stringValue)
       let group = GroupID(rawValue: id)
       #expect(actual.object?["text"] == "created")
+      #expect(actual.object?["created"]?.object?["name"] == "research_notes")
       #expect(actual.object?["errors"] == ["memberRequired", "aliasTaken", "invalidArgument"])
-      #expect(actual.object?["standing"] == ["id": .string(id), "member": false, "readable": true, "admin": false])
+      #expect(actual.object?["standing"] == ["id": .string(id), "name": "research_notes", "member": false, "readable": true, "admin": false])
       #expect(try await rig.space.isHumanAdmin(owner.id, of: group))
       #expect(try await rig.space.group(group)?.visibility == .open)
       #expect(try await rig.space.resolveGroup("research_notes") == group)
+    }
+  }
+
+  // A live top-level agent administers its own group, and no other.
+  @Test func setGroupNameTakesTheGroupsAdmin() async throws {
+    let alice = GroupID(rawValue: "alice")
+    try await withRig(group: alice) { rig in
+      let named = try await rig.evaluate("""
+      import {setGroupName, groups} from 'wuhu:space'
+      const detail = await setGroupName('alice', '  Alice Lab  ')
+      const errors = []
+      for (const [group, name] of [['alice', ''], ['alice', 'a\\nb'], ['alice', 'x'.repeat(65)], ['shared', 'Ours']]) {
+        try { await setGroupName(group, name) } catch(e) { errors.push(e.code) }
+      }
+      result({name: detail.name, listed: Object.fromEntries((await groups()).map(g => [g.id, g.name])), errors})
+      """)
+      #expect(named == ["name": "Alice Lab", "listed": ["alice": "Alice Lab", "shared": "Shared"], "errors": ["invalidName", "invalidName", "invalidName", "groupForbidden"]], "\(named)")
+      #expect(try await rig.space.group(alice)?.name == "Alice Lab")
+      #expect(try await rig.space.group(.shared)?.name == "Shared")
     }
   }
 
