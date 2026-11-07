@@ -60,26 +60,26 @@ func identityResponse(_ request: Request, client: SpaceClient, protect: (String)
     throw ScriptIdentityFailure(code: failure.code ?? "identityUnavailable", message: failure.message)
   }
   protect(token)
-  let remaining = identityRemaining(clock)
+  let window = IdentityWindow(clock)
   let timeout = FetchError.transportFailure(kind: .deadlineExceeded)
   var body = try await request.body?.bytes()
   var target = request
   for count in 0 ... identityHops {
-    guard remaining() > .zero else { throw timeout }
+    guard window.isOpen() else { throw timeout }
     target.body = body.map { .bytes($0) }
     target.headers[.authorization] = fetchOrigin(target.url) == origin ? "Bearer " + token : nil
     let outgoing = target
     let response = try await withThrowingTaskGroup(of: Response.self) { tasks in
       tasks.addTask { try await hop(outgoing) }
-      tasks.addTask { [clock] in
-        try await clock.sleep(for: remaining())
+      tasks.addTask {
+        try await window.end()
         throw timeout
       }
       defer { tasks.cancelAll() }
       return try await tasks.next()!
     }
     guard [301, 302, 303, 307, 308].contains(response.status.code), let location = response.headers[.location] else {
-      return bounded(response, remaining: remaining, clock: clock)
+      return bounded(response, window: window)
     }
     guard count < identityHops, let url = URL(string: location, relativeTo: target.url)?.absoluteURL, fetchOrigin(url) != nil else {
       throw ScriptHopError.invalidRedirect
@@ -95,10 +95,10 @@ func identityResponse(_ request: Request, client: SpaceClient, protect: (String)
   preconditionFailure()
 }
 
-/// `response` with its body under the window its head came in: a chunk that
-/// hasn't arrived when `remaining()` runs out ends the read with the same
-/// deadline failure, instead of a stalled upstream holding the script.
-private func bounded<C: Clock>(_ response: Response, remaining: @escaping @Sendable () -> Duration, clock: C) -> Response where C.Duration == Duration {
+/// `response` with its body under the window its head came in: a chunk still
+/// missing when the window ends fails the read with the same deadline error,
+/// instead of a stalled upstream holding the script.
+private func bounded(_ response: Response, window: IdentityWindow) -> Response {
   var response = response
   let base = response.body
   response.body = .stream(length: base.contentLength, contentType: base.contentType, AsyncThrowingStream<Bytes, any Error> { continuation in
@@ -111,8 +111,7 @@ private func bounded<C: Clock>(_ response: Response, remaining: @escaping @Senda
       }
     }
     let watchdog = Task {
-      let left = remaining()
-      if left > .zero { try await clock.sleep(for: left) }
+      try await window.end()
       continuation.finish(throwing: FetchError.transportFailure(kind: .deadlineExceeded))
       reader.cancel()
     }
@@ -124,7 +123,15 @@ private func bounded<C: Clock>(_ response: Response, remaining: @escaping @Senda
   return response
 }
 
-private func identityRemaining<C: Clock>(_ clock: C) -> @Sendable () -> Duration where C.Duration == Duration {
-  let expires = clock.now.advanced(by: identityWindow)
-  return { clock.now.duration(to: expires) }
+/// One instant fixed when the fetch starts: a wait armed late still ends
+/// there, never a full window after it was armed.
+private struct IdentityWindow: Sendable {
+  let isOpen: @Sendable () -> Bool
+  let end: @Sendable () async throws -> Void
+
+  init<C: Clock>(_ clock: C) where C.Duration == Duration {
+    let expires = clock.now.advanced(by: identityWindow)
+    isOpen = { clock.now < expires }
+    end = { try await clock.sleep(until: expires, tolerance: nil) }
+  }
 }

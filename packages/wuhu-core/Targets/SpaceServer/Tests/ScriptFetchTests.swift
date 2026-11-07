@@ -212,15 +212,19 @@ import struct WuhuAI.ToolCall
 
   @Test func aStalledResponseBodyEndsWithTheFetchWindow() async throws {
     let clock = VirtualClock()
-    let (heads, head) = AsyncStream<Void>.makeStream()
+    let (reads, read) = AsyncStream<Void>.makeStream()
+    let stalled = AsyncThrowingStream<Data, any Error> { _ in }
     try await withIdentityScript(identity: try testIdentity().controller, clock: clock, hop: FetchClient { _ in
-      head.yield(())
-      return Response(status: .ok, body: .stream(AsyncThrowingStream<Data, any Error> { _ in }))
+      Response(status: .ok, body: .stream(AsyncThrowingStream<Data, any Error>(unfolding: {
+        read.yield(())
+        for try await chunk in stalled { return chunk }
+        return nil
+      })))
     }) { rig in
       async let output = rig.evaluate(#"""
       try { await fetch("http://backend.test", { identity: true }); result("read") } catch (e) { result(e.message) }
       """#, wait: 120)
-      for await _ in heads { break }
+      for await _ in reads { break }
       await clock.advance(by: .seconds(60))
       let message = try await output
       #expect(message == "fetch failed: reading the response body failed: transportFailure(kind: Fetch.TransportFailureKind.deadlineExceeded)")
