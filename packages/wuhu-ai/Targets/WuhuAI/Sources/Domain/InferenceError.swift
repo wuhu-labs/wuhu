@@ -17,6 +17,7 @@ public enum InferenceError: Error, Sendable, Equatable {
   case oidcSigningFailed(provider: String)
   case authenticationRefused(code: String)
   case upstreamUnavailable(code: String)
+  case upstreamUnreachable
   case capacityExceeded(code: String, message: String, status: Int?)
   case streamCut
   case contextTooLong
@@ -134,10 +135,6 @@ extension InferenceError {
       return providerStreamError.asInferenceError()
     }
 
-    if let responsesStreamError = error as? ResponsesStreamError {
-      return responsesStreamError.asInferenceError()
-    }
-
     if isTransportError(error) {
       return .transient(status: nil, body: nil)
     }
@@ -223,17 +220,6 @@ struct ProviderStreamError: Error, Sendable, Equatable {
       message
     case (nil, nil):
       nil
-    }
-  }
-}
-
-extension ResponsesStreamError {
-  func asInferenceError() -> InferenceError {
-    switch self {
-    case let .failed(status):
-      .transient(status: nil, body: status)
-    case .cancelled:
-      .cancelled
     }
   }
 }

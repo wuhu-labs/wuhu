@@ -30,18 +30,13 @@ struct ResponsesWebSocketEvents {
       throw Self.invalid("Expected a Responses event object")
     }
     if type == "error" || type == "response.failed" {
-      let error = object["error"] ?? object["response"]?.object?["error"] ?? value
+      let error = responsesEventError(value)
       let code = error.object?["code"]?.stringValue ?? error.object?["type"]?.stringValue
       if !exposedOutput {
         if code == "previous_response_not_found" { throw ResponsesRecovery.previousMissing }
         if code == "websocket_connection_limit_reached" { throw ResponsesRecovery.connectionExpired }
       }
-      let headers = object["headers"]?.object ?? error.object?["headers"]?.object ?? [:]
-      throw Self.providerError(
-        error,
-        status: responsesProviderErrorStatus(value, error: error),
-        headers: RequestHeaders(values: Dictionary(uniqueKeysWithValues: headers.compactMap { key, value in value.stringValue.map { (key, $0) } })).fields,
-      )
+      throw responsesFailure(value)
     }
     if type == "response.cancelled" { throw Self.invalid("Unsolicited response.cancelled") }
     guard type.hasPrefix("response.") else { return (nil, false) }
@@ -150,29 +145,6 @@ struct ResponsesWebSocketEvents {
 
   static func invalid(_ message: String) -> InferenceError {
     .transient(status: nil, body: "invalid_stream: \(message)")
-  }
-
-  static func providerError(_ value: JSONValue, status: Int?, headers: Headers) -> InferenceError {
-    if let malformed = responsesMalformedMessage(value) { return malformed }
-    let object = value.object
-    let code = object?["code"]?.stringValue ?? object?["type"]?.stringValue ?? "unknown_error"
-    let message = String((object?["message"]?.stringValue ?? code).prefix(8192))
-    if let capacity = InferenceError.capacityError(code: code, message: message, status: status) { return capacity }
-    if InferenceError.bodyIndicatesContextOverflow(code + " " + message) { return .contextTooLong }
-    switch code {
-    case "upstream_stream_cut": return .streamCut
-    case "rate_limit_exceeded", "rate_limit_error", "insufficient_quota", "usage_limit_reached": return .rateLimited(retryAt: InferenceError.parseRetryAfter(headers))
-    case "server_error", "internal_server_error", "overloaded_error", "temporarily_unavailable":
-      return .upstreamUnavailable(code: code)
-    case "invalid_api_key", "authentication_error", "unauthorized", "account_deactivated", "account_banned": return .authenticationRefused(code: code)
-    case "permission_denied", "forbidden": return .invalidInput(status: 403, body: message)
-    case "previous_response_not_found", "websocket_connection_limit_reached": return .transient(status: status, body: message)
-    case "invalid_stream_id", "websocket_stream_limit_reached", "invalid_request_error", "invalid_request", "invalid_value", "unsupported_parameter", "model_not_found":
-      return .invalidInput(status: 400, body: message)
-    default:
-      if let status { return .classify(status: status, headers: headers, body: message) }
-      return .other(status: nil, body: code + ": " + message)
-    }
   }
 }
 

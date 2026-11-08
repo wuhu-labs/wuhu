@@ -20,7 +20,7 @@ import Testing
       let responseHeaders = headers
       let value: JSONValue = .object(["code": .string(code), "message": .string("capacity reached")])
       let expected = InferenceError.capacityExceeded(code: code, message: "capacity reached", status: status)
-      #expect(ResponsesWebSocketEvents.providerError(value, status: status, headers: headers) == expected)
+      #expect(responsesProviderError(value, status: status, headers: headers) == expected)
       for endpoint: any ModelEndpoint in [OpenAIGPTEndpoint(model: "test", apiKey: "offline"), AnthropicEndpoint(model: "test", replayScope: "test-scope", apiKey: "offline"), CapacityChatEndpoint()] {
         let bound = endpoint.withFetch(FetchClient { _ in Response(status: .init(code: status), headers: responseHeaders, body: .string(JSONValue.object(["error": value]).jsonString())) })
         await #expect(throws: expected) { try await bound.inference(context: Context(messages: [])).collect() }
@@ -70,7 +70,7 @@ import Testing
     headers[.retryAfter] = "30"
     let now = Date(timeIntervalSince1970: 100)
     withDependencies { $0.date = .constant(now) } operation: {
-      #expect(ResponsesWebSocketEvents.providerError(["code": "rate_limit_exceeded"], status: 429, headers: headers) == .rateLimited(retryAt: now.addingTimeInterval(30)))
+      #expect(responsesProviderError(["code": "rate_limit_exceeded"], status: 429, headers: headers) == .rateLimited(retryAt: now.addingTimeInterval(30)))
     }
   }
 }

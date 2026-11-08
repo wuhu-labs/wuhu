@@ -7,6 +7,7 @@ dependencies:
   - NIOCore
   - NIOHTTP1
   - NIOHTTP2
+  - NIOPosix
   - Logging
 checks:
   build: [linux, mac]

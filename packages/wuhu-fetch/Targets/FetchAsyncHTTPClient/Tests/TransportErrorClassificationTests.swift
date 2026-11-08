@@ -3,6 +3,7 @@ import Fetch
 @testable import FetchAsyncHTTPClient
 import NIOCore
 import NIOHTTP2
+import NIOPosix
 import Testing
 
 @Suite struct TransportErrorClassificationTests {
@@ -34,6 +35,16 @@ import Testing
       mapTransportError(IOError(errnoCode: 54, reason: "connection reset")) as? FetchError
         == .transportFailure(kind: .io),
     )
+  }
+
+  @Test func aRefusedDialToAHostnameBecomesTransportFailure() async throws {
+    let closed = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).bind(host: "127.0.0.1", port: 0).get()
+    let port = try #require(closed.localAddress?.port)
+    try await closed.close()
+    let refusal = await #expect(throws: NIOConnectionError.self) {
+      try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton).connect(host: "localhost", port: port).get()
+    }
+    #expect(mapTransportError(try #require(refusal)) as? FetchError == .transportFailure(kind: .io))
   }
 
   @Test func http2StreamAndConnectionDeathsBecomeConnectionClosed() {

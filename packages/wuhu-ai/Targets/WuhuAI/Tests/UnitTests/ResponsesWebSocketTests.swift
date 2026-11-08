@@ -494,6 +494,17 @@ import WuhuAI
     }
   }
 
+  @Test func aGatewayWhoseUpstreamIsUnreachableFailsAsUpstreamUnreachable() async throws {
+    let failed = #"{"type":"response.failed","response":{"error":{"code":"upstream_unreachable","message":"API Error: Connection refused"}}}"#
+    let server = ScriptedResponsesSocket(scripts: [[json(failed)]])
+    let session = ResponsesWebSocketSession()
+    await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
+      await #expect(throws: InferenceError.upstreamUnreachable) {
+        _ = try await endpoint().withWebSocket(session: session, attemptID: "one").inference(context: initial()).collect()
+      }
+    }
+  }
+
   @Test(arguments: ["binary", "bad-json", "missing-usage", "missing-id", "unfinished-tool", "unknown-incomplete", "cancelled"])
   func malformedStreamsCannotCommit(_ kind: String) async throws {
     var script = textResponse("resp_1")

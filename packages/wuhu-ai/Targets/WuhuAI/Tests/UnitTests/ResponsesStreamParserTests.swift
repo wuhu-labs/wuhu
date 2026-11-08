@@ -39,6 +39,38 @@ private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
     }
   }
 
+  @Test(arguments: ["response.failed", "error"])
+  func anUnreachableUpstreamIsTypedEvenAfterOutputStreamed(type: String) async throws {
+    let error: JSONValue = ["code": "upstream_unreachable", "message": "API Error: Connection refused"]
+    let failure: JSONValue = type == "response.failed"
+      ? .object(["type": .string(type), "response": ["status": "failed", "error": error]])
+      : .object(["type": .string(type), "error": error])
+    let events = [
+      jsonEvent(["type": "response.output_item.added", "item": ["type": "message", "id": "msg_1"]]),
+      jsonEvent(["type": "response.output_text.delta", "delta": "partial"]),
+      SSEEvent(data: failure.jsonString()),
+    ]
+    await #expect(throws: InferenceError.upstreamUnreachable) {
+      for try await _ in parseResponsesStream(sse(events), providerID: "gateway", model: "test") {}
+    }
+  }
+
+  @Test(arguments: [
+    (#"{"type":"response.failed","response":{"error":{"code":"upstream_unreachable","message":"refused"}}}"#, InferenceError.upstreamUnreachable),
+    (#"{"type":"error","status":400,"error":{"code":"unlisted_code","message":"bad"}}"#, .invalidInput(status: 400, body: "bad")),
+    (#"{"type":"response.failed","response":{"error":{"code":"claude_code_exited","message":"exited"}}}"#, .transient(status: nil, body: "claude_code_exited: exited")),
+    (#"{"type":"error","error":{"code":"unlisted_code","message":"new"}}"#, .transient(status: nil, body: "unlisted_code: new")),
+    (#"{"type":"response.failed","response":{"status":"failed"}}"#, .transient(status: nil, body: "response.failed: response.failed")),
+  ])
+  func sseAndWebSocketClassifyAFailureAlike(event: String, expected: InferenceError) async throws {
+    let value = try #require(JSONValue.parse(event))
+    var socket = ResponsesWebSocketEvents()
+    #expect(throws: expected) { try socket.accept(value) }
+    await #expect(throws: expected) {
+      for try await _ in parseResponsesStream(sse([SSEEvent(data: event)]), providerID: "gateway", model: "test") {}
+    }
+  }
+
   @Test func malformedDiagnosticsAreBoundedAndOptional() {
     let error: JSONValue = .object([
       "code": .string("malformed_model_message"),

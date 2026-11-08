@@ -315,22 +315,11 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
               }
             }
 
-          case "error":
-            let value = dict["error"] ?? .object(dict)
-            if value.object?["code"]?.stringValue == "upstream_stream_cut" || value.object?["type"]?.stringValue == "upstream_stream_cut" { throw InferenceError.streamCut }
-            if let error = responsesMalformedMessage(value) { throw error }
-            if let error = InferenceError.capacityError(code: value.object?["code"]?.stringValue ?? value.object?["type"]?.stringValue, message: value.object?["message"]?.stringValue, status: responsesProviderErrorStatus(.object(dict), error: value)) { throw error }
-
-          case "response.failed":
-            let value = dict["response"]?.object?["error"] ?? dict["error"] ?? .object(dict)
-            if value.object?["code"]?.stringValue == "upstream_stream_cut" || value.object?["type"]?.stringValue == "upstream_stream_cut" { throw InferenceError.streamCut }
-            if let error = responsesMalformedMessage(value) { throw error }
-            if let error = InferenceError.capacityError(code: value.object?["code"]?.stringValue ?? value.object?["type"]?.stringValue, message: value.object?["message"]?.stringValue, status: responsesProviderErrorStatus(.object(dict), error: value)) { throw error }
-            let status = dict["response"]?.object?["status"]?.stringValue ?? type
-            throw ResponsesStreamError.failed(status: status)
+          case "error", "response.failed":
+            throw responsesFailure(.object(dict))
 
           case "response.cancelled":
-            throw ResponsesStreamError.cancelled
+            throw InferenceError.cancelled
 
           default:
             break
@@ -355,13 +344,6 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
       task.cancel()
     }
   }
-}
-
-// MARK: - Responses Error
-
-enum ResponsesStreamError: Error {
-  case failed(status: String)
-  case cancelled
 }
 
 // MARK: - Codex Stream Parser

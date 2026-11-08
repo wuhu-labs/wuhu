@@ -663,7 +663,7 @@ private func classify(_ error: any Error) -> FailureClass {
   // Only a silent model stream escalates the idle-timeout schedule: it is the
   // one transport failure that re-burned the prompt to learn nothing.
   case .transport(.idleTimeout): .transient(timedOut: true)
-  case .transport: .outage(retryAt: nil)
+  case .transport, .upstreamUnreachable: .outage(retryAt: nil)
   case .streamCut, .transient, .upstreamUnavailable: .transient(timedOut: false)
   case .contextTooLong: .contextTooLong
   case .requestTooLarge: .requestTooLarge(normalized)

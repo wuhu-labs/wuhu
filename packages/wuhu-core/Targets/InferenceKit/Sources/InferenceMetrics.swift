@@ -116,6 +116,8 @@ extension InferenceMetric {
       return (.networkError, "streamCut", nil, nil)
     case .upstreamUnavailable:
       return (.httpError, "upstreamUnavailable", nil, nil)
+    case .upstreamUnreachable:
+      return (.networkError, "upstreamUnreachable", nil, nil)
     case .oidcSigningFailed:
       return (.httpError, "oidcSigningFailed", nil, nil)
     case .credentialRefreshRefused:

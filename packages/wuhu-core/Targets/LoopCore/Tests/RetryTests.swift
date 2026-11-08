@@ -1,8 +1,9 @@
 import Dependencies
-import enum Fetch.FetchError
-import enum Fetch.TransportFailureKind
+import Fetch
 import Foundation
+import InferenceKit
 @testable import LoopCore
+import ModelProviders
 import SessionDomain
 import SpaceCore
 import Testing
@@ -317,7 +318,7 @@ import WuhuAI
   // own. No attempt count survives that, so throttling and unreachability are
   // bounded by rate instead — the session waits it out and nobody is woken.
   @Test func `throttling and unreachable networks retry past the bounded limit`() async throws {
-    for outage in [InferenceError.rateLimited(retryAt: nil), .transport(.connectionClosed)] {
+    for outage in [InferenceError.rateLimited(retryAt: nil), .transport(.connectionClosed), .upstreamUnreachable] {
       try await withKernelDeps(seed: 7) { time in
         let space = try Space.inMemory()
         let sessions = space.sessions
@@ -347,6 +348,49 @@ import WuhuAI
 
         #expect(try await sessions.record(sid).work != .errored)
       }
+    }
+  }
+
+  @Test func `a gateway's unreachable upstream over SSE retries past the bounded limit`() async throws {
+    try await withKernelDeps(seed: 7) { time in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let document = ModelsDocument(providers: ["gateway": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
+      let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "gateway", model: "test", effort: "low"), session: sid)
+      let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [], hub: AttemptHub())
+      let rounds = boundedFailureLimit * 2
+      let requests = Box(0)
+      let gateway = FetchClient { _ in
+        let sse = requests.withLock { $0 += 1; return $0 } <= rounds ? unreachableAfterOutputSSE : backOnlineSSE
+        return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
+      }
+      let step: InferenceScript.Step = { request in
+        let result = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
+        return InferenceReply(message: result.message, metadata: result.metadata, committed: { _, _ in })
+      }
+      let script = InferenceScript(Array(repeating: step, count: rounds + 1))
+
+      var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
+      mirrorAllocationDraws(&rng)
+      let delays = (0 ..< rounds).map { attempt in
+        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      }
+
+      try await withDependencies { $0.fetch = gateway } operation: {
+        try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+          _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+          for (index, delay) in delays.enumerated() {
+            try await until("attempt \(index + 1)") { script.count == index + 1 }
+            try await time.wake("backoff \(index + 1)", after: delay)
+          }
+          try await until("recovered") { script.count == rounds + 1 }
+          try await until("settled") { try await sessions.settledWork(sid) }
+        }
+      }
+
+      #expect(try await sessions.record(sid).work != .errored)
+      #expect(try await sessions.hydrate(sid).transcript.kernel.assistantEntries.map(\.content) == [[.text(TextContent(text: "back online"))]])
     }
   }
 
@@ -387,3 +431,23 @@ import WuhuAI
     }
   }
 }
+
+private let unreachableAfterOutputSSE = """
+data: {"type":"response.output_item.added","item":{"type":"message","id":"msg"}}
+
+data: {"type":"response.output_text.delta","delta":"partial"}
+
+data: {"type":"response.failed","response":{"status":"failed","error":{"code":"upstream_unreachable","message":"API Error: Connection refused"}}}
+
+"""
+
+private let backOnlineSSE = """
+data: {"type":"response.output_item.added","item":{"type":"message","id":"msg"}}
+
+data: {"type":"response.output_text.delta","delta":"back online"}
+
+data: {"type":"response.output_item.done","item":{"type":"message","id":"msg"}}
+
+data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":2}}}
+
+"""

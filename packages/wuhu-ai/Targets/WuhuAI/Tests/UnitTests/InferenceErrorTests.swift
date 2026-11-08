@@ -49,7 +49,7 @@ struct InferenceErrorTests {
     let responses = sse + "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
     #expect(await captureInferenceError(fetch: stubFetch(Response(status: .ok, body: .string(responses))), endpoint: openAIEndpoint()) == .streamCut)
     #expect(InferenceError.classify(status: 502, headers: Headers(), body: "{\"error\":{\"\(field)\":\"upstream_stream_cut\"}}") == .streamCut)
-    #expect(ResponsesWebSocketEvents.providerError(.object([field: .string("upstream_stream_cut")]), status: nil, headers: Headers()) == .streamCut)
+    #expect(responsesProviderError(.object([field: .string("upstream_stream_cut")]), status: nil, headers: Headers()) == .streamCut)
   }
 
   @Test func anthropicTypeClassificationSurvivesUnrelatedCode() async {

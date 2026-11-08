@@ -10,6 +10,7 @@ import HTTPTypes
 import NIOCore
 import NIOHTTP1
 import NIOHTTP2
+import NIOPosix
 
 @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
 extension FetchClient {
@@ -149,7 +150,7 @@ func mapTransportError(_ error: any Error) -> any Error {
   if error is ChannelError {
     return FetchError.transportFailure(kind: .channel)
   }
-  if error is IOError {
+  if error is IOError || error is NIOConnectionError {
     return FetchError.transportFailure(kind: .io)
   }
   return error
