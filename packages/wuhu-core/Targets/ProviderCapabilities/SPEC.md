@@ -26,4 +26,4 @@ Brave/Qwen/Codex live acceptance occurs separately in a fresh test space. OpenAI
 
 ## Plan usage parsing
 
-`PlanUsage` turns Codex response headers, the ChatGPT `wham/usage` read and the Codex socket `rate_limits` event into `UsageWindow`s named by their length (`five_hour`, `seven_day`, otherwise `<minutes>_minute`). A header family zero minutes long is absent, and a socket window without a positive length, a percentage in 0...100 or a reset time is dropped.
+`PlanUsage` turns Codex response headers, the ChatGPT `wham/usage` read and the Codex socket `rate_limits` event into `UsageWindow`s named by their length (`five_hour`, `seven_day`, otherwise `<minutes>_minute`). A header family zero minutes long is absent, and a socket window without a positive length, a percentage in 0...100 or a reset time is dropped; a reset of 0 (the gateway's never-reported window) is no reset.

@@ -39,6 +39,11 @@ struct PlanUsageTests {
     }
   }
 
+  @Test func aGatewayWindowNeverReportedHasNoReset() throws {
+    let unreported = try #require(JSONValue.parse(#"{"rate_limits":{"windows":{"seven_day":{"used_percent":0,"window_minutes":10080,"reset_at":0}}}}"#))
+    #expect(PlanUsage.codexSocket(unreported).windows == [UsageWindow(name: "seven_day", usedPercent: 0, resetsAt: nil, windowMinutes: 10080)])
+  }
+
   @Test func theCodexUsageReadBecomesWindows() throws {
     let payload = try #require(JSONValue.parse("""
     {"plan_type":"pro","rate_limit":{"allowed":true,"primary_window":{"used_percent":61,"limit_window_seconds":604800,

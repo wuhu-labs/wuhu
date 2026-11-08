@@ -44,7 +44,8 @@ public enum PlanUsage {
       guard let window = value.object, let minutes = window["window_minutes"]?.intValue, minutes > 0,
             let used = window["used_percent"]?.doubleValue, used.isFinite, (0 ... 100).contains(used),
             let reset = window["reset_at"]?.doubleValue, reset.isFinite, reset >= 0 else { return }
-      windows[name] = UsageWindow(name: name, usedPercent: used, resetsAt: reset, windowMinutes: minutes)
+      // The gateway times a window it has never seen a report of at 0.
+      windows[name] = UsageWindow(name: name, usedPercent: used, resetsAt: reset > 0 ? reset : nil, windowMinutes: minutes)
     }
     for key in ["primary", "secondary"] {
       if let value = rates?[key], let minutes = value.object?["window_minutes"]?.intValue {

@@ -53,6 +53,8 @@ private let usageModels = """
 }
 """
 
+private let week = 7 * 86400.0
+
 @Suite(.deterministicDependencies) struct ProviderUsageTests {
   @Test func everyProviderListsItsModelsAndNoUsageUntilObserved() async throws {
     try await withSessionDeps {
@@ -121,22 +123,62 @@ private let usageModels = """
     #expect(board.usage("claude", at: early + 120)?.observedAt == 160, "an empty report observes nothing")
   }
 
-  @Test func aPassedOrZeroResetReadsAsUnusedWithNoResetAndAMissingOneKeepsItsUsage() {
+  @Test func aPassedResetReadsAsUnusedAndOnlyAFixedWindowKnowsTheNextOne() {
     let board = UsageBoard()
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     board.record("gateway", plan: nil, windows: [
       UsageWindow(name: "five_hour", usedPercent: 100, resetsAt: 1_700_000_060, windowMinutes: 300),
-      UsageWindow(name: "seven_day", usedPercent: 40, resetsAt: 1_700_000_000),
-      UsageWindow(name: "seven_day_overage_included", usedPercent: 0, resetsAt: 0, windowMinutes: 10080),
+      UsageWindow(name: "seven_day", usedPercent: 40, resetsAt: 1_700_000_000 - 2 * week - 10),
       UsageWindow(name: "primary", usedPercent: 12, resetsAt: nil),
     ], at: now - 3600)
-    let unused = [
-      UsageWindow(name: "seven_day", usedPercent: 0, resetsAt: nil),
-      UsageWindow(name: "seven_day_overage_included", usedPercent: 0, resetsAt: nil, windowMinutes: 10080),
+    let unchanged = [
+      UsageWindow(name: "seven_day", usedPercent: 0, resetsAt: 1_700_000_000 + week - 10),
       UsageWindow(name: "primary", usedPercent: 12, resetsAt: nil),
     ]
-    #expect(board.usage("gateway", at: now)?.windows == [UsageWindow(name: "five_hour", usedPercent: 100, resetsAt: 1_700_000_060, windowMinutes: 300)] + unused)
-    #expect(board.usage("gateway", at: now + 60) == ProviderUsage(plan: nil, windows: [UsageWindow(name: "five_hour", usedPercent: 0, resetsAt: nil, windowMinutes: 300)] + unused, observedAt: 1_699_996_400), "the reading is fresh once its reset passes, without a new poll")
+    #expect(board.usage("gateway", at: now)?.windows == [UsageWindow(name: "five_hour", usedPercent: 100, resetsAt: 1_700_000_060, windowMinutes: 300)] + unchanged, "a weekly reset rolls on by whole weeks")
+    #expect(board.usage("gateway", at: now + 60) == ProviderUsage(plan: nil, windows: [UsageWindow(name: "five_hour", usedPercent: 0, resetsAt: nil, windowMinutes: 300)] + unchanged, observedAt: 1_699_996_400), "the reading is fresh once its reset passes, without a new poll")
+  }
+
+  @Test func aFixedWindowReportedWithoutAResetKeepsTheKnownOneAndATimedReportReplacesIt() {
+    let board = UsageBoard()
+    let reset = 1_700_000_000.0
+    board.record("gateway", plan: nil, windows: [UsageWindow(name: "seven_day", usedPercent: 90, resetsAt: reset)], at: Date(timeIntervalSince1970: reset - 60))
+    let nextWeek = Date(timeIntervalSince1970: reset + week + 3600)
+    board.record("gateway", plan: nil, windows: [
+      UsageWindow(name: "seven_day", usedPercent: 5, resetsAt: nil),
+      UsageWindow(name: "five_hour", usedPercent: 5, resetsAt: nil),
+    ], at: nextWeek)
+    #expect(board.usage("gateway", at: nextWeek)?.windows == [
+      UsageWindow(name: "seven_day", usedPercent: 5, resetsAt: reset + 2 * week),
+      UsageWindow(name: "five_hour", usedPercent: 5, resetsAt: nil),
+    ], "the usage counts toward the week the report fell in")
+    board.record("gateway", plan: nil, windows: [UsageWindow(name: "seven_day", usedPercent: 6, resetsAt: reset + 2 * week + 7200)], at: nextWeek + 60)
+    #expect(board.usage("gateway", at: nextWeek + 60)?.windows.first == UsageWindow(name: "seven_day", usedPercent: 6, resetsAt: reset + 2 * week + 7200))
+  }
+
+  @Test func aFixedResetOutlivesARestartWhileTheGatewayReportsNone() async throws {
+    try await withSessionDeps {
+      let space = try Space.inMemory()
+      _ = try await space.fs(.settings).write("/models.json", Data(usageModels.utf8), ifMatch: nil)
+      let credentials = CredentialResolver { $0 == "gateway" ? .apiKey("gateway-key") : nil }
+      let reset = 1_790_500_000.0
+      let report = Mutex(#"{"rate_limits":{"windows":{"seven_day":{"used_percent":40,"window_minutes":10080,"reset_at":1790500000}}}}"#)
+      let now = Mutex(Date(timeIntervalSince1970: reset - 3600))
+      await withDependencies {
+        $0.date = DateGenerator { now.withLock { $0 } }
+        $0.fetch = FetchClient { request in
+          #expect(request.url.absoluteString == "http://gateway.test/v1/usage")
+          return Response(status: .ok, body: .string(report.withLock { $0 }))
+        }
+      } operation: {
+        await UsageRefresher(board: UsageBoard(), space: space, credentials: credentials).tick()
+        report.withLock { $0 = #"{"rate_limits":{"windows":{"seven_day":{"used_percent":0,"window_minutes":10080,"reset_at":0}}}}"# }
+        let later = now.withLock { $0 = Date(timeIntervalSince1970: reset + week + 3600); return $0 }
+        let restarted = UsageBoard()
+        await UsageRefresher(board: restarted, space: space, credentials: credentials).tick()
+        #expect(restarted.usage("gateway", at: later)?.windows == [UsageWindow(name: "seven_day", usedPercent: 0, resetsAt: reset + 2 * week, windowMinutes: 10080)])
+      }
+    }
   }
 
   @Test func aRefreshIsClaimedOnlyAfterTheIntervalSinceTheLastObservationOrAttempt() {
@@ -183,8 +225,8 @@ private let usageModels = """
           return Response(status: .ok, body: .string(try #require(bodies[request.url.absoluteString])))
         }
       } operation: {
-        await refresher.refreshStale()
-        await refresher.refreshStale()
+        await refresher.tick()
+        await refresher.tick()
       }
       #expect(seen.withLock { $0 }.sorted { $0.url < $1.url } == [
         URLRequestSummary(url: "http://gateway.test/v1/usage", account: nil, authorization: "Bearer gateway-key"),

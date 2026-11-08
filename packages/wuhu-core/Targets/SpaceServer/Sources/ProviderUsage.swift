@@ -26,7 +26,12 @@ final class UsageBoard: Sendable {
     var attemptedAt: Date?
   }
 
-  private let entries = Mutex<[String: Entry]>([:])
+  private struct State {
+    var entries: [String: Entry] = [:]
+    var fixedResets: [UsageWindowKey: Double] = [:]
+  }
+
+  private let state = Mutex(State())
   private let onRecord: (@Sendable (String, String?, [UsageWindow], Date) -> Void)?
 
   /// `onRecord` hears every report too: a worker in its own process passes
@@ -35,13 +40,22 @@ final class UsageBoard: Sendable {
     self.onRecord = onRecord
   }
 
+  /// A fixed window reported without a reset keeps the last one known, rolled forward to the report.
   func record(_ provider: String, plan: String?, windows: [UsageWindow], at date: Date) {
     guard !windows.isEmpty else { return }
     onRecord?(provider, plan, windows, date)
-    entries.withLock { entries in
-      guard (entries[provider]?.usage.observedAt ?? -.infinity) <= date.timeIntervalSince1970 else { return }
-      var merged = entries[provider]?.usage.windows ?? []
-      for window in windows {
+    state.withLock { state in
+      guard (state.entries[provider]?.usage.observedAt ?? -.infinity) <= date.timeIntervalSince1970 else { return }
+      var merged = state.entries[provider]?.usage.windows ?? []
+      for var window in windows {
+        if case .fixedWeekly = UsageWindowKind(window.name) {
+          let key = UsageWindowKey(provider: provider, window: window.name)
+          if let reset = window.resetsAt {
+            state.fixedResets[key] = reset
+          } else if let known = state.fixedResets[key] {
+            window = window.resetting(at: UsageWindowKind.fixedWeekly.reset(following: known, after: date.timeIntervalSince1970))
+          }
+        }
         if let held = merged.firstIndex(where: { $0.name == window.name }) {
           merged[held] = window
         } else {
@@ -49,47 +63,97 @@ final class UsageBoard: Sendable {
         }
       }
       let usage = ProviderUsage(
-        plan: plan ?? entries[provider]?.usage.plan,
+        plan: plan ?? state.entries[provider]?.usage.plan,
         windows: merged,
         observedAt: date.timeIntervalSince1970,
       )
-      entries[provider] = Entry(usage: usage, attemptedAt: entries[provider]?.attemptedAt)
+      state.entries[provider] = Entry(usage: usage, attemptedAt: state.entries[provider]?.attemptedAt)
     }
   }
 
-  /// A window whose reset has passed, or is 0, reads as used 0 with no reset
-  /// time, so a reading taken before its reset is fresh after it without a new poll.
+  /// A window whose reset has passed reads as used 0, so a reading taken before
+  /// its reset is fresh after it without a new poll. A rolling window's next
+  /// reset is unknown until observed; a fixed one's is a whole number of periods on.
   func usage(_ provider: String, at now: Date) -> ProviderUsage? {
-    guard let usage = entries.withLock({ $0[provider]?.usage }), !usage.windows.isEmpty else { return nil }
+    guard let usage = state.withLock({ $0.entries[provider]?.usage }), !usage.windows.isEmpty else { return nil }
     let windows = usage.windows.map { window in
       guard let reset = window.resetsAt, reset <= now.timeIntervalSince1970 else { return window }
-      return UsageWindow(name: window.name, usedPercent: 0, resetsAt: nil, windowMinutes: window.windowMinutes)
+      return UsageWindow(name: window.name, usedPercent: 0, resetsAt: UsageWindowKind(window.name).reset(following: reset, after: now.timeIntervalSince1970), windowMinutes: window.windowMinutes)
     }
     return ProviderUsage(plan: usage.plan, windows: windows, observedAt: usage.observedAt)
+  }
+
+  /// The last reset reported of each fixed window.
+  var fixedResets: [UsageWindowKey: Double] {
+    state.withLock(\.fixedResets)
+  }
+
+  /// Takes resets kept from before a restart, for the fixed windows no report has timed since.
+  func remember(_ resets: [UsageWindowKey: Double]) {
+    state.withLock { state in
+      for (key, reset) in resets where state.fixedResets[key] == nil {
+        state.fixedResets[key] = reset
+        guard var entry = state.entries[key.provider],
+              let held = entry.usage.windows.firstIndex(where: { $0.name == key.window && $0.resetsAt == nil }) else { continue }
+        var windows = entry.usage.windows
+        windows[held] = windows[held].resetting(at: UsageWindowKind.fixedWeekly.reset(following: reset, after: entry.usage.observedAt))
+        entry.usage = ProviderUsage(plan: entry.usage.plan, windows: windows, observedAt: entry.usage.observedAt)
+        state.entries[key.provider] = entry
+      }
+    }
   }
 
   // Claims a refresh when the provider has been neither observed nor tried
   // within the interval, so a failing source is retried at that pace too.
   func claimRefresh(_ provider: String, now: Date, interval: TimeInterval) -> Bool {
-    entries.withLock { entries in
-      let observed = entries[provider].map { Date(timeIntervalSince1970: $0.usage.observedAt) }
-      let attempted = entries[provider]?.attemptedAt
+    state.withLock { state in
+      let observed = state.entries[provider].map { Date(timeIntervalSince1970: $0.usage.observedAt) }
+      let attempted = state.entries[provider]?.attemptedAt
       let latest = [observed, attempted].compactMap(\.self).max()
       guard latest.map({ now.timeIntervalSince($0) >= interval }) ?? true else { return false }
-      if var entry = entries[provider] {
+      if var entry = state.entries[provider] {
         entry.attemptedAt = now
-        entries[provider] = entry
+        state.entries[provider] = entry
       } else {
-        entries[provider] = Entry(usage: ProviderUsage(plan: nil, windows: [], observedAt: 0), attemptedAt: now)
+        state.entries[provider] = Entry(usage: ProviderUsage(plan: nil, windows: [], observedAt: 0), attemptedAt: now)
       }
       return true
     }
   }
 }
 
+/// How a plan window's reset moves once it passes.
+enum UsageWindowKind {
+  /// Starts at the first request after a reset, so the next reset is unknown until observed.
+  case rolling
+  /// Resets on a fixed weekly schedule.
+  case fixedWeekly
+
+  private static let week: Double = 7 * 24 * 3600
+
+  init(_ name: String) {
+    self = name.hasPrefix("seven_day") ? .fixedWeekly : .rolling
+  }
+
+  /// The first reset after `now` that one at `reset` implies.
+  func reset(following reset: Double, after now: Double) -> Double? {
+    guard reset <= now else { return reset }
+    return switch self {
+    case .rolling: nil
+    case .fixedWeekly: reset + (((now - reset) / Self.week).rounded(.down) + 1) * Self.week
+    }
+  }
+}
+
+private extension UsageWindow {
+  func resetting(at reset: Double?) -> UsageWindow {
+    UsageWindow(name: name, usedPercent: usedPercent, resetsAt: reset, windowMinutes: windowMinutes)
+  }
+}
+
 struct UsageRefresher: Sendable {
   static let interval: TimeInterval = 15 * 60
-  static let tick: Duration = .seconds(60)
+  static let pace: Duration = .seconds(60)
 
   let board: UsageBoard
   let space: Space
@@ -98,12 +162,27 @@ struct UsageRefresher: Sendable {
   func run() async {
     @Dependency(\.continuousClock) var clock
     while !Task.isCancelled {
-      await refreshStale()
-      guard (try? await clock.sleep(for: Self.tick)) != nil else { return }
+      await tick()
+      guard (try? await clock.sleep(for: Self.pace)) != nil else { return }
     }
   }
 
-  func refreshStale() async {
+  /// Reads the stale providers, and keeps the board's fixed resets in the
+  /// space across restarts: kept ones fill what the board lacks, and the
+  /// board's new ones are kept.
+  func tick() async {
+    do {
+      let kept = try await space.usageWindowResets()
+      board.remember(kept)
+      await refreshStale()
+      let learned = board.fixedResets.filter { kept[$0.key] != $0.value }
+      if !learned.isEmpty { try await space.saveUsageWindowResets(learned) }
+    } catch {
+      Logger(label: "wuhu.usage").error("usage resets not kept", metadata: ["error": "\(error)"])
+    }
+  }
+
+  private func refreshStale() async {
     @Dependency(\.date) var date
     guard let document = await modelsDocument(space: space) else { return }
     let invalid = ProviderCatalog(document: document, credentials: .unavailable).providerErrors
