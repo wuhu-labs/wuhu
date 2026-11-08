@@ -44,6 +44,18 @@ public enum ComputerKindSchemas {
   public static let stat = KindDescriptor("stat.v1", inputSchema: pathInput, resultSchema: entry, deliveryPolicy: .boundedResult)
   public static let list = KindDescriptor("list.v1", inputSchema: pathInput, resultSchema: object(["count": offset], required: ["count"]), outputChannels: [.init("entries", unit: .records, schema: entry)])
   public static let write = KindDescriptor("write.v1", inputSchema: object(["path": string, "ifMatch": string, "bytes": offset, "digest": string], required: ["path", "bytes", "digest"]), resultSchema: object(["version": string], required: ["version"]), inputChannels: [.init("data", windowBytes: 65536)])
+  /// A file of unknown length and digest, streamed on `data` into a hidden sibling of `path`; once `data` ends, `commit` carries
+  /// the length and sha256 of every byte sent. A match is synced and renamed into place, over an existing file only with
+  /// `replace` (`fileUnavailable` with errno EEXIST otherwise, checked at start and at the rename); anything else removes the stage.
+  public static let stagedWrite = KindDescriptor(
+    "stagedWrite.v1",
+    inputSchema: object(["path": ["type": "string", "pattern": "^/"], "replace": ["type": "boolean"]], required: ["path", "replace"]),
+    resultSchema: object(["version": string], required: ["version"]),
+    inputChannels: [
+      .init("data", windowBytes: 1 << 20),
+      .init("commit", unit: .records, windowBytes: 1024, maxRecordBytes: 1024, schema: object(["bytes": offset, "sha256": string], required: ["bytes", "sha256"])),
+    ],
+  )
   public static let mkdir = KindDescriptor("mkdir.v1", inputSchema: pathInput, resultSchema: object([:], required: []), deliveryPolicy: .boundedResult)
   public static let remove = KindDescriptor("remove.v1", inputSchema: object(["path": string, "ifMatch": string], required: ["path"]), resultSchema: object([:], required: []), deliveryPolicy: .boundedResult)
   public static let move = KindDescriptor("move.v1", inputSchema: object(["from": string, "to": string], required: ["from", "to"]), resultSchema: object([:], required: []), deliveryPolicy: .boundedResult)

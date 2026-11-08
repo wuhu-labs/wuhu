@@ -11,6 +11,7 @@
     "transcribe"
   ],
   "wuhu:machine": [
+    "copy",
     "execStatus",
     "execs",
     "killExec",

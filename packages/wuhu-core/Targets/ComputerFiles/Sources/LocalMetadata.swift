@@ -15,13 +15,14 @@ import struct OperationProtocol.OperationError
 import Synchronization
 
 extension ComputerFileOperations {
-  static var local: Self { local(synchronize: { fd in guard fsync(fd) == 0 else { throw diskError() } }) }
-  static func local(synchronize: @escaping @Sendable (Int32) throws -> Void, beforeRename: @escaping @Sendable () -> Void = {}) -> Self {
+  static var local: Self { local(stages: nil) }
+  static func local(stages: StageLedger?) -> Self { local(synchronize: { fd in guard fsync(fd) == 0 else { throw diskError() } }, stages: stages) }
+  static func local(synchronize: @escaping @Sendable (Int32) throws -> Void, beforeRename: @escaping @Sendable () -> Void = {}, stages: StageLedger? = nil) -> Self {
     .init(stat: { path in try await diskIO { try metadata(path) } }, list: { path in
       let cursor = try await diskIO { _ = try metadata(path); return try MetadataDirectory(path) }
       return .init(next: { try await diskIO { try cursor.next() } }, close: { await diskIO { cursor.close() } })
-    }, write: { path, token in
-      let writer = try await diskIO { try DiskWriter(path: path, token: token, synchronize: synchronize, beforeRename: beforeRename) }
+    }, write: { path, condition in
+      let writer = try await diskIO { try DiskWriter(path: path, condition: condition, synchronize: synchronize, beforeRename: beforeRename, stages: stages) }
       return .init(append: { data in try await diskIO { try writer.append(data) } }, prepare: { try await diskIO { try writer.prepare() } }, commit: { try await cancellableDiskIO { check in try writer.commit(check: check) } }, close: { await diskIO { writer.close() } })
     }, mkdir: { path in
       try await cancellableDiskIO { check in
@@ -45,12 +46,7 @@ extension ComputerFileOperations {
       try await diskIO {
         let source = try sourceParent(from, token: nil); defer { closeDescriptor(source.fd) }
         let target = try parentOf(to); defer { closeDescriptor(target.fd) }
-        #if os(Linux)
-          let result = renameExclusive(source.fd, source.name, target.fd, target.name, 1)
-        #else
-          let result = renameatx_np(source.fd, source.name, target.fd, target.name, UInt32(RENAME_EXCL))
-        #endif
-        guard result == 0 else { throw diskError() }
+        guard renameExclusive(source.fd, source.name, target.fd, target.name) == 0 else { throw diskError() }
       }
     })
   }
@@ -58,8 +54,17 @@ extension ComputerFileOperations {
 
 #if os(Linux)
   @_silgen_name("renameat2")
-  private func renameExclusive(_ oldFD: Int32, _ old: UnsafePointer<CChar>, _ newFD: Int32, _ new: UnsafePointer<CChar>, _ flags: UInt32) -> Int32
+  private func renameat2(_ oldFD: Int32, _ old: UnsafePointer<CChar>, _ newFD: Int32, _ new: UnsafePointer<CChar>, _ flags: UInt32) -> Int32
 #endif
+
+/// A rename that fails with EEXIST rather than replace what is at `new`.
+private func renameExclusive(_ oldFD: Int32, _ old: String, _ newFD: Int32, _ new: String) -> Int32 {
+  #if os(Linux)
+    renameat2(oldFD, old, newFD, new, 1)
+  #else
+    renameatx_np(oldFD, old, newFD, new, UInt32(RENAME_EXCL))
+  #endif
+}
 
 private func parentOf(_ path: String) throws -> (fd: Int32, name: String) {
   let parts = path.split(separator: "/")
@@ -112,6 +117,17 @@ private func metadataAt(_ fd: Int32, _ name: String) throws -> MachineEntry {
 private func checkToken(_ fd: Int32, _ name: String, _ token: String?) throws {
   guard let token else { return }
   guard let current = try? metadataAt(fd, name), current.token == token else { throw OperationError(.fileChanged) }
+}
+
+private func require(_ condition: WriteCondition, _ fd: Int32, _ name: String) throws {
+  switch condition {
+  case .any: return
+  case let .version(token): try checkToken(fd, name, token)
+  case .absent:
+    var value = stat()
+    guard fstatat(fd, name, &value, AT_SYMLINK_NOFOLLOW) != 0 else { errno = EEXIST; throw diskError() }
+    guard errno == ENOENT else { throw diskError() }
+  }
 }
 
 #if os(Linux)
@@ -175,20 +191,25 @@ private final class DiskWriter: Sendable {
   private let parent: Int32
   private let name: String
   private let temporary: String
-  private let token: String?
+  private let condition: WriteCondition
   private let synchronize: @Sendable (Int32) throws -> Void
   private let beforeRename: @Sendable () -> Void
-  init(path: String, token: String?, synchronize: @escaping @Sendable (Int32) throws -> Void, beforeRename: @escaping @Sendable () -> Void) throws {
+  private let stage = UUID()
+  private let stages: StageLedger?
+  init(path: String, condition: WriteCondition, synchronize: @escaping @Sendable (Int32) throws -> Void, beforeRename: @escaping @Sendable () -> Void, stages: StageLedger?) throws {
     let target = try parentOf(path)
-    parent = target.fd; name = target.name; self.token = token; self.synchronize = synchronize; self.beforeRename = beforeRename
-    temporary = ".wuhu-write-" + UUID().uuidString
+    parent = target.fd; name = target.name; self.condition = condition; self.synchronize = synchronize; self.beforeRename = beforeRename; self.stages = stages
+    temporary = stagePrefix + stage.uuidString
     do {
-      try checkToken(parent, name, token)
+      try require(condition, parent, name)
       _ = try writableTarget(parent, name)
+      try stages?.record(stage, in: "/" + path.split(separator: "/").dropLast().joined(separator: "/"))
       let fd = openat(parent, temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o666)
-      guard fd >= 0 else { throw diskError() }
+      guard fd >= 0 else { let error = diskError(); stages?.forget(stage); throw error }
       state = Mutex(State(fd: fd))
-    } catch { closeDescriptor(parent); throw error }
+    } catch {
+      closeDescriptor(parent); throw error
+    }
   }
 
   deinit { close(); closeDescriptor(parent) }
@@ -213,7 +234,7 @@ private final class DiskWriter: Sendable {
   func prepare() throws {
     try state.withLock { state in
       guard !state.closed, !state.committed else { throw OperationError(.operationEnded) }
-      try checkToken(parent, name, token)
+      try require(condition, parent, name)
       if let original = try writableTarget(parent, name) {
         guard fchmod(state.fd, original.st_mode & 0o7777) == 0 else { throw diskError() }
       }
@@ -226,11 +247,12 @@ private final class DiskWriter: Sendable {
     try state.withLock { state in
       guard !state.closed, state.prepared, !state.committed else { throw OperationError(.operationEnded) }
       return try withLocalWriteLock(parent: parent) {
-        try checkToken(parent, name, token)
+        try require(condition, parent, name)
         _ = try writableTarget(parent, name)
         beforeRename()
         try check()
-        guard renameat(parent, temporary, parent, name) == 0 else { throw diskError() }
+        let renamed = condition == .absent ? renameExclusive(parent, temporary, parent, name) : renameat(parent, temporary, parent, name)
+        guard renamed == 0 else { throw diskError() }
         state.committed = true
         var value = stat()
         guard fstat(state.fd, &value) == 0 else { preconditionFailure("committed write descriptor became invalid") }
@@ -241,7 +263,10 @@ private final class DiskWriter: Sendable {
 
   func close() {
     state.withLock { state in
-      if !state.closed { closeDescriptor(state.fd); if !state.committed { _ = unlinkat(parent, temporary, 0) }; state.closed = true }
+      guard !state.closed else { return }
+      closeDescriptor(state.fd)
+      if state.committed || removeStage(parent, temporary) != nil { stages?.forget(stage) }
+      state.closed = true
     }
   }
 }

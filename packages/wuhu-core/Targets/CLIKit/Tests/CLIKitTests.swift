@@ -119,6 +119,17 @@ struct RequestMappingTests {
       #expect(input == ["from": "/a", "to": "/b", "replace": true])
     }
 
+    try await assertRequest(["cp", "machines://box/a.bin", "/a.bin"], response: .object(["bytes": 3, "sha256": "abc", "token": "7"])) { request in
+      #expect(request.url.path == "/v1/tools/copy")
+      let input = try await requestBodyJSON(request)
+      #expect(input == ["from": "machines://box/a.bin", "to": "/a.bin"])
+    }
+
+    try await assertRequest(["cp", "/a.bin", "machines://box/a.bin", "--overwrite"], response: .object(["bytes": 3, "sha256": "abc", "token": "8"])) { request in
+      let input = try await requestBodyJSON(request)
+      #expect(input == ["from": "/a.bin", "to": "machines://box/a.bin", "overwrite": true])
+    }
+
     try await assertRequest(["ls", "/", "--rev", "9"], response: .object(["rev": 9, "entries": []])) { request in
       #expect(request.url.path == "/v1/tools/ls")
       let input = try await requestBodyJSON(request)

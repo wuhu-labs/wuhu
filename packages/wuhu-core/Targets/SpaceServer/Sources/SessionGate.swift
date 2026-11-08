@@ -584,7 +584,7 @@ private func subscriptionOutput(_ payload: ToolResultPayload) -> SubscriptionOut
 // changes; a read names nothing to check.
 let sessionToolFields: [String: [String]] = [
   "read": [], "ls": [], "stat": [], "grep": [], "find": [], "history": [], "query": [],
-  "write": ["path"], "edit": ["path"], "rm": ["path"], "mv": ["from", "to"], "checkout": ["path"],
+  "write": ["path"], "edit": ["path"], "rm": ["path"], "mv": ["from", "to"], "copy": ["to"], "checkout": ["path"],
   "table.schema": [], "table.create": ["path"], "table.alter": ["path"], "table.mutate": ["path"], "table.rows": ["path"], "new": ["in"],
   "attributes.read": [], "attributes.patch": ["path"],
 ]

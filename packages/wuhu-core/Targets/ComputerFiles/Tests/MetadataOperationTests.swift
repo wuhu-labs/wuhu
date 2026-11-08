@@ -126,8 +126,8 @@ extension MetadataOperationTests {
     let operations = ComputerFileOperations(stat: { path in events.withLock { $0.append("stat \(path)") }; return entry }, list: { path in
       events.withLock { $0.append("list \(path)") }
       return .init(next: { cursor.withLock { count in defer { count += 1 }; return count == 0 ? entry : nil } }, close: { events.withLock { $0.append("list close") }; closed.yield() })
-    }, write: { path, token in
-      events.withLock { $0.append("write \(path) \(token ?? "nil")") }
+    }, write: { path, condition in
+      events.withLock { $0.append("write \(path) \(condition)") }
       return .init(append: { data in events.withLock { $0.append("append \(data.base64EncodedString())") } }, commit: { events.withLock { $0.append("commit") }; return "new-token" }, close: { events.withLock { $0.append("write close") }; closed.yield() })
     }, mkdir: { path in events.withLock { $0.append("mkdir \(path)") } }, remove: { path, token in events.withLock { $0.append("remove \(path) \(token ?? "nil")") } }, move: { from, to in events.withLock { $0.append("move \(from) \(to)") } })
     let files = ComputerFileSystem(status: { _ in throw OperationError(.fileUnavailable) }, read: { _, _, _ in throw OperationError(.fileUnavailable) }, search: { _ in NoFiles() }, operations: operations)
@@ -142,7 +142,7 @@ extension MetadataOperationTests {
     var count = 0
     for await _ in closes { count += 1; if count == 2 { break } }
     let recorded = events.withLock { $0 }
-    #expect(recorded.filter { !$0.hasSuffix(" close") } == ["stat /file", "list /", "write /file recorded-token", "append AQID", "commit", "mkdir /dir", "remove /file new-token", "move /a /b"])
+    #expect(recorded.filter { !$0.hasSuffix(" close") } == ["stat /file", "list /", #"write /file version("recorded-token")"#, "append AQID", "commit", "mkdir /dir", "remove /file new-token", "move /a /b"])
     #expect(try #require(recorded.firstIndex(of: "list close")) > #require(recorded.firstIndex(of: "list /")))
     #expect(try #require(recorded.firstIndex(of: "write close")) > #require(recorded.firstIndex(of: "commit")))
   }
@@ -191,8 +191,8 @@ extension MetadataOperationTests {
       compared.leave()
       _ = compared.wait(timeout: .now() + .seconds(1))
     }
-    let first = try await ComputerFileOperations.local(synchronize: { _ in }, beforeRename: beforeRename).write(path, token)
-    let second = try await ComputerFileOperations.local(synchronize: { _ in }, beforeRename: beforeRename).write(other, token)
+    let first = try await ComputerFileOperations.local(synchronize: { _ in }, beforeRename: beforeRename).write(path, .version(token))
+    let second = try await ComputerFileOperations.local(synchronize: { _ in }, beforeRename: beforeRename).write(other, .version(token))
     try await first.append(Data("first".utf8)); try await second.append(Data("second".utf8))
     try await first.prepare(); try await second.prepare()
     let results = await withTaskGroup(of: Result<String, OperationError>.self, returning: [Result<String, OperationError>].self) { group in
@@ -227,8 +227,8 @@ extension MetadataOperationTests {
       let concurrent = compared.wait(timeout: .now() + .seconds(2)) == .success
       waits.withLock { $0.append(concurrent) }
     })
-    let first = try await operations.write(firstFolder.url.appending(path: "file").path, nil)
-    let second = try await operations.write(secondFolder.url.appending(path: "file").path, nil)
+    let first = try await operations.write(firstFolder.url.appending(path: "file").path, .any)
+    let second = try await operations.write(secondFolder.url.appending(path: "file").path, .any)
     try await first.append(Data("first".utf8)); try await second.append(Data("second".utf8))
     try await first.prepare(); try await second.prepare()
     try await withThrowingTaskGroup(of: String.self) { group in
@@ -245,7 +245,7 @@ extension MetadataOperationTests {
     let path = folder.url.appending(path: "file").path
     try Data([1]).write(to: URL(fileURLWithPath: path))
     let token = try await ComputerFileSystem.local.status(path).version
-    let writer = try await ComputerFileSystem.local.operations.write(path, token)
+    let writer = try await ComputerFileSystem.local.operations.write(path, .version(token))
     try await writer.append(Data([2]))
     try Data([3, 4]).write(to: URL(fileURLWithPath: path))
     await #expect(throws: OperationError.self) { try await writer.prepare(); _ = try await writer.commit() }
@@ -255,6 +255,67 @@ extension MetadataOperationTests {
       _ = try await client.writeFile(machine: "disk", path: path, data: Data(), owner: owner())
       #expect(try Data(contentsOf: URL(fileURLWithPath: path)).isEmpty)
     }
+  }
+
+  @Test func stageLedgerHoldsOpenStagesAndSweepRemovesThoseLeftBehind() async throws {
+    let folder = try ScratchFolder("metadata-stage-ledger")
+    let ledger = try StageLedger(directory: folder.url.appending(path: "stages").path)
+    let files = ComputerFileSystem.local(stages: ledger)
+    let target = folder.url.appending(path: "target").path
+    try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: false)
+    func entries() throws -> [String] { try FileManager.default.contentsOfDirectory(atPath: ledger.directory) }
+    func stages() throws -> [String] { try FileManager.default.contentsOfDirectory(atPath: target).filter { $0.hasPrefix(stagePrefix) } }
+    let committed = try await files.operations.write(target + "/kept", .absent)
+    try await committed.append(Data([1]))
+    #expect(try entries().count == 1 && stages().count == 1)
+    try await committed.prepare(); _ = try await committed.commit(); await committed.close()
+    #expect(try entries().isEmpty && stages().isEmpty)
+    let crashed = try await files.operations.write(target + "/lost", .any)
+    try await crashed.append(Data([2]))
+    #expect(ledger.sweep() == 1)
+    #expect(try entries().isEmpty && stages().isEmpty)
+    await crashed.close()
+    #expect(try FileManager.default.contentsOfDirectory(atPath: target) == ["kept"])
+  }
+
+  @Test func aSweepRemovesOnlyTheRegularStageAnEntryOwns() async throws {
+    let folder = try ScratchFolder("metadata-stage-forged")
+    let ledger = try StageLedger(directory: folder.url.appending(path: "stages").path)
+    let target = folder.url.appending(path: "target").path
+    try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: false)
+    let backup = target + "/" + stagePrefix + "backup", kept = target + "/kept"
+    #expect(FileManager.default.createFile(atPath: backup, contents: Data([1])))
+    #expect(FileManager.default.createFile(atPath: kept, contents: Data([2])))
+    let pathEntry = UUID().uuidString, linked = UUID()
+    #expect(FileManager.default.createFile(atPath: ledger.directory + "/backup", contents: Data(target.utf8)))
+    #expect(FileManager.default.createFile(atPath: ledger.directory + "/" + pathEntry, contents: Data(backup.utf8)))
+    let link = target + "/" + stagePrefix + linked.uuidString
+    try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: kept)
+    try ledger.record(linked, in: target)
+    #expect(ledger.sweep() == 0)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: backup)) == Data([1]))
+    #expect(try Data(contentsOf: URL(fileURLWithPath: kept)) == Data([2]))
+    #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link) == kept)
+    #expect(try Set(FileManager.default.contentsOfDirectory(atPath: ledger.directory)) == ["backup", pathEntry, linked.uuidString])
+  }
+
+  @Test func anEntryStaysWhileItsStageMayStillBeThere() async throws {
+    let folder = try ScratchFolder("metadata-stage-kept")
+    let ledger = try StageLedger(directory: folder.url.appending(path: "stages").path)
+    let target = folder.url.appending(path: "target").path
+    try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: false)
+    func entries() throws -> Int { try FileManager.default.contentsOfDirectory(atPath: ledger.directory).count }
+    let writer = try await ComputerFileSystem.local(stages: ledger).operations.write(target + "/file", .any)
+    let stage = target + "/" + (try #require(try FileManager.default.contentsOfDirectory(atPath: target).first))
+    try FileManager.default.removeItem(atPath: stage)
+    try FileManager.default.createDirectory(atPath: stage, withIntermediateDirectories: false)
+    await writer.close()
+    #expect(try entries() == 1, "close could not remove the stage")
+    #expect(ledger.sweep() == 0)
+    #expect(try entries() == 1, "nor could the sweep")
+    try FileManager.default.removeItem(atPath: stage)
+    #expect(ledger.sweep() == 0)
+    #expect(try entries() == 0, "a stage confirmed absent frees its entry")
   }
 }
 

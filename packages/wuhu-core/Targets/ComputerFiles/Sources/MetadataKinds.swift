@@ -8,12 +8,12 @@ import enum JSONValue.JSONValue
 import enum OperationProtocol.ComputerKindSchemas
 import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.Offset
-import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
 import OperationRuntime
 
 func metadataOperationKinds(files: ComputerFileOperations) -> [AnyOperationKind] {
   [ComputerKindSchemas.stat, ComputerKindSchemas.list, ComputerKindSchemas.write, ComputerKindSchemas.mkdir, ComputerKindSchemas.remove, ComputerKindSchemas.move].map { AnyOperationKind(MetadataKind(descriptor: $0, files: files)) }
+    + [AnyOperationKind(StagedWriteKind(files: files))]
 }
 
 private struct MetadataInput: Decodable, Sendable {
@@ -45,14 +45,7 @@ private struct MetadataKind: OperationKind {
   }
 
   func run(_ input: MetadataInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
-    try await withThrowingTaskGroup(of: JSONValue.self) { group in
-      defer { group.cancelAll() }
-      group.addTask { try await self.perform(input, channels: channels, cancellation: cancellation) }
-      group.addTask {
-        while true { try await cancellation.check(); try await OperationClock.continuous.sleep(.milliseconds(10)) }
-      }
-      return try await group.next()!
-    }
+    try await cancellation.unlessStopped { try await self.perform(input, channels: channels, cancellation: cancellation) }
   }
 
   private func perform(_ input: MetadataInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
@@ -71,28 +64,61 @@ private struct MetadataKind: OperationKind {
         await directory.close(); return ["count": .string(String(count))]
       } catch { await directory.close(); throw error }
     case "write.v1":
-      let writer = try await files.write(input.path!, input.ifMatch)
-      do {
-        var hash = SHA256(); var count: UInt64 = 0
-        while let chunk = try await channels.read("data", upTo: 65536) {
-          try await cancellation.check()
-          guard let data = chunk.data, UInt64(data.count) <= input.bytes!.rawValue - count else { throw OperationError(.invalidInput) }
-          hash.update(data: data); count += UInt64(data.count); try await writer.append(data)
-        }
-        guard count == input.bytes!.rawValue, hash.finalize().map({ String(format: "%02x", $0) }).joined() == input.digest else { throw OperationError(.invalidInput, message: "Write length or digest mismatch") }
-        try await writer.prepare()
-        try await cancellation.check()
-        let version = try await writer.commit()
-        let result: JSONValue = ["version": .string(version)]
-        try await channels.publish(.init(.completed, result: result))
-        await writer.close(); return result
-      } catch { await writer.close(); throw error }
+      return try await stream("data", into: files.write(input.path!, input.ifMatch.map(WriteCondition.version) ?? .any), channels: channels, cancellation: cancellation, limit: input.bytes!.rawValue) { count, digest in
+        guard count == input.bytes!.rawValue, digest == input.digest else { throw OperationError(.invalidInput, message: "Write length or digest mismatch") }
+      }
     case "mkdir.v1": try await files.mkdir(input.path!)
     case "remove.v1": try await files.remove(input.path!, input.ifMatch)
     case "move.v1": try await files.move(input.from!, input.to!)
     default: throw OperationError(.unknownKind)
     }
     return .object([:])
+  }
+}
+
+/// Appends `channel` to `writer` until it ends, hands its length and sha256 to `verify`, then lands the write and publishes its
+/// version before the writer closes; any failure closes it unlanded.
+private func stream(_ channel: String, into writer: ComputerWriter, channels: OperationChannels, cancellation: OperationCancellation, limit: UInt64 = .max, verify: (UInt64, String) async throws -> Void) async throws -> JSONValue {
+  do {
+    var hash = SHA256(); var count: UInt64 = 0
+    while let chunk = try await channels.read(channel, upTo: 1 << 20) {
+      guard let data = chunk.data, UInt64(data.count) <= limit - count else { throw OperationError(.invalidInput) }
+      hash.update(data: data); count += UInt64(data.count); try await writer.append(data)
+    }
+    try await verify(count, hash.finalize().map { String(format: "%02x", $0) }.joined())
+    try await writer.prepare()
+    try await cancellation.check()
+    let version = try await writer.commit()
+    let result: JSONValue = ["version": .string(version)]
+    try await channels.publish(.init(.completed, result: result))
+    await writer.close(); return result
+  } catch { await writer.close(); throw error }
+}
+
+private struct StagedWriteInput: Decodable, Sendable {
+  let path: String; let replace: Bool
+  enum CodingKeys: String, CodingKey { case path, replace }
+  init(from decoder: any Decoder) throws {
+    try fields(decoder, allowed: ["path", "replace"])
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    path = try c.decode(String.self, forKey: .path); replace = try c.decode(Bool.self, forKey: .replace)
+    try absolute(path)
+  }
+}
+
+private struct StagedCommit: Decodable { let bytes: Offset; let sha256: String }
+
+private struct StagedWriteKind: OperationKind {
+  let files: ComputerFileOperations
+  let descriptor = ComputerKindSchemas.stagedWrite
+  func run(_ input: StagedWriteInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+    try await cancellation.unlessStopped {
+      try await stream("data", into: files.write(input.path, input.replace ? .any : .absent), channels: channels, cancellation: cancellation) { count, digest in
+        guard let record = try await channels.read("commit", upTo: 1024)?.records?.first else { throw OperationError(.invalidInput, message: "No commit record") }
+        let commit = try JSONDecoder().decode(StagedCommit.self, from: Data(record.jsonString().utf8))
+        guard commit.bytes.rawValue == count, commit.sha256 == digest else { throw OperationError(.invalidInput, message: "Write length or digest mismatch") }
+      }
+    }
   }
 }
 

@@ -8,6 +8,10 @@ public enum ErrorCode: String, Codable, Equatable, Sendable {
   case memberRequired
   case notFound
   case conflict
+  /// A copy's target is already there and the copy may not replace it.
+  case exists
+  /// A copy's source changed while it was being read.
+  case sourceChanged
   case invalidPath
   case invalidArgument
   case unauthorized

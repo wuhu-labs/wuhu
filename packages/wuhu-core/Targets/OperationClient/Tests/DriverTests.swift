@@ -250,7 +250,7 @@ func drain(_ operation: OperationClient.Operation) async throws -> Data {
   return bytes
 }
 
-private func eventually(_ seconds: Double = 5, _ condition: () async throws -> Bool) async throws -> Bool {
+func eventually(_ seconds: Double = 5, _ condition: () async throws -> Bool) async throws -> Bool {
   let end = ContinuousClock.now + .seconds(seconds)
   while ContinuousClock.now < end {
     if try await condition() { return true }
@@ -260,7 +260,7 @@ private func eventually(_ seconds: Double = 5, _ condition: () async throws -> B
 }
 
 /// Opens once, for every waiter, now and later.
-private final class Signal: Sendable {
+final class Signal: Sendable {
   private let stream: AsyncStream<Void>
   private let continuation: AsyncStream<Void>.Continuation
   init() { (stream, continuation) = AsyncStream.makeStream() }

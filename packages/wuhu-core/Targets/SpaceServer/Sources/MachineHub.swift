@@ -9,6 +9,7 @@ import struct FileSearch.SearchPage
 import struct FileSearch.SearchQuery
 import Logging
 import MachineContract
+import func OperationClient.copyFile
 import struct OperationProtocol.OperationError
 import Serve
 import func ServerTelemetry.reachedMachine
@@ -109,6 +110,14 @@ public actor MachineHub {
 
   public func vfs(machine: MachineID, op: VFSOp, caller: SessionID? = nil) async throws -> VFSResult {
     try await operationsService().operations(group: group(machine)).vfs(machine: machine.rawValue, op: op, owner: .init(scope: "machine-tools/" + UUID().uuidString, key: "operation"), caller: space.startCaller(caller))
+  }
+
+  /// Each machine end through its own group's operations.
+  public func copy(from source: CopySource, to target: CopyTarget, caller: SessionID? = nil) async throws -> CopyReceipt {
+    let service = try operationsService()
+    return try await copyFile(from: source, to: target, caller: space.startCaller(caller)) { machine in
+      try await service.operations(group: self.group(machine))
+    }
   }
 
   public func search(machine: MachineID, query: SearchQuery, caller: SessionID? = nil) async throws -> SearchPage {

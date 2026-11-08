@@ -57,9 +57,20 @@ public struct OperationCancellation: Sendable {
   let checkImpl: @Sendable () async throws -> Void
   let stopImpl: @Sendable (String) async throws -> Void
   let reasonImpl: @Sendable () async -> String?
+  let stoppedImpl: @Sendable () async -> Void
   public func reason() async -> String? { await reasonImpl() }
   public func check() async throws { try Task.checkCancellation(); try await checkImpl() }
   public func stop(reason: String) async throws { try await stopImpl(reason) }
+
+  /// `work`, cancelled with a `CancellationError` the moment a stop or lease expiry lands: neither is task cancellation.
+  public func unlessStopped<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+      defer { group.cancelAll() }
+      group.addTask { try await work() }
+      group.addTask { await stoppedImpl(); throw CancellationError() }
+      return try await group.next()!
+    }
+  }
 }
 
 public struct OperationChannels: Sendable {

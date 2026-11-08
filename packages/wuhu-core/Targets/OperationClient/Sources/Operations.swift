@@ -15,8 +15,8 @@ import struct OperationProtocol.Verdict
 import TaskLifetime
 import Tracing
 
-/// A handle on one operation. Output arrives in arrival order across channels and stays retained, durably, until acknowledged;
-/// every call works the same before and after a server restart.
+/// A handle on one operation. Output arrives in arrival order across channels and stays retained until acknowledged; for an
+/// operation that is not `transient`, durably, and every call works the same before and after a server restart.
 public struct Operation: Sendable {
   public let id: UUID
   public let owner: OperationOwner
@@ -84,6 +84,7 @@ public actor MachineOperations {
   /// (holding a tunnel lane). `open` reattaches to one, and `shutdown` and `setAside` end it.
   private var kept: [UUID: Kept] = [:]
   private var opening: [OperationOwner: Task<Operation, any Error>] = [:]
+  private var admitting: [UUID: Task<Operation, any Error>] = [:]
   /// The admission describe in flight per machine, shared by every start waiting on it.
   private var describing: [String: Task<MachineDescription, any Error>] = [:]
   private var descriptions: [String: (description: MachineDescription, at: Duration)] = [:]
@@ -156,11 +157,7 @@ public actor MachineOperations {
       guard try prior.machine == machine && prior.start.canonicalData() == start.canonicalData() else { throw OperationError(.invocationConflict, operation: prior.id) }
       return attach(prior, owner: owner)
     }
-    let description = try await admissionDescription(machine)
-    try admit(start, on: description)
-    let lanes = 1 + (description.kinds.first { $0.name == start.kind }?.outputChannels.count ?? 0)
-    try await tunnel.reserve(lanes, on: machine)
-    var proposed = ClientRecord(id: link.ids(), correlation: link.ids(), machine: machine, start: start, description: description)
+    var (proposed, lanes) = try await admitted(machine: machine, start: start)
     proposed.consumer = consumer
     let claim: OperationClaim
     do {
@@ -173,9 +170,45 @@ public actor MachineOperations {
       tunnel.release(lanes, on: machine)
       return attach(claim.record, owner: owner)
     }
-    let operation = register(claim.record, owner: owner, dispatch: true, reserved: lanes)
+    let operation = register(claim.record, owner: owner, dispatch: true, reserved: lanes, store: store)
     try await operation.driver.started()
     return operation
+  }
+
+  /// `open` with nothing in the store: no claim, no resume, no idempotence by owner. The operation ends with this process, and
+  /// its answers cost no store write. A caller that leaves before the machine took the start leaves it abandoned.
+  public func transient(_ owner: OperationOwner, machine: String, start: StartRequest) async throws -> Operation {
+    guard !closed else { throw OperationError(.requestCancelled) }
+    let key = link.ids()
+    let task = try taskScope.run("operation-transient") {
+      defer { self.admitting[key] = nil }
+      return try await self.admitTransient(owner, machine: machine, start: start)
+    }
+    admitting[key] = task
+    return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+  }
+
+  private func admitTransient(_ owner: OperationOwner, machine: String, start: StartRequest) async throws -> Operation {
+    let (record, lanes) = try await admitted(machine: machine, start: start)
+    guard !closed, !Task.isCancelled else {
+      tunnel.release(lanes, on: machine)
+      throw OperationError(.requestCancelled)
+    }
+    let operation = register(record, owner: owner, dispatch: true, reserved: lanes, store: nil)
+    do { try await operation.driver.started() } catch {
+      try? await abandon(operation, "callerGone", consumer: nil)
+      throw error
+    }
+    return operation
+  }
+
+  /// A fresh record for a start the machine admits, holding the tunnel lanes its driver needs.
+  private func admitted(machine: String, start: StartRequest) async throws -> (ClientRecord, lanes: Int) {
+    let description = try await admissionDescription(machine)
+    try admit(start, on: description)
+    let lanes = 1 + (description.kinds.first { $0.name == start.kind }?.outputChannels.count ?? 0)
+    try await tunnel.reserve(lanes, on: machine)
+    return (ClientRecord(id: link.ids(), correlation: link.ids(), machine: machine, start: start, description: description), lanes)
   }
 
   /// A fresh description for a start, so admission sees the machine as it is now. Concurrent starts on one machine share one
@@ -208,7 +241,7 @@ public actor MachineOperations {
     guard let kind = description.kinds.first(where: { $0.name == start.kind }) else {
       if let refusal = description.availability?[start.kind]?.refusal(kind: start.kind) { throw refusal }
       let message = switch start.kind {
-      case "stat.v1", "list.v1", "read.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1": "Machine does not support \(start.kind): agent too old, upgrade"
+      case "stat.v1", "list.v1", "read.v1", "write.v1", "stagedWrite.v1", "mkdir.v1", "remove.v1", "move.v1": "Machine does not support \(start.kind): agent too old, upgrade"
       default: "Machine does not support \(start.kind)"
       }
       throw OperationError(.unknownKind, message: message, details: ["kind": .string(start.kind)])
@@ -265,11 +298,11 @@ public actor MachineOperations {
     if let driver = drivers[record.id]?.driver ?? kept[record.id]?.driver { return Operation(id: record.id, owner: owner, driver: driver, operations: self) }
     let lanes = 1 + record.outputChannels.count
     if record.live { tunnel.hold(lanes, on: record.machine) }
-    return register(record, owner: owner, dispatch: false, reserved: record.live ? lanes : 0)
+    return register(record, owner: owner, dispatch: false, reserved: record.live ? lanes : 0, store: store)
   }
 
   /// Registers the record's driver, which holds `reserved` tunnel lanes until it ends.
-  private func register(_ record: ClientRecord, owner: OperationOwner, dispatch: Bool, reserved lanes: Int) -> Operation {
+  private func register(_ record: ClientRecord, owner: OperationOwner, dispatch: Bool, reserved lanes: Int, store: (any OperationStore)?) -> Operation {
     let driver = OperationDriver(record: record, dispatch: dispatch, link: link, store: store) { [weak self] id in await self?.ended(id) }
     if record.live {
       drivers[record.id] = Entry(driver: driver, owner: owner, machine: record.machine, lanes: lanes)
@@ -333,7 +366,7 @@ public actor MachineOperations {
   /// Returns once no driver of this instance writes the store or talks to a machine any more.
   public func shutdown() async {
     closed = true
-    let claims = Array(opening.values)
+    let claims = Array(opening.values) + Array(admitting.values)
     for shared in describing.values { shared.cancel() }
     for task in claims { task.cancel() }
     for task in claims { _ = try? await task.value }

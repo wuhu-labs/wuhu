@@ -1,7 +1,7 @@
 ---
 name: machine-scripts
-description: Use wuhu:machine — machine files, commands, script-local streaming processes and durable exec ownership — and what deleting a machine for good (`wuhu machine delete`, by a human admin of its group) removes, unlike `revoke`.
-script_exports: {"wuhu:machine":["execStatus","execs","killExec","machine","machines"]}
+description: Use wuhu:machine — machine files, copying a file between machines (or a machine and the space) without relaying its bytes, commands, script-local streaming processes and durable exec ownership — and what deleting a machine for good (`wuhu machine delete`, by a human admin of its group) removes, unlike `revoke`.
+script_exports: {"wuhu:machine":["copy","execStatus","execs","killExec","machine","machines"]}
 ---
 
 # Machine scripts
@@ -21,6 +21,7 @@ result(await m.readText("/var/log/app.log"))
 - `read(path)` returns a Uint8Array; `readText(path)` returns UTF-8 text.
 - `write(path, data, { ifMatch? })` accepts a string, ArrayBuffer or typed array. Existing-file overwrites require a prior read at the current mtime; `ifMatch` supplies an explicit guard.
 - `remove(path)`, `mkdir(path)` and `move(from, to)` mutate the raw filesystem, without a space revision journal.
+- `copy(from, to, { overwrite? })` (a top-level export) moves one file between machines, or between a machine and the space, without the bytes entering the script; it resolves to `{ bytes, sha256, token }`. Addresses are the read tool's: `machines://<name-or-id>/<path>` or a space path; space to space is refused. A machine target lands whole or not at all. An existing `to` fails with `err.code === "exists"` unless `overwrite: true`; a source changing mid-copy fails `sourceChanged`; a folder is refused (tar it, copy the archive, untar it). A copy does not survive a server restart: call it again. A space target takes at most 64 MiB.
 - `exec(command, options?)` collects output. `spawn(command, options?)` returns a script-local Process for streaming. Options are `{ cwd?, env?, secrets?, timeout?, maxOutput?, stdin? }`.
 - `secrets: { VAR: "SECRET_NAME" }` uses the machine's group, not yours, and masks values in output. Secret placeholders are refused in commands, env and stdin; only fetch fills them in.
 

@@ -348,6 +348,13 @@ func machineSeam(hub: MachineHub) -> MachineSeam {
       catch let error as OperationError { throw machineOperationFailure(error) }
       catch let error as SearchError { throw searchFailure(error) }
     },
+    copy: { source, target in
+      do { return try await hub.copy(from: source, to: target, caller: MachineSeam.caller) }
+      catch let error as MachineHubError {
+        guard case let .machineUnattached(machine) = error else { throw error }
+        throw toolFailure(error, machine: machine)
+      } catch let error as OperationError { throw machineOperationFailure(error) }
+    },
     attached: { await hub.attachedMachines() },
   )
 }

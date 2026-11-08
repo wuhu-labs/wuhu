@@ -162,6 +162,12 @@ struct Executor {
         text += "dangling \(path)\n"
       }
       await self.runner.stdout(text)
+    case let .copy(from, to, overwrite):
+      let route = try self.route([from, to])
+      var input: JSONValue = ["from": .string(route.paths[0]), "to": .string(route.paths[1])]
+      if overwrite { input.set("overwrite", .bool(true)) }
+      let output: CopyOutput = try await self.tool("copy", input, space: route.space)
+      await self.runner.stdout("\(output.bytes) bytes sha256 \(output.sha256)\ntoken \(output.token)\n")
     case let .list(path, rev):
       let route = try self.route(path)
       var input: JSONValue = ["path": .string(route.path)]

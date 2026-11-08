@@ -185,7 +185,7 @@ private func failureResponse(_ error: any Error) -> Response {
 private func status(of code: ErrorCode) -> Status {
   switch code {
   case .notFound: .notFound
-  case .conflict, .aliasTaken: .conflict
+  case .conflict, .aliasTaken, .exists, .sourceChanged: .conflict
   case .invalidPath, .invalidArgument, .invalidAlias, .byteLimitExceeded: .badRequest
   case .unauthorized, .forbidden, .memberRequired: .forbidden
   case .unsupported, .unknownKind: .unprocessableContent

@@ -86,18 +86,7 @@ private struct SearchKind: OperationKind {
   func run(_ input: SearchInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> SearchPage {
     let source = files.search(input.query.root)
     do {
-      return try await withThrowingTaskGroup(of: SearchPage?.self) { group in
-        defer { group.cancelAll() }
-        group.addTask { [clock] in try await input.query.run(in: source, clock: clock) }
-        // A stop or lease expiry is not task cancellation; poll for it.
-        group.addTask { [clock] in
-          while true {
-            try await cancellation.check()
-            try await clock.sleep(for: .milliseconds(10))
-          }
-        }
-        return try await group.next()!!
-      }
+      return try await cancellation.unlessStopped { [clock] in try await input.query.run(in: source, clock: clock) }
     } catch let error as SearchError {
       throw operationError(error)
     } catch let error as SearchUnreadable {

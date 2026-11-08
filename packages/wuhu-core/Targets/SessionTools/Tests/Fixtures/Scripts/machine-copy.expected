@@ -1,0 +1,11 @@
+=== run_script
+to space: 8 bytes, fake-sha256-8
+exists: already exists: /copied/a.txt
+replaced: 15 bytes
+to machine: 15 bytes, token 1003.0
+text: "payload, again\n"
+unsupported: copy moves a file onto or off a machine: /copied/a.txt -> /elsewhere.txt
+
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
+=== probe
+seam asked: caller(limit: 67108864), caller(limit: 67108864), machine(/work/b.txt, replace: false)

@@ -86,6 +86,11 @@ export const execs = () => ownExec("list")
 export const execStatus = (id) => ownExec("status", id)
 export const killExec = (id) => ownExec("kill", id)
 export const machines = () => call(() => host.machine_list())
+export const copy = async (from, to, options = {}) => {
+  const value = await call(() => host.machine_copy(String(from), String(to), options.overwrite === true))
+  if (value.error) throw failure(value.error)
+  return value.ok
+}
 
 export function machine(reference) {
   const ref = String(reference)

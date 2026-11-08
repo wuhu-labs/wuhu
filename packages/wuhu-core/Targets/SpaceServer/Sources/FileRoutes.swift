@@ -150,7 +150,7 @@ private func fileRouteFailure(_ error: ToolRunError) -> Response {
   case let .failed(code, _, _, _):
     let status: Status = switch code {
     case .notFound: .notFound
-    case .conflict, .aliasTaken: .conflict
+    case .conflict, .aliasTaken, .exists, .sourceChanged: .conflict
     case .invalidPath, .invalidArgument, .invalidAlias, .byteLimitExceeded: .badRequest
     case .unauthorized, .forbidden, .memberRequired: .forbidden
     case .unsupported, .unknownKind: .unsupportedMediaType

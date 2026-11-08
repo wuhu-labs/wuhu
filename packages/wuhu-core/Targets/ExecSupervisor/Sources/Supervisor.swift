@@ -27,7 +27,7 @@ public enum ExecSupervisor {
     var state = stat()
     let parent = URL(fileURLWithPath: socket).deletingLastPathComponent().path
     guard lstat(parent, &state) == 0, state.st_uid == getuid(), state.st_mode & 0o777 == 0o700 else { throw OperationError(.invalidConfiguration) }
-    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: .local, kinds: []) { agent, _ in
+    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: nil, kinds: []) { agent, _ in
       var state = stat()
       if lstat(socket, &state) == 0 {
         guard state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK else { throw OperationError(.invalidConfiguration) }

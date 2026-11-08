@@ -68,6 +68,11 @@ public struct SpaceToolContext: Sendable {
         try await requireUsable(machine)
         return try await seam.search(machine, query)
       },
+      copy: { source, target in
+        if case let .machine(machine, _) = source { try await requireUsable(machine) }
+        if case let .machine(machine, _, _) = target { try await requireUsable(machine) }
+        return try await seam.copy(source, target)
+      },
       attached: {
         var usable = Set<MachineID>()
         for machine in await seam.attached() where (try? await requireUsable(machine)) != nil {

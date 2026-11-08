@@ -35,11 +35,16 @@ struct ChannelState: Sendable {
     }
   }
 
-  mutating func append(_ value: ChannelPayload) throws -> Bool {
+  /// Whether `value` fits the window now; a refusal (wrong unit, ended, larger than the window) throws.
+  func fits(_ value: ChannelPayload) throws -> Bool {
     try validate(value)
     guard !end else { throw OperationError(.operationEnded) }
     guard value.byteCount <= descriptor.windowBytes else { throw OperationError(.inputTooLarge) }
-    guard payload.byteCount + value.byteCount <= descriptor.windowBytes else { return false }
+    return payload.byteCount + value.byteCount <= descriptor.windowBytes
+  }
+
+  mutating func append(_ value: ChannelPayload) throws -> Bool {
+    guard try fits(value) else { return false }
     let next = try through.advanced(by: value.count)
     if let data = value.data { payload = .init(data: (payload.data ?? Data()) + data) }
     if let records = value.records { payload = .init(records: (payload.records ?? []) + records) }
@@ -132,8 +137,10 @@ struct OperationState: Sendable {
     if verdict == nil && stopReason == nil { leaseDeadline = now + lease }
   }
 
+  func lapsed(now: Duration) -> Bool { verdict == nil && stopReason == nil && now >= leaseDeadline }
+
   mutating func expire(now: Duration) {
-    if verdict == nil && now >= leaseDeadline { stopReason = stopReason ?? "leaseExpired" }
+    if lapsed(now: now) { stopReason = "leaseExpired" }
   }
 
   mutating func publish(_ result: Verdict, token: UUID, now: Duration) {

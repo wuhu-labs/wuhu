@@ -55,7 +55,7 @@ private final class FakeExternal: Sendable {
       group.addTask { await agent.run() }
       defer { group.cancelAll() }
       let description = try await operations.describe("disk")
-      #expect(description.kinds.map(\.name) == ["read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "echo.v1"])
+      #expect(description.kinds.map(\.name) == ["read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "stagedWrite.v1", "echo.v1"])
       let echo = try await operations.open(.init(scope: "test", key: "echo"), machine: "disk", start: .init(kind: "echo.v1", input: ["text": "hi"]))
       #expect(try await echo.drain().end.verdict?.result == "hi")
       let read = try await operations.open(.init(scope: "test", key: "read"), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/file"]))
@@ -68,7 +68,7 @@ private final class FakeExternal: Sendable {
     let external = FakeExternal()
     let agent = try ComputerAgent(machine: "disk", kinds: [AnyOperationKind(EchoKind())], external: external.kind)
     let description = try await agent.handler(Request(url: URL(string: base)!)).body.json(MachineDescription.self)
-    #expect(description.kinds.map(\.name) == ["external.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "echo.v1"])
+    #expect(description.kinds.map(\.name) == ["external.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "stagedWrite.v1", "echo.v1"])
     let id = UUID()
     #expect(try await start(agent, id, kind: "external.v1", input: [:]).body.json([String: String].self) == ["routed": "external"])
     let poll = try await agent.handler(Request(url: URL(string: base + "/operations/" + id.uuidString)!))

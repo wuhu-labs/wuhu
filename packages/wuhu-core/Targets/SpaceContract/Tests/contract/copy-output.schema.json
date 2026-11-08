@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"CopyOutput","type":"object","properties":{"bytes":{"type":"integer"},"sha256":{"type":"string"},"token":{"type":"string"}},"required":["bytes","sha256","token"],"additionalProperties":false}

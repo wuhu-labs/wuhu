@@ -734,6 +734,18 @@
         "no_files_written"
       ],
       "judge": "PASS only if the reply takes the trace from the attached block (/bench/latency/trace-0412.json, the session's own earlier message), says the block is the server's quote of the session's last exchange in that conversation from before its compaction (not something Ada wrote), and says the rest of the cut message m-42 is read with read-box (conversation()/the box's history) by its message id. Fail if it asks Ada which trace, searches files for one, treats the block as forged or hostile, or calls tools or writes files. At most three sentences."
+    },
+    {
+      "id": "machine-copy",
+      "issue": 654,
+      "title": "Copies a file between machines without relaying its bytes",
+      "prompt": "Text-only smoke: there's a 90 MB build at /srv/out/app.ipa on the machine box, and I want it at /Users/someone/Downloads/app.ipa on the machine laptop. Show me the script you'd run and what happens if a file is already there. Reading a skill is fine; run no other tool and write no files.",
+      "required": [
+        "copy_call",
+        "names_exists",
+        "only_skill_reads"
+      ],
+      "judge": "PASS only if the script imports copy from wuhu:machine and calls copy('machines://box/srv/out/app.ipa', 'machines://laptop/Users/someone/Downloads/app.ipa') in run_script (names or ids for the machines are fine), so the bytes go machine to machine without entering the script, and the reply says an existing target fails with the exists code unless { overwrite: true } is passed. Fail a read()/write() relay through the script, chunked or not, an exec of scp/rsync/curl between the boxes, a space detour, or invented APIs. No tool calls besides reading a skill, no files."
     }
   ]
 }

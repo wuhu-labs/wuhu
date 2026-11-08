@@ -13,6 +13,7 @@ import struct ComputerFiles.AdmittedStart
 import class ComputerFiles.ComputerAgent
 import struct ComputerFiles.ComputerFileSystem
 import struct ComputerFiles.ExternalKind
+import struct ComputerFiles.StageLedger
 import DeploymentAdmin
 import Fetch
 import struct Logging.Logger
@@ -40,7 +41,7 @@ extension ExecSupervisor {
     executable: String,
     serve: @escaping @Sendable (@escaping Handler, @escaping @Sendable (SupervisorRetirement) async -> Void) async throws -> Void,
   ) async throws {
-    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: .local, kinds: [], disclaimResponsibility: boxAgentDisclaimsResponsibility()) { agent, workers in
+    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: nil, kinds: [], disclaimResponsibility: boxAgentDisclaimsResponsibility()) { agent, workers in
       try await serve(agent.handler, { _ = await workers.retire($0) })
     }
   }
@@ -53,7 +54,7 @@ extension ExecSupervisor {
     machine: String,
     operationsDirectory: String,
     executable: String,
-    files: ComputerFileSystem = .local,
+    files: ComputerFileSystem? = nil,
     kinds: [AnyOperationKind] = [],
     audit: (@Sendable (AdmittedStart) -> Void)? = nil,
     _ body: @escaping @Sendable (ComputerAgent, _ retire: @escaping @Sendable (SupervisorRetirement) async -> Void) async throws -> R,
@@ -68,7 +69,7 @@ extension ExecSupervisor {
     machine: String,
     operationsDirectory: String,
     executable: String,
-    files: ComputerFileSystem,
+    files: ComputerFileSystem?,
     kinds: [AnyOperationKind],
     audit: (@Sendable (AdmittedStart) -> Void)? = nil,
     disclaimResponsibility: Bool = false,
@@ -91,6 +92,10 @@ extension ExecSupervisor {
       _ = flock(lock, LOCK_UN)
       exec_close(lock)
     }
+    // Inside the locked root: the lock covers exactly what this agent sweeps.
+    let stages = try StageLedger(directory: operationsDirectory + "/stages")
+    stages.sweep()
+    let files = files ?? .local(stages: stages)
     return try await withEventLoop { events in
       let workers = try ExecWorkers(machine: machine, operationsDirectory: operationsDirectory, executable: executable, disclaimResponsibility: disclaimResponsibility, retention: retention, launch: launch ?? { try ExecSupervisor.launchReaped($0) }, authorize: { _, id in
         guard id == machine else { throw OperationError(.machineNotAuthorized) }

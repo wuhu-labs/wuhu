@@ -67,6 +67,7 @@ wuhu edit /notes/plan.md "old text" "new text"
 wuhu ls /notes        # markers: d dir, - file, t table; then size, then name
 wuhu stat /notes/plan.md
 wuhu mv /notes/plan.md /notes/done.md
+wuhu cp machines://box-a/tmp/app.ipa machines://box-b/tmp/app.ipa [--overwrite]   # one file, server-streamed
 wuhu rm /notes/done.md
 wuhu grep pattern [/dir]
 wuhu find '**/*.md' [/dir]

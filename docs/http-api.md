@@ -11,7 +11,7 @@ A bearer assertion is a JWT whose claims are `key`, `space`, `exp` and an option
 A session's exec token (`Authorization: Bearer wst_…`, handed to a
 session's exec as `WUHU_TOKEN`) is its own principal, dev or not: it acts as
 that session on the verbs a session has — the file routes and `read`, `ls`,
-`stat`, `grep`, `find`, `history`, `query`, `write`, `edit`, `rm`, `mv`,
+`stat`, `grep`, `find`, `history`, `query`, `write`, `edit`, `rm`, `mv`, `copy`,
 `checkout`, the table verbs, `new`, `attributes.read` and `attributes.patch`;
 `observe`; `GET /v1/server`, `GET /v1/groups` and `GET /v1/machine`; message posts, session
 create, request, archive, unarchive, interrupt, resume and tags; exec, ps

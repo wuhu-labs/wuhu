@@ -234,6 +234,12 @@ extension Command {
       let to = try parser.required("to", verb: verb)
       try parser.finish(verb: verb)
       return .move(from: from, to: to, replace: replace)
+    case "cp":
+      let overwrite = parser.flag("--overwrite")
+      let from = try parser.required("from", verb: verb)
+      let to = try parser.required("to", verb: verb)
+      try parser.finish(verb: verb)
+      return .copy(from: from, to: to, overwrite: overwrite)
     case "ls":
       let rev = try parser.intOption("--rev", verb: verb)
       let path = parser.pop() ?? "/"
@@ -1031,6 +1037,7 @@ extension Command {
     edit      replace one text span
     rm        remove a path
     mv        move a path
+    cp        copy one file onto or off a machine
     ls        list directory entries
     stat      show labeled metadata for a path
     grep      search file contents
@@ -1274,6 +1281,14 @@ extension Command {
     moves a path and migrates wallet tokens under that path. an existing <to> refuses the move.
     flags:
       --replace  replace an existing file at <to> in the same revision
+    \(exitCodes)
+    """,
+    "cp": """
+    usage: wuhu cp <from> <to> [--overwrite]
+
+    copies one file between machines, or between a machine and the space; the server streams it. addresses are machines://<machine>/<path> or space paths, never two space paths. prints the bytes, sha256 and the token at <to>.
+    flags:
+      --overwrite  replace an existing file at <to>; without it the copy fails with exists
     \(exitCodes)
     """,
     "ls": """

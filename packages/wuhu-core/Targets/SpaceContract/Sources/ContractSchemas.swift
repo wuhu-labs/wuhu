@@ -21,6 +21,8 @@ public enum ContractSchemas {
     ("RemoveInput", RemoveInput.jsonSchema),
     ("MoveInput", MoveInput.jsonSchema),
     ("MoveOutput", MoveOutput.jsonSchema),
+    ("CopyInput", CopyInput.jsonSchema),
+    ("CopyOutput", CopyOutput.jsonSchema),
     ("ListInput", ListInput.jsonSchema),
     ("ListOutput", ListOutput.jsonSchema),
     ("StatInput", StatInput.jsonSchema),

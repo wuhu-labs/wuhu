@@ -36,7 +36,7 @@ import Testing
   @Test func combinesKindsAndRejectsOtherMachineBeforeDispatch() async throws {
     let (agent, _) = try fixture()
     let description = try await agent.handler(describe()).body.json(MachineDescription.self)
-    #expect(Set(description.kinds.map(\.name)) == ["exec.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1"])
+    #expect(Set(description.kinds.map(\.name)) == ["exec.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "stagedWrite.v1"])
     #expect(description.acceptingStarts)
     let response = try await agent.handler(Request(url: URL(string: "https://agent/machine/v2/machines/not-authorized")!))
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .machineNotAuthorized)
@@ -154,7 +154,7 @@ import Testing
           if second >= 0 { exec_close(second) }
           let description = try await agent.handler(Request(url: URL(string: "https://agent/machine/v2/machines/test")!)).body.json(MachineDescription.self)
           #expect(description.acceptingStarts)
-          #expect(description.kinds.map(\.name) == ["exec.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "note.v1"])
+          #expect(description.kinds.map(\.name) == ["exec.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "stagedWrite.v1", "note.v1"])
           let path = "/injected-\(fails)"
           let read = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": .string(path)])))
           #expect(try await agent.handler(read).status.code == 201)
@@ -201,6 +201,23 @@ import Testing
     WorkerDirectory.remove(launched.withLock { $0[1] })
     try await ContinuousClock().sleep(for: .milliseconds(500))
     #expect(launched.withLock { $0.count } == 2, "the run loop stopped with the body")
+  }
+
+  @Test func aRestartedAgentRemovesTheWriteStagesItsLastRunLeftBehindAndNoOtherRootsStages() async throws {
+    let home = try MachineHome()
+    defer { home.remove() }
+    let other = home.path + "/other", target = home.path + "/files"
+    try #require(mkdir(other, 0o700) == 0)
+    try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: false)
+    let mine = try await ComputerFileSystem.local(stages: StageLedger(directory: home.operations + "/stages")).operations.write(target + "/mine", .any)
+    let theirs = try await ComputerFileSystem.local(stages: StageLedger(directory: other + "/stages")).operations.write(target + "/theirs", .any)
+    for (root, left) in [(home.operations, 1), (other, 0)] {
+      try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: nil, kinds: [], launch: { _ in nil }) { _, _ in
+        let stages = try FileManager.default.contentsOfDirectory(atPath: target)
+        #expect(stages.count == left)
+      }
+    }
+    await mine.close(); await theirs.close()
   }
 }
 

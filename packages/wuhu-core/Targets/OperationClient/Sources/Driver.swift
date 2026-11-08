@@ -19,14 +19,14 @@ import TaskLifetime
 
 /// The only code that talks to a machine about one operation. One control lane sends the start (once, by the claim winner),
 /// the stop, pending input and the terminal acknowledgement, and watches state otherwise; one lane per output channel takes
-/// output while the channel's retained bytes leave room for a full poll. Every answer is durable before the next request
-/// acknowledges it. The driver ends when the machine acknowledged the terminal record (retired) or with a diagnostic.
+/// output while the channel's retained bytes leave room for a full poll. With a store, every answer is durable before the next
+/// request acknowledges it; without one the operation is transient and ends with this process. The driver ends when the machine acknowledged the terminal record (retired) or with a diagnostic.
 actor OperationDriver {
   static let backoff: (first: Duration, last: Duration) = (.milliseconds(100), .seconds(2))
   static let exchangeMargin: Duration = .seconds(5)
 
   private let link: MachineLink
-  private let store: any OperationStore
+  private let store: (any OperationStore)?
   private(set) var record: ClientRecord
   private var dispatch: Bool
   private var stopSent = false
@@ -48,7 +48,7 @@ actor OperationDriver {
   private let onEnd: @Sendable (UUID) async -> Void
   nonisolated let machine: String
 
-  init(record: ClientRecord, dispatch: Bool, link: MachineLink, store: any OperationStore, onEnd: @escaping @Sendable (UUID) async -> Void) {
+  init(record: ClientRecord, dispatch: Bool, link: MachineLink, store: (any OperationStore)?, onEnd: @escaping @Sendable (UUID) async -> Void) {
     self.record = record; self.dispatch = dispatch; self.link = link; self.store = store; self.onEnd = onEnd; machine = record.machine
     leaseClock = LocalWorkClock(link.clock)
     lastAnswer = link.clock.now()
@@ -483,8 +483,8 @@ actor OperationDriver {
     switch persist {
     case .none: return
     case .memory: break
-    case let .save(chunk): try await store.save(next, appending: chunk)
-    case let .trim(sequences): try await store.trim(next, removing: sequences)
+    case let .save(chunk): try await store?.save(next, appending: chunk)
+    case let .trim(sequences): try await store?.trim(next, removing: sequences)
     }
     record = next
     wake()

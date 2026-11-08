@@ -10,6 +10,7 @@ Each tool is one route, `POST /v1/tools/<name>`, taking the tool's input as its 
 | [`sync`](sync.md) | [`SyncInput`](../../../SpaceContract/Tests/contract/sync-input.schema.json) | [`SyncOutput`](../../../SpaceContract/Tests/contract/sync-output.schema.json) |
 | [`rm`](rm.md) | [`RemoveInput`](../../../SpaceContract/Tests/contract/remove-input.schema.json) | [`RevisionOutput`](../../../SpaceContract/Tests/contract/revision-output.schema.json) |
 | [`mv`](mv.md) | [`MoveInput`](../../../SpaceContract/Tests/contract/move-input.schema.json) | [`MoveOutput`](../../../SpaceContract/Tests/contract/move-output.schema.json) |
+| [`copy`](copy.md) | [`CopyInput`](../../../SpaceContract/Tests/contract/copy-input.schema.json) | [`CopyOutput`](../../../SpaceContract/Tests/contract/copy-output.schema.json) |
 | [`ls`](ls.md) | [`ListInput`](../../../SpaceContract/Tests/contract/list-input.schema.json) | [`ListOutput`](../../../SpaceContract/Tests/contract/list-output.schema.json) |
 | [`stat`](stat.md) | [`StatInput`](../../../SpaceContract/Tests/contract/stat-input.schema.json) | [`StatOutput`](../../../SpaceContract/Tests/contract/stat-output.schema.json) |
 | [`grep`](grep.md) | [`GrepInput`](../../../SpaceContract/Tests/contract/grep-input.schema.json) | [`GrepOutput`](../../../SpaceContract/Tests/contract/grep-output.schema.json) |

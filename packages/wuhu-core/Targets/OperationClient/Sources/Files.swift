@@ -122,13 +122,13 @@ public extension MachineOperations {
   }
 
   /// Opens the call, hands every output chunk to `consume` in order, acknowledging it, and returns the completed result.
-  func call(_ machine: String, _ owner: OperationOwner, _ start: StartRequest, consume: (ChannelPayload) throws -> Void = { _ in }) async throws -> JSONValue {
-    let operation = try await open(owner, machine: machine, start: start)
+  nonisolated(nonsending) func call(_ machine: String, _ owner: OperationOwner, _ start: StartRequest, transient: Bool = false, consume: (ChannelPayload) async throws -> Void = { _ in }) async throws -> JSONValue {
+    let operation = try await transient ? self.transient(owner, machine: machine, start: start) : open(owner, machine: machine, start: start)
     return try await settle(operation) {
       var after: UInt64?
       while let chunks = try await operation.output(after: after) {
         for chunk in chunks {
-          try consume(chunk.payload)
+          try await consume(chunk.payload)
           try await operation.acknowledge(chunk)
           after = chunk.sequence
         }
@@ -138,7 +138,7 @@ public extension MachineOperations {
   }
 
   /// A call that fails on this side abandons its operation: nobody is left to read it.
-  private func settle<T>(_ operation: Operation, _ body: () async throws -> T) async throws -> T {
+  private nonisolated(nonsending) func settle<T>(_ operation: Operation, _ body: () async throws -> T) async throws -> T {
     do { return try await body() } catch {
       try? await operation.abandon("fileCallFailed")
       throw error
@@ -156,12 +156,12 @@ public extension MachineOperations {
   }
 }
 
-private func version(_ result: JSONValue) throws -> String {
+func version(_ result: JSONValue) throws -> String {
   guard case let .object(fields) = result, case let .string(version)? = fields["version"] else { throw OperationError(.invalidResponse) }
   return version
 }
 
-private func decodeEntry(_ value: JSONValue) throws -> MachineEntry {
+func decodeEntry(_ value: JSONValue) throws -> MachineEntry {
   do { return try JSONDecoder().decode(MachineEntry.self, from: Data(value.jsonString().utf8)) } catch { throw OperationError(.invalidResponse) }
 }
 

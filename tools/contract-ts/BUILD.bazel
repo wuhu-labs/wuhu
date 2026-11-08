@@ -25,6 +25,8 @@ deno_generate(
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/checkout-output.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/column-spec.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/column-type.schema.json",
+        "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/copy-input.schema.json",
+        "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/copy-output.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/conversation-create-input.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/conversation-kind-payload.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/conversation-member-payload.schema.json",

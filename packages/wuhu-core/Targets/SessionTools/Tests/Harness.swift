@@ -12,6 +12,10 @@ import struct LoopCore.SessionExecution
 import MachineChannel
 import struct MachineContract.Ack
 import struct MachineContract.Base64Data
+import struct MachineContract.CopyReceipt
+import enum MachineContract.CopyRefusal
+import enum MachineContract.CopySource
+import enum MachineContract.CopyTarget
 import struct MachineContract.ExecExit
 import struct MachineContract.ExecID
 import struct MachineContract.ExecMintInput
@@ -256,6 +260,7 @@ final class FakeMachineFS: Sendable {
   let clockSeconds = Box<Double>(1000)
   let attached = Box<Set<MachineID>>([])
   let stats = Box<Int>(0)
+  let copies = Box<[CopyTarget]>([])
 
   func put(_ path: String, _ content: String, mtime: Double) {
     files.withLock { $0[path] = File(mtime: mtime, content: Array(content.utf8)) }
@@ -359,6 +364,30 @@ final class FakeMachineFS: Sendable {
       },
       search: { _, _ in
         throw SearchError(.notFound, "search is unsupported in the fake")
+      },
+      copy: { [files, clockSeconds, copies] source, target in
+        copies.withLock { $0.append(target) }
+        let bytes: [UInt8]
+        switch source {
+        case let .bytes(given): bytes = given
+        case let .machine(_, path):
+          guard let file = files.withLock({ $0[path] }) else { throw CopyRefusal.missing(.source) }
+          bytes = file.content
+        }
+        let digest = "fake-sha256-\(bytes.count)"
+        switch target {
+        case let .caller(limit):
+          guard bytes.count <= limit else { throw CopyRefusal.sourceTooLarge(size: bytes.count, limit: limit) }
+          return CopyReceipt(bytes: bytes.count, sha256: digest, landing: .caller(bytes))
+        case let .machine(_, path, replace):
+          guard replace || files.withLock({ $0[path] }) == nil else { throw CopyRefusal.targetExists }
+          let mtime = clockSeconds.withLock { seconds -> Double in
+            seconds += 1
+            return seconds
+          }
+          files.withLock { $0[path] = File(mtime: mtime, content: bytes) }
+          return CopyReceipt(bytes: bytes.count, sha256: digest, landing: .machine(token: token(mtime)))
+        }
       },
       attached: { [attached] in attached.value },
     )

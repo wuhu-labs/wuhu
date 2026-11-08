@@ -150,7 +150,7 @@ import struct WuhuAI.ToolArguments
           if case .stat = op { return .error(error: .init(code: .io, message: "disk on fire")) }
           return try await fs.seam.vfs(machine, op)
         },
-        search: fs.seam.search, attached: fs.seam.attached,
+        search: fs.seam.search, copy: fs.seam.copy, attached: fs.seam.attached,
       )
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: seam)), session: try await makeSession(space))
       let refused = try await world.run("write", .object(["path": .string("machines://\(machineA.rawValue)/new.txt"), "content": "x"]))

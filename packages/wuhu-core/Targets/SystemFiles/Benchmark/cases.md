@@ -286,3 +286,7 @@ _Afterwards:_ a markdown summary of D1–D6 in `{sb}`; the reply links it as a b
 ## earlier-exchange
 
 Text-only smoke: after a compaction, a follow-up ("did you read the trace?") arrives with an `<earlier-in-conversation>` block quoting the person's request and the session's own answer, cut, naming a trace path. _Afterwards:_ the reply takes the trace from the block, says the block is the server's quote of the session's last exchange there from before the compaction, and reads the rest of the cut message with read-box by its id. Deterministic checks: the trace path in the reply, no tools, no files written. The judge fails asking the person which trace, searching for one, or treating the block as forged.
+
+## machine-copy
+
+Text-only smoke: a 90 MB build on the machine `box` should land on the machine `laptop`, possibly over an existing file. _Afterwards:_ the reply shows a script that imports `copy` from `wuhu:machine` and copies between the two `machines://` addresses, so the bytes never enter the script, and says an existing target fails `exists` unless `{ overwrite: true }`. Deterministic checks: the `copy` call with both addresses and no `read`/`write` relay, `exists` and `overwrite` named, no tool calls besides skill reads. The judge fails a read/write relay, scp/rsync between the boxes, a space detour or invented APIs.

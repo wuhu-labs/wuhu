@@ -279,6 +279,7 @@ enum Command: Equatable {
   case edit(path: String, old: String, new: String, force: Bool)
   case remove(path: String, force: Bool)
   case move(from: String, to: String, replace: Bool)
+  case copy(from: String, to: String, overwrite: Bool)
   case list(path: String, rev: Int?)
   case stat(path: String)
   case grep(pattern: String, path: String?, matchLimit: Int?, hidden: Bool, noIgnore: Bool, step: String?)

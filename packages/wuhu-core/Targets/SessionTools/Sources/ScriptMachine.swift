@@ -59,6 +59,13 @@ final class ScriptMachineBindings: Sendable {
       }
     })
     engine.define("__wuhu_machine_list", promising: { [self] _ in try await machines() })
+    // The bytes stay on the server: main's copy tool streams them between the machines.
+    engine.define("__wuhu_machine_copy", promising: { [self] arguments in
+      await spaceAnswer {
+        let input: JSONValue = .object(["from": .string(string(arguments, 0)), "to": .string(string(arguments, 1)), "overwrite": .bool(arguments[safe: 2] == .bool(true))])
+        return try await tools.client(execution.actor).tool("copy", input)
+      }
+    })
     engine.define("__wuhu_machine_fs", promising: { [self] in try await files($0) })
     engine.define("__wuhu_machine_exec", promising: { [self] in try await exec($0) })
     engine.define("__wuhu_machine_spawn", promising: { [self] in try await spawn($0) })

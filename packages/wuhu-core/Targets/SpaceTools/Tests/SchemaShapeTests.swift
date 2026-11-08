@@ -2,6 +2,7 @@ import ControlledTime
 import DeterministicDependencies
 import Foundation
 import JSONValue
+import MachineContract
 import SpaceContract
 import SpaceToolReference
 import SpaceTools
@@ -89,6 +90,12 @@ import Testing
     let patchSchema = try outputSchema("attributes.patch")
     #expect(schemaIssues(patched, schema: patchSchema) == [], "attributes.patch")
     validated.insert("attributes.patch")
+    let machined = SpaceToolContext(space: context.space, machines: copySeam { _, _ in
+      CopyReceipt(bytes: 6, sha256: zeroHash, landing: .machine(token: "1"))
+    }, principal: context.principal)
+    let copied = try await run("copy", ["from": "/sync.md", "to": "machines://mc_00000000/sync.md"], machined)
+    #expect(schemaIssues(copied, schema: try outputSchema("copy")) == [], "copy")
+    validated.insert("copy")
     #expect(validated == Set(SpaceToolbox.all.map(\.name)))
   }
 

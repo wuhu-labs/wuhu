@@ -609,6 +609,22 @@ import struct WuhuAI.ToolCall
     }
   }
 
+  @Test func machineCopy() async throws {
+    let world = MachineWorld()
+    try await withRig(world: world) { rig in
+      try await world.attach("box", in: rig.space)
+      try await rig.run("machine-copy")
+      let asked = world.files.copies.value.map { target in
+        switch target {
+        case let .caller(limit): "caller(limit: \(limit))"
+        case let .machine(_, path, replace): "machine(\(path), replace: \(replace))"
+        }
+      }
+      rig.probe("seam asked: \(asked.joined(separator: ", "))")
+      try rig.expect("machine-copy")
+    }
+  }
+
   @Test func aProcessDiesWithTheScriptThatStartedIt() async throws {
     let world = MachineWorld()
     try await withRig(world: world) { rig in

@@ -92,6 +92,24 @@ public struct MoveOutput: Codable, Equatable, Sendable {
   public let dangling: [String]
 }
 
+/// One file onto or off a machine: `from` and `to` are read-tool addresses, at least one of them a machine's.
+@Contract
+public struct CopyInput: Codable, Equatable, Sendable {
+  public let from: String
+  public let to: String
+  /// Replace a file already at `to`; without it the copy fails with `exists`.
+  public let overwrite: Bool?
+}
+
+@Contract
+public struct CopyOutput: Codable, Equatable, Sendable {
+  public let bytes: Int
+  /// Lowercase hex sha256 of the bytes copied.
+  public let sha256: String
+  /// The version token of the file at `to`.
+  public let token: String
+}
+
 @Contract
 public struct ListInput: Codable, Equatable, Sendable {
   public let path: String

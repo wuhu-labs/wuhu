@@ -17,6 +17,7 @@
 | `wuhu edit <path> <old> <new> [--force]` | Apply one text replacement through the server edit tool. |
 | `wuhu rm <path> [--force]` | Remove a path and clear its recorded wallet token. |
 | `wuhu mv <from> <to> [--replace]` | Move a path and migrate recorded wallet tokens under that path. An existing `<to>` refuses the move; `--replace` replaces an existing file there in the same revision. |
+| `wuhu cp <from> <to> [--overwrite]` | Copy one file between machines, or between a machine and the space, streamed by the server; never two space paths. An existing `<to>` fails with `exists` unless `--overwrite`. Prints the bytes, sha256 and the token at `<to>`. |
 | `wuhu ls [path] [--rev N]` | List entries with compact `d`, `-`, and `t` markers. |
 | `wuhu stat <path>` | Print labeled metadata: kind, size, optional line count, token, mtime. |
 | `wuhu grep <pattern> [path] [--match-limit N] [--hidden] [--no-ignore] [--step cursor]` | Search file contents (ICU regex), skipping hidden and `.gitignore`d entries unless asked; paged by an opaque continuation cursor. |

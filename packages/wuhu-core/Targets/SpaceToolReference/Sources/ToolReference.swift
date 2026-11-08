@@ -45,6 +45,10 @@ public enum ToolReference {
       summary: "Move a path. An existing `to` refuses the move unless `replace` is true. `dangling` lists the documents whose links still point at the old path.",
     ),
     Entry(
+      tool: "copy", input: "CopyInput", output: "CopyOutput",
+      summary: "Copy one file onto or off a machine: machine to machine, machine to space or space to machine, never space to space. The server streams the bytes; a machine target lands whole or not at all, after its sha256 is checked. An existing `to` fails with `exists` unless `overwrite` is true; a source that changes mid-copy fails with `sourceChanged`; a folder at `from` is refused. A space target takes at most 64 MiB.",
+    ),
+    Entry(
       tool: "ls", input: "ListInput", output: "ListOutput",
       summary: "List a folder's entries, at the head or at `rev`. At `/` the system folder `/_` and `/users` are left out unless `hidden` is true.",
     ),

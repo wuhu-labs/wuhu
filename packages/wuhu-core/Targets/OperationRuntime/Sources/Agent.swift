@@ -30,7 +30,12 @@ public actor OperationAgent {
   let ids: @Sendable () -> UUID
   let authorize: @Sendable (Request, String) async throws -> Void
   let availability: KindAvailabilityProvider?
-  var operations: [UUID: OperationState] = [:]
+  var operations: [UUID: OperationState] = [:] { didSet { changed() } }
+  /// Everything waiting for the next change to `operations`: a kind's send or read, a held poll.
+  private var waiters: [Int: AsyncStream<Void>.Continuation] = [:]
+  /// How many waits ever began: a test's evidence that blocked work stays parked.
+  private(set) var nextWaiter = 0
+  var waiting: Int { waiters.count }
   /// Finished operations dropped before they settled: their operation evidence is gone.
   public private(set) var lostOperations: Set<UUID> = []
   var closed = false
@@ -150,7 +155,7 @@ public actor OperationAgent {
   func sweep() {
     let now = clock.now()
     for id in operations.keys {
-      operations[id]?.expire(now: now)
+      if operations[id]?.lapsed(now: now) == true { operations[id]?.expire(now: now) }
       guard let op = operations[id], op.finishedAt != nil else { continue }
       let expired = now - op.lastRequest >= receiptRetention
       guard op.released || expired else { continue }
@@ -183,7 +188,7 @@ public actor OperationAgent {
       availableInputImpl: { try await self.availableInput($0, bytes: $1, id: id) },
       publishImpl: { try await self.publish($0, id: id) },
     )
-    let cancellation = OperationCancellation(checkImpl: { try await self.check(id) }, stopImpl: { try await self.kindStop(id, reason: $0) }, reasonImpl: { await self.stopReason(id) })
+    let cancellation = OperationCancellation(checkImpl: { try await self.check(id) }, stopImpl: { try await self.kindStop(id, reason: $0) }, reasonImpl: { await self.stopReason(id) }, stoppedImpl: { await self.stopped(id) })
     let verdict: Verdict
     do {
       try await cancellation.check()
@@ -209,8 +214,10 @@ public actor OperationAgent {
       let piece = payload.slice(offset ..< offset + count)
       while true {
         try Task.checkCancellation(); try checkOutput(id)
-        if try operations[id]?.outputs[name]?.append(piece) == true { break }
-        try await clock.sleep(.milliseconds(10))
+        // A refused append must not write `operations`: the write alone would wake every other blocked producer, and theirs this one.
+        guard let channel = operations[id]?.outputs[name] else { throw OperationError(.unknownChannel) }
+        if try channel.fits(piece) { _ = try operations[id]?.outputs[name]?.append(piece); break }
+        await nextChange()
       }
       offset += count
     }
@@ -227,8 +234,43 @@ public actor OperationAgent {
       }
       if state.payload.count > 0 { throw OperationError(.recordTooLarge) }
       if state.end { return nil }
-      try await clock.sleep(.milliseconds(10))
+      await nextChange()
     }
+  }
+
+  private func changed() {
+    guard !waiters.isEmpty else { return }
+    let current = waiters
+    waiters = [:]
+    for waiter in current.values { waiter.finish() }
+  }
+
+  /// Returns at the next change to any operation (or on cancellation). A caller checks its condition, then calls this with no
+  /// suspension in between, so no change slips past.
+  func nextChange() async {
+    let (id, signal) = waiter()
+    for await _ in signal {}
+    waiters[id] = nil
+  }
+
+  /// `nextChange`, or `timeout` on the agent's clock, whichever is first; the clock's failure to sleep is thrown.
+  func nextChange(within timeout: Duration) async throws {
+    let (id, signal) = waiter()
+    defer { waiters[id] = nil }
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { for await _ in signal {} }
+      group.addTask { [clock] in try await clock.sleep(timeout) }
+      try await group.next()
+      group.cancelAll()
+    }
+  }
+
+  private func waiter() -> (Int, AsyncStream<Void>) {
+    let id = nextWaiter
+    nextWaiter += 1
+    let (signal, continuation) = AsyncStream<Void>.makeStream()
+    waiters[id] = continuation
+    return (id, signal)
   }
 
   func finish(_ name: String, id: UUID) throws {
@@ -258,6 +300,10 @@ public actor OperationAgent {
   }
 
   func stopReason(_ id: UUID) -> String? { sweep(); return operations[id]?.stopReason }
+
+  func stopped(_ id: UUID) async {
+    while !Task.isCancelled, let operation = operations[id], operation.stopReason == nil { await nextChange() }
+  }
 
   func publish(_ verdict: Verdict, id: UUID) throws {
     sweep()
@@ -353,12 +399,13 @@ public actor OperationAgent {
       let deadline = clock.now() + .milliseconds(hold)
       while true {
         guard let s = operations[id]?.snapshot(channel: channel, limit: limit) else { throw OperationError(.unknownOperation) }
-        if s.verdict != nil || (s.payload?.count ?? 0) > 0 || s.channelEnd || clock.now() >= deadline {
+        let now = clock.now()
+        if s.verdict != nil || (s.payload?.count ?? 0) > 0 || s.channelEnd || now >= deadline {
           let response = try Response.json(s, outputFormatting: [.sortedKeys, .withoutEscapingSlashes])
           guard (response.body.contentLength ?? 0) <= OperationLimits.responseBytes else { throw OperationError(.resultTooLarge) }
           return response
         }
-        try await clock.sleep(.milliseconds(10)); try Task.checkCancellation()
+        try await nextChange(within: deadline - now); try Task.checkCancellation()
       }
     }
     if request.method == .put && path.count == 7 && path[6] == "stop" {

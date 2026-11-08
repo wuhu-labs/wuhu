@@ -9,15 +9,19 @@ import SpaceFS
 public struct MachineSeam: Sendable {
   public let vfs: @Sendable (MachineID, VFSOp) async throws -> VFSResult
   public let search: @Sendable (MachineID, SearchQuery) async throws -> SearchPage
+  /// One file onto or off a machine; throws `CopyRefusal` for what is at its ends.
+  public let copy: @Sendable (CopySource, CopyTarget) async throws -> CopyReceipt
   public let attached: @Sendable () async -> Set<MachineID>
 
   public init(
     vfs: @escaping @Sendable (MachineID, VFSOp) async throws -> VFSResult,
     search: @escaping @Sendable (MachineID, SearchQuery) async throws -> SearchPage,
+    copy: @escaping @Sendable (CopySource, CopyTarget) async throws -> CopyReceipt,
     attached: @escaping @Sendable () async -> Set<MachineID>,
   ) {
     self.vfs = vfs
     self.search = search
+    self.copy = copy
     self.attached = attached
   }
 
@@ -25,11 +29,12 @@ public struct MachineSeam: Sendable {
   /// Set by the tool executor around each tool call and by `attributed(to:)`; nil for calls no session made.
   @TaskLocal public static var caller: SessionID?
 
-  /// This seam with every file and search call attributed to `session`, however many wrappers sit underneath.
+  /// This seam with every file, search and copy call attributed to `session`, however many wrappers sit underneath.
   public func attributed(to session: SessionID) -> MachineSeam {
     MachineSeam(
       vfs: { machine, op in try await Self.$caller.withValue(session) { try await vfs(machine, op) } },
       search: { machine, query in try await Self.$caller.withValue(session) { try await search(machine, query) } },
+      copy: { source, target in try await Self.$caller.withValue(session) { try await copy(source, target) } },
       attached: attached,
     )
   }

@@ -14,8 +14,10 @@ import Synchronization
 
 extension ComputerFileSystem {
   public static var local: Self { local() }
+  /// Local disk whose write stages are recorded in `stages`, so the next agent run removes those a crash left behind.
+  public static func local(stages: StageLedger) -> Self { local(beforeOpen: { _ in }, stages: stages) }
   /// `beforeOpen` runs on the disk queue before each read and each search effect, with its path; tests block or fail in it.
-  static func local(beforeOpen: @escaping @Sendable (String) throws -> Void = { _ in }) -> Self {
+  static func local(beforeOpen: @escaping @Sendable (String) throws -> Void = { _ in }, stages: StageLedger? = nil) -> Self {
     let effects = DiskEffects()
     return Self(status: { path in try await diskIO { try fileLookup { try fileStatus(path) } } }, read: { path, offset, count in
       try await diskIO {
@@ -35,7 +37,7 @@ extension ComputerFileSystem {
         guard statusInfo(after) == initial, try fileStatus(path) == initial else { throw OperationError(.fileChanged) }
         bytes.removeSubrange(n ..< bytes.count); return bytes
       }
-    }, search: { root in LocalSearchSource(root: root, effects: effects, beforeIO: beforeOpen) }, abandonedEffects: { effects.abandoned }, operations: .local)
+    }, search: { root in LocalSearchSource(root: root, effects: effects, beforeIO: beforeOpen) }, abandonedEffects: { effects.abandoned }, operations: .local(stages: stages))
   }
 }
 
