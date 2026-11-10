@@ -11,6 +11,11 @@ public struct GroupCell {
     rows.role(of: actor, in: GroupID(rawValue: id.key), acting: acting, rows: GroupAccess.ActorRows(db))
   }
 
+  /// Whether the person behind `account` administers the group: its owner, a space admin, or an admin on its list.
+  public func isHumanAdmin(_ account: AccountID) -> Bool {
+    GroupAccess.ActorRows(db).account(account).map { rows.isHumanAdmin($0, of: id.key) } ?? false
+  }
+
   /// The group's list, whoever asks: `role` says who may see it.
   public func grants() -> [GroupGrant] {
     rows.grants(of: id.key)
@@ -36,6 +41,11 @@ public struct SpaceCell {
   /// Every group, removed ones too, oldest first.
   public func groups() -> [GroupRecord] {
     db.rows(GroupRow.order { ($0.createdAt, $0.id) }).map(GroupRecord.init(row:))
+  }
+
+  /// The groups `group` reads by its own entries, itself included.
+  public func reach(of group: GroupID) -> Set<GroupID> {
+    rows.reach(of: group)
   }
 
   public func readable(by principal: Principal) -> Set<GroupID> {

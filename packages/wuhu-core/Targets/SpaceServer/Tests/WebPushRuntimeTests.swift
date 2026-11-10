@@ -74,6 +74,7 @@ import WebPush
       replyTarget: MessageID("question"),
       content: .init(text: "second answer"),
     )
+    try await space.sessions.inboxesSettled()
     #expect(try await space.dueWebPushDeliveries(at: fixedDate).map(\.endpoint) == ["https://push.example/live"])
   }
 
@@ -101,6 +102,7 @@ import WebPush
           senderSession: session,
           content: .init(text: "hello"),
         )
+        try await space.sessions.inboxesSettled()
       }
       try await WebPushRuntime(
         space: space,
@@ -133,6 +135,7 @@ import WebPush
         senderSession: visitor,
         content: .init(text: "from outside"),
       )
+      try await space.sessions.inboxesSettled()
       try await WebPushRuntime(
         space: space,
         logger: Logger(label: "web-push-test"),
@@ -158,7 +161,7 @@ import WebPush
       )
       try await space.sessions.markErrored(worker, message: "boom")
     }
-    let errored = try #require(try await space.sessions.notifications(recipient: "owner").only)
+    let errored = try #require(try await space.sessions.inbox("owner").only)
     #expect(try await NotificationOrigin(errored, space: space) == .session("worker"))
   }
 
@@ -236,6 +239,7 @@ private func notificationSpace(endpoints: [String]) async throws -> (space: Spac
       sender: Sender(id: persona.name, timeZone: TimeZone(identifier: "UTC")!),
       content: .init(text: "question"),
     )
+    try await space.sessions.inboxesSettled()
     for endpoint in endpoints {
       try await space.registerWebPushSubscription(.init(
         endpoint: endpoint,
@@ -255,6 +259,7 @@ private func notificationSpace(endpoints: [String]) async throws -> (space: Spac
       replyTarget: MessageID("question"),
       content: .init(text: "answer"),
     )
+    try await space.sessions.inboxesSettled()
     return (space, owner)
   }
 }

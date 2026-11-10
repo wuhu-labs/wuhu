@@ -43,7 +43,8 @@ final class DependencyScheduler: Scheduler {
   }
 
   func at(_ deadline: Instant, _ event: @escaping @Sendable () -> Void) {
-    // Made here, not at init: a clock nobody injected is read only by a worker that runs timers.
+    // A clock nobody injected never comes due: a test that gave none has no time passing.
+    guard !(clock is UnimplementedClock<Duration>) else { return }
     let clock = AnyClock(self.clock)
     let deadline = clock.now.advanced(by: deadline - now)
     let id = UUID()

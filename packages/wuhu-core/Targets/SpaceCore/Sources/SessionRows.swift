@@ -273,6 +273,8 @@ public struct SessionRows {
       transcript = Transcript()
     }
     try Notifications.fireErrored(key, error: message, transcript: transcript, now: now, in: db)
+    let runtime = store.runtime
+    db.afterNextTransaction { _ in runtime.poke(person: Notifications.ownerRecipient) }
   }
 
   /// `title` is already usable (``SessionStore/usableTitle(_:)``).

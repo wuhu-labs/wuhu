@@ -14,6 +14,7 @@ final class CellMacroTests: XCTestCase {
         func balance() -> Int64 { 0 }
         mutating func deposit(_ amount: Int64) throws {}
         mutating func rename(to name: String) {}
+        mutating func withdraw(_ amount: Int64) throws -> Int64 { amount }
         private mutating func audit() {}
       }
       """,
@@ -22,6 +23,7 @@ final class CellMacroTests: XCTestCase {
         func balance() -> Int64 { 0 }
         mutating func deposit(_ amount: Int64) throws {}
         mutating func rename(to name: String) {}
+        mutating func withdraw(_ amount: Int64) throws -> Int64 { amount }
         private mutating func audit() {}
 
         var _context: CellContext<Account>

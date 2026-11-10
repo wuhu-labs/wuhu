@@ -3,7 +3,7 @@ import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
-/// `@Cell`: every mutating method that is not private is a message, `wake()` aside. It becomes a case of `Message`, a branch of `receive` and a method of `Sender`, which posts that case. A method taking a `SocketHandle` is a socket handler instead, dispatched by a generated `_socket`.
+/// `@Cell`: every mutating method that is not private and returns nothing is a message, `wake()` aside. It becomes a case of `Message`, a branch of `receive` and a method of `Sender`, which posts that case. A method taking a `SocketHandle` is a socket handler instead, dispatched by a generated `_socket`.
 public struct CellMacro: MemberMacro, ExtensionMacro {
   public static func expansion(
     of _: AttributeSyntax,
@@ -146,13 +146,13 @@ private struct Message {
   static func isMessage(_ method: FunctionDeclSyntax) -> Bool {
     let modifiers = method.modifiers.map(\.name.tokenKind)
     if method.name.text == "wake", method.signature.parameterClause.parameters.isEmpty { return false }
+    if method.signature.returnClause != nil { return false }
     return modifiers.contains(.keyword(.mutating)) && !modifiers.contains(.keyword(.private)) && !modifiers.contains(.keyword(.fileprivate))
   }
 
   static func refusal(_ method: FunctionDeclSyntax) -> Refusal? {
     if method.signature.effectSpecifiers?.asyncSpecifier != nil { return Refusal("a cell never awaits: '\(method.name.text)' is async; effects belong to a job") }
     if method.genericParameterClause != nil { return Refusal("a message cannot be generic: '\(method.name.text)'") }
-    if method.signature.returnClause != nil { return Refusal("a message returns nothing, since it arrives by mail: '\(method.name.text)'") }
     for parameter in method.signature.parameterClause.parameters {
       if parameter.ellipsis != nil || parameter.type.is(AttributedTypeSyntax.self) {
         return Refusal("a message's parameters are plain Codable values: '\(method.name.text)'")

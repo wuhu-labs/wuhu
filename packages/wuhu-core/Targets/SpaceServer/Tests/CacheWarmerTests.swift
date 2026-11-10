@@ -37,7 +37,7 @@ import WuhuAI
         try await store.deliverMail()
         #expect(try await store.undrainedInputs(warm).last?.input.content.text.contains("<cache-warming-notice>") == true)
         for id in [disabled, task, neverRan] { #expect(try await store.undrainedInputs(id).isEmpty) }
-        #expect(try await store.notifications(recipient: "morgan").isEmpty)
+        #expect(try await store.inbox("morgan").isEmpty)
       }
     }
   }

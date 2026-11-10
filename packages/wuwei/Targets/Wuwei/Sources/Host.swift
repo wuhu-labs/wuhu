@@ -349,14 +349,20 @@ final class Incarnation {
     }
   }
 
-  /// Hands a socket event to the addressable. `false` means this incarnation is gone or leaving, and the caller should find the next one.
-  func socket(_ inbound: Attachment.Inbound, from attachment: Attachment) async -> Bool {
+  /// Readies this incarnation for an event from outside. `false` means it is gone or leaving, and the caller should find the next one.
+  func admit() async -> Bool {
     guard !dead, !left else { return false }
     if retiring {
       await withCheckedContinuation { leaving.append($0) }
       return false
     }
     boot()
+    return true
+  }
+
+  /// Hands a socket event to the addressable, unless `admit` says to find the next incarnation.
+  func socket(_ inbound: Attachment.Inbound, from attachment: Attachment) async -> Bool {
+    guard await admit() else { return false }
     lifecycle.socket(self, attachment, inbound)
     return true
   }

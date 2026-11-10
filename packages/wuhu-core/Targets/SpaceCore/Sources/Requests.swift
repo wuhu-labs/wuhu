@@ -175,17 +175,7 @@ extension SessionStore {
       requestID: request,
       content: MessageContent(text: text),
       acting: requester.principal,
-      alongside: { message, db in
-        let now = SQLiteDateFormat.string(from: message.createdAt)
-        try Self.insertRequest(
-          request, group: group, requester: requester, task: task, brief: text, terms: terms, stallSeconds: stallSeconds,
-          now: now, in: db,
-        )
-        if try Sessions.remindQuiet(RequestRow.find(request, in: db)!, from: message.createdAt, in: db) {
-          let runtime = self.runtime
-          db.afterNextTransaction { _ in runtime.poke(requester.session!) }
-        }
-      },
+      request: .open(group: group, requester: requester, task: task, brief: text, terms: terms, stallSeconds: stallSeconds),
     )
   }
 
@@ -228,14 +218,7 @@ extension SessionStore {
       kind: kind,
       requestID: request,
       content: MessageContent(text: text),
-      alongside: { message, db in
-        let now = SQLiteDateFormat.string(from: message.createdAt)
-        if kind == .final {
-          try Self.close(row, as: .done, result: finalResult, now: now, in: db)
-        } else {
-          try Sessions.remindQuiet(row, from: message.createdAt, in: db)
-        }
-      },
+      request: kind == .final ? .close(as: .done, result: finalResult) : .progress,
     )
   }
 
@@ -267,37 +250,18 @@ extension SessionStore {
         kind: .final,
         requestID: RequestID(row.id),
         content: MessageContent(text: "request \(row.id) failed: its final report broke the request's schema \(refusals) times; last: \(violations.joined(separator: "; "))"),
-        alongside: { message, db in
-          try Self.close(row, as: .failed, result: nil, now: SQLiteDateFormat.string(from: message.createdAt), in: db)
-        },
+        request: .close(as: .failed, result: nil),
       )
     }
     throw SessionStoreError.reportRefused(row.id, violations: violations, left: left)
-  }
-
-  /// A request's final status, with its quiet reminder ended in the same write.
-  static func close(_ row: RequestRow, as status: RequestStatus, result: String?, now: String, in db: Database) throws {
-    try RequestRow.update {
-      $0.status = #bind(status.rawValue)
-      $0.result = #bind(result)
-      $0.updatedAt = #bind(now)
-    }.where { $0.id.eq(row.id) }.execute(db)
-    guard let requester = try row.requesterSession(in: db) else { return }
-    try Sessions.clear(requester.rawValue, topic: Sessions.quietTopic(row.id), in: db)
   }
 }
 
 extension Sessions {
   static func quietTopic(_ request: String) -> String { "quiet:\(request)" }
 
-  /// Puts the requester's reminder that the task has reported nothing on the
-  /// request for its stall seconds since `from`; a later put moves it, the
-  /// request's end takes it back. Only a live requesting session gets one.
-  @discardableResult
-  static func remindQuiet(_ row: RequestRow, from: Date, in db: Database) throws -> Bool {
-    guard let seconds = row.stallSeconds, let requester = try row.requesterSession(in: db),
-          try record(requester.rawValue, in: db).lifecycle == .live
-    else { return false }
+  /// The requester's reminder that the task has reported nothing on the request for `seconds` since `from`: an input on the request's quiet topic, due then.
+  static func quietReminder(_ row: RequestRow, seconds: Double, from: Date) -> SessionPut {
     let minutes = Int((seconds / 60).rounded())
     let span = minutes >= 1 ? "\(minutes) min" : "\(Int(seconds)) s"
     let notification = SystemNotification(
@@ -308,9 +272,6 @@ extension Sessions {
       requestID: RequestID(row.id),
       content: .init(text: "Request \(row.id) on task \(row.task) has had no progress report for \(span). Check on it: message it, or archive it if it is lost."),
     )
-    try enqueue(
-      requester.rawValue, input: .notification(notification), topic: quietTopic(row.id), due: from.addingTimeInterval(seconds), nowDate: from, in: db,
-    )
-    return true
+    return SessionPut(.notification(notification), topic: quietTopic(row.id), due: from.addingTimeInterval(seconds))
   }
 }

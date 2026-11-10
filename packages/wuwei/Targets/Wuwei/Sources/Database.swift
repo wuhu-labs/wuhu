@@ -48,15 +48,21 @@ public struct Row: Sendable {
   }
 }
 
-struct SQLiteError: Error, CustomStringConvertible {
-  let code: Int32
-  let message: String
+/// SQLite's refusal of a statement, by its extended result code.
+public struct SQLiteError: Error, CustomStringConvertible {
+  public let code: Int32
+  public let message: String
+
+  public init(code: Int32, message: String) {
+    self.code = code
+    self.message = message
+  }
 
   var primary: Int32 {
     code & 0xFF
   }
 
-  var description: String {
+  public var description: String {
     "sqlite \(code): \(message)"
   }
 }
@@ -173,7 +179,7 @@ extension Connection {
   /// A statement that cannot run is a bug and traps here; what remains is the data's fault or the disk's.
   func write(_ sql: String, _ arguments: [Value]) -> Result<Void, WriteFailure> {
     do {
-      _ = try rows(sql, arguments)
+      if try hostWrite?(sql, arguments) != true { _ = try rows(sql, arguments) }
       return .success(())
     } catch let error as SQLiteError where error.primary == SQLITE_CONSTRAINT {
       return .failure(.constraint(ConstraintViolation(message: error.message)))
@@ -191,6 +197,8 @@ final class Connection {
   private let owned: Bool
   /// The host program's object for a borrowed writer, on the shared backend.
   var host: AnyObject?
+  /// How the host program runs an addressable's write on a borrowed writer; true when it did.
+  var hostWrite: ((String, [Value]) throws -> Bool)?
 
   init(path: String, flags: Int32, vfs: String? = nil) throws {
     var handle: OpaquePointer?

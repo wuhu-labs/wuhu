@@ -58,8 +58,8 @@ struct HumanAgentDMToolTests {
       ]))
       #expect(try failureMessage(result) == refusal)
       #expect(try await space.sessions.messages(conversation: dm.message.conversation).map(\.content.text) == ["hello"])
-      #expect(try await space.sessions.notifications(recipient: "carol").isEmpty)
-      #expect(try await space.sessions.notifications(recipient: "dave").count == 1)
+      #expect(try await space.sessions.inbox("carol").isEmpty)
+      #expect(try await space.sessions.inbox("dave").count == 1)
       #expect(try await space.sessions.messages(conversation: .init(session.rawValue)).isEmpty)
     }
   }
@@ -78,7 +78,7 @@ struct HumanAgentDMToolTests {
       let result = try await world.run("send_message", .object(["message": "lost", "conversation": .string(dm.rawValue)]))
       #expect(try failureMessage(result) == refusal)
       #expect(try await space.sessions.messages(conversation: dm).isEmpty)
-      #expect(try await space.sessions.notifications(recipient: "carol").isEmpty)
+      #expect(try await space.sessions.inbox("carol").isEmpty)
     }
   }
 }

@@ -37,7 +37,7 @@ import struct WuhuAI.ToolCall
       }
       #expect(try await t.harness.store.messages(conversation: dm).isEmpty)
       #expect(try await t.harness.store.messages(conversation: .init(t.parent.rawValue)).isEmpty)
-      #expect(try await t.harness.store.notifications(recipient: person).isEmpty)
+      #expect(try await t.harness.store.inbox(person).isEmpty)
     }
   }
 
@@ -55,13 +55,13 @@ import struct WuhuAI.ToolCall
       #expect(response.status == .unprocessableContent)
       #expect(try await response.json(JSONValue.self) == .object(["code": "refused", "message": .string(refusal)]))
       #expect(try await t.harness.store.messages(conversation: .init(dm.conversationId)).map(\.content.text) == ["hello"])
-      #expect(try await t.harness.store.notifications(recipient: first).isEmpty)
-      #expect(try await t.harness.store.notifications(recipient: second).count == 1)
+      #expect(try await t.harness.store.inbox(first).isEmpty)
+      #expect(try await t.harness.store.inbox(second).count == 1)
       let reply = try await t.harness.call("/v1/conversation/message", [
         "conversation": .string(dm.conversationId), "identity": .string(second), "message": "answer",
       ], as: ConversationPostOutput.self)
       #expect(reply.conversationId == dm.conversationId)
-      #expect(try await t.harness.store.notifications(recipient: first).count == 1)
+      #expect(try await t.harness.store.inbox(first).count == 1)
     }
   }
 
@@ -139,7 +139,7 @@ import struct WuhuAI.ToolCall
         "conversation": .string(t.parent.rawValue), "replyTarget": .string(first.messageId), "message": "answer",
       ], as: ConversationPostOutput.self, bearer: t.token)
       #expect(reply.conversationId == t.parent.rawValue)
-      let notifications = try await t.harness.store.notifications(recipient: person)
+      let notifications = try await t.harness.store.inbox(person)
       #expect(notifications.count == 1)
       #expect(notifications.first?.source == t.parent.rawValue)
       #expect(notifications.first?.payload.contains("answer") == true)

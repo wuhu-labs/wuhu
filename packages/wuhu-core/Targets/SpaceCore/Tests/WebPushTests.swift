@@ -35,6 +35,7 @@ import Testing
       replyTarget: MessageID("question"),
       content: .init(text: "before enrollment"),
     )
+    _ = try await space.sessions.inbox(persona.name)
 
     let registration = WebPushSubscriptionRegistration(
       endpoint: "https://push.example/subscription",
@@ -64,6 +65,7 @@ import Testing
       replyTarget: MessageID("question"),
       content: .init(text: "second live reply"),
     )
+    _ = try await space.sessions.inbox(persona.name)
 
     let first = try #require(try await space.dueWebPushDeliveries(at: fixedDate).only)
     #expect(first.notification.payload.contains("first live reply"))
@@ -125,6 +127,7 @@ import Testing
       replyTarget: MessageID("question"),
       content: .init(text: "reply"),
     )
+    _ = try await space.sessions.inbox(persona.name)
 
     let deliveries = try await space.dueWebPushDeliveries(at: fixedDate)
     #expect(deliveries.map(\.endpoint) == ["https://push.example/expired", "https://push.example/live"])

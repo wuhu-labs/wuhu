@@ -61,7 +61,7 @@ struct UnreadTests {
       _ = try await store.drainQueue(box)
       try await store.markErrored(box, message: "provider exploded")
 
-      let kinds = try await store.notifications(recipient: "owner").map(\.kind)
+      let kinds = try await store.inbox("owner").map(\.kind)
       #expect(kinds == [.sessionErrored])
       #expect(try await unread(space, viewer: "owner") == [[.text(box.rawValue), .integer(0)]])
     }

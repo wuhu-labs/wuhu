@@ -22,6 +22,16 @@ extension SessionStore {
     try await rows { try $0.put(id, SessionPut(input)) }
   }
 
+  /// A person's inbox once their cell has taken the mail on its way.
+  func inbox(_ recipient: String) async throws -> [NotificationRecord] {
+    _ = runtime.worker()
+    runtime.poke(person: recipient)
+    while try await writer.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["PersonCell/" + recipient])! }) {
+      await Task.yield()
+    }
+    return notifications(recipient: recipient)
+  }
+
   /// What the session cells do with the mail main posted, for a test that runs no worker.
   func deliverMail() async throws {
     try await rows { rows in

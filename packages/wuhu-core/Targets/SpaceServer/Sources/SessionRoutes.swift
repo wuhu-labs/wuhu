@@ -751,7 +751,7 @@ func addSessionRoutes(
     case let .identity(resolved): identity = resolved
     case let .refused(response): return response
     }
-    let records = try await store.notifications(recipient: identity, after: after)
+    let records = store.notifications(recipient: identity, after: after)
     return try Response.json(NotificationsOutput(notifications: records.map(notificationPayload)))
   }
 }

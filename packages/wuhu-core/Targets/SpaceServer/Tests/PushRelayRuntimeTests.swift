@@ -68,6 +68,7 @@ import Testing
         senderSession: visitor,
         content: .init(text: "from outside"),
       )
+      try await space.sessions.inboxesSettled()
       try await PushRelayRuntime(
         space: space,
         logger: Logger(label: "push-relay-test"),
@@ -103,6 +104,7 @@ import Testing
         sender: Sender(id: other.name, timeZone: TimeZone(identifier: "UTC")!),
         content: .init(text: "aside"),
       )
+      try await space.sessions.inboxesSettled()
       try await PushRelayRuntime(
         space: space,
         logger: Logger(label: "push-relay-test"),
@@ -159,6 +161,7 @@ import Testing
             sender: Sender(id: helperID, timeZone: TimeZone(identifier: "UTC")!),
             senderSession: SessionID(helperID), content: .init(text: "second"),
           )
+          try await space.sessions.inboxesSettled()
         }
         try await PushRelayRuntime(space: space, logger: Logger(label: "push-relay-test"), client: client).drain()
       }
@@ -232,6 +235,7 @@ import Testing
         senderSession: owner,
         content: .init(text: text),
       )
+      try await space.sessions.inboxesSettled()
       try await PushRelayRuntime(
         space: space,
         logger: Logger(label: "push-relay-test"),
@@ -278,11 +282,13 @@ import Testing
       _ = try await space.sessions.post(
         .box(helper), messageID: MessageID("q2"), sender: Sender(id: persona, timeZone: utc), content: .init(text: "q2"),
       )
+      try await space.sessions.inboxesSettled()
       for (box, id) in [(helper, "a2"), (owner, "a3")] {
         _ = try await space.sessions.post(
           .box(box), messageID: MessageID(id), sender: Sender(id: helper.rawValue, timeZone: utc),
           senderSession: helper, content: .init(text: id),
         )
+        try await space.sessions.inboxesSettled()
       }
       try await runtime.drain()
       #expect(await messages.values.map(\.badge) == [2, 2, 2])
@@ -292,6 +298,7 @@ import Testing
         .box(helper), messageID: MessageID("a4"), sender: Sender(id: helper.rawValue, timeZone: utc),
         senderSession: helper, content: .init(text: "a4"),
       )
+      try await space.sessions.inboxesSettled()
       try await runtime.drain()
     }
     #expect(await messages.values.map(\.badge) == [2, 2, 2, 1])
@@ -320,6 +327,7 @@ import Testing
           .dm(with: persona), messageID: MessageID(id), sender: Sender(id: "other-person", timeZone: utc),
           content: .init(text: id),
         )
+        try await space.sessions.inboxesSettled()
         try await runtime.drain()
       }
     }
@@ -393,6 +401,7 @@ private func relaySpace(grants: [String]) async throws -> (space: Space, owner: 
       sender: Sender(id: persona.name, timeZone: TimeZone(identifier: "UTC")!),
       content: .init(text: "question"),
     )
+    try await space.sessions.inboxesSettled()
     for grant in grants {
       try await space.registerPushRelayGrant(PushRelayGrant(
         grant: grant,
@@ -410,6 +419,7 @@ private func relaySpace(grants: [String]) async throws -> (space: Space, owner: 
       replyTarget: MessageID("question"),
       content: .init(text: "answer"),
     )
+    try await space.sessions.inboxesSettled()
     return (space, owner)
   }
 }

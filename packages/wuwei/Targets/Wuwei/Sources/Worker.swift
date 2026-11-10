@@ -49,7 +49,8 @@ public final class Worker: Sendable {
 
   private struct Hosts {
     var live: [String: Host] = [:]
-    var claiming = false
+    var claiming = true
+    var started = false
   }
 
   private struct Sockets {
@@ -101,16 +102,16 @@ public final class Worker: Sendable {
   }
 
   public var isStarted: Bool {
-    hosts.withLock { $0.claiming }
+    hosts.withLock { $0.started }
   }
 
-  /// Until it starts, a worker hosts nothing: mail sent to it or through it waits in the store.
+  /// Begins the scan. Until then a worker hosts only what it is called, attached or poked for: mail nobody poked it for waits in the store, and so does a job or a wake that is due.
   public func start() {
-    let started = hosts.withLock { hosts in
-      defer { hosts.claiming = true }
-      return !hosts.claiming
+    let starts = hosts.withLock { hosts in
+      defer { hosts.started = true }
+      return !hosts.started
     }
-    if started { scan() }
+    if starts { scan() }
   }
 
   /// Mail from outside any addressable, durable when the call returns: `worker.send(id).deposit(42)`.
@@ -192,6 +193,18 @@ public final class Worker: Sendable {
     } catch {
       preconditionFailure("could not read \(address): \(error)")
     }
+  }
+
+  /// A call to a cell from outside any addressable: `body` runs on the cell's owner as one durable step, and its value comes back once that step is durable. What `body` throws rolls the step back and is thrown here. Nothing about a call is durable. It throws `Evicted` when the cell is not this worker's to host or its incarnation died first: the step may have landed then, so what a caller repeats must be safe to repeat.
+  public func call<C: Cell, Value: Sendable>(_ id: C.ID, _ body: @Sendable (inout C) throws -> Value) async throws -> Value {
+    let address = id.description
+    while let host = host(address) {
+      let answer: Result<Value?, any Error> = await host.run { incarnation in
+        do { return .success(try await incarnation.answer(C.self, body)) } catch { return .failure(error) }
+      }
+      if let value = try answer.get() { return value }
+    }
+    throw Evicted(address: address)
   }
 
   /// Takes a socket to a cell. `nil` when the cell is not this worker's to host: it lives elsewhere, or this worker does not register its kind. The cell hears `attached` first; `output` runs on the cell's lane, in order, and must not block.
@@ -336,7 +349,7 @@ public final class Worker: Sendable {
 
   /// The backstop behind every poke: renews this worker's leases, then pokes every recipient with mail, every job nobody holds or whose wake time has come, and every cell whose wake time has come and that nobody else holds.
   private func scan() {
-    guard hosts.withLock({ $0.claiming }) else { return }
+    guard hosts.withLock({ $0.claiming && $0.started }) else { return }
     let now = scheduler.now
     do {
       try store.write {

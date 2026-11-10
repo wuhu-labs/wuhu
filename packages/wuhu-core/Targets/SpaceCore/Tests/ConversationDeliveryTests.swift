@@ -267,7 +267,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
       .box(owner), messageID: MessageID("m2"), sender: human(owner.rawValue),
       senderSession: owner, content: .init(text: "answered"),
     )
-    let rows = try await rig.store.notifications(recipient: "carol")
+    let rows = try await rig.store.inbox("carol")
     #expect(rows.map(\.kind) == [.conversationMessage])
     #expect(rows[0].payload.contains("answered"))
   }
@@ -282,8 +282,8 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     _ = try await rig.store.post(
       .box(owner), messageID: MessageID("m3"), sender: human(owner.rawValue), senderSession: owner, content: .init(text: "answered"),
     )
-    #expect(try await rig.store.notifications(recipient: "hazel").isEmpty)
-    let minsheng = try await rig.store.notifications(recipient: "minsheng")
+    #expect(try await rig.store.inbox("hazel").isEmpty)
+    let minsheng = try await rig.store.inbox("minsheng")
     #expect(minsheng.count == 1 && minsheng[0].payload.contains("answered"))
   }
 
@@ -297,8 +297,8 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     _ = try await rig.store.post(
       .box(owner), messageID: MessageID("m3"), sender: human(owner.rawValue), senderSession: owner, content: .init(text: "answered"),
     )
-    #expect(try await rig.store.notifications(recipient: "minsheng").map(\.payload).map { $0.contains("answered") } == [false, true])
-    #expect(try await rig.store.notifications(recipient: "hazel").map(\.payload).map { $0.contains("answered") } == [true])
+    #expect(try await rig.store.inbox("minsheng").map(\.payload).map { $0.contains("answered") } == [false, true])
+    #expect(try await rig.store.inbox("hazel").map(\.payload).map { $0.contains("answered") } == [true])
   }
 
   @Test func `an observer's box post is no person write`() async throws {
@@ -313,7 +313,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     _ = try await rig.store.post(
       .box(owner), messageID: MessageID("m3"), sender: human(owner.rawValue), senderSession: owner, content: .init(text: "answered"),
     )
-    #expect(try await rig.store.notifications(recipient: observer.member).isEmpty)
-    #expect(try await rig.store.notifications(recipient: "hazel").map(\.payload).map { $0.contains("answered") } == [false, true])
+    #expect(try await rig.store.inbox(observer.member).isEmpty)
+    #expect(try await rig.store.inbox("hazel").map(\.payload).map { $0.contains("answered") } == [false, true])
   }
 }

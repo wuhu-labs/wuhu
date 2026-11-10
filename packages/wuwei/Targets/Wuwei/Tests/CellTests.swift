@@ -14,6 +14,12 @@ struct Counter {
     try db.execute("UPDATE counter SET value = value + ?", .integer(amount))
   }
 
+  mutating func addThenRead(_ amount: Int64) throws -> Int64 {
+    try add(amount)
+    if amount < 0 { throw Refused() }
+    return value()
+  }
+
   mutating func addThenPass(_ amount: Int64, _ label: String) throws {
     try add(amount)
     ctx.dependency(Tripwire.self).trip()
@@ -81,6 +87,14 @@ final class Tripwire: Sendable {
   }
 }
 
+/// What a task outside any addressable got back from `Worker.call`, and the counter's durable value when it did.
+final class Asked: Sendable {
+  let heard = Mutex<(answer: Result<Int64, any Error>, durable: Int64)?>(nil)
+
+  var answer: Result<Int64, any Error>? { heard.withLock { $0?.answer } }
+  var durable: Int64? { heard.withLock { $0?.durable } }
+}
+
 @Suite struct CellTests {
   let world = World()
   let counter = Counter.ID("c")
@@ -117,6 +131,59 @@ final class Tripwire: Sendable {
     client.send(counter).add(1)
     world.run(for: .seconds(15))
     #expect(value(client) == 6)
+  }
+
+  func ask(_ worker: Worker, on process: SimulatedProcess, add amount: Int64) -> Asked {
+    let asked = Asked()
+    let counter = counter
+    Task(executorPreference: process) {
+      let answer: Result<Int64, any Error>
+      do { answer = .success(try await worker.call(counter) { try $0.addThenRead(amount) }) } catch { answer = .failure(error) }
+      asked.heard.withLock { $0 = (answer, worker.cell(counter).value()) }
+    }
+    return asked
+  }
+
+  @Test(arguments: [false, true])
+  func aCallFromOutsideHearsItsValueOnceTheStepIsDurable(shared: Bool) throws {
+    let world = World(shared: shared)
+    let a = try world.node("a", [.cell(Counter.self)])
+    let asked = ask(a.worker, on: a.process, add: 5)
+    world.run(for: .seconds(2))
+    #expect(try asked.answer?.get() == 5)
+    #expect(asked.durable == 5)
+  }
+
+  @Test(arguments: [false, true])
+  func aCallThatThrowsRollsBackAndTellsItsCaller(shared: Bool) throws {
+    let world = World(shared: shared)
+    let a = try world.node("a", [.cell(Counter.self)])
+    let asked = ask(a.worker, on: a.process, add: -5)
+    world.run(for: .seconds(2))
+    #expect(throws: Refused.self) { try asked.answer?.get() }
+    #expect(asked.durable == 0)
+  }
+
+  @Test func beforeItStartsAWorkerHostsWhatItIsCalledForAndLooksForNothing() throws {
+    let a = try world.node("a", [.cell(Counter.self)], starts: false)
+    try world.client().send(counter).add(2)
+    world.run(for: .seconds(5))
+    #expect(value(a.worker) == 0)
+    let asked = ask(a.worker, on: a.process, add: 1)
+    world.run(for: .seconds(2))
+    #expect(try asked.answer?.get() == 1)
+    a.worker.start()
+    world.run(for: .seconds(2))
+    #expect(value(a.worker) == 3)
+  }
+
+  @Test func aCallToACellHostedElsewhereIsRefused() throws {
+    _ = try node("a")
+    let client = try world.node("client", [])
+    let asked = ask(client.worker, on: client.process, add: 5)
+    world.run(for: .seconds(2))
+    #expect(throws: Evicted.self) { try asked.answer?.get() }
+    #expect(value(client.worker) == 0)
   }
 
   @Test func aCallReadsAnotherCellsDurableState() throws {

@@ -43,9 +43,7 @@ extension SessionStore {
         kind: .final,
         requestID: RequestID(row.id),
         content: MessageContent(text: "session \(id.rawValue) (\(record.title)) was archived before reporting on request \(row.id)"),
-        alongside: { message, db in
-          try Self.close(row, as: .failed, result: nil, now: SQLiteDateFormat.string(from: message.createdAt), in: db)
-        },
+        request: .close(as: .failed, result: nil),
       )
     }
   }

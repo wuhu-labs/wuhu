@@ -7,6 +7,14 @@ public protocol SharedDatabase: Sendable {
   func write(_ body: (_ handle: OpaquePointer, _ host: AnyObject?) throws -> Void) throws
   /// One read transaction, never on the writer: a read may run while a write is open.
   func read(_ body: (OpaquePointer) throws -> Void) throws
+  /// One write statement of a cell or a job, inside the transaction `write` opened with `host`. A host program whose driver must see every write to its tables, to track changes, runs the statement itself and returns true; false leaves it to the runtime. A statement SQLite refuses throws ``SQLiteError``.
+  func execute(_ sql: String, _ arguments: [Value], on host: AnyObject?) throws -> Bool
+}
+
+extension SharedDatabase {
+  public func execute(_: String, _: [Value], on _: AnyObject?) throws -> Bool {
+    false
+  }
 }
 
 /// Defines `cell()` on a connection: the key of the addressable whose statement runs on it, `NULL` outside one.

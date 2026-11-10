@@ -166,27 +166,6 @@ enum Conversations {
     try Sessions.exists(principal, in: db) ? .session : .user
   }
 
-  // A DM row is minted on first post; the id is a hash of the sorted pair, so
-  // two racing posts converge instead of forking the conversation.
-  /// `group` homes a DM minted here: the opener's.
-  static func resolveDM(_ a: String, _ b: String, group: GroupID, now: String, in db: Database) throws -> ConversationID {
-    let aKind = try memberKind(of: a, in: db)
-    let bKind = try memberKind(of: b, in: db)
-    let id = dmID(a, b)
-    if try record(id.rawValue, in: db) == nil {
-      try create(
-        id: id.rawValue,
-        kind: aKind == .session && bKind == .session ? .dmSession : .dmUser,
-        group: group,
-        ownerSession: nil,
-        members: [.init(member: a, kind: aKind), .init(member: b, kind: bKind)],
-        now: now,
-        in: db,
-      )
-    }
-    return id
-  }
-
   // The device and the viewed page ride in side tables, so the projection every
   // read shares has to carry them: `messages` itself is untouched and old
   // spaces read correctly.

@@ -59,7 +59,7 @@ import Testing
         #expect(try await store.undrainedInputs(session).isEmpty)
       }
       #expect(try await store.conversations(member: "carol").isEmpty)
-      #expect(try await store.notifications(recipient: "carol").isEmpty)
+      #expect(try await store.inbox("carol").isEmpty)
     }
   }
 
@@ -70,7 +70,11 @@ import Testing
       let store = space.sessions
       let agent = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "carol", model: .test)
       let dm = try await space.writer.write { db in
-        let id = try Conversations.resolveDM("carol", agent.rawValue, group: .shared, now: "2026-01-01T00:00:00.000Z", in: db)
+        let id = Conversations.dmID("carol", agent.rawValue)
+        try Conversations.create(
+          id: id.rawValue, kind: .dmUser, group: .shared, ownerSession: nil,
+          members: [.init(member: "carol", kind: .user), .init(member: agent.rawValue, kind: .session)], now: "2026-01-01T00:00:00.000Z", in: db,
+        )
         try db.execute(
           sql: "INSERT INTO messages (id, conversation_id, sender_id, sender_timezone, kind, content, created_at) VALUES ('old', ?, 'carol', 'GMT', 'message', ?, '2026-01-01T00:00:00.000Z')",
           arguments: [id.rawValue, try Sessions.encode(MessageContent(text: "history"))],
@@ -90,7 +94,7 @@ import Testing
       #expect(try await store.messages(conversation: dm).map(\.content.text) == ["history"])
       #expect(try await space.query("SELECT id FROM messages").rows == [[.text("old")]])
       #expect(try await store.undrainedInputs(agent).isEmpty)
-      #expect(try await store.notifications(recipient: "carol").isEmpty)
+      #expect(try await store.inbox("carol").isEmpty)
     }
   }
 
@@ -102,7 +106,7 @@ import Testing
       let delivery = try await store.post(.dm(with: "dave"), messageID: .init("m1"), sender: Sender(id: "carol", timeZone: .gmt), content: .init(text: "hi"))
       #expect(delivery.enqueued.isEmpty)
       #expect(try await store.conversation(delivery.message.conversation).members.allSatisfy { $0.kind == .user })
-      #expect(try await store.notifications(recipient: "dave").count == 1)
+      #expect(try await store.inbox("dave").count == 1)
     }
   }
 }

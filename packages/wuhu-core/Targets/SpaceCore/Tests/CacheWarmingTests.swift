@@ -51,7 +51,7 @@ private final class WarmingTime: Sendable {
         }
         time.advance()
         #expect(try await !ping(store, id))
-        #expect(try await store.notifications(recipient: "morgan").isEmpty)
+        #expect(try await store.inbox("morgan").isEmpty)
         for input in [SessionFix.message(), SessionFix.notification()] {
           try await store.put(id, input: input)
           try await settle(store, id)

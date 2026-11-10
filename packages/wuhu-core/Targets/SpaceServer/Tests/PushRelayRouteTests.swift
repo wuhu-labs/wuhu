@@ -202,6 +202,7 @@ import Testing
       sender: Sender(id: persona.name, timeZone: TimeZone(identifier: "UTC")!),
       content: .init(text: "question"),
     )
+    try await harness.space.sessions.inboxesSettled()
     _ = try await harness.space.sessions.post(
       .box(owner),
       messageID: MessageID("reply-\(thread)"),
@@ -209,6 +210,7 @@ import Testing
       replyTarget: MessageID("question-\(thread)"),
       content: .init(text: "reply"),
     )
+    try await harness.space.sessions.inboxesSettled()
   }
 }
 

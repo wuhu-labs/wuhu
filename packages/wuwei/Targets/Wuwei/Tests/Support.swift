@@ -17,7 +17,7 @@ struct World {
     self.shared = shared
   }
 
-  func node(_ id: String, _ registrations: [Registration], dependencies: Dependencies = Dependencies()) throws -> Node {
+  func node(_ id: String, _ registrations: [Registration], dependencies: Dependencies = Dependencies(), starts: Bool = true) throws -> Node {
     var options = Worker.Options()
     options.cellIdle = .seconds(5)
     let process = simulation.spawn()
@@ -26,7 +26,7 @@ struct World {
     for registration in registrations {
       worker.register(registration)
     }
-    worker.start()
+    if starts { worker.start() }
     return Node(worker: worker, process: process)
   }
 

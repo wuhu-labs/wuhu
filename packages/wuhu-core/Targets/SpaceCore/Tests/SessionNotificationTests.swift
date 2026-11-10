@@ -17,8 +17,8 @@ struct SessionNotificationTests {
         sid, attemptID: UUID(), message: SessionFix.assistant("all done"), metadata: SessionFix.metadata,
       )
       #expect(try await store.record(sid).work == .noWork)
-      #expect(try await store.notifications(recipient: "morgan").isEmpty)
-      #expect(try await store.notifications(recipient: "owner").isEmpty)
+      #expect(try await store.inbox("morgan").isEmpty)
+      #expect(try await store.inbox("owner").isEmpty)
     }
   }
 
@@ -36,7 +36,7 @@ struct SessionNotificationTests {
       )
       try await store.markResumed(sid)
 
-      #expect(try await store.notifications(recipient: "morgan").isEmpty)
+      #expect(try await store.inbox("morgan").isEmpty)
       let hydration = try await store.hydrate(sid)
       #expect(hydration.queueHead == hydration.queueTail, "the resumed loop reads the owe from its transcript")
       #expect(hydration.record.work == .noWork)
@@ -51,10 +51,10 @@ struct SessionNotificationTests {
       _ = try await store.drainQueue(sid)
       try await store.markErrored(sid, message: "provider exploded")
 
-      let rows = try await store.notifications(recipient: "owner")
+      let rows = try await store.inbox("owner")
       #expect(rows.map(\.kind) == [.sessionErrored])
       #expect(rows[0].payload.contains("provider exploded"))
-      #expect(try await store.notifications(recipient: "morgan").isEmpty)
+      #expect(try await store.inbox("morgan").isEmpty)
     }
   }
 

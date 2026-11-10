@@ -24,6 +24,7 @@ final class OuterStore: Sendable {
     try database.write { handle, host in
       let db = Connection(borrowing: handle)
       db.host = host
+      db.hostWrite = { [database] in try database.execute($0, $1, on: host) }
       db.owner = owner
       defer { db.owner = nil }
       result = try body(db)

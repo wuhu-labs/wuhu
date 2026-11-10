@@ -338,7 +338,7 @@ import Testing
     _ = try await rig.store.post(
       .box(rig.s), messageID: MessageID("m4"), sender: sender(rig.s), senderSession: rig.s, content: .init(text: "insider"),
     )
-    let rows = try await rig.store.notifications(recipient: "carol")
+    let rows = try await rig.store.inbox("carol")
     #expect(rows.map(\.source) == [dm.message.conversation.rawValue, rig.s.rawValue, rig.s.rawValue])
     #expect(rows.map(\.group) == [Self.alice, .shared, .shared])
     let senderGroups = rows.map { row in

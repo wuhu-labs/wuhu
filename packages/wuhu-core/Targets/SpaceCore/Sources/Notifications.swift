@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
+import Wuwei
 
 public enum NotificationKind: String, Hashable, Sendable, Codable {
   case conversationMessage = "conversation_message"
@@ -22,8 +23,8 @@ public struct NotificationRecord: Hashable, Sendable {
   /// session's. A person reads one inbox across every group.
   public var group: GroupID
 
-  // Reads a row that selected the notification's columns, grp included.
-  init(row: Row) throws {
+  /// Reads a row that selected the notification's columns, as the push outboxes do.
+  init(row: GRDB.Row) throws {
     self.n = row["n"]
     self.recipient = row["recipient"]
     self.source = row["source"]
@@ -31,6 +32,16 @@ public struct NotificationRecord: Hashable, Sendable {
     self.payload = row["payload"]
     self.createdAt = try SQLiteDateFormat.date(from: row["created_at"])
     self.group = GroupID(rawValue: row["grp"])
+  }
+
+  init(row: NotificationRow) {
+    n = row.n
+    recipient = row.recipient
+    source = row.source
+    kind = NotificationKind(rawValue: row.kind)!
+    payload = row.payload
+    createdAt = try! SQLiteDateFormat.date(from: row.createdAt)
+    group = GroupID(rawValue: row.group)
   }
 }
 
@@ -67,34 +78,23 @@ enum Notifications {
     ))
   }
 
-  static func append(
-    recipient: String,
-    source: String,
-    group: GroupID,
-    kind: NotificationKind,
-    payload: String,
-    now: String,
-    in db: Database,
-  ) throws {
-    try db.execute(
-      sql: "INSERT INTO notifications (recipient, source, kind, payload, created_at, grp) VALUES (?, ?, ?, ?, ?, ?)",
-      arguments: [recipient, source, kind.rawValue, payload, now, group.rawValue],
-    )
+  /// Mail to the person's cell, durable with the write in `db`; whoever commits pokes the cell (`SpaceRuntime.poke(person:)`), or the worker's scan finds the mail.
+  static func notify(_ recipient: String, _ note: PersonNote, in db: GRDB.Database) throws {
+    try PersonCell.ID(recipient).recipient.post(.notify(note), on: db.sqliteConnection!)
   }
 
   // The distinguished owner principal (SpaceContract's ownerIdentity on the
   // wire).
   static let ownerRecipient = "owner"
 
-  static func fireErrored(_ key: String, error: String, transcript: Transcript, now: String, in db: Database) throws {
+  static func fireErrored(_ key: String, error: String, transcript: Transcript, now: String, in db: GRDB.Database) throws {
     let payload = try Sessions.encode(ErroredPayload(
       sessionID: key,
       error: error,
       message: transcript.finalAssistantText,
     ))
-    try append(
-      recipient: ownerRecipient, source: key, group: Sessions.group(of: key, in: db), kind: .sessionErrored,
-      payload: payload, now: now, in: db,
+    try notify(
+      ownerRecipient, PersonNote(source: key, group: Sessions.group(of: key, in: db), kind: .sessionErrored, payload: payload, createdAt: now), in: db,
     )
   }
 }
@@ -114,42 +114,12 @@ extension Transcript {
 }
 
 extension SessionStore {
-  public func notifications(recipient: String, after n: Int64 = 0) async throws -> [NotificationRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM notifications WHERE recipient = ? AND n > ? ORDER BY n",
-        arguments: [recipient, n],
-      ).map(NotificationRecord.init(row:))
-    }
+  public func notifications(recipient: String, after n: Int64 = 0) -> [NotificationRecord] {
+    runtime.worker().cell(PersonCell.ID(recipient)).notifications(after: n)
   }
 
   @discardableResult
   public func advanceWatermark(identity: String, source: String) async throws -> Int64 {
-    try await writer.write { db in
-      let newest = try Int64.fetchOne(db, sql: "SELECT MAX(n) FROM notifications") ?? 0
-      try db.execute(
-        sql: """
-        INSERT INTO watermarks (identity, source, last_read_n) VALUES (?, ?, ?)
-        ON CONFLICT (identity, source) DO UPDATE SET last_read_n = excluded.last_read_n
-        """,
-        arguments: [identity, source, newest],
-      )
-      return newest
-    }
-  }
-
-  public func unreadCount(identity: String, source: String) async throws -> Int {
-    try await writer.read { db in
-      try Int.fetchOne(
-        db,
-        sql: """
-        SELECT COUNT(*) FROM notifications
-        WHERE recipient = ? AND source = ?
-          AND n > COALESCE((SELECT last_read_n FROM watermarks WHERE identity = ? AND source = ?), 0)
-        """,
-        arguments: [identity, source, identity, source],
-      )!
-    }
+    try await runtime.worker().call(PersonCell.ID(identity)) { try $0.read(source) }
   }
 }

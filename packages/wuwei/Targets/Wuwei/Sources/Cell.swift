@@ -1,9 +1,9 @@
-/// Makes a struct a ``Cell``: every mutating method that is not private becomes a message, and the macro adds a private `ctx`, with `db` and `id` over it, `kind` (the type's name unless declared), `Message` (`Never` for a cell that only reads), `receive` and the `Sender` behind `ctx.send(id)`. A message method is synchronous; it may throw.
+/// Makes a struct a ``Cell``: every mutating method that is not private and returns nothing becomes a message, and the macro adds a private `ctx`, with `db` and `id` over it, `kind` (the type's name unless declared), `Message` (`Never` for a cell that only reads), `receive` and the `Sender` behind `ctx.send(id)`. A message method is synchronous; it may throw.
 @attached(member, names: named(_context), named(ctx), named(db), named(id), named(init), named(kind), named(Message), named(receive), named(Sender), named(sender), named(_socket))
 @attached(extension, conformances: Addressable, Cell)
 public macro Cell() = #externalMacro(module: "WuweiMacros", type: "CellMacro")
 
-/// A durable state machine: a struct whose only stored property is its context. A nonmutating method is a read, which anyone may call through `cell(_:)` at the durable snapshot; a mutating method is a write, run only by the cell's owner and reached only by mail. A delivery is one synchronous call and one durable step: if `receive` throws, everything the call wrote, sent and emitted is rolled back, and the mail is still consumed. Write one with ``Cell()``.
+/// A durable state machine: a struct whose only stored property is its context. A nonmutating method is a read, which anyone may call through `cell(_:)` at the durable snapshot; a mutating method is a write, run only by the cell's owner and reached by mail, or, from outside any addressable, by `Worker.call`, which alone hears what it returns. A delivery is one synchronous call and one durable step: if `receive` throws, everything the call wrote, sent and emitted is rolled back, and the mail is still consumed. Write one with ``Cell()``.
 public protocol Cell: Addressable {
   associatedtype Sender
   init(_context: CellContext<Self>)
@@ -180,6 +180,19 @@ extension Incarnation {
       armWake(C.self, at: next)
     }
     return committed
+  }
+
+  /// A call from outside any addressable, answered once its step is durable. `nil` means this incarnation is gone or leaving.
+  func answer<C: Cell, Value>(_: C.Type, _ body: (inout C) throws -> Value) async throws -> Value? {
+    guard await admit() else { return nil }
+    var result: Result<Value, any Error>?
+    call(C.self) { cell, _ in
+      result = Result { try body(&cell) }
+      _ = try result!.get()
+    }
+    guard let value = try result?.get() else { throw Evicted(address: address) }
+    try await gate()
+    return value
   }
 
   /// Arms the in-process timer at the recorded wake time; at boot, one that passed while nobody held the cell wakes it at once.
