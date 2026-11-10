@@ -7,7 +7,6 @@ import InferenceKit
 import JSONValue
 import LoopCore
 import class MainHub.Hub
-import class MainHub.SessionService
 import Scratch
 import ServeTesting
 import SessionDomain
@@ -85,8 +84,7 @@ private final class SessionCLIHarness: Sendable {
   let stdout: Sink
   let stderr: Sink
   let fetch: FetchClient
-  // Channel-post delivery wakes recipients through the work-signal bus, which
-  // only a running service consumes — mirror serve's runtime here.
+  // Shuts the sessions down when cancelled.
   private let serviceTask: Task<Void, Never>
 
   deinit {
@@ -131,20 +129,16 @@ private final class SessionCLIHarness: Sendable {
     )
     let tokens = ExecTokens(spaceURL: "http://space")
     let connection = MainConnection()
-    let workers = WorkerRegistry(tokens: tokens, machines: nil)
-    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { _ in config }
-    workers.announce(workers.mint().id, endpoint: worker)
-    let service = SessionService(sessions: store, worker: workers)
-    serviceTask = Task {
-      do {
-        try await service.start()
-      } catch is CancellationError {
-      } catch {
-        Issue.record("session service failed: \(error)")
-      }
-    }
-    let runtime = SessionRuntime(space: space, service: service, workers: workers, attempts: attempts, owner: owner, tokens: tokens, connection: connection)
+    let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, space: owner.space) { _ in config }
+    let runtime = SessionRuntime(execution: worker, attempts: attempts, owner: owner, tokens: tokens, connection: connection)
     let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
+    worker.start()
+    serviceTask = Task {
+      let (parked, end) = AsyncStream<Void>.makeStream()
+      for await _ in parked {}
+      end.finish()
+      await worker.shutdown()
+    }
     fetch = ServeTesting.client(upgrading: handler)
     stdout = Sink()
     stderr = Sink()
@@ -425,18 +419,16 @@ private func until(
       let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)
       busyID.withLock { $0 = leaf }
       try await harness.store.markInterrupted(root)
-      let delivery = try await harness.store.openRequest(on: root, from: .session(requester), messageID: .init("cli-request"), text: "work", deadline: nil)
-      _ = try await harness.store.openRequest(on: leaf, from: .session(child), messageID: .init("cli-leaf-request"), text: "start", deadline: nil)
+      let delivery = try await harness.store.openRequest(on: root, from: .session(requester), messageID: .init("cli-request"), text: "work")
+      _ = try await harness.store.openRequest(on: leaf, from: .session(child), messageID: .init("cli-leaf-request"), text: "start")
       try await until("signup running") { entered.withLock { $0 } }
       #expect(await harness.run(["session", "archive", root.rawValue]) == 1)
       #expect(await harness.stderr.text.contains("\(leaf.rawValue) (signup)"))
       for id in [root, child, leaf] { #expect(try await harness.store.record(id).lifecycle == .live) }
       #expect(await harness.run(["session", "archive", root.rawValue, "--force"]) == 0)
-      for id in [root, child, leaf] {
-        guard case .archived = try await harness.store.record(id).lifecycle else {
-          Issue.record("\(id) remained live")
-          continue
-        }
+      try await until("tree archived") {
+        for id in [root, child, leaf] where try await harness.store.record(id).lifecycle == .live { return false }
+        return true
       }
       let messages = try await harness.store.messages(conversation: delivery.message.conversation)
       let final = try #require(messages.first { $0.kind == .final })
@@ -516,19 +508,18 @@ private func until(
       let id = try await harness.createSession()
 
       #expect(await harness.run(["session", "interrupt", id]) == 0)
-      let interrupted = try await harness.store.record(SessionID(id))
-      #expect(interrupted.hold == .interrupted)
+      try await until("interrupted") { try await harness.store.record(SessionID(id)).hold == .interrupted }
       #expect(await harness.run(["session", "resume", id]) == 0)
       let beforeRename = await harness.stdout.text
       #expect(await harness.run(["session", "rename", id, "  renamed worker  "]) == 0)
       #expect(String(await harness.stdout.text.dropFirst(beforeRename.count)) == "renamed worker\n")
-      #expect(try await harness.store.record(SessionID(id)).title == "renamed worker")
+      try await until("renamed") { try await harness.store.record(SessionID(id)).title == "renamed worker" }
       #expect(await harness.run(["session", "rename", id, "  "]) == 1)
       #expect(try await harness.store.record(SessionID(id)).title == "renamed worker")
       let beforeTags = await harness.stdout.text
       #expect(await harness.run(["session", "tags", id, "wuhu:13", "gate"]) == 0)
       #expect(String(await harness.stdout.text.dropFirst(beforeTags.count)) == "wuhu:13\ngate\n")
-      #expect(try await harness.store.record(SessionID(id)).tags == ["wuhu:13", "gate"])
+      try await until("tagged") { try await harness.store.record(SessionID(id)).tags == ["wuhu:13", "gate"] }
 
       #expect(await harness.run(["session", "archive", id]) == 0)
       #expect(await harness.run(["session", "unarchive", id]) == 0)

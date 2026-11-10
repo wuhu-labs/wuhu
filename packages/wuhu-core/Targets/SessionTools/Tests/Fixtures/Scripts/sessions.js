@@ -40,9 +40,10 @@ out.noTitle = await settle(createSession({ kind: "agent" }))
 out.noOptions = await settle(createSession())
 
 const worker = unkeyed[0]
+names.set(worker.id, "<twin>")
 await setTags(worker.id, ["wuhu:13", "gate"])
 out.retagged = (await shape(worker.id)).tags
-out.request = typeof (await request(worker.id, "do it", { deadlineSeconds: 600 })).requestId
+out.request = typeof (await request(worker.id, "do it", { stallSeconds: 600 })).requestId
 out.verbs = [
   await settle(interrupt(worker.id)),
   await settle(resume(worker.id)),

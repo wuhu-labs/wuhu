@@ -27,10 +27,6 @@ extension NotificationContent {
     let body = switch kind {
     case .conversationMessage:
       field("text") ?? ""
-    case .childFailed:
-      "Failed with a request still open and sent no final report" + (field("error").map { ": \($0)" } ?? ".")
-    case .requestDeadline:
-      "Passed its request deadline with no final report."
     case .sessionSettled:
       field("message") ?? "Finished."
     case .sessionErrored:

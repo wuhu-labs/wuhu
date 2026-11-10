@@ -38,7 +38,7 @@ import Testing
             try await harness.deliver("oidc input \(round)", to: id)
             try await until("unverified OIDC request committed") {
               guard requests.withLock({ $0 }) == round else { return false }
-              return try await harness.store.record(id).work == .noWork
+              return try await harness.store.settledWork(id)
             }
             #expect(try await harness.store.generationState(id).generation == 0)
           }
@@ -84,7 +84,7 @@ import Testing
             try await harness.deliver("input-\(round)", to: id)
             try await until("bound runtime request committed") {
               guard bodies.withLock({ $0.count }) == round + 1 else { return false }
-              return try await harness.store.record(id).work == .noWork
+              return try await harness.store.settledWork(id)
             }
             #expect(try await harness.store.generationState(id).generation == (round == 2 ? 1 : 0))
             let route = try #require(await harness.store.modelRoute(id))

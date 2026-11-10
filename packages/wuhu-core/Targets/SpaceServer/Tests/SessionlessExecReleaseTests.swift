@@ -18,37 +18,22 @@ import OperationRuntime
 import Serve
 import SessionDomain
 import struct SpaceContract.GroupID
-import enum SpaceContract.ScriptOutput
 import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
 
-// A worker whose script mints one exec and attaches to it, then ends as the
-// case says: a firing is cancelled, a terminal run is cancelled or returns.
-private final class Spawning: Worker, Sendable {
+// A script that mints one exec and attaches to it, under the token its run was given.
+private final class Spawning: Sendable {
   let tokens = Mutex<[String]>([])
   let spawn: @Sendable (_ script: String) async throws -> Void
 
   init(spawn: @escaping @Sendable (_ script: String) async throws -> Void) { self.spawn = spawn }
 
-  func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
-    tokens.withLock { $0.append(invocation.token ?? "") }
-    try await spawn(invocation.scriptID)
-    throw CancellationError()
+  func run(token: String, script: String) async throws {
+    tokens.withLock { $0.append(token) }
+    try await spawn(script)
   }
-
-  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
-    guard case let .person(run) = script.runner else { return }
-    tokens.withLock { $0.append(script.token ?? "") }
-    try await spawn(run.id)
-  }
-
-  func deliver(_ session: SessionID, _ input: WorkerInput) async throws {}
-  func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { true }
-  func activity() async -> WorkerActivity { WorkerActivity(scripts: [:]) }
-  func runningWork(_ session: SessionID) async throws -> [String] { [] }
-  func shutdown() async {}
 }
 
 private final class FiringProcessSide: Sendable {
@@ -89,13 +74,12 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
     let server = TestServer(space: space, clock: VirtualClock())
     let (machineID, _) = try await addMachine(server)
     let tokens = ExecTokens(spaceURL: "http://main")
-    let registry = WorkerRegistry(tokens: tokens, machines: server.hub)
     let observer = Observer(group: .shared, name: "nightly", firing: "f1")
-    let invocation = ScriptHandlerInvocation(id: UUID(), path: "/nightly.js", runner: .observer(observer), input: .timer(Date()), stateJSON: nil)
+    let firing = handlerScriptID(UUID())
     let account = AccountID(rawValue: "ac_alice001")
     let terminal = TerminalRun(id: "terminal-1", persona: "nightly", account: account, group: .shared, personalGroup: GroupID(rawValue: "alice"))
     let (script, caller, leg, sessionless): (String, String, ExecLeg, SessionlessScript) = switch end {
-    case .firingCancelled: (invocation.scriptID, observer.member, .observer(observer.member), .observer(observer))
+    case .firingCancelled: (firing, observer.member, .observer(observer.member), .observer(observer))
     case .terminalCancelled, .terminalReturned: (terminal.id, Person.execCaller(account), .person(account), .person(terminal))
     }
     let (running, run) = AsyncStream<ExecID>.makeStream()
@@ -132,16 +116,18 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
         _ = try await mixedExecExit(&events)
       }
     }
-    registry.announce(registry.mint().id, endpoint: worker)
 
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await server.run() }
       tasks.addTask { await agent.run() }
       tasks.addTask { try await service.run() }
       defer { side.release.open(); tasks.cancelAll() }
-      let task: Task<Void, any Error> = switch end {
-      case .firingCancelled: Task { _ = try await registry.fire(invocation) }
-      case .terminalCancelled, .terminalReturned: Task { try await registry.run(ScriptRun(runner: .person(terminal), source: "", arguments: [])) { _ in } }
+      // A firing ends cancelled; a terminal run is cancelled or returns.
+      let task = Task {
+        try await tokens.runSessionless(sessionless, script: script, machines: server.hub) { token in
+          try await worker.run(token: token, script: script)
+          if case .firingCancelled = end { throw CancellationError() }
+        }
       }
       var started = running.makeAsyncIterator()
       let exec = try #require(await started.next())

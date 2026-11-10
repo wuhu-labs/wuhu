@@ -11,16 +11,6 @@ import Testing
       origin: .session("Fix the build"),
     )
     #expect(errored == NotificationContent(title: "Fix the build", subtitle: nil, body: "Stopped with an error: rate limited"))
-
-    let failed = NotificationContent(
-      .childFailed,
-      payload: #"{"sessionID":"s2","parent":"s1","requestID":"r1","error":"killed"}"#,
-      origin: .session("Worker"),
-    )
-    #expect(failed.body == "Failed with a request still open and sent no final report: killed")
-
-    let deadline = NotificationContent(.requestDeadline, payload: #"{"sessionID":"s2"}"#, origin: .session("Worker"))
-    #expect(deadline.body == "Passed its request deadline with no final report.")
   }
 
   @Test func aMessageIsTitledWithItsSenderAndTheBoxItWasPostedIn() {

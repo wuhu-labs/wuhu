@@ -57,7 +57,7 @@ struct SessionRunStateTests {
     try await withMovingDate { clock in
       let store = try Space.inMemory().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await store.enqueue(sid, input: SessionFix.message())
+      try await store.put(sid, input: SessionFix.message())
       #expect(try await row(store, sid).run == "no_run")
 
       var at = clock.advance()
@@ -72,7 +72,6 @@ struct SessionRunStateTests {
 
       // A tool that takes its time does not move the row.
       _ = clock.advance()
-      #expect(try await store.bootSessions() == [sid])
       try await expectRow(store, sid, waiting)
 
       at = clock.advance()
@@ -90,7 +89,7 @@ struct SessionRunStateTests {
     try await withMovingDate { clock in
       let store = try Space.inMemory().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await store.enqueue(sid, input: SessionFix.message())
+      try await store.put(sid, input: SessionFix.message())
       _ = try await store.drainQueue(sid)
       let call = ToolCall(id: "call_0", name: "exec", arguments: .object([:]))
       try await store.appendAssistant(sid, attemptID: UUID(), message: SessionFix.assistant("on it", toolCalls: [call]), metadata: SessionFix.metadata)
@@ -121,13 +120,13 @@ struct SessionRunStateTests {
     try await withMovingDate { _ in
       let store = try Space.inMemory().sessions
       let held = try await store.createSession(group: .shared, title: "held", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await store.enqueue(held, input: SessionFix.message())
+      try await store.put(held, input: SessionFix.message())
       try await store.markInterrupted(held)
       _ = try await store.drainQueue(held)
       #expect(try await row(store, held).run == "no_run")
 
       let errored = try await store.createSession(group: .shared, title: "errored", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await store.enqueue(errored, input: SessionFix.message())
+      try await store.put(errored, input: SessionFix.message())
       try await store.markErrored(errored, message: "boom")
       _ = try await store.drainQueue(errored)
       #expect(try await row(store, errored).run == "no_run")

@@ -76,18 +76,17 @@ export const minTextSize = 8
 export const textColor = '#1F2937FF'
 export const labelColor = '#374151FF'
 export const labelSize = 12
-export const arrowHead = { length: 10, width: 8 }
 
 const palette: Record<CanvasColor, { fill: string; stroke: string }> = {
   yellow: { fill: '#FFE48A', stroke: '#E5C04A' },
   pink: { fill: '#FFC4D8', stroke: '#E58FB0' },
   green: { fill: '#C2EBC8', stroke: '#78C589' },
-  blue: { fill: '#C3DEFF', stroke: '#7BAEEC' },
+  blue: { fill: '#B2D9FB', stroke: '#7BAEEC' },
   purple: { fill: '#DDCDFF', stroke: '#A68AE8' },
   gray: { fill: '#E8E8E8', stroke: '#B0B0B0' },
 }
 
-export const connectorStroke: Stroke = { color: '#6B7280FF', width: 2 }
+export const connectorStroke: Stroke = { color: '#D8DAE5FF', width: 3.2 }
 
 export function swatchOf(color: CanvasColor): string {
   return palette[color].fill
@@ -146,9 +145,9 @@ function sceneItem(item: BoardItem, frame: Rect): SceneItem {
     case 'sticky':
       return {
         ...base,
-        shape: { kind: 'roundedRect', radius: 4 },
+        shape: { kind: 'roundedRect', radius: 0 },
         fill: rgba(palette[item.color ?? 'yellow'].fill),
-        ...text(inset(frame, 12), 'topLeading', 16),
+        ...text(inset(frame, 20), 'topLeading', 16),
       }
     case 'text':
       return {
@@ -247,15 +246,162 @@ function collapsed(points: Point[]): Point[] {
   return kept.length === 1 ? [kept[0], kept[0]] : kept
 }
 
+export interface End {
+  point: Point
+  side: Side
+}
+
+// Ends sharing a side stand `spreadGap` apart, spanning at most
+// `spreadShare` of the side.
+const spreadGap = 24
+const spreadShare = 0.8
+
+// The side facing `other` on the axis `first` does not use, when `other`'s
+// centre lies past the frame on that axis.
+function secondSide(frame: Rect, other: Rect, first: Side): Side | null {
+  const o = centre(other)
+  if (horizontal(first)) {
+    return o.y > frame.y + frame.h ? 'bottom' : o.y < frame.y ? 'top' : null
+  }
+  return o.x > frame.x + frame.w ? 'right' : o.x < frame.x ? 'left' : null
+}
+
+// The point on the item's outline `offset` along `side` from its midpoint:
+// an ellipse and a diamond curve and slope away from it.
+export function outline(
+  frame: Rect,
+  kind: ItemKind | undefined,
+  side: Side,
+  offset: number,
+): Point {
+  const half = horizontal(side) ? frame.h / 2 : frame.w / 2
+  const u = half > 0 ? Math.min(Math.abs(offset) / half, 1) : 0
+  const depth = kind === 'diamond'
+    ? u
+    : kind === 'ellipse'
+    ? 1 - Math.sqrt(1 - u * u)
+    : 0
+  const midX = frame.x + frame.w / 2
+  const midY = frame.y + frame.h / 2
+  switch (side) {
+    case 'left':
+      return { x: frame.x + frame.w / 2 * depth, y: midY + offset }
+    case 'right':
+      return { x: frame.x + frame.w - frame.w / 2 * depth, y: midY + offset }
+    case 'top':
+      return { x: midX + offset, y: frame.y + frame.h / 2 * depth }
+    case 'bottom':
+      return { x: midX + offset, y: frame.y + frame.h - frame.h / 2 * depth }
+  }
+}
+
+// Where every drawable connector's ends sit, in board order. A free end
+// takes the side facing the other item; when an end before it (pinned ends
+// first) holds that side and the other item lies past the frame on the
+// other axis, it takes the side facing it there instead. Ends still sharing
+// a side spread along it, ordered by what they lead to, on the outline.
+export function endsOf(
+  connectors: readonly BoardConnector[],
+  frames: ReadonlyMap<string, Rect>,
+  kinds: ReadonlyMap<string, ItemKind>,
+): [BoardConnector, End, End][] {
+  const drawn = connectors.filter((c) =>
+    c.from !== c.to && frames.has(c.from) && frames.has(c.to)
+  )
+  const slot = (item: string, side: Side) => `${item}|${side}`
+  const taken = new Set<string>()
+  for (const c of drawn) {
+    if (c.fromSide !== undefined) taken.add(slot(c.from, c.fromSide))
+    if (c.toSide !== undefined) taken.add(slot(c.to, c.toSide))
+  }
+  const free = (id: string, other: Rect): Side => {
+    const frame = frames.get(id)!
+    const first = facing(frame, other)
+    if (!taken.has(slot(id, first))) return first
+    const second = secondSide(frame, other, first)
+    return second === null || taken.has(slot(id, second)) ? first : second
+  }
+  const sides = drawn.map((c): [Side, Side] => {
+    const from = c.fromSide ?? free(c.from, frames.get(c.to)!)
+    taken.add(slot(c.from, from))
+    const to = c.toSide ?? free(c.to, frames.get(c.from)!)
+    taken.add(slot(c.to, to))
+    return [from, to]
+  })
+  const sharing = new Map<
+    string,
+    {
+      item: string
+      side: Side
+      members: { index: number; from: boolean; toward: Point }[]
+    }
+  >()
+  const share = (
+    item: string,
+    side: Side,
+    member: { index: number; from: boolean; toward: Point },
+  ) => {
+    const key = slot(item, side)
+    const entry = sharing.get(key) ?? { item, side, members: [] }
+    entry.members.push(member)
+    sharing.set(key, entry)
+  }
+  drawn.forEach((c, index) => {
+    share(c.from, sides[index][0], {
+      index,
+      from: true,
+      toward: centre(frames.get(c.to)!),
+    })
+    share(c.to, sides[index][1], {
+      index,
+      from: false,
+      toward: centre(frames.get(c.from)!),
+    })
+  })
+  const ends = drawn.map((c, index): [End, End] => [
+    {
+      point: anchor(frames.get(c.from)!, sides[index][0]),
+      side: sides[index][0],
+    },
+    {
+      point: anchor(frames.get(c.to)!, sides[index][1]),
+      side: sides[index][1],
+    },
+  ])
+  for (const { item, side, members } of sharing.values()) {
+    if (members.length < 2) continue
+    const frame = frames.get(item)!
+    const length = horizontal(side) ? frame.h : frame.w
+    const spacing = Math.min(
+      spreadGap,
+      length * spreadShare / (members.length - 1),
+    )
+    const along = (p: Point) => horizontal(side) ? p.y : p.x
+    const ordered = [...members].sort((a, b) =>
+      along(a.toward) - along(b.toward)
+    )
+    ordered.forEach((member, rank) => {
+      const offset = (rank - (members.length - 1) / 2) * spacing
+      ends[member.index][member.from ? 0 : 1].point = outline(
+        frame,
+        kinds.get(item),
+        side,
+        offset,
+      )
+    })
+  }
+  return drawn.map((c, index) => [c, ...ends[index]])
+}
+
 export function route(
-  connector: Pick<BoardConnector, 'fromSide' | 'toSide' | 'style' | 'offset'>,
-  from: Rect,
-  to: Rect,
+  connector: Pick<BoardConnector, 'style' | 'offset'>,
+  from: End,
+  to: End,
 ): Point[] {
-  const fromSide = connector.fromSide ?? facing(from, to)
-  const toSide = connector.toSide ?? facing(to, from)
-  const a = anchor(from, fromSide)
-  const b = anchor(to, toSide)
+  const fromSide = from.side
+  const toSide = to.side
+  const a = from.point
+  const b = to.point
   if (connector.style === 'straight') return [a, b]
   const offset = connector.offset
   if (horizontal(fromSide) && horizontal(toSide)) {
@@ -289,6 +435,7 @@ export function midpoint(points: Point[]): Point {
 
 export function sceneOf(board: Board): CanvasScene {
   const frames = new Map<string, Rect>()
+  const kinds = new Map<string, ItemKind>()
   const sections: SceneItem[] = []
   const others: SceneItem[] = []
   for (const item of board.items) {
@@ -300,26 +447,24 @@ export function sceneOf(board: Board): CanvasScene {
       h: item.h,
     }
     frames.set(item.id, frame)
+    if (!kinds.has(item.id)) kinds.set(item.id, item.kind)
     ;(item.kind === 'section' ? sections : others).push(sceneItem(item, frame))
   }
-  const connectors: SceneConnector[] = []
-  for (const connector of board.connectors) {
-    const from = frames.get(connector.from)
-    const to = frames.get(connector.to)
-    if (from === undefined || to === undefined) continue
-    if (connector.from === connector.to) continue
-    const points = route(connector, from, to)
-    const hasLabel = connector.label.some((run) => run.text !== '')
-    connectors.push({
-      id: connector.id,
-      points,
-      arrow: connector.arrow,
-      stroke: connectorStroke,
-      ...(hasLabel
-        ? { label: { runs: connector.label, anchor: midpoint(points) } }
-        : {}),
-    })
-  }
+  const connectors = endsOf(board.connectors, frames, kinds).map(
+    ([connector, from, to]): SceneConnector => {
+      const points = route(connector, from, to)
+      const hasLabel = connector.label.some((run) => run.text !== '')
+      return {
+        id: connector.id,
+        points,
+        arrow: connector.arrow,
+        stroke: connectorStroke,
+        ...(hasLabel
+          ? { label: { runs: connector.label, anchor: midpoint(points) } }
+          : {}),
+      }
+    },
+  )
   return { items: [...sections, ...others], connectors }
 }
 

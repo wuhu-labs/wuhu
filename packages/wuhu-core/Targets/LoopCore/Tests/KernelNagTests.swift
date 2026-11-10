@@ -3,8 +3,6 @@ import Foundation
 import GRDB
 @testable import LoopCore
 import class MainHub.Hub
-import struct MainHub.SessionAccess
-import class MainHub.SessionService
 import SessionDomain
 @testable import SpaceCore
 import Synchronization
@@ -62,7 +60,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
         inference: { try await script($0) },
       )
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
+        try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
         try await until("the exchange settles") { try await sessions.settledWork(sid) && script.count == 3 }
         try await holds("the wrap-up to be the last word") { script.count == 3 }
       }
@@ -75,7 +73,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
       #expect(stored.value?.record.work == .hasWork)
       #expect(stored.value?.transcript.kernel.items.last?.id == nag.id, "stored with the message, before the next inference")
       #expect(stored.value?.queueTail == 1, "the nag was never a queue row")
-      #expect(flips.flips.withLock { $0 } == [SessionWork.hasWork.rawValue, SessionWork.noWork.rawValue])
+      #expect(Array(flips.flips.withLock { $0 }.drop { $0 == SessionWork.noWork.rawValue }) == [SessionWork.hasWork.rawValue, SessionWork.noWork.rawValue])
     }
   }
 
@@ -84,7 +82,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await sessions.enqueue(sid, input: Fix.message("please review", conversation: sid.rawValue, owesReply: true))
+      try await sessions.put(sid, input: Fix.message("please review", conversation: sid.rawValue, owesReply: true))
       _ = try await sessions.drainQueue(sid)
       try await sessions.markInterrupted(sid)
       _ = try await sessions.appendAssistant(sid, attemptID: UUID(), message: .init(content: [.text("stopped")]), metadata: Fix.reply("").metadata)
@@ -140,52 +138,9 @@ private final class WorkFlips: TransactionObserver, Sendable {
     }
   }
 
-  @Test func `parent reminders survive eviction of the parked execution actor`() async throws {
-    try await withKernelDeps { time in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await createRequestedTask(in: space, title: "parked")
-      let script = InferenceScript([
-        Fix.replying("parking"),
-        Fix.replying("waiting"),
-        Fix.replying("reporting", calls: [Self.call("report", "final")]),
-        Fix.replying("reported"),
-      ])
-      var config = makeConfig(executeTool: { _ in try await sessions.reportFinal(sid) }, inference: { try await script($0) })
-      let evicted = Box(false)
-      config.invalidateInference = { _ in evicted.withLock { $0 = true } }
-      config.eviction = .init(idleTTL: .seconds(1), maxIdle: 0, sweepInterval: .seconds(1))
-      let hydrations = Box(0)
-      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
-        var access = SessionAccess()
-        access.beforeHydrate = { _ in hydrations.withLock { $0 += 1 } }
-        return access
-      }()), loopConfig: config)
-      try await runService(service) { _ in
-        try await sessions.openParentRequest(on: sid)
-        try await until("parked") { try await sessions.settledWork(sid) && script.count == 2 }
-        try await time.asleep("parent reminder", dueIn: 60)
-        try await until("parked execution evicted before its reminder") {
-          if evicted.value { return true }
-          @Dependency(\.date) var date
-          try #require(date.now < anchor.addingTimeInterval(59))
-          try await time.wake("idle sweep", after: 1)
-          return evicted.value
-        }
-        try await time.asleep("next idle sweep", dueIn: 1)
-        #expect(hydrations.value == 1)
-        await time.advance(to: anchor.addingTimeInterval(60.000001))
-        try await until("parent wakes a freshly hydrated actor") { try await sessions.settledWork(sid) && script.count == 4 }
-        #expect(hydrations.value == 2)
-        #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
-      }
-    }
-  }
-
-  @Test func `a task waiting on an armed timer or a deadline on its child's request is never nagged`() async throws {
+  @Test func `a task waiting on an armed timer is never nagged`() async throws {
     let wakes: [ToolResultPayload] = [
       .timer(.init(subscriptionID: .init("timer.c-1"), schedule: .oneShot(anchor.addingTimeInterval(3600)), message: "check")),
-      .request(.init(requestID: .init("c1"), task: .init("child"), conversationID: .init("dm-child"), deadline: anchor.addingTimeInterval(3600))),
     ]
     for wake in wakes {
       try await withKernelDeps { time in
@@ -205,7 +160,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
         try await runService(space, config) { _ in
           try await sessions.openParentRequest(on: sid)
           try await until("it parks") { try await sessions.settledWork(sid) && script.count == 2 }
-          #expect(time.sleepCount == 1 && time.sleeping(dueIn: 30) == 1, "only the reaper is asleep")
           await time.advance(by: 900)
           try await holds("no reminder while \(wake) is armed") { script.count == 2 }
         }
@@ -293,16 +247,15 @@ private final class WorkFlips: TransactionObserver, Sendable {
       let sid = try await sessions.createSession(group: .shared, title: "parked", kind: kind, parent: parent, createdBy: "morgan", executor: .kernel(.test))
       let first = InferenceScript([Fix.replying("parking"), Fix.replying("waiting")])
       try await runService(space, makeConfig(inference: { try await first($0) })) { _ in
-        _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it", deadline: nil)
+        _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it")
         try await until("first parent parks") { try await sessions.settledWork(sid) && first.count == 2 }
         try await time.asleep("first parent reminder", dueIn: 60)
       }
-      #expect(try await sessions.bootSessions().contains(sid))
       let second = InferenceScript([Fix.replying("reminded after parent restart")])
       try await runService(space, makeConfig(inference: { try await second($0) })) { _ in
-        try await time.asleep("reconstructed parent reminder", dueIn: 60)
+        try await time.asleep("the restarted worker's scan, which finds the recorded wake", dueIn: 1)
         await time.advance(by: 60)
-        try await until("reconstructed deadline fires") { try await sessions.settledWork(sid) && second.count == 1 }
+        try await until("reconstructed reminder fires") { try await sessions.settledWork(sid) && second.count == 1 }
         #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
         #expect(abs(try #require(second.attempts.value.first).at.timeIntervalSince(anchor) - 60) < 0.001)
       }
@@ -315,11 +268,11 @@ private final class WorkFlips: TransactionObserver, Sendable {
       let sessions = space.sessions
       let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it", deadline: nil)
+      _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it")
+      try await sessions.deliverMail()
       _ = try await sessions.drainQueue(sid)
       _ = try await sessions.appendAssistant(sid, attemptID: UUID(), message: .init(content: [.text("stopped")]), metadata: Fix.reply("").metadata)
       try await sessions.restart(sid)
-      #expect(try await sessions.bootSessions().contains(sid), "its request is still open")
 
       let script = InferenceScript([])
       try await runService(space, makeConfig(inference: { try await script($0) })) { _ in

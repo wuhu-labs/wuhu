@@ -14,6 +14,16 @@ public enum TranscriptItem: Hashable, Sendable, Codable {
   case toolResult(ToolResultItem)
   case bookmark(BookmarkMarker)
   case generationHead(GenerationHead)
+
+  var answeredToolCallID: ToolCallID? {
+    switch self {
+    case let .toolResult(result):
+      guard case let .toolCall(callID) = result.provenance else { return nil }
+      return callID
+    case let .bookmark(marker): return marker.toolCallID
+    case .direct, .message, .notification, .assistant, .generationHead: return nil
+    }
+  }
 }
 
 public struct DirectMessage: Hashable, Sendable, Codable {
@@ -39,7 +49,6 @@ public struct ConversationMessage: Hashable, Sendable, Codable {
   public var timestamp: Date
   public var kind: MessageKind
   public var requestID: RequestID?
-  public var deadline: Date?
   public var replyTarget: MessageID?
   // Per-delivery, minted by the delivery path: only it knows whether this
   // recipient owes the conversation an answer. The same row delivered to two
@@ -64,7 +73,6 @@ public struct ConversationMessage: Hashable, Sendable, Codable {
     timestamp: Date,
     kind: MessageKind = .message,
     requestID: RequestID? = nil,
-    deadline: Date? = nil,
     replyTarget: MessageID? = nil,
     owesReply: Bool = false,
     senderGroup: GroupID? = nil,
@@ -80,7 +88,6 @@ public struct ConversationMessage: Hashable, Sendable, Codable {
     self.timestamp = timestamp
     self.kind = kind
     self.requestID = requestID
-    self.deadline = deadline
     self.replyTarget = replyTarget
     self.owesReply = owesReply
     self.senderGroup = senderGroup
@@ -97,8 +104,6 @@ public struct SystemNotification: Hashable, Sendable, Codable {
     case compactRequest
     case owedReply
     case parkReminder
-    case childFailed
-    case requestDeadline
     case requestStall
     case script
     case exec
@@ -114,6 +119,8 @@ public struct SystemNotification: Hashable, Sendable, Codable {
   public var requestID: RequestID?
   public var folderRoots: [String: String?]?
   public var deliveredContext: [String: String]?
+  /// A timer's: what puts its next firing when this one is drained.
+  public var schedule: TimerSchedule?
   public var content: MessageContent
 
   public init(
@@ -126,6 +133,7 @@ public struct SystemNotification: Hashable, Sendable, Codable {
     requestID: RequestID? = nil,
     folderRoots: [String: String?]? = nil,
     deliveredContext: [String: String]? = nil,
+    schedule: TimerSchedule? = nil,
     content: MessageContent,
   ) {
     self.id = id
@@ -137,6 +145,7 @@ public struct SystemNotification: Hashable, Sendable, Codable {
     self.requestID = requestID
     self.folderRoots = folderRoots
     self.deliveredContext = deliveredContext
+    self.schedule = schedule
     self.content = content
   }
 }
@@ -218,8 +227,12 @@ public struct GenerationHead: Hashable, Sendable, Codable {
   public var note: String?
   public var replayBinding: ReplayBinding?
   public var runningWork: [String]?
+  public var awaiting: [AwaitedRequest]?
 
-  public init(id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil, replayBinding: ReplayBinding? = nil, runningWork: [String]) {
+  public init(
+    id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil,
+    replayBinding: ReplayBinding? = nil, runningWork: [String], awaiting: [AwaitedRequest] = [],
+  ) {
     self.id = id
     self.timestamp = timestamp
     self.summary = summary
@@ -229,5 +242,6 @@ public struct GenerationHead: Hashable, Sendable, Codable {
     self.note = note
     self.replayBinding = replayBinding
     self.runningWork = runningWork.isEmpty ? nil : runningWork.sorted()
+    self.awaiting = awaiting.isEmpty ? nil : awaiting
   }
 }

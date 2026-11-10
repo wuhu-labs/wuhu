@@ -41,7 +41,8 @@ struct MessagingTests {
       }
       #expect(outcome.conversationID == ConversationID(key(world.session)))
       #expect(try await space.sessions.messages(conversation: outcome.conversationID).count == 1)
-      #expect(try await space.sessions.hydrate(world.session).undrained.isEmpty, "a post never wakes its poster")
+      try await space.sessions.deliverMail()
+      #expect(try await space.sessions.undrainedInputs(world.session).isEmpty, "a post never wakes its poster")
     }
   }
 
@@ -62,7 +63,8 @@ struct MessagingTests {
       }
       #expect(agentPost.conversationID != ConversationID(key(b)))
       #expect(try await space.sessions.conversation(agentPost.conversationID).kind == .dmSession)
-      #expect(try await space.sessions.hydrate(b).undrained.count == 1)
+      try await space.sessions.deliverMail()
+      #expect(try await space.sessions.undrainedInputs(b).count == 1)
       #expect(
         try await space.sessions.messages(conversation: ConversationID(key(b))).isEmpty,
         "an agent's box is not a session-to-session channel",
@@ -281,7 +283,8 @@ struct MessagingTests {
         throw Mismatch("expected a send outcome, got \(first)")
       }
       #expect(try await space.sessions.messages(conversation: post.conversationID).count == 1)
-      #expect(try await space.sessions.hydrate(a).undrained.count == 1)
+      try await space.sessions.deliverMail()
+      #expect(try await space.sessions.undrainedInputs(a).count == 1)
     }
   }
 
@@ -359,7 +362,7 @@ struct MessagingTests {
     }
   }
 
-  @Test func requestArmsAStallClockUnlessTurnedOff() async throws {
+  @Test func requestKeepsItsStallSecondsUnlessTurnedOff() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
@@ -368,9 +371,10 @@ struct MessagingTests {
       let parent = try await makeSession(space, name: "parent")
       var world = ToolWorld(executor: executor, session: parent)
       func stalls() async throws -> [SessionID: Double] {
-        try await space.sessions.armedSubscriptions(parent).reduce(into: [:]) { found, armed in
-          if case let .requestStall(clock) = armed.slot.kind { found[clock.task] = clock.seconds }
-        }
+        try await space.query("SELECT task, stall_seconds FROM requests WHERE stall_seconds IS NOT NULL", as: space.principal(of: parent)).rows
+          .reduce(into: [:]) { found, row in
+            if case let .text(task) = row[0], case let .real(seconds) = row[1] { found[SessionID(task)] = seconds }
+          }
       }
 
       let quiet = try await makeTask(space, parent: parent, name: "quiet")
@@ -451,7 +455,8 @@ struct MessagingTests {
         throw Mismatch("expected a report outcome, got \(final)")
       }
       #expect(try await space.sessions.openRequests(task).isEmpty)
-      #expect(try await space.sessions.hydrate(parent).undrained.count == 2)
+      try await space.sessions.deliverMail()
+      #expect(try await space.sessions.undrainedInputs(parent).count == 2)
     }
   }
 

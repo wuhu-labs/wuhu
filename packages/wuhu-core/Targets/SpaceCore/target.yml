@@ -35,6 +35,7 @@ dependencies:
   - StructuredQueriesSQLite
   - Dependencies
   - Logging
+  - WuweiNeo
 tests:
   exclude:
     - Fixtures/**

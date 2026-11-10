@@ -35,13 +35,15 @@ import Testing
         try await harness.deliver("start-the-script", to: session)
         #expect(try await realPollUntil {
           await clock.advance(by: .seconds(1))
-          return try await harness.store.record(session).hold == .interrupted
+          guard try await harness.store.record(session).hold == .interrupted,
+                case let .kernel(transcript) = try await harness.store.hydrate(session).transcript else { return false }
+          return transcript.items.contains { if case .toolResult = $0 { true } else { false } }
         }, "the interrupt returned")
         try await harness.deliver("sent-after-the-interrupt", to: session)
-        try await harness.runtime.service.resume(session)
+        try await harness.runtime.execution.resume(session)
         #expect(try await realPollUntil {
           guard provider.saw("sent-after-the-interrupt") else { return false }
-          return try await harness.store.record(session).work == .noWork
+          return try await harness.store.settledWork(session)
         }, "the message sent afterwards went in on resume")
       }
     }

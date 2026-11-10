@@ -44,7 +44,7 @@ import WuhuAI
       let delay = Double.random(in: 0 ... 1, using: &rng)
       try await withDependencies { $0.fetch = provider } operation: {
         try await runService(space, makeConfig(inference: { try await script($0) })) { service in
-          _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+          try await service.enqueue(item: Fix.message("hello"), to: sid)
           try await until("failed attempt") { script.count == 1 }
           try await time.asleep("retry", dueIn: delay)
           #expect(hub.inFlight(session: sid).isEmpty)

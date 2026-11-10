@@ -72,7 +72,11 @@ extension Sessions {
   // compactions recorded one) takes its settle state from what the store saw
   // drained and posted up to the head.
   static func kernelTranscript(_ key: String, in db: Database) throws -> Transcript {
-    var transcript = try Sessions.transcript(key, in: db)
+    try kernelTranscript(key, generation: try runtime(key, in: db).generation, count: nil, in: db)
+  }
+
+  static func kernelTranscript(_ key: String, generation: Int64, count: Int?, in db: Database) throws -> Transcript {
+    var transcript = try Sessions.transcript(key, generation: generation, count: count, in: db)
     if case var .generationHead(head)? = transcript.items.first, head.settle == nil {
       head.settle = try settleState(key, through: head.timestamp, in: db)
       transcript.items[0] = .generationHead(head)

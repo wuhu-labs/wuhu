@@ -40,7 +40,7 @@ private func messageText(_ item: SessionLogItem) throws -> String? {
 private func toolHeavyKernelSession(_ harness: SessionHarness, rounds: Int) async throws -> SessionID {
   let id = try await harness.createSession()
   for round in 0 ..< rounds {
-    _ = try await harness.store.enqueue(id, input: .message(ConversationMessage(
+    try await harness.store.put(id, input: .message(ConversationMessage(
       id: UUID(),
       messageID: MessageID(UUID().uuidString),
       conversationID: ConversationID("ch1"),

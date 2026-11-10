@@ -176,7 +176,7 @@ extension Hub {
         receipt: (holder: caller, callID: callID),
         cloneOwed: template != nil,
         modelRoute: route,
-        request: expectsReply ? (RequestID(messageID.rawValue), requester, order.message!, terms) : nil,
+        request: expectsReply ? (RequestID(messageID.rawValue), requester, order.message!, terms, stall) : nil,
         observer: caller.observer,
       )
     } catch let refusal as ObserverRefusal {
@@ -200,7 +200,7 @@ extension Hub {
       }
       if let message = order.message {
         if expectsReply {
-          let delivery = try await store.openRequest(on: id, from: requester, messageID: messageID, text: message, deadline: nil, stallSeconds: stall, terms: terms)
+          let delivery = try await store.openRequest(on: id, from: requester, messageID: messageID, text: message, stallSeconds: stall, terms: terms)
           spawned.requestID = delivery.message.requestID
         } else if try await store.message(messageID) == nil {
           // A session primes the new one in private; a person has only its box.

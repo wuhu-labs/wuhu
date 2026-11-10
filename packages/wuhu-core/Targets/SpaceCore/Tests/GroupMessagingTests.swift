@@ -35,7 +35,8 @@ import Testing
   func sender(_ id: SessionID) -> Sender { Sender(id: id.rawValue, timeZone: Self.utc) }
 
   func queued(_ rig: Rig, _ id: SessionID) async throws -> [ConversationMessage] {
-    try await rig.store.undrainedInputs(id).compactMap {
+    try await rig.store.deliverMail()
+    return try await rig.store.undrainedInputs(id).compactMap {
       if case let .message(message) = $0.input { message } else { nil }
     }
   }

@@ -1,19 +1,3 @@
-struct GenerateImageArguments: Decodable {
-  var prompt: String
-  var destination: String
-  var provider: String?
-  var model: String?
-  var quality: String?
-  var size: String?
-  var frames: Int?
-  var frameMs: Int?
-
-  enum CodingKeys: String, CodingKey {
-    case prompt, destination, provider, model, quality, size, frames
-    case frameMs = "frame_ms"
-  }
-}
-
 struct GrepArguments: Decodable {
   var pattern: String
   var path: String?

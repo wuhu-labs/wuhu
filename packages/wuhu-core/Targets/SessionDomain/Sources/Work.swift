@@ -37,16 +37,8 @@ extension Transcript {
     var minted: [ToolCallID] = []
     var satisfied: Set<ToolCallID> = []
     for item in items {
-      switch item {
-      case let .assistant(entry):
-        minted.append(contentsOf: entry.toolCalls.map { ToolCallID($0.id) })
-      case let .toolResult(result):
-        if case let .toolCall(callID) = result.provenance { satisfied.insert(callID) }
-      case let .bookmark(marker):
-        if let callID = marker.toolCallID { satisfied.insert(callID) }
-      case .direct, .message, .notification, .generationHead:
-        break
-      }
+      if case let .assistant(entry) = item { minted.append(contentsOf: entry.toolCalls.map { ToolCallID($0.id) }) }
+      if let callID = item.answeredToolCallID { satisfied.insert(callID) }
     }
     return minted.filter { !satisfied.contains($0) }
   }

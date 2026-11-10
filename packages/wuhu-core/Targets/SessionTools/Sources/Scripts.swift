@@ -8,15 +8,12 @@ import Dependencies
 import Fetch
 import enum JSONValue.JSONValue
 import Logging
-import protocol MainHub.Main
 import func MainHub.runningJSON
 import struct MainHub.ScriptRun
-import struct MainHub.ScriptRunID
 import func MainHub.seconds
 import enum MainHub.ToolLifetimes
 import struct MainHub.ToolProblem
 import enum MainHub.WaitCut
-import struct MainHub.WorkerActivity
 import ServerTelemetry
 import SessionDomain
 import enum SpaceContract.ScriptOutput
@@ -25,7 +22,7 @@ import Synchronization
 import TaskLifetime
 
 public final class Scripts: Sendable {
-  let owner: any Main
+  let sessions: SessionStore
   let limits: ScriptLimits
   // Every execution runs in here, from its start until it ends or `close`.
   private let scope = TaskScope()
@@ -34,12 +31,12 @@ public final class Scripts: Sendable {
   // "unknown". Bounded and in-process: past either, an id reads as unknown.
   private let ended = Mutex(EndedScripts())
 
-  public convenience init(owner: any Main) {
-    self.init(owner: owner, limits: .standard)
+  public convenience init(sessions: SessionStore) {
+    self.init(sessions: sessions, limits: .standard)
   }
 
-  init(owner: any Main, limits: ScriptLimits) {
-    self.owner = owner
+  init(sessions: SessionStore, limits: ScriptLimits) {
+    self.sessions = sessions
     self.limits = limits
   }
 
@@ -68,7 +65,7 @@ public final class Scripts: Sendable {
     running.withLock { $0[id] = execution }
     do {
       try scope.run("script \(id)") {
-        await execution.run(owner: self.owner)
+        await execution.run(sessions: self.sessions)
         self.ended.withLock { $0.record(execution.id, session: session) }
         _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
       }
@@ -107,7 +104,7 @@ public final class Scripts: Sendable {
       trace: .root(root),
     )
     let run: Task<Void, Never>
-    do { run = try scope.run("script \(execution.id)") { await execution.run(owner: self.owner) } }
+    do { run = try scope.run("script \(execution.id)") { await execution.run(sessions: self.sessions) } }
     catch { throw ToolProblem("this worker is stopping; the script did not start") }
     await withTaskCancellationHandler {
       await run.value
@@ -134,12 +131,6 @@ public final class Scripts: Sendable {
     for execution in running.withLock({ $0.values.filter { $0.actor.session == session } }) {
       execution.requestStop()
     }
-  }
-
-  public var activity: WorkerActivity {
-    WorkerActivity(
-      scripts: running.withLock { Dictionary(uniqueKeysWithValues: $0.map { (ScriptRunID($0.key), $0.value.actor.session!) }) },
-    )
   }
 
   public func stop(_ id: String, session: SessionID) async throws -> ToolResultPayload {
@@ -180,7 +171,7 @@ struct RunScriptArguments: Decodable {
 }
 
 extension ToolExecutor {
-  func runScript(_ session: SessionID, _ arguments: RunScriptArguments) async throws -> ToolResultPayload {
+  func runScript(_ session: SessionID, _ arguments: RunScriptArguments, yielded: @escaping @Sendable () async -> Bool) async throws -> ToolResultPayload {
     guard let scripts else { throw ToolProblem("run_script is not available here") }
     if arguments.timeoutSeconds != nil {
       throw ToolProblem("run_script: timeout_seconds is renamed to wait_seconds", code: "invalidArgument")
@@ -200,9 +191,8 @@ extension ToolExecutor {
       throw ToolProblem("run_script: max_lifetime_seconds is at most \(seconds(.seconds(ToolLifetimes.ceiling)))", code: "invalidArgument")
     }
     let execution = try await scripts.start(arguments.source, session: session, lifetime: .seconds(lifetime), tools: self)
-    let arrivals = owner.pendingArrivals(session)
     let waited = min(wait, lifetime + ToolLifetimes.lifetimeSlack)
-    switch try await execution.answer(until: { await WaitCut.first(wait: waited, arrivals: arrivals) }) {
+    switch try await execution.answer(until: { await WaitCut.first(wait: waited, yielded: yielded) }) {
     case let .result(text):
       let note = "\n\n[\(scriptHandle(execution.id)): any update() after this arrives as a message; cancel(\"\(scriptHandle(execution.id))\") ends it while it runs.]"
       return .script(.init(output: text + note))

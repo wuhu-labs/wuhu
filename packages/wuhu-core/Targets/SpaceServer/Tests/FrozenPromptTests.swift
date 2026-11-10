@@ -45,7 +45,7 @@ import Testing
             try await harness.deliver("hello", to: id)
             try await until("\(id.rawValue) answers and settles", timeout: .seconds(60)) {
               guard tap.count > start else { return false }
-              return try await harness.store.record(id).work == .noWork
+              return try await harness.store.settledWork(id)
             }
             let prompts = tap.since(start)
             #expect(Set(prompts).count == 1, "one prompt per turn")
@@ -65,8 +65,11 @@ import Testing
           _ = try await harness.store.setTitle(first, to: "renamed")
           #expect(try await turn(first) == firstPrompt, "an edit or a rename within a generation waits for a compaction")
 
-          let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init(), runningWork: [])
-          _ = try await harness.store.writeCompaction(first, head: head, kept: nil)
+          #expect(try await harness.post("/v1/session/\(first.rawValue)/compact", .object([:])).status == .ok)
+          try await until("first compacts", timeout: .seconds(60)) {
+            guard try await harness.store.generationState(first).generation == 1 else { return false }
+            return try await harness.store.settledWork(first)
+          }
           let compacted = try await turn(first)
           #expect(compacted != firstPrompt)
           #expect(compacted.contains("root edited") && compacted.contains("home edited"))

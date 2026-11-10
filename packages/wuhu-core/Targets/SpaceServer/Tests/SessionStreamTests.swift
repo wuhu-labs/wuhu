@@ -296,7 +296,7 @@ private func itemKind(_ event: SessionStreamEvent) -> String? {
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await harness.createSession()
-      for index in 0 ..< 205 { _ = try await harness.store.enqueue(id, input: .message(ConversationMessage(id: UUID(), messageID: MessageID("m\(index)"), conversationID: ConversationID(id.rawValue), sender: Sender(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: MessageContent(text: "entry \(index)")))) }
+      for index in 0 ..< 205 { try await harness.store.put(id, input: .message(ConversationMessage(id: UUID(), messageID: MessageID("m\(index)"), conversationID: ConversationID(id.rawValue), sender: Sender(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: MessageContent(text: "entry \(index)")))) }
       _ = try await harness.store.drainQueue(id)
       let response = try await harness.get("/v1/session/\(id.rawValue)/direct", query: ["paged": "true", "generation": "0", "position": "-1"])
       var events: [SessionStreamEvent] = []

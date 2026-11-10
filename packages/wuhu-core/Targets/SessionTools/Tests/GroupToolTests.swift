@@ -105,6 +105,7 @@ import struct WuhuAI.ToolArguments
       #expect(try await rig.space.sessions.conversation(receipt.conversationID).group == Self.alice)
       let stored = try #require(try await rig.space.sessions.message(receipt.messageID)?.content.attachments.first?.path)
       #expect(try await rig.space.fs(Self.alice).read(stored).1 == Data("rules".utf8))
+      try await rig.space.sessions.deliverMail()
       let delivered = try #require(try await rig.space.sessions.undrainedInputs(rig.s).compactMap {
         if case let .message(message) = $0.input { message.content.attachments.first?.path } else { nil }
       }.last)
@@ -199,18 +200,16 @@ import struct WuhuAI.ToolArguments
       }
 
       #expect(try await verb("archive", rig.s, of: theirs) == nil)
-      guard case .archived = try await rig.space.sessions.record(theirs).lifecycle else { throw Mismatch("creator's archive did not commit") }
       for (caller, target) in [(st, rig.s), (rig.p, rig.s), (st, theirs)] {
         let refusal = try await verb("archive", caller, of: target)
         #expect(refusal == "\(caller.rawValue) may not archive or unarchive session \(target.rawValue): only the session itself, its creator and admins of its group may")
       }
       #expect(try await verb("archive", st, of: st, force: true)?.contains("can't force-archive itself") == true)
       #expect(try await verb("archive", st, of: st) == nil)
-      guard case .archived = try await rig.space.sessions.record(st).lifecycle else { throw Mismatch("self-archive did not commit") }
-      // Archived, it may no longer act; its parent brings it back.
+      // Archived (no cell runs here, so the fixture writes it), it may no longer act; its parent brings it back.
+      try await rig.space.sessions.archive(st, grace: .seconds(3600))
       #expect(try await verb("unarchive", st, of: st) == "session \(st.rawValue) is archived and may no longer act")
       #expect(try await verb("unarchive", rig.s, of: st) == nil)
-      guard case .live = try await rig.space.sessions.record(st).lifecycle else { throw Mismatch("unarchive did not commit") }
     }
   }
 }

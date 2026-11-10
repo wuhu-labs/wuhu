@@ -79,15 +79,16 @@ public struct ExecRecord: Equatable, Sendable, Codable {
   public let caller: String?
   public let toolCallID: ToolCallID?
   public let toolSpec: String?
-  public let toolEndOwed: Bool
+  /// Its tool call answered `running`: the relay keeps it without a caller and tells the session how it ended.
+  public let background: Bool
   public let startedAt: Date
   public let terminal: ExecTerminalState?
   public let killDelivered: Bool
   /// The group the exec is homed in: groups that read it may see and join it.
   public let group: GroupID
 
-  public init(id: ExecID, machine: MachineID, streamID: Int, command: String, caller: String?, toolCallID: ToolCallID?, startedAt: Date, terminal: ExecTerminalState?, killDelivered: Bool, group: GroupID, toolSpec: String? = nil, toolEndOwed: Bool = false) {
-    self.id = id; self.machine = machine; self.streamID = streamID; self.command = command; self.caller = caller; self.toolCallID = toolCallID; self.startedAt = startedAt; self.terminal = terminal; self.killDelivered = killDelivered; self.group = group; self.toolSpec = toolSpec; self.toolEndOwed = toolEndOwed
+  public init(id: ExecID, machine: MachineID, streamID: Int, command: String, caller: String?, toolCallID: ToolCallID?, startedAt: Date, terminal: ExecTerminalState?, killDelivered: Bool, group: GroupID, toolSpec: String? = nil, background: Bool = false) {
+    self.id = id; self.machine = machine; self.streamID = streamID; self.command = command; self.caller = caller; self.toolCallID = toolCallID; self.startedAt = startedAt; self.terminal = terminal; self.killDelivered = killDelivered; self.group = group; self.toolSpec = toolSpec; self.background = background
   }
 
   /// The session that minted it: nil for an observer's, whose caller is its member.
@@ -527,11 +528,11 @@ extension Space {
     }
   }
 
-  public func setExecEndOwed(_ id: ExecID, caller: String, owed: Bool) async throws -> Bool {
+  public func backgroundExec(_ id: ExecID, caller: String) async throws -> Bool {
     try await writer.write { db in
       try db.execute(
-        sql: "UPDATE machine_execs SET tool_end_owed = ? WHERE id = ? AND caller = ? AND tool_call_id IS NOT NULL",
-        arguments: [owed, id.rawValue, caller],
+        sql: "UPDATE machine_execs SET tool_end_owed = 1 WHERE id = ? AND caller = ? AND tool_call_id IS NOT NULL",
+        arguments: [id.rawValue, caller],
       )
       return db.changesCount > 0
     }
@@ -542,34 +543,6 @@ extension Space {
       try Row.fetchAll(
         db,
         sql: "SELECT * FROM machine_execs WHERE caller = ? AND tool_call_id IS NOT NULL AND terminal_state IS NULL ORDER BY started_at, id",
-        arguments: [caller],
-      ).map(Self.execRecord(from:))
-    }
-  }
-
-  public func forgetOwedExecs(caller: String) async throws {
-    try await writer.write { db in
-      try db.execute(
-        sql: "UPDATE machine_execs SET tool_end_owed = 0 WHERE caller = ? AND tool_call_id IS NOT NULL",
-        arguments: [caller],
-      )
-    }
-  }
-
-  public func owedExecs() async throws -> [ExecRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1 ORDER BY started_at, id",
-      ).map(Self.execRecord(from:))
-    }
-  }
-
-  public func owedExecs(caller: String) async throws -> [ExecRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE caller = ? AND tool_call_id IS NOT NULL AND tool_end_owed = 1 ORDER BY started_at, id",
         arguments: [caller],
       ).map(Self.execRecord(from:))
     }
@@ -664,7 +637,7 @@ extension Space {
       killDelivered: (row["kill_delivered"] as Int64) != 0,
       group: GroupID(rawValue: row["grp"] as String? ?? GroupID.shared.rawValue),
       toolSpec: row["tool_spec"],
-      toolEndOwed: (row["tool_end_owed"] as Int64) != 0,
+      background: (row["tool_end_owed"] as Int64) != 0,
     )
   }
 }

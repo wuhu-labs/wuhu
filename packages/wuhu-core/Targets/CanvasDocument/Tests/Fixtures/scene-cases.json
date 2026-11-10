@@ -11,7 +11,7 @@
     "expected": {
       "items": [
         { "id": "aaaaaa", "frame": [0, 0, 100, 100], "fill": "#FFE48AFF" },
-        { "id": "bbbbbb", "frame": [300, 50, 100, 100], "fill": "#C3DEFFFF", "stroke": { "color": "#7BAEECFF", "width": 1.5 } }
+        { "id": "bbbbbb", "frame": [300, 50, 100, 100], "fill": "#B2D9FBFF", "stroke": { "color": "#7BAEECFF", "width": 1.5 } }
       ],
       "connectors": [
         { "id": "c00001", "points": [[100, 50], [300, 100]], "arrow": "end" }
@@ -110,7 +110,7 @@
     ],
     "expected": {
       "items": [
-        { "id": "s00001", "frame": [100, 100, 400, 300], "fill": "#C3DEFF59", "stroke": { "color": "#7BAEECFF", "width": 1 } },
+        { "id": "s00001", "frame": [100, 100, 400, 300], "fill": "#B2D9FB59", "stroke": { "color": "#7BAEECFF", "width": 1 } },
         { "id": "s00002", "frame": [600, 0, 200, 200], "fill": "#E8E8E859", "stroke": { "color": "#B0B0B0FF", "width": 1 } },
         { "id": "xxxxxx", "frame": [120, 140, 100, 100], "fill": "#FFC4D8FF" },
         { "id": "tttttt", "frame": [0, 0, 200, 40] },
@@ -118,6 +118,33 @@
       ],
       "connectors": [
         { "id": "c00001", "points": [[170, 140], [610, 35]], "arrow": "end" }
+      ]
+    }
+  },
+  {
+    "name": "a free end avoids a side a pinned end holds, ends still sharing a side spread on the outline",
+    "items": [
+      { "id": "aaaaaa", "kind": "ellipse", "x": 0, "y": 0, "w": 100, "h": 100 },
+      { "id": "bbbbbb", "kind": "rect", "x": 300, "y": 0, "w": 100, "h": 100 },
+      { "id": "cccccc", "kind": "rect", "x": 300, "y": 300, "w": 100, "h": 100 },
+      { "id": "dddddd", "kind": "rect", "x": 300, "y": 150, "w": 100, "h": 100 }
+    ],
+    "connectors": [
+      { "id": "c00001", "from": "aaaaaa", "to": "cccccc", "style": "elbow" },
+      { "id": "c00002", "from": "aaaaaa", "to": "bbbbbb", "fromSide": "right", "style": "straight" },
+      { "id": "c00003", "from": "aaaaaa", "to": "dddddd", "style": "straight" }
+    ],
+    "expected": {
+      "items": [
+        { "id": "aaaaaa", "frame": [0, 0, 100, 100], "fill": "#E8E8E8FF", "stroke": { "color": "#B0B0B0FF", "width": 1.5 } },
+        { "id": "bbbbbb", "frame": [300, 0, 100, 100], "fill": "#E8E8E8FF", "stroke": { "color": "#B0B0B0FF", "width": 1.5 } },
+        { "id": "cccccc", "frame": [300, 300, 100, 100], "fill": "#E8E8E8FF", "stroke": { "color": "#B0B0B0FF", "width": 1.5 } },
+        { "id": "dddddd", "frame": [300, 150, 100, 100], "fill": "#E8E8E8FF", "stroke": { "color": "#B0B0B0FF", "width": 1.5 } }
+      ],
+      "connectors": [
+        { "id": "c00001", "points": [[50, 100], [50, 350], [300, 350]], "arrow": "end" },
+        { "id": "c00002", "points": [[98.53864439804639, 38], [300, 50]], "arrow": "end" },
+        { "id": "c00003", "points": [[98.53864439804639, 62], [300, 200]], "arrow": "end" }
       ]
     }
   },

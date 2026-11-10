@@ -42,7 +42,7 @@ import WuhuAI
       )
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(
+        try await service.enqueue(
           item: Fix.message("please review", conversation: sid.rawValue, owesReply: true),
           to: sid,
         )

@@ -259,12 +259,12 @@
       "id": "server-execution",
       "issue": 332,
       "title": "Explains in-process-only execution and the removed deployment pin",
-      "prompt": "Text-only smoke: we are upgrading a standalone server whose unit still passes --execution-placement in-process. The release removes execution workers and admin-exec; standalone and hosted serving run only in the server process. In at most four sentences, explain the unit change needed at the authorized restart, what happens to live inference sockets/scripts/handlers, and what an unfinished handler may do after committing effects but not its returned state. Does installing this release alone authorize the restart? Do not call tools, change files or operate on a server.",
+      "prompt": "Text-only smoke: we are upgrading a standalone server whose unit still passes --execution-placement in-process. The release removes execution workers and admin-exec; standalone and hosted serving run only in the server process. In at most four sentences, explain the unit change needed at the authorized restart, what happens to live inference sockets/scripts/handlers, and what an unfinished handler may do after committing effects but before its firing ended. Does installing this release alone authorize the restart? Do not call tools, change files or operate on a server.",
       "required": [
         "in_process_only",
         "no_files_written"
       ],
-      "judge": "PASS only if the reply says to remove --execution-placement in-process from the unit at the authorized restart, not replace it with another flag or alias; all execution is in-process and live sockets/JavaScript heaps are not adopted across restart. An unfinished handler may run anew from its last committed state and repeat already committed effects. No admin-exec or automatic worker fallback exists, and installation alone does not authorize production restart. At most four sentences; no tools or mutations."
+      "judge": "PASS only if the reply says to remove --execution-placement in-process from the unit at the authorized restart, not replace it with another flag or alias; all execution is in-process and live sockets/JavaScript heaps are not adopted across restart. An unfinished handler may run anew on the same input and repeat already committed effects. No admin-exec or automatic worker fallback exists, and installation alone does not authorize production restart. At most four sentences; no tools or mutations."
     },
     {
       "id": "minimal-agent",
@@ -562,7 +562,7 @@
       "skills": {
         "sessions": true
       },
-      "judge": "PASS only if a group observer named bench-{tag}-review was armed with createObserver from wuhu:session (or wuhu group observer create): an observe whose SQL reads docs under {sb}/drafts/ with status review, and a handler module in the group's files (not the session home) whose default export calls createSession for each newly seen doc, keeping what it has seen in its returned state rather than relying on wake(). The reply says the observer's name and how to stop it (cancelObserver or wuhu group observer cancel). Fail a session-owned observe or timer, a polling loop, a handler that wakes the subject instead of creating the agent, or invented APIs."
+      "judge": "PASS only if a group observer named bench-{tag}-review was armed with createObserver from wuhu:session (or wuhu group observer create): an observe whose SQL reads docs under {sb}/drafts/ with status review, and a handler module in the group's files (not the session home) whose default export calls createSession for each newly seen doc, skipping docs it already handled by a durable lookup (a session tagged with the doc's path, or a table row) rather than relying on wake(). The reply says the observer's name and how to stop it (cancelObserver or wuhu group observer cancel). Fail a session-owned observe or timer, a polling loop, a handler that wakes the subject instead of creating the agent, or invented APIs."
     },
     {
       "id": "stream-observe",
@@ -573,7 +573,7 @@
         "stream_observed",
         "handler_reads_event"
       ],
-      "judge": "PASS only if the session armed observe with url https://deploys.bench.invalid/events (not sql) and a handler module whose default export takes the event argument and appends event.data to {sb}/deploys.md, returning its state; the reply is short and says where the handler lives and how to stop it (cancel with the obs. id). The host does not resolve, so no line is expected. Fail a run_script loop holding a fetch open, a timer that polls, a plain observe relying on wakes, or invented APIs."
+      "judge": "PASS only if the session armed observe with url https://deploys.bench.invalid/events (not sql) and a handler module whose default export takes the event argument and appends event.data to {sb}/deploys.md; the reply is short and says where the handler lives and how to stop it (cancel with the obs. id). The host does not resolve, so no line is expected. Fail a run_script loop holding a fetch open, a timer that polls, a plain observe relying on wakes, or invented APIs."
     },
     {
       "id": "handler-self-cancel",
@@ -584,7 +584,7 @@
         "decision_short",
         "no_files_written"
       ],
-      "judge": "PASS only if the reply says the firing runs to its end: the code after cancel runs, both wakes ('build green' and 'stopped watching') arrive, and then the slot is retired so timer.ci7 never fires again (its returned state is dropped, if mentioned). For cancelling it with the tool mid-firing, the same holds: the running firing finishes, its wakes arrive, then it stops. Fail if it says cancel kills the handler at once or drops wakes, that the timer keeps firing, invents a separate self-stop API, or calls tools or writes files. At most three sentences."
+      "judge": "PASS only if the reply says the firing runs to its end: the code after cancel runs, both wakes ('build green' and 'stopped watching') arrive, and then the slot is retired so timer.ci7 never fires again. For cancelling it with the tool mid-firing, the same holds: the running firing finishes, its wakes arrive, then it stops. Fail if it says cancel kills the handler at once or drops wakes, that the timer keeps firing, invents a separate self-stop API, or calls tools or writes files. At most three sentences."
     },
     {
       "id": "page-haptics",

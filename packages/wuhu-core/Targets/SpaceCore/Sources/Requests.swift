@@ -11,7 +11,7 @@ import struct SpaceContract.GroupID
 import StructuredQueries
 
 enum RequestStatus: String, Hashable, Sendable, Codable, CaseIterable {
-  case open, stalled, overdue, done, failed
+  case open, done, failed
 
   var isOpen: Bool { self != .done && self != .failed }
 }
@@ -60,7 +60,7 @@ struct RequestRow {
   var result: String?
   /// The ids of the refused final attempts, a JSON array.
   var refusals: String
-  @Column("deadline_at") var deadlineAt: String?
+  @Column("stall_seconds") var stallSeconds: Double?
   @Column("created_at") var createdAt: String
   @Column("updated_at") var updatedAt: String
 
@@ -75,12 +75,6 @@ struct RequestRow {
   /// box, where the person asked.
   func replyTarget(in db: Database) throws -> ConversationTarget {
     try requesterSession(in: db).map { .dm(with: $0.rawValue) } ?? .box(SessionID(task))
-  }
-
-  /// Who holds the request's clocks: the requesting session, else the task,
-  /// whose stall clock then moves the row without alerting anyone.
-  func clockOwner(in db: Database) throws -> String {
-    try requesterSession(in: db)?.rawValue ?? task
   }
 
   static func find(_ id: RequestID, in db: Database) throws -> Self? {
@@ -116,7 +110,8 @@ extension SessionStore {
   /// group throws `RequestKeyTaken`, so the unique index, not a prior read,
   /// decides which of two racing creates wins.
   static func insertRequest(
-    _ id: RequestID, group: GroupID, requester: Caller, task: SessionID, brief: String, terms: RequestTerms, deadline: Date?, now: String, in db: Database,
+    _ id: RequestID, group: GroupID, requester: Caller, task: SessionID, brief: String, terms: RequestTerms, stallSeconds: Double?,
+    now: String, in db: Database,
   ) throws {
     guard try RequestRow.find(id, in: db) == nil else { return }
     try RequestRow.insert {
@@ -124,7 +119,8 @@ extension SessionStore {
         id: id.rawValue, group: group.rawValue, requester: requester.name, firing: requester.firing, task: task.rawValue,
         kind: terms.kind, key: terms.key, status: RequestStatus.open.rawValue, brief: brief,
         schema: terms.schema?.jsonString(sortedKeys: true), fields: terms.fields?.jsonString(sortedKeys: true),
-        result: nil, refusals: "[]", deadlineAt: deadline.map(SQLiteDateFormat.string(from:)), createdAt: now, updatedAt: now,
+        result: nil, refusals: "[]", stallSeconds: stallSeconds,
+        createdAt: now, updatedAt: now,
       )
     } onConflict: { ($0.group, $0.kind, $0.key) }.execute(db)
     guard db.changesCount == 1 else {
@@ -139,11 +135,27 @@ extension SessionStore {
     }
   }
 
+  /// The requests `requester` opened that still wait on their final, oldest first.
+  public func awaitedRequests(_ requester: SessionID) async throws -> [AwaitedRequest] {
+    try await writer.read { db in
+      try Row.fetchAll(db, sql: """
+      SELECT r.id, r.task,
+        COALESCE((SELECT MAX(m.created_at) FROM messages AS m WHERE m.request_id = r.id AND m.kind = 'progress'), r.created_at) AS heard
+      FROM requests AS r WHERE r.requester = ? AND r.status = 'open' ORDER BY r.created_at, r.id
+      """, arguments: [requester.rawValue]).map { row in
+        AwaitedRequest(
+          id: RequestID(row["id"]), task: SessionID(row["task"]),
+          lastHeard: try SQLiteDateFormat.date(from: row["heard"]),
+        )
+      }
+    }
+  }
+
   public func openRequests(_ id: SessionID) async throws -> [OpenRequest] {
     try await writer.read { db in
       _ = try Sessions.record(id.rawValue, in: db)
       return try RequestRow.open(task: id.rawValue, in: db).map {
-        OpenRequest(id: RequestID($0.id), deadline: try $0.deadlineAt.map(SQLiteDateFormat.date(from:)))
+        OpenRequest(id: RequestID($0.id))
       }
     }
   }
@@ -165,13 +177,11 @@ extension SessionStore {
     from requester: Caller,
     messageID: MessageID,
     text: String,
-    deadline: Date?,
     stallSeconds: Double? = nil,
     terms: RequestTerms = .none,
   ) async throws -> MessageDelivery {
     let key = task.rawValue
     let request = RequestID(messageID.rawValue)
-    precondition(deadline == nil || requester.session != nil, "a person's request has no deadline")
     if let existing = try await keyedRequest(by: requester, terms)?.request, existing != request {
       return try await existingRequest(existing)
     }
@@ -198,10 +208,9 @@ extension SessionStore {
       }
       return record.group
     }
-    // The row and the clocks commit with the message: a request that exists
-    // has its deadline and stall alert, and a replayed one keeps the ones it got.
+    // The row and its quiet reminder commit with the message; a replayed
+    // request keeps the ones it got.
     do {
-      let clocks = requester.session?.rawValue ?? key
       return try await post(
         requester.session == nil ? .box(task) : .dm(with: key),
         messageID: messageID,
@@ -213,21 +222,13 @@ extension SessionStore {
         acting: requester.principal,
         alongside: { message, db in
           let now = SQLiteDateFormat.string(from: message.createdAt)
-          try Self.insertRequest(request, group: group, requester: requester, task: task, brief: text, terms: terms, deadline: deadline, now: now, in: db)
-          if let deadline {
-            try self.armSubscription(
-              clocks,
-              slot: .init(id: .deadline(request), kind: .requestDeadline(request: request, task: task)),
-              nextFireAt: deadline, marker: nil, now: now, in: db,
-            )
-          }
-          if let stallSeconds {
-            let opened = message.createdAt
-            try self.armSubscription(
-              clocks,
-              slot: .init(id: .stall(request), kind: .requestStall(.init(request: request, task: task, seconds: stallSeconds, openedAt: opened))),
-              nextFireAt: opened.addingTimeInterval(stallSeconds), marker: nil, now: now, in: db,
-            )
+          try Self.insertRequest(
+            request, group: group, requester: requester, task: task, brief: text, terms: terms, stallSeconds: stallSeconds,
+            now: now, in: db,
+          )
+          if try Sessions.remindQuiet(RequestRow.find(request, in: db)!, from: message.createdAt, in: db) {
+            let signals = self.signals
+            db.afterNextTransaction { _ in signals.post(requester.session!) }
           }
         },
       )
@@ -285,7 +286,7 @@ extension SessionStore {
         if kind == .final {
           try Self.close(row, as: .done, result: finalResult, now: now, in: db)
         } else {
-          try RequestRow.setStatus(request, from: [.stalled], to: .open, now: now, in: db)
+          try Sessions.remindQuiet(row, from: message.createdAt, in: db)
         }
       },
     )
@@ -327,81 +328,42 @@ extension SessionStore {
     throw SessionStoreError.reportRefused(row.id, violations: violations, left: left)
   }
 
-  /// A request's final status, with its clocks ended in the same write.
+  /// A request's final status, with its quiet reminder ended in the same write.
   static func close(_ row: RequestRow, as status: RequestStatus, result: String?, now: String, in db: Database) throws {
     try RequestRow.update {
       $0.status = #bind(status.rawValue)
       $0.result = #bind(result)
       $0.updatedAt = #bind(now)
     }.where { $0.id.eq(row.id) }.execute(db)
-    let owner = try row.clockOwner(in: db)
-    try deleteSubscription(owner, .deadline(RequestID(row.id)), in: db)
-    try deleteSubscription(owner, .stall(RequestID(row.id)), in: db)
+    guard let requester = try row.requesterSession(in: db) else { return }
+    try Sessions.clear(requester.rawValue, topic: Sessions.quietTopic(row.id), in: db)
   }
+}
 
-  public func recordRequestDeadline(
-    parent: SessionID,
-    task: SessionID,
-    request: RequestID,
-    deadline: Date,
-  ) async throws {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      try recordRequestDeadline(parent: parent, task: task, request: request, deadline: deadline, now: now, in: db)
-    }
-  }
+extension Sessions {
+  static func quietTopic(_ request: String) -> String { "quiet:\(request)" }
 
-  func recordRequestDeadline(
-    parent: SessionID,
-    task: SessionID,
-    request: RequestID,
-    deadline: Date,
-    now: String,
-    in db: Database,
-  ) throws {
-    try RequestRow.setStatus(request, from: [.open, .stalled], to: .overdue, now: now, in: db)
-    try Notifications.append(
-      recipient: Notifications.ownerRecipient,
-      source: parent.rawValue,
-      group: try Sessions.group(of: parent.rawValue, in: db),
-      kind: .requestDeadline,
-      payload: try Sessions.encode(Notifications.RequestDeadlinePayload(
-        sessionID: task.rawValue,
-        parent: parent.rawValue,
-        requestID: request.rawValue,
-        deadlineAt: deadline.timeIntervalSince1970,
-      )),
-      now: now,
-      in: db,
-    )
-  }
-
-  // An errored or killed child with an open request tells its requester so;
-  // fabricating a final on its behalf is the one thing that must never happen.
-  func notifyParentOfFailure(_ key: String, error: String, now: String, in db: Database) throws -> SessionID? {
-    guard let open = try RequestRow.open(task: key, in: db).first else { return nil }
-    let requester = try open.requesterSession(in: db)
-    let nowDate = try SQLiteDateFormat.date(from: now)
+  /// Puts the requester's reminder that the task has reported nothing on the
+  /// request for its stall seconds since `from`; a later put moves it, the
+  /// request's end takes it back. Only a live requesting session gets one.
+  @discardableResult
+  static func remindQuiet(_ row: RequestRow, from: Date, in db: Database) throws -> Bool {
+    guard let seconds = row.stallSeconds, let requester = try row.requesterSession(in: db),
+          try record(requester.rawValue, in: db).lifecycle == .live
+    else { return false }
+    let minutes = Int((seconds / 60).rounded())
+    let span = minutes >= 1 ? "\(minutes) min" : "\(Int(seconds)) s"
     let notification = SystemNotification(
-      id: UUID.deterministic("child-failed", key, open.id),
-      timestamp: nowDate,
-      kind: .childFailed,
-      subscriptionID: .deadline(RequestID(open.id)),
-      requestID: RequestID(open.id),
-      content: .init(text: "session \(key) failed with an open request \(open.id) and sent no final report: \(error)"),
+      id: UUID.deterministic("quiet", row.id, SQLiteDateFormat.string(from: from)),
+      timestamp: from.addingTimeInterval(seconds),
+      kind: .requestStall,
+      subscriptionID: SubscriptionID(quietTopic(row.id)),
+      requestID: RequestID(row.id),
+      content: .init(text: "Request \(row.id) on task \(row.task) has had no progress report for \(span). Check on it: message it, or archive it if it is lost."),
     )
-    let enqueued = try requester.map { (try? Sessions.enqueue($0.rawValue, input: .notification(notification), nowDate: nowDate, in: db)) != nil } ?? false
-    try Notifications.append(
-      recipient: Notifications.ownerRecipient,
-      source: open.requester,
-      group: GroupID(rawValue: open.group),
-      kind: .childFailed,
-      payload: try Sessions.encode(Notifications.ChildFailedPayload(
-        sessionID: key, parent: open.requester, requestID: open.id, error: error,
-      )),
-      now: now,
-      in: db,
+    try enqueue(
+      requester.rawValue, input: .notification(notification), topic: quietTopic(row.id), due: from.addingTimeInterval(seconds), nowDate: from, in: db,
     )
-    return enqueued ? requester : nil
+    return true
   }
 }

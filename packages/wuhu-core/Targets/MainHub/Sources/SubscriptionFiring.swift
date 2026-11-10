@@ -1,6 +1,4 @@
 import Dependencies
-import struct FetchSSE.SSEEvent
-import struct FetchSSE.SSEEvents
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -9,10 +7,8 @@ import TaskLifetime
 #endif
 import struct GRDB.DatabaseError
 import Logging
-import ServerTelemetry
 import SessionDomain
 @_spi(SessionObservation) import SpaceCore
-import Synchronization
 
 public struct SubscriptionFiring: Sendable {
   let space: Space
@@ -21,26 +17,16 @@ public struct SubscriptionFiring: Sendable {
     await space.observeQuery(sql, throttle: .zero, as: principal)
   }
 
-  public var sources: EventSources = .unavailable
+  /// Mails a handler slot's observer cell.
+  private let observe: @Sendable (SubscriptionOwner, SubscriptionID, ObserverMail) async throws -> Void
 
-  var nextCronFire: @Sendable (String, Date) -> Date? = { expression, after in
-    try? CronSchedule.parse(expression).next(after: after)
-  }
-
-  private let worker: any Worker
-
-  public init(space: Space, worker: any Worker) {
+  public init(space: Space, observe: @escaping @Sendable (SubscriptionOwner, SubscriptionID, ObserverMail) async throws -> Void) {
     self.space = space
-    self.worker = worker
+    self.observe = observe
   }
 
   public func run() async {
     @Dependency(\.continuousClock) var clock
-    do {
-      try await space.sessions.interruptFirings()
-    } catch {
-      log.warning("the firings the last run left running were not ended: \(error)")
-    }
     while !Task.isCancelled {
       do {
         try await runRegistry()
@@ -76,8 +62,8 @@ public struct SubscriptionFiring: Sendable {
         }
       }
       var running: [Arming: (generation: Int, task: Task<Void, Never>)] = [:]
-      var stopped: Set<Arming> = []
       var retries: [Arming: Int] = [:]
+      var cells: Set<Arming> = []
       var generation = 0
       var failure: (any Error)?
       do {
@@ -98,34 +84,35 @@ public struct SubscriptionFiring: Sendable {
           let registrations = try await space.sessions.subscriptionRegistrations()
           let current = registrations.map { (Arming($0.subscription, callbackID: $0.callbackID, orphaned: $0.orphaned), $0.subscription) }
           let keys = Set(current.map(\.0))
-          stopped.formIntersection(keys)
           retries = retries.filter { keys.contains($0.key) }
-          if let (arming, outcome) = completion {
-            switch outcome {
-            case .failure(let error) where error is NonAdvancingSubscription:
-              if keys.contains(arming) { stopped.insert(arming) }
-            case .failure:
-              if keys.contains(arming) { retries[arming] = min(max(1, (retries[arming] ?? 0) * 2), 60) }
-            case .success where keys.contains(arming):
-              if case .timer(.cron, _) = arming.kind {
-                log.error("recurring timer \(arming.subscription.rawValue) did not advance its stored due time after a successful fire; stopped")
-                stopped.insert(arming)
-              } else {
-                log.warning("subscription \(arming.subscription.rawValue) ended with its stored arming unchanged; retrying")
-                retries[arming] = min(max(1, (retries[arming] ?? 0) * 2), 60)
-              }
-            case .success:
-              break
-            }
+          // An observer cell reads its slot itself: it hears of every change.
+          let handlers = Set(current.filter { $0.1.slot.handler != nil }.map(\.0))
+          for arming in Set(handlers.symmetricDifference(cells).map { Pair(owner: $0.owner, subscription: $0.subscription) }) {
+            try await observe(arming.owner, arming.subscription, .look)
           }
-          // A gone slot's firing is stopped, not waited for: its end is a
+          cells = handlers
+          if let (arming, outcome) = completion, keys.contains(arming) {
+            if case let .failure(error) = outcome, !(error is CancellationError) {
+              log.warning("observation \(arming.subscription.rawValue) failed: \(error)")
+            }
+            retries[arming] = min(max(1, (retries[arming] ?? 0) * 2), 60)
+          }
+          // A gone slot's observation is stopped, not waited for: its end is a
           // stale generation, and the scope joins it on the way out.
           for (arming, job) in running where !keys.contains(arming) {
             job.task.cancel()
             running[arming] = nil
           }
           for (arming, subscription) in current where running[arming] == nil {
-            guard !stopped.contains(arming) else { continue }
+            let sql: String
+            switch subscription.slot.kind {
+            case let .observe(query, _): sql = query
+            case .children:
+              guard case let .session(parent) = subscription.owner else { continue }
+              sql = SubscriptionSlot.childrenQuery(parent)
+            case .stream, .timer: continue
+            }
+            guard let callbackID = arming.callbackID else { continue }
             generation += 1
             let startedGeneration = generation
             let backoff = retries[arming] ?? 0
@@ -135,14 +122,9 @@ public struct SubscriptionFiring: Sendable {
                 @Dependency(\.continuousClock) var clock
                 if backoff > 0 { try await clock.sleep(for: .seconds(backoff)) }
                 try Task.checkCancellation()
-                try await run(subscription, callbackID: arming.callbackID)
+                try await runObservation(subscription, callbackID: callbackID, sql: sql)
                 outcome = .success(())
               } catch {
-                if error is NonAdvancingSubscription {
-                  log.error("subscription \(arming.subscription.rawValue) stopped: \(error)")
-                } else if !(error is CancellationError) {
-                  log.warning("subscription \(arming.subscription.rawValue) failed: \(error)")
-                }
                 outcome = .failure(error)
               }
               post.yield(.finished(arming, startedGeneration, outcome))
@@ -161,45 +143,7 @@ public struct SubscriptionFiring: Sendable {
     }
   }
 
-  private func run(_ subscription: ArmedSubscription, callbackID: UUID?) async throws {
-    switch subscription.slot.kind {
-    case let .observe(sql, throttleSeconds):
-      guard let callbackID else { throw FiringFailure.missingObservationCallback }
-      return try await runObservation(subscription, callbackID: callbackID, sql: sql, throttleSeconds: throttleSeconds)
-    case let .stream(url, throttleSeconds):
-      guard let callbackID else { throw FiringFailure.missingObservationCallback }
-      return try await runStream(subscription, callbackID: callbackID, url: url, throttleSeconds: throttleSeconds)
-    case .timer, .requestDeadline, .requestStall:
-      break
-    }
-    try await sleep(until: subscription.nextFireAt)
-    @Dependency(\.date) var date
-    guard try await retireIfOrphaned(subscription) == false else { return }
-    let now = date.now
-    let due = subscription.nextFireAt ?? now
-    switch subscription.slot.kind {
-    case .observe, .stream:
-      break
-    case let .timer(schedule, message):
-      try await fireTimer(subscription, schedule: schedule, message: message, due: due, now: now)
-    case let .requestDeadline(request, task):
-      guard let parent = try await wakes(subscription, orPause: "a request deadline belongs to a session") else { return }
-      try await fireDeadline(subscription, to: parent, request: request, task: task, now: now)
-    case .requestStall:
-      guard let parent = try await wakes(subscription, orPause: "a request stall belongs to a session") else { return }
-      try await space.sessions.checkRequestStall(
-        parent, subscriptionID: subscription.slot.id, now: now, liveScripts: Set(await worker.activity().scripts.values),
-      )
-    }
-  }
-
-  private func runObservation(
-    _ subscription: ArmedSubscription,
-    callbackID: UUID,
-    sql: String,
-    throttleSeconds: Double,
-  ) async throws {
-    @Dependency(\.continuousClock) var clock
+  private func runObservation(_ subscription: ArmedSubscription, callbackID: UUID, sql: String) async throws {
     var delivered = subscription.marker
     var snapshots = try await observationStream(space, principal(of: subscription), sql).makeAsyncIterator()
     while !Task.isCancelled {
@@ -222,13 +166,24 @@ public struct SubscriptionFiring: Sendable {
         return
       }
       guard let rows else { throw FiringFailure.observationStreamEnded }
-      let marker = rowsMarker(rows)
-      guard marker != delivered else { continue }
+      let marker: String
+      if case .children = subscription.slot.kind, case let .session(parent) = subscription.owner {
+        // Its marker is the errored children last seen: only one joining them is news.
+        let errored = rows.rows.compactMap { if case let .text(id) = $0[0] { id } else { nil } }
+        marker = errored.joined(separator: ",")
+        if Set(errored).isSubset(of: (delivered ?? "").split(separator: ",").map(String.init)) {
+          if marker != delivered ?? "" { try await space.sessions.observedQuietly(parent, subscriptionID: subscription.slot.id, marker: marker) }
+          delivered = marker
+          continue
+        }
+      } else {
+        marker = rowsMarker(rows)
+        guard marker != delivered else { continue }
+      }
       guard try await retireIfOrphaned(subscription) == false else { return }
       if subscription.slot.handler != nil {
-        try await fireHandler(subscription, input: .rows(rows), advance: .observed(marker: marker), marker: marker)
+        try await observe(subscription.owner, subscription.slot.id, .rows(handlerInput(rows), marker: marker))
         delivered = marker
-        try await clock.sleep(for: .seconds(throttleSeconds))
         continue
       }
       guard let session = try await wakes(subscription, orPause: "a group observer runs a handler") else { return }
@@ -236,122 +191,12 @@ public struct SubscriptionFiring: Sendable {
         subscription,
         to: session,
         callbackID: callbackID,
-        text: "observed change for \(sql):\n" + renderedRows(rows),
+        text: observedText(subscription.slot.kind, sql: sql, rows: rows),
         advance: .observed(marker: marker),
       )
       delivered = marker
-      try await clock.sleep(for: .seconds(throttleSeconds))
     }
     throw CancellationError()
-  }
-
-  // Each connection resumes after the last event taken, so an event whose
-  // firing failed comes again. A stream that ends or fails is dialled again,
-  // backing off from 1 s to 5 min, or longer when its server says so. Events
-  // are read no faster than they are fired or woken, so a slow handler holds
-  // the source back rather than piling events up.
-  private func runStream(
-    _ subscription: ArmedSubscription,
-    callbackID: UUID,
-    url: URL,
-    throttleSeconds: Double,
-  ) async throws {
-    @Dependency(\.continuousClock) var clock
-    var lastEventID = subscription.marker ?? ""
-    var backoff = 0
-    while true {
-      var retryAfter = Duration.zero
-      do {
-        let events = try await sources.open(url, as: subscription.owner, after: lastEventID)
-        if subscription.slot.handler != nil {
-          for try await event in events {
-            guard try await retireIfOrphaned(subscription) == false else { return }
-            let id = event.id ?? ""
-            guard try await fireHandlerOnce(subscription, input: .event(event), advance: .streamed(lastEventID: id), marker: nil)
-            else { break }
-            lastEventID = id
-            backoff = 0
-          }
-        } else {
-          guard let session = try await wakes(subscription, orPause: "a group observer runs a handler") else { return }
-          let retired = try await wake(session, with: events, of: subscription, callbackID: callbackID, url: url, throttleSeconds: throttleSeconds) {
-            lastEventID = $0
-            backoff = 0
-          }
-          if retired { return }
-        }
-      } catch let StreamFailure.refused(reason) {
-        guard let session = try await wakes(subscription, orPause: reason) else { return }
-        try await notifyObservation(
-          subscription,
-          to: session,
-          callbackID: callbackID,
-          text: "observation \(subscription.slot.id.rawValue) of \(url) failed and was cancelled: \(reason)",
-          advance: .retire,
-        )
-        return
-      } catch let StreamFailure.unavailable(after) {
-        retryAfter = after ?? .zero
-      } catch is CancellationError {
-        throw CancellationError()
-      } catch {
-        log.info("stream \(subscription.slot.id.rawValue) dropped: \(error)")
-      }
-      backoff = min(max(1, backoff * 2), 300)
-      try await clock.sleep(for: max(.seconds(backoff), retryAfter))
-    }
-  }
-
-  /// Wakes `session` with what `events` sends, at most once a throttle: what
-  /// arrives in between goes in one wake of up to 64 KiB, and reading waits
-  /// while that is full. `delivered` gets each wake's last event id. True
-  /// when the slot retired because its owner was archived.
-  private func wake(
-    _ session: SessionID,
-    with events: SSEEvents,
-    of subscription: ArmedSubscription,
-    callbackID: UUID,
-    url: URL,
-    throttleSeconds: Double,
-    delivered: (String) -> Void,
-  ) async throws -> Bool {
-    @Dependency(\.continuousClock) var clock
-    let pending = PendingEvents()
-    let (arrivals, arrived) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-    let (takes, took) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-    defer { took.finish() }
-    return try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask {
-        defer { arrived.finish() }
-        var taken = takes.makeAsyncIterator()
-        for try await event in events {
-          while !pending.add(event) {
-            guard await taken.next() != nil else { return }
-          }
-          arrived.yield()
-        }
-      }
-      for await _ in arrivals {
-        let batch = pending.take()
-        took.yield()
-        guard let lastEventID = batch.lastEventID else { continue }
-        guard try await retireIfOrphaned(subscription) == false else {
-          group.cancelAll()
-          return true
-        }
-        try await notifyObservation(
-          subscription,
-          to: session,
-          callbackID: callbackID,
-          text: "observed \(batch.count) event\(batch.count == 1 ? "" : "s") from \(url):\n" + batch.rendered,
-          advance: .streamed(lastEventID: lastEventID),
-        )
-        delivered(lastEventID)
-        try await clock.sleep(for: .seconds(throttleSeconds))
-      }
-      try await group.waitForAll()
-      return false
-    }
   }
 
   private func notifyObservation(
@@ -373,172 +218,11 @@ public struct SubscriptionFiring: Sendable {
     try await deliver(subscription, to: session, notification: notification, advance: advance)
   }
 
-  private func fireDeadline(
-    _ subscription: ArmedSubscription,
-    to parent: SessionID,
-    request: RequestID,
-    task: SessionID,
-    now: Date,
-  ) async throws {
-    let notification = SystemNotification(
-      id: UUID.deterministic("deadline", parent.rawValue, request.rawValue),
-      timestamp: now,
-      kind: .requestDeadline,
-      subscriptionID: subscription.slot.id,
-      endsSubscription: true,
-      requestID: request,
-      content: .init(text: """
-      Request \(request.rawValue) on task \(task.rawValue) passed its deadline with no final report. \
-      Decide: re-request, kill it, or replace it.
-      """),
-    )
-    try await deliver(subscription, to: parent, notification: notification, advance: .retire)
-  }
-
-  private func fireTimer(
-    _ subscription: ArmedSubscription,
-    schedule: TimerSchedule,
-    message: String,
-    due: Date,
-    now: Date,
-  ) async throws {
-    let advance: SessionStore.SubscriptionAdvance
-    let endsSubscription: Bool
-    switch schedule {
-    case .oneShot:
-      advance = .retire
-      endsSubscription = true
-    case let .cron(expression):
-      guard let next = nextCronFire(expression, max(now, due)) else {
-        try await retire(subscription)
-        return
-      }
-      advance = .reschedule(next)
-      endsSubscription = false
-    }
-    if subscription.slot.handler != nil {
-      try await fireHandler(subscription, input: .timer(due), advance: advance)
-      return
-    }
-    guard let session = try await wakes(subscription, orPause: "a group timer runs a handler") else { return }
-    let notification = SystemNotification(
-      id: UUID.deterministic(
-        "timer",
-        session.rawValue,
-        subscription.slot.id.rawValue,
-        String(due.timeIntervalSince1970),
-      ),
-      timestamp: now,
-      kind: .timer,
-      subscriptionID: subscription.slot.id,
-      endsSubscription: endsSubscription,
-      content: .init(text: message),
-    )
-    try await deliver(subscription, to: session, notification: notification, advance: advance)
-  }
-
-  // A failed firing's input stands: the same rows or fire time go again,
-  // backing off, until the handler takes them or the slot goes.
-  private func fireHandler(
-    _ subscription: ArmedSubscription,
-    input: ScriptHandlerInvocation.Input,
-    advance: SessionStore.SubscriptionAdvance,
-    marker: String? = nil,
-  ) async throws {
-    @Dependency(\.continuousClock) var clock
-    var backoff = 0
-    while try await !fireHandlerOnce(subscription, input: input, advance: advance, marker: marker) {
-      backoff = min(max(1, backoff * 2), 300)
-      try await clock.sleep(for: .seconds(backoff))
-    }
-  }
-
-  private func fireHandlerOnce(
-    _ subscription: ArmedSubscription,
-    input: ScriptHandlerInvocation.Input,
-    advance: SessionStore.SubscriptionAdvance,
-    marker: String?,
-  ) async throws -> Bool {
-    try Task.checkCancellation()
-    if try await retireIfOrphaned(subscription) { return true }
-    guard let path = subscription.slot.handler, let incarnation = subscription.slot.handlerIncarnation,
-          let attempt = try await space.sessions.beginSubscriptionHandler(
-            subscription.owner, subscriptionID: subscription.slot.id, incarnation: incarnation, marker: marker,
-          )
-    else { throw CancellationError() }
-    @Dependency(\.date) var date
-    @Dependency(\.uuid) var uuid
-    let kind: FiringKind = switch input {
-    case .rows: .observe
-    case .timer: .timer
-    case .event: .stream
-    }
-    func notification(_ text: String) -> SystemNotification {
-      SystemNotification(
-        id: uuid(), timestamp: date.now, kind: kind == .timer ? .timer : .spaceObservation,
-        subscriptionID: subscription.slot.id, content: .init(text: text),
-      )
-    }
-    let runner: ScriptHandlerInvocation.Runner = switch attempt.owner {
-    case let .session(id): .session(id)
-    case let .group(group): .observer(Observer(group: group, name: attempt.name!, firing: attempt.firing))
-    }
-    let lag: Int? = if case let .timer(due) = input { max(0, Int(date.now.timeIntervalSince(due) * 1000)) } else { nil }
-    let result: ScriptHandlerResult
-    do {
-      result = try await traced(.firing, under: .root(SpanOwner(session: attempt.owner.session, group: attempt.group))) { span in
-        span.set(.subscription, subscription.slot.id)
-        span.set(.firing, attempt.firing)
-        span.set(.firingKind, kind)
-        span.set(.observer, attempt.owner.group == nil ? nil : attempt.name)
-        span.set(.lagMs, lag)
-        let result = try await worker.fire(.init(
-          id: attempt.attemptID, path: path, runner: runner, input: input,
-          stateJSON: attempt.stateJSON,
-        ))
-        try Task.checkCancellation()
-        span.set(.wakes, result.wakes.count)
-        span.conclude(.ok)
-        return result
-      }
-    } catch {
-      // An aborted firing may answer with its script's error; either way it
-      // was cut off, not failed.
-      if error is CancellationError || Task.isCancelled {
-        try? await uncancellable("Log the cancelled firing") { try await space.sessions.cancelFiring(attempt) }
-        throw CancellationError()
-      }
-      guard try await finish(attempt, .failure(
-        error: "\(error)", notification: notification("handler \(path) for \(subscription.slot.id.rawValue) failed: \(error)"),
-      )) else { throw CancellationError() }
-      return false
-    }
-    guard try await finish(attempt, .success(stateJSON: result.stateJSON, advance: advance, wakes: result.wakes.map(notification)))
-    else { throw CancellationError() }
-    return true
-  }
-
-  // A firing's end is written even when its task is cancelled meanwhile: the
-  // write itself says whether its slot still takes it.
-  private func finish(_ attempt: SubscriptionHandlerAttempt, _ result: SubscriptionHandlerResult) async throws -> Bool {
-    try await uncancellable("End the firing") { try await space.sessions.finishSubscriptionHandler(attempt, result: result) }
-  }
-
   private func principal(of subscription: ArmedSubscription) async throws -> Principal {
     switch subscription.owner {
     case let .session(id): try await space.principal(of: id)
     case let .group(group): Observer(group: group, name: subscription.name!, firing: nil).principal
     }
-  }
-
-  private func sleep(until due: Date?) async throws {
-    try Task.checkCancellation()
-    guard let due else { throw FiringFailure.missingDueTime }
-    @Dependency(\.continuousClock) var clock
-    @Dependency(\.date) var date
-    let delay = due.timeIntervalSince(date.now)
-    if delay > 0 { try await clock.sleep(for: .seconds(delay)) }
-    try Task.checkCancellation()
   }
 
   /// The session a notifying slot wakes. A group's slot wakes no one: it
@@ -573,7 +257,7 @@ public struct SubscriptionFiring: Sendable {
       case .modelRouteInvalid, .unknownPerson, .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
            .selfDirectMessage, .humanAgentDirectMessage, .taskHasNoBox, .taskTakesNoHumanInput, .notTheParent,
            .requestAlreadyOpen, .unknownRequest, .reportRefused,
-           .busyForRestart, .requestDeadlineWithoutFireDate, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:
+           .busyForRestart, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:
         throw error
       }
     }
@@ -601,53 +285,20 @@ private func invalidObservationQuery(_ error: any Error) -> Bool {
   }
 }
 
-private final class PendingEvents: Sendable {
-  private let batch = Mutex(EventBatch())
-
-  func add(_ event: SSEEvent) -> Bool { batch.withLock { $0.add(event) } }
-
-  func take() -> EventBatch {
-    batch.withLock { batch in
-      defer { batch = EventBatch() }
-      return batch
-    }
-  }
-}
-
-/// Events waiting for a wake, rendered as they came over the wire. It takes
-/// events while they fit in 64 KiB, and always its first, cut to fit.
-private struct EventBatch {
-  static let limit = 64 << 10
-  private(set) var count = 0
-  /// The last event's id, empty when it had none; nil while the batch is empty.
-  private(set) var lastEventID: String?
-  private(set) var rendered = ""
-
-  mutating func add(_ event: SSEEvent) -> Bool {
-    var lines = event.id.map { ["id: " + $0] } ?? []
-    if event.event != "message" { lines.append("event: " + event.event) }
-    lines += event.data.split(separator: "\n", omittingEmptySubsequences: false).map { "data: " + $0 }
-    let wire = lines.joined(separator: "\n") + "\n\n"
-    let size = wire.utf8.count
-    if count > 0, rendered.utf8.count + size > Self.limit { return false }
-    count += 1
-    lastEventID = event.id ?? ""
-    rendered += size <= Self.limit ? wire : String(decoding: wire.utf8.prefix(Self.limit), as: UTF8.self) + "\n(cut at 64 KiB of \(size) bytes)\n\n"
-    return true
-  }
-}
-
 private enum FiringFailure: Error {
   case registryStreamEnded
   case observationStreamEnded
-  case missingObservationCallback
-  case missingDueTime
 }
 
 private enum RegistryEvent: Sendable {
   case changed
   case finished(Arming, Int, Result<Void, any Error>)
   case failed(any Error)
+}
+
+private struct Pair: Hashable {
+  var owner: SubscriptionOwner
+  var subscription: SubscriptionID
 }
 
 private struct Arming: Hashable, Sendable {
@@ -668,4 +319,9 @@ private struct Arming: Hashable, Sendable {
     handlerIncarnation = armed.slot.handlerIncarnation
     self.orphaned = orphaned
   }
+}
+
+private func observedText(_ kind: SubscriptionSlot.Kind, sql: String, rows: Rows) -> String {
+  guard case .children = kind else { return "observed change for \(sql):\n" + renderedRows(rows) }
+  return "Your children errored:\n" + renderedRows(rows)
 }

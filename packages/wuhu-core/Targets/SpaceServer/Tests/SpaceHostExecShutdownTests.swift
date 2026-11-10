@@ -24,7 +24,7 @@ import Testing
 import struct WuhuAI.ToolCall
 
 @Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct SpaceHostExecShutdownTests {
-  @Test func archiveKillsAndAcknowledgesAWorkerExecBeforeForgettingItsEnd() async throws {
+  @Test func archiveKillsAWorkerExec() async throws {
     try await withSessionDeps {
       let space = try makeMachineSpace()
       _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
@@ -47,6 +47,7 @@ import struct WuhuAI.ToolCall
       await server.hub.configureV2(service)
       let runtime = await SessionRuntime.assemble(space: space, hub: server.hub, credentials: .unavailable)
       _ = SpaceServer.handler(space: space, hub: server.hub, sessions: runtime, dev: true)
+      runtime.execution.start()
       let session = try await space.sessions.createSession(
         group: .shared, title: "owed end", kind: .agent, createdBy: "owner",
         model: .init(provider: "testing", model: "test-model", effort: "high"),
@@ -55,19 +56,16 @@ import struct WuhuAI.ToolCall
         group.addTask { await agent.run() }
         group.addTask { try await service.run() }
         defer { group.cancelAll(); side.release.open() }
-        let outcome = try await runtime.inProcessWorker!.execute(session: session, call: ToolCall(
+        let outcome = try await runtime.execution.tools.execute(session: session, call: ToolCall(
           id: "archive-live", name: "exec", arguments: .object([
             "machine": .string(machine.rawValue), "cwd": .string("/"), "command": .string("wait"), "wait_seconds": .number(0.01),
           ]),
         ), state: .init(folderRoots: ["machines://\(machine.rawValue)/": nil]))
         guard case .exec = outcome.payload else { Issue.record("expected a running exec"); return }
         await side.started.wait()
-        let record = try #require(try await space.execRecord(caller: session.rawValue, toolCallID: .init("archive-live")))
-        #expect(record.toolEndOwed)
         let token = runtime.tokens.sessionToken(session)
-        try await runtime.service.archive(session)
-        #expect(try await space.sessions.record(session).lifecycle != .live)
-        #expect(try await space.execRecord(record.id)?.toolEndOwed == false)
+        try await runtime.execution.archive(session)
+        try await until("archived") { try await space.sessions.record(session).lifecycle != .live }
         #expect(runtime.tokens.session(ofBearer: token) == nil)
         await side.stopped.wait()
         #expect(side.reason.withLock { $0 } == "callerCancelled")
@@ -78,13 +76,8 @@ import struct WuhuAI.ToolCall
         }
         let operations = try await service.operations(group: .shared)
         try await until("the archived operation is settled") { await operations.running == 0 }
-        let executor = SessionRuntime.toolExecutor(owner: runtime.owner)
-        await executor.adoptExecJobs(of: session)
-        await executor.adoptExecJobs(of: session)
-        #expect(executor.runningExecJobs(of: session).isEmpty)
-        #expect(try await space.owedExecs().isEmpty)
         #expect(counts.withLock { $0.stops == 1 })
-        await runtime.workers.shutdown()
+        await runtime.execution.shutdown()
         await service.shutdown()
         await agent.shutdown()
       }
@@ -154,7 +147,7 @@ import struct WuhuAI.ToolCall
             try await http("/v1/machine/box/status").json(MachineStatus.self).attached
           }, "the machine tunnel must be attached before the worker starts its exec")
           let session = try await host.space.sessions.createSession(group: .shared, title: "live exec", kind: .agent, createdBy: "owner", model: .init(provider: "testing", model: "test-model", effort: "high"))
-          _ = try await host.space.sessions.enqueue(session, input: .notification(.init(id: UUID(), timestamp: Date(), kind: .timer, subscriptionID: .init("exec-wake"), content: .init(text: "run wait"))))
+          try await host.space.sessions.enqueue(session, input: .notification(.init(id: UUID(), timestamp: Date(), kind: .timer, subscriptionID: .init("exec-wake"), content: .init(text: "run wait"))))
           try #require(try await realPollUntil { side.startedFlag.withLock { $0 } }, "the worker must start its operation through the attached tunnel")
           let drained = Mutex(false)
           let shutdown = Task {

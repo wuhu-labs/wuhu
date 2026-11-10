@@ -23,6 +23,7 @@ public enum InferenceError: Error, Sendable, Equatable {
   case contextTooLong
   case requestTooLarge(limitBytes: Int)
   case requestTooLargeAfterCompaction(limitBytes: Int)
+  /// Output a caller cannot use, found by the caller itself (a completion with tool calls, invalid structured JSON); no provider reports it.
   case malformedModelMessage(message: String, reason: String?)
   case invalidInput(status: Int, body: String?)
   case transient(status: Int?, body: String?)
@@ -76,7 +77,7 @@ extension InferenceError {
   static func capacityError(code: String?, message: String?, status: Int?) -> InferenceError? {
     guard let code else { return nil }
     switch code {
-    case "websocket_backpressure", "response_too_large", "websocket_message_too_large":
+    case "response_too_large", "websocket_message_too_large":
       return .capacityExceeded(code: code, message: String((message ?? code).prefix(8192)), status: status)
     default:
       return nil

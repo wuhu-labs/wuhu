@@ -67,8 +67,6 @@ private func renderedKernelItem(_ logItem: SessionLogItem, level: Int, clip: Int
     case .compactRequest: "compact request"
     case .owedReply: "owed reply"
     case .parkReminder: "park reminder"
-    case .childFailed: "child failed"
-    case .requestDeadline: "request deadline"
     case .requestStall: "request stall"
     case .script: "script"
     case .exec: "exec"

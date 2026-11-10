@@ -59,7 +59,7 @@ private extension Transcript {
         return nil
       }
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("wrap up"), to: id)
+        try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
         await time.advance(by: 3600)
         try await holds("no inference while parked") { script.count == 1 }
@@ -69,7 +69,7 @@ private extension Transcript {
         guard case .foldPending = try await sessions.hydrate(id).transcript.kernel.phase else { throw UnexpectedCall("a live phase after the park") }
 
         _ = try await space.fs(.shared).write("/AGENTS.md", Data("edited while parked".utf8), ifMatch: nil)
-        _ = try await service.enqueue(item: Fix.message("next", message: "m2"), to: id)
+        try await service.enqueue(item: Fix.message("next", message: "m2"), to: id)
         try await until("the wake runs the new generation") { try await sessions.settledWork(id) && script.count == 2 }
       }
       #expect(placements.withLock { $0 } == 1)
@@ -93,14 +93,14 @@ private extension Transcript {
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("wrap up"), to: id)
+        try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
       }
       try await runService(space, config) { service in
-        try await service.wake(id)
+        try await sessions.look(id)
         try await holds("a restart starts nothing") { script.count == 1 }
         #expect(try await sessions.generationState(id).generation == 0)
-        _ = try await service.enqueue(item: Fix.message("after restart", message: "m2"), to: id)
+        try await service.enqueue(item: Fix.message("after restart", message: "m2"), to: id)
         try await until("the wake runs the new generation") { try await sessions.settledWork(id) && script.count == 2 }
       }
       #expect(try await sessions.generationState(id).generation == 1)
@@ -117,7 +117,7 @@ private extension Transcript {
       let script = InferenceScript([parks()])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { _ in
-        _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "ask @\(bystander.rawValue) first", deadline: nil)
+        _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "ask @\(bystander.rawValue) first")
         try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
       }
       let transcript = try await sessions.hydrate(bystander).transcript.kernel
@@ -137,7 +137,7 @@ private extension Transcript {
       let bystander = try await sessions.createSession(group: .shared, title: "bystander", kind: .agent, createdBy: "morgan", model: .test)
       let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "morgan")
       let task = try await createRetiredSession(in: space, title: "task", kind: .task, parent: requester, createdBy: "morgan")
-      _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "do it", deadline: nil)
+      _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "do it")
       let foreignBrief = QueueInput.message(.init(
         id: UUID(), messageID: .init("r1"), conversationID: .init("dm-requester-task"), sender: Fix.sender,
         timestamp: anchor, kind: .request, requestID: .init("r1"), owesReply: false, content: .init(text: "do it"),
@@ -145,7 +145,7 @@ private extension Transcript {
       let script = InferenceScript([parks()])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: foreignBrief, to: bystander)
+        try await service.enqueue(item: foreignBrief, to: bystander)
         try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
       }
       guard case .foldPending = try await sessions.hydrate(bystander).transcript.kernel.phase else { throw UnexpectedCall("the park was refused") }
@@ -160,7 +160,7 @@ private extension Transcript {
       let task = try await createRequestedTask(in: space, title: "fails its request")
       let parent = try #require(try await sessions.record(task).parent)
       let schema = try #require(JSONValue.parse(#"{"type":"object"}"#))
-      _ = try await sessions.openRequest(on: task, from: .session(parent), messageID: .init("r1"), text: "answer in JSON", deadline: nil, terms: RequestTerms(schema: schema))
+      _ = try await sessions.openRequest(on: task, from: .session(parent), messageID: .init("r1"), text: "answer in JSON", terms: RequestTerms(schema: schema))
       for attempt in ["f1", "f2", "f3"] {
         await #expect(throws: SessionStoreError.self) {
           _ = try await sessions.report(task, request: .init("r1"), kind: .final, messageID: .init(attempt), text: "not an object")
@@ -170,7 +170,7 @@ private extension Transcript {
       let script = InferenceScript([parks()])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in
-        try await service.wake(task)
+        try await sessions.look(task)
         try await until("the task's park settles") { try await sessions.settledWork(task) && script.count == 1 }
       }
       let transcript = try await sessions.hydrate(task).transcript.kernel
@@ -200,7 +200,7 @@ private extension Transcript {
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in
-        if let owing { _ = try await service.enqueue(item: owing, to: id) } else { try await sessions.openParentRequest(on: id) }
+        if let owing { try await service.enqueue(item: owing, to: id) } else { try await sessions.openParentRequest(on: id) }
         try await until("the refused park's turn goes on and its nag is answered") { try await sessions.settledWork(id) && script.count == 3 }
       }
       #expect(try await sessions.generationState(id).generation == 0)
@@ -223,15 +223,15 @@ private extension Transcript {
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("wrap up"), to: id)
+        try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
         try await sessions.requestCommand(id, .compact(instructions: "keep the build notes"))
-        try await service.wake(id)
+        try await sessions.look(id)
         try await until("the request completes") { try await sessions.pendingCommand(id) == nil }
         try await holds("no fold and no inference") { script.count == 1 }
         #expect(try await sessions.generationState(id).generation == 0)
         guard case .foldPending = try await sessions.hydrate(id).transcript.kernel.phase else { throw UnexpectedCall("the request ran the fold") }
-        _ = try await service.enqueue(item: Fix.message("next", message: "m2"), to: id)
+        try await service.enqueue(item: Fix.message("next", message: "m2"), to: id)
         try await until("the wake runs the fold") { try await sessions.settledWork(id) && script.count == 2 }
       }
       #expect(try await sessions.generationState(id).generation == 1)
@@ -253,11 +253,11 @@ private extension Transcript {
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("wrap up"), to: id)
+        try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
         _ = try await service.restart(id, executor: nil, note: "Started over.")
         try await holds("Start over is inert") { script.count == 1 }
-        _ = try await service.enqueue(item: Fix.message("begin again", message: "m2"), to: id)
+        try await service.enqueue(item: Fix.message("begin again", message: "m2"), to: id)
         try await until("the fresh generation runs") { try await sessions.settledWork(id) && script.count == 2 }
       }
     }
@@ -277,7 +277,7 @@ private extension Transcript {
         },
       ])
       try await runService(space, makeConfig(inference: { try await script($0) })) { service in
-        _ = try await service.enqueue(item: Fix.message("wrap up"), to: id)
+        try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the refusal is answered") { try await sessions.settledWork(id) && script.count == 2 }
       }
       #expect(try await sessions.hydrate(id).transcript.kernel.phase == .live)

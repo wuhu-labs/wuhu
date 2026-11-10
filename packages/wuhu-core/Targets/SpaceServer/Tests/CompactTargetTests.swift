@@ -38,7 +38,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
   let created = try await harness.call("/v1/session", .object(["title": "Direct", "kind": "agent", "provider": "testing", "model": "test-model"]), as: SessionCreateOutput.self)
   let id = SessionID(created.id)
   let bound = SessionModelRoute(group: nil, member: nil, specifier: .init(provider: "testing", model: "test-model", effort: "high"), bindingFingerprint: catalog.document.providers["testing"]!.routeFingerprint, epoch: UUID().uuidString.lowercased(), reason: .create, placedAt: Date(), evidence: [])
-  return (id, try await owner.append(id, .modelRouteEstablished(bound)).value(SessionModelRoute.self))
+  return (id, try await owner.space.sessions.establishModelRoute(id, route: bound))
 }
 
 @Suite(.deterministicDependencies) struct CompactTargetTests {
@@ -64,16 +64,16 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
         let usage = UsageBoard()
         let placed = try #require(await modelRoutePreparer(catalog: { catalog }, usage: usage)(.modelGroup(id: "work", effort: "high"), .create))
         id = try await space.sessions.createSession(group: .shared, title: "Switch", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), snapshot: .init(), modelRoute: placed)
-        old = try #require(await owner.modelRoute(id))
+        old = try #require(await owner.space.sessions.modelRoute(id))
         let transcript = try await compacted(space.sessions, id)
-        let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: usage)
+        let prepare = compactionPlacement(store: owner.space.sessions, catalog: { _ in catalog }, usage: usage)
         let transition = try #require(await prepare(id, transcript, .init(model: "alternate/test-model", effort: "low")))
         route = transition.route
         #expect(route.group == nil && route.member == nil)
         #expect(route.specifier == ModelSpecifier(provider: "alternate", model: "test-model", effort: "low"))
         #expect(route.reason == .compaction)
         #expect(routeNotice(transition.transcript) == "Model switched work:\(old.member!) → alternate/test-model (requested at compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed.")
-        _ = try await owner.append(id, .compacted(closing: nil, head: summaryHead, kept: nil, completing: nil, transition: transition)).value(Transcript.self)
+        _ = try await owner.space.sessions.writeCompaction(id, head: summaryHead, kept: nil, transition: transition)
         try await space.close()
       }
       let reopened = try Space.open(file: file)
@@ -92,10 +92,10 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
   @Test func aRefusedTargetLeavesRouteHistoryAndGenerationUntouched() async throws {
     try await withSessionDeps {
       let (harness, owner, catalog, id) = try await GroupSwitchingTests().setup()
-      let old = try #require(await owner.modelRoute(id))
+      let old = try #require(await owner.space.sessions.modelRoute(id))
       let generation = try await harness.store.generationState(id).generation
       let transcript = try await compacted(harness.store, id)
-      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(store: owner.space.sessions, catalog: { _ in catalog }, usage: harness.runtime.usage)
       let refusals: [(CompactionTarget, CatalogError)] = [
         (.init(model: "nope/x"), .unknownProvider("nope")),
         (.init(model: "testing/missing"), .unknownModel(provider: "testing", model: "missing")),
@@ -111,9 +111,9 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
         provider == "alternate" ? nil : .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
       }
       let unready = missing
-      let refusing = compactionPlacement(owner: owner, catalog: { _ in unready }, usage: harness.runtime.usage)
+      let refusing = compactionPlacement(store: owner.space.sessions, catalog: { _ in unready }, usage: harness.runtime.usage)
       await #expect(throws: CatalogError.missingCredential(provider: "alternate")) { try await refusing(id, transcript, .init(model: "alternate/test-model")) }
-      #expect(try await owner.modelRoute(id) == old)
+      #expect(try await owner.space.sessions.modelRoute(id) == old)
       #expect(try await harness.store.modelRouteHistory(id) == [old])
       #expect(try await harness.store.generationState(id).generation == generation)
     }
@@ -122,9 +122,9 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
   @Test func aGroupIDRePlacesWithinItsGroupAndBringsADirectSessionIn() async throws {
     try await withSessionDeps {
       let (harness, owner, catalog, id) = try await GroupSwitchingTests().setup()
-      let old = try #require(await owner.modelRoute(id))
+      let old = try #require(await owner.space.sessions.modelRoute(id))
       try #require(old.member == "a")
-      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(store: owner.space.sessions, catalog: { _ in catalog }, usage: harness.runtime.usage)
       #expect(try await prepare(id, compacted(harness.store, id), .init(model: "work")) == nil)
       let reset = Date().timeIntervalSince1970 + 18000
       harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 99, resetsAt: nil)], at: Date())
@@ -133,8 +133,8 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       #expect(transition.route.group == "work" && transition.route.member == "b")
       #expect(transition.route.specifier.effort == old.specifier.effort)
       #expect(routeNotice(transition.transcript)?.hasPrefix("Model group work moved a → b (compaction).") == true)
-      _ = try await owner.append(id, .compacted(closing: nil, head: summaryHead, kept: nil, completing: nil, transition: transition)).value(Transcript.self)
-      #expect(try await owner.modelRoute(id) == transition.route)
+      _ = try await owner.space.sessions.writeCompaction(id, head: summaryHead, kept: nil, transition: transition)
+      #expect(try await owner.space.sessions.modelRoute(id) == transition.route)
       #expect(try await harness.store.record(id).executor == .modelGroup(id: "work", effort: old.specifier.effort))
 
       let (direct, bound) = try await directSession(harness, owner: owner, catalog: catalog)
@@ -142,7 +142,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       #expect(joining.route.group == "work" && joining.route.member == "b")
       #expect(joining.route.specifier == ModelSpecifier(provider: "alternate", model: "test-model", effort: "low"))
       #expect(routeNotice(joining.transcript)?.hasPrefix("Model switched testing/test-model → work:b (requested at compaction).") == true)
-      _ = try await owner.append(direct, .compacted(closing: nil, head: summaryHead, kept: nil, completing: nil, transition: joining)).value(Transcript.self)
+      _ = try await owner.space.sessions.writeCompaction(direct, head: summaryHead, kept: nil, transition: joining)
       #expect(try await harness.store.record(direct).executor == .modelGroup(id: "work", effort: "low"))
       #expect(try await harness.store.modelRouteHistory(direct) == [bound, joining.route])
     }
@@ -158,11 +158,11 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: entry)
       let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
       let (id, bound) = try await directSession(harness, owner: owner, catalog: catalog)
-      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(store: owner.space.sessions, catalog: { _ in catalog }, usage: harness.runtime.usage)
       let joining = try #require(await prepare(id, compacted(harness.store, id), .init(model: "team/claude")))
       #expect(joining.route.group == "team/claude" && joining.route.member != nil)
       #expect(routeNotice(joining.transcript)?.hasPrefix("Model switched testing/test-model → team/claude:") == true)
-      _ = try await owner.append(id, .compacted(closing: nil, head: summaryHead, kept: nil, completing: nil, transition: joining)).value(Transcript.self)
+      _ = try await owner.space.sessions.writeCompaction(id, head: summaryHead, kept: nil, transition: joining)
       #expect(try await harness.store.record(id).executor == .modelGroup(id: "team/claude", effort: joining.route.specifier.effort))
       #expect(try await harness.store.modelRouteHistory(id) == [bound, joining.route])
       #expect(try await prepare(id, compacted(harness.store, id), .init(model: "team/claude")) == nil)
@@ -173,16 +173,16 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
     try await withSessionDeps {
       let (harness, owner, catalog, _) = try await GroupSwitchingTests().setup()
       let (id, bound) = try await directSession(harness, owner: owner, catalog: catalog)
-      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(store: owner.space.sessions, catalog: { _ in catalog }, usage: harness.runtime.usage)
       let transcript = try await compacted(harness.store, id)
       #expect(try await prepare(id, transcript, .init(model: "testing/test-model")) == nil)
       let transition = try #require(await prepare(id, transcript, .init(model: "testing/test-model", effort: "low")))
       #expect(transition.route.epoch == bound.epoch)
       #expect(transition.route.specifier.effort == "low")
       #expect(transition.transcript == transcript)
-      _ = try await owner.append(id, .compacted(closing: nil, head: summaryHead, kept: nil, completing: nil, transition: transition)).value(Transcript.self)
+      _ = try await owner.space.sessions.writeCompaction(id, head: summaryHead, kept: nil, transition: transition)
       #expect(try await harness.store.record(id).executor == .kernel(.init(provider: "testing", model: "test-model", effort: "low")))
-      #expect(try await owner.modelRoute(id) == transition.route)
+      #expect(try await owner.space.sessions.modelRoute(id) == transition.route)
       #expect(try await harness.store.modelRouteHistory(id) == [bound])
     }
   }

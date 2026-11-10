@@ -290,7 +290,7 @@ func withIdentityScript(
       let space = try Space.inMemory()
       let session = try await space.sessions.createSession(group: .shared, title: "fetch test", kind: .agent, createdBy: "tester", model: .init(provider: "test", model: "test", effort: "high"))
       let owner = Hub(space: space)
-      let scripts = Scripts(owner: owner)
+      let scripts = Scripts(sessions: owner.space.sessions)
       let rig = IdentityScriptRig(space: space, session: session, executor: SessionRuntime.toolExecutor(owner: owner, scripts: scripts, identity: identity))
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await whenCancelled { await scripts.close() } }

@@ -10,6 +10,7 @@ import Fetch
 import struct InferenceKit.InferenceMetric
 import struct InferenceKit.InferenceMetricsSink
 import JSONValue
+import struct LoopCore.SessionExecution
 import MachineContract
 import struct MainHub.CancelArguments
 import struct MainHub.CreateSessionArguments
@@ -24,7 +25,6 @@ import struct MainHub.ScriptRun
 import struct MainHub.SendMessageArguments
 import struct MainHub.SetTitleArguments
 import struct MainHub.TimerArguments
-import protocol MainHub.Worker
 import Serve
 import ServeRouting
 import ServeSSE
@@ -72,10 +72,9 @@ func sessionGate(
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
   let gated = sessionRouter(
-    space: space, hub: hub, machines: machines, owner: owner, workers: runtime.workers, streams: runtime.streamScope,
+    space: space, hub: hub, machines: machines, owner: owner, execution: runtime.execution, streams: runtime.streamScope,
     credentials: credentials, identity: identity, metrics: metrics, routed: routed,
   ).upgradingHandler
-  let workerRoutes = workerRouter(owner: owner, runtime: runtime).upgradingHandler
   let sessionlessRoutes = sessionlessRouter(
     space: space, hub: hub, machines: machines, owner: owner, metrics: metrics, routed: routed,
   ).upgradingHandler
@@ -87,8 +86,6 @@ func sessionGate(
     switch await sessionVerdict(String(header.dropFirst("Bearer ".count)), tokens: tokens, space: space, now: dateGen.now) {
     case let .refused(response):
       return .response(response)
-    case .worker:
-      return try await workerRoutes(request)
     case let .script(script):
       if let refused = try await groupMismatch(request, by: "script \(script.member)", group: script.group, space: space) {
         return .response(refused)
@@ -111,8 +108,6 @@ func sessionGate(
 
 enum SessionVerdict {
   case session(GatedSession)
-  /// The worker's own token: the loop's routes, never a session's.
-  case worker
   /// A sessionless script's token: an observer's few verbs, as its principal.
   case script(SessionlessScript)
   case refused(Response)
@@ -129,7 +124,6 @@ func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
 }
 
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
-  if tokens.worker(ofBearer: bearer) != nil { return .worker }
   if let script = tokens.script(ofBearer: bearer) { return .script(script) }
   let session: SessionID
   var boundGroup: GroupID?
@@ -183,7 +177,7 @@ private func sessionRouter(
   hub: MachineHub,
   machines: MachineSeam,
   owner: Hub,
-  workers: any Worker,
+  execution: SessionExecution,
   streams: TaskScope,
   credentials: CredentialResolver,
   identity: IdentityController?,
@@ -423,17 +417,14 @@ private func sessionRouter(
   router.post("/v1/scripts") { request, _ in
     let input = try await request.json(ScriptRunInput.self)
     let script = ScriptRun(runner: .session(principal().session, group: principal().group), source: input.source, arguments: input.arguments)
-    return scriptStream(in: streams) { say in try await workers.run(script, output: say) }
+    return scriptStream(in: streams) { say in try await execution.run(script, output: say) }
   }
-  for (action, owed) in [("detach", true), ("delivered", false)] {
-    router.post("/v1/exec/:id/\(action)") { _, parameters in
-      guard let raw = parameters["id"], ExecID.isValid(raw),
-            try await space.setExecEndOwed(ExecID(rawValue: raw), caller: principal().session.rawValue, owed: owed)
-      else { return unknownExec(parameters) }
-      return try Response.json(JSONValue.object([:]))
-    }
+  router.post("/v1/exec/:id/background") { _, parameters in
+    guard let raw = parameters["id"], ExecID.isValid(raw),
+          try await space.backgroundExec(ExecID(rawValue: raw), caller: principal().session.rawValue)
+    else { return unknownExec(parameters) }
+    return try Response.json(JSONValue.object([:]))
   }
-
   router.post("/v1/session") { request, _ in
     try await postSession(request, as: .session(principal().session), callID: callID(request), owner: owner)
   }
@@ -462,15 +453,7 @@ private func sessionRouter(
   // A session names only itself.
   router.post("/v1/session/:id/title") { request, parameters in
     guard let id = sessionID(parameters), id == principal().session else { return unknownSession(parameters) }
-    let input: SessionTitleInput
-    do {
-      input = try await request.json(SessionTitleInput.self)
-    } catch {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-title body: \(error)")
-    }
-    let payload = try await answered { try await owner.setTitle(principal().session, callID(request), SetTitleArguments(title: input.title)) }
-    guard case let .setTitle(titled) = payload else { return hubRefusal(payload) }
-    return try Response.json(SessionTitleOutput(title: titled.title))
+    return try await forward(request, parameters)
   }
 
   router.post("/v1/device/:id/command") { request, parameters in
@@ -517,7 +500,9 @@ private func sessionRouter(
     guard let id = parameters["id"], !id.isEmpty else {
       return errorResponse(.notFound, code: "notFound", message: "unknown subscription")
     }
-    let payload = try await answered { try await owner.cancel(principal().session, callID(request), CancelArguments(id: id)) }
+    let payload = try await answered {
+      try await owner.cancel(principal().session, callID(request), CancelArguments(id: id))
+    }
     guard let output = subscriptionOutput(payload) else { return hubRefusal(payload) }
     return try Response.json(output)
   }

@@ -18,9 +18,9 @@ extension Hub {
         @Dependency(\.date) var date
         @Dependency(\.uuid) var uuid
         do {
-          _ = try await append(SessionID(rawValue: owner.session), .inputEnqueued(.notification(.init(
+          try await store.enqueue(SessionID(rawValue: owner.session), input: .notification(.init(
             id: uuid(), timestamp: date.now, kind: .script, subscriptionID: .script(owner.script), content: .init(text: text),
-          )))).value(Int.self)
+          )))
         } catch {
           Logger(label: "wuhu.execution-boot").warning("Could not notify script owner: \(error)")
         }

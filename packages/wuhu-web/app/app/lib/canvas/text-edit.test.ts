@@ -3,6 +3,7 @@ import { loadLoro } from '~/lib/wmd/loro.ts'
 import { wmdSchema as schema } from '~/lib/wmd/schema.ts'
 import { boardOf, configuredBoard, type TextRun } from './board.ts'
 import { CanvasEditor } from './editor.ts'
+import { sceneOf } from './scene.ts'
 import { finishText, inlineNodes, mergedText, runsOf } from './text-edit.ts'
 
 await loadLoro()
@@ -50,12 +51,12 @@ Deno.test('typing merges with a concurrent edit made since the base', () => {
   new CanvasEditor(remote).setText(id, [{ text: 'Hello world' }])
   remote.commit()
   doc.import(remote.export({ mode: 'update', from: doc.oplogVersion() }))
-  assertEquals(mergedText(doc, id, base, [{ text: 'Hi Hello' }]), [
+  assertEquals(mergedText(doc, { id }, base, [{ text: 'Hi Hello' }]), [
     { text: 'Hi Hello world' },
   ])
   new CanvasEditor(doc).delete([id])
   doc.commit()
-  assertEquals(mergedText(doc, id, base, [{ text: 'Hi Hello' }]), null)
+  assertEquals(mergedText(doc, { id }, base, [{ text: 'Hi Hello' }]), null)
   assertEquals(boardOf(doc).items, [])
 })
 
@@ -116,4 +117,51 @@ Deno.test('undo reverts only the local peer and keeps remote edits', () => {
   undo.redo()
   assertEquals(item().text, [{ text: 'Hi Hello world' }])
   assertEquals([item().x, item().y, item().color], [40, 40, 'pink'])
+})
+
+Deno.test('a connector label edits through the connector, merges and clears to no label', () => {
+  const doc = configuredBoard(new LoroDoc())
+  const editor = new CanvasEditor(doc)
+  const box = { x: 0, y: 0, w: 100, h: 100 }
+  const a = editor.insert('rect', box, 'blue')
+  const b = editor.insert('rect', { ...box, x: 300 }, 'blue')
+  const id = editor.connect({ from: a, to: b })
+  doc.commit()
+  const undo = new UndoManager(doc, { mergeInterval: 0 })
+  const labelOf = () => boardOf(doc).connectors.find((c) => c.id === id)?.label
+  const session = { id, label: true, base: doc.frontiers(), original: [] }
+  assertEquals(finishText(doc, session, [{ text: 'sync' }]), true)
+  assertEquals(labelOf(), [{ text: 'sync' }])
+  assertEquals(sceneOf(boardOf(doc)).connectors[0].label?.runs, [{
+    text: 'sync',
+  }])
+
+  const remote = configuredBoard(new LoroDoc())
+  remote.import(doc.export({ mode: 'snapshot' }))
+  const again = {
+    id,
+    label: true,
+    base: doc.frontiers(),
+    original: [{ text: 'sync' }],
+  }
+  new CanvasEditor(remote).updateConnector(
+    id,
+    (c) => (c.label = [{ text: 'sync now' }]),
+  )
+  remote.commit()
+  doc.import(remote.export({ mode: 'update', from: doc.oplogVersion() }))
+  assertEquals(finishText(doc, again, [{ text: 'live sync' }]), true)
+  assertEquals(labelOf(), [{ text: 'live sync now' }])
+
+  const cleared = {
+    id,
+    label: true,
+    base: doc.frontiers(),
+    original: [{ text: 'live sync now' }],
+  }
+  assertEquals(finishText(doc, cleared, []), true)
+  assertEquals(labelOf(), [])
+  assertEquals(sceneOf(boardOf(doc)).connectors[0].label, undefined)
+  undo.undo()
+  assertEquals(labelOf(), [{ text: 'live sync now' }])
 })

@@ -15,11 +15,15 @@ dependencies:
   - SpaceCore
   - WuhuAI
   - Fetch
+  - FetchSSE
   - JSONValue
   - OrderedCollections
   - Dependencies
   - Logging
   - GRDB
+  - WuweiNeo
+  - WuweiNeoQueries
+  - StructuredQueries
 swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:

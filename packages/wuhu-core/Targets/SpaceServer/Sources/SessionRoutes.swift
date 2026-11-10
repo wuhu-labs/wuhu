@@ -15,11 +15,11 @@ import SpaceTools
 import SystemFiles
 
 func addSessionRoutes(
-  _ router: inout Router, space: Space, runtime: SessionRuntime, dev: Bool,
+  _ router: inout Router, space: Space, hub: MachineHub, runtime: SessionRuntime, dev: Bool,
   principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict,
 ) {
   let store = space.sessions
-  let service = runtime.service
+  let service = runtime.execution
   @Dependency(\.continuousClock) var clock
   @Dependency(\.date) var dateGen
 
@@ -160,7 +160,9 @@ func addSessionRoutes(
     case let .refused(response): return response
     }
     return scriptStream(in: runtime.streamScope) { say in
-      try await runtime.workers.run(ScriptRun(runner: .person(run), source: input.source, arguments: input.arguments), output: say)
+      try await runtime.tokens.runSessionless(.person(run), script: run.id, machines: hub) { token in
+        try await service.run(ScriptRun(runner: .person(run), source: input.source, arguments: input.arguments, token: token), output: say)
+      }
     }
   }
 
@@ -217,9 +219,9 @@ func addSessionRoutes(
   }
 
   for (verb, action) in [
-    ("interrupt", SessionService.interrupt),
-    ("resume", SessionService.resume),
-    ("unarchive", SessionService.unarchive),
+    ("interrupt", SessionExecution.interrupt),
+    ("resume", SessionExecution.resume),
+    ("unarchive", SessionExecution.unarchive),
   ] {
     router.post("/v1/session/:id/\(verb)") { request, parameters in
       try request.requireNoBody()
@@ -247,7 +249,7 @@ func addSessionRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-tags body: \(error)")
     }
     do {
-      try await store.setTags(id, to: input.tags)
+      try await service.retag(id, to: input.tags)
       return jsonResponse(.object(["tags": .array(input.tags.map { .string($0) })]))
     } catch {
       return sessionErrorResponse(error)
@@ -264,7 +266,7 @@ func addSessionRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-title body: \(error)")
     }
     do {
-      return jsonResponse(.object(["title": .string(try await store.setTitle(id, to: input.title))]))
+      return jsonResponse(.object(["title": .string(try await service.retitle(id, to: input.title))]))
     } catch {
       return sessionErrorResponse(error)
     }
@@ -284,10 +286,7 @@ func addSessionRoutes(
       }
     }
     do {
-      if try await store.record(id).kind == .task, input.instructions?.isEmpty == false {
-        throw SessionStoreError.taskTakesNoHumanInput(id.rawValue)
-      }
-      try await store.requestCommand(id, .compact(instructions: input.instructions))
+      try await service.compact(id, instructions: input.instructions)
       return jsonResponse(.object([:]))
     } catch {
       return sessionErrorResponse(error)
@@ -827,8 +826,6 @@ func sessionErrorResponse(_ error: any Error) -> Response {
       return errorResponse(.notFound, code: "notFound", message: "unknown message: \(id)")
     case let .archiveGraceExpired(key):
       return errorResponse(.conflict, code: "archiveGraceExpired", message: "session \(key) is archived and its grace has expired")
-    case let .requestDeadlineWithoutFireDate(id):
-      return errorResponse(.conflict, code: "invalidSubscription", message: "request deadline \(id) has no stored fire date")
     case let .busyForRestart(key):
       return errorResponse(
         .conflict,
@@ -893,10 +890,6 @@ func sessionErrorResponse(_ error: any Error) -> Response {
     return errorResponse(.conflict, code: "conflict", message: busy.message)
   case let SessionError.unreadableData(id):
     return errorResponse(.conflict, code: "unreadableSessionData", message: SessionError.unreadableData(id).description)
-  case SessionError.archiveInProgress:
-    return errorResponse(.conflict, code: "conflict", message: "session is being archived; retry after the archive finishes")
-  case SessionError.archiveReservationLost:
-    return errorResponse(.conflict, code: "conflict", message: "session changed during archive; archive stopped, retry it")
   case SessionError.archiveGraceExpired:
     return errorResponse(.conflict, code: "archiveGraceExpired", message: "the archive grace has expired")
   case let error as CatalogError:

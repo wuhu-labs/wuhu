@@ -57,10 +57,10 @@ public enum CanvasKind: String, CaseIterable, Hashable, Sendable {
 
   public var defaultSize: CanvasSize {
     switch self {
-    case .sticky: CanvasSize(w: 160, h: 160)
+    case .sticky: CanvasSize(w: 220, h: 220)
     case .text: CanvasSize(w: 240, h: 40)
     case .rect: CanvasSize(w: 200, h: 100)
-    case .ellipse, .diamond: CanvasSize(w: 160, h: 120)
+    case .ellipse, .diamond: CanvasSize(w: 120, h: 120)
     case .section: CanvasSize(w: 600, h: 400)
     case .file: CanvasSize(w: 240, h: 160)
     }
@@ -69,8 +69,7 @@ public enum CanvasKind: String, CaseIterable, Hashable, Sendable {
   /// What a new item gets when nothing names its colour; free text and file cards have none.
   public var defaultColor: CanvasColor? {
     switch self {
-    case .sticky: .yellow
-    case .rect, .ellipse, .diamond: .blue
+    case .sticky, .rect, .ellipse, .diamond: .blue
     case .section: .gray
     case .text, .file: nil
     }

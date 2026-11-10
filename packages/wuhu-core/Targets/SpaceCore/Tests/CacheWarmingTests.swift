@@ -22,7 +22,9 @@ private final class WarmingTime: Sendable {
   }
 
   private func ping(_ store: SessionStore, _ id: SessionID, quotaLow: Bool = false, max: Int = 20) async throws -> Bool {
-    try await store.enqueueCacheWarming(id, maxPings: max, floorTokens: 50000, images: .claude, quotaLow: quotaLow)
+    let pinged = try await store.enqueueCacheWarming(id, maxPings: max, floorTokens: 50000, images: .claude, quotaLow: quotaLow)
+    try await store.deliverMail()
+    return pinged
   }
 
   private func row(_ store: SessionStore, _ id: SessionID) async throws -> CacheWarmingRow? {
@@ -42,8 +44,7 @@ private final class WarmingTime: Sendable {
         for index in 0 ..< 20 {
           time.advance()
           #expect(try await ping(store, id))
-          let hydration = try await store.hydrate(id)
-          let notice = try #require(hydration.undrained.last?.input)
+          let notice = try #require(try await store.undrainedInputs(id).last?.input)
           #expect(notice.content.text.contains("<cache-warming-notice>"))
           #expect(notice.content.text.contains("compact tool now with park: true"), "ping \(index)")
           try await settle(store, id)
@@ -52,7 +53,7 @@ private final class WarmingTime: Sendable {
         #expect(try await !ping(store, id))
         #expect(try await store.notifications(recipient: "morgan").isEmpty)
         for input in [SessionFix.message(), SessionFix.notification()] {
-          _ = try await store.enqueue(id, input: input)
+          try await store.put(id, input: input)
           try await settle(store, id)
           #expect(try await !ping(store, id))
           time.advance()
@@ -75,14 +76,14 @@ private final class WarmingTime: Sendable {
         #expect(try await !ping(store, id, max: 1))
         let after = try #require(try await row(store, id))
         #expect(after.pingCount == before.pingCount && after.nextPingAt == before.nextPingAt)
-        #expect(try await store.hydrate(id).undrained.isEmpty)
+        #expect(try await store.undrainedInputs(id).isEmpty)
         try await settle(store, id, tokens: 50000)
         time.advance()
         #expect(try await ping(store, id, max: 1))
-        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact tool now with park: true") == true)
+        #expect(try await store.undrainedInputs(id).last?.input.content.text.contains("compact tool now with park: true") == true)
         _ = try await store.drainQueue(id)
         _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: time.now, summary: "folded", snapshot: .init(), runningWork: []), kept: nil)
-        _ = try await store.enqueue(id, input: SessionFix.message("new work"))
+        try await store.put(id, input: SessionFix.message("new work"))
         try await settle(store, id, tokens: 12000)
         time.advance()
         #expect(try await !ping(store, id, max: 1))
@@ -106,7 +107,7 @@ private final class WarmingTime: Sendable {
         #expect(try await !ping(store, task))
         time.advance()
         #expect(try await !ping(store, agent))
-        _ = try await store.enqueue(agent, input: SessionFix.notification())
+        try await store.put(agent, input: SessionFix.notification())
         try await settle(store, agent)
         time.advance()
         #expect(try await ping(store, agent))
@@ -119,7 +120,7 @@ private final class WarmingTime: Sendable {
     try await withSessionDeps {
       try await withDependencies { $0.date = DateGenerator { time.now } } operation: {
         let store = try Space.inMemory().sessions
-        let helpers = SubscriptionHandlerTests()
+        let helpers = ObserverRowsTests()
         let id = try await helpers.owner(store)
         try await settle(store, id)
         let slot = try await helpers.arm(store, id)
@@ -128,18 +129,18 @@ private final class WarmingTime: Sendable {
             time.advance(30)
             let marker = "\(cycle)-\(tick)"
             let attempt = try await helpers.begin(store, slot, marker: marker)
-            #expect(try await store.finishSubscriptionHandler(attempt, result: .success(stateJSON: "null", advance: .observed(marker: marker), wakes: [])))
+            try await helpers.finish(store, attempt, .ok(wakes: []), .taken(marker: marker))
           }
-          #expect(try await store.hydrate(id).undrained.isEmpty)
+          #expect(try await store.undrainedInputs(id).isEmpty)
           #expect(try await ping(store, id, max: 2))
           try await settle(store, id)
         }
         time.advance()
         let attempt = try await helpers.begin(store, slot, marker: "stopped")
-        #expect(try await store.finishSubscriptionHandler(attempt, result: .success(stateJSON: "null", advance: .observed(marker: "stopped"), wakes: [])))
+        try await helpers.finish(store, attempt, .ok(wakes: []), .taken(marker: "stopped"))
         #expect(try await !ping(store, id, max: 2))
         let wake = try await helpers.begin(store, slot, marker: "wake")
-        #expect(try await store.finishSubscriptionHandler(wake, result: .success(stateJSON: "null", advance: .observed(marker: "wake"), wakes: [helpers.wake(slot, "real input")])))
+        try await helpers.finish(store, wake, .ok(wakes: ["real input"]), .taken(marker: "wake"))
         try await settle(store, id)
         time.advance()
         #expect(try await ping(store, id, max: 2))
@@ -162,7 +163,7 @@ private final class WarmingTime: Sendable {
         try await settle(store, id)
         time.advance()
         #expect(try await !ping(store, id))
-        _ = try await store.enqueue(id, input: SessionFix.notification("real input"))
+        try await store.put(id, input: SessionFix.notification("real input"))
         try await settle(store, id)
         time.advance()
         #expect(try await ping(store, id))
@@ -189,7 +190,7 @@ private final class WarmingTime: Sendable {
         try await settle(store, id)
         time.advance()
         #expect(try await !ping(store, id, max: 1))
-        _ = try await store.enqueue(id, input: SessionFix.message("new work"))
+        try await store.put(id, input: SessionFix.message("new work"))
         try await settle(store, id)
         time.advance()
         #expect(try await ping(store, id, max: 1))
@@ -246,7 +247,7 @@ private final class WarmingTime: Sendable {
         #expect(try await !ping(store, id, max: 2))
         time.advance()
         #expect(try await ping(store, id, max: 2))
-        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact tool now with park: true") == true)
+        #expect(try await store.undrainedInputs(id).last?.input.content.text.contains("compact tool now with park: true") == true)
         try await settle(store, id)
         time.advance()
         #expect(try await !ping(store, id, max: 2))
@@ -255,8 +256,8 @@ private final class WarmingTime: Sendable {
         try await store.scheduleCacheWarming(id, intervalSeconds: 3300)
         time.advance()
         #expect(try await ping(store, id, max: 2))
-        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact tool now with park: true") == true)
-        _ = try await store.enqueue(id, input: SessionFix.notification("real after restart"))
+        #expect(try await store.undrainedInputs(id).last?.input.content.text.contains("compact tool now with park: true") == true)
+        try await store.put(id, input: SessionFix.notification("real after restart"))
         try await settle(store, id)
         time.advance()
         #expect(try await ping(store, id, max: 2))

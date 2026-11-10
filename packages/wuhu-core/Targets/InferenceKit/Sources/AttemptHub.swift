@@ -35,13 +35,7 @@ public final class AttemptHub: Sendable {
   }
 
   private let topics = Mutex<[SessionID: Topic]>([:])
-  private let onPublish: (@Sendable (SessionID, AttemptEvent) -> Void)?
-
-  /// `onPublish` hears every event too: a worker in its own process passes
-  /// them on to main's hub.
-  public init(onPublish: (@Sendable (SessionID, AttemptEvent) -> Void)? = nil) {
-    self.onPublish = onPublish
-  }
+  public init() {}
 
   public func publish(session: SessionID, _ event: AttemptEvent) {
     let continuations = topics.withLock { topics -> [AsyncStream<AttemptEvent>.Continuation] in
@@ -60,7 +54,6 @@ public final class AttemptHub: Sendable {
     for continuation in continuations {
       continuation.yield(event)
     }
-    onPublish?(session, event)
   }
 
   public func events(session: SessionID) -> AsyncStream<AttemptEvent> {

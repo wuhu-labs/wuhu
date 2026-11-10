@@ -47,21 +47,6 @@ extension SessionStore {
     }
   }
 
-  public func discardPendingCacheWarming(_ id: SessionID) async throws -> Transcript {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      let original = try Sessions.transcript(id.rawValue, in: db)
-      let transcript = original.discardingPendingCacheWarming()
-      for (before, after) in zip(original.items, transcript.items) where before != after {
-        let payload = try Sessions.encode(after)
-        try SessionContentRow.where { $0.sessionID.eq(id.rawValue) && $0.id.eq(after.id.uuidString.lowercased()) }
-          .update { $0.payload = #bind(payload) }.execute(db)
-      }
-      try Sessions.refreshWork(id.rawValue, transcript: transcript, now: now, in: db)
-      return transcript
-    }
-  }
-
   public func deferOverdueCacheWarming() async throws {
     let now = dateGen.now.timeIntervalSince1970
     try await writer.write { db in
@@ -81,7 +66,7 @@ extension SessionStore {
       let record = try Sessions.record(id.rawValue, in: db)
       let kernel = switch record.executor { case .kernel, .modelGroup: true; case .retired: false }
       guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal, record.work == .noWork,
-            !self.archiveReservations.contains(id), kernel,
+            kernel,
             var row = try CacheWarmingRow.where({ $0.sessionID.eq(id.rawValue) }).fetchOne(db),
             row.nextPingAt <= now.timeIntervalSince1970, row.pingCount < maxPings,
             try Sessions.transcript(id.rawValue, in: db).reachesCacheWarmingFloor(floorTokens, images: images) else { return false }
@@ -100,7 +85,7 @@ extension SessionStore {
       Judge whether you expect more work soon. If you don't, call the compact tool now with park: true: a parked session gets no more of these notices, and its next generation starts at its next wake. If you do, end this turn without a reply; that is normal.
       </cache-warming-notice>
       """
-      _ = try Sessions.enqueue(id.rawValue, input: .notification(.init(id: noticeID, timestamp: now, kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: text))), nowDate: now, in: db)
+      try Sessions.enqueue(id.rawValue, input: .notification(.init(id: noticeID, timestamp: now, kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: text))), nowDate: now, in: db)
       return true
     }
     if enqueued { signals.post(id) }

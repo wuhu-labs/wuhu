@@ -1,3 +1,4 @@
+import struct ControlledTime.TimeControl
 import Dependencies
 import DeterministicDependencies
 import LoopCore
@@ -12,12 +13,19 @@ import LoopCore
 import JSONValue
 import Scratch
 import SessionDomain
-@_spi(SessionObservation) import SpaceCore
+@_spi(SessionObservation) @testable import SpaceCore
 import SpaceFS
 import Testing
 
+// Every notification the session was given, drained or not: a wake reaches its session cell at once, which may drain it.
+/// Every notification the session was sent, seen by its model or not, once its cell has taken its mail.
 func handlerNotifications(_ space: Space, _ session: SessionID) async throws -> [SystemNotification] {
-  try await space.sessions.hydrate(session).undrained.compactMap {
+  try await until("the session's cell takes its mail") {
+    try await space.sessions.writer.read {
+      try Bool.fetchOne($0, sql: "SELECT NOT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["\(SessionMail.kind)/\(session.rawValue)"])!
+    }
+  }
+  return try await space.sessions.writer.read { try Sessions.undrained(session.rawValue, tail: 0, at: "9999", in: $0) }.compactMap {
     guard case let .notification(notification) = $0.input else { return nil }
     return notification
   }
@@ -26,12 +34,13 @@ func handlerNotifications(_ space: Space, _ session: SessionID) async throws -> 
 func withHandlerFiring(
   _ space: Space,
   owner: Hub? = nil,
+  sources: EventSources = .unavailable,
   configure: (inout SubscriptionFiring) -> Void = { _ in },
   _ body: (SessionExecution, Hub) async throws -> Void,
 ) async throws {
   let owner = owner ?? Hub(space: space)
-  let (worker, registry) = await firingWorkers(owner)
-  var configured = SubscriptionFiring(space: space, worker: registry)
+  let worker = await firingWorker(owner, sources: sources)
+  var configured = SubscriptionFiring(space: space) { worker.observe($0, $1, $2) }
   configure(&configured)
   let firing = configured
   try await withThrowingTaskGroup(of: Void.self) { group in
@@ -52,11 +61,10 @@ func withHandlerFiring(
       _ = try await space.createTable(SpacePath(validating: "/runs.table"), header: .init(columns: [.init(name: "phase", type: .text)]), in: .shared, acting: .shared)
       _ = try await space.fs(.shared).write("/serial.js", Data("""
       import {mutateRows} from 'wuhu:space';
-      export default async ({state}) => {
+      export default async () => {
         await mutateRows('/runs.table',[{insert:{phase:'start'}}]);
         await sleep(5000);
         await mutateRows('/runs.table',[{insert:{phase:'end'}}]);
-        return {n:(state?.n??0)+1};
       };
       """.utf8), ifMatch: nil)
       let principal = try await space.principal(of: session)
@@ -66,9 +74,8 @@ func withHandlerFiring(
         _ = try await space.mutateRows(watched, [.insert([.integer(1)])], in: .shared, acting: .shared)
         try await untilAdvancing("first firing started", time) { try await space.query("SELECT phase FROM \"/runs.table\"", as: principal).rows.count == 1 }
         _ = try await space.mutateRows(watched, [.insert([.integer(2)])], in: .shared, acting: .shared)
-        try await untilAdvancing("second firing saved", time) {
-          let json = try await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON
-          return json.flatMap(JSONValue.parse)?.object?["n"] == .integer(2)
+        try await untilAdvancing("second firing ended", time) {
+          try await space.query("SELECT phase FROM \"/runs.table\"", as: principal).rows.count == 4
         }
         let phases = try await space.query("SELECT phase FROM \"/runs.table\" ORDER BY id", as: principal)
         #expect(phases.rows.map { $0[0] } == [.text("start"), .text("end"), .text("start"), .text("end")])
@@ -115,20 +122,18 @@ func withHandlerFiring(
         _ = try await world.run("observe", .object(.init(uniqueKeysWithValues: observe.sorted { $0.key < $1.key })))
       }
       _ = try await space.sessions.archive(session, grace: .seconds(100))
-      #expect(try await space.sessions.armedSubscriptions(session).count == 4)
-      let head = try await space.sessions.queueHead(session)
+      #expect(try await space.sessions.armedSubscriptions(session).count == 3)
       _ = try await space.mutateRows(watched, [.insert([.integer(1)])], in: .shared, acting: .shared)
       try await withHandlerFiring(space) { _, _ in
         await time.advance(by: 11)
         try await untilAdvancing("archived firings retire registrations", time) { try await space.sessions.armedSubscriptions(session).isEmpty }
       }
-      #expect(try await handlerNotifications(space, session).isEmpty)
-      #expect(try await space.sessions.queueHead(session) == head)
+      #expect(try await handlerNotifications(space, session).allSatisfy { $0.kind == .timer }, "only the plain timer's own input came due")
       #expect((try? await space.fs(.shared).stat("/ran.md")) == nil)
     }
   }
 
-  @Test func interruptedTimerReopensAndRerunsLastSavedState() async throws {
+  @Test func interruptedTimerReopensAndReruns() async throws {
     let folder = try ScratchFolder("handler-runtime-restart")
     let file = folder.url.appending(path: "space.sqlite")
     try await withToolDeps { time in
@@ -136,37 +141,33 @@ func withHandlerFiring(
       let session = try await makeSession(first)
       _ = try await first.fs(.shared).write("/pending.js", Data("""
       import {writeText} from 'wuhu:space';
-      export default async ({state,wake}) => {
+      export default async ({wake}) => {
         await writeText('/pending-started.md','started',{ifMatch:null});
         wake('not committed');
         await sleep(120000);
-        return {cursor:99};
       }
       """.utf8), ifMatch: nil)
       try await withHandlerFiring(first) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 1, "handler": "/pending.js"]))
         await time.advance(by: 2)
-        try await untilAdvancing("pending timer began", time) { (try? await first.fs(.shared).stat("/pending-started.md")) != nil }
+        try await untilTicking("pending timer began", time) { (try? await first.fs(.shared).stat("/pending-started.md")) != nil }
       }
-      let savedState = try await first.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON
-      let notifications = try await handlerNotifications(first, session)
-      #expect(savedState == nil)
-      #expect(notifications.isEmpty)
+      #expect(try await handlerNotifications(first, session).isEmpty)
       try await first.close()
       let reopened = try Space.open(file: file)
       let fs = await reopened.fs(.shared)
       let (token, _) = try await fs.read("/pending.js")
-      _ = try await fs.write("/pending.js", Data("export default ({state,wake}) => { if(state!==null) throw Error('advanced prematurely'); wake('resumed'); return {cursor:1}; };".utf8), ifMatch: token)
+      _ = try await fs.write("/pending.js", Data("export default ({wake}) => { wake('resumed'); };".utf8), ifMatch: token)
       try await withHandlerFiring(reopened) { _, _ in
-        try await untilAdvancing("reopened firing finishes", time) { try await reopened.sessions.armedSubscriptions(session).isEmpty }
+        try await untilTicking("reopened firing finishes", time) { try await reopened.sessions.armedSubscriptions(session).isEmpty }
         #expect(try await handlerNotifications(reopened, session).map { $0.content.text } == ["resumed"])
       }
       try await reopened.close()
     }
   }
 
-  @Test func cancellationInterruptsCPUHandlerWithoutWakeOrStateCommit() async throws {
+  @Test func cancellationInterruptsCPUHandlerWithoutWake() async throws {
     try await withRig { rig in
       try await rig.write("/cpu.js", """
       import {writeText} from 'wuhu:space';
@@ -189,7 +190,7 @@ func withHandlerFiring(
     }
   }
 
-  @Test func handlerTimeoutDiscardsEarlyWakeAndRejectsUndefinedOrOversizeState() async throws {
+  @Test func handlerTimeoutDiscardsEarlyWake() async throws {
     try await withRig { rig in
       let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
       try await rig.write("/timeout.js", "export default async ({wake}) => { wake('discard'); await sleep(120000); return 1; }")
@@ -201,11 +202,6 @@ func withHandlerFiring(
         Issue.record("timeout succeeded")
       } catch { #expect(String(describing: error).contains("60")) }
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
-      try await rig.write("/undefined.js", "export default () => undefined;")
-      try await rig.write("/oversize.js", "export default () => 'x'.repeat(20000);")
-      for path in ["/undefined.js", "/oversize.js"] {
-        await #expect(throws: (any Error).self) { try await rig.scripts.runHandler(path: path, actor: .session(rig.session), tools: tools) }
-      }
     }
   }
 
@@ -213,11 +209,9 @@ func withHandlerFiring(
     try await withRig { rig in
       try await rig.write("/post.js", """
       import {sendMessage} from 'wuhu:session';
-      export default async () => { return await sendMessage({message:'handler answered'}); };
+      export default async () => { await sendMessage({message:'handler answered'}); };
       """)
-      let result = try await rig.scripts.runHandler(path: "/post.js", actor: .session(rig.session), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
-      let posted = try #require(JSONValue.parse(result.stateJSON)?.object)
-      #expect(posted["conversationId"] == .string(rig.session.rawValue))
+      _ = try await rig.scripts.runHandler(path: "/post.js", actor: .session(rig.session), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       let page = try await rig.evaluate("import {conversation} from 'wuhu:space'; result((await conversation(import.meta.session)).messages.map(m=>m.text));")
       #expect(page == .array(["handler answered"]))
       let refused = try await rig.evaluate("import {sendMessage} from 'wuhu:session'; try { await sendMessage({message:'wrong',user:'morgan'}); } catch(e) { result(e.message); }")
@@ -225,73 +219,24 @@ func withHandlerFiring(
     }
   }
 
-  @Test func channelCursorSkipsTenPlainMessagesAndResumesWithoutRepeating() async throws {
-    try await withToolDeps { time in
-      let space = try Space.inMemory()
-      let session = try await makeSession(space)
-      try await space.registerPeople(["morgan"])
-      let channel = try await space.sessions.createConversation(members: ["morgan"], title: "The Park", in: .shared)
-      _ = try await space.fs(.shared).write("/park.js", Data("""
-      export default ({rows,state,wake}) => {
-        const fresh = rows.filter(row => row.n > (state?.cursor ?? 0));
-        if (fresh.some(row => row.text.includes('release'))) wake('Release question\\nDecision needed');
-        return {cursor:Math.max(state?.cursor ?? 0,...fresh.map(row=>row.n))};
-      }
-      """.utf8), ifMatch: nil)
-      func post(_ n: Int, _ text: String) async throws {
-        _ = try await space.sessions.post(.conversation(channel), messageID: .init("park-\(n)"), sender: .init(id: "morgan", timeZone: TimeZone(identifier: "UTC")!), content: .init(text: text))
-      }
-      try await withHandlerFiring(space) { worker, owner in
-        var world = ToolWorld(worker: worker, session: session)
-        _ = try await world.run("observe", .object([
-          "sql": .string("SELECT n, json_extract(content,'$.text') AS text FROM messages WHERE conversation_id = '\(channel.rawValue)' ORDER BY n"),
-          "throttle_seconds": 1, "handler": "/park.js",
-        ]))
-        for n in 1 ... 10 {
-          try await post(n, "plain \(n)")
-          try await untilAdvancing("plain cursor \(n)", time) {
-            let json = try await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON
-            return json.flatMap(JSONValue.parse)?.object?["cursor"] == .integer(n)
-          }
-        }
-        #expect(try await handlerNotifications(space, session).isEmpty)
-        try await post(11, "Should we release today?")
-        try await untilAdvancing("one relevant wake", time) { try await handlerNotifications(space, session).count == 1 }
-        #expect(try await handlerNotifications(space, session).first?.content.text == "Release question\nDecision needed")
-      }
-      try await post(12, "plain while stopped")
-      try await withHandlerFiring(space) { _, _ in
-        try await untilAdvancing("cursor resumes", time) {
-          let json = try await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON
-          return json.flatMap(JSONValue.parse)?.object?["cursor"] == .integer(12)
-        }
-        #expect(try await handlerNotifications(space, session).count == 1)
-        try await post(13, "release decision again")
-        try await untilAdvancing("next relevant wake", time) { try await handlerNotifications(space, session).count == 2 }
-      }
-    }
-  }
-
-  @Test func moduleGetsStateRowsRightsAndOnlyExplicitWake() async throws {
+  @Test func moduleGetsRowsRightsAndOnlyExplicitWake() async throws {
     try await withRig { rig in
       try await rig.write("/handler.js", """
       import { writeText } from 'wuhu:space';
-      export default async ({ rows, state, wake }) => {
+      export default async ({ rows, wake }) => {
         await writeText('/handler-note.md', rows[0].text, {ifMatch:null});
         wake('release digest');
-        return {cursor: (state?.cursor ?? 0) + rows.length};
       }
       """)
       let rows = try await rig.space.query("SELECT 'release?' AS text", as: try await rig.space.principal(of: rig.session))
-      let result = try await rig.scripts.runHandler(path: "/handler.js", actor: .session(rig.session), input: .rows(rows), stateJSON: "{\"cursor\":10}", tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
-      #expect(JSONValue.parse(result.stateJSON) == .object(["cursor": 11]))
+      let result = try await rig.scripts.runHandler(path: "/handler.js", actor: .session(rig.session), input: handlerInput(rows), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
       #expect(result.wakes == ["release digest"])
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
       #expect(String(decoding: try await rig.space.fs(.shared).read("/handler-note.md").1, as: UTF8.self) == "release?")
     }
   }
 
-  @Test func thrownHandlerDiscardsBufferedWakeAndState() async throws {
+  @Test func thrownHandlerDiscardsBufferedWake() async throws {
     try await withRig { rig in
       try await rig.write("/throws.js", "export default ({wake}) => { wake('must not deliver'); throw Error('boom'); }")
       await #expect(throws: (any Error).self) {
@@ -332,25 +277,25 @@ func withHandlerFiring(
       let space = try Space.inMemory()
       let session = try await makeSession(space)
       let fs = await space.fs(.shared)
-      _ = try await fs.write("/tick.js", Data("export default ({state, fireTime}) => ({n:(state?.n ?? 0)+1, fireTime});".utf8), ifMatch: nil)
+      _ = try await fs.write("/tick.js", Data("import {writeText} from 'wuhu:space'; export default async ({subscription}) => { await writeText('/ticked.md',subscription,{ifMatch:null}); };".utf8), ifMatch: nil)
       try await withHandlerFiring(space) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/tick.js"]))
+        let first = try await space.sessions.armedSubscriptions(session).first?.nextFireAt
         await time.advance(by: 61)
-        try await untilAdvancing("silent first tick", time) {
-          try await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON != nil
-        }
+        // The firing is over once the slot is rescheduled: one still open when the next minute comes skips it.
+        try await untilTicking("silent first tick", time) { try await space.sessions.armedSubscriptions(session).first?.nextFireAt != first }
+        let slot = try await space.sessions.armedSubscriptions(session).first?.slot.id.rawValue
+        #expect(String(decoding: try await fs.read("/ticked.md").1, as: UTF8.self) == slot)
         #expect(try await handlerNotifications(space, session).isEmpty)
         let (entry, _) = try await fs.read("/tick.js")
-        _ = try await fs.write("/tick.js", Data("export default ({state,wake}) => { wake('edited tick'); return {n:state.n+1}; };".utf8), ifMatch: entry)
+        _ = try await fs.write("/tick.js", Data("export default ({wake}) => { wake('edited tick'); };".utf8), ifMatch: entry)
         await time.advance(by: 61)
-        try await untilAdvancing("edited handler wakes", time) {
+        try await untilTicking("edited handler wakes", time) {
           try await handlerNotifications(space, session).count == 1
         }
-        #expect(try await handlerNotifications(space, session).first?.content.text == "edited tick")
-        let slot = try #require(await space.sessions.armedSubscriptions(session).first)
-        #expect(JSONValue.parse(try #require(slot.slot.handlerStateJSON)) == .object(["n": 2]))
-        #expect(slot.lastFiredAt != nil)
+        #expect(try await handlerNotifications(space, session).map(\.content.text) == ["edited tick"])
+        #expect(try await space.sessions.armedSubscriptions(session).first?.lastFiredAt != nil)
       }
     }
   }
@@ -362,32 +307,31 @@ func withHandlerFiring(
       try await withHandlerFiring(space) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/missing.js"]))
-        try await time.wake("first cron firing", after: 60)
-        try await until("missing handler error") { try await handlerNotifications(space, session).count == 1 }
+        await time.advance(by: 61)
+        try await untilTicking("missing handler error", time) { try await handlerNotifications(space, session).count == 1 }
         let missingError = try #require(await space.sessions.armedSubscriptions(session).first?.slot.lastError)
         #expect(missingError.contains("notFound:"), "\(missingError)")
         let fs = await space.fs(.shared)
         _ = try await fs.write("/missing.js", Data("export default () => { throw Error('again'); };".utf8), ifMatch: nil)
-        try await time.wake("first retry", after: 1)
-        try await until("same streak second error") {
+        try await untilTicking("same streak second error", time) {
           try await space.sessions.armedSubscriptions(session).first?.slot.lastError?.contains("again") == true
         }
         #expect(try await handlerNotifications(space, session).count == 1)
         let (entry, _) = try await fs.read("/missing.js")
-        _ = try await fs.write("/missing.js", Data("export default ({state}) => ({n:(state?.n ?? 0)+1});".utf8), ifMatch: entry)
-        try await time.wake("second retry", after: 2)
-        try await until("success ends failure streak") { try await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON != nil }
-        #expect(try await space.sessions.armedSubscriptions(session).first?.slot.lastError == nil)
+        _ = try await fs.write("/missing.js", Data("export default () => {};".utf8), ifMatch: entry)
+        try await untilTicking("success ends failure streak", time) { try await space.sessions.armedSubscriptions(session).first?.slot.lastError == nil }
         let (next, _) = try await fs.read("/missing.js")
         _ = try await fs.write("/missing.js", Data("export default () => { throw Error('new streak'); };".utf8), ifMatch: next)
-        @Dependency(\.date) var date
-        let nextFire = try #require(await space.sessions.armedSubscriptions(session).first?.nextFireAt)
-        try await time.wake("next cron firing", after: nextFire.timeIntervalSince(date.now))
-        try await until("new streak wakes again") { try await handlerNotifications(space, session).count == 2 }
-        #expect(JSONValue.parse(try #require(await space.sessions.armedSubscriptions(session).first?.slot.handlerStateJSON)) == .object(["n": 1]))
+        await time.advance(by: 61)
+        try await untilTicking("new streak wakes again", time) { try await handlerNotifications(space, session).count == 2 }
       }
     }
   }
+}
+
+/// Time moves in hundredths of a second while the wait goes on: a jump leaves an evicted cell's wake to the worker's scan, which only a moving clock steps, and whole seconds per attempt would run a slow handler out of its minute.
+private func untilTicking(_ description: String, _ time: TimeControl, _ condition: () async throws -> Bool) async throws {
+  try await untilAdvancing(description, time, stepSeconds: 0.01, attempts: 6000, condition)
 }
 
 @Suite(.deterministicDependencies) struct ArchivedObservationTests {
@@ -395,11 +339,11 @@ func withHandlerFiring(
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      _ = try await space.fs(.shared).write("/unchanged.js", Data("export default ({state}) => state;".utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/unchanged.js", Data("export default () => {};".utf8), ifMatch: nil)
       let owner = Hub(space: space)
       let worker = await firingWorker(owner)
       let streams = Box(0)
-      var firing = SubscriptionFiring(space: space, worker: worker)
+      var firing = SubscriptionFiring(space: space) { worker.observe($0, $1, $2) }
       firing.observationStream = { space, principal, sql in
         streams.withLock { $0 += 1 }
         return await space.observeQuery(sql, throttle: .zero, as: principal)

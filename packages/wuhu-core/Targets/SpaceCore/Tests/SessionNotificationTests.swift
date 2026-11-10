@@ -11,7 +11,7 @@ struct SessionNotificationTests {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await store.enqueue(sid, input: SessionFix.message("do it"))
+      try await store.put(sid, input: SessionFix.message("do it"))
       _ = try await store.drainQueue(sid)
       _ = try await store.appendAssistant(
         sid, attemptID: UUID(), message: SessionFix.assistant("all done"), metadata: SessionFix.metadata,
@@ -26,7 +26,7 @@ struct SessionNotificationTests {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await store.enqueue(
+      try await store.put(
         sid, input: SessionFix.message("please review", conversation: sid.rawValue, owesReply: true),
       )
       _ = try await store.drainQueue(sid)
@@ -38,7 +38,7 @@ struct SessionNotificationTests {
 
       #expect(try await store.notifications(recipient: "morgan").isEmpty)
       let hydration = try await store.hydrate(sid)
-      #expect(hydration.undrained.isEmpty, "the resumed loop reads the owe from its transcript")
+      #expect(hydration.queueHead == hydration.queueTail, "the resumed loop reads the owe from its transcript")
       #expect(hydration.record.work == .noWork)
     }
   }
@@ -47,7 +47,7 @@ struct SessionNotificationTests {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await store.enqueue(sid, input: SessionFix.message("do it"))
+      try await store.put(sid, input: SessionFix.message("do it"))
       _ = try await store.drainQueue(sid)
       try await store.markErrored(sid, message: "provider exploded")
 

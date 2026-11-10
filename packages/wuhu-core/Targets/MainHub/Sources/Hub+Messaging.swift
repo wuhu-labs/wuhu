@@ -88,17 +88,9 @@ extension Hub {
     _ callID: ToolCallID,
     _ arguments: RequestArguments,
   ) async throws -> ToolResultPayload {
-    @Dependency(\.date) var date
-    let deadline = try arguments.deadlineSeconds.map { seconds -> Date in
-      guard seconds >= 1 else { throw ToolProblem("deadline_seconds must be at least 1") }
-      return date.now.addingTimeInterval(seconds)
-    }
     let stall = try stallSeconds(arguments.stallSeconds)
     let terms = try arguments.terms.terms()
     let task = SessionID(arguments.task)
-    guard deadline == nil || caller.session != nil else {
-      throw ToolProblem("deadline_seconds needs a session to tell; an observer's request has none")
-    }
     let messageID = MessageID(UUID.deterministic("request", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
     do {
       let delivery = try await store.openRequest(
@@ -106,7 +98,6 @@ extension Hub {
         from: caller,
         messageID: messageID,
         text: arguments.message,
-        deadline: deadline,
         stallSeconds: stall,
         terms: terms,
       )
@@ -115,7 +106,6 @@ extension Hub {
         requestID: delivery.message.requestID!,
         task: existing ? try await store.keyedRequest(by: caller, terms)!.task : task,
         conversationID: delivery.message.conversation,
-        deadline: existing ? nil : delivery.message.deadline,
         existing: existing ? true : nil,
       ))
     } catch let error as SessionStoreError {
@@ -123,9 +113,9 @@ extension Hub {
     }
   }
 
-  // Absent means the default; 0 turns the alert off.
+  // Absent means half an hour; 0 turns the reminder off.
   nonisolated func stallSeconds(_ seconds: Double?) throws -> Double? {
-    guard let seconds else { return RequestStall.defaultSeconds }
+    guard let seconds else { return 1800 }
     guard seconds != 0 else { return nil }
     guard seconds >= 1 else { throw ToolProblem("stall_seconds is 0 (off) or at least 1") }
     return seconds
@@ -303,8 +293,6 @@ extension Hub {
       ToolProblem(SessionStoreError.reportRefusal(id, violations: violations, left: left), code: "invalidArgument")
     case let .archiveGraceExpired(key):
       ToolProblem("session \(key) is archived and no longer accepts messages")
-    case let .requestDeadlineWithoutFireDate(id):
-      ToolProblem("request deadline \(id) has no stored fire date")
     case let .busyForRestart(key):
       ToolProblem("session \(key) has unfinished work or an open run and cannot start over")
     case let .parentUnavailableForCreation(key):

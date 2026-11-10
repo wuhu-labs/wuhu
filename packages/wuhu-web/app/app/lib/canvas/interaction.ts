@@ -30,6 +30,9 @@ export const chrome = {
   corner: 9,
   side: 11,
   end: 10,
+  // Drawn: a selected connector's end dots and the pill on the leg that slides.
+  endDot: 14,
+  pill: { long: 26, short: 8 },
   sideOffset: 16,
   hitSlop: 7,
   pinRadius: 18,
@@ -71,6 +74,20 @@ export function rectBetween(a: Point, b: Point): Rect {
     w: Math.abs(a.x - b.x),
     h: Math.abs(a.y - b.y),
   }
+}
+
+// The item a creation drag shows before it exists.
+export const draftID = 'draft0'
+
+// The frame a creation drag from `start` draws: spanning the drag, or a
+// square as far along both axes when `square`.
+export function createdFrame(start: Point, end: Point, square: boolean): Rect {
+  if (!square) return rectBetween(start, end)
+  const side = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y))
+  return rectBetween(start, {
+    x: start.x + (end.x < start.x ? -side : side),
+    y: start.y + (end.y < start.y ? -side : side),
+  })
 }
 
 // The middle segment of a four-point elbow; dragging it moves the offset.

@@ -91,7 +91,7 @@ extension ToolExecutor {
         ("sql", string("Read-only SQL over space tables and induced tables (docs, links, sessions, ...).")),
         ("url", string("Instead of sql: an http(s) SSE stream the server dials with an OIDC token naming you (audience: its origin), resuming after the last event taken.")),
         ("throttle_seconds", number("Minimum seconds between firings (default 30); a stream's handler fires on every event.")),
-        ("handler", string("Optional space script module path; default export receives {rows | event: {id, type, data}, state, wake} and returns next JSON state. Runs as you, 60 s budget.")),
+        ("handler", string("Optional space script module path; default export receives {rows | event: {id, type, data}, subscription, wake}. Runs as you, 60 s budget.")),
         ("name", string("Optional readable name, shown in subscriptions; defaults to the handler's file name.")),
       ], required: []),
     ),
@@ -100,7 +100,7 @@ extension ToolExecutor {
       description: "Schedule a message back to yourself: once after in_seconds, or repeatedly on a 5-field UTC cron expression. Cancel it with cancel and the subscription id it reports (timer.…).",
       parameters: schema([
         ("message", string("The message you will receive when the timer fires.")),
-        ("handler", string("Optional space script module path; default export receives {fireTime, state, wake} and returns next JSON state. Runs silently as you, 60 s budget.")),
+        ("handler", string("Optional space script module path; default export receives {fireTime, subscription, wake}. Runs silently as you, 60 s budget.")),
         ("in_seconds", number("Fire once after this many seconds.")),
         ("cron", string("Fire repeatedly: minute hour day month weekday in UTC.")),
         ("name", string("Optional readable name, shown in subscriptions; defaults to the handler's file name.")),
@@ -137,12 +137,11 @@ extension ToolExecutor {
     ),
     Tool(
       name: "request",
-      description: "Open a request on a child you created, task or agent: the message lands in your DM with it and it owes you a final report. One open request per child — request again only after its final. A deadline is your backstop, not the task's: on expiry you are told, and you decide to re-request, kill or replace. Separately, if the child and its descendants show no progress (an inference, a finished tool call, a message to you) for stall_seconds while not waiting on a script, exec, timer or request of its own, you get one stall notice; progress re-arms it. It only notifies.",
+      description: "Open a request on a child you created, task or agent: the message lands in your DM with it and it owes you a final report. One open request per child — request again only after its final. If the child sends no progress report for stall_seconds, you get one reminder; each progress report restarts the wait. It only notifies.",
       parameters: schema([
         ("task", string("Session id of a child you created (a task or an agent).")),
         ("message", string("What you are asking it to do.")),
-        ("deadline_seconds", number("Tell me if there is no final report within this many seconds.")),
-        ("stall_seconds", number("Tell me once the child has shown no progress for this many seconds (default 1800; 0 turns it off).")),
+        ("stall_seconds", number("Remind me once the child has sent no progress report for this many seconds (default 1800; 0 turns it off).")),
       ] + requestTerms, required: ["task", "message"]),
     ),
     Tool(
@@ -173,20 +172,6 @@ extension ToolExecutor {
       ], required: ["device", "payload"]),
     ),
     Tool(
-      name: "generate_image",
-      description: "Generate an image from a text prompt and save it at destination: a .gif destination makes an animated GIF, any other a png. Never overwrites: it fails when a file already exists there.",
-      parameters: schema([
-        ("prompt", string("Image description.")),
-        ("destination", string("Where to save it: /<path> in the space or machines://<name-or-id>/<path>; .gif for a GIF, otherwise png.")),
-        ("provider", string("Optional configured capability provider override.")),
-        ("model", string("Optional model override; unsupported features fail.")),
-        ("quality", string("draft, standard, fine or ultra.")),
-        ("size", string("1024x1024, 1536x1024 or 1024x1536; a GIF omits it for the provider's own size.")),
-        ("frames", integer("GIF only: 2 to 16 frames.")),
-        ("frame_ms", integer("GIF only: each frame's duration, 20 to 2000 ms.")),
-      ], required: ["prompt", "destination"]),
-    ),
-    Tool(
       name: "create_session",
       description: "Create a session: by default a child task. A child agent gets a box of its own; a top-level agent (top_level) has no parent and belongs to the humans — you gain no parent/ancestry control but retain creator archive/unarchive rights, and only an agent may create one. A child lives in your group; a top-level agent in yours too unless group names another your group reads. With expects_reply the child starts working on message and owes you a final report; without, message arrives as a DM from you and there is no duty, which is how you prime a child agent for a human who then takes over (a task takes no messages from people). Omitted target and effort default to your requested target (not its active member); modelGroup is exclusive with provider/model. Explicit targets replace inherited/template targets as a whole; a template's values win over that default, and explicit arguments win over both. Every provider runs in the kernel. An executor other than kernel is refused invalidArgument.",
       parameters: schema([
@@ -206,7 +191,7 @@ extension ToolExecutor {
           "type": .string("boolean"),
           "description": .string("Open a request on the new child so it reports back."),
         ])),
-        ("stall_seconds", number("With expects_reply: tell me once the child has shown no progress for this many seconds (default 1800; 0 turns it off).")),
+        ("stall_seconds", number("With expects_reply: remind me once the child has sent no progress report for this many seconds (default 1800; 0 turns it off).")),
         ("request", jsonObject([
           ("type", .string("object")),
           ("description", .string("With expects_reply: the request's kind, key, schema and fields, as on the request tool. A key your group already used for that kind creates nothing and returns that request's session.")),

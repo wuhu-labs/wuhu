@@ -8,7 +8,7 @@ public enum CancelTarget: Equatable {
   case script(String)
   case exec(ExecID)
 
-  private static let subscriptionPrefixes = ["obs.", "timer.", "stall.", "deadline."]
+  private static let subscriptionPrefixes = ["obs.", "timer.", "deadline."]
 
   public init(_ id: String) throws(ToolProblem) {
     if id.hasPrefix("script.") {

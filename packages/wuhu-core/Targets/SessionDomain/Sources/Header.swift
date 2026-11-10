@@ -76,8 +76,6 @@ public struct MessageHeader: Hashable, Sendable {
     case compactRequest
     case owedReply
     case parkReminder
-    case childFailed
-    case requestDeadline
     case requestStall
     case script
     case exec
@@ -96,8 +94,6 @@ public struct MessageHeader: Hashable, Sendable {
       case .compactRequest: "compact request"
       case .owedReply: "owed reply"
       case .parkReminder: "park reminder"
-      case .childFailed: "child failed"
-      case .requestDeadline: "request deadline"
       case .requestStall: "request stall"
       case .script: "script"
       case .exec: "exec"
@@ -233,8 +229,6 @@ extension SystemNotification {
         case .compactRequest: .compactRequest
         case .owedReply: .owedReply
         case .parkReminder: .parkReminder
-        case .childFailed: .childFailed
-        case .requestDeadline: .requestDeadline
         case .requestStall: .requestStall
         case .script: .script
         case .exec: .exec

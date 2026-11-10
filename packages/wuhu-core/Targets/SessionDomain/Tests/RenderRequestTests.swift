@@ -42,6 +42,22 @@ import WuhuAI
     #expect(context.messages[3].user != nil, "the message after the head renders next")
   }
 
+  @Test func `the snapshot lists the requests the session awaits`() async {
+    let heard = Date(timeIntervalSince1970: 1_800_000_000)
+    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "s", snapshot: .init(), runningWork: [], awaiting: [
+      AwaitedRequest(id: RequestID("r1"), task: SessionID("t-1"), lastHeard: heard),
+      AwaitedRequest(id: RequestID("r2"), task: SessionID("t-2"), lastHeard: heard),
+    ])
+    let context = await Transcript(items: [.generationHead(head)], keptCount: 1).renderRequest(session: Fix.session, systemPrompt: "sys")
+    guard case let .text(text) = context.messages[0].user?.content.first else {
+      Issue.record("snapshot must render as text")
+      return
+    }
+    #expect(text.text.contains(
+      "awaiting final reports: r1 from t-1 (last heard 2027-01-15T08:00:00Z), r2 from t-2 (last heard 2027-01-15T08:00:00Z)",
+    ))
+  }
+
   @Test func `a creation head carries no summary and no nudge`() async {
     let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "", snapshot: .init(), runningWork: [])
     let transcript = Transcript(items: [.generationHead(head), Fix.message()], keptCount: 1)

@@ -90,34 +90,4 @@ import Testing
       }
     }
   }
-
-  @Test func anImageBoundForAnotherSessionsHomeIsRefusedBeforeTheProviderIsCalled() async throws {
-    try await withSessionDeps {
-      let requests = Mutex(0)
-      let harness = try await SessionHarness(credentials: CredentialResolver { providerID in
-        providerID == "codex" ? .chatGPT(accessToken: "token", accountID: "account") : nil
-      })
-      _ = try await harness.space.fs(.settings).write("/models.json", Data(testImageModels.utf8), ifMatch: nil)
-      let executor = SessionExecutor.kernel(ModelSpecifier(provider: "claude", model: "opus", effort: "high"))
-      let owner = try await harness.store.createSession(group: .shared, title: "owner", kind: .agent, createdBy: "morgan", executor: executor).rawValue
-      let other = try await harness.store.createSession(group: .shared, title: "image", kind: .agent, createdBy: "morgan", executor: executor).rawValue
-
-      let refused = try await withDependencies {
-        $0.fetch = FetchClient { _ in
-          requests.withLock { $0 += 1 }
-          return Response(status: .ok, body: .string(#"{"data":[{"b64_json":"\#(testImagePNG.base64EncodedString())"}]}"#))
-        }
-      } operation: {
-        try await callResult(
-          harness, other, tool: "generate_image",
-          .object(["prompt": .string("a moon"), "destination": .string("/_/sessions/\(owner)/moon.png")]),
-        )
-      }
-
-      #expect(isToolError(refused))
-      #expect(resultText(refused)?.contains("propose the change to \(owner) by message") == true)
-      #expect(requests.withLock { $0 } == 0)
-      await #expect(throws: (any Error).self) { try await harness.space.fs(.shared).read("/_/sessions/\(owner)/moon.png") }
-    }
-  }
 }

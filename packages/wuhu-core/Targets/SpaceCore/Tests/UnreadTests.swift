@@ -52,23 +52,17 @@ struct UnreadTests {
     }
   }
 
-  @Test func errorsAndDeadlinesLightNothing() async throws {
+  @Test func errorsLightNothing() async throws {
     try await withSessionDeps {
       let space = try makeSpace(clock: ImmediateClock())
       let store = space.sessions
       let box = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "owner", model: .test)
-      _ = try await store.enqueue(box, input: SessionFix.message("do it"))
+      try await store.put(box, input: SessionFix.message("do it"))
       _ = try await store.drainQueue(box)
       try await store.markErrored(box, message: "provider exploded")
-      try await space.writer.write { db in
-        try Notifications.append(
-          recipient: Notifications.ownerRecipient, source: box.rawValue, group: .shared, kind: .requestDeadline,
-          payload: "{}", now: SQLiteDateFormat.string(from: fixedDate), in: db,
-        )
-      }
 
       let kinds = try await store.notifications(recipient: "owner").map(\.kind)
-      #expect(kinds == [.sessionErrored, .requestDeadline])
+      #expect(kinds == [.sessionErrored])
       #expect(try await unread(space, viewer: "owner") == [[.text(box.rawValue), .integer(0)]])
     }
   }

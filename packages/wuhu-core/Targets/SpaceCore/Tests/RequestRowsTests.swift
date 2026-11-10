@@ -30,8 +30,8 @@ import Testing
     var task: SessionID { tasks[0] }
 
     @discardableResult
-    func request(_ id: String, on task: SessionID? = nil, deadline: Date? = nil, _ terms: RequestTerms = .none) async throws -> MessageDelivery {
-      try await store.openRequest(on: task ?? self.task, from: .session(parent), messageID: MessageID(id), text: "do \(id)", deadline: deadline, terms: terms)
+    func request(_ id: String, on task: SessionID? = nil, _ terms: RequestTerms = .none) async throws -> MessageDelivery {
+      try await store.openRequest(on: task ?? self.task, from: .session(parent), messageID: MessageID(id), text: "do \(id)", terms: terms)
     }
 
     // The row's non-null columns, as text.
@@ -121,7 +121,7 @@ import Testing
     await #expect(throws: RequestKeyTaken(existing: RequestID("r1"))) {
       try await fleet.store.createSession(
         group: .shared, title: "twin", kind: .task, parent: fleet.parent, createdBy: fleet.parent.rawValue,
-        executor: .kernel(.test), request: (RequestID("r2"), .session(fleet.parent), "do r2", keyed),
+        executor: .kernel(.test), request: (RequestID("r2"), .session(fleet.parent), "do r2", keyed, nil),
       )
     }
     #expect(try await fleet.count("SELECT count(*) FROM sessions") == sessions)
@@ -209,16 +209,43 @@ import Testing
     #expect(row["result"] == #"{"verdict":"pass"}"#)
   }
 
-  @Test func `a passed deadline marks the row overdue and a final still closes it`() async throws {
+  @Test func `a quiet request reminds its requester, a progress report moves the reminder and the final takes it back`() async throws {
     let fleet = try await Fleet()
-    let deadline = fixedDate.addingTimeInterval(60)
-    try await fleet.request("r1", deadline: deadline)
-    #expect(try await fleet.row("r1")?["deadline_at"] == SQLiteDateFormat.string(from: deadline))
-    fleet.rig.advance(61)
-    try await fleet.store.recordRequestDeadline(parent: fleet.parent, task: fleet.task, request: RequestID("r1"), deadline: deadline)
-    #expect(try await fleet.status("r1") == "overdue")
-    _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f1"), text: "late")
-    #expect(try await fleet.status("r1") == "done")
+    func reminders() async throws -> [String] {
+      try await fleet.store.deliverMail()
+      return try await fleet.store.drainQueue(fleet.parent).items.compactMap {
+        if case let .notification(notice) = $0, notice.kind == .requestStall { notice.requestID?.rawValue } else { nil }
+      }
+    }
+    func report(_ id: String, _ kind: MessageKind) async throws {
+      _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: kind, messageID: MessageID(id), text: id)
+    }
+    _ = try await fleet.store.openRequest(on: fleet.task, from: .session(fleet.parent), messageID: MessageID("r1"), text: "do r1", stallSeconds: 600)
+    fleet.rig.advance(300)
+    try await report("p1", .progress)
+    fleet.rig.advance(300)
+    #expect(try await reminders() == [])
+    fleet.rig.advance(300)
+    #expect(try await reminders() == ["r1"])
+    try await report("p2", .progress)
+    try await report("f1", .final)
+    fleet.rig.advance(600)
+    #expect(try await reminders() == [])
+  }
+
+  @Test func `a requester awaits its open requests, last heard at the latest progress report`() async throws {
+    let fleet = try await Fleet(tasks: 2)
+    try await fleet.request("r1")
+    fleet.rig.advance(60)
+    try await fleet.request("r2", on: fleet.tasks[1])
+    fleet.rig.advance(60)
+    _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .progress, messageID: MessageID("p1"), text: "half")
+    #expect(try await fleet.store.awaitedRequests(fleet.parent) == [
+      AwaitedRequest(id: RequestID("r1"), task: fleet.task, lastHeard: fixedDate.addingTimeInterval(120)),
+      AwaitedRequest(id: RequestID("r2"), task: fleet.tasks[1], lastHeard: fixedDate.addingTimeInterval(60)),
+    ])
+    _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f1"), text: "done")
+    #expect(try await fleet.store.awaitedRequests(fleet.parent).map(\.id) == [RequestID("r2")])
   }
 
   @Test func `archive fails the open row`() async throws {
@@ -245,23 +272,15 @@ import Testing
       #expect(frame == statuses.enumerated().map { [.text("r\($0 + 1)"), .text($1)] })
     }
     let r1 = RequestID("r1")
-    _ = try await fleet.store.openRequest(on: fleet.task, from: .session(fleet.parent), messageID: MessageID("r1"), text: "do r1", deadline: nil, stallSeconds: 600)
+    try await fleet.request("r1")
     try await next("open")
-    let deadline = fixedDate.addingTimeInterval(60)
-    try await fleet.request("r2", on: fleet.tasks[1], deadline: deadline)
+    try await fleet.request("r2", on: fleet.tasks[1])
     try await next("open", "open")
     try await fleet.request("r3", on: fleet.tasks[2])
     try await next("open", "open", "open")
-    fleet.rig.advance(600)
-    try await fleet.store.checkRequestStall(fleet.parent, subscriptionID: .stall(r1), now: fixedDate.addingTimeInterval(600))
-    try await next("stalled", "open", "open")
-    _ = try await fleet.store.report(fleet.task, request: r1, kind: .progress, messageID: MessageID("p1"), text: "half")
-    try await next("open", "open", "open")
-    try await fleet.store.recordRequestDeadline(parent: fleet.parent, task: fleet.tasks[1], request: RequestID("r2"), deadline: deadline)
-    try await next("open", "overdue", "open")
     try await fleet.store.closeRequestsForArchive(fleet.tasks[2])
-    try await next("open", "overdue", "failed")
+    try await next("open", "open", "failed")
     _ = try await fleet.store.report(fleet.task, request: r1, kind: .final, messageID: MessageID("f1"), text: "done")
-    try await next("done", "overdue", "failed")
+    try await next("done", "open", "failed")
   }
 }

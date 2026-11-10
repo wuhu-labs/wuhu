@@ -88,16 +88,19 @@ extension ToolResultItem {
 }
 
 extension StateSnapshot {
-  func rendered(running: [String]) -> String {
+  func rendered(running: [String], awaiting: [AwaitedRequest] = []) -> String {
     let subs = subscriptions.isEmpty
       ? "none"
       : subscriptions.keys.map(\.rawValue).sorted().joined(separator: ", ")
     let reads = preReads.isEmpty ? "none" : preReads.joined(separator: ", ")
     let work = running.isEmpty ? "none" : running.sorted().joined(separator: ", ")
+    let awaited = awaiting.isEmpty ? "" : "\nawaiting final reports: " + awaiting.map { request in
+      "\(request.id.rawValue) from \(request.task.rawValue) (last heard \(request.lastHeard.formatted(.iso8601)))"
+    }.joined(separator: ", ")
     return """
     <session-state>
     active subscriptions: \(subs)
-    running: \(work)
+    running: \(work)\(awaited)
     files to re-read (re-established below): \(reads)
     </session-state>
     """
@@ -109,7 +112,7 @@ extension GenerationHead {
   // user-role message; the summary follows it. A creation head has no summary
   // and gets no nudge.
   func renderMessages(session: SessionID) -> [Message] {
-    var messages: [Message] = [.user(.init(content: [.text(snapshot.rendered(running: runningWork ?? []))]))]
+    var messages: [Message] = [.user(.init(content: [.text(snapshot.rendered(running: runningWork ?? [], awaiting: awaiting ?? []))]))]
     if let note, !note.isEmpty {
       messages.append(.user(.init(content: [.text(note)])))
     }

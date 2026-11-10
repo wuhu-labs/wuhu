@@ -47,7 +47,7 @@
   pointer-events: none;
 }
 
-.canvas-connectors polyline {
+.canvas-connectors path {
   fill: none;
   stroke-linejoin: round;
   stroke-linecap: round;
@@ -273,6 +273,16 @@
   cursor: text;
   -webkit-user-select: text;
   user-select: text;
+}
+
+.canvas-text-editing[data-kind='label'] {
+  overflow: visible;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fff;
+  white-space: nowrap;
+  line-height: 1.4;
+  min-width: 1ch;
 }
 
 .canvas-text-editing .tiptap {

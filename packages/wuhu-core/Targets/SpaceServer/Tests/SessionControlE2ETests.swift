@@ -2,7 +2,6 @@ import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
-import class MainHub.SessionService
 import SessionDomain
 @testable import SpaceCore
 import SpaceServer
@@ -35,7 +34,7 @@ import Testing
         #expect(resultText(output)?.contains("Start over") == true)
         #expect(try await harness.store.record(bad).work == .errored)
         #expect(try await harness.post("/v1/session/\(bad.rawValue)/restart", .null).status == .ok)
-        #expect(try await harness.store.hydrate(bad).record.work == .noWork)
+        try await until("restarted") { try await harness.store.settledWork(bad) }
         #expect(try await harness.post("/v1/session/\(bad.rawValue)/resume", .null).status == .ok)
         let old = try await harness.space.writer.read { db in
           try String.fetchOne(db, sql: "SELECT payload FROM session_contents WHERE session_id = ? AND payload = '{}' LIMIT 1", arguments: [bad.rawValue])
@@ -89,13 +88,12 @@ import Testing
           """),
         ]))
         #expect(resultText(output)?.contains("detached") == true)
-        #expect(try await harness.store.record(root).work == .noWork)
+        #expect(try await harness.store.settledWork(root))
         #expect(try await harness.store.record(root).lifecycle == .live)
         _ = try await harness.store.setTitle(root, to: "settled")
-        try await until("detached script archives its own subtree") {
-          try await harness.store.record(root).lifecycle != .live
+        for id in [root, child, leaf] {
+          try await until("detached script archives its own subtree") { try await harness.store.record(id).lifecycle != .live }
         }
-        for id in [root, child, leaf] { #expect(try await harness.store.record(id).lifecycle != .live) }
         #expect(try await harness.store.record(independent).lifecycle == .live)
       }
     }
@@ -109,7 +107,7 @@ import Testing
       })
       let root = try await harness.createSession(title: "root")
       let child = try await harness.store.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-      _ = try await harness.store.openRequest(on: child, from: .session(root), messageID: .init("http-request"), text: "queued", deadline: nil)
+      _ = try await harness.store.openRequest(on: child, from: .session(root), messageID: .init("http-request"), text: "queued")
       for body in [JSONValue.null, .object([:]), .object(["force": .bool(false)])] {
         let response = try await harness.post("/v1/session/\(root.rawValue)/archive", body)
         #expect(response.status == .conflict)
@@ -119,8 +117,10 @@ import Testing
       }
       #expect(try await harness.post("/v1/session/\(root.rawValue)/archive", .object(["force": .string("true")])).status == .badRequest)
       #expect(try await harness.post("/v1/session/\(root.rawValue)/archive", .object(["force": .bool(true)])).status == .ok)
-      #expect(try await harness.store.record(root).lifecycle != .live)
-      #expect(try await harness.store.record(child).lifecycle != .live)
+      try await until("archived") {
+        let root = try await harness.store.record(root).lifecycle, child = try await harness.store.record(child).lifecycle
+        return root != .live && child != .live
+      }
     }
   }
 
@@ -141,7 +141,7 @@ import Testing
       let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)
       let topLevel = try await harness.store.createSession(group: .shared, title: "independent", kind: .agent, createdBy: child.rawValue, executor: model)
       try await harness.store.markInterrupted(root)
-      let delivery = try await harness.store.openRequest(on: root, from: .session(caller), messageID: .init("script-request"), text: "work", deadline: nil)
+      let delivery = try await harness.store.openRequest(on: root, from: .session(caller), messageID: .init("script-request"), text: "work")
       func script(_ options: String) async throws -> String {
         let result = try await callResult(harness, caller.rawValue, tool: "run_script", .object([
           "source": .string("import { archive } from \"wuhu:session\"; result(await archive(\"\(root.rawValue)\"\(options)).then(() => \"done\", e => e.message))"),
@@ -157,11 +157,9 @@ import Testing
         #expect(refused.contains("\(leaf.rawValue) (signup)"))
         for id in [root, child, leaf] { #expect(try await harness.store.record(id).lifecycle == .live) }
         #expect(try await script(", { force: true }").contains("done"))
-        for id in [root, child, leaf] {
-          guard case .archived = try await harness.store.record(id).lifecycle else {
-            Issue.record("\(id) remained live")
-            continue
-          }
+        try await until("tree archived") {
+          for id in [root, child, leaf] where try await harness.store.record(id).lifecycle == .live { return false }
+          return true
         }
         #expect(try await harness.store.record(topLevel).lifecycle == .live)
         #expect(try await harness.store.record(caller).lifecycle == .live)
@@ -214,10 +212,7 @@ import Testing
 
         // A grandchild, so the right is the ancestor's, not only the parent's.
         #expect(try await script(root, "result(await archive(\"\(reviewer.rawValue)\").\(settle))").contains("done"))
-        guard case .archived = try await harness.store.record(reviewer).lifecycle else {
-          Issue.record("the ancestor's archive did not archive the reviewer")
-          return
-        }
+        try await until("the ancestor archived the reviewer") { try await harness.store.record(reviewer).lifecycle != .live }
 
         let refused = try await script(stranger, "result(await archive(\"\(coder.rawValue)\").\(settle))")
         #expect(refused.contains(
@@ -234,7 +229,7 @@ import Testing
         #expect(try await harness.store.record(coder).lifecycle == .live)
 
         #expect(try await script(root, "result(await interrupt(\"\(coder.rawValue)\").\(settle))").contains("done"))
-        #expect(try await harness.store.record(coder).hold == .interrupted)
+        try await until("coder interrupted") { try await harness.store.record(coder).hold == .interrupted }
         release.open()
       }
     }

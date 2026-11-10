@@ -35,13 +35,13 @@ enum Sessions {
     return chain
   }
 
-  static func runtime(_ key: String, in db: Database) throws -> (generation: Int64, queueTail: Int64) {
+  static func runtime(_ key: String, in db: Database) throws -> (generation: Int64, queueTail: Int64, stepTry: Int64) {
     guard let row = try Row.fetchOne(
       db,
-      sql: "SELECT generation, queue_tail FROM session_runtime WHERE session_id = ?",
+      sql: "SELECT generation, queue_tail, step_try FROM session_runtime WHERE session_id = ?",
       arguments: [key],
     ) else { throw SessionStoreError.unknownSession(key) }
-    return (row["generation"], row["queue_tail"])
+    return (row["generation"], row["queue_tail"], row["step_try"])
   }
 
   static func group(of key: String, in db: Database) throws -> GroupID {
@@ -94,11 +94,14 @@ enum Sessions {
   }
 
   static func transcript(_ key: String, in db: Database) throws -> Transcript {
-    let runtime = try runtime(key, in: db)
+    try transcript(key, generation: try runtime(key, in: db).generation, count: nil, in: db)
+  }
+
+  static func transcript(_ key: String, generation: Int64, count: Int?, in db: Database) throws -> Transcript {
     guard let keptCount = try Int.fetchOne(
       db,
       sql: "SELECT kept_count FROM session_generations WHERE session_id = ? AND generation = ?",
-      arguments: [key, runtime.generation],
+      arguments: [key, generation],
     ) else { throw SessionStoreError.unknownSession(key) }
     let payloads = try String.fetchAll(
       db,
@@ -107,8 +110,9 @@ enum Sessions {
       JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
       WHERE p.session_id = ? AND p.generation = ?
       ORDER BY p.position
+      LIMIT ?
       """,
-      arguments: [key, runtime.generation],
+      arguments: [key, generation, count ?? -1],
     )
     let items = try payloads.map { try decode(TranscriptItem.self, from: $0) }
     let registrations = try registeredSubscriptions(key, in: db)
@@ -160,11 +164,15 @@ enum Sessions {
     )
   }
 
-  static func undrained(_ key: String, tail: Int64, in db: Database) throws -> [SessionQueueEntry] {
+  /// An input is due once its `due_at` is not after the time bound to `?`; one without is due at once. Each decision binds one time to every query it makes, so they agree on what is due.
+  static let due = "(due_at IS NULL OR due_at <= ?)"
+
+  /// The due inputs past `tail`, in order.
+  static func undrained(_ key: String, tail: Int64, at clock: String, in db: Database) throws -> [SessionQueueEntry] {
     try Row.fetchAll(
       db,
-      sql: "SELECT id, payload FROM session_queue WHERE session_id = ? AND id > ? ORDER BY id",
-      arguments: [key, tail],
+      sql: "SELECT id, payload FROM session_queue WHERE session_id = ? AND id > ? AND \(due) ORDER BY id",
+      arguments: [key, tail, clock],
     ).map { row in
       SessionQueueEntry(id: Int(row["id"] as Int64), input: try decode(QueueInput.self, from: row["payload"]))
     }
@@ -201,13 +209,50 @@ enum Sessions {
     )
   }
 
-  static func queueHead(_ key: String, tail: Int64, in db: Database) throws -> Int64 {
+  /// The last due input, or `tail` when none waits.
+  static func queueHead(_ key: String, tail: Int64, at clock: String, in db: Database) throws -> Int64 {
     let maxID = try Int64.fetchOne(
       db,
-      sql: "SELECT MAX(id) FROM session_queue WHERE session_id = ?",
-      arguments: [key],
+      sql: "SELECT MAX(id) FROM session_queue WHERE session_id = ? AND \(due)",
+      arguments: [key, clock],
     ) ?? 0
     return max(maxID, tail)
+  }
+
+  /// Moves the inputs past `tail` that are not due yet behind every other, so the due ones drain as one run from `tail`.
+  static func deferNotDue(_ key: String, tail: Int64, at clock: String, in db: Database) throws {
+    let later = try Int64.fetchAll(
+      db,
+      sql: "SELECT id FROM session_queue WHERE session_id = ? AND id > ? AND NOT \(due) ORDER BY id",
+      arguments: [key, tail, clock],
+    )
+    guard !later.isEmpty else { return }
+    var next = try Int64.fetchOne(db, sql: "SELECT MAX(id) FROM session_queue WHERE session_id = ?", arguments: [key])!
+    for id in later {
+      next += 1
+      try db.execute(sql: "UPDATE session_queue SET id = ? WHERE session_id = ? AND id = ?", arguments: [next, key, id])
+    }
+  }
+
+  /// When a new input on `topic` is due: the one it replaces keeps its time,
+  /// else no sooner than `throttle` past the last one the model saw.
+  private static func throttledDue(_ key: String, topic: String, throttle: Double, now: Date, in db: Database) throws -> Date {
+    let tail = try runtime(key, in: db).queueTail
+    let last = try Row.fetchOne(
+      db,
+      sql: "SELECT id, enqueued_at, COALESCE(due_at, enqueued_at) AS due FROM session_queue WHERE session_id = ? AND topic = ? ORDER BY id DESC LIMIT 1",
+      arguments: [key, topic],
+    )
+    guard let last else { return now }
+    let due = try SQLiteDateFormat.date(from: last["due"])
+    guard (last["id"] as Int64) <= tail else { return due }
+    let seen = max(due, try SQLiteDateFormat.date(from: last["enqueued_at"]))
+    return max(now, seen.addingTimeInterval(throttle))
+  }
+
+  static func removeInput(_ key: String, topic: String, in db: Database) throws {
+    let tail = try runtime(key, in: db).queueTail
+    try db.execute(sql: "DELETE FROM session_queue WHERE session_id = ? AND topic = ? AND id > ?", arguments: [key, topic, tail])
   }
 
   static func receipt(_ key: String, toolCallID: String, in db: Database) throws -> ToolResultPayload? {
@@ -250,36 +295,33 @@ enum Sessions {
     )
   }
 
-  static func enqueue(_ key: String, input: QueueInput, nowDate: Date, in db: Database) throws -> Int {
+  /// The session cell's write of an input it was sent; one it already has is not queued twice.
+  static func insertInput(_ key: String, _ put: SessionPut, nowDate: Date, in db: Database) throws {
     let record = try record(key, in: db)
-    let inputID = input.id.uuidString.lowercased()
-    if let existing = try Int64.fetchOne(
-      db,
-      sql: "SELECT id FROM session_queue WHERE session_id = ? AND input_id = ?",
-      arguments: [key, inputID],
-    ) {
-      return Int(existing)
-    }
-    if case let .archived(graceExpiresAt) = record.lifecycle, nowDate >= graceExpiresAt {
-      throw SessionStoreError.archiveGraceExpired(key)
-    }
+    let inputID = put.input.id.uuidString.lowercased()
+    guard try Int64.fetchOne(db, sql: "SELECT id FROM session_queue WHERE session_id = ? AND input_id = ?", arguments: [key, inputID]) == nil else { return }
     let now = SQLiteDateFormat.string(from: nowDate)
+    var due = put.due
+    if let topic = put.topic {
+      if let throttle = put.throttle { due = try throttledDue(key, topic: topic, throttle: throttle, now: nowDate, in: db) }
+      try removeInput(key, topic: topic, in: db)
+    }
     let next = (try Int64.fetchOne(
       db,
       sql: "SELECT MAX(id) FROM session_queue WHERE session_id = ?",
       arguments: [key],
     ) ?? 0) + 1
+    let later = due.flatMap { $0 > nowDate ? SQLiteDateFormat.string(from: $0) : nil }
     try db.execute(
-      sql: "INSERT INTO session_queue (session_id, id, input_id, payload, enqueued_at) VALUES (?, ?, ?, ?, ?)",
-      arguments: [key, next, inputID, try encode(input.capped()), now],
+      sql: "INSERT INTO session_queue (session_id, id, input_id, payload, enqueued_at, topic, due_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      arguments: [key, next, inputID, try encode(put.input.capped()), now, put.topic, later],
     )
-    if record.work == .noWork {
+    if record.work == .noWork, later == nil {
       try db.execute(
         sql: "UPDATE sessions SET work = 'has_work', last_activity_at = ? WHERE id = ?",
         arguments: [now, key],
       )
     }
-    return Int(next)
   }
 
   static func markHasWork(_ key: String, now: String, in db: Database) throws {
@@ -305,8 +347,8 @@ enum Sessions {
     let runtime = try runtime(key, in: db)
     let backlog = try Int.fetchOne(
       db,
-      sql: "SELECT COUNT(*) FROM session_queue WHERE session_id = ? AND id > ?",
-      arguments: [key, runtime.queueTail],
+      sql: "SELECT COUNT(*) FROM session_queue WHERE session_id = ? AND id > ? AND \(due)",
+      arguments: [key, runtime.queueTail, now],
     )!
     let derived = (backlog > 0 || transcript.hasWork) ? SessionWork.hasWork : SessionWork.noWork
     let running = hold == SessionHold.normal.rawValue && lifecycle == "live"

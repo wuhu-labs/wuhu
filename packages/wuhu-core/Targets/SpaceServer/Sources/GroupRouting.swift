@@ -1,6 +1,5 @@
 import struct Credentials.CredentialResolver
 import Dependencies
-import protocol MainHub.Main
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -84,14 +83,6 @@ func groupCatalog(space: Space, access: InferenceAccess) -> @Sendable () async t
     do { groups = try await fs.read(ModelsDocument.groupPath).1 }
     catch SpaceError.notFound { groups = nil }
     return access.catalog(try ModelsDocument(json: data, groupsJSON: groups))
-  }
-}
-
-func activeModelSpecifier(_ record: SessionRecord, owner: any Main) async -> ModelSpecifier? {
-  switch record.executor {
-  case let .kernel(model): model
-  case .modelGroup: try? await owner.modelRoute(record.id)?.specifier
-  case .retired: nil
   }
 }
 

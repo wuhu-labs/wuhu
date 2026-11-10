@@ -188,18 +188,19 @@ data: {}
       }, oidcToken: { _, _ in throw SigningFailure() }))
       try await rig.write("/signing-handler.js", #"""
       import {complete, CompletionError} from 'wuhu:ai'
-      export default async () => {
+      export default async ({wake}) => {
         try { await complete('hello', {model:'offline/small'}) }
-        catch (error) { return {typed:error instanceof CompletionError,name:error.name,code:error.code,provider:error.provider,message:error.message} }
+        catch (error) { wake(JSON.stringify({typed:error instanceof CompletionError,name:error.name,code:error.code,provider:error.provider,message:error.message})); return }
         throw new Error('expected signing failure')
       }
       """#)
-      let result = try await rig.scripts.runHandler(path: "/signing-handler.js", actor: .session(rig.session), stateJSON: "null", tools: tools)
-      #expect(JSONValue.parse(result.stateJSON) == .object([
+      let result = try await rig.scripts.runHandler(path: "/signing-handler.js", actor: .session(rig.session), tools: tools)
+      let caught = try #require(result.wakes.first)
+      #expect(JSONValue.parse(caught) == .object([
         "typed": .bool(true), "name": .string("CompletionError"), "code": .string("oidcSigningFailed"), "provider": .string("offline"),
         "message": .string("OIDC signing failed for provider offline; no fallback was attempted."),
       ]))
-      #expect(!result.stateJSON.contains("private-signing-material"))
+      #expect(!caught.contains("private-signing-material"))
     }
   }
 
@@ -273,19 +274,19 @@ data: {}
       try await rig.write("/complete-handler.js", #"""
       import {complete} from 'wuhu:ai'
       import {context} from 'wuhu:space'
-      export default async ({state,wake}) => {
+      export default async ({wake}) => {
         const text = await complete('Release today?', {model:'offline/small',schema:{type:'object',properties:{relevant:{type:'boolean'}},required:['relevant'],additionalProperties:false}})
         if (JSON.parse(text).relevant) wake('Release question')
-        return {session:(await context()).session,text,cursor:(state?.cursor ?? 0)+1}
+        wake(JSON.stringify({session:(await context()).session,text}))
       }
       """#)
       let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
-      let result = try await rig.scripts.runHandler(path: "/complete-handler.js", actor: .session(rig.session), stateJSON: #"{"cursor":4}"#, tools: tools)
-      let state = try #require(JSONValue.parse(result.stateJSON)?.object)
-      #expect(state["session"] == .string(rig.session.rawValue))
-      #expect(state["text"] == .string(#"{"relevant":true}"#))
-      #expect(state["cursor"] == .integer(5))
-      #expect(result.wakes == ["Release question"])
+      let result = try await rig.scripts.runHandler(path: "/complete-handler.js", actor: .session(rig.session), tools: tools)
+      #expect(result.wakes.count == 2)
+      #expect(result.wakes.first == "Release question")
+      let seen = try #require(JSONValue.parse(result.wakes.last ?? "")?.object)
+      #expect(seen["session"] == .string(rig.session.rawValue))
+      #expect(seen["text"] == .string(#"{"relevant":true}"#))
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
       #expect(record.object?["session"] == .string(rig.session.rawValue))
       #expect(record.object?["model"] == .string("small"))

@@ -223,7 +223,7 @@ _Afterwards:_ the reply names `createSession` with `expectsReply` (or `create_se
 
 _Prompt:_ "Whenever a doc under {sb}/drafts/ gets status: review, a new agent here should start reviewing that doc. This belongs to the group, not to you: it has to keep working after you and this chat are archived. Call it bench-{tag}-review."
 
-_Afterwards:_ `subscriptions` has a group observer (`session_id` null) named `bench-{tag}-review`, an `observe` over `docs` under `{sb}/drafts/` with status `review`, whose handler module lives in the group's files and calls `createSession` for each new doc, deduped by its returned state. The reply names it and says how to cancel it. A session-owned observe is a fail.
+_Afterwards:_ `subscriptions` has a group observer (`session_id` null) named `bench-{tag}-review`, an `observe` over `docs` under `{sb}/drafts/` with status `review`, whose handler module lives in the group's files and calls `createSession` for each new doc, skipping a doc it already handled by a durable lookup (a session tagged with the doc's path, or a table row). The reply names it and says how to cancel it. A session-owned observe is a fail.
 
 ## stream-observe
 

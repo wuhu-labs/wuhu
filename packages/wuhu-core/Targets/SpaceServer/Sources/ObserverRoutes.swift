@@ -68,7 +68,7 @@ func observerOutput(_ armed: ArmedSubscription, group: GroupID) -> ObserverOutpu
   case let .stream(url, _): (.observe, nil, url, nil)
   case let .timer(.cron(expression), _): (.timer, nil, nil, expression)
   case .timer(.oneShot, _): (.timer, nil, nil, nil)
-  case .requestDeadline, .requestStall: preconditionFailure("a group observer is an observation or a timer")
+  case .children: preconditionFailure("only a session watches its children")
   }
   return ObserverOutput(
     name: armed.name!, id: armed.slot.id.rawValue, group: group.rawValue, kind: kind, handler: armed.slot.handler!, sql: sql, url: url?.absoluteString, cron: cron,

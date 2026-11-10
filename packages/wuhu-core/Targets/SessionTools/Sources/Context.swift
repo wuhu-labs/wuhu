@@ -35,7 +35,6 @@ extension ToolExecutor {
     let raw: String?
     switch tool {
     case .read, .write, .edit, .grep, .find: (field, raw) = ("path", fields["path"]?.stringValue)
-    case .generateImage: (field, raw) = ("destination", fields["destination"]?.stringValue)
     case .exec:
       guard let machine = fields["machine"]?.stringValue, let cwd = fields["cwd"]?.stringValue else { return (call, nil) }
       (field, raw) = ("machine", "machines://\(machine)\(cwd)")
@@ -51,7 +50,7 @@ extension ToolExecutor {
     }
     let address = Address.machine(machine, path)
     switch tool {
-    case .read, .write, .edit, .generateImage: return (resolved, address.folder)
+    case .read, .write, .edit: return (resolved, address.folder)
     default: return (resolved, address)
     }
   }

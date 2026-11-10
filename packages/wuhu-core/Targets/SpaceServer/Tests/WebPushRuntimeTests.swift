@@ -145,7 +145,7 @@ import WebPush
   }
 
   @Test func aSessionEventIsTitledWithTheSessionItIsAbout() async throws {
-    let (space, owner) = try await notificationSpace(endpoints: [])
+    let (space, _) = try await notificationSpace(endpoints: [])
     try await withDependencies {
       $0.date = .constant(fixedDate)
     } operation: {
@@ -156,15 +156,10 @@ import WebPush
         createdBy: "owner",
         model: ModelSpecifier(provider: "testing", model: "test-model", effort: "medium"),
       )
-      try await space.sessions.recordRequestDeadline(
-        parent: owner,
-        task: worker,
-        request: RequestID("request"),
-        deadline: fixedDate,
-      )
+      try await space.sessions.markErrored(worker, message: "boom")
     }
-    let deadline = try #require(try await space.sessions.notifications(recipient: "owner").only)
-    #expect(try await NotificationOrigin(deadline, space: space) == .session("worker"))
+    let errored = try #require(try await space.sessions.notifications(recipient: "owner").only)
+    #expect(try await NotificationOrigin(errored, space: space) == .session("worker"))
   }
 
   @Test func transientFailureDefersTheSameNotification() async throws {

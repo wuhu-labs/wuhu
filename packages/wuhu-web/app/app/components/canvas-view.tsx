@@ -2,7 +2,6 @@ import {
   type CSSProperties,
   memo,
   type ReactNode,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -21,12 +20,11 @@ import {
 import { contains, grown, SpatialGrid } from '~/lib/canvas/grid'
 import { PointerRouter } from '~/lib/canvas/pointers'
 import type { TextRun } from '~/lib/canvas/board'
+import { connectorPaths } from '~/lib/canvas/connector-path'
 import {
-  arrowHead,
   boundsOf,
   type CanvasScene,
   connectorBounds,
-  connectorStroke,
   labelColor,
   labelSize,
   minTextSize,
@@ -55,7 +53,8 @@ export interface CanvasViewProps {
   control?: { current: CanvasControl | null }
   // Editing: pointers it claims edit instead of panning.
   input?: CanvasInput
-  // The item whose text an editor draws instead.
+  // The item whose text, or the connector whose label, an editor draws
+  // instead.
   editingText?: string | null
   // Screen-space chrome; pointers on it neither pan nor edit.
   children?: ReactNode
@@ -109,7 +108,6 @@ export function CanvasView({
   const viewportRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
   const zoomRef = useRef<HTMLSpanElement>(null)
-  const markerId = useId()
   const [mounted, setMounted] = useState<Mounted>({
     items: [],
     connectors: [],
@@ -382,34 +380,12 @@ export function CanvasView({
           />
         ))}
         <svg className='canvas-connectors' width='1' height='1'>
-          <defs>
-            <marker
-              id={markerId}
-              markerUnits='userSpaceOnUse'
-              markerWidth={arrowHead.length}
-              markerHeight={arrowHead.width}
-              refX={arrowHead.length}
-              refY={arrowHead.width / 2}
-              orient='auto-start-reverse'
-            >
-              <path
-                d={`M0,0 L${arrowHead.length},${
-                  arrowHead.width / 2
-                } L0,${arrowHead.width} z`}
-                fill={connectorStroke.color}
-              />
-            </marker>
-          </defs>
           {connectors.map((connector) => (
-            <ConnectorPath
-              key={connector.id}
-              connector={connector}
-              marker={`url(#${CSS.escape(markerId)})`}
-            />
+            <ConnectorPath key={connector.id} connector={connector} />
           ))}
         </svg>
         {connectors.map((connector) =>
-          connector.label && (
+          connector.label && connector.id !== editingText && (
             <div
               key={connector.id}
               className='canvas-label'
@@ -431,19 +407,16 @@ export function CanvasView({
   )
 }
 
-const ConnectorPath = memo(function ConnectorPath({ connector, marker }: {
+const ConnectorPath = memo(function ConnectorPath({ connector }: {
   connector: SceneConnector
-  marker: string
 }) {
+  const { line, heads } = connectorPaths(connector)
+  const { color, width } = connector.stroke
   return (
-    <polyline
-      points={connector.points.map((p) => `${p.x},${p.y}`).join(' ')}
-      stroke={connector.stroke.color}
-      strokeWidth={connector.stroke.width}
-      color={connector.stroke.color}
-      markerEnd={connector.arrow === 'none' ? undefined : marker}
-      markerStart={connector.arrow === 'both' ? marker : undefined}
-    />
+    <g stroke={color} strokeWidth={width}>
+      <path d={line} />
+      {heads !== '' && <path d={heads} />}
+    </g>
   )
 })
 

@@ -75,7 +75,7 @@ private func ids(_ text: String) -> [String] {
     let live = LiveReplica(.canvas)
     try live.write(Self.example, peer: 1)
     #expect(shape(live.text) == """
-    - sticky {#id0 @40,60 160x160 yellow} Ship canvas **v1**
+    - sticky {#id0 @40,60 220x220 blue} Ship canvas **v1**
     - text {#id1 @40,300 320x40} Free text, line one
       continuation line two
 
@@ -102,7 +102,7 @@ private func ids(_ text: String) -> [String] {
     try live.write("- sticky {@0,0} ## Launch\n  - [ ] Draft the API\n  - [x] Book the room\n", peer: 42)
     let id = try #require(ids(live.text).first)
     let canonical = """
-    - sticky {#\(id) @0,0 160x160 yellow}
+    - sticky {#\(id) @0,0 220x220 blue}
       ## Launch
 
       - [ ] Draft the API
@@ -270,7 +270,7 @@ private func ids(_ text: String) -> [String] {
 
   @Test func newItemsWithoutAPositionTakeFreeSlots() throws {
     let live = LiveReplica(.canvas)
-    try live.write("## S {@0,0 600x400}\n- sticky\n- sticky\n- sticky\n- sticky\n", peer: 13)
+    try live.write("## S {@0,0 600x400}\n- sticky {160x160}\n- sticky {160x160}\n- sticky {160x160}\n- sticky {160x160}\n", peer: 13)
     let board = CanvasBoard(doc: try drawnDoc(live))
     let frames = board.items.filter { $0.kind == .sticky }.map(board.frame(of:))
     #expect(frames.map(\.x) == [20, 200, 380, 20])
@@ -299,7 +299,7 @@ private func ids(_ text: String) -> [String] {
     let dragged = try #require(try human.write(agentText.replacing("@0,0", with: "@300,200"), peer: 18))
     try live.importUpdate(dragged.update)
     let agent = try #require(try live.write(agentText.replacing("plan", with: "plan **v2**"), base: read, peer: 19))
-    #expect(live.text.contains("@300,200 160x160 yellow} plan **v2**"))
+    #expect(live.text.contains("@300,200 220x220 blue} plan **v2**"))
     try human.importUpdate(agent.update)
     #expect(human.text == live.text)
   }

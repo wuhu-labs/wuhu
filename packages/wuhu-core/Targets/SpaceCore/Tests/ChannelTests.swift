@@ -92,7 +92,7 @@ import Testing
     let id = try await store.createConversation(members: ["alice", "bob"], in: .shared)
     let plain = try await store.post(.conversation(id), messageID: MessageID("plain"), sender: person("alice"), content: .init(text: "hello people"))
     #expect(plain.enqueued.isEmpty)
-    #expect(try await store.hydrate(agent).undrained.isEmpty)
+    #expect(try await store.undrainedInputs(agent).isEmpty)
     let mention = try await store.post(.conversation(id), messageID: MessageID("mention"), sender: person("alice"), content: .init(text: "@\(agent.rawValue) help"))
     #expect(mention.enqueued == [agent])
     _ = try await store.drainQueue(agent)

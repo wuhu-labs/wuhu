@@ -54,8 +54,6 @@ import Testing
       }
       #expect(try await space.query("SELECT * FROM sessions").rows.isEmpty)
       let id = try await store.createSession(group: .shared, title: "good", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: route())
-      _ = try await store.enqueue(id, input: SessionFix.message())
-      await #expect(throws: SessionStoreError.busyForRestart(id.rawValue)) { try await store.restart(id, modelRoute: route(member: "other")) }
       #expect(try await store.modelRoute(id) == route())
     }
   }

@@ -1,17 +1,9 @@
-import Dependencies
-import Logging
-#if canImport(FoundationEssentials)
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
 import struct MachineContract.ExecID
 import struct MachineContract.ExecStatus
 import func MainHub.execHandle
 import struct MainHub.ToolProblem
 import SessionDomain
 import SpaceClient
-import SpaceCore
 
 extension ToolExecutor {
   private func ownExec(_ id: ExecID, session: SessionID) async throws -> ExecStatus? {
@@ -31,169 +23,23 @@ extension ToolExecutor {
     }
   }
 
+  /// Kills the exec an interrupted call started, if it still runs.
   public func killInterrupted(session: SessionID, callID: ToolCallID) async {
-    if let job = execJobs.job(session, callID) {
-      let interrupted = try? await job.gate.holding { () -> Bool in
-        guard job.phase != .detached, job.phase != .detaching else { return false }
-        job.phase = .cancelled
-        try? await delivered(job)
-        if job.ended.value != nil {
-          execJobs.remove(job)
-          job.committed.fulfill(job.deliveryRecorded.value == true)
-        }
-        return true
-      }
-      guard interrupted == true, let client = try? await client(session) else { return }
-      try? await killExec(job.id, client: client)
-      return
-    }
     guard let client = try? await client(session),
           let records: [ExecStatus] = try? await client.api(.get, "/v1/exec"),
           let record = records.first(where: { $0.toolCallID == callID.rawValue && $0.state == .live }) else { return }
     try? await killExec(record.id, client: client)
   }
 
-  /// cancel(exec.…): SIGTERM to the process group, SIGKILL 5 s later. The
-  /// end is not announced; the result says how it ended, if it does soon.
+  /// cancel(exec.…): SIGTERM to the process group, SIGKILL 5 s later.
   func cancelExec(_ session: SessionID, _ id: ExecID) async throws -> ToolResultPayload {
     let handle = execHandle(id)
-    let job = execJobs.job(session, exec: id)
-    if job == nil {
-      guard let record = try await ownExec(id, session: session), record.toolCallID != nil else {
-        throw ToolProblem("you have no exec \(handle)", code: "notFound")
-      }
-      guard record.state == .live else { throw ToolProblem("\(handle) has already ended", code: "alreadyEnded") }
+    guard let record = try await ownExec(id, session: session), record.toolCallID != nil else {
+      throw ToolProblem("you have no exec \(handle)", code: "notFound")
     }
-    let client = try await client(session)
-    guard let job else {
-      try await killExec(id, client: client)
-      let _: EmptyExecReply = try await client.api(.post, "/v1/exec/\(id.rawValue)/delivered")
-      return .script(.init(output: "\(handle) was sent SIGTERM to its process group, and gets SIGKILL 5 s later"))
-    }
-    try await job.gate.holding {
-      guard job.ended.value == nil else { throw ToolProblem("\(handle) has already ended", code: "alreadyEnded") }
-      let phase = job.phase
-      let detached = phase != .awaited
-      if detached { job.phase = .cancelled }
-      do { try await killExec(id, client: client) }
-      catch {
-        if detached { job.phase = phase }
-        throw error
-      }
-      if detached { try await delivered(job) }
-    }
-    @Dependency(\.continuousClock) var continuousClock
-    let clock = continuousClock
-    let ended: ExecJob.Outcome? = await withTaskGroup(of: ExecJob.Outcome?.self) { group in
-      group.addTask { await job.ended.wait() }
-      group.addTask {
-        try? await clock.sleep(for: .seconds(10))
-        return nil
-      }
-      defer { group.cancelAll() }
-      return await group.next() ?? nil
-    }
-    let output = switch ended {
-    case let .payload(.exec(result))?: "\(handle) was killed (SIGTERM to its process group, SIGKILL 5 s later); it ended with exit code \(result.exitCode)"
-    case .payload?: "\(handle) was killed"
-    case let .problem(problem)?: "\(handle) was killed: \(problem.message)"
-    case nil: "\(handle) was sent SIGTERM to its process group and has not ended within 10 s; SIGKILL follows 5 s after the TERM"
-    }
-    return .script(.init(output: output))
-  }
-
-  /// A hand-off found the exec call mid-wait: this worker forgets the job and
-  /// stops following it without acknowledging its end, so the relay keeps
-  /// the replay for the next worker, which rejoins by the call id. False
-  /// once the call has returned `running` (its end is owed here) or when
-  /// there is no such job.
-  public func release(session: SessionID, callID: ToolCallID) async -> Bool {
-    guard let job = execJobs.job(session, callID) else { return false }
-    let released = try? await job.gate.holding { () -> Bool in
-      guard let driver = job.driver.withLock({ $0 }), job.release(from: .awaited) else { return false }
-      execJobs.remove(job)
-      driver.cancel()
-      return true
-    }
-    return released == true
-  }
-
-  public func cancelExecJobs(of session: SessionID) async {
-    guard let client = try? await client(session) else { return }
-    for job in execJobs.jobs(of: session) {
-      try? await job.gate.holding {
-        job.phase = .cancelled
-        try? await delivered(job)
-        if job.ended.value != nil {
-          execJobs.remove(job)
-          job.committed.fulfill(job.deliveryRecorded.value == true)
-        }
-      }
-      try? await killExec(job.id, client: client)
-    }
-  }
-
-  /// A hand-off: this worker stops following the session's execs whose calls
-  /// returned `running`, without acknowledging their ends, so the next worker
-  /// adopts them when it mounts the session. An end already being delivered
-  /// here finishes first.
-  public func releaseExecJobs(of session: SessionID) async {
-    for job in execJobs.jobs(of: session) {
-      try? await job.gate.holding {
-        guard job.release(from: .detached, .detaching) else { return }
-        execJobs.remove(job)
-        job.driver.withLock { $0 }?.cancel()
-      }
-    }
-  }
-
-  public func runningExecJobs(of session: SessionID) -> [String] { execJobs.running(of: session) }
-
-  /// The session's execs whose ends it is owed and that no call of it still
-  /// waits for, followed here from now on: what a restart or a hand-off left
-  /// running. Reads the transcript to know which calls still wait.
-  public func adoptExecJobs(of session: SessionID) async {
-    do {
-      let hydration = try await owner.hydrate(session)
-      guard case let .kernel(transcript) = hydration.transcript else { return }
-      await adoptExecJobs(of: session, pending: Set(transcript.pendingToolCallIDs))
-    } catch {
-      Self.execLog.warning("could not read the exec caller's transcript: \(error)")
-    }
-  }
-
-  /// As above, with the calls the session's transcript still waits for: the
-  /// loop rejoins those by their call ids.
-  public func adoptExecJobs(of session: SessionID, pending: Set<ToolCallID>) async {
-    let records: [ExecRecord]
-    do { records = try await owner.owedExecs(session) } catch {
-      Self.execLog.error("could not read the exec jobs the session is owed: \(error)")
-      return
-    }
-    for record in records {
-      guard let call = record.toolCallID, !pending.contains(call), execJobs.job(session, call) == nil else { continue }
-      let job = ExecJob(
-        session: session,
-        call: call,
-        id: record.id,
-        startedAt: record.startedAt,
-        notice: UUID.deterministic("exec-end", session.rawValue, call.rawValue),
-        spec: record.toolSpec ?? "",
-        phase: .detached,
-        adopted: true,
-      )
-      guard let encoded = record.toolSpec,
-            let spec = try? JSONDecoder().decode(ExecJobSpec.self, from: Data(encoded.utf8)),
-            let client = try? await client(session)
-      else {
-        do { try await settle(job, .problem(ToolProblem("this server cannot rejoin it"))) }
-        catch { Self.execLog.error("\(job.handle) could not deliver its end: \(error)") }
-        continue
-      }
-      execJobs.insert(job)
-      do { try drive(job, spec: spec, client: client) }
-      catch { Self.execLog.warning("\(job.handle) was not re-adopted: \(error.message)") }
-    }
+    guard record.state == .live else { throw ToolProblem("\(handle) has already ended", code: "alreadyEnded") }
+    try await killExec(id, client: client(session))
+    return .script(.init(output: "\(handle) was sent SIGTERM to its process group, and gets SIGKILL 5 s later"))
   }
 }
 

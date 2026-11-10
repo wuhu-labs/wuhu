@@ -18,8 +18,7 @@ import SpaceCore
 import SpaceTools
 import struct WuhuAI.ToolCall
 
-public actor Hub: Main {
-  nonisolated let sessionAccess: SessionAccess
+public actor Hub {
   nonisolated public let space: Space
   nonisolated let secrets: SpaceSecretStores?
   nonisolated public let machines: MachineSeam?
@@ -29,14 +28,12 @@ public actor Hub: Main {
 
   public init(
     space: Space,
-    sessionAccess: SessionAccess = .init(),
     secrets: SpaceSecretStores? = nil,
     machines: MachineSeam? = nil,
     resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
     resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
     prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
   ) {
-    self.sessionAccess = sessionAccess
     self.space = space
     self.secrets = secrets
     self.machines = machines

@@ -379,7 +379,6 @@ extension Command {
       let cert = try parser.option("--cert", verb: verb)
       let key = try parser.option("--key", verb: verb)
       let webApp = try parser.option("--web-app", verb: verb)
-      let workerProcess = parser.flag("--worker-process")
       var ignored: [String] = []
       for name in ["--web-port", "--web-origin"] {
         if try parser.option(name, verb: verb) != nil { ignored.append(name) }
@@ -441,7 +440,6 @@ extension Command {
         groupCertificate: groupCert,
         groupPrivateKey: groupKey,
         webApp: webApp,
-        workerProcess: workerProcess,
         ignoredOptions: ignored,
       ))
     default:
@@ -641,7 +639,6 @@ extension Command {
         effort: effort, tags: tags, template: template, topLevel: topLevel, homeGroup: homeGroup,
       ))
     case "request":
-      let deadline = try parser.doubleOption("--deadline", verb: "session request")
       let stall = try parser.doubleOption("--stall", verb: "session request")
       let kind = try parser.option("--kind", verb: "session request")
       let key = try parser.option("--key", verb: "session request")
@@ -651,7 +648,7 @@ extension Command {
       let message = try parser.required("message", verb: "session request")
       try parser.finish(verb: "session request")
       return .sessionRequest(
-        id: id, message: message, deadline: deadline, stall: stall,
+        id: id, message: message, stall: stall,
         terms: RequestTermsInput(kind: kind, key: key, schema: schema, fields: fields),
       )
     case "restart":
@@ -1384,7 +1381,7 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--worker-process]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls
@@ -1410,12 +1407,6 @@ extension Command {
     on LibreSSL, fails an Ed25519 handshake) or one that isn't the leaf's.
     --web-app serves the SPA from <dir> (loaded once at boot; index.html
     required) instead of the embedded build; the override is logged at boot.
-    --worker-process runs the sessions' loops, inference and tools in a
-    worker process of their own, which reaches the server over
-    <folder>/run/worker.sock. SIGHUP then reboots the server in place:
-    a new worker takes the sessions over at the end of each one's step in
-    flight, and the server re-executes itself, keeping its listeners and
-    its worker.
     --host sets the bind address; it defaults to 127.0.0.1 (loopback
     only). Pass --host 0.0.0.0 to expose the server on the LAN.
     --origin advertises the server's canonical https:// origin through
@@ -1979,7 +1970,7 @@ extension Command {
 
     subcommands:
       create [--kind agent|task] [--top-level] [--executor E] [--provider P --model M | --model-group G] [--effort E] [--template NAME] [--extra JSON] [--tag T]... <title>
-      request [--deadline SECONDS] [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
+      request [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
                                from a session's exec: open a request on a
                                child it created, which owes it a final report
       restart [--executor E] [--provider P] [--model M] [--model-group G] [--effort E] [--extra JSON] [--message TEXT] <session-id>
@@ -2037,14 +2028,12 @@ extension Command {
     \(exitCodes)
     """,
     "session request": """
-    usage: wuhu session request [--deadline SECONDS] [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
+    usage: wuhu session request [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
 
     only from a session's exec (WUHU_EXEC=1): opens a request on a child the
     session created, posting <message> into their DM. the child owes a final
-    report; --deadline notifies the session if none arrives in time. --stall
-    (default 1800, 0 for off) notifies it once the child and its descendants
-    show no progress for that long while not waiting on a script, exec,
-    one-shot timer or request of their own. the request is a row of the
+    report. --stall (default 1800, 0 for off) reminds it once the child has sent no progress
+    report for that long. the request is a row of the
     requests table: --kind sorts it, --key (needs --kind) names it, unique per
     group and kind, and a key already taken posts nothing and prints the request
     holding it, marked existing. --schema is a JSON Schema the final report's

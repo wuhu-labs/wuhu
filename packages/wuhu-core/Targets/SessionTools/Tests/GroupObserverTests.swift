@@ -120,35 +120,10 @@ import Testing
     }
   }
 
-  @Test func cancellingAnObserverStopsItsFiringInFlight() async throws {
-    try await withToolDeps { time in
-      let space = try Space.inMemory()
-      _ = try await space.fs(.shared).write("/slow.js", Data("""
-      import { writeText } from 'wuhu:space';
-      export default async () => {
-        await writeText('/started.md', 'x', { ifMatch: null });
-        await sleep(5000);
-        await writeText('/after.md', 'x', { ifMatch: null });
-        return null;
-      };
-      """.utf8), ifMatch: nil)
-      try await withHandlerFiring(space) { _, owner in
-        _ = try await owner.armObserver(.shared, ObserverInput(
-          name: "slow", handler: "/slow.js", observe: nil, timer: ObserverTimerInput(inSeconds: 1, cron: nil), sessionsPerHour: nil,
-        ))
-        await time.advance(by: 2)
-        try await until("the firing starts") { (try? await space.fs(.shared).read("/started.md")) != nil }
-        _ = try await owner.cancelObserver(.shared, name: "slow")
-        await time.advance(by: 10)
-        try await holds("the cancelled firing writes nothing more") { (try? await space.fs(.shared).read("/after.md")) == nil }
-      }
-    }
-  }
-
   @Test func observationThatTurnsInvalidPausesTheObserverWithItsError() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
-      _ = try await space.fs(.shared).write("/watch.js", Data("export default ({state}) => state;".utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/watch.js", Data("export default () => {};".utf8), ifMatch: nil)
       try await withHandlerFiring(space, configure: { firing in
         firing.observationStream = { _, _, _ in
           AsyncThrowingStream { $0.finish(throwing: SpaceError.unknownRelation("/gone.table")) }

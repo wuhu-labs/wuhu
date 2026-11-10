@@ -49,7 +49,7 @@ private func render(_ delivery: WebPushDeliveryRecord, space: Space) async throw
   let notification = delivery.notification
   let target: SpaceURL.Destination = switch notification.kind {
   case .conversationMessage: .conversation(notification.source)
-  case .childFailed, .requestDeadline, .sessionSettled, .sessionErrored,
+  case .sessionSettled, .sessionErrored,
        .sessionDisconnected, .contractorDisconnected: .session(notification.source)
   }
   let destination = URL(string: target.percentEncodedPath)!

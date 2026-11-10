@@ -1,6 +1,7 @@
 import type { Board, BoardItem } from './board.ts'
 import {
   barOrigin,
+  createdFrame,
   handleAt,
   handlesOf,
   hitAt,
@@ -156,4 +157,26 @@ Deno.test('a press is a click when its release lands within the slop, wherever i
   assertEquals(withinClick(press, { x: 110, y: 100 }, 1), false)
   assertEquals(withinClick(press, { x: 101, y: 100 }, 1), true)
   assertEquals(withinClick(press, { x: 103, y: 100 }, 2), false)
+})
+
+Deno.test('a creation drag draws over the drag, a square with Shift', () => {
+  const start = { x: 100, y: 100 }
+  assertEquals(createdFrame(start, { x: 260, y: 180 }, false), {
+    x: 100,
+    y: 100,
+    w: 160,
+    h: 80,
+  })
+  assertEquals(createdFrame(start, { x: 260, y: 180 }, true), {
+    x: 100,
+    y: 100,
+    w: 160,
+    h: 160,
+  })
+  assertEquals(createdFrame(start, { x: 40, y: 190 }, true), {
+    x: 10,
+    y: 100,
+    w: 90,
+    h: 90,
+  })
 })

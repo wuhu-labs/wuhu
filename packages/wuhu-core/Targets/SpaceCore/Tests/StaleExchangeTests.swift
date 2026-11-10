@@ -54,7 +54,8 @@ import struct WuhuAI.Context
     }
 
     func drained() async throws -> [String] {
-      try await store.drainQueue(agent).items.compactMap {
+      try await store.deliverMail()
+      return try await store.drainQueue(agent).items.compactMap {
         if case let .message(message) = $0 { message.content.text } else { nil }
       }
     }

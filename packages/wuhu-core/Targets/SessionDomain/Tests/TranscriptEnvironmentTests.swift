@@ -19,10 +19,6 @@ import Testing
   private static let park = Nag.park(request: RequestID("r1"))
   private static let open = [OpenRequest(id: RequestID("r1"))]
 
-  private static func requested(_ task: String, deadline: Date?) -> TranscriptItem {
-    Fix.result(.request(.init(requestID: .init("c1"), task: .init(task), conversationID: .init("dm-\(task)"), deadline: deadline)))
-  }
-
   @Test func `an agent owes in transcript order and is reminded once per delivery`() {
     let owed = Nag.owedReply(conversations: [.init("box")])
     var items = [Fix.message(conversation: "box")]
@@ -57,17 +53,6 @@ import Testing
     #expect(Self.environment([Self.request, timer, fired]).nag(task: true, openRequests: Self.open, now: Fix.instant) == Self.park, "a fired one-shot wakes nothing more")
   }
 
-  @Test func `a deadline on a request to a child keeps a task from being nagged until the child's final`() {
-    let bounded = Self.requested("child", deadline: Self.later)
-    #expect(Self.environment([Self.request, bounded]).nag(task: true, openRequests: Self.open, now: Fix.instant) == nil)
-    #expect(Self.environment([Self.request, Self.requested("child", deadline: nil)]).nag(task: true, openRequests: Self.open, now: Fix.instant) == Self.park)
-
-    let final = Fix.message(id: "f", conversation: "dm-child", kind: .final, request: "c1", owesReply: false)
-    #expect(Self.environment([Self.request, bounded, final]).nag(task: true, openRequests: Self.open, now: Fix.instant) == Self.park)
-    let expired = Fix.notification(kind: .requestDeadline, subscription: "deadline.c1", endsSubscription: true)
-    #expect(Self.environment([Self.request, bounded, expired]).nag(task: true, openRequests: Self.open, now: Fix.instant) == Self.park)
-  }
-
   @Test func `an observation does not keep a task from being nagged`() {
     let observing = Fix.result(.observe(.init(subscriptionID: .init("obs.o"), source: .query("SELECT 1"))))
     #expect(Self.environment([Self.request, observing]).nag(task: true, openRequests: Self.open, now: Fix.instant) == Self.park)
@@ -86,14 +71,12 @@ import Testing
     #expect(carried.environment.nextTimer(openRequests: Self.open, now: Self.later) == Self.later.addingTimeInterval(60))
   }
 
-  @Test func `park reminders back off 1, 5, 15 minutes, then flat, and the deadline ends the series`() {
+  @Test func `park reminders back off 1, 5, 15 minutes, then flat`() {
     var items = [Self.request]
     #expect(Self.environment(items).nextTimer(openRequests: Self.open, now: Fix.instant) == Fix.instant)
     for delay in [60.0, 300, 900, 900] {
       items.append(Self.nag(Self.park))
       #expect(Self.environment(items).nextTimer(openRequests: Self.open, now: Fix.instant) == Fix.instant.addingTimeInterval(delay))
     }
-    let bounded = [OpenRequest(id: RequestID("r1"), deadline: Fix.instant.addingTimeInterval(30))]
-    #expect(Self.environment([Self.request, Self.nag(Self.park)]).nextTimer(openRequests: bounded, now: Fix.instant) == nil)
   }
 }

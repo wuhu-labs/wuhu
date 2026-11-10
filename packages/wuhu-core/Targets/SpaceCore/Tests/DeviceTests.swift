@@ -139,7 +139,7 @@ struct DeviceTests {
     func input() -> QueueInput {
       .message(.init(id: UUID(), messageID: .init(UUID().uuidString), conversationID: .init("names"), sender: .init(id: device.account.rawValue, timeZone: TimeZone(identifier: "UTC")!, device: device.id), timestamp: fixedDate, content: .init(text: "hello")))
     }
-    _ = try await space.sessions.enqueue(session, input: input())
+    _ = try await space.sessions.put(session, input: input())
     let before = try await space.sessions.drainQueue(session)
     _ = try await space.setUserProfile(principal: device.account.rawValue, handle: "after", displayName: nil)
     let annotated = try await space.annotateDevice(device.id, name: "Studio Mac", machine: machine.id)
@@ -148,7 +148,7 @@ struct DeviceTests {
     let untouched = try await space.annotateDevice(device.id, name: nil, machine: nil)
     #expect(untouched.name == "Studio Mac")
     #expect(untouched.machine == machine.id)
-    _ = try await space.sessions.enqueue(session, input: input())
+    _ = try await space.sessions.put(session, input: input())
     let after = try await space.sessions.drainQueue(session)
     let hydrated = try await space.sessions.hydrate(session).transcript.kernel
     #expect(hydrated.items == before.items + after.items)

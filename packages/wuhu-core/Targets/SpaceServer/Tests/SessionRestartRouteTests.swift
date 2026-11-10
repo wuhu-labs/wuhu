@@ -25,6 +25,7 @@ import enum WuhuAI.InferenceError
       #expect(out.model == "test-model")
       #expect(out.queued == nil)
 
+      try await until("restarted") { try await harness.store.generationState(id).generation == 1 }
       let transcript = try await harness.store.transcript(id)
       #expect(transcript.items.count == 1, "the head is the whole of a restarted generation")
       guard case let .generationHead(head) = transcript.items[0] else {
@@ -46,6 +47,7 @@ import enum WuhuAI.InferenceError
       let parent = try await harness.createSession()
       let task = try await harness.store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: parent.rawValue, executor: try await harness.store.record(parent).executor)
       _ = try await harness.call("/v1/session/\(task.rawValue)/restart", .null, as: SessionRestartOutput.self)
+      try await until("restarted") { try await harness.store.generationState(task).generation == 1 }
       let note = try #require(await harness.store.generationState(task).note)
       #expect(note.contains("Catch up from your DM with your parent before acting"))
       #expect(!note.contains("your box"))
@@ -63,9 +65,9 @@ import enum WuhuAI.InferenceError
       )
       #expect(out.model == "test-model", "an omitted field keeps the live value")
       #expect(out.effort == "low")
-      #expect(try await harness.store.record(id).executor == .kernel(
-        .init(provider: "testing", model: "test-model", effort: "low"),
-      ))
+      try await until("restarted onto low effort") {
+        try await harness.store.record(id).executor == .kernel(.init(provider: "testing", model: "test-model", effort: "low"))
+      }
     }
   }
 
@@ -78,13 +80,12 @@ import enum WuhuAI.InferenceError
         "/v1/session/\(id.rawValue)/restart", .object(["message": "start here"]), as: SessionRestartOutput.self,
       )
       #expect(out.queued == 1)
-      let undrained = try await harness.store.hydrate(id).undrained
-      #expect(undrained.count == 1)
-      guard case let .message(message) = undrained[0].input else {
-        Issue.record("the opening message rides the box, got \(undrained[0].input)")
-        return
+      try await until("the fresh generation takes the opening message") {
+        guard try await harness.store.generationState(id).generation == 1 else { return false }
+        return try await harness.store.transcript(id).items.contains {
+          if case let .message(message) = $0 { message.content.text == "start here" } else { false }
+        }
       }
-      #expect(message.content.text == "start here")
     }
   }
 
@@ -92,7 +93,7 @@ import enum WuhuAI.InferenceError
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await harness.createSession()
-      _ = try await harness.store.enqueue(id, input: .message(.init(
+      try await harness.store.put(id, input: .message(.init(
         id: UUID(),
         messageID: MessageID(UUID().uuidString),
         conversationID: ConversationID("ch1"),
@@ -133,9 +134,9 @@ import enum WuhuAI.InferenceError
       )
       #expect(switched.executor == "kernel")
       #expect(switched.effort == "low", "the new model's own default, not the old effort")
-      #expect(try await harness.store.record(id).executor == .kernel(
-        .init(provider: "second", model: "other-model", effort: "low"),
-      ))
+      try await until("restarted onto the other provider") {
+        try await harness.store.record(id).executor == .kernel(.init(provider: "second", model: "other-model", effort: "low"))
+      }
     }
   }
 
@@ -149,11 +150,8 @@ import enum WuhuAI.InferenceError
       let id = try await harness.createSession()
 
       _ = try await harness.call("/v1/session/\(id.rawValue)/restart", .null, as: SessionRestartOutput.self)
-      // The verb path materializes the session and mounts its looper, so this
-      // is a real loop pass over the restarted transcript.
-      try await harness.runtime.service.wake(id)
       try await until("the loop pass to settle") {
-        try await harness.store.record(id).work == .noWork
+        try await harness.store.settledWork(id)
       }
 
       let attempted = attempts.withLock { $0 }

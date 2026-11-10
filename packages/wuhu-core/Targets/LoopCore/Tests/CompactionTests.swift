@@ -2,8 +2,6 @@ import Dependencies
 import Foundation
 import JSONValue
 @testable import LoopCore
-import class MainHub.Hub
-import class MainHub.SessionService
 import SessionDomain
 import SessionTools
 import SpaceCore
@@ -44,47 +42,11 @@ private func compactCall(
         },
       ])
       try await runService(space, makeConfig(inference: { try await script($0) })) { service in
-        _ = try await service.enqueue(item: Fix.message("work"), to: id)
+        try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("compact refusal is followed by another inference") { try await sessions.settledWork(id) && script.count == 2 }
       }
       #expect(try await sessions.generationState(id).generation == 0)
       #expect(try await sessions.record(id).errorMessage == nil)
-    }
-  }
-
-  @Test func cancellationAfterForcedCommitSkipsMechanicalFallback() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "cancel compact", kind: .agent, createdBy: "morgan", model: .test)
-      let attempts = Box(0)
-      let compacted = Box(0)
-      let committed = AsyncStream<Void>.makeStream()
-      let config = makeConfig(inference: { request in
-        attempts.withLock { $0 += 1 }
-        var reply = Fix.reply("done", tokens: request.mode == .forcedCompact ? 950 : 900)
-        if request.mode == .forcedCompact {
-          reply.committed = { _, _ in
-            withUnsafeCurrentTask { $0?.cancel() }
-            committed.continuation.yield(())
-          }
-        }
-        return reply
-      }, compact: { _ in
-        compacted.withLock { $0 += 1 }
-        return .init(summary: "should not run")
-      }, budget: tightBudget)
-      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: config)
-      try await runService(service) { _ in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
-        for await _ in committed.stream { break }
-        await service.shutdown()
-        #expect(compacted.value == 0)
-        #expect(attempts.value == 2)
-        let transcript = try await sessions.hydrate(sid).transcript.kernel
-        #expect(transcript.assistantEntries.count == 2)
-        if case .generationHead(let head)? = transcript.items.first { #expect(head.summary.isEmpty) }
-      }
     }
   }
 
@@ -118,7 +80,7 @@ private func compactCall(
       )
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         // The work axis flips no_work at the first big commit already; the
         // ladder converges only once the post-compaction turn has landed.
         try await until("fresh turn landed") {
@@ -172,7 +134,7 @@ private func compactCall(
       )
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh turn landed") {
           guard script.count == 3 else { return false }
           return try await sessions.settledWork(sid)
@@ -213,7 +175,7 @@ private func compactCall(
       )
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh turn landed") {
           guard script.count == 3 else { return false }
           return try await sessions.settledWork(sid)
@@ -239,7 +201,7 @@ private func compactCall(
       let config = makeConfig(inference: { try await script($0) }, compact: { try await compactor($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         // The clock never advances: any backoff would hang this convergence.
         try await until("settled") { try await sessions.settledWork(sid) }
       }
@@ -265,12 +227,12 @@ private func compactCall(
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("explore"), to: sid)
+        try await service.enqueue(item: Fix.message("explore"), to: sid)
         try await until("explored") {
           guard script.count >= 2 else { return false }
           return try await sessions.settledWork(sid)
         }
-        _ = try await service.enqueue(item: Fix.message("now compact"), to: sid)
+        try await service.enqueue(item: Fix.message("now compact"), to: sid)
         try await until("settled") { try await sessions.settledWork(sid) }
       }
 
@@ -310,7 +272,7 @@ private func compactCall(
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await sessions.enqueue(sid, input: Fix.message("hello"))
+      try await sessions.put(sid, input: Fix.message("hello"))
       _ = try await sessions.drainQueue(sid)
       _ = try await sessions.writeCompaction(
         sid,
@@ -336,6 +298,7 @@ private func compactCall(
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
       try await runService(space, config) { _ in
+        try await sessions.look(sid)
         try await until("settled") { try await sessions.settledWork(sid) }
       }
 
@@ -360,7 +323,7 @@ private func compactCall(
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("first turn settled") {
           guard script.count == 1 else { return false }
           return try await sessions.settledWork(sid)
@@ -384,7 +347,7 @@ private func compactCall(
     }
   }
 
-  @Test func `a compact command without instructions injects nothing`() async throws {
+  @Test func `a compact command without instructions appends one empty request`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -402,7 +365,7 @@ private func compactCall(
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("first turn settled") {
           guard script.count == 1 else { return false }
           return try await sessions.settledWork(sid)
@@ -419,7 +382,7 @@ private func compactCall(
         guard case let .notification(notification) = item else { return nil }
         return notification
       }
-      #expect(notifications.isEmpty, "a bare compact steers nothing into the context")
+      #expect(notifications.map(\.kind) == [.compactRequest] && notifications[0].content.text.isEmpty, "a bare compact is one empty request")
     }
   }
 }

@@ -47,7 +47,7 @@ extension SessionStore {
     receipt: (holder: Caller, callID: ToolCallID)? = nil,
     cloneOwed: Bool = false,
     modelRoute: SessionModelRoute? = nil,
-    request: (id: RequestID, requester: Caller, brief: String, terms: RequestTerms)? = nil,
+    request: (id: RequestID, requester: Caller, brief: String, terms: RequestTerms, stallSeconds: Double?)? = nil,
     observer: Observer? = nil,
   ) async throws -> SessionID {
     @Dependency(\.uuid) var uuid
@@ -71,7 +71,7 @@ extension SessionStore {
       if let observer, let refusal = try Self.admit(observer, now: nowDate, in: db) { return .failure(refusal) }
       if let parent {
         let parentRecord = try Sessions.record(parent.rawValue, in: db)
-        guard parentRecord.lifecycle == .live, !self.archiveReservations.contains(parent) else {
+        guard parentRecord.lifecycle == .live else {
           throw SessionStoreError.parentUnavailableForCreation(parent.rawValue)
         }
         guard try Sessions.ancestors(parent.rawValue, in: db).count + 2 <= Self.depthLimit else {
@@ -113,8 +113,12 @@ extension SessionStore {
         try Sessions.append(name, generation: 0, items: [TranscriptItem.generationHead(head)], in: db)
       }
       let id = SessionID(name)
+      if let parent { try Self.watchChildren(parent, now: now, in: db) }
       if let request {
-        try Self.insertRequest(request.id, group: group, requester: request.requester, task: id, brief: request.brief, terms: request.terms, deadline: nil, now: now, in: db)
+        try Self.insertRequest(
+          request.id, group: group, requester: request.requester, task: id, brief: request.brief, terms: request.terms,
+          stallSeconds: request.stallSeconds, now: now, in: db,
+        )
       }
       if let receipt {
         try Sessions.recordReceipt(
@@ -132,119 +136,33 @@ extension SessionStore {
     return try made.get()
   }
 
-  public func enqueue(_ id: SessionID, input: QueueInput) async throws -> Int {
+  /// Mails the session's cell an input for its queue.
+  public func enqueue(_ id: SessionID, input: QueueInput, topic: String? = nil, due: Date? = nil) async throws {
     let key = id.rawValue
     let nowDate = dateGen.now
-    let row = try await writer.write { db in
-      try Sessions.enqueue(key, input: input, nowDate: nowDate, in: db)
+    try await writer.write { db in
+      try Sessions.enqueue(key, input: input, topic: topic, due: due, nowDate: nowDate, in: db)
     }
     signals.post(id)
-    return row
   }
 
-  // A drained input is unanswered by construction — it lands after any
-  // assistant entry — so the work flag follows from having drained anything
-  // and needs no transcript.
+  /// Mails the session's cell to take back the input on `topic` that the model has not seen.
+  public func clear(_ id: SessionID, topic: String) async throws {
+    let key = id.rawValue
+    try await writer.write { db in try Sessions.clear(key, topic: topic, in: db) }
+    signals.post(id)
+  }
+
   public func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      let runtime = try Sessions.runtime(key, in: db)
-      let entries = try Sessions.undrained(key, tail: runtime.queueTail, in: db)
-      guard let lastID = entries.last?.id else {
-        return QueueDrain(items: [], queueTail: Int(runtime.queueTail))
-      }
-      let generationStart = try Sessions.generationStart(key, generation: runtime.generation, in: db)
-      var quoted: Set<ConversationID> = []
-      let items = try entries.map { entry -> TranscriptItem in
-        guard case var .message(message) = entry.input else { return entry.input.transcriptItem }
-        message.sender = try Sessions.attributed(message.sender, in: db)
-        if let generationStart, quoted.insert(message.conversationID).inserted {
-          let exchange = try Conversations.staleExchange(
-            message.conversationID, session: key, generation: runtime.generation, startedAt: generationStart, in: db,
-          )
-          message.content = message.content.following(try exchange.map { earlier in
-            EarlierMessage(id: earlier.id, sender: try Sessions.attributed(earlier.sender, in: db), timestamp: earlier.createdAt, text: earlier.content.text)
-          })
-        }
-        return .message(message)
-      }
-      try Sessions.append(key, generation: runtime.generation, items: items, in: db)
-      try db.execute(
-        sql: "UPDATE session_runtime SET queue_tail = ? WHERE session_id = ?",
-        arguments: [lastID, key],
-      )
-      try Sessions.markDrained(key, through: Int64(lastID), now: now, in: db)
-      try Sessions.markHasWork(key, now: now, in: db)
-      try Sessions.markInferenceOwed(key, now: now, in: db)
-      return QueueDrain(items: items, queueTail: lastID, firings: try Sessions.firings(of: entries.map(\.input), in: db))
-    }
+    try await rows { try $0.drainQueue(id) }
   }
 
-  // `transcript` is the caller's state with `items` already appended: the work
-  // flag is derived from the whole generation, and reading it back here would
-  // decode every payload in the session under the space's one write lock.
-  /// `items` go after the generation's tail; `inputOrigin` is the appended
-  /// transcript's `cacheWarmingInputOrigin`, the one thing of it the store
-  /// keeps. The same append again (a worker's retry) records nothing.
-  public func append(_ id: SessionID, items: [TranscriptItem], inputOrigin: Bool?, completingCompactRequest: CompactRequestClaim? = nil) async throws {
-    guard !items.isEmpty else { return }
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      // The same append again (a worker retrying what it could not see
-      // commit) is the first one: its first item is already held, nothing
-      // new. An append that repeats an item among new ones is a bug and
-      // still fails on the content key.
-      let known = try Int.fetchOne(
-        db, sql: "SELECT count(*) FROM session_contents WHERE session_id = ? AND id = ?",
-        arguments: [key, items[0].id.uuidString.lowercased()],
-      ) ?? 0
-      if known > 0 { return }
-      let runtime = try Sessions.runtime(key, in: db)
-      try Sessions.completeCompactRequest(completingCompactRequest, key: key, generation: runtime.generation, in: db)
-      try Sessions.append(key, generation: runtime.generation, items: items, in: db)
-      if items.contains(where: { if case .assistant = $0 { true } else { false } }) {
-        try CacheWarmingRow.recordInference(key, origin: inputOrigin, now: dateGen.now, in: db)
-      }
-      try Sessions.refreshWork(key, transcript: try Sessions.transcript(key, in: db), now: now, in: db)
-    }
+  public func append(_ id: SessionID, items: [TranscriptItem], inputOrigin: Bool?) async throws {
+    try await rows { try $0.append(id, items: items, inputOrigin: inputOrigin) }
   }
 
-  public func writeCompaction(
-    _ id: SessionID,
-    closing: ToolResultItem? = nil,
-    head: GenerationHead,
-    kept: Range<Int>?,
-    completingCompactRequest: CompactRequestClaim? = nil,
-    transition: ModelRouteTransition? = nil,
-  ) async throws -> Transcript {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db -> Transcript in
-      let runtime = try Sessions.runtime(key, in: db)
-      let transcript = try Sessions.transcript(key, in: db)
-      try Sessions.completeCompactRequest(completingCompactRequest, key: key, generation: runtime.generation, in: db)
-      // The closing result joins the OLD generation in the same commit; the
-      // kept range never includes it (it was computed before the close).
-      if let closing {
-        try Sessions.append(key, generation: runtime.generation, items: [TranscriptItem.toolResult(closing)], in: db)
-      }
-      let compacted = transition?.transcript ?? transcript.compacted(head: head, kept: kept)
-      if let transition {
-        try Sessions.commitRouteTransition(key, transition: transition, in: db)
-        let existing = Set(transcript.items.map(\.id))
-        for item in compacted.items.dropFirst() where !existing.contains(item.id) {
-          let row = SessionContentRow(sessionID: key, id: item.id.uuidString.lowercased(), payload: try Sessions.encode(item))
-          try SessionContentRow.insert { row }.execute(db)
-        }
-      }
-      let generation = runtime.generation + 1
-      try Sessions.writeGeneration(key, generation: generation, transcript: compacted, in: db)
-      try Sessions.refreshWork(key, transcript: compacted, now: now, in: db)
-      try SessionPrompts.advance(key, in: db)
-      return compacted
-    }
+  public func writeCompaction(_ id: SessionID, closing: ToolResultItem? = nil, head: GenerationHead, kept: Range<Int>?, transition: ModelRouteTransition? = nil) async throws -> Transcript {
+    try await rows { try $0.writeCompaction(id, closing: closing, head: head, kept: kept, transition: transition) }
   }
 
   // One line, trimmed, capped: the title is a row every roster and dashboard
@@ -260,49 +178,6 @@ extension SessionStore {
       throw .unusableTitle(title)
     }
     return cleaned
-  }
-
-  public func setTitle(_ id: SessionID, to title: String) async throws -> String {
-    let cleaned = try Self.usableTitle(title)
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in try Self.updateTitle(key, to: cleaned, now: now, in: db) }
-    return cleaned
-  }
-
-  // The title as a tool call's effect: the call's answer is looked up and
-  // recorded in the write that sets it, so a call already answered changes
-  // nothing — a retry that lands after a later call never puts its title back.
-  public func setTitle(_ id: SessionID, to title: String, answering callID: ToolCallID) async throws -> ToolResultPayload {
-    let cleaned = try Self.usableTitle(title)
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      if let recorded = try Sessions.receipt(key, toolCallID: callID.rawValue, in: db) { return recorded }
-      try Self.updateTitle(key, to: cleaned, now: now, in: db)
-      let receipt = ToolReceipt(session: id, callID: callID, payload: .setTitle(.init(title: cleaned)))
-      try receipt.record(now: now, in: db)
-      return receipt.payload
-    }
-  }
-
-  private static func updateTitle(_ key: String, to title: String, now: String, in db: Database) throws {
-    _ = try Sessions.record(key, in: db)
-    try db.execute(
-      sql: "UPDATE sessions SET title = ?, last_activity_at = ? WHERE id = ?",
-      arguments: [title, now, key],
-    )
-  }
-
-  // The whole list is replaced, whatever the session's lifecycle: an archived
-  // session can be retagged to tidy history.
-  public func setTags(_ id: SessionID, to tags: [String]) async throws {
-    let key = id.rawValue
-    let encoded = try Sessions.encode(tags)
-    try await writer.write { db in
-      _ = try Sessions.record(key, in: db)
-      try db.execute(sql: "UPDATE sessions SET tags = ? WHERE id = ?", arguments: [encoded, key])
-    }
   }
 
   // Archive, unarchive, interrupt, resume and tag edits on a session belong to
@@ -352,136 +227,8 @@ extension SessionStore {
     }
   }
 
-  public func markInterrupted(_ id: SessionID) async throws {
-    try await setHold(id, to: .interrupted)
-  }
-
-  public func markResumed(_ id: SessionID) async throws {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    let reminderQueued = try await writer.write { db -> Bool in
-      let record = try Sessions.record(key, in: db)
-      try record.executor.requireSupported()
-      try db.execute(
-        sql: "UPDATE sessions SET hold = 'normal', error_message = NULL, last_activity_at = ? WHERE id = ?",
-        arguments: [now, key],
-      )
-      if record.work == .errored {
-        try db.execute(sql: "UPDATE sessions SET work = 'no_work' WHERE id = ?", arguments: [key])
-      }
-      // Resuming re-derives both the work flag (after an error) and what the
-      // loop is about to do (after an interrupt).
-      if record.work == .errored || record.hold == .interrupted {
-        let transcript = switch record.executor {
-        case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
-        case .retired: Transcript()
-        }
-        try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
-      }
-      return false
-    }
-    if reminderQueued { signals.post(id) }
-  }
-
-  /// A forced compaction is an inference the transcript does not owe: it can
-  /// start from a settled turn. `active` shows it as `inference`; ending it
-  /// re-derives the run state from the transcript.
-  public func markCompacting(_ id: SessionID, active: Bool) async throws {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      let record = try Sessions.record(key, in: db)
-      guard record.work != .errored else { return }
-      if active {
-        guard record.hold == .normal, case .live = record.lifecycle else { return }
-        try Sessions.setRunState(key, .inference, now: now, in: db)
-      } else {
-        try Sessions.refreshWork(key, transcript: try Sessions.transcript(key, in: db), now: now, in: db)
-      }
-    }
-  }
-
   public func markErrored(_ id: SessionID, message: String) async throws {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    let parent = try await writer.write { db -> SessionID? in
-      let record: SessionRecord?
-      do {
-        record = try Sessions.record(key, in: db)
-      } catch where isUnreadableSessionData(error) {
-        record = nil
-      }
-      try db.execute(
-        sql: """
-        UPDATE sessions SET work = 'errored', error_message = ?, last_activity_at = ?,
-            run_state = 'no_run', run_progress_at = NULL
-        WHERE id = ?
-        """,
-        arguments: [message, now, key],
-      )
-      let parent: SessionID?
-      do {
-        parent = record == nil ? nil : try self.notifyParentOfFailure(key, error: message, now: now, in: db)
-      } catch where isUnreadableSessionData(error) {
-        parent = nil
-      }
-      guard let parent else {
-        let transcript: Transcript
-        do {
-          transcript = switch record?.executor {
-          case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
-          case .retired, nil: Transcript()
-          }
-        } catch where isUnreadableSessionData(error) {
-          transcript = Transcript()
-        }
-        try Notifications.fireErrored(key, error: message, transcript: transcript, now: now, in: db)
-        return nil
-      }
-      return parent
-    }
-    if let parent {
-      signals.post(parent)
-    }
-  }
-
-  @discardableResult
-  public func archive(_ id: SessionID, grace: Duration) async throws -> Date {
-    let key = id.rawValue
-    let nowDate = dateGen.now
-    let deadline = nowDate.addingTimeInterval(grace.timeInterval)
-    try await writer.write { db in
-      _ = try Sessions.record(key, in: db)
-      try SubscriptionRow.of(.session(id)).and(SubscriptionRow.retiring).delete().execute(db)
-      try SubscriptionRow.of(.session(id)).update {
-        $0.payload = #sql("json_remove(\($0.payload), '$.handlerFiring')", as: String.self)
-      }.execute(db)
-      try db.execute(
-        sql: """
-        UPDATE sessions SET lifecycle = 'archived', grace_expires_at = ?, last_activity_at = ?,
-            run_state = 'no_run', run_progress_at = NULL
-        WHERE id = ?
-        """,
-        arguments: [SQLiteDateFormat.string(from: deadline), SQLiteDateFormat.string(from: nowDate), key],
-      )
-    }
-    return deadline
-  }
-
-  public func unarchive(_ id: SessionID) async throws {
-    let key = id.rawValue
-    let nowDate = dateGen.now
-    let now = SQLiteDateFormat.string(from: nowDate)
-    try await writer.write { db in
-      let record = try Sessions.record(key, in: db)
-      guard case let .archived(graceExpiresAt) = record.lifecycle else { return }
-      try record.executor.requireSupported()
-      guard nowDate < graceExpiresAt else { throw SessionStoreError.archiveGraceExpired(key) }
-      try db.execute(
-        sql: "UPDATE sessions SET lifecycle = 'live', grace_expires_at = NULL, last_activity_at = ? WHERE id = ?",
-        arguments: [now, key],
-      )
-    }
+    try await rows { try $0.markErrored(id, message: message) }
   }
 
   // The template's files reached the home: a replay of this creation no
@@ -509,23 +256,10 @@ extension SessionStore {
       db.afterNextTransaction { _ in onCommit() }
     }
   }
-
-  private func setHold(_ id: SessionID, to hold: SessionHold) async throws {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      _ = try Sessions.record(key, in: db)
-      try db.execute(
-        sql: "UPDATE sessions SET hold = ?, last_activity_at = ? WHERE id = ?",
-        arguments: [hold.rawValue, now, key],
-      )
-      if hold == .interrupted { try Sessions.setRunState(key, .noRun, now: now, in: db) }
-    }
-  }
 }
 
 extension Duration {
-  fileprivate var timeInterval: TimeInterval {
+  var timeInterval: TimeInterval {
     let (seconds, attoseconds) = components
     return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
   }

@@ -54,6 +54,7 @@ import Testing
       #expect(inspected.requestedTarget.object?["modelGroup"] == "work")
       let restarted = try await harness.call("/v1/session/\(id.rawValue)/restart", .null, as: SessionRestartOutput.self)
       #expect(restarted.provider == "testing")
+      try await until("placed for the start over") { try await harness.store.modelRoute(id)?.reason == .startOver }
       let second = try #require(await harness.store.modelRoute(id))
       #expect(second.member == "a")
       #expect(second.reason == .startOver)
@@ -142,6 +143,7 @@ extension ModelGroupRouteTests {
       let restarted = try await harness.call("/v1/session/\(created.id)/restart", .object(["provider": "testing", "model": "test-model"]), as: SessionRestartOutput.self)
       #expect(restarted.provider == "testing")
       #expect(restarted.modelGroup == nil)
+      try await until("restarted onto the model") { try await harness.store.modelRoute(SessionID(created.id)) == nil }
       #expect(await harness.runtime.budget(SessionID(created.id)).usableTokens == 99000)
       #expect(try await harness.store.modelRoute(SessionID(created.id)) == nil)
       #expect(try await harness.store.modelRouteHistory(SessionID(created.id)).count == 1)

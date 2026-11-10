@@ -74,7 +74,7 @@ import Testing
       "/skills/secret-scripts/SKILL.md": ["placeholder", "human admin"],
       "/skills/script-runtime/SKILL.md": ["fetchIdentityUnavailable", "256 files"],
       "/skills/sessions/SKILL.md": ["wuhu:session", "topLevel: true", "expectsReply: true", "Promise.all"],
-      "/skills/observe-group-channel/SKILL.md": ["conversation_id", "handler", "state", "wake", "complete", "every-message", "topic", "name-mention"],
+      "/skills/observe-group-channel/SKILL.md": ["conversation_id", "handler", "cursor", "wake", "complete", "every-message", "topic", "name-mention"],
     ]
     for (path, expected) in anchors {
       let body = try text(path)

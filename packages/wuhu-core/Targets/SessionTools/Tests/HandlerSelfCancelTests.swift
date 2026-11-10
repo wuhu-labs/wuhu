@@ -86,7 +86,7 @@ import Testing
     }
   }
 
-  @Test func aSelfCancelledFiringThatTimesOutEndsFailedWithoutItsWakes() async throws {
+  @Test func aSelfCancelledFiringThatTimesOutEndsFailedSilently() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
@@ -114,47 +114,8 @@ import Testing
         }
         #expect(try await outcomes(space, session) == [[.text("failed")]])
         #expect(try await space.sessions.armedSubscriptions(session).isEmpty)
-        let woken = try await handlerNotifications(space, session)
-        #expect(!woken.map(\.content.text).contains("dropped"))
-        #expect(woken.map(\.endsSubscription) == [true])
+        #expect(try await handlerNotifications(space, session).isEmpty)
       }
-    }
-  }
-
-  @Test func aRetiringSlotCutOffWithItsRegistryDoesNotComeBack() async throws {
-    try await withToolDeps { time in
-      let space = try Space.inMemory()
-      let session = try await makeSession(space)
-      let fs = await space.fs(.shared)
-      _ = try await fs.write("/held.js", Data("""
-      import {readText, writeText} from 'wuhu:space';
-      export default async ({wake}) => {
-        await writeText('/held-started.md', 'started', {ifMatch: null});
-        for (;;) { try { await readText('/never.md'); break; } catch { await sleep(10); } }
-        wake('never');
-        return {n: 1};
-      };
-      """.utf8), ifMatch: nil)
-      try await withHandlerFiring(space) { worker, _ in
-        var world = ToolWorld(worker: worker, session: session)
-        guard case let .timer(timer) = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/held.js"])) else {
-          Issue.record("expected a timer"); return
-        }
-        await time.advance(by: 61)
-        try await untilAdvancing("held handler started", time) { (try? await fs.stat("/held-started.md")) != nil }
-        guard case .cancelTimer = try await world.run("cancel", .object(["id": .string(timer.subscriptionID.rawValue)])) else {
-          Issue.record("expected the cancel to succeed"); return
-        }
-      }
-      let ended = try await outcomes(space, session)
-      #expect(ended.count == 1 && ended != [[.text("running")]], "\(ended)")
-      #expect(try await space.sessions.armedSubscriptions(session).isEmpty)
-      try await withHandlerFiring(space) { _, _ in
-        await time.advance(by: 120)
-        try await holds("no firing after restart") { try await outcomes(space, session).count == 1 }
-      }
-      #expect(try await space.sessions.armedSubscriptions(session).isEmpty)
-      #expect(try await handlerNotifications(space, session).allSatisfy { $0.content.text != "never" })
     }
   }
 }

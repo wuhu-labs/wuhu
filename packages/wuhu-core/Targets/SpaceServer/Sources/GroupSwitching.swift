@@ -1,6 +1,5 @@
 import enum Credentials.ChatGPTAuthError
 import Dependencies
-import protocol MainHub.Main
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -11,6 +10,7 @@ import InferenceKit
 import LoopCore
 import ModelProviders
 import SessionDomain
+import struct SpaceCore.SessionStore
 import WuhuAI
 
 func replacementRoute(_ held: SessionModelRoute, catalog: ProviderCatalog, usage: UsageBoard, reason: ModelPlacementReason) throws -> SessionModelRoute {
@@ -77,15 +77,15 @@ private func resolvedPlacement(_ held: SessionModelRoute, session: SessionID, ca
   }
 }
 
-func compactionPlacement(owner: any Main, catalog: @escaping @Sendable (SessionID) async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? {
+func compactionPlacement(store: SessionStore, catalog: @escaping @Sendable (SessionID) async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? {
   { id, transcript, target in
-    if let target { return try await requestedTransition(target, session: id, transcript: transcript, owner: owner, catalog: catalog(id), usage: usage) }
-    guard let held = try await owner.modelRoute(id), let group = held.group else { return nil }
+    if let target { return try await requestedTransition(target, session: id, transcript: transcript, store: store, catalog: catalog(id), usage: usage) }
+    guard let held = try await store.modelRoute(id), let group = held.group else { return nil }
     let catalog = try await catalog(id)
     _ = try catalog.validateRoute(held, group: group, effort: held.specifier.effort)
     guard let definition = catalog.document.groups[group], case .quotaAware = definition.policy else { return nil }
     guard let (next, resolved) = try await resolvedPlacement(held, session: id, catalog: catalog, usage: usage) else { return nil }
-    var portable = try compactedHandoff(transcript, to: next, resolved: resolved, openRequests: try await owner.openRequests(id))
+    var portable = try compactedHandoff(transcript, to: next, resolved: resolved, openRequests: try await store.openRequests(id))
     portable.appendRouteNotice(group: group, from: held.member!, to: next.member!, reason: next.reason)
     guard portable.estimatedContextTokens(images: resolved.budget.images) <= resolved.budget.usableTokens else { throw PortableHandoffError.modelHandoffTooLarge }
     return .init(expectedEpoch: held.epoch, route: next, transcript: portable)
@@ -114,8 +114,8 @@ struct CompactionTargetRefused: Error, CustomStringConvertible {
 /// provider/model reading, so a group id may itself contain a slash. The target is checked against
 /// the catalog and credential readiness before anything folds; a throw is the
 /// tool's refusal. Nil when the target is where the session already is.
-func requestedTransition(_ target: CompactionTarget, session id: SessionID, transcript: Transcript, owner: any Main, catalog: ProviderCatalog, usage: UsageBoard) async throws -> ModelRouteTransition? {
-  guard let held = try await owner.modelRoute(id) else { throw CompactionTargetRefused(description: "this session has no model route yet") }
+func requestedTransition(_ target: CompactionTarget, session id: SessionID, transcript: Transcript, store: SessionStore, catalog: ProviderCatalog, usage: UsageBoard) async throws -> ModelRouteTransition? {
+  guard let held = try await store.modelRoute(id) else { throw CompactionTargetRefused(description: "this session has no model route yet") }
   let name = target.model.trimmingCharacters(in: .whitespacesAndNewlines)
   @Dependency(\.date.now) var now
   @Dependency(\.uuid) var uuid
@@ -148,7 +148,7 @@ func requestedTransition(_ target: CompactionTarget, session id: SessionID, tran
     next = placed
     resolved = model
   }
-  var portable = try compactedHandoff(transcript, to: next, resolved: resolved, openRequests: try await owner.openRequests(id))
+  var portable = try compactedHandoff(transcript, to: next, resolved: resolved, openRequests: try await store.openRequests(id))
   if let group = next.group, group == held.group {
     portable.appendRouteNotice(group: group, from: held.member!, to: next.member!, reason: next.reason)
   } else {
@@ -172,8 +172,8 @@ private func routeLabel(_ route: SessionModelRoute) -> String {
   return "\(route.specifier.provider)/\(route.specifier.model)"
 }
 
-func recordRouteFailure(_ error: any Error, session: SessionID, owner: any Main, catalog: ProviderCatalog, usage: UsageBoard? = nil, inferenceStarted: Bool = true) async throws -> ModelRouteFailure? {
-  guard let route = try await owner.modelRoute(session), let group = route.group, let definition = catalog.document.groups[group], case .quotaAware = definition.policy else { return nil }
+func recordRouteFailure(_ error: any Error, session: SessionID, store: SessionStore, catalog: ProviderCatalog, usage: UsageBoard? = nil, inferenceStarted: Bool = true) async throws -> ModelRouteFailure? {
+  guard let route = try await store.modelRoute(session), let group = route.group, let definition = catalog.document.groups[group], case .quotaAware = definition.policy else { return nil }
   if !inferenceStarted, !credentialLoginRefusal(error, provider: route.specifier.provider) { return nil }
   let reason: ModelRouteFailure.Reason
   let retryAt: Date?
@@ -198,7 +198,7 @@ func recordRouteFailure(_ error: any Error, session: SessionID, owner: any Main,
   }
   let old = route.failure
   let failure = ModelRouteFailure(reason: reason, firstFailureAt: old?.firstFailureAt ?? now, retryAt: retryAt, consecutiveFailures: (old?.consecutiveFailures ?? 0) + 1, source: source, code: code, lastFailureAt: now)
-  _ = try await owner.append(session, .modelRouteFailureUpdated(expectedEpoch: route.epoch, failure: failure))
+  try await store.updateModelRouteFailure(session, expectedEpoch: route.epoch, failure: failure)
   return failure
 }
 

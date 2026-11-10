@@ -48,30 +48,8 @@ final class MachineWriteClaims: Sendable {
 }
 
 extension ToolExecutor {
-  // The agent's generate_image. Main's recorded answer for the call stands in
-  // for a repeat, so a replay never pays for a second generation; otherwise
-  // the destination is checked, the image generated and placed create-only.
-  func generateImage(
-    _ session: SessionID,
-    _ callID: ToolCallID,
-    _ arguments: GenerateImageArguments,
-  ) async throws -> ToolResultPayload {
-    let destination = try await resolvedAddress(arguments.destination, as: session)
-    try Addressing.refuseSystem(destination)
-    let recorded = try await client(session, toolCall: callID.rawValue)
-    if let answer = try await receipt(recorded, for: destination) {
-      return .write(.init(path: destination.rendered, revision: try revision(answer.token, at: destination)))
-    }
-    let format = try ImageFormat(destination: destination.rendered)
-    try await refuseForeignHome(destination, session)
-    try await refuseExisting(destination, session)
-    let options = CapabilityOptions(provider: arguments.provider, model: arguments.model, quality: arguments.quality, size: arguments.size, frames: arguments.frames, frameMs: arguments.frameMs)
-    let image = try await image(session, arguments.prompt, images: [], format: format, options: options)
-    return try await place(image.bytes, at: destination, recorded)
-  }
-
-  // The run_script side of generate_image: the same checks, provider and
-  // write, with no receipt and no context delivery.
+  // `wuhu:ai`'s generateImage: the destination checked, the image generated
+  // and placed create-only, with no receipt and no context delivery.
   func generateImage(
     _ session: SessionID,
     prompt: String,
@@ -138,17 +116,6 @@ extension ToolExecutor {
   // The answer main recorded for the client's tool call, when its write ran
   // before. It stands only for the destination written then: a retry that
   // names another is refused, not answered.
-  private func receipt(_ recorded: SpaceClient, for destination: Address) async throws -> WriteOutput? {
-    var query = URLComponents()
-    query.queryItems = [URLQueryItem(name: "address", value: destination.rendered)]
-    do { return try await recorded.api(.get, "/v1/receipt" + query.string!) }
-    catch let failure as SpaceClient.ToolFailure where failure.error.code == .notFound { return nil }
-    catch let failure as SpaceClient.ToolFailure where failure.error.code == .conflict { throw ToolProblem(failure.error.message) }
-  }
-
-  // A session home other than the caller's own, in its own group, is never
-  // written; main refuses the rest at the write. Checked before the provider
-  // is paid.
   private func refuseForeignHome(_ destination: Address, _ session: SessionID) async throws {
     guard case let .space(path, group) = destination, let target = try? SpacePath(validating: path), target.homeOwner != nil else { return }
     let context: DiscoveryContext = try await client(session).api(.get, "/v1/context")

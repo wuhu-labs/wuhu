@@ -8,8 +8,6 @@ import InferenceKit
 import JSONValue
 import LoopCore
 import class MainHub.Hub
-import protocol MainHub.Main
-import class MainHub.SessionService
 import Serve
 import ServeTesting
 import SessionDomain
@@ -102,7 +100,6 @@ struct SessionHarness {
       inference: { request in try await inference(request, attempts) },
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
-      allowCacheWarming: { try await CacheWarmer(space: space, usage: cacheUsage).allows($0) },
     )
     let access = InferenceAccess(credentials: credentials)
     let catalog = groupCatalog(space: space, access: access)
@@ -114,19 +111,15 @@ struct SessionHarness {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: cacheUsage),
     )
     let connection = MainConnection()
-    let workers = WorkerRegistry(tokens: tokens, machines: hub)
-    let credential = workers.mint()
-    let main: any Main = MainClient(connection: connection, credential: { credential.token })
-    let worker = await SessionExecution(main: main, connection: connection, credential: { tokens.sessionToken($0) }, access: access) { _ in config }
-    workers.announce(credential.id, endpoint: worker)
-    let service = SessionService(sessions: store, worker: workers)
-    runtime = SessionRuntime(space: space, service: service, workers: workers, inProcessWorker: worker, attempts: attempts, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
+    let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, access: access, space: space) { _ in config }
+    runtime = SessionRuntime(execution: worker, attempts: attempts, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
       credentials: credentials, secrets: secrets, execTokens: tokens,
       identityController: identityController, machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil, keyStreams: keyStreams,
     )
     api = ServeTesting.client(upgrading: handler)
+    worker.start()
   }
 
   // .null means "no body" (the verb routes require an empty request).
@@ -204,27 +197,25 @@ struct SessionHarness {
     )
     handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     api = ServeTesting.client(upgrading: handler)
+    runtime.execution.start()
   }
 
-  // Channel posts reach a session through the store's work signals, and only
-  // the started service loop consumes those; `deliver` wakes the actor
-  // without it.
   func deliver(_ text: String, to id: SessionID) async throws {
     @Dependency(\.uuid) var uuid
     @Dependency(\.date) var date
-    _ = try await runtime.service.enqueue(item: .message(ConversationMessage(
+    try await store.enqueue(id, input: .message(ConversationMessage(
       id: uuid(),
       messageID: MessageID(uuid().uuidString.lowercased()),
       conversationID: ConversationID(id.rawValue),
       sender: Sender(id: "owner", timeZone: TimeZone(identifier: "UTC")!),
       timestamp: date.now,
       content: MessageContent(text: text),
-    )), to: id)
+    )))
   }
 
   func running<R: Sendable>(_ body: () async throws -> R) async throws -> R {
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { [service = runtime.service] in try await service.start() }
+      group.addTask { [execution = runtime.execution] in await whenCancelled { await execution.shutdown() } }
       let result = try await body()
       group.cancelAll()
       try await group.waitForAll()

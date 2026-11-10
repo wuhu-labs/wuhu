@@ -63,6 +63,7 @@ import Testing
         source.items += items
         try await harness.store.append(id, items: items, inputOrigin: source.cacheWarmingInputOrigin)
         try await harness.running {
+          try await harness.store.look(id)
           try await until("legacy turn completes without error", timeout: .seconds(40)) {
             let record = try await harness.store.record(id)
             try #require(record.work != .errored, "\(record.errorMessage ?? "")")
@@ -70,7 +71,7 @@ import Testing
           }
           #expect(try await harness.store.generationState(id).generation == 1)
           if let wake {
-            _ = try await harness.runtime.service.enqueue(item: .notification(.init(id: UUID(), timestamp: Date(), kind: wake, subscriptionID: .init(wake == .context ? "cache-warming" : "wake-trigger"), content: .init(text: "fresh notification turn"))), to: id)
+            try await harness.store.enqueue(id, input: .notification(.init(id: UUID(), timestamp: Date(), kind: wake, subscriptionID: .init(wake == .context ? "cache-warming" : "wake-trigger"), content: .init(text: "fresh notification turn"))))
           } else {
             try await harness.deliver("fresh user turn", to: id)
           }

@@ -11,7 +11,7 @@ import struct SpaceContract.GroupID
 import Testing
 
 @Suite(.deterministicDependencies) struct ObserverStoreTests {
-  let tests = SubscriptionHandlerTests()
+  let tests = ObserverRowsTests()
 
   func arm(_ store: SessionStore, _ name: String = "triage", cap: Int = 2) async throws -> ArmedSubscription {
     try await store.armObserver(.shared, ObserverTerms(name: name, sessionsPerHour: cap), slot: .init(
@@ -53,7 +53,7 @@ import Testing
   @Test func capPausesTheObserverUntilArmedAgain() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
-      let armed = try await arm(store, cap: 2)
+      _ = try await arm(store, cap: 2)
       let observer = Observer(group: .shared, name: "triage", firing: "f1")
       @Sendable func make(_ call: Int) async throws -> SessionID {
         try await store.createSession(
@@ -76,7 +76,6 @@ import Testing
       let paused = try #require(try await store.observers(.shared).first)
       #expect(paused.status == .paused)
       #expect(paused.slot.lastError == ObserverRefusal.atCap(name: "triage", sessionsPerHour: 2).description)
-      #expect(try await store.beginSubscriptionHandler(.group(.shared), subscriptionID: armed.slot.id, incarnation: try #require(armed.slot.handlerIncarnation)) == nil)
       let resumed = try await arm(store, cap: 3)
       #expect(resumed.status == .armed)
       #expect(resumed.slot.lastError == nil)
@@ -95,9 +94,9 @@ import Testing
       let child = try await store.createSession(
         group: .shared, title: "made", kind: .agent, createdBy: "triage@shared", executor: .kernel(.test), observer: Observer(group: .shared, name: "triage", firing: made.firing),
       )
-      #expect(try await store.finishSubscriptionHandler(made, result: .success(stateJSON: "1", advance: .observed(marker: "a"), wakes: [tests.wake(armed, "nobody hears")])))
+      #expect(try await tests.finish(store, made, .ok(wakes: ["nobody hears"]), .taken(marker: "a")).isEmpty)
       let empty = try await tests.begin(store, armed, marker: "b")
-      #expect(try await store.finishSubscriptionHandler(empty, result: .failure(error: "boom", notification: tests.wake(armed, "boom"))))
+      #expect(try await tests.finish(store, empty, .failed("boom")).isEmpty)
       let log = "SELECT id, owner_kind, name, outcome, error, effects FROM subscription_firings ORDER BY at, id"
       #expect(try await rig.space.query(log).rows == [
         [.text(made.firing), .text("group"), .text("triage"), .text("ok"), .null, .text(#"{"sessions":["\#(child.rawValue)"]}"#)],
@@ -109,23 +108,15 @@ import Testing
       #expect(try await rig.space.query("SELECT outcome FROM subscription_firings WHERE id = ?", arguments: [.string(wrote.firing)]).rows == [[.text("running")]])
       let writer = Observer(group: .shared, name: "triage", firing: wrote.firing)
       _ = try await rig.space.fs(.shared, attribution: RevisionAttribution(firing: writer)).write("/note.md", Data("x".utf8), ifMatch: nil)
-      #expect(try await store.finishSubscriptionHandler(wrote, result: .success(stateJSON: "2", advance: .observed(marker: "b"), wakes: [])))
+      try await tests.finish(store, wrote, .ok(wakes: []), .taken(marker: "b"))
       let wroteEffects = try await rig.space.query("SELECT effects FROM subscription_firings WHERE id = ?", arguments: [.string(wrote.firing)]).rows
       guard case let .text(effects)? = wroteEffects.first?.first else { Issue.record("a firing that wrote logs its revisions"); return }
       #expect(effects.hasPrefix(#"{"revisions":[""#))
 
       rig.advance(SessionStore.noEffectFiringRetention + 1)
       let later = try await tests.begin(store, armed, marker: "c")
-      _ = try await store.finishSubscriptionHandler(later, result: .success(stateJSON: "3", advance: .observed(marker: "c"), wakes: []))
+      try await tests.finish(store, later, .ok(wakes: []), .taken(marker: "c"))
       #expect(try await rig.space.query("SELECT id FROM subscription_firings ORDER BY at").rows == [[.text(made.firing)], [.text(wrote.firing)], [.text(later.firing)]])
-
-      let cut = try await tests.begin(store, armed, marker: "d")
-      let stranded = try await tests.begin(store, try await arm(store, "digest"))
-      _ = try await store.cancelObserver(.shared, name: "triage")
-      #expect(try await store.finishSubscriptionHandler(cut, result: .success(stateJSON: "4", advance: .observed(marker: "d"), wakes: [])) == false)
-      try await store.interruptFirings()
-      let ends = "SELECT outcome FROM subscription_firings WHERE id IN (?, ?) ORDER BY name"
-      #expect(try await rig.space.query(ends, arguments: [.string(cut.firing), .string(stranded.firing)]).rows == [[.text("interrupted")], [.text("cancelled")]])
     }
   }
 }

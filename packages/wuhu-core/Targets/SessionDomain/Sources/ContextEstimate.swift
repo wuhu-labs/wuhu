@@ -2,7 +2,7 @@ import Foundation
 import struct SpaceContract.PixelSize
 import WuhuAI
 
-public struct ContextBudget: Hashable, Sendable {
+public struct ContextBudget: Hashable, Sendable, Codable {
   public var maxInput: Int
   public var maxOutput: Int
   public var headroomOverride: Int?

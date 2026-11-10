@@ -2,7 +2,6 @@ import struct MainHub.CancelArguments
 import struct MainHub.CreateSessionArguments
 import struct MainHub.ExecArguments
 import struct MainHub.IncompleteSession
-import protocol MainHub.Main
 import struct MainHub.ManipulateUIArguments
 import struct MainHub.ObserveArguments
 import func MainHub.renderedFailure
@@ -33,29 +32,23 @@ import SpaceTools
 import struct WuhuAI.ToolCall
 
 public struct ToolExecutor: Sendable {
-  let owner: any Main
   let main: MainConnection
   let credential: @Sendable (SessionID) async throws -> String
   /// What the worker brings to the inferences it runs itself (the loop's and scripts' `complete()`).
   let access: InferenceAccess
-  let execJobs: ExecJobs
   let scripts: Scripts?
 
   /// `credential` is the token main issued the session; every call the worker
   /// makes to main's API carries it.
   public init(
-    owner: any Main,
     main: MainConnection,
     credential: @escaping @Sendable (SessionID) async throws -> String,
     access: InferenceAccess = InferenceAccess(),
     scripts: Scripts? = nil,
-    execJobs: ExecJobs = ExecJobs(),
   ) {
-    self.owner = owner
     self.main = main
     self.credential = credential
     self.access = access
-    self.execJobs = execJobs
     self.scripts = scripts
   }
 
@@ -80,23 +73,22 @@ public struct ToolExecutor: Sendable {
     })
   }
 
-  public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome {
+  /// `yielded` returns true once the call is told to yield, which makes an exec or a script answer `running`.
+  public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState, yielded: @escaping @Sendable () async -> Bool = { false }) async throws -> ToolOutcome {
     guard let tool = RosterTool(rawValue: call.name) else {
       return ToolOutcome(payload: .failure(.init(message: "unknown tool: \(call.name)")))
     }
     let (call, touched) = await resolvingMachine(session, tool, call)
-    let payload = try await result(session, tool, call, state: state)
-    let committed = tool == .exec ? execCommitted(session, ToolCallID(call.id)) : nil
-    if case .failure = payload { return ToolOutcome(payload: payload, committed: committed) }
-    return ToolOutcome(payload: payload, context: await deliverContext(session, touching: touched, state: state), committed: committed)
+    let payload = try await result(session, tool, call, state: state, yielded: yielded)
+    if case .failure = payload { return ToolOutcome(payload: payload) }
+    return ToolOutcome(payload: payload, context: await deliverContext(session, touching: touched, state: state))
   }
 
-  private func result(_ session: SessionID, _ tool: RosterTool, _ call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {
+  private func result(_ session: SessionID, _ tool: RosterTool, _ call: ToolCall, state: ToolExecutionState, yielded: @escaping @Sendable () async -> Bool) async throws -> ToolResultPayload {
     do {
       switch tool {
-      case .runScript: return try await runScript(session, decoded(RunScriptArguments.self, call))
+      case .runScript: return try await runScript(session, decoded(RunScriptArguments.self, call), yielded: yielded)
       case .cancel: return try await cancel(session, decoded(CancelArguments.self, call), call: call, state: state)
-      case .generateImage: return try await generateImage(session, ToolCallID(call.id), decoded(GenerateImageArguments.self, call))
       case .grep: return try await grep(session, decoded(GrepArguments.self, call))
       case .find: return try await find(session, decoded(FindArguments.self, call))
       case .query: return try await query(session, decoded(QueryArguments.self, call))
@@ -114,7 +106,7 @@ public struct ToolExecutor: Sendable {
       case .createSession: return try await createSession(.session(session), call.id, decoded(CreateSessionArguments.self, call))
       case .setTitle: return try await setTitle(session, call.id, decoded(SetTitleArguments.self, call))
       case .manipulateUI: return try await manipulateUI(session, call.id, decoded(ManipulateUIArguments.self, call))
-      case .exec: return try await exec(session, ToolCallID(call.id), decoded(ExecArguments.self, call))
+      case .exec: return try await exec(session, ToolCallID(call.id), decoded(ExecArguments.self, call), yielded: yielded)
       }
     } catch let error as CapabilityError { return .failure(.init(message: error.description)) }
     catch let error as OperationError { return .failure(.init(message: error.message.isEmpty ? error.code.rawValue : error.message, code: error.code.rawValue)) }

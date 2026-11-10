@@ -14,42 +14,38 @@ struct ObservationProgress: Hashable, Sendable, Codable {
   var deliverySequence: Int
 }
 
-/// A handler slot's firing in progress. One that cancelled its own slot
-/// retires it when it ends, and the slot reads as ended meanwhile.
-enum HandlerFiring: Hashable, Sendable, Codable {
-  case running(UUID)
-  case retiring(UUID)
-
-  var attempt: UUID {
-    switch self {
-    case let .running(id), let .retiring(id): id
-    }
-  }
-}
-
 public struct SubscriptionSlot: Hashable, Sendable, Codable {
   public enum Kind: Hashable, Sendable, Codable {
     case observe(sql: String, throttleSeconds: Double)
     case stream(url: URL, throttleSeconds: Double)
     case timer(TimerSchedule, message: String)
-    case requestDeadline(request: RequestID, task: SessionID)
-    case requestStall(RequestStall)
+    /// Its owner's live children that errored or were interrupted: armed with
+    /// the first live child, gone with the last, and never listed.
+    case children
   }
 
   public var id: SubscriptionID
   public var kind: Kind
   public var handler: String?
   public var handlerIncarnation: UUID?
-  public var handlerStateJSON: String?
   public var lastError: String?
-  var handlerFailed: Bool?
-  var handlerFiring: HandlerFiring?
+  /// The handler firing in progress: its observer cell started it and has not taken its answer.
+  var firing: UUID?
   var observationProgress: ObservationProgress?
 
   public init(id: SubscriptionID, kind: Kind, handler: String? = nil) {
     self.id = id
     self.kind = kind
     self.handler = handler
+  }
+
+  public static let childrenID = SubscriptionID("children")
+
+  public static func childrenQuery(_ parent: SessionID) -> String {
+    """
+    SELECT id, title, COALESCE(error_message, '') AS error
+    FROM sessions WHERE parent = '\(parent.rawValue.replacing("'", with: "''"))' AND lifecycle = 'live' AND work = 'errored' ORDER BY id
+    """
   }
 }
 
@@ -234,7 +230,7 @@ extension SessionStore {
     }
   }
 
-  private static func pause(_ row: SubscriptionRow, error: String, in db: Database) throws {
+  static func pause(_ row: SubscriptionRow, error: String, in db: Database) throws {
     var row = row
     var slot = try Sessions.decode(SubscriptionSlot.self, from: row.payload)
     slot.lastError = error
@@ -244,7 +240,7 @@ extension SessionStore {
   }
 
   // The slot as it is stored: an observation gets its incarnation, a handler
-  // a fresh one. A request's deadline and stall slots need neither.
+  // a fresh one. A request's deadline slot needs neither.
   private func prepared(_ slot: SubscriptionSlot) -> SubscriptionSlot {
     @Dependency(\.uuid) var uuid
     var inserted = slot
@@ -253,10 +249,8 @@ extension SessionStore {
     }
     if inserted.handler != nil {
       inserted.handlerIncarnation = uuid()
-      inserted.handlerStateJSON = nil
       inserted.lastError = nil
-      inserted.handlerFailed = nil
-      inserted.handlerFiring = nil
+      inserted.firing = nil
     }
     return inserted
   }
@@ -286,6 +280,25 @@ extension SessionStore {
     return try armedSubscription(row)
   }
 
+  /// Arms `parent`'s children slot unless it stands; a new incarnation each
+  /// time, so a firing of an earlier one cannot deliver into it.
+  static func watchChildren(_ parent: SessionID, now: String, in db: Database) throws {
+    var slot = SubscriptionSlot(id: SubscriptionSlot.childrenID, kind: .children)
+    slot.observationProgress = ObservationProgress(incarnation: UUID.deterministic("children", parent.rawValue, now), deliverySequence: 0)
+    let row = SubscriptionRow(
+      ownerKind: SubscriptionOwner.session(parent).kind, owner: parent.rawValue, subscriptionID: slot.id.rawValue,
+      name: nil, payload: try Sessions.encode(slot), nextFireAt: nil, marker: nil, lastFiredAt: nil, armedAt: now,
+    )
+    try SubscriptionRow.insert { row } onConflict: { ($0.ownerKind, $0.owner, $0.subscriptionID) }.execute(db)
+  }
+
+  /// Ends `parent`'s children slot once no live child is left.
+  static func unwatchChildren(_ parent: SessionID, in db: Database) throws {
+    let live = try Int.fetchOne(db, sql: "SELECT count(*) FROM sessions WHERE parent = ? AND lifecycle = 'live'", arguments: [parent.rawValue]) ?? 0
+    guard live == 0 else { return }
+    try deleteSubscription(parent.rawValue, SubscriptionSlot.childrenID, in: db)
+  }
+
   static func deleteSubscription(_ key: String, _ subscriptionID: SubscriptionID, in db: Database) throws {
     try SubscriptionRow.delete(.session(SessionID(key)), subscriptionID.rawValue, in: db)
   }
@@ -295,11 +308,11 @@ extension SessionStore {
   }
 
   // The cancel as a tool call's effect. `answer` sees the slot as stored (nil
-  // when there is none or it is retiring) and says what the call returns, or
-  // throws why it cannot; the lookup, the cancel and the answer's receipt are
-  // one write, so a call already answered (an earlier run, or an overlapping
-  // twin of this one) gets that answer, never a refusal for the slot its twin
-  // removed. A slot whose handler is firing retires when that firing ends.
+  // when there is none) and says what the call returns, or throws why it
+  // cannot; the lookup, the cancel and the answer's receipt are one write, so
+  // a call already answered (an earlier run, or an overlapping twin of this
+  // one) gets that answer, never a refusal for the slot its twin removed. A
+  // firing in progress runs on.
   public func cancelSubscription(
     _ id: SessionID,
     subscriptionID: SubscriptionID,
@@ -311,18 +324,27 @@ extension SessionStore {
     return try await writer.write { db in
       if let recorded = try Sessions.receipt(key, toolCallID: callID.rawValue, in: db) { return recorded }
       let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db)
-      var stored = try row.map { try Sessions.decode(SubscriptionSlot.self, from: $0.payload) }
-      if case .retiring? = stored?.handlerFiring { stored = nil }
-      let payload = try answer(stored)
-      if var row, var slot = stored {
-        if case let .running(attempt)? = slot.handlerFiring {
-          slot.handlerFiring = .retiring(attempt)
-          row.payload = try Sessions.encode(slot)
-          try SubscriptionRow.save(row, in: db)
-        } else {
-          try Self.deleteSubscription(key, subscriptionID, in: db)
-        }
+      let stored = try row.map { try Sessions.decode(SubscriptionSlot.self, from: $0.payload) }
+      if stored == nil, let timer = try Sessions.pendingTimers(key, in: db).first(where: { $0.subscriptionID == subscriptionID }),
+         let schedule = timer.schedule
+      {
+        let payload = try answer(SubscriptionSlot(id: subscriptionID, kind: .timer(schedule, message: timer.content.text)))
+        try Sessions.clear(key, topic: subscriptionID.rawValue, in: db)
+        try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
+        let signals = self.signals
+        db.afterNextTransaction { _ in signals.post(id) }
+        return payload
       }
+      if stored == nil, let stream = try Sessions.streams(key, in: db).first(where: { $0.id == subscriptionID }) {
+        let payload = try answer(SubscriptionSlot(id: subscriptionID, kind: .stream(url: stream.url, throttleSeconds: 0)))
+        try Sessions.post(.unstream(subscriptionID), to: key, in: db)
+        try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
+        let signals = self.signals
+        db.afterNextTransaction { _ in signals.post(id) }
+        return payload
+      }
+      let payload = try answer(stored)
+      if stored != nil { try Self.deleteSubscription(key, subscriptionID, in: db) }
       try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
       return payload
     }
@@ -376,9 +398,11 @@ extension SessionStore {
       }
   }
 
+  /// What the session armed itself; its children watch is not listed.
   public func armedSubscriptions(_ id: SessionID) async throws -> [ArmedSubscription] {
     try await writer.read { db in
-      try SubscriptionRow.of(.session(id)).order { $0.subscriptionID }.fetchAll(db).map(armedSubscription)
+      try SubscriptionRow.of(.session(id)).where { $0.subscriptionID.neq(SubscriptionSlot.childrenID.rawValue) }
+        .order { $0.subscriptionID }.fetchAll(db).map(armedSubscription)
     }
   }
 
@@ -397,34 +421,33 @@ extension SessionStore {
     )
   }
 
-  public enum SubscriptionAdvance: Hashable, Sendable {
-    case retire
-    case reschedule(Date)
-    case observed(marker: String)
-    /// A stream's events were taken: a reconnect resumes after the last
-    /// one's id, empty when the stream had none or reset it.
-    case streamed(lastEventID: String)
+  /// The children watch saw its errored set shrink: nothing to tell, and the
+  /// next child to join is measured from here.
+  public func observedQuietly(_ id: SessionID, subscriptionID: SubscriptionID, marker: String) async throws {
+    try await writer.write { db in
+      try SubscriptionRow.of(.session(id)).where { $0.subscriptionID.eq(subscriptionID.rawValue) }.update { $0.marker = #bind(marker) }.execute(db)
+    }
   }
 
-  @discardableResult
+  public enum SubscriptionAdvance: Hashable, Sendable {
+    case retire
+    case observed(marker: String)
+  }
+
   public func fireSubscription(
     _ id: SessionID,
     subscriptionID: SubscriptionID,
     notification: SystemNotification,
     advance: SubscriptionAdvance,
-  ) async throws -> Int {
+  ) async throws {
     let key = id.rawValue
     let nowDate = dateGen.now
     let now = SQLiteDateFormat.string(from: nowDate)
-    let row = try await writer.write { db in
-      if case let .reschedule(next) = advance {
-        guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
-        let due = try armedSubscription(row).nextFireAt
-        guard let due, SQLiteDateFormat.string(from: next) > SQLiteDateFormat.string(from: due)
-        else { throw NonAdvancingSubscription(due: due, next: next) }
-      }
+    try await writer.write { db in
       var delivered = notification
       var advancedObservation: SubscriptionSlot?
+      var topic: String?
+      var throttled: Double?
       if notification.kind == .spaceObservation {
         guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
         let current = try armedSubscription(row)
@@ -445,45 +468,32 @@ extension SessionStore {
             String(progress.deliverySequence),
           )
           advancedObservation = slot
+          let throttle: Double? = switch slot.kind {
+          case let .observe(_, throttleSeconds) where slot.handler == nil: throttleSeconds
+          case .children: 0
+          case .observe, .stream, .timer: nil
+          }
+          if let throttle { (topic, throttled) = (subscriptionID.rawValue, throttle) }
         } else {
           delivered.id = UUID.deterministic("observe-error", key, subscriptionID.rawValue)
         }
       }
 
-      let enqueued = try Sessions.enqueue(key, input: .notification(delivered), nowDate: nowDate, in: db)
-      if notification.kind == .requestDeadline {
-        guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
-        let current = try armedSubscription(row)
-        guard case let .requestDeadline(request, task) = current.slot.kind,
-              request == notification.requestID, let deadline = current.nextFireAt,
-              advance == .retire
-        else { throw StaleSubscriptionCallback() }
-        try recordRequestDeadline(
-          parent: id, task: task, request: request, deadline: deadline, now: now, in: db,
-        )
-      }
+      try Sessions.enqueue(key, input: .notification(delivered), topic: topic, throttle: throttled, nowDate: nowDate, in: db)
       let slot = SubscriptionRow.of(.session(id)).where { $0.subscriptionID.eq(subscriptionID.rawValue) }
       switch advance {
       case .retire:
         try Self.deleteSubscription(key, subscriptionID, in: db)
-      case let .reschedule(next):
-        try slot.update {
-          $0.nextFireAt = #bind(SQLiteDateFormat.string(from: next))
-          $0.lastFiredAt = #bind(now)
-        }.execute(db)
-      case .observed, .streamed:
+      case let .observed(marker):
         let payload = try advancedObservation.map { try Sessions.encode($0) }
-        let marker = advance.marker
         try slot.update {
           if let payload { $0.payload = #bind(payload) }
-          if let marker { $0.marker = #bind(marker) }
+          $0.marker = #bind(marker)
           $0.lastFiredAt = #bind(now)
         }.execute(db)
       }
-      return enqueued
     }
     signals.post(id)
-    return row
   }
 }
 
@@ -491,19 +501,8 @@ extension SubscriptionSlot.Kind {
   /// Whether it watches a source (a query, a stream) rather than a clock.
   var observes: Bool {
     switch self {
-    case .observe, .stream: true
-    case .timer, .requestDeadline, .requestStall: false
-    }
-  }
-}
-
-extension SessionStore.SubscriptionAdvance {
-  /// What the slot's marker becomes; nil leaves it.
-  var marker: String? {
-    switch self {
-    case let .observed(marker): marker
-    case let .streamed(lastEventID): lastEventID
-    case .retire, .reschedule: nil
+    case .observe, .stream, .children: true
+    case .timer: false
     }
   }
 }
@@ -516,14 +515,6 @@ func handlerName(_ path: String) -> String {
 }
 
 private struct StaleSubscriptionCallback: Error {}
-@_spi(SessionObservation)
-public struct NonAdvancingSubscription: Error, CustomStringConvertible {
-  public let description: String
-
-  init(due: Date?, next: Date) {
-    description = "reschedule did not advance stored due time \(due.map(SQLiteDateFormat.string(from:)) ?? "nil"): next \(SQLiteDateFormat.string(from: next))"
-  }
-}
 
 // Re-arming after cancellation changes callback identity; transcript generation changes do not.
 func observationToken(_ subscription: ArmedSubscription) -> UUID {

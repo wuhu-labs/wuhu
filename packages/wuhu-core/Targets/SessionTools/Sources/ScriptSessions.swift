@@ -82,7 +82,7 @@ struct ScriptSessions {
     engine.define("__wuhu_session_request", promising: { [actor, tools] arguments in
       try await scripted {
         guard case let .string(task)? = arguments[safe: 0], case let .string(message)? = arguments[safe: 1] else {
-          throw ToolProblem("request(id, message, { deadlineSeconds, stallSeconds, kind, key, schema, fields }) wants a session id and a message")
+          throw ToolProblem("request(id, message, { stallSeconds, kind, key, schema, fields }) wants a session id and a message")
         }
         func seconds(_ value: JSONValue?) -> Double? {
           switch value {
@@ -96,8 +96,8 @@ struct ScriptSessions {
           actor,
           "script:\(uuid().uuidString.lowercased())",
           RequestArguments(
-            task: task, message: message, deadlineSeconds: seconds(arguments[safe: 2]), stallSeconds: seconds(arguments[safe: 3]),
-            terms: try decoded(RequestTermsArguments.self, arguments[safe: 4], in: "request"),
+            task: task, message: message, stallSeconds: seconds(arguments[safe: 2]),
+            terms: try decoded(RequestTermsArguments.self, arguments[safe: 3], in: "request"),
           ),
         )
         guard case let .request(opened) = result else {

@@ -3,12 +3,13 @@
 #else
   import Foundation
 #endif
+import struct MainHub.EventSources
 import SessionDomain
 import struct WuhuAI.AssistantMessage
 import struct WuhuAI.AssistantMessageMetadata
 import struct WuhuAI.ToolCall
 
-public enum InferenceMode: Hashable, Sendable {
+public enum InferenceMode: Hashable, Sendable, Codable {
   case normal
   case forcedCompact
 }
@@ -39,11 +40,14 @@ public struct ToolInvocation: Sendable {
   public var sessionID: SessionID
   public var call: ToolCall
   public var state: ToolExecutionState
+  /// True once the call is told to yield: an exec or a script then answers `running`. False when no yield will come.
+  public var yielded: @Sendable () async -> Bool
 
-  public init(sessionID: SessionID, call: ToolCall, state: ToolExecutionState) {
+  public init(sessionID: SessionID, call: ToolCall, state: ToolExecutionState, yielded: @escaping @Sendable () async -> Bool = { false }) {
     self.sessionID = sessionID
     self.call = call
     self.state = state
+    self.yielded = yielded
   }
 }
 
@@ -66,6 +70,7 @@ public struct InferenceReply: Sendable {
   public var message: AssistantMessage
   public var metadata: AssistantMessageMetadata
   public var replayBinding: ReplayBinding?
+  /// The attempt's follow-up once it is the step's reply, with the transcript it ends.
   public var committed: @Sendable (AssistantEntry, Transcript) async -> Void
 
   public init(message: AssistantMessage, metadata: AssistantMessageMetadata, replayBinding: ReplayBinding? = nil, committed: @escaping @Sendable (AssistantEntry, Transcript) async -> Void = { _, _ in }) {
@@ -88,22 +93,6 @@ public struct CompactionResult: Sendable {
   }
 }
 
-public struct EvictionPolicy: Sendable {
-  public var idleTTL: Duration
-  public var maxIdle: Int
-  public var sweepInterval: Duration
-
-  public init(
-    idleTTL: Duration = .seconds(300),
-    maxIdle: Int = 32,
-    sweepInterval: Duration = .seconds(30),
-  ) {
-    self.idleTTL = idleTTL
-    self.maxIdle = maxIdle
-    self.sweepInterval = sweepInterval
-  }
-}
-
 public struct LoopConfig: Sendable {
   public var executeTool: @Sendable (ToolInvocation) async throws -> ToolOutcome
   public var inference: @Sendable (InferenceRequest) async throws -> InferenceReply
@@ -113,24 +102,15 @@ public struct LoopConfig: Sendable {
   public var prepareCompaction: @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition?
   public var budget: @Sendable (SessionID) async -> ContextBudget
   // Fired when an interrupt cancels a mid-flight tool: the composition root
-  // propagates the kill to the effector (a crash-shaped cancellation never
-  // reaches this seam, so crash-retry rejoin stays possible).
+  // propagates the kill to the effector.
   public var killInterruptedTool: @Sendable (ToolInvocation) async -> Void
-  // Asked when a hand-off finds a tool mid-flight: true releases it to the
-  // next worker (its wait is cancelled, the call stays pending, nothing is
-  // written); false lets it run to its end here.
-  public var releaseTool: @Sendable (ToolInvocation) async -> Bool
   public var invalidateInference: @Sendable (SessionID) async -> Void
-  public var allowCacheWarming: @Sendable (SessionID) async throws -> Bool
-  public var scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)?
   // The cancel ids of the work running for a session outside the loop
   // (`script.<id>`), listed in the `<session-state>` of a compaction.
   public var runningWork: @Sendable (SessionID) async throws -> [String]
-  // Told when a session mounts here, with the transcript it hydrated: the
-  // worker takes up what the session left running elsewhere.
-  public var mounted: @Sendable (SessionID, Transcript) async -> Void = { _, _ in }
   public var thresholds: CompactionThresholds
-  public var eviction: EvictionPolicy
+  /// Where a session's plain stream observations dial.
+  public var sources: EventSources
 
   public init(
     executeTool: @escaping @Sendable (ToolInvocation) async throws -> ToolOutcome,
@@ -139,13 +119,10 @@ public struct LoopConfig: Sendable {
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
     prepareCompaction: @escaping @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? = { _, _, _ in nil },
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
-    releaseTool: @escaping @Sendable (ToolInvocation) async -> Bool = { _ in false },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
-    allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },
-    scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)? = nil,
     runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] },
     thresholds: CompactionThresholds = .init(),
-    eviction: EvictionPolicy = .init(),
+    sources: EventSources = .unavailable,
   ) {
     self.prepareCompaction = prepareCompaction
     self.executeTool = executeTool
@@ -153,12 +130,9 @@ public struct LoopConfig: Sendable {
     self.compact = compact
     self.budget = budget
     self.killInterruptedTool = killInterruptedTool
-    self.releaseTool = releaseTool
     self.invalidateInference = invalidateInference
-    self.allowCacheWarming = allowCacheWarming
-    self.scheduleWake = scheduleWake
     self.runningWork = runningWork
     self.thresholds = thresholds
-    self.eviction = eviction
+    self.sources = sources
   }
 }

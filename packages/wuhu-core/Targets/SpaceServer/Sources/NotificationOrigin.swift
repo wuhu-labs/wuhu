@@ -23,7 +23,7 @@ extension NotificationOrigin {
         sender: outside.map { "\(name) (group \($0))" } ?? name,
         box: try await boxTitle(ConversationID(notification.source), unless: sender, space: space),
       )
-    case .childFailed, .requestDeadline, .sessionSettled, .sessionErrored,
+    case .sessionSettled, .sessionErrored,
          .sessionDisconnected, .contractorDisconnected:
       let session = payload?["sessionID"]?.stringValue ?? notification.source
       self = .session(try await sessionTitle(session, space: space) ?? session)
@@ -48,7 +48,7 @@ extension NotificationSender {
     case .conversationMessage:
       guard let sender = payload?["sender"]?.stringValue, !sender.isEmpty else { return nil }
       self.init(id: sender, kind: await senderKind(sender, sessions: space.sessions) == .session ? .session : .user)
-    case .childFailed, .requestDeadline, .sessionSettled, .sessionErrored,
+    case .sessionSettled, .sessionErrored,
          .sessionDisconnected, .contractorDisconnected:
       self.init(id: payload?["sessionID"]?.stringValue ?? notification.source, kind: .session)
     }

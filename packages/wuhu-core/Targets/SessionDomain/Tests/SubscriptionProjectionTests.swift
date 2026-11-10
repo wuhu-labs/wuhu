@@ -6,18 +6,17 @@ import Testing
   @Test func projectionReconcilesOnlyPublicSubscriptionsAfterTheWholeFold() throws {
     let timer = SubscriptionID("timer")
     let observer = SubscriptionID("observer")
-    let deadline = SubscriptionID.deadline(.init("r"))
     var transcript = Transcript(items: [
       Fix.result(.timer(.init(subscriptionID: timer, schedule: .oneShot(Fix.instant), message: "tick"))),
       Fix.result(.observe(.init(subscriptionID: observer, source: .query("SELECT 1")))),
       Fix.result(.read(.init(path: "/file.md", revision: .journal(7), content: "body"))),
     ])
-    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "snapshot", snapshot: .init(subscriptions: [deadline: .requestDeadline(Fix.instant)]), runningWork: [])
+    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "snapshot", snapshot: .init(subscriptions: [timer: .timer(.oneShot(Fix.instant))]), runningWork: [])
     transcript.items.insert(.generationHead(head), at: 0)
-    #expect(transcript.environment.tools.subscriptions.count == 3, "unprojected pure transcript folding stays compatible")
+    #expect(transcript.environment.tools.subscriptions.count == 2, "unprojected pure transcript folding stays compatible")
     transcript.registeredSubscriptions = [observer]
     transcript.handlerSubscriptions = [observer]
-    #expect(transcript.environment.tools.subscriptions == [observer: .observe(sql: "SELECT 1"), deadline: .requestDeadline(Fix.instant)])
+    #expect(transcript.environment.tools.subscriptions == [observer: .observe(sql: "SELECT 1")])
     #expect(transcript.environment.tools.fileAccessLog["/file.md"] == .journal(7))
     let stale = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "compact", snapshot: .init(subscriptions: [timer: .timer(.oneShot(Fix.instant)), observer: .observe(sql: "SELECT 1")]), runningWork: [])
     let compacted = transcript.compacted(head: stale, kept: 1 ..< transcript.items.count)
@@ -110,7 +109,5 @@ import Testing
     let compacted = transcript.compacted(head: head, kept: nil)
     #expect(compacted.handlerSubscriptions == [subscription])
     #expect(compacted.environment.nextTimer(openRequests: open, now: Fix.instant) == Fix.instant, "a new generation starts the backoff over")
-    transcript.append(Fix.result(.request(.init(requestID: .init("child"), task: .init("task"), conversationID: .init("child-dm"), deadline: Fix.instant.addingTimeInterval(60)))))
-    #expect(transcript.environment.nextTimer(openRequests: open, now: Fix.instant) == nil, "outgoing request deadlines remain guaranteed wakes")
   }
 }

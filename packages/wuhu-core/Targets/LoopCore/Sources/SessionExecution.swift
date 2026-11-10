@@ -1,14 +1,15 @@
-import protocol MainHub.Main
-import enum MainHub.RevocationPolicy
-import struct MainHub.ScriptHandlerInvocation
+import Dependencies
+import Logging
+import struct MainHub.ArchiveBusySession
+import func MainHub.handlerScriptID
+import enum MainHub.ObserverMail
 import struct MainHub.ScriptHandlerResult
 import struct MainHub.ScriptRun
-import func MainHub.withCallback
-import protocol MainHub.Worker
-import struct MainHub.WorkerActivity
-import enum MainHub.WorkerInput
+import enum MainHub.SessionError
+import struct MainHub.SubtreeArchiveBusy
 import SessionTools
 import enum SpaceContract.ScriptOutput
+import WuweiNeo
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -16,105 +17,195 @@ import enum SpaceContract.ScriptOutput
 #endif
 import SessionDomain
 import SpaceCore
-import struct WuhuAI.ToolCall
 
-/// A worker: the loops, the tools and the scripts of the sessions main
-/// assigns to it. It runs from when it is made until `shutdown`.
-public struct SessionExecution: Worker {
-  private let registry: SessionRegistry
+/// The sessions' runtime: the loops, the tools and the scripts, the handler slots' observer cells, and the verbs main's routes take for a session. Each loop is a session cell on neo's shared backend over `space`'s database. Nothing runs until `start`: mail waits in the store.
+public struct SessionExecution: Sendable {
+  private let loops: WuweiNeo.Worker
+  private let scheduler: DependencyScheduler
+  let store: SessionStore
   private let scripts: Scripts
-  private let execJobs: ExecJobs
-  private let tools: ToolExecutor
+  public let tools: ToolExecutor
   private let running: @Sendable (SessionID) async throws -> [String]
+  private let archiveGrace: Duration
+  private let archived: @Sendable (SessionID) async -> Void
+  private let log = Logger(label: "wuhu.session-execution")
 
+  /// `archived` hears of each session an archive took, after its cell was told.
   public init(
-    main: any Main,
     connection: MainConnection,
     credential: @escaping @Sendable (SessionID) async throws -> String,
     access: InferenceAccess = InferenceAccess(),
-    execJobs: ExecJobs = ExecJobs(),
+    space: Space,
+    scripts: Scripts? = nil,
+    archiveGrace: Duration = .seconds(24 * 3600),
+    archived: @escaping @Sendable (SessionID) async -> Void = { _ in },
+    observerRun: @escaping ObserverRun = { _, _, _ in preconditionFailure("this worker runs no group observer") },
     loopConfig: @Sendable (ToolExecutor) -> LoopConfig,
-  ) async {
-    let scripts = Scripts(owner: main)
-    let tools = ToolExecutor(
-      owner: main, main: connection, credential: credential, access: access, scripts: scripts, execJobs: execJobs,
-    )
-    self.execJobs = execJobs
+  ) {
+    let scripts = scripts ?? Scripts(sessions: space.sessions)
+    let tools = ToolExecutor(main: connection, credential: credential, access: access, scripts: scripts)
     self.scripts = scripts
     self.tools = tools
+    self.archiveGrace = archiveGrace
+    self.archived = archived
     var config = loopConfig(tools)
     let runningWork = config.runningWork
     config.runningWork = { session in
-      scripts.running(of: session) + tools.runningExecJobs(of: session) + (try await runningWork(session))
+      scripts.running(of: session) + (try await runningWork(session))
     }
     running = config.runningWork
-    let mounted = config.mounted
-    config.mounted = { session, transcript in
-      await tools.adoptExecJobs(of: session, pending: Set(transcript.pendingToolCallIDs))
-      await mounted(session, transcript)
+    @Dependency(\.continuousClock) var clock
+    let scheduler = DependencyScheduler()
+    self.scheduler = scheduler
+    let handler: @Sendable (HandlerJob.Params) async throws -> ScriptHandlerResult = { params in
+      switch params.owner {
+      case let .session(session):
+        return try await scripts.runHandler(id: params.firing, path: params.path, actor: .session(session), input: params.input, tools: tools)
+      case let .group(group):
+        let observer = Observer(group: group, name: params.name!, firing: params.firing.uuidString.lowercased())
+        return try await observerRun(observer, handlerScriptID(params.firing)) { token in
+          try await scripts.runHandler(id: params.firing, path: params.path, actor: .observer(observer, token: token), input: params.input, tools: tools)
+        }
+      }
     }
-    registry = SessionRegistry(main: main, loopConfig: config)
-    await registry.activate()
+    let client = withEscapedDependencies { [config] dependencies in
+      LoopClient(
+        store: space.sessions, config: config, sleep: { deadlineSleep(after: $0, clock: clock) }, dependencies: dependencies, scheduler: scheduler,
+        handler: handler,
+      )
+    }
+    store = space.sessions
+    let database: any SharedDatabase
+    do { database = try space.neoDatabase() } catch { preconditionFailure("the space database took no reader: \(error)") }
+    let loops = WuweiNeo.Worker.loops(storage: .shared(database), client: client)
+    self.loops = loops
+    space.sessions.onMail { loops.poke(SessionCell.ID($0.rawValue).recipient) }
   }
 
-  public func deliver(_ session: SessionID, _ input: WorkerInput) async throws {
-    switch input {
-    case .wake:
-      try await withCallback(of: Void.self) { registry.send(.wake($0), to: session) }
-    case .interrupt:
-      try await withCallback(of: Void.self) { registry.send(.interrupt($0), to: session) }
-    case .resume:
-      try await withCallback(of: Void.self) { registry.send(.resume($0), to: session) }
-    case .reload: try await registry.reload(session)
-    case .archived:
-      scripts.stopScripts(of: session)
-      await tools.cancelExecJobs(of: session)
-      await registry.archived(session)
+  /// Takes the mail that waited and whatever a restart left to run.
+  public func start() {
+    loops.start()
+  }
+
+  public func shutdown() async {
+    await loops.drain()
+    scheduler.stop()
+    await scripts.close()
+  }
+
+  private func cell(_ session: SessionID) -> SessionCell.Sender {
+    loops.send(SessionCell.ID(session.rawValue))
+  }
+
+  public func retitle(_ session: SessionID, to title: String) async throws -> String {
+    let title = try SessionStore.usableTitle(title)
+    _ = try await store.record(session)
+    cell(session).retitle(title)
+    return title
+  }
+
+  public func retag(_ session: SessionID, to tags: [String]) async throws {
+    _ = try await store.record(session)
+    cell(session).retag(tags)
+  }
+
+  public func compact(_ session: SessionID, instructions: String?) async throws {
+    if try await store.record(session).kind == .task, instructions?.isEmpty == false {
+      throw SessionStoreError.taskTakesNoHumanInput(session.rawValue)
+    }
+    cell(session).compact(instructions)
+  }
+
+  public func interrupt(_ session: SessionID) async throws {
+    _ = try await store.record(session)
+    cell(session).interrupt()
+  }
+
+  public func resume(_ session: SessionID) async throws {
+    try await store.record(session).executor.requireSupported()
+    do {
+      // What the loop could not read is refused here, not found by it.
+      _ = try await store.hydrate(session)
+    } catch where error is DecodingError || error is ExecutorSpecError || (error as? CocoaError)?.code == .formatting {
+      log.error("resume failed", metadata: ["session": "\(session.rawValue)", "error": "\(error)"])
+      try await store.markErrored(session, message: "resume failed: \(SessionError.unreadableData(session))")
+      cell(session).cancel()
+      throw SessionError.unreadableData(session)
+    }
+    cell(session).resume()
+  }
+
+  /// Best effort: busy sessions refuse the whole subtree unless `force`; one that turns busy after the check is archived anyway.
+  public func archive(_ session: SessionID, force: Bool = false) async throws {
+    let subtree = try await store.archiveSubtree(session).filter { $0.lifecycle == .live }
+    if !force {
+      var busy: [ArchiveBusySession] = []
+      for record in subtree where !record.executor.isRetired {
+        if try await !settled(record.id) { busy.append(ArchiveBusySession(id: record.id, title: record.title)) }
+      }
+      guard busy.isEmpty else { throw SubtreeArchiveBusy(sessions: busy) }
+    }
+    // Parents first: a child's failed request reaches a parent already archived, which does not start on it.
+    for record in subtree.reversed() {
+      try await store.closeRequestsForArchive(record.id)
+      scripts.stopScripts(of: record.id)
+      cell(record.id).archive(archiveGrace)
+      await archived(record.id)
     }
   }
 
-  public func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool {
-    let settled = try await registry.revoke(session, policy: policy)
-    // What the session left running outside its loop goes with it: the next
-    // worker adopts it when it mounts the session.
-    if settled, case .handOff = policy { await tools.releaseExecJobs(of: session) }
-    return settled
-  }
-
-  /// A tool call run here as the loop runs it: what tests of the tools take.
-  public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome {
-    try await tools.execute(session: session, call: call, state: state)
-  }
-
-  public func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
-    let actor: ScriptActor
-    switch invocation.runner {
-    case let .session(session): actor = .session(session)
-    case let .observer(observer):
-      guard let token = invocation.token else { preconditionFailure("an observer's firing reached the worker without its token") }
-      actor = .observer(observer, token: token)
+  /// The reply is read before the cell restarts: the generation it names is the one the restart opens unless another restart lands first.
+  public func restart(_ session: SessionID, executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute? = nil) async throws -> SessionRestart {
+    let record = try await store.record(session)
+    try (executor ?? record.executor).requireSupported()
+    guard record.lifecycle == .live else { throw SessionStoreError.restartOfArchivedSession(session.rawValue) }
+    if !record.executor.isRetired, try await !settled(session) {
+      throw SessionStoreError.busyForRestart(session.rawValue)
     }
-    return try await scripts.runHandler(
-      id: invocation.id, path: invocation.path, actor: actor,
-      input: invocation.input, stateJSON: invocation.stateJSON, tools: tools,
-    )
+    let stored = executor == nil && modelRoute == nil ? record.executor : try SessionStore.restartExecutor(executor ?? record.executor, route: modelRoute)
+    let generation = try await store.generation(session) + 1
+    cell(session).restart(executor, modelRoute, note, try await running(session))
+    return SessionRestart(generation: generation, executor: stored)
   }
 
+  public func unarchive(_ session: SessionID) async throws {
+    @Dependency(\.date.now) var now
+    let record = try await store.record(session)
+    guard case let .archived(graceExpiresAt) = record.lifecycle else { return }
+    try record.executor.requireSupported()
+    guard now < graceExpiresAt else { throw SessionStoreError.archiveGraceExpired(session.rawValue) }
+    cell(session).unarchive()
+  }
+
+  /// Whether the session has nothing to do, now or once its job answers or its cell takes its mail; the caller writes what it then does before the next wake reaches the cell.
+  private func settled(_ session: SessionID) async throws -> Bool {
+    guard try await store.pendingCommand(session) == nil else { return false }
+    if try await store.record(session).stopped { return true }
+    guard !loops.hasMail(for: SessionCell.ID(session.rawValue).recipient) else { return false }
+    let state = SessionState(try await store.hydrate(session))
+    return state.settled && (state.slot.working(exists: { [loops] work in
+      switch work {
+      case let .step(id): loops.exists(id)
+      case let .call(id): loops.exists(id)
+      case let .compaction(id): loops.exists(id)
+      }
+    }, outcome: { [loops] in loops.job($0).outcome() }) == nil)
+  }
+
+  /// Mail to a handler slot's observer cell.
+  public func observe(_ owner: SubscriptionOwner, _ subscription: SubscriptionID, _ mail: ObserverMail) {
+    let cell = loops.send(ObserverCell.ID(owner, subscription))
+    switch mail {
+    case .look: cell.look()
+    case let .rows(input, marker): cell.observed(input, marker)
+    }
+  }
+
+  /// Runs `script` until it ends, `output` taking what it says as it says it; cancelling the call kills it.
   public func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws {
     try await scripts.run(script, tools: tools, output: output)
   }
-
-  public func activity() async -> WorkerActivity { scripts.activity }
-
-  /// The sessions this worker holds: what it announces again when it opens
-  /// a new line to main.
-  public func holding() async -> [SessionID] { await registry.mounted() }
-
-  public func runningWork(_ session: SessionID) async throws -> [String] { try await running(session) }
-
-  public func shutdown() async {
-    await registry.stop()
-    await scripts.close()
-    await execJobs.close()
-  }
 }
+
+/// Runs a group observer's handler: `body` gets the token minted for this firing alone, which ends with the call, and so does every machine process its script started.
+public typealias ObserverRun = @Sendable (Observer, _ script: String, (String) async throws -> ScriptHandlerResult) async throws -> ScriptHandlerResult

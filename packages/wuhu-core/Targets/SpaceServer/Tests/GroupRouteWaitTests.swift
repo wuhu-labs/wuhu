@@ -98,10 +98,10 @@ extension GroupSwitchingTests {
         }
       }
       let reset = resetAhead ? Date().addingTimeInterval(7800) : nil
-      #expect(try await recordRouteFailure(InferenceError.rateLimited(retryAt: reset), session: id, owner: owner, catalog: catalog)?.retryAt == reset)
+      #expect(try await recordRouteFailure(InferenceError.rateLimited(retryAt: reset), session: id, store: owner.space.sessions, catalog: catalog)?.retryAt == reset)
       let ready = catalog
       let compacted = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "folded", snapshot: .init(), runningWork: []), kept: nil)
-      let transition = try await compactionPlacement(owner: owner, catalog: { _ in ready }, usage: harness.runtime.usage)(id, compacted, nil)
+      let transition = try await compactionPlacement(store: owner.space.sessions, catalog: { _ in ready }, usage: harness.runtime.usage)(id, compacted, nil)
       #expect(transition?.route.member == (resetAhead && otherUsable ? "b" : nil))
     }
   }

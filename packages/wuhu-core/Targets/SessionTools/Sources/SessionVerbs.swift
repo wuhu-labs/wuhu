@@ -47,13 +47,12 @@ extension ToolExecutor {
 
   func request(_ actor: ScriptActor, _ call: String, _ arguments: RequestArguments) async throws -> ToolResultPayload {
     var body: OrderedDictionary<String, JSONValue> = ["message": .string(arguments.message)]
-    body["deadlineSeconds"] = arguments.deadlineSeconds.map(JSONValue.number)
     body["stallSeconds"] = arguments.stallSeconds.map(JSONValue.number)
     body.merge(arguments.terms.body) { $1 }
     let opened: SessionRequestOutput = try await verb(actor, call, .post, "/v1/session/\(arguments.task)/request", body: .object(body))
     return .request(.init(
       requestID: RequestID(opened.requestId), task: SessionID(opened.task), conversationID: ConversationID(opened.conversationId),
-      deadline: opened.deadline.map { Date(timeIntervalSince1970: $0) }, existing: opened.existing,
+      existing: opened.existing,
     ))
   }
 

@@ -78,18 +78,18 @@ export function ChromeLayer({ store, overlay }: {
       height: view.h + 2 * outset,
     }
   }
-  const line = (points: Point[]) =>
-    points.map(v).map((p) => `${p.x},${p.y}`).join(' ')
   return (
     <svg className='canvas-chrome canvas-overlay' aria-hidden='true'>
-      {overlay.connector && (
-        <polyline
-          points={line(overlay.connector)}
-          stroke={accent}
-          strokeOpacity={0.3}
-          strokeWidth={6}
-        />
-      )}
+      {overlay.connector &&
+        [overlay.connector[0], overlay.connector.at(-1)!].map((end, i) => (
+          <circle
+            key={i}
+            cx={v(end).x}
+            cy={v(end).y}
+            r={chrome.endDot / 2}
+            fill={accent}
+          />
+        ))}
       {overlay.outlines.map((outline, i) => (
         <rect key={i} {...r(outline, 2)} stroke={accent} strokeWidth={1.5} />
       ))}
@@ -132,20 +132,9 @@ export function ChromeLayer({ store, overlay }: {
             )
           }
           case 'end':
-            return (
-              <circle
-                key={i}
-                cx={at.x}
-                cy={at.y}
-                r={chrome.end / 2}
-                fill='#fff'
-                stroke={accent}
-                strokeWidth={1.5}
-              />
-            )
+            return null
           case 'wiggle': {
-            const long = 18
-            const short = chrome.end - 2
+            const { long, short } = chrome.pill
             const w = handle.vertical ? short : long
             const h = handle.vertical ? long : short
             return (
@@ -157,7 +146,6 @@ export function ChromeLayer({ store, overlay }: {
                 height={h}
                 rx={short / 2}
                 fill={accent}
-                stroke='#fff'
               />
             )
           }

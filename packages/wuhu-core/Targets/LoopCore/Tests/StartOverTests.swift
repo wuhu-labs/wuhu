@@ -12,9 +12,9 @@ import Testing
       let space = try Space.inMemory()
       let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "queue recovery", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await sessions.enqueue(id, input: Fix.message("first", message: "first"))
-      _ = try await sessions.enqueue(id, input: Fix.message("bad", message: "bad"))
-      _ = try await sessions.enqueue(id, input: Fix.message("last", message: "last"))
+      try await sessions.put(id, input: Fix.message("first", message: "first"))
+      try await sessions.put(id, input: Fix.message("bad", message: "bad"))
+      try await sessions.put(id, input: Fix.message("last", message: "last"))
       try await space.writer.write { db in
         try db.execute(sql: "UPDATE session_queue SET payload = '{}' WHERE session_id = ? AND id = 2", arguments: [id.rawValue])
       }
@@ -52,7 +52,7 @@ import Testing
       let id = try await sessions.createSession(group: .shared, title: "restart", kind: kind, parent: kind == .task ? parent : nil, createdBy: "morgan", executor: .kernel(.test))
       _ = try await sessions.armSubscription(id, slot: .init(id: .init("timer.keep"), kind: .timer(.cron("* * * * *"), message: "later")), nextFireAt: anchor.addingTimeInterval(60))
       try await sessions.markInterrupted(id)
-      _ = try await sessions.enqueue(id, input: Fix.message("waiting before restart"))
+      try await sessions.enqueue(id, input: Fix.message("waiting before restart"))
       let seen = Box<[Transcript]>([])
       let committed = AsyncStream<Void>.makeStream()
       defer { committed.continuation.finish() }

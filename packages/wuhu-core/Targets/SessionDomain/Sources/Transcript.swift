@@ -86,21 +86,20 @@ public struct Transcript: Hashable, Sendable, Codable {
   }
 
   // Everything before the returned index gets summarized; nil = nothing fits,
-  // summarize the whole transcript. Never cuts at a tool result: its call
-  // would be summarized away, orphaning the result.
+  // summarize the whole transcript. The cut never falls inside a tool turn:
+  // every answer it keeps has its call kept too.
   public func compactionCutIndex(keptTokens: Int, images: ImageLimits) -> Int? {
     var firstKeptIndex: Int?
     var sum = 0
-    var index = items.count - 1
-    while index >= 0 {
-      sum += items[index].estimatedTokens(images)
-      if case .toolResult = items[index] {
-        index -= 1
-        continue
-      }
+    var answersAwaitingCall: Set<ToolCallID> = []
+    for index in items.indices.reversed() {
+      let item = items[index]
+      sum += item.estimatedTokens(images)
+      if let callID = item.answeredToolCallID { answersAwaitingCall.insert(callID) }
+      if case let .assistant(entry) = item { answersAwaitingCall.subtract(entry.toolCalls.map { ToolCallID($0.id) }) }
+      guard answersAwaitingCall.isEmpty else { continue }
       guard sum <= keptTokens else { break }
       firstKeptIndex = index
-      index -= 1
     }
     return firstKeptIndex
   }

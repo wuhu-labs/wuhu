@@ -49,7 +49,7 @@ private struct TargetRefused: Error, CustomStringConvertible {
         throw TargetRefused()
       }
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("work"), to: id)
+        try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("refusal is followed by another inference") { try await sessions.settledWork(id) && script.count == 2 }
       }
       #expect(seen.withLock { $0 } == [CompactionTarget(model: "nope/x")])
@@ -77,7 +77,7 @@ private struct TargetRefused: Error, CustomStringConvertible {
         return nil
       }
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("work"), to: id)
+        try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("compaction then continuation") { try await sessions.settledWork(id) && script.count == 2 }
       }
       #expect(seen.withLock { $0 } == [CompactionTarget(model: "work", effort: "low")])

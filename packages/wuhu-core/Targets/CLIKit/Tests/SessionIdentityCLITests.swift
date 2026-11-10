@@ -8,7 +8,6 @@ import InferenceKit
 import LoopCore
 import MachineContract
 import class MainHub.Hub
-import class MainHub.SessionService
 import Scratch
 import ServeTesting
 import SessionDomain
@@ -125,14 +124,17 @@ final class IdentityHarness: Sendable {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
     )
     let connection = MainConnection()
-    let workers = WorkerRegistry(tokens: tokens, machines: nil)
     let access = InferenceAccess(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "identity-fixture") })
-    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }, access: access) { _ in config }
-    workers.announce(workers.mint().id, endpoint: worker)
-    let service = SessionService(sessions: self.store, worker: workers)
-    self.serviceTask = Task { try? await service.start() }
-    let runtime = SessionRuntime(space: space, service: service, workers: workers, attempts: AttemptHub(), owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
+    let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, access: access, space: owner.space) { _ in config }
+    let runtime = SessionRuntime(execution: worker, attempts: AttemptHub(), owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: dev, execTokens: tokens)
+    worker.start()
+    self.serviceTask = Task {
+      let (parked, end) = AsyncStream<Void>.makeStream()
+      for await _ in parked {}
+      end.finish()
+      await worker.shutdown()
+    }
     let inner = ServeTesting.client(upgrading: handler)
     let hosts = self.hosts
     self.fetch = FetchClient { request in
@@ -384,7 +386,7 @@ final class IdentityHarness: Sendable {
       #expect(record.kind == .task)
       #expect(record.parent == h.parent)
 
-      let keyed = ["session", "request", "--deadline", "600", "--kind", "build", "--key", "build-1", "--fields", #"{"pr":7}"#, id.rawValue, "do the thing"]
+      let keyed = ["session", "request", "--stall", "600", "--kind", "build", "--key", "build-1", "--fields", #"{"pr":7}"#, id.rawValue, "do the thing"]
       let requested = await h.asSession(keyed)
       #expect(requested.code == 0, "\(requested.stderr)")
       #expect(requested.stdout.hasPrefix("requested "))

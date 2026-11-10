@@ -19,6 +19,8 @@ import {
 import {
   chrome,
   type Corner,
+  createdFrame,
+  draftID,
   type End,
   handleAt,
   handlesOf,
@@ -41,9 +43,12 @@ import {
   boundsOf,
   type CanvasScene,
   connectorBounds,
+  labelSize,
+  midpoint,
   type Point,
   type Rect,
   sceneOf,
+  type SceneText,
   textLayoutOf,
 } from '~/lib/canvas/scene'
 import { finishText } from '~/lib/canvas/text-edit'
@@ -79,11 +84,13 @@ type Drag =
     | { kind: 'connect'; from: string; fromSide: Side | null }
     | { kind: 'reroute'; connector: string; end: End }
     | { kind: 'wiggle'; connector: string; vertical: boolean; offset: number }
-    | { kind: 'create'; tool: ItemKind }
+    | { kind: 'create'; tool: ItemKind; square: boolean }
   )
 
 interface Editing {
+  // An item's id, or a connector's when `label`.
   id: string
+  label: boolean
   base: Frontiers
   original: TextRun[]
 }
@@ -109,6 +116,22 @@ function previewed(board: Board, drag: Drag | null): Board {
         drag.connector,
         drag.offset + (drag.vertical ? dx : dy),
       )
+    case 'create': {
+      if (drag.tool === 'file') return board
+      const frame = createdFrame(drag.start, drag.now, drag.square)
+      const color = defaultColor[drag.tool]
+      return {
+        ...board,
+        items: [...board.items, {
+          id: draftID,
+          kind: drag.tool,
+          parent: null,
+          ...frame,
+          ...(color === null ? {} : { color }),
+          text: [],
+        }],
+      }
+    }
     default:
       return board
   }
@@ -153,6 +176,9 @@ function overlayOf(
   if (drag.kind === 'marquee') {
     overlay.marquee = rectBetween(drag.start, drag.now)
   }
+  if (drag.kind === 'create' && drag.tool !== 'file') {
+    overlay.outlines.push(createdFrame(drag.start, drag.now, drag.square))
+  }
   let from: Point | undefined
   let exclude: string | undefined
   if (drag.kind === 'connect') {
@@ -180,6 +206,36 @@ function overlayOf(
     }
   }
   return overlay
+}
+
+// What an editing session draws its editor over: an item's text box, or a
+// connector's label slot (a point; the editor centres on it).
+function editedIn(
+  board: Board,
+  scene: CanvasScene,
+  editing: Editing,
+): { kind: ItemKind | 'label'; frame: Rect; layout: SceneText } | undefined {
+  if (editing.label) {
+    const drawn = scene.connectors.find((c) => c.id === editing.id)
+    if (drawn === undefined) return undefined
+    const at = midpoint(drawn.points)
+    const frame = { ...at, w: 0, h: 0 }
+    return {
+      kind: 'label',
+      frame,
+      layout: {
+        runs: [],
+        box: frame,
+        alignment: 'center',
+        size: labelSize,
+        shrink: false,
+      },
+    }
+  }
+  const item = board.items.find((i) => i.id === editing.id)
+  const frame = item && frameIn(scene, item.id)
+  if (item === undefined || frame === undefined) return undefined
+  return { kind: item.kind, frame, layout: textLayoutOf(item, frame) }
 }
 
 // The item at the end a reroute keeps.
@@ -248,11 +304,13 @@ export function CanvasEditing({
     doc.commit()
   }
 
-  const beginEditing = (id: string, original: TextRun[]) => {
-    const next = { id, base: doc.frontiers(), original }
+  const beginEditing = (id: string, original: TextRun[], label = false) => {
+    const next = { id, label, base: doc.frontiers(), original }
     now.current.editing = next
     setEditing(next)
-    select({ items: [id], connector: null })
+    select(
+      label ? { items: [], connector: id } : { items: [id], connector: null },
+    )
   }
   const endEditing = () => {
     const session = now.current.editing
@@ -270,10 +328,13 @@ export function CanvasEditing({
 
   const insertAt = (kind: ItemKind, at: Point, path?: string) => {
     const size = defaultSize[kind]
-    const frame = { x: at.x - size.w / 2, y: at.y - size.h / 2, ...size }
+    insert(kind, { x: at.x - size.w / 2, y: at.y - size.h / 2, ...size }, path)
+  }
+  const insert = (kind: ItemKind, frame: Rect, path?: string) => {
+    const centre = { x: frame.x + frame.w / 2, y: frame.y + frame.h / 2 }
     const section = kind === 'section'
       ? null
-      : sectionUnder(now.current.scene, at, '')
+      : sectionUnder(now.current.scene, centre, '')
     let id: string | null = null
     edit((e) => {
       id = e.insert(kind, frame, defaultColor[kind], { path, section })
@@ -328,7 +389,7 @@ export function CanvasEditing({
     const scale = camera.scale
     const pointer = { start: at, now: at, active: false }
     if (tool !== 'select' && tool !== 'connector') {
-      dragTo({ ...pointer, kind: 'create', tool })
+      dragTo({ ...pointer, kind: 'create', tool, square: event.shiftKey })
       return true
     }
     if (tool === 'select') {
@@ -413,12 +474,14 @@ export function CanvasEditing({
     return true
   }
 
-  const move = (_: PointerEvent, at: Point, camera: Camera) => {
+  const move = (event: PointerEvent, at: Point, camera: Camera) => {
     const current = now.current.drag
     if (current === null) return
     const active = current.active ||
       !withinClick(current.start, at, camera.scale)
-    const next = { ...current, now: at, active }
+    const next = current.kind === 'create'
+      ? { ...current, now: at, active, square: event.shiftKey }
+      : { ...current, now: at, active }
     dragTo(next)
     if (next.kind === 'marquee' && active) {
       const hits = marqueeHits(
@@ -448,11 +511,19 @@ export function CanvasEditing({
     const active = current.active || !withinClick(current.start, at, scale)
     switch (current.kind) {
       case 'create':
-        if (!withinClick(current.start, at, scale)) return
-        if (current.tool === 'file') {
-          setTool('select')
-          setPicking(at)
-        } else insertAt(current.tool, at)
+        if (!active) {
+          if (current.tool === 'file') {
+            setTool('select')
+            setPicking(at)
+          } else insertAt(current.tool, at)
+        } else if (current.tool !== 'file') {
+          const frame = createdFrame(current.start, at, event.shiftKey)
+          insert(current.tool, {
+            ...frame,
+            w: Math.max(frame.w, chrome.minimumSize),
+            h: Math.max(frame.h, chrome.minimumSize),
+          })
+        }
         return
       case 'move': {
         if (!active) {
@@ -551,6 +622,11 @@ export function CanvasEditing({
     if (item === undefined || item.kind === 'file' || item.note) return
     beginEditing(id, item.text)
   }
+  const startLabelEditing = (id: string) => {
+    const connector = now.current.board.connectors.find((c) => c.id === id)
+    if (connector === undefined) return
+    beginEditing(id, connector.label, true)
+  }
 
   const key = (event: KeyboardEvent) => {
     const mod = event.metaKey || event.ctrlKey
@@ -593,8 +669,15 @@ export function CanvasEditing({
     event.stopPropagation()
   }
 
-  const handlers = useRef({ down, move, up, key, startEditing })
-  handlers.current = { down, move, up, key, startEditing }
+  const handlers = useRef({
+    down,
+    move,
+    up,
+    key,
+    startEditing,
+    startLabelEditing,
+  })
+  handlers.current = { down, move, up, key, startEditing, startLabelEditing }
   const input = useMemo<CanvasInput>(() => ({
     down: (...args) => handlers.current.down(...args),
     move: (...args) => handlers.current.move(...args),
@@ -602,9 +685,9 @@ export function CanvasEditing({
     key: (event) => handlers.current.key(event),
     doubleClick: (at, camera) => {
       const hit = hitAt(now.current.scene, at, camera.scale)
-      if (hit !== null && 'item' in hit) {
-        handlers.current.startEditing(hit.item.id)
-      }
+      if (hit === null) return
+      if ('item' in hit) handlers.current.startEditing(hit.item.id)
+      else handlers.current.startLabelEditing(hit.connector.id)
     },
   }), [])
 
@@ -618,10 +701,8 @@ export function CanvasEditing({
       },
   })
 
-  const edited = editing === null
-    ? undefined
-    : board.items.find((item) => item.id === editing.id)
-  const editedFrame = edited && frameIn(scene, edited.id)
+  const edited = editing === null ? undefined : editedIn(board, scene, editing)
+  const editedFrame = edited?.frame
 
   let bar: { anchor: Rect; mode: BarMode } | null = null
   if (drag?.active) bar = null
@@ -707,12 +788,12 @@ export function CanvasEditing({
             store.get().scale,
           )}
         />
-        {editing !== null && edited !== undefined && editedFrame && (
+        {editing !== null && edited !== undefined && (
           <TextEditor
             key={editing.id}
             store={store}
             kind={edited.kind}
-            layout={textLayoutOf(edited, editedFrame)}
+            layout={edited.layout}
             runs={editing.original}
             onEditor={setTextEditor}
             onDone={endEditing}

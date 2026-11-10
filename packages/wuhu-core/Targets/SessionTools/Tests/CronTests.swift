@@ -1,8 +1,7 @@
 import DeterministicDependencies
 import Foundation
 @testable import MainHub
-import struct MainHub.CronSchedule
-import struct MainHub.ToolProblem
+@testable import SessionDomain
 @testable import SessionTools
 import Testing
 
@@ -118,10 +117,10 @@ private func utc(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: I
   }
 
   @Test func malformedExpressionsAreRejected() {
-    #expect(throws: ToolProblem.self) { try CronSchedule.parse("* * * *") }
-    #expect(throws: ToolProblem.self) { try CronSchedule.parse("61 * * * *") }
-    #expect(throws: ToolProblem.self) { try CronSchedule.parse("*/0 * * * *") }
-    #expect(throws: ToolProblem.self) { try CronSchedule.parse("5-1 * * * *") }
-    #expect(throws: ToolProblem.self) { try CronSchedule.parse("not a cron") }
+    #expect(throws: CronError.self) { try CronSchedule.parse("* * * *") }
+    #expect(throws: CronError.self) { try CronSchedule.parse("61 * * * *") }
+    #expect(throws: CronError.self) { try CronSchedule.parse("*/0 * * * *") }
+    #expect(throws: CronError.self) { try CronSchedule.parse("5-1 * * * *") }
+    #expect(throws: CronError.self) { try CronSchedule.parse("not a cron") }
   }
 }

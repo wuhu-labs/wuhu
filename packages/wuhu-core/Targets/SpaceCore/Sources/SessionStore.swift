@@ -104,24 +104,25 @@ public struct SessionHydration: Hashable, Sendable, Codable {
   public var generation: Int
   public var record: SessionRecord
   public var transcript: SessionTranscript
-  public var undrained: [SessionQueueEntry]
   public var queueHead: Int
   public var queueTail: Int
+  /// Times the session was resumed: each asks its interrupted or failed step again.
+  public var stepTry: Int
 
   public init(
     generation: Int,
     record: SessionRecord,
     transcript: SessionTranscript,
-    undrained: [SessionQueueEntry],
     queueHead: Int,
     queueTail: Int,
+    stepTry: Int = 0,
   ) {
     self.generation = generation
     self.record = record
     self.transcript = transcript
-    self.undrained = undrained
     self.queueHead = queueHead
     self.queueTail = queueTail
+    self.stepTry = stepTry
   }
 }
 
@@ -138,7 +139,6 @@ public enum SessionStoreError: Error, Equatable, Sendable {
   case unknownPerson(String)
   case archiveGraceExpired(String)
   case busyForRestart(String)
-  case requestDeadlineWithoutFireDate(String)
   case restartOfArchivedSession(String)
   case parentUnavailableForCreation(String)
   case unknownMessage(String)
@@ -162,10 +162,6 @@ public enum SessionStoreError: Error, Equatable, Sendable {
   case mayNotArchive(String, actor: String)
 }
 
-public enum ExecutionHydrationError: Error, Equatable, Sendable {
-  case reservedForArchive(SessionID)
-}
-
 public struct ForeignReceipt: Error, Equatable, Sendable {
   public var toolCallID: ToolCallID
 }
@@ -177,13 +173,12 @@ public struct SessionStore: Sendable {
   let dateGen: DateGenerator
   let broadcast: FSBroadcast
   let signals: WorkSignals
-  let archiveReservations: ArchiveReservations
   let rng: WithRandomNumberGenerator
 }
 
 extension Space {
   public nonisolated var sessions: SessionStore {
-    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, signals: workSignals, archiveReservations: archiveReservations, rng: rng)
+    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, signals: workSignals, rng: rng)
   }
 }
 
@@ -206,91 +201,68 @@ extension SessionStore {
   }
 
   public func hydrate(_ id: SessionID) async throws -> SessionHydration {
-    try await writer.read { db in try Sessions.hydrate(id.rawValue, in: db) }
+    let now = SQLiteDateFormat.string(from: dateGen.now)
+    return try await writer.read { db in try Sessions.hydrate(id.rawValue, at: now, in: db) }
   }
 
-  public func hydrateForExecution(_ id: SessionID) async throws -> SessionHydration {
+  /// What an inference step sends: the first `count` items of `generation`, as the loop hydrates them, with the subscriptions registered now.
+  public func transcript(_ id: SessionID, generation: Int, count: Int) async throws -> Transcript {
     try await writer.read { db in
-      guard !self.archiveReservations.contains(id) else { throw ExecutionHydrationError.reservedForArchive(id) }
-      let hydration = try Sessions.hydrate(id.rawValue, in: db)
-      try hydration.record.executor.requireSupported()
-      return hydration
-    }
-  }
-
-  public func bootSessions() async throws -> [SessionID] {
-    try await writer.read { db in
-      try String.fetchAll(
-        db,
-        sql: """
-        SELECT id FROM sessions
-        WHERE lifecycle = 'live' AND executor = 'kernel'
-          AND (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)
-            OR (work = 'no_work' AND (id IN (SELECT caller FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1)
-              OR id IN (SELECT task FROM requests WHERE status NOT IN ('done', 'failed')))))
-        ORDER BY allocation
-        """,
-      ).map { SessionID($0) }
+      let transcript = try Sessions.kernelTranscript(id.rawValue, generation: Int64(generation), count: count, in: db)
+      precondition(transcript.items.count == count, "\(id.rawValue) has no slot \(generation):\(count)")
+      return transcript
     }
   }
 
   public func undrainedInputs(_ id: SessionID) async throws -> [SessionQueueEntry] {
     let key = id.rawValue
+    let now = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.read { db in
-      try Sessions.undrained(key, tail: try Sessions.runtime(key, in: db).queueTail, in: db)
+      try Sessions.undrained(key, tail: try Sessions.runtime(key, in: db).queueTail, at: now, in: db)
     }
   }
+}
 
-  /// For each urgency, the earliest item in the session's queue that the
-  /// model has not seen yet, most urgent first; empty while there is none:
-  /// now, and again after every change.
-  public func observePendingArrivals(_ id: SessionID) -> some AsyncSequence<[PendingArrival], any Error> & Sendable {
-    let key = id.rawValue
-    return ValueObservation
-      .tracking { db in try Self.pendingArrivals(key, in: db) }
-      .removeDuplicates()
-      .values(in: writer, bufferingPolicy: .bufferingNewest(1))
-  }
-
-  static func pendingArrivals(_ key: String, in db: Database) throws -> [PendingArrival] {
-    var earliest: [ArrivalUrgency: Date] = [:]
+extension Sessions {
+  /// When the work at hand should give the turn back to what waits for the session: each due input it has not seen allows a grace from when it came due, a person's message to the session itself 10 s, anything else 90 s; the session's own context deliveries allow none of their own. Nil while nothing waits.
+  static func yieldDeadline(_ key: String, at now: String, in db: Database) throws -> Date? {
+    var deadline: Date?
     for row in try Row.fetchAll(
       db,
-      sql: "SELECT payload, enqueued_at FROM session_queue WHERE session_id = ? AND id > ? ORDER BY id",
-      arguments: [key, try Sessions.runtime(key, in: db).queueTail],
+      sql: "SELECT payload, COALESCE(due_at, enqueued_at) AS arrived FROM session_queue WHERE session_id = ? AND id > ? AND \(due) ORDER BY id",
+      arguments: [key, try runtime(key, in: db).queueTail, now],
     ) {
-      guard let urgency = try urgency(of: try Sessions.decode(QueueInput.self, from: row["payload"]), to: key, in: db),
-            earliest[urgency] == nil
-      else { continue }
-      earliest[urgency] = try SQLiteDateFormat.date(from: row["enqueued_at"])
+      guard let grace = try grace(of: try decode(QueueInput.self, from: row["payload"]), to: key, in: db) else { continue }
+      let end = try SQLiteDateFormat.date(from: row["arrived"]).addingTimeInterval(grace)
+      deadline = min(deadline ?? end, end)
     }
-    return earliest.map { PendingArrival(urgency: $0.key, arrivedAt: $0.value) }.sorted { $0.urgency < $1.urgency }
+    return deadline
   }
 
-  // A person's message in the session's own box or in a person's DM with it
-  // is direct; any other message or notification is other. Context
-  // deliveries are the session's own housekeeping and count as nothing.
-  private static func urgency(of input: QueueInput, to session: String, in db: Database) throws -> ArrivalUrgency? {
+  private static func grace(of input: QueueInput, to session: String, in db: Database) throws -> TimeInterval? {
     switch input {
     case let .message(message):
       guard message.senderSession == nil,
             let conversation = try Conversations.record(message.conversationID.rawValue, in: db)
-      else { return .other }
+      else { return 90 }
       switch conversation.kind {
-      case .box: return conversation.ownerSession?.rawValue == session ? .direct : .other
-      case .dmUser: return .direct
-      case .users, .dmSession: return .other
+      case .box: return conversation.ownerSession?.rawValue == session ? 10 : 90
+      case .dmUser: return 10
+      case .users, .dmSession: return 90
       }
     case let .notification(notification):
-      return notification.kind == .context ? nil : .other
+      return notification.kind == .context ? nil : 90
     }
   }
+}
 
+extension SessionStore {
   public func queueHead(_ id: SessionID) async throws -> Int {
     let key = id.rawValue
+    let now = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.read { db in
       let runtime = try Sessions.runtime(key, in: db)
-      return Int(try Sessions.queueHead(key, tail: runtime.queueTail, in: db))
+      return Int(try Sessions.queueHead(key, tail: runtime.queueTail, at: now, in: db))
     }
   }
 
@@ -337,14 +309,8 @@ public struct APIReceipt: Hashable, Sendable {
   }
 }
 
-extension SessionStore {
-  public func workSignals() -> WorkSignalSubscription {
-    signals.subscribe()
-  }
-}
-
-private extension Sessions {
-  static func hydrate(_ key: String, in db: Database) throws -> SessionHydration {
+extension Sessions {
+  static func hydrate(_ key: String, at now: String, in db: Database) throws -> SessionHydration {
     let record = try Sessions.record(key, in: db)
     let runtime = try Sessions.runtime(key, in: db)
     let transcript: SessionTranscript = switch record.executor {
@@ -355,9 +321,9 @@ private extension Sessions {
       generation: Int(runtime.generation),
       record: record,
       transcript: transcript,
-      undrained: try Sessions.undrained(key, tail: runtime.queueTail, in: db),
-      queueHead: Int(try Sessions.queueHead(key, tail: runtime.queueTail, in: db)),
+      queueHead: Int(try Sessions.queueHead(key, tail: runtime.queueTail, at: now, in: db)),
       queueTail: Int(runtime.queueTail),
+      stepTry: Int(runtime.stepTry),
     )
   }
 }

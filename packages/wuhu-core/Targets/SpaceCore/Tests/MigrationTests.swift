@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+import struct MachineContract.ExecID
 import Scratch
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -59,7 +60,6 @@ import Testing
     #expect(try await first.accounts().contains { $0.name == "Kept" })
     let owed = try #require(try await first.owedExecs().first)
     #expect(owed.toolSpec == "{}")
-    #expect(owed.toolEndOwed)
     let identity = try await first.identity()
     try await database.write { db in
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
@@ -380,7 +380,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020", "021", "022", "023", "024", "025", "998", "999"])
     try await original.close()
   }
 
@@ -446,5 +446,17 @@ import Testing
     try await database.read { db in
       try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql).map { $0["detail"] as String }.joined(separator: "\n")
     }
+  }
+}
+
+private extension Space {
+  /// The rows the upgrade marked as owing their tool call's end.
+  func owedExecs() async throws -> [ExecRecord] {
+    let ids = try await writer.read { try String.fetchAll($0, sql: "SELECT id FROM machine_execs WHERE tool_end_owed = 1 ORDER BY started_at, id") }
+    var records: [ExecRecord] = []
+    for id in ids {
+      if let record = try await execRecord(ExecID(rawValue: id)) { records.append(record) }
+    }
+    return records
   }
 }

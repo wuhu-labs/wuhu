@@ -42,7 +42,7 @@ struct SessionObserveTests {
       _ = try await awaitItems(results, atLeast: 1)
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await awaitItems(results, atLeast: 2)
-      _ = try await store.enqueue(sid, input: SessionFix.message())
+      try await store.put(sid, input: SessionFix.message())
       let collected = try await awaitItems(results, atLeast: 3)
 
       // Draining does not flip the axis, so the induced table stays silent:

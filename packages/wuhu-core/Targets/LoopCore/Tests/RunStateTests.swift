@@ -32,7 +32,7 @@ import WuhuAI
   // A session can sit for hours in one exec (say, a find blocked on a macOS
   // consent prompt) and through server restarts. Its row must show the wait
   // for what it is, not read no_run with last_activity_at = its creation time.
-  @Test func `a session waiting in a long exec reads tool across a restart and no_run once it settles`() async throws {
+  @Test func `a session waiting in a long exec reads tool until a restart and no_run once it settles`() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -55,7 +55,7 @@ import WuhuAI
 
       var waiting: RunRow?
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("find the script"), to: sid)
+        try await service.enqueue(item: Fix.message("find the script"), to: sid)
         try await until("exec engaged") { exec.calls.value.count == 1 }
         let inTool = try await row(space, sid)
         #expect(inTool.work == "has_work")
@@ -70,15 +70,11 @@ import WuhuAI
       #expect(try await row(space, sid) == waiting)
       await time.advance(by: 3600)
 
+      // A restart ends the call interrupted, and the model goes on from there.
       try await runService(space, config) { _ in
-        // Boot rejoins the same call, and the row still dates the wait
-        // from when it began.
-        try await until("exec rejoined") { exec.calls.value.count == 2 }
-        #expect(try await row(space, sid) == waiting)
-
-        release.release()
         try await until("settled") { try await sessions.settledWork(sid) }
       }
+      #expect(exec.calls.value.count == 1)
 
       let settled = try await row(space, sid)
       #expect(settled.run == "no_run")
@@ -107,7 +103,7 @@ import WuhuAI
       }, compact: { _ in .init(summary: "folded") })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("settled") { try await sessions.settledWork(sid) }
         #expect(try await row(space, sid).run == "no_run")
 
@@ -135,7 +131,7 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("inference engaged") { script.count == 1 }
         let thinking = try await row(space, sid)
         #expect(thinking.run == "inference")

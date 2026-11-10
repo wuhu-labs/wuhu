@@ -28,7 +28,7 @@ func callResult(
   let id = SessionID(session)
   let state = harness.toolStates.values.withLock { $0[id] ?? ToolExecutionState() }
   let callID = UUID().uuidString.lowercased()
-  let outcome = try await harness.runtime.inProcessWorker!.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
+  let outcome = try await harness.runtime.execution.tools.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
   let payload = outcome.payload
   harness.toolStates.values.withLock {
     var state = $0[id] ?? ToolExecutionState()
@@ -38,7 +38,6 @@ func callResult(
     }
     $0[id] = state
   }
-  await outcome.committed?()
   let failed: Bool = if case .failure = payload { true } else { false }
   return .object(["isError": .bool(failed), "content": .array([.object(["type": "text", "text": .string(payload.renderedText)])])])
 }
@@ -54,16 +53,3 @@ func isToolError(_ result: JSONValue) -> Bool {
   guard case let .object(fields) = result else { return false }
   return fields["isError"] == .bool(true)
 }
-
-let testImagePNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==")!
-let testImageModels = #"""
-{
-  "codex": {
-    "dialect": "codex",
-    "baseURL": "https://chatgpt.com/backend-api/codex",
-    "models": {
-      "gpt-5.6-sol": {"maxInput": 100000, "maxOutput": 10000, "efforts": ["high"], "defaultEffort": "high"}
-    }
-  }
-}
-"""#

@@ -3,12 +3,13 @@ import StarterKit from '@tiptap/starter-kit'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect } from 'react'
 import type { ItemKind, TextRun } from '~/lib/canvas/board'
-import { type SceneText, textColor } from '~/lib/canvas/scene'
+import { labelColor, type SceneText, textColor } from '~/lib/canvas/scene'
 import { inlineNodes, runsOf } from '~/lib/canvas/text-edit'
 import { type CameraStore, useCamera, viewRect } from './canvas-chrome'
 
-// An item's text, edited in place: one paragraph whose hard breaks are
-// newlines, with `.wmd`'s bold, italic, link and code marks.
+// An item's text or a connector's label, edited in place: one paragraph
+// whose hard breaks are newlines, with `.wmd`'s bold, italic, link and code
+// marks. A label's editor centres on its slot in a white capsule.
 
 const OneParagraph = Node.create({
   name: 'doc',
@@ -56,7 +57,7 @@ export const typedRuns = (editor: Editor): TextRun[] =>
 
 export function TextEditor({ store, kind, layout, runs, onEditor, onDone }: {
   store: CameraStore
-  kind: ItemKind
+  kind: ItemKind | 'label'
   layout: SceneText
   runs: TextRun[]
   onEditor(editor: Editor | null): void
@@ -71,7 +72,10 @@ export function TextEditor({ store, kind, layout, runs, onEditor, onDone }: {
     ).toJSON(),
     autofocus: 'end',
     editorProps: {
-      attributes: { spellcheck: 'false', 'aria-label': 'Item text' },
+      attributes: {
+        spellcheck: 'false',
+        'aria-label': kind === 'label' ? 'Connector label' : 'Item text',
+      },
       handleKeyDown: (view, event) => {
         if (event.key !== 'Enter' || event.shiftKey) return false
         view.dispatch(
@@ -88,6 +92,7 @@ export function TextEditor({ store, kind, layout, runs, onEditor, onDone }: {
   }, [editor])
 
   const box = viewRect(camera, layout.box)
+  const label = kind === 'label'
   return (
     <div
       className='canvas-chrome canvas-text canvas-text-editing'
@@ -96,11 +101,12 @@ export function TextEditor({ store, kind, layout, runs, onEditor, onDone }: {
       style={{
         left: box.x,
         top: box.y,
-        width: layout.box.w,
-        height: layout.box.h,
-        transform: `scale(${camera.scale})`,
+        ...(label ? {} : { width: layout.box.w, height: layout.box.h }),
+        transform: label
+          ? `scale(${camera.scale}) translate(-50%, -50%)`
+          : `scale(${camera.scale})`,
         fontSize: layout.size,
-        color: textColor,
+        color: label ? labelColor : textColor,
       }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {

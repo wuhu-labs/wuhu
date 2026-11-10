@@ -3,7 +3,7 @@ import struct SpaceContract.PixelSize
 
 // What one model takes as an image. A bigger one is scaled down when the
 // request is built, so the context estimate counts the size actually sent.
-public struct ImageLimits: Hashable, Sendable {
+public struct ImageLimits: Hashable, Sendable, Codable {
   public var maxLongEdge: Int
   public var patch: Int
   public var maxPatches: Int
@@ -15,7 +15,7 @@ public struct ImageLimits: Hashable, Sendable {
   // and the text needs room too.
   public var requestBytes: Int?
 
-  public struct Crowding: Hashable, Sendable {
+  public struct Crowding: Hashable, Sendable, Codable {
     public var imageCount: Int
     public var maxLongEdge: Int
   }

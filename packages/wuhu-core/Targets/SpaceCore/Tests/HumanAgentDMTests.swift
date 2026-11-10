@@ -56,7 +56,7 @@ import Testing
           }
           #expect(try await store.message(id) == nil)
         }
-        #expect(try await store.hydrate(session).undrained.isEmpty)
+        #expect(try await store.undrainedInputs(session).isEmpty)
       }
       #expect(try await store.conversations(member: "carol").isEmpty)
       #expect(try await store.notifications(recipient: "carol").isEmpty)
@@ -89,7 +89,7 @@ import Testing
       #expect(try await store.reads(store.conversation(dm), reader: "carol", group: .shared))
       #expect(try await store.messages(conversation: dm).map(\.content.text) == ["history"])
       #expect(try await space.query("SELECT id FROM messages").rows == [[.text("old")]])
-      #expect(try await store.hydrate(agent).undrained.isEmpty)
+      #expect(try await store.undrainedInputs(agent).isEmpty)
       #expect(try await store.notifications(recipient: "carol").isEmpty)
     }
   }

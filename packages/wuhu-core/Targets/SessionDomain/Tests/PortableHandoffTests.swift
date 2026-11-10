@@ -62,6 +62,35 @@ import WuhuAI
     }
   }
 
+  @Test func aNoticeBetweenParallelResultsNeverOrphansTheSecond() async throws {
+    try await withDependencies {
+      $0.uuid = UUIDGenerator { UUID() }
+      $0.date = DateGenerator { Fix.instant }
+    } operation: {
+      let calls = ["k-1", "k-2"].map { ToolCall(id: $0, name: "grep", arguments: .object([:])) }
+      let tail = Fix.direct(text: "short tail")
+      let original = Transcript(items: [
+        Fix.message(kind: .request, request: "r", text: "task"),
+        Fix.assistant(text: String(repeating: "a", count: 4000), totalTokens: 1, toolCalls: calls),
+        Fix.result(.grep(.init(output: "first")), provenance: .toolCall(.init("k-1"))),
+        Fix.notification(kind: .context, subscription: "machine-notes", text: "notes"),
+        Fix.result(.grep(.init(output: "second")), provenance: .toolCall(.init("k-2"))),
+        Fix.assistant(text: "next", totalTokens: 1),
+        tail,
+      ])
+      let portable = try original.portableHandoff(binding: binding, budget: budget, runningWork: [], openRequests: [OpenRequest(id: .init("r"))], recentTokens: 200)
+      #expect(portable.items.contains(tail))
+      var called: Set<String> = []
+      for message in await portable.renderRequest(session: Fix.session, systemPrompt: "sys").messages {
+        called.formUnion(message.assistant?.content.compactMap { block in
+          guard case let .toolCall(call) = block else { return nil }
+          return call.id
+        } ?? [])
+        if let result = message.toolResult { #expect(called.contains(result.toolCallId)) }
+      }
+    }
+  }
+
   @Test func onlyTheOpenRequestsBriefsAreProtected() throws {
     try withDependencies {
       $0.uuid = UUIDGenerator { UUID() }

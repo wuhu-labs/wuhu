@@ -50,7 +50,7 @@ struct LiveNodeTests {
     try client.edit(text(data).replacing("@0,0", with: "@300,200"))
     #expect(await client.next() == .control(.ack(count: 1)))
     _ = try await fs.write(board, bytes(text(data).replacing("Ship", with: "Ship **v1**")), ifMatch: read)
-    #expect(text(try await fs.read(board).1).contains("@300,200 160x160 yellow} Ship **v1**\n"))
+    #expect(text(try await fs.read(board).1).contains("@300,200 220x220 blue} Ship **v1**\n"))
     await #expect(throws: SpaceError.liveSyntax(path: board, line: 1, reason: "#zzzzzz is not on this board; omit the id to create a new item or connector")) {
       try await fs.write(board, bytes("- sticky {#zzzzzz} x\n"), ifMatch: nil)
     }

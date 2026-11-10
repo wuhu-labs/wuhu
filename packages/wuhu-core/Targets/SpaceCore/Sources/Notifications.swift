@@ -5,8 +5,6 @@ import struct SpaceContract.GroupID
 
 public enum NotificationKind: String, Hashable, Sendable, Codable {
   case conversationMessage = "conversation_message"
-  case childFailed = "child_failed"
-  case requestDeadline = "request_deadline"
   case sessionSettled = "session_settled"
   case sessionErrored = "session_errored"
   case sessionDisconnected = "session_disconnected"
@@ -45,20 +43,6 @@ enum Notifications {
     /// outside sender.
     var senderGroup: String?
     var text: String
-  }
-
-  struct ChildFailedPayload: Codable {
-    var sessionID: String
-    var parent: String
-    var requestID: String
-    var error: String
-  }
-
-  struct RequestDeadlinePayload: Codable {
-    var sessionID: String
-    var parent: String
-    var requestID: String
-    var deadlineAt: Double
   }
 
   struct ErroredPayload: Codable {

@@ -77,7 +77,7 @@ import struct WuhuAI.ToolCall
       #expect(try await response.json(JSONValue.self) == .object(["code": "humanAgentDM", "message": .string(refusal)]))
       #expect(try await t.harness.get("/v1/conversation/\(dm.rawValue)/messages", query: ["identity": person]).status == .ok)
       #expect(try await t.harness.store.messages(conversation: dm).isEmpty)
-      #expect(try await t.harness.store.hydrate(t.parent).undrained.isEmpty)
+      #expect(try await t.harness.store.sent(t.parent).isEmpty)
     }
   }
 
@@ -87,7 +87,7 @@ import struct WuhuAI.ToolCall
       let person = try await t.harness.mintPersona()
       // The identity hop lands on the harness as the parent's own bearer.
       let owner = Hub(space: t.harness.space)
-      let scripts = Scripts(owner: owner)
+      let scripts = Scripts(sessions: owner.space.sessions)
       let executor = SessionRuntime.toolExecutor(owner: owner, scripts: scripts, identity: try testIdentity().controller)
       try await withDependencies {
         $0.scriptHop = FetchClient { request in

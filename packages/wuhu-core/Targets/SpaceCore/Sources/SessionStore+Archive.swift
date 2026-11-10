@@ -6,7 +6,6 @@
 import GRDB
 import SessionDomain
 import StructuredQueries
-import Synchronization
 
 @Table("sessions")
 struct SessionTreeRow {
@@ -14,38 +13,7 @@ struct SessionTreeRow {
   var parent: String?
 }
 
-final class ArchiveReservations: Sendable {
-  private let tokens = Mutex<[SessionID: UUID]>([:])
-
-  func contains(_ id: SessionID) -> Bool { tokens.withLock { $0[id] != nil } }
-
-  func reserve(_ id: SessionID, token: UUID) {
-    tokens.withLock { $0[id] = token }
-  }
-
-  func release(_ id: SessionID, token: UUID) {
-    tokens.withLock {
-      if $0[id] == token { $0[id] = nil }
-    }
-  }
-}
-
 extension SessionStore {
-  public func isReservedForArchive(_ id: SessionID) -> Bool {
-    archiveReservations.contains(id)
-  }
-
-  public func reserveForArchive(_ id: SessionID, token: UUID) async throws {
-    try await writer.write { db in
-      _ = try Sessions.record(id.rawValue, in: db)
-      self.archiveReservations.reserve(id, token: token)
-    }
-  }
-
-  public func releaseArchiveReservation(_ id: SessionID, token: UUID) {
-    archiveReservations.release(id, token: token)
-  }
-
   public func archiveSubtree(_ root: SessionID) async throws -> [SessionRecord] {
     try await writer.read { db in
       _ = try Sessions.record(root.rawValue, in: db)

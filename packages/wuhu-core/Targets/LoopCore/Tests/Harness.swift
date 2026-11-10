@@ -103,7 +103,7 @@ func createRequestedTask(in space: Space, title: String = "t") async throws -> S
 extension SessionStore {
   @discardableResult
   func openParentRequest(on task: SessionID, _ id: String = "r1") async throws -> MessageDelivery {
-    try await openRequest(on: task, from: .session(try #require(try await record(task).parent)), messageID: .init(id), text: "do it", deadline: nil)
+    try await openRequest(on: task, from: .session(try #require(try await record(task).parent)), messageID: .init(id), text: "do it")
   }
 
   func reportFinal(_ task: SessionID, _ request: String = "r1") async throws -> ToolResultPayload {
@@ -129,27 +129,23 @@ func withKernelDeps<R>(
 func runService(
   _ space: Space,
   _ config: LoopConfig,
-  body: (SessionService) async throws -> Void,
+  body: (SessionExecution) async throws -> Void,
 ) async throws {
-  try await runService(await SessionService(sessions: space.sessions, main: Hub(space: space), loopConfig: config), body: body)
+  try await runService(SessionExecution(space: space, loopConfig: config), body: body)
 }
 
 func runService(
-  _ service: SessionService,
-  body: (SessionService) async throws -> Void,
+  _ service: SessionExecution,
+  body: (SessionExecution) async throws -> Void,
 ) async throws {
-  try await withThrowingTaskGroup(of: Void.self) { group in
-    group.addTask { try await service.start() }
-    var bodyError: (any Error)?
-    do {
-      try await body(service)
-    } catch {
-      bodyError = error
-    }
-    group.cancelAll()
-    try await group.waitForAll()
-    if let bodyError { throw bodyError }
+  service.start()
+  do {
+    try await body(service)
+  } catch {
+    await service.shutdown()
+    throw error
   }
+  await service.shutdown()
 }
 
 extension TimeControl {
@@ -247,14 +243,12 @@ func makeConfig(
     throw UnexpectedCall("compact")
   },
   budget: ContextBudget = .init(maxInput: 1_001_000, maxOutput: 1000),
-  eviction: EvictionPolicy = .init(),
 ) -> LoopConfig {
   LoopConfig(
     executeTool: { ToolOutcome(payload: try await executeTool($0.call)) },
     inference: inference,
     compact: { _, transcript in try await compact(transcript) },
     budget: { _ in budget },
-    eviction: eviction,
   )
 }
 
@@ -308,8 +302,12 @@ enum Fix {
 }
 
 extension SessionStore {
+  /// Nothing to do, and no mail on its way to the session's cell.
   func settledWork(_ id: SessionID) async throws -> Bool {
-    try await record(id).work == .noWork
+    try await writer.read { db in
+      try Sessions.record(id.rawValue, in: db).work == .noWork
+        && Bool.fetchOne(db, sql: "SELECT NOT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["\(SessionMail.kind)/\(id.rawValue)"])!
+    }
   }
 }
 
@@ -334,55 +332,13 @@ extension ModelSpecifier {
   static let test = ModelSpecifier(provider: "deepseek", model: "deepseek-v4-pro", effort: "high")
 }
 
-private struct WeakService: Sendable {
-  weak var value: SessionService?
-}
-
-// A loop whose worker has no line to main: the tools the worker owns are not
-// under test here.
+// Sessions with no line to main: the tools are not under test here.
 extension SessionExecution {
-  init(main: any Main, loopConfig: LoopConfig) async {
-    await self.init(main: main, connection: MainConnection(), credential: { _ in throw MainUnavailable() }, loopConfig: { _ in loopConfig })
-  }
-}
-
-extension SessionService {
-  convenience init(
-    sessions: SessionStore,
-    main: any Main,
-    loopConfig: LoopConfig,
-    beforeArchive: @escaping @Sendable (SessionID) async throws -> Void = { _ in },
-    cancelled: (@Sendable (SessionID) -> Void)? = nil,
-    log: Logger = Logger(label: "test.session-service"),
-  ) async {
-    let slot = Box(WeakService())
-    var config = loopConfig
-    config.scheduleWake = { id, due in
-      await slot.withLock { $0.value }?.scheduleWake(id, at: due)
-    }
-    let execution = await SessionExecution(main: main, loopConfig: config)
-    let worker: any Worker = if let cancelled { CancelWatch(execution: execution, cancelled: cancelled) } else { execution }
-    self.init(sessions: sessions, worker: worker, archiveGrace: .seconds(24 * 3600), beforeArchive: beforeArchive, log: log)
-    slot.withLock { $0.value = self }
-  }
-}
-
-// A failed wake marks the session errored, then cancels its loop: a verb
-// sent before that cancel has returned races it.
-private struct CancelWatch: Worker {
-  let execution: SessionExecution
-  let cancelled: @Sendable (SessionID) -> Void
-
-  func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool {
-    let revoked = try await execution.revoke(session, policy: policy)
-    if policy == .cancel { cancelled(session) }
-    return revoked
+  init(space: Space, loopConfig: LoopConfig) {
+    self.init(connection: MainConnection(), credential: { _ in throw MainUnavailable() }, space: space, loopConfig: { _ in loopConfig })
   }
 
-  func deliver(_ session: SessionID, _ input: WorkerInput) async throws { try await execution.deliver(session, input) }
-  func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { try await execution.fire(invocation) }
-  func run(_ script: ScriptRun, output: @escaping @Sendable (ScriptOutput) -> Void) async throws { try await execution.run(script, output: output) }
-  func activity() async -> WorkerActivity { await execution.activity() }
-  func runningWork(_ session: SessionID) async throws -> [String] { try await execution.runningWork(session) }
-  func shutdown() async { await execution.shutdown() }
+  func enqueue(item: QueueInput, to session: SessionID) async throws {
+    try await store.enqueue(session, input: item)
+  }
 }

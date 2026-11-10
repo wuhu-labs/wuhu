@@ -12,7 +12,7 @@ import Testing
 @testable import WuhuAI
 
 @Suite(.deterministicDependencies) struct CapacityErrorTests {
-  @Test(arguments: ["websocket_backpressure", "response_too_large", "websocket_message_too_large"])
+  @Test(arguments: ["response_too_large", "websocket_message_too_large"])
   func capacityCodesOverride429And413OnHTTPAndWebSocket(code: String) async throws {
     for status in [429, 413] {
       var headers = Headers()
@@ -28,7 +28,7 @@ import Testing
     }
   }
 
-  @Test(arguments: ["error", "response.failed"], ["websocket_backpressure", "response_too_large", "websocket_message_too_large"])
+  @Test(arguments: ["error", "response.failed"], ["response_too_large", "websocket_message_too_large"])
   func sseCapacityKeepsCode(type: String, code: String) async throws {
     let error: JSONValue = .object(["code": .string(code), "message": .string("capacity reached")])
     let value: JSONValue = type == "error"

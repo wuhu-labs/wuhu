@@ -37,16 +37,17 @@ import WuhuAI
           try await harness.deliver("hello", to: sid)
           if status == nil {
             try await until("pending provider request") { creates.value == 1 }
-            try await harness.runtime.service.interrupt(sid)
+            try await harness.runtime.execution.interrupt(sid)
             try await until("durable interruption") { try await harness.store.record(sid).hold == .interrupted }
           } else {
             try await until("provider failure") { try await harness.store.record(sid).work == .errored }
           }
           #expect(creates.value == 1)
-          try await harness.runtime.service.resume(sid)
-          try await until("resumed result") { let work = try await harness.store.record(sid).work; return work == .errored || work == .noWork }
+          try await harness.runtime.execution.resume(sid)
+          try await until("second provider request") { creates.value == 2 }
+          try await until("resumed result") { try await harness.store.settledWork(sid) }
           #expect(creates.value == 2)
-          #expect(try await harness.store.record(sid).work == .noWork)
+          #expect(try await harness.store.settledWork(sid))
         }
       }
     }

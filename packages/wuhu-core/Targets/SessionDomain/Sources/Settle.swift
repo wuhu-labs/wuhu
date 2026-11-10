@@ -47,13 +47,25 @@ public enum SettleEvent: Hashable, Sendable {
 }
 
 /// A request whose final report this session owes, as the requests table holds it.
+/// A request the session opened that still waits on its final, as a compaction found it.
+public struct AwaitedRequest: Hashable, Sendable, Codable {
+  public var id: RequestID
+  public var task: SessionID
+  /// The task's last progress report, else when the request was opened.
+  public var lastHeard: Date
+
+  public init(id: RequestID, task: SessionID, lastHeard: Date) {
+    self.id = id
+    self.task = task
+    self.lastHeard = lastHeard
+  }
+}
+
 public struct OpenRequest: Hashable, Sendable, Codable {
   public var id: RequestID
-  public var deadline: Date?
 
-  public init(id: RequestID, deadline: Date? = nil) {
+  public init(id: RequestID) {
     self.id = id
-    self.deadline = deadline
   }
 }
 
@@ -107,12 +119,10 @@ enum ParkBackoff {
     return delays[min(reminders, delays.count) - 1]
   }
 
-  static func nextFire(after request: OpenRequest, reminded: ParkReminders?, now: Date) -> Date? {
+  static func nextFire(reminded: ParkReminders?, now: Date) -> Date {
     let base = reminded?.last ?? now
     let interval = delay(after: reminded?.count ?? 0).seconds
-    let due = max(now, base.addingTimeInterval(interval))
-    guard let deadline = request.deadline else { return due }
-    return due <= deadline ? due : nil
+    return max(now, base.addingTimeInterval(interval))
   }
 }
 
@@ -132,7 +142,7 @@ extension QueueInput {
       switch notification.kind {
       case .owedReply:
         .owedReminder(conversations: notification.conversations, at: notification.timestamp)
-      case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .exec, .context, .parkReminder:
+      case .timer, .spaceObservation, .compactRequest, .requestStall, .script, .exec, .context, .parkReminder:
         nil
       }
     }

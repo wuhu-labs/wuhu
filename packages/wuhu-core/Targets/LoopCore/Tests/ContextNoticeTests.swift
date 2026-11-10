@@ -34,7 +34,7 @@ import struct WuhuAI.ToolCall
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("go"), to: sid)
+        try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("second assistant reply") {
           try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 2
         }

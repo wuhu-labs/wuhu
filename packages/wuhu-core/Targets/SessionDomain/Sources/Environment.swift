@@ -11,7 +11,7 @@ public enum Nag: Hashable, Sendable, Codable {
     case .parkReminder:
       guard let request = notification.requestID else { return nil }
       self = .park(request: request)
-    case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .exec, .context:
+    case .timer, .spaceObservation, .compactRequest, .requestStall, .script, .exec, .context:
       return nil
     }
   }
@@ -135,12 +135,11 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
     }
   }
 
-  // A handler timer can stay silent; only plain timers and outgoing deadlines guarantee a model wake.
+  // A handler timer can stay silent; only a plain timer guarantees a model wake.
   var hasArmedWake: Bool {
     tools.subscriptions.contains { id, subscription in
       switch subscription {
       case .timer: !tools.handlerSubscriptions.contains(id)
-      case .requestDeadline: true
       case .observe, .stream: false
       }
     }
@@ -160,10 +159,10 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
 
   public func nextTimer(openRequests: [OpenRequest], now: Date) -> Date? {
     guard !hasArmedWake else { return nil }
-    return openRequests.compactMap { nextParkReminder($0, now: now) }.min()
+    return openRequests.map { nextParkReminder($0, now: now) }.min()
   }
 
-  private func nextParkReminder(_ request: OpenRequest, now: Date) -> Date? {
-    ParkBackoff.nextFire(after: request, reminded: parkReminders[request.id], now: now)
+  private func nextParkReminder(_ request: OpenRequest, now: Date) -> Date {
+    ParkBackoff.nextFire(reminded: parkReminders[request.id], now: now)
   }
 }

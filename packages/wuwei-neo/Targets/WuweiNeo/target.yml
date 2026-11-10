@@ -1,0 +1,12 @@
+name: WuweiNeo
+kind: library
+sources: Sources
+dependencies:
+  - WuweiNeoMacros
+  - GRDBSQLite
+  - DequeModule
+  - Logging
+tests:
+  dependencies:
+    - WuweiNeoQueries
+    - StructuredQueries

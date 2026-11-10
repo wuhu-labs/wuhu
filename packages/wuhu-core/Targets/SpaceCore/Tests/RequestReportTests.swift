@@ -24,9 +24,9 @@ import Testing
       )
     }
 
-    func request(_ id: String, deadline: Date? = nil) async throws -> MessageDelivery {
+    func request(_ id: String) async throws -> MessageDelivery {
       try await store.openRequest(
-        on: task, from: .session(parent), messageID: MessageID(id), text: "do the thing", deadline: deadline,
+        on: task, from: .session(parent), messageID: MessageID(id), text: "do the thing",
       )
     }
 
@@ -63,7 +63,7 @@ import Testing
     )
     await #expect(throws: SessionStoreError.notTheParent(pair.task.rawValue)) {
       _ = try await pair.store.openRequest(
-        on: pair.task, from: .session(stranger), messageID: MessageID("r1"), text: "hi", deadline: nil,
+        on: pair.task, from: .session(stranger), messageID: MessageID("r1"), text: "hi",
       )
     }
   }
@@ -108,52 +108,20 @@ import Testing
       pair.task, attemptID: UUID(), message: SessionFix.assistant("thinking"), metadata: SessionFix.metadata,
     )
     #expect(try await pair.store.armedSubscriptions(pair.task).isEmpty, "the loop schedules its own park wake")
-    #expect(try await pair.store.hydrate(pair.task).undrained.isEmpty)
+    #expect(try await pair.store.undrainedInputs(pair.task).isEmpty)
   }
 
-  @Test func `a deadline arms the parent's own subscription and a final cancels it`() async throws {
+  @Test func `a parent watches its children while one is live`() async throws {
     let pair = try await Pair()
-    let deadline = fixedDate.addingTimeInterval(3600)
-    _ = try await pair.request("r1", deadline: deadline)
-    #expect(try await pair.store.armedSubscriptions(pair.parent).map(\.slot.id.rawValue) == ["deadline.r1"])
-
-    try await pair.drain(pair.task)
-    _ = try await pair.store.report(
-      pair.task, request: .init("r1"), kind: .final, messageID: MessageID("f1"), text: "done",
-    )
-    #expect(try await pair.store.armedSubscriptions(pair.parent).isEmpty)
-  }
-
-  @Test func `a deadline expiry writes the parent a notification`() async throws {
-    let pair = try await Pair()
-    let deadline = fixedDate.addingTimeInterval(3600)
-    _ = try await pair.request("r1", deadline: deadline)
-    try await pair.store.recordRequestDeadline(
-      parent: pair.parent, task: pair.task, request: .init("r1"), deadline: deadline,
-    )
-    let rows = try await pair.store.notifications(recipient: Notifications.ownerRecipient)
-    #expect(rows.map(\.kind) == [.requestDeadline])
-    #expect(rows[0].source == pair.parent.rawValue)
-  }
-
-  @Test func `an errored task with an open request notifies its parent instead of faking a final`() async throws {
-    let pair = try await Pair()
-    _ = try await pair.request("r1")
-    try await pair.drain(pair.task)
-
-    var signals = pair.store.workSignals().makeAsyncIterator()
-    try await pair.store.markErrored(pair.task, message: "boom")
-    #expect(await signals.next() == pair.parent, "the parent is woken, not just written to")
-    let rows = try await pair.store.notifications(recipient: Notifications.ownerRecipient)
-    #expect(rows.map(\.kind) == [.childFailed])
-    #expect(rows[0].payload.contains("boom"))
-    #expect(try await pair.store.openRequests(pair.task).count == 1)
-
-    let hydration = try await pair.store.hydrate(pair.parent)
-    guard case let .notification(notification) = hydration.undrained.last?.input.transcriptItem else {
-      Issue.record("the parent is told its child failed")
-      return
+    let watched = {
+      try await pair.rig.space.writer.read { db in try SubscriptionRow.of(.session(pair.parent)).fetchAll(db).map(\.subscriptionID) }
     }
-    #expect(notification.kind == .childFailed)
+    #expect(try await watched() == [SubscriptionSlot.childrenID.rawValue])
+
+    try await pair.store.rows { try $0.archive(pair.task, grace: .seconds(60)) }
+    #expect(try await watched().isEmpty)
+
+    try await pair.store.rows { try $0.unarchive(pair.task) }
+    #expect(try await watched() == [SubscriptionSlot.childrenID.rawValue])
   }
 }

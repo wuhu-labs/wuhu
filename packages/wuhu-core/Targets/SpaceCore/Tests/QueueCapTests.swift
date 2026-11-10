@@ -9,8 +9,8 @@ struct QueueCapTests {
   private func stored(_ input: QueueInput) async throws -> QueueInput {
     let store = try makeSpace().sessions
     let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-    _ = try await store.enqueue(sid, input: input)
-    return try #require(try await store.hydrate(sid).undrained.first).input
+    try await store.put(sid, input: input)
+    return try #require(try await store.undrainedInputs(sid).first).input
   }
 
   private func text(_ input: QueueInput) -> String {

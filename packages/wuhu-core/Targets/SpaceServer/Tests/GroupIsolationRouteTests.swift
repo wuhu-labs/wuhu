@@ -548,7 +548,7 @@ import Testing
         #expect(try await w.harness.store.record(w.p).lifecycle == .live)
         let aliceAct = try await send(w, .post, "/v1/session/\(w.p.rawValue)/archive", bearer: w.alice, group: w.aliceGroup)
         #expect(aliceAct.status == .ok)
-        #expect(try await w.harness.store.record(w.p).lifecycle != .live)
+        try await until("archived") { try await w.harness.store.record(w.p).lifecycle != .live }
 
         let refused = try await send(w, .post, "/v1/session/\(w.s.rawValue)/archive", bearer: w.alice)
         #expect(refused.status == .forbidden)
@@ -559,7 +559,7 @@ import Testing
         let descendant = try await w.harness.store.createSession(group: .shared, title: "someone else's child", kind: .task, parent: hers, createdBy: w.s.rawValue, executor: Self.model)
         #expect(try await send(w, .post, "/v1/session/\(descendant.rawValue)/archive", .object(["force": .bool(true)]), bearer: w.alice).status == .forbidden)
         #expect(try await send(w, .post, "/v1/session/\(hers.rawValue)/archive", bearer: w.alice).status == .ok)
-        #expect(try await w.harness.store.record(descendant).lifecycle != .live)
+        try await until("descendant archived") { try await w.harness.store.record(descendant).lifecycle != .live }
         #expect(try await send(w, .post, "/v1/session/\(w.s.rawValue)/archive", bearer: w.admin).status == .ok)
       }
     }

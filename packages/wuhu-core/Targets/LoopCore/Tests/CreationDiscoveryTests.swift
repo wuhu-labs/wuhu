@@ -28,7 +28,7 @@ import Testing
       let config = makeConfig(executeTool: { try await executed($0) }, inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        try await service.wake(sid)
+        try await sessions.look(sid)
         try await until("first assistant reply") {
           try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 1
         }
@@ -62,8 +62,8 @@ import Testing
 
       let config = makeConfig()
       try await runService(space, config) { service in
-        try await service.wake(sid)
-        try await holds("no work appears") { try await sessions.settledWork(sid) }
+        try await sessions.look(sid)
+        try await until("the cell has looked") { try await sessions.settledWork(sid) }
       }
       #expect(try await sessions.hydrate(sid).transcript.kernel.items.isEmpty)
     }

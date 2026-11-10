@@ -60,7 +60,7 @@ import WuhuAI
               message.content.attachments = [.image(path: "/picture.png", mimeType: "image/png", size: 3)]
               input = .message(message)
             }
-            _ = try await service.enqueue(item: input, to: sid)
+            try await service.enqueue(item: input, to: sid)
             try await until("SSE commit") { commits.value == round + 1 }
             try await until("settled") { try await sessions.settledWork(sid) }
           }
@@ -127,7 +127,7 @@ import WuhuAI
             message.content.attachments = [.image(path: "/picture.png", mimeType: "image/png", size: 3)]
             input = .message(message)
           }
-          _ = try await service.enqueue(item: input, to: sid)
+          try await service.enqueue(item: input, to: sid)
           try await until("four commits") { commits.value.count == 4 }
           try await until("settled") { try await sessions.settledWork(sid) }
         }

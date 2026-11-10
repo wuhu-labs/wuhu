@@ -64,7 +64,7 @@ private final class ChildHold: Sendable {
       if let agent = self.agent.withLock({ $0 }), !text.contains("Your session id is \(agent.id.rawValue) and") {
         await self.gate.wait()
         try await until("the agent is idle before the task calls the provider", timeout: .seconds(300)) {
-          try await agent.store.record(agent.id).work == .noWork
+          try await agent.store.settledWork(agent.id)
         }
       }
       do {
@@ -145,7 +145,7 @@ private final class ToolsWitness: Sendable {
             #expect(ask.delivered == [agent.rawValue])
 
             try await until("the agent settles after delegating", timeout: .seconds(300)) {
-              try await harness.store.record(agent).work == .noWork
+              try await harness.store.settledWork(agent)
             }
 
             let delegating = try await harness.store.hydrate(agent)
@@ -169,13 +169,13 @@ private final class ToolsWitness: Sendable {
             #expect(!acknowledged.isEmpty, "the agent acknowledged the ask in its box")
             #expect(try await harness.store.settleState(agent).owedConversations.isEmpty)
             #expect(delegated.notifications(kind: .owedReply).isEmpty)
-            #expect(delegating.undrained.isEmpty)
+            #expect(delegating.queueHead == delegating.queueTail)
             #expect(try await harness.store.openRequests(task).map(\.id) == [request])
 
             hold.gate.open()
 
             try await until("the task settles after its final", timeout: .seconds(300)) {
-              try await harness.store.record(task).work == .noWork
+              try await harness.store.settledWork(task)
             }
             let reported = try await harness.store.transcript(task)
             let reports = reported.results.compactMap { payload -> ReportResult? in
@@ -187,7 +187,7 @@ private final class ToolsWitness: Sendable {
             #expect(try await harness.store.openRequests(task).isEmpty)
 
             try await until("the agent relays the final into its box", timeout: .seconds(300)) {
-              guard try await harness.store.record(agent).work == .noWork else { return false }
+              guard try await harness.store.settledWork(agent) else { return false }
               return try await harness.boxMessages(agent).contains { message in
                 message.senderSession == agent.rawValue && message.text.localizedCaseInsensitiveContains("pineapple")
               }
@@ -209,7 +209,7 @@ private final class ToolsWitness: Sendable {
             #expect(relayed.notifications(kind: .owedReply).isEmpty)
             #expect(relayed.notifications(kind: .parkReminder).isEmpty)
             #expect(try await harness.store.settleState(agent).owedConversations.isEmpty)
-            #expect(try await harness.store.hydrate(agent).undrained.isEmpty)
+            #expect(try await harness.store.undrainedInputs(agent).isEmpty)
 
             let served = try #require(
               try await sessionToolRosters(harness, executor: .kernel).rosters.first,

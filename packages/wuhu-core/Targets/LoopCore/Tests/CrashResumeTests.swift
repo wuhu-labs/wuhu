@@ -8,68 +8,6 @@ import Testing
 import WuhuAI
 
 @Suite struct CrashResumeTests {
-  @Test func `boot retries an orphaned tool call against a fresh service and converges`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-
-      // The "crashed" run: a committed assistant turn whose tool call never
-      // got a result. No service ever saw this state.
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await sessions.enqueue(sid, input: Fix.message("run the build"))
-      _ = try await sessions.drainQueue(sid)
-      _ = try await sessions.appendAssistant(
-        sid,
-        attemptID: UUID(),
-        message: .init(content: [
-          .text("on it"),
-          .toolCall(.init(id: "call_0", name: "exec", arguments: .object(["command": .string("make")]))),
-        ]),
-        metadata: .init(stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 50)),
-      )
-      #expect(try await sessions.bootSessions() == [sid])
-
-      let script = InferenceScript([
-        Fix.replying("build finished"),
-      ])
-      let exec = ExecScript { _ in
-        .exec(.init(output: "ok", exitCode: 0))
-      }
-      let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
-
-      try await runService(space, config) { _ in
-        // No verb: boot alone must surface the orphan FIFO and converge.
-        try await until("settled") { try await sessions.settledWork(sid) }
-      }
-
-      #expect(exec.calls.value.map(\.name) == ["exec"])
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(transcript.pendingToolCallIDs.isEmpty)
-      guard case let .toolResult(result) = transcript.items[2],
-            case .exec = result.payload
-      else {
-        Issue.record("expected the retried exec result in place")
-        return
-      }
-      #expect(transcript.assistantEntries.count == 2)
-      guard case .assistant = transcript.items.last else {
-        Issue.record("expected the follow-up assistant turn to end the transcript")
-        return
-      }
-    }
-  }
-
-  @Test func `an errored session with a pending command still boots`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await sessions.markErrored(sid, message: "boom")
-      try await sessions.requestCommand(sid, .compact(instructions: nil))
-      #expect(try await sessions.bootSessions() == [sid])
-    }
-  }
-
   @Test func `an interrupted orphan stays parked at boot and surfaces on resume`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
@@ -78,7 +16,7 @@ import WuhuAI
       // Interrupted mid-tool-call, then "crashed": boot materializes it but
       // the hold parks the loop; the orphan surfaces only once resumed.
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = try await sessions.enqueue(sid, input: Fix.message("run the build"))
+      try await sessions.put(sid, input: Fix.message("run the build"))
       _ = try await sessions.drainQueue(sid)
       _ = try await sessions.appendAssistant(
         sid,

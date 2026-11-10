@@ -2,6 +2,7 @@ import struct Credentials.CredentialResolver
 import DeterministicDependencies
 import Fetch
 import Foundation
+import GRDB
 import JSONValue
 import MachineContract
 import ServeTesting
@@ -9,7 +10,7 @@ import SessionDomain
 import SpaceContract
 import struct SpaceFS.SpacePath
 import SpaceTools
-@_spi(Testing) import SpaceCore
+@_spi(Testing) @testable import SpaceCore
 @testable import SpaceServer
 import Testing
 
@@ -62,7 +63,7 @@ import Testing
         group: .shared, title: "other task", kind: .task, parent: t.stranger, createdBy: t.stranger.rawValue, executor: model,
       )
       #expect(try await t.harness.post("/v1/session/\(others.rawValue)/archive", .null, bearer: t.token).status == .ok)
-      #expect(try await t.harness.store.record(others).lifecycle != .live)
+      try await until("archived") { try await t.harness.store.record(others).lifecycle != .live }
     }
   }
 
@@ -71,7 +72,7 @@ import Testing
       let t = try await tree()
       let tagged = try await t.harness.post("/v1/session/\(t.child.rawValue)/tags", .object(["tags": ["wuhu:37"]]), bearer: t.token)
       #expect(tagged.status == .ok)
-      #expect(try await t.harness.store.record(t.child).tags == ["wuhu:37"])
+      try await until("tagged") { try await t.harness.store.record(t.child).tags == ["wuhu:37"] }
     }
   }
 
@@ -266,7 +267,7 @@ import Testing
       let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: .shared))
       let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
       let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
-      _ = try await t.harness.store.openRequest(on: t.child, from: .session(t.parent), messageID: .init("ask-1"), text: "work", deadline: nil)
+      _ = try await t.harness.store.openRequest(on: t.child, from: .session(t.parent), messageID: .init("ask-1"), text: "work")
       // The request is open on the child once it has taken the message.
       _ = try await t.harness.store.drainQueue(t.child)
       let reported = try await t.harness.call(
@@ -284,7 +285,7 @@ import Testing
       )
       #expect(timer.kind == .timer)
       #expect(timer.fireAt != nil)
-      #expect(try await t.harness.store.armedSubscriptions(t.parent).map(\.slot.id.rawValue) == [timer.id])
+      #expect(try await pendingTimers(t.harness, t.parent) == [timer.id])
       let both = try await t.harness.post(
         "/v1/subscription", .object(["timer": ["message": "x", "inSeconds": 1], "observe": ["sql": "SELECT 1"]]), bearer: t.token,
       )
@@ -294,14 +295,14 @@ import Testing
       let ended = try await t.harness.api(cancel)
       #expect(ended.status == .ok)
       #expect(try await ended.text().contains(timer.id))
-      #expect(try await t.harness.store.armedSubscriptions(t.parent).isEmpty)
+      #expect(try await pendingTimers(t.harness, t.parent).isEmpty)
       #expect(try await t.harness.api(cancel).status == .unprocessableContent)
 
       let titled = try await t.harness.call(
         "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead"]), as: SessionTitleOutput.self, bearer: t.token,
       )
       #expect(titled.title == "lead")
-      #expect(try await t.harness.store.record(t.parent).title == "lead")
+      try await until("retitled") { try await t.harness.store.record(t.parent).title == "lead" }
       #expect(try await t.harness.post("/v1/session/\(t.child.rawValue)/title", .object(["title": "x"]), bearer: t.token).status == .notFound)
 
       let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
@@ -328,9 +329,9 @@ import Testing
       let armed = try await call(.post, "/v1/subscription", .object(["timer": ["message": "ping", "inSeconds": 60]]), toolCall: "tc-timer")
       #expect(armed.0 == .ok)
       #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "ping", "inSeconds": 60]]), toolCall: "tc-timer") == armed)
-      let slots = try await t.harness.store.armedSubscriptions(t.parent)
-      #expect(slots.count == 1)
-      let id = try #require(slots.first?.slot.id.rawValue)
+      let timers = try await pendingTimers(t.harness, t.parent)
+      #expect(timers.count == 1)
+      let id = try #require(timers.first)
 
       let cancelled = try await call(.delete, "/v1/subscription/\(id)", .null, toolCall: "tc-cancel")
       #expect(cancelled.0 == .ok)
@@ -367,14 +368,6 @@ import Testing
       #expect(try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device") == driven)
       let again = try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device-2")
       #expect(JSONValue.parse(again.1)?.object?["n"] == .integer(2))
-
-      // A title call retried after a later one answers as it first did and
-      // leaves the later title standing.
-      let named = try await call(.post, "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead"]), toolCall: "tc-title")
-      #expect(named.0 == .ok)
-      #expect(try await call(.post, "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead, renamed"]), toolCall: "tc-title-2").0 == .ok)
-      #expect(try await call(.post, "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead"]), toolCall: "tc-title") == named)
-      #expect(try await t.harness.store.record(t.parent).title == "lead, renamed")
     }
   }
 
@@ -394,16 +387,16 @@ import Testing
       let armed = try await (firstArm, secondArm)
       #expect(armed.0.0 == .ok)
       #expect(armed.0 == armed.1)
-      let slots = try await t.harness.store.armedSubscriptions(t.parent)
-      #expect(slots.count == 1)
-      let id = try #require(slots.first?.slot.id.rawValue)
+      let timers = try await pendingTimers(t.harness, t.parent)
+      #expect(timers.count == 1)
+      let id = try #require(timers.first)
 
       async let firstCancel = call(.delete, "/v1/subscription/\(id)", .null, "tc-cancel")
       async let secondCancel = call(.delete, "/v1/subscription/\(id)", .null, "tc-cancel")
       let cancelled = try await (firstCancel, secondCancel)
       #expect(cancelled.0.0 == .ok)
       #expect(cancelled.0 == cancelled.1)
-      #expect(try await t.harness.store.armedSubscriptions(t.parent).isEmpty)
+      #expect(try await pendingTimers(t.harness, t.parent).isEmpty)
 
       let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
       _ = try await t.harness.space.addKey(testPubkey("phone"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -420,8 +413,7 @@ import Testing
     }
   }
 
-  // A request's clocks commit with its message and end with the final that
-  // closes it; a retry of either call is the first one again.
+  // A retry of a request or a report is the first one again.
   @Test func aRetriedRequestOrReportIsTheFirstOne() async throws {
     try await withSessionDeps {
       let t = try await tree()
@@ -429,13 +421,11 @@ import Testing
       let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
       let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
 
-      let ask: JSONValue = .object(["message": "do it", "deadlineSeconds": 60, "stallSeconds": 30])
+      let ask: JSONValue = .object(["message": "do it", "stallSeconds": 30])
       let opened = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session/\(t.child.rawValue)/request", ask, toolCall: "tc-ask")
       #expect(opened.0 == .ok)
       #expect(try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session/\(t.child.rawValue)/request", ask, toolCall: "tc-ask") == opened)
       let requestID = try #require(JSONValue.parse(opened.1)?.object?["requestId"]?.stringValue)
-      let clocks = try await t.harness.store.armedSubscriptions(t.parent).map(\.slot.id.rawValue).sorted()
-      #expect(clocks == ["deadline.\(requestID)", "stall.\(requestID)"])
 
       _ = try await t.harness.store.drainQueue(t.child)
       let done: JSONValue = .object(["kind": "final", "content": "done"])
@@ -445,7 +435,6 @@ import Testing
       let conversation = try #require(JSONValue.parse(reported.1)?.object?["conversationId"]?.stringValue)
       let finals = try await t.harness.store.messages(conversation: ConversationID(conversation)).filter { $0.kind == .final }
       #expect(finals.count == 1)
-      #expect(try await t.harness.store.armedSubscriptions(t.parent).isEmpty)
       #expect(try await toolCalled(t.harness, bearer: childToken, .post, "/v1/request/\(requestID)/report", done, toolCall: "tc-done-2").0 == .unprocessableContent)
     }
   }
@@ -520,30 +509,6 @@ import Testing
         let statuses = try JSONValueDecoder().decode([ExecStatus].self, from: #require(JSONValue.parse(try await listed.text())))
         #expect(statuses.filter { $0.toolCallID == "claim" }.map(\.id) == [minted.id])
       }
-    }
-  }
-
-  @Test func onlyOwnToolCallExecsCanChangeTheirOwedEnd() async throws {
-    try await withSessionDeps {
-      let t = try await tree()
-      let machine = try #require(try await t.harness.space.machine(named: "box"))
-      let own = try await t.harness.space.claimExec(machine: machine.id, caller: t.parent.rawValue, toolCallID: ToolCallID("own"))
-      let foreign = try await t.harness.space.claimExec(machine: machine.id, caller: t.child.rawValue, toolCallID: ToolCallID("foreign"))
-      let script = try await t.harness.space.mintScriptExec(machine: machine.id, caller: t.parent.rawValue, script: "script")
-      for action in ["detach", "delivered"] {
-        for id in [foreign.record.id, script.id, t.exec] {
-          #expect(try await t.harness.post("/v1/exec/\(id.rawValue)/\(action)", .null, bearer: t.token).status == .notFound)
-        }
-        #expect(try await t.harness.post("/v1/exec/missing/\(action)", .null, bearer: t.token).status == .notFound)
-      }
-      #expect(try await t.harness.post("/v1/exec/\(own.record.id.rawValue)/detach", .null, bearer: t.token).status == .ok)
-      #expect(try await t.harness.space.execRecord(own.record.id)?.toolEndOwed == true)
-      try await t.harness.space.finishExec(own.record.id, .exited(code: 0))
-      #expect(try await t.harness.space.owedExecs().map(\.id) == [own.record.id])
-      #expect(try await t.harness.post("/v1/exec/\(own.record.id.rawValue)/delivered", .null, bearer: t.token).status == .ok)
-      #expect(try await t.harness.space.execRecord(own.record.id)?.toolEndOwed == false)
-      #expect(try await t.harness.space.owedExecs().isEmpty)
-      #expect(try await t.harness.post("/v1/exec/\(own.record.id.rawValue)/delivered", .null, bearer: t.token).status == .ok)
     }
   }
 
@@ -831,4 +796,18 @@ private func toolCalled(
   request.headers[ToolCallHeader.name] = toolCall
   let response = try await harness.api(request)
   return (response.status, try await response.text())
+}
+
+private func pendingTimers(_ harness: SessionHarness, _ session: SessionID) async throws -> [String] {
+  _ = try await harness.store.sent(session)
+  return try await harness.space.writer.read { db in
+    try String.fetchAll(
+      db,
+      sql: """
+      SELECT q.topic FROM session_queue q JOIN session_runtime r ON r.session_id = q.session_id
+      WHERE q.session_id = ? AND q.id > r.queue_tail AND q.topic LIKE 'timer.%' ORDER BY q.id
+      """,
+      arguments: [session.rawValue],
+    )
+  }
 }

@@ -27,7 +27,6 @@ import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
 import class MainHub.Hub
-import protocol MainHub.Worker
 import Serve
 import struct ServerTelemetry.TraceParent
 import SessionDomain
@@ -172,7 +171,7 @@ struct ToolWorld {
   }
 
   init(worker: SessionExecution, session: SessionID) {
-    execute = { try await worker.execute(session: $0, call: $1, state: $2) }
+    execute = { try await worker.tools.execute(session: $0, call: $1, state: $2) }
     self.session = session
   }
 
@@ -193,7 +192,6 @@ struct ToolWorld {
       state,
     )
     state.apply(outcome.payload)
-    await outcome.committed?()
     delivered = outcome.context
     if let delivered {
       state.apply(delivered: .notification(delivered.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
@@ -405,9 +403,6 @@ final class ScriptedExecMachine: Sendable {
   let scriptMints = Box(0)
   let kills = Box<[ExecID]>([])
   private let killGates = Mutex<[ExecID: Gate]>([:])
-  let failDelivered = Box(false)
-  /// Holds the next read of an exec's status, as an end's settlement makes.
-  let statusHold = Box<StatusHold?>(nil)
   /// Whether each dial was made in a trace.
   let tracedDials = Box<[Bool]>([])
 
@@ -435,37 +430,21 @@ final class ScriptedExecMachine: Sendable {
   }
 
   func executor(
-    owner: MainHub.Hub, jobs: ExecJobs = ExecJobs(), reachable: Bool = true, scripts: Scripts? = nil,
+    owner: MainHub.Hub, reachable: Bool = true, scripts: Scripts? = nil,
     access: InferenceAccess = InferenceAccess(), origin: String? = nil, contentHostPattern: String? = nil,
     secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
   ) -> ToolExecutor {
     let tokens = ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
-    let executor = ToolExecutor(owner: owner, main: connection, credential: {
+    let executor = ToolExecutor(main: connection, credential: {
       guard reachable else { throw MainUnavailable() }
       return tokens.sessionToken($0)
-    }, access: access, scripts: scripts, execJobs: jobs)
+    }, access: access, scripts: scripts)
     bind(
       connection, owner: owner, tokens: tokens, reachable: reachable, access: access,
       origin: origin, contentHostPattern: contentHostPattern, secrets: secrets, identity: identity,
     )
     return executor
-  }
-
-  // A worker that mounts its sessions as deliveries reach them, its execs reaching this machine.
-  func worker(owner: MainHub.Hub, jobs: ExecJobs) async -> SessionExecution {
-    let tokens = ExecTokens(spaceURL: "http://main")
-    let connection = MainConnection()
-    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }, execJobs: jobs) { tools in
-      LoopConfig(
-        executeTool: { try await tools.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
-        inference: { _ in throw Mismatch("unexpected inference") },
-        compact: { _, _ in throw Mismatch("unexpected compaction") },
-        budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
-      )
-    }
-    bind(connection, owner: owner, tokens: tokens)
-    return worker
   }
 
   private func bind(
@@ -474,10 +453,8 @@ final class ScriptedExecMachine: Sendable {
   ) {
     let space = owner.space
     self.space.withLock { $0 = space }
-    let workers = WorkerRegistry(tokens: tokens, machines: nil)
-    workers.announce(workers.mint().id, endpoint: ToolOnlyWorker())
     let fallback = FetchClient.inProcess(SessionRuntime.bindMain(
-      owner: owner, workers: workers, tokens: tokens, connection: connection,
+      owner: owner, tokens: tokens, connection: connection,
       origin: origin, contentHostPattern: contentHostPattern, credentials: access.credentials, secrets: secrets, identity: identity,
     ))
     connection.bind(FetchClient { [self] request in
@@ -503,15 +480,6 @@ final class ScriptedExecMachine: Sendable {
       guard let record = try await space.execRecord(id), record.caller == session.rawValue else {
         return try Response.json(["code": "notFound", "message": "unknown exec"], status: .notFound)
       }
-      if components.last == "detach" || components.last == "delivered" {
-        if components.last == "delivered", failDelivered.value {
-          return try Response.json(["code": "unavailable", "message": "injected delivery failure"], status: .serviceUnavailable)
-        }
-        guard try await space.setExecEndOwed(id, caller: session.rawValue, owed: components.last == "detach") else {
-          return try Response.json(["code": "notFound", "message": "unknown tool exec"], status: .notFound)
-        }
-        return try Response.json([String: String]())
-      }
       if components.last == "kill" {
         guard record.terminal == nil else {
           return try Response.json(["code": "alreadyEnded", "message": "exec has already ended"], status: .unprocessableContent)
@@ -520,13 +488,6 @@ final class ScriptedExecMachine: Sendable {
         killGate(id).open()
         try await space.finishExec(id, .cancelled)
         return try Response.json(["ok": true])
-      }
-      if let hold = statusHold.withLock({ hold in
-        defer { hold = nil }
-        return hold
-      }) {
-        hold.reached.open()
-        await hold.resume.wait()
       }
       return try Response.json(execStatus(of: record))
     }, dial: { [self] url, _ in
@@ -593,11 +554,6 @@ final class ScriptedExecMachine: Sendable {
       }
     }
   }
-}
-
-struct StatusHold: Sendable {
-  let reached = Gate()
-  let resume = Gate()
 }
 
 struct Gate: Sendable {

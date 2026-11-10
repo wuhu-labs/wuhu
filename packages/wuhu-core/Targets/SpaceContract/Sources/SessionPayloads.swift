@@ -50,7 +50,6 @@ public struct RequestTermsInput: Codable, Equatable, Sendable {
 @Contract
 public struct SessionRequestInput: Codable, Equatable, Sendable {
   public let message: String
-  public let deadlineSeconds: Double?
   public let stallSeconds: Double?
   public let kind: String?
   public let key: String?
@@ -58,7 +57,6 @@ public struct SessionRequestInput: Codable, Equatable, Sendable {
   public let fields: JSONValue?
 }
 
-// `deadline` is the request's deadline as unix seconds, when it has one.
 // `existing` is true when the key was taken: the answer names the request that
 // holds it, and nothing was posted.
 @Contract
@@ -66,7 +64,6 @@ public struct SessionRequestOutput: Codable, Equatable, Sendable {
   public let requestId: String
   public let task: String
   public let conversationId: String
-  public let deadline: Double?
   public let existing: Bool?
 }
 
@@ -404,6 +401,7 @@ public struct ConversationCreateInput: Codable, Equatable, Sendable {
 public enum SessionNotificationKind: String, Codable, Equatable, Sendable {
   case conversationMessage = "conversation_message"
   case childFailed = "child_failed"
+  // Only the wuhu-wuwei server raises this one.
   case requestDeadline = "request_deadline"
   case sessionSettled = "session_settled"
   case sessionErrored = "session_errored"

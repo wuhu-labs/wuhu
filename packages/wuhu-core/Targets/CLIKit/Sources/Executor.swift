@@ -316,8 +316,8 @@ struct Executor {
       try await self.inbox()
     case let .sessionCreate(command):
       try await self.sessionCreate(command)
-    case let .sessionRequest(id, message, deadline, stall, terms):
-      try await self.sessionRequest(id: id, message: message, deadline: deadline, stall: stall, terms: terms)
+    case let .sessionRequest(id, message, stall, terms):
+      try await self.sessionRequest(id: id, message: message, stall: stall, terms: terms)
     case let .sessionAction(verb, id, force):
       try await self.sessionAction(verb, id: id, force: force)
     case let .sessionCompact(id, instructions):

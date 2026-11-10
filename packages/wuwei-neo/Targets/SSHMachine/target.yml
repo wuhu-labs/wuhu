@@ -1,0 +1,9 @@
+name: SSHMachine
+kind: library
+sources: Sources
+dependencies:
+  - WuweiNeo
+  - Subprocess
+tests:
+  dependencies:
+    - WuweiNeo

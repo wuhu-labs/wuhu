@@ -24,7 +24,7 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.asleep("retry-after", dueIn: 600)
         await time.advance(by: 599)
@@ -54,7 +54,7 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("capped wait 1", after: retryAtCeiling)
         try await until("attempt 2") { script.count == 2 }
@@ -91,7 +91,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
           try await time.asleep("backoff \(index + 1)", dueIn: delay)
@@ -133,7 +133,7 @@ import WuhuAI
       let third = 4 * Double.random(in: 0 ... 1, using: &rng)
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("backoff 1", after: first)
         try await until("attempt 2") { script.count == 2 }
@@ -163,13 +163,13 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.asleep("retry-after", dueIn: retryAtCeiling)
 
         try await service.interrupt(sid)
-        #expect(try await sessions.record(sid).hold == .interrupted)
-        #expect(time.sleeping(dueIn: retryAtCeiling) == 0)
+        try await until("interrupted") { try await sessions.record(sid).hold == .interrupted }
+        try await until("wait cancelled") { time.sleeping(dueIn: retryAtCeiling) == 0 }
 
         await time.advance(by: retryAtCeiling)
         try await holds("no retry while interrupted") { script.count == 1 }
@@ -208,7 +208,7 @@ import WuhuAI
 
       try await withDependencies { $0.fetch = provider } operation: {
         try await runService(space, config) { service in
-          _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+          try await service.enqueue(item: Fix.message("hello"), to: sid)
           try await until("throttled") { script.count == 1 }
           try await time.asleep("retry-after", dueIn: 1800)
           await time.advance(by: 1799)

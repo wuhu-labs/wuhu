@@ -33,8 +33,6 @@ public struct ServeCommand: Equatable, Sendable {
   public var groupCertificate: String? = nil
   public var groupPrivateKey: String? = nil
   public var webApp: String? = nil
-  /// The workers run in processes of their own, and SIGHUP reboots main in place.
-  public var workerProcess: Bool = false
   /// Deprecated options serve accepts and ignores, with a warning.
   public var ignoredOptions: [String] = []
 }
@@ -339,7 +337,7 @@ enum Command: Equatable {
   case send(SendCommand)
   case inbox
   case sessionCreate(SessionCreateCommand)
-  case sessionRequest(id: String, message: String, deadline: Double?, stall: Double?, terms: RequestTermsInput)
+  case sessionRequest(id: String, message: String, stall: Double?, terms: RequestTermsInput)
   case sessionAction(SessionActionVerb, id: String, force: Bool = false)
   case sessionCompact(id: String, instructions: String?)
   case sessionRename(id: String, title: String)

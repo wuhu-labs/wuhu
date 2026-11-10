@@ -14,24 +14,23 @@ import Testing
     return try DatabaseQueue(path: "file:/migration-008-\(UUID())?vfs=memdb", configuration: configuration)
   }
 
-  // Six requests: answered, on an archived task, past its deadline, before
-  // its deadline, without one, and with its stall alert fired. Then the
+  // Five requests: answered, on an archived task, past its deadline, before
+  // its deadline, and without one. Then the
   // schema goes back to before 008 (and 009, which builds on it).
   private func before008(_ database: DatabaseQueue) async throws -> Space {
     let space = try Space(writer: database)
     let store = space.sessions
     let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
-    for id in ["done", "gone", "late", "pending", "plain", "stalled"] {
+    for id in ["done", "gone", "late", "pending", "plain"] {
       let task = try await store.createSession(
         group: .shared, title: id, kind: .task, parent: parent, createdBy: parent.rawValue, executor: .kernel(.test),
       )
       _ = try await store.openRequest(
-        on: task, from: .session(parent), messageID: MessageID(id), text: "brief \(id)", deadline: nil, stallSeconds: id == "stalled" ? 600 : nil,
+        on: task, from: .session(parent), messageID: MessageID(id), text: "brief \(id)",
       )
       switch id {
       case "done": _ = try await store.report(task, request: RequestID(id), kind: .final, messageID: MessageID("final"), text: "all good")
       case "gone": _ = try await store.archive(task, grace: .seconds(60))
-      case "stalled": try await store.checkRequestStall(parent, subscriptionID: .stall(RequestID(id)), now: fixedDate.addingTimeInterval(600))
       default: break
       }
     }
@@ -74,7 +73,6 @@ import Testing
       ["late", "overdue", "brief late", nil, "2000-01-01T00:00:00.000Z", nil, nil],
       ["pending", "open", "brief pending", nil, "2999-01-01T00:00:00.000Z", nil, nil],
       ["plain", "open", "brief plain", nil, nil, nil, nil],
-      ["stalled", "stalled", "brief stalled", nil, nil, nil, nil],
     ])
     #expect(try await reopened.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'deadline_at'") } == 0)
     try await original.close()
@@ -92,7 +90,7 @@ import Testing
       }
       return backfill
     }
-    #expect(backfill == Migration008.Backfill(requestMessages: 6, rows: ["done": 1, "failed": 1, "open": 2, "overdue": 1, "stalled": 1]))
+    #expect(backfill == Migration008.Backfill(requestMessages: 5, rows: ["done": 1, "failed": 1, "open": 2, "overdue": 1]))
     try await original.close()
   }
 

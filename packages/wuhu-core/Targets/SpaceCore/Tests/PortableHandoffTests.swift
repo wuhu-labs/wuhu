@@ -20,12 +20,7 @@ import WuhuAI
       if hydrated { original = try await store.hydrate(id).transcript.kernel }
       let projected = try original.portableHandoff(binding: .init(identity: "binding-b", epoch: "route-b"), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [], openRequests: [])
       let generation = try await store.generationState(id).generation
-      var changed = original
-      changed.append(.bookmark(.init(id: UUID(), timestamp: fixedDate)))
-      await #expect(throws: PortableHandoffConflict.transcriptChanged) {
-        try await store.writePortableHandoff(id, expectedGeneration: generation, source: changed, transcript: projected)
-      }
-      let written = try await store.writePortableHandoff(id, expectedGeneration: generation, source: original, transcript: projected)
+      let written = try await store.writePortableHandoff(id, transcript: projected)
       #expect(written.items.map(\.id) == projected.items.map(\.id))
       #expect(try await store.generationState(id).generation == generation + 1)
       #expect(try await store.transcript(id).replayBinding == projected.replayBinding)
@@ -36,7 +31,6 @@ import WuhuAI
       }
       let archivedContainsOriginal = archived?.contains("old-secret") == true
       #expect(archivedContainsOriginal)
-      await #expect(throws: PortableHandoffConflict.generationChanged) { try await store.writePortableHandoff(id, expectedGeneration: generation, source: original, transcript: projected) }
       #expect(try await store.generationState(id).generation == generation + 1)
     }
   }

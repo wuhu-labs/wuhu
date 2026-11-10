@@ -52,7 +52,7 @@ Outbound payload failures retain their typed metric kinds `requestTooLarge` and 
 
 Context-pressure notices are ordinary durable transcript notifications written by LoopCore before inference. Rendering and acknowledgement only replay them; neither computes a new percentage. Offline kernel tests exercise a full create, warm deltas with historical notices, real tool commits and a forced reconnect for text and image histories, plus full HTTP/SSE histories for Responses, Anthropic and Chat Completions.
 
-Provider capacity failures report `httpError` with their exact provider code (`websocket_backpressure`, `response_too_large` or `websocket_message_too_large`) in the metric's `error` field and the supplied status when available; they are never erased into `rateLimited`.
+Provider capacity failures report `httpError` with their exact provider code (`response_too_large` or `websocket_message_too_large`) in the metric's `error` field and the supplied status when available; they are never erased into `rateLimited`.
 
 The `anthropic` provider dialect uses the kernel's Anthropic Messages endpoint. Claude itself is served through the gateway as a `responses` provider. Credential resolution never substitutes another provider or falls back to a removed executor. OIDC uses the server identity path, without reading stored credentials.
 

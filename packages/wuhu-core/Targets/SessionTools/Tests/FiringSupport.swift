@@ -1,4 +1,5 @@
 import LoopCore
+import struct MainHub.EventSources
 import class MainHub.Hub
 import SessionTools
 @testable import SpaceServer
@@ -12,26 +13,29 @@ func whenCancelled(_ then: @Sendable () async -> Void) async {
   await then()
 }
 
-// The loop worker with main bound in process, as the kernel wires it.
-func firingWorker(_ owner: Hub) async -> SessionExecution {
-  await firingWorkers(owner).worker
-}
-
-// The worker and the registry in front of it: a firing that reaches main's
-// API as an observer goes through the registry, which mints its token.
-func firingWorkers(_ owner: Hub) async -> (worker: SessionExecution, registry: WorkerRegistry) {
+// The sessions' runtime with main bound in process, as the kernel wires it, started.
+func firingWorker(_ owner: Hub, sources: EventSources = .unavailable) async -> SessionExecution {
   let tokens = ExecTokens(spaceURL: "http://main")
   let connection = MainConnection()
-  let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { tools in
+  let worker = SessionExecution(
+    connection: connection,
+    credential: { tokens.sessionToken($0) },
+    space: owner.space,
+    observerRun: { observer, _, body in
+      let token = tokens.scriptToken(.observer(observer))
+      defer { tokens.revokeScript(token) }
+      return try await body(token)
+    },
+  ) { tools in
     LoopConfig(
       executeTool: { try await tools.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
-      inference: { _ in throw Mismatch("unexpected inference in subscription test") },
+      inference: { _ in throw Mismatch("unexpected inference in a firing test: hold the session so its cell leaves its queue alone") },
       compact: { _, _ in throw Mismatch("unexpected compaction in subscription test") },
       budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
+      sources: sources,
     )
   }
-  let workers = WorkerRegistry(tokens: tokens, machines: nil)
-  workers.announce(workers.mint().id, endpoint: worker)
-  SessionRuntime.bindMain(owner: owner, workers: workers, tokens: tokens, connection: connection)
-  return (worker, workers)
+  SessionRuntime.bindMain(owner: owner, execution: worker, tokens: tokens, connection: connection)
+  worker.start()
+  return worker
 }

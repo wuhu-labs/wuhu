@@ -73,7 +73,6 @@ public struct MessageRecord: Hashable, Sendable {
   public var replyTarget: MessageID?
   public var kind: MessageKind
   public var requestID: RequestID?
-  public var deadline: Date?
   public var viewing: Viewing?
   public var content: MessageContent
   public var createdAt: Date
@@ -194,7 +193,6 @@ enum Conversations {
   static let selection = """
   SELECT m.*, (SELECT device_id FROM message_devices WHERE message_id = m.id) AS device_id,
     (SELECT path FROM message_viewing WHERE message_id = m.id) AS viewing,
-    (SELECT deadline_at FROM requests WHERE id = m.request_id AND m.kind = 'request') AS deadline_at,
     \(senderGroupSQL) AS sender_grp FROM messages m
   """
 
@@ -227,7 +225,6 @@ enum Conversations {
       replyTarget: (row["reply_target"] as String?).map { MessageID($0) },
       kind: MessageKind(rawValue: row["kind"])!,
       requestID: (row["request_id"] as String?).map { RequestID($0) },
-      deadline: try (row["deadline_at"] as String?).map(SQLiteDateFormat.date(from:)),
       viewing: (row["viewing"] as String?).map(Viewing.stored),
       content: try Sessions.decode(MessageContent.self, from: row["content"]),
       createdAt: try SQLiteDateFormat.date(from: row["created_at"]),

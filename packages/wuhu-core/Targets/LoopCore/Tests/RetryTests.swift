@@ -34,7 +34,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
 
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -83,7 +83,7 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("errored") { try await sessions.record(sid).work == .errored }
       }
 
@@ -117,7 +117,7 @@ import WuhuAI
       let delays = [1 * jitters[0], 2 * jitters[1], 1 * jitters[2]]
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("one"), to: sid)
+        try await service.enqueue(item: Fix.message("one"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("backoff 1", after: delays[0])
         try await until("attempt 2") { script.count == 2 }
@@ -125,7 +125,7 @@ import WuhuAI
         try await until("first success") { script.count == 3 }
         try await until("settled once") { try await sessions.settledWork(sid) }
 
-        _ = try await service.enqueue(item: Fix.message("two"), to: sid)
+        try await service.enqueue(item: Fix.message("two"), to: sid)
         try await until("attempt 4") { script.count == 4 }
         try await time.wake("backoff 3", after: delays[2])
         try await until("second success") { script.count == 5 }
@@ -159,7 +159,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
           try await time.wake("backoff \(index + 1)", after: delay)
@@ -196,7 +196,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
           try await time.wake("backoff \(index + 1)", after: delay)
@@ -234,7 +234,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
           try await time.wake("backoff \(index + 1)", after: delay)
@@ -268,7 +268,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
           try await time.wake("backoff \(index + 1)", after: delay)
@@ -299,7 +299,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
           try await time.wake("backoff \(index + 1)", after: delay)
@@ -337,7 +337,7 @@ import WuhuAI
         }
 
         try await runService(space, config) { service in
-          _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+          try await service.enqueue(item: Fix.message("hello"), to: sid)
           for (index, delay) in delays.enumerated() {
             try await until("\(outage) attempt \(index + 1)") { script.count == index + 1 }
             try await time.wake("backoff \(index + 1)", after: delay)
@@ -379,7 +379,7 @@ import WuhuAI
 
       try await withDependencies { $0.fetch = gateway } operation: {
         try await runService(space, makeConfig(inference: { try await script($0) })) { service in
-          _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+          try await service.enqueue(item: Fix.message("hello"), to: sid)
           for (index, delay) in delays.enumerated() {
             try await until("attempt \(index + 1)") { script.count == index + 1 }
             try await time.wake("backoff \(index + 1)", after: delay)
@@ -416,7 +416,7 @@ import WuhuAI
       }
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
           try await time.wake("backoff \(index + 1)", after: delay)

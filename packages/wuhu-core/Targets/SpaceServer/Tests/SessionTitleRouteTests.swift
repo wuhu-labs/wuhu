@@ -20,7 +20,7 @@ import Testing
         as: Renamed.self,
       )
       #expect(renamed.title == "Nightly release watch")
-      #expect(try await harness.store.record(session).title == "Nightly release watch")
+      try await until("retitled") { try await harness.store.record(session).title == "Nightly release watch" }
     }
   }
 

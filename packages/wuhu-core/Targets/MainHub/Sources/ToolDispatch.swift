@@ -46,7 +46,6 @@ public enum RosterTool: String, CaseIterable {
   case report
   case createSession = "create_session"
   case setTitle = "set_title"
-  case generateImage = "generate_image"
   case manipulateUI = "manipulate_ui"
   case runScript = "run_script"
 }

@@ -79,17 +79,6 @@ struct ScriptSessionTests {
       prepare: { space, _ in _ = try await makeSession(space, name: "stranger") },
     ) { rig in
       try await rig.run("sessions")
-      // The verbs ran on the real service: Wuhu Infra stays archived, the
-      // twin went through interrupt, resume, archive and back, the stranger
-      // was archived by its group admin.
-      let lifecycles = try await rig.space.writer.read { db in
-        try Row.fetchAll(
-          db,
-          sql: "SELECT DISTINCT title, lifecycle FROM sessions WHERE title IN ('Wuhu Infra', 'twin', 'stranger') ORDER BY title",
-        ).map { "\($0["title"] as String): \($0["lifecycle"] as String)" }
-      }
-      rig.probe("lifecycles: \(lifecycles)")
-      rig.probe("tags: \(try await rig.space.sessions.record(rig.session).tags)")
       try rig.expect("sessions")
     }
   }

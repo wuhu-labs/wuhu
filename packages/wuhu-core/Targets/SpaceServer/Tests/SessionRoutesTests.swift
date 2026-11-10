@@ -72,24 +72,18 @@ import Testing
       let id = try await harness.createSession()
 
       _ = try await harness.call("/v1/session/\(id.rawValue)/interrupt", .null, as: [String: String].self)
-      let interrupted = try await harness.store.record(id)
-      #expect(interrupted.hold == .interrupted)
+      try await until("interrupted") { try await harness.store.record(id).hold == .interrupted }
 
       _ = try await harness.call("/v1/session/\(id.rawValue)/resume", .null, as: [String: String].self)
-      let resumed = try await harness.store.record(id)
-      #expect(resumed.hold == .normal)
+      try await until("resumed") { try await harness.store.record(id).hold == .normal }
 
       // A created session's head carries nothing forward, so materializing it
       // is not work and archive needs no settle to wait for.
       _ = try await harness.call("/v1/session/\(id.rawValue)/archive", .null, as: [String: String].self)
-      guard case .archived = try await harness.store.record(id).lifecycle else {
-        Issue.record("expected archived lifecycle")
-        return
-      }
+      try await until("archived") { try await harness.store.record(id).lifecycle != .live }
 
       _ = try await harness.call("/v1/session/\(id.rawValue)/unarchive", .null, as: [String: String].self)
-      let unarchived = try await harness.store.record(id)
-      #expect(unarchived.lifecycle == .live)
+      try await until("unarchived") { try await harness.store.record(id).lifecycle == .live }
 
       let missing = try await harness.post("/v1/session/\(UUID().uuidString.lowercased())/interrupt", .null)
       #expect(missing.status == .notFound)

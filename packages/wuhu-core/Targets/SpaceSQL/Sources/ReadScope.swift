@@ -109,8 +109,14 @@ public struct ViewCatalog: Sendable {
         if group == acting { views.append(View(name: path, table: table)) }
         if readable.contains(group) { views.append(View(name: "wuhu://\(group).localspace\(path)", table: table)) }
       } else if table == "subscription_slots" {
-        // A session's slot acts in its session's group, an observer in its own;
-        // one retiring after its running firing reads as ended.
+        // A session's plain stream is a job of its worker, once one has made the table.
+        let streams = tables["streams"] == nil ? "" : """
+
+        UNION ALL
+        SELECT se.grp, st.subscription_id, NULL, st.session_id, 'observe', NULL, st.url, NULL, NULL, 'armed', NULL, st.armed_at, NULL, NULL
+        FROM \(s)."streams" st JOIN \(s)."sessions" se ON se.id = st.session_id
+        """
+        // A session's slot acts in its session's group, an observer in its own.
         func subscriptions(_ name: String, groupFilter: String) -> View {
           View(
             name: name, table: table,
@@ -126,10 +132,19 @@ public struct ViewCatalog: Sendable {
               json_extract(su.payload, '$.lastError') AS last_error
             FROM \(s)."subscription_slots" su LEFT JOIN \(s)."sessions" se ON su.owner_kind = 'session' AND se.id = su.owner
             WHERE (json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.stream') IS NOT NULL
-              OR json_type(su.payload, '$.kind.timer') IS NOT NULL) AND json_type(su.payload, '$.handlerFiring.retiring') IS NULL)
+              OR json_type(su.payload, '$.kind.timer') IS NOT NULL)
+            UNION ALL
+            SELECT se.grp, q.topic, NULL, q.session_id, 'timer', NULL, NULL,
+              COALESCE(json_extract(q.payload, '$.notification._0.schedule.cron._0'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(q.payload, '$.notification._0.schedule.oneShot._0') + 978307200, 'unixepoch')),
+              NULL, 'armed', NULL, q.enqueued_at, NULL, NULL
+            FROM \(s)."session_queue" q JOIN \(s)."session_runtime" r ON r.session_id = q.session_id
+              JOIN \(s)."sessions" se ON se.id = q.session_id
+            WHERE q.id > r.queue_tail AND json_extract(q.payload, '$.notification._0.kind') = 'timer'
+              AND json_type(q.payload, '$.notification._0.schedule') IS NOT NULL\(streams))
             WHERE \(groupFilter)
             """,
-            joins: ["sessions"],
+            joins: ["sessions", "session_queue", "session_runtime"] + (tables["streams"] == nil ? [] : ["streams"]),
           )
         }
         views.append(subscriptions("subscriptions", groupFilter: "grp = \(literal(acting))"))

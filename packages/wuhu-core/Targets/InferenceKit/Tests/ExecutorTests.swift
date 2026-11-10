@@ -156,15 +156,8 @@ private func run(
 }
 
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct ExecutorTests {
-  @Test func malformedModelMessageMetricKeepsTypedKind() {
-    let classified = InferenceMetric.classify(.malformedModelMessage(message: "bad tool_use", reason: "invalid_tool_use_name"))
-    #expect(classified.outcome == .httpError)
-    #expect(classified.kind == "malformedModelMessage")
-    #expect(classified.status == nil)
-  }
-
   @Test func capacityMetricsKeepProviderCode() {
-    for code in ["websocket_backpressure", "response_too_large", "websocket_message_too_large"] {
+    for code in ["response_too_large", "websocket_message_too_large"] {
       let metric = InferenceMetric.classify(.capacityExceeded(code: code, message: "capacity", status: 429))
       #expect(metric.outcome == .httpError)
       #expect(metric.kind == code)

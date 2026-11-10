@@ -1,11 +1,9 @@
 import Dependencies
 import enum JSONValue.JSONValue
 import Logging
-import protocol MainHub.Main
 import struct MainHub.ScriptError
 import func MainHub.scriptHandle
 import struct MainHub.ScriptHandlerResult
-import struct MainHub.ScriptRunID
 import func MainHub.seconds
 import enum MainHub.WaitCut
 import OrderedCollections
@@ -309,17 +307,17 @@ final class ScriptExecution: Sendable {
 
   /// Cancelling the task that runs it kills it: a busy script never reaches
   /// a suspension point, so only the interrupter ends it.
-  func run(owner: any Main) async {
+  func run(sessions: SessionStore) async {
     await withTaskCancellationHandler {
-      await traced(owner: owner)
+      await traced(sessions: sessions)
     } onCancel: {
       killForCancellation()
     }
   }
 
-  private func traced(owner: any Main) async {
+  private func traced(sessions: SessionStore) async {
     await ServerTelemetry.traced(.script, under: trace) { span in
-      await runBody(owner: owner)
+      await runBody(sessions: sessions)
       span.set(.scriptKind, kind.span)
       span.set(.sourceSHA256, sha256Hex(source))
       let (ending, updates) = state.withLock { ($0.ending, $0.updates) }
@@ -328,17 +326,17 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func runBody(owner: any Main) async {
+  private func runBody(sessions: SessionStore) async {
     let killed = state.withLock { state -> ScriptStop? in
       state.started = true
       return state.killRequested
     }
     if let killed { return finish(.killed(killed)) }
     await withTaskGroup(of: Void.self) { group in
-      group.addTask { await self.deliver(to: owner) }
+      group.addTask { await self.deliver(to: sessions) }
       group.addTask { await self.processes.run() }
       let ending = await withTaskGroup(of: ScriptEnding?.self) { race in
-        race.addTask { await self.evaluate(owner: owner) }
+        race.addTask { await self.evaluate(sessions: sessions) }
         race.addTask { await self.supervise() }
         let first = await race.next() ?? nil
         race.cancelAll()
@@ -363,14 +361,14 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func evaluate(owner: any Main) async -> ScriptEnding {
+  private func evaluate(sessions: SessionStore) async -> ScriptEnding {
     let streams = ScriptStreams()
-    let ending = await evaluate(owner: owner, streams: streams)
+    let ending = await evaluate(sessions: sessions, streams: streams)
     await streams.shutdown()
     return ending
   }
 
-  private func evaluate(owner: any Main, streams: ScriptStreams) async -> ScriptEnding {
+  private func evaluate(sessions: SessionStore, streams: ScriptStreams) async -> ScriptEnding {
     let engine = JSEngine(limits: .init(memoryBytes: scriptEngineMemoryBytes), interrupter: interrupter)
     ScriptBindings(execution: self, client: client, secrets: secrets).install(in: engine)
     ScriptFiles(client: client, execution: self).install(in: engine)
@@ -443,7 +441,7 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func deliver(to owner: any Main) async {
+  private func deliver(to sessions: SessionStore) async {
     for await output in outbox {
       if case let .command(say) = kind {
         say(output)
@@ -456,7 +454,7 @@ final class ScriptExecution: Sendable {
       }
       // A handler answers with its result, never a message.
       guard let session = actor.session else { preconditionFailure("an observer's handler posted script output") }
-      await notify(owner, session, script: id, text)
+      await notify(sessions, session, script: id, text)
     }
   }
 
@@ -484,7 +482,7 @@ final class ScriptExecution: Sendable {
       throw ScriptError(ending?.afterResult ?? "handler did not finish")
     }
     let result = try handler.result()
-    return ScriptHandlerResult(stateJSON: result.stateJSON, wakes: result.wakes.map(secrets.mask))
+    return ScriptHandlerResult(wakes: result.wakes.map(secrets.mask))
   }
 
   func nextAbort() async throws -> String {
@@ -640,7 +638,7 @@ struct ScriptConsole {
 }
 
 // Wakes `session` with a message from script `script`.
-func notify(_ owner: any Main, _ session: SessionID, script: String, _ text: String) async {
+func notify(_ sessions: SessionStore, _ session: SessionID, script: String, _ text: String) async {
   @Dependency(\.date) var date
   @Dependency(\.uuid) var uuid
   let notification = SystemNotification(
@@ -651,7 +649,7 @@ func notify(_ owner: any Main, _ session: SessionID, script: String, _ text: Str
     content: .init(text: text),
   )
   do {
-    _ = try await owner.append(session, .inputEnqueued(.notification(notification))).value(Int.self)
+    try await sessions.enqueue(session, input: .notification(notification))
   } catch {
     Logger(label: "wuhu.run-script").warning("script \(script) could not reach \(session.rawValue): \(error)")
   }

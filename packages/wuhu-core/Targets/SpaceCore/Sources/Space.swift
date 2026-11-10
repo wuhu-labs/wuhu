@@ -11,15 +11,16 @@ import Logging
 import struct SpaceContract.GroupID
 import SpaceFS
 import SpaceSQL
+import Synchronization
 
 public actor Space {
   nonisolated let taskScope: TaskScope
   let writer: any DatabaseWriter
   let reads: ReadPool
+  let neoReaders = Mutex<[DatabaseQueue]>([])
   let blobs: BlobStore
   let broadcast: FSBroadcast
   let workSignals = WorkSignals()
-  let archiveReservations = ArchiveReservations()
   let dateGen: DateGenerator
   let clock: any Clock<Duration>
   let live: LiveHub
@@ -65,6 +66,9 @@ public actor Space {
     await taskScope.close()
     var failure: (any Error)?
     do { try await reads.close() } catch { failure = error }
+    for reader in neoReaders.withLock({ $0 }) {
+      do { try reader.close() } catch { if failure == nil { failure = error } }
+    }
     do { try writer.close() } catch { if failure == nil { failure = error } }
     if let failure { throw failure }
   }

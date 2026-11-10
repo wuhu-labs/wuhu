@@ -4,7 +4,6 @@ public enum Subscription: Hashable, Sendable, Codable {
   case observe(sql: String)
   case stream(URL)
   case timer(TimerSchedule)
-  case requestDeadline(Date)
 }
 
 public struct ToolExecutionState: Hashable, Sendable {
@@ -32,20 +31,12 @@ public struct ToolExecutionState: Hashable, Sendable {
     self.init(subscriptions: snapshot.subscriptions)
   }
 
-  // A final ends the deadline on its request; it is delivered only after the
-  // request's own tool result, so the two never race.
   public mutating func apply(delivered input: QueueInput) {
-    switch input {
-    case let .notification(notification):
-      folderRoots.merge(notification.folderRoots ?? [:]) { $1 }
-      deliveredContext.merge(notification.deliveredContext ?? [:]) { first, _ in first }
-      if notification.endsSubscription {
-        subscriptions.removeValue(forKey: notification.subscriptionID)
-      }
-    case let .message(message):
-      if message.kind == .final, let request = message.requestID {
-        subscriptions.removeValue(forKey: .deadline(request))
-      }
+    guard case let .notification(notification) = input else { return }
+    folderRoots.merge(notification.folderRoots ?? [:]) { $1 }
+    deliveredContext.merge(notification.deliveredContext ?? [:]) { first, _ in first }
+    if notification.endsSubscription {
+      subscriptions.removeValue(forKey: notification.subscriptionID)
     }
   }
 
@@ -58,12 +49,8 @@ public struct ToolExecutionState: Hashable, Sendable {
     case let .edit(result):
       fileAccessLog[result.path] = result.revision
     case .grep, .find, .exec, .mount, .machines, .templates, .query, .createSession, .setTitle, .compact,
-         .manipulateUI, .script, .text, .failure, .sendMessage, .report:
+         .manipulateUI, .script, .text, .failure, .sendMessage, .report, .request:
       break
-    case let .request(result):
-      if let deadline = result.deadline {
-        subscriptions[.deadline(result.requestID)] = .requestDeadline(deadline)
-      }
     case let .observe(result):
       subscriptions[result.subscriptionID] = switch result.source {
       case let .query(sql): .observe(sql: sql)
@@ -86,14 +73,6 @@ extension SubscriptionID {
 
   public static func park(_ request: RequestID) -> SubscriptionID {
     SubscriptionID("park.\(request.rawValue)")
-  }
-
-  public static func deadline(_ request: RequestID) -> SubscriptionID {
-    SubscriptionID("deadline.\(request.rawValue)")
-  }
-
-  public static func stall(_ request: RequestID) -> SubscriptionID {
-    SubscriptionID("stall.\(request.rawValue)")
   }
 
   public static func script(_ id: String) -> SubscriptionID {
@@ -153,7 +132,6 @@ func registeredSubscriptionState(
   subscriptions.filter { id, subscription in
     switch subscription {
     case .observe, .stream, .timer: registered.contains(id)
-    case .requestDeadline: true
     }
   }
 }

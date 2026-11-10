@@ -25,7 +25,7 @@ private func context(_ harness: SessionHarness, _ id: String) async throws -> Se
       #expect(empty.maxTokens == 99000, "maxInput minus maxOutput from the space's models document")
       #expect(empty.updatedAt == nil)
 
-      _ = try await harness.store.enqueue(
+      try await harness.store.put(
         id,
         input: .message(ConversationMessage(
           id: UUID(),

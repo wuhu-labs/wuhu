@@ -4,7 +4,6 @@ import DeterministicDependencies
 import ExecutionOwner
 import Fetch
 import MainHub
-import protocol MainHub.Main
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -44,24 +43,5 @@ import Testing
     }
     #expect(replacement.identityEpoch != first.identityEpoch)
     #expect(try await resolver.resolveBinding("missing") == nil)
-  }
-
-  @Test func portableHandoffUsesConditionalSessionOwnerCommit() async throws {
-    let space = try Space.inMemory()
-    let id = try await space.sessions.createSession(group: .shared, title: "owner handoff", kind: .agent, createdBy: "fixture", model: .init(provider: "fixture", model: "model", effort: "high"))
-    let owner: any Main = Hub(space: space)
-    let hydration = try await owner.hydrate(id)
-    guard case let .kernel(source) = hydration.transcript else { Issue.record("expected kernel transcript"); return }
-    let binding = ReplayBinding(identity: "owner-binding", epoch: "owner-route")
-    let projected = try withDependencies {
-      $0.uuid = .incrementing
-      $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
-    } operation: {
-      try source.portableHandoff(binding: binding, budget: .init(maxInput: 10000, maxOutput: 1000), runningWork: [], openRequests: [])
-    }
-    let committed = try await owner.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: projected)).value(Transcript.self)
-    #expect(committed == projected)
-    #expect(try await owner.hydrate(id).generation == hydration.generation + 1)
-    #expect(try await owner.hydrate(id).transcript == .kernel(projected))
   }
 }

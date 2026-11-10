@@ -17,7 +17,7 @@ private func makeExecSpace() throws -> Space {
 }
 
 @Suite(.deterministicDependencies) struct ExecClaimTests {
-  @Test func claimSpecSurvivesRejoinAndOwedEndsSurviveTermination() async throws {
+  @Test func claimSpecSurvivesRejoin() async throws {
     let space = try makeExecSpace()
     let machine = try await space.addMachine(name: "box").id
     let first = try await space.claimExec(machine: machine, caller: "caller", toolCallID: ToolCallID("call"), spec: "{\"lifetime\":60}")
@@ -25,39 +25,6 @@ private func makeExecSpace() throws -> Space {
     #expect(retry.rejoined)
     #expect(retry.record.toolSpec == first.record.toolSpec)
     #expect(try await space.execRecord(first.record.id)?.toolSpec == first.record.toolSpec)
-    _ = try await space.mintExec(machine: machine, caller: "caller")
-    #expect(try await space.owedExecs().isEmpty)
-    #expect(try await space.setExecEndOwed(first.record.id, caller: "foreign", owed: true) == false)
-    #expect(try await space.setExecEndOwed(first.record.id, caller: "caller", owed: true))
-    #expect(try await space.setExecEndOwed(first.record.id, caller: "caller", owed: true))
-    #expect(try await space.owedExecs().map(\.id) == [first.record.id])
-    try await space.finishExec(first.record.id, .exited(code: 0))
-    #expect(try await space.owedExecs().first?.terminal == .exited(code: 0))
-    #expect(try await space.setExecEndOwed(first.record.id, caller: "caller", owed: false))
-    #expect(try await space.owedExecs().isEmpty)
-  }
-
-  @Test func forgettingOwedEndsOnlyAffectsTheCallersToolExecs() async throws {
-    let space = try makeExecSpace()
-    let machine = try await space.addMachine(name: "box").id
-    let own = try await space.claimExec(machine: machine, caller: "caller", toolCallID: .init("own"))
-    let terminal = try await space.claimExec(machine: machine, caller: "caller", toolCallID: .init("terminal"))
-    let foreign = try await space.claimExec(machine: machine, caller: "peer", toolCallID: .init("foreign"))
-    let plain = try await space.mintExec(machine: machine, caller: "caller")
-    let script = try await space.mintScriptExec(machine: machine, caller: "caller", script: "script")
-    try await space.writer.write { db in
-      try db.execute(sql: "UPDATE machine_execs SET tool_end_owed = 1")
-    }
-    try await space.finishExec(terminal.record.id, .exited(code: 0))
-    #expect(try await space.liveToolExecs(caller: "caller").map(\.id) == [own.record.id])
-    try await space.forgetOwedExecs(caller: "caller")
-    #expect(try await space.execRecord(own.record.id)?.toolEndOwed == false)
-    #expect(try await space.execRecord(terminal.record.id)?.toolEndOwed == false)
-    for id in [foreign.record.id, plain.id, script.id] {
-      #expect(try await space.execRecord(id)?.toolEndOwed == true)
-    }
-    try await space.forgetOwedExecs(caller: "caller")
-    #expect(try await space.owedExecs().map(\.id) == [foreign.record.id])
   }
 
   @Test func duplicateClaimIsAbsorbedAndScopedByCaller() async throws {

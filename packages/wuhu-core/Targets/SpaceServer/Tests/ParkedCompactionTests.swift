@@ -33,7 +33,7 @@ import Testing
         let id = SessionID(created.id)
         try await harness.running {
           try await harness.deliver("wrap up", to: id)
-          try await until("the park settles") { try await harness.store.record(id).work == .noWork && requests.withLock { $0.count } == 1 }
+          try await until("the park settles") { try await harness.store.settledWork(id) && requests.withLock { $0.count } == 1 }
           #expect(try await harness.store.generationState(id).generation == 0)
 
           _ = try await harness.space.fs(.shared).write("/AGENTS.md", Data("root edited while parked".utf8), ifMatch: nil)
@@ -42,7 +42,7 @@ import Testing
           harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
 
           try await harness.deliver("the next thing", to: id)
-          try await until("the wake runs the next generation") { try await harness.store.record(id).work == .noWork && requests.withLock { $0.count } == 2 }
+          try await until("the wake runs the next generation") { try await harness.store.settledWork(id) && requests.withLock { $0.count } == 2 }
         }
         let emitted = requests.withLock { $0 }
         #expect(emitted[0].authorization == "Bearer key-testing")

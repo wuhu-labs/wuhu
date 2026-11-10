@@ -22,7 +22,7 @@ public struct EventSources: Sendable {
     self.fetch = fetch
   }
 
-  static let unavailable = EventSources(token: { _, _ in throw StreamFailure.refused("this server dials no event streams") }, fetch: FetchClient { _ in
+  public static let unavailable = EventSources(token: { _, _ in throw StreamFailure.refused("this server dials no event streams") }, fetch: FetchClient { _ in
     throw FetchError.unimplemented
   })
 
@@ -30,7 +30,7 @@ public struct EventSources: Sendable {
   /// status the stream may get past by waiting throws
   /// ``StreamFailure/unavailable(retryAfter:)``; any other answer but an event
   /// stream, ``StreamFailure/refused(_:)``.
-  func open(_ url: URL, as owner: SubscriptionOwner, after lastEventID: String) async throws -> SSEEvents {
+  public func open(_ url: URL, as owner: SubscriptionOwner, after lastEventID: String) async throws -> SSEEvents {
     guard let audience = fetchOrigin(url).flatMap(URL.init(string:)) else {
       throw StreamFailure.refused("\(url) is not an http(s) URL with a plain host")
     }
@@ -61,7 +61,7 @@ private func waitFor(_ retryAfter: String) -> Duration? {
   return .seconds(max(date.timeIntervalSince(now), 0))
 }
 
-enum StreamFailure: Error {
+public enum StreamFailure: Error {
   case refused(String)
   case unavailable(retryAfter: Duration?)
 }

@@ -31,7 +31,7 @@ import Testing
     let parent = try await root(rig.store)
     let agent = try await child(rig.store, of: parent, kind: .agent)
     let request = try await rig.store.openRequest(
-      on: agent, from: .session(parent), messageID: MessageID("r1"), text: "look into it", deadline: nil,
+      on: agent, from: .session(parent), messageID: MessageID("r1"), text: "look into it",
     )
     #expect(request.enqueued == [agent])
     _ = try await rig.store.drainQueue(agent)
@@ -55,14 +55,14 @@ import Testing
     let rig = try MovingClockSpace()
     let parent = try await root(rig.store)
     let task = try await child(rig.store, of: parent)
-    _ = try await rig.store.openRequest(on: task, from: .session(parent), messageID: MessageID("r1"), text: "go", deadline: nil)
+    _ = try await rig.store.openRequest(on: task, from: .session(parent), messageID: MessageID("r1"), text: "go")
     _ = try await rig.store.drainQueue(task)
     let replay = try await rig.store.openRequest(
-      on: task, from: .session(parent), messageID: MessageID("r1"), text: "go", deadline: nil,
+      on: task, from: .session(parent), messageID: MessageID("r1"), text: "go",
     )
     #expect(replay.replayed)
     await #expect(throws: SessionStoreError.requestAlreadyOpen("r1")) {
-      _ = try await rig.store.openRequest(on: task, from: .session(parent), messageID: MessageID("r2"), text: "go", deadline: nil)
+      _ = try await rig.store.openRequest(on: task, from: .session(parent), messageID: MessageID("r2"), text: "go")
     }
   }
 

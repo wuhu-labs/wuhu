@@ -85,7 +85,7 @@ func render(_ delivery: PushRelayDelivery, space: Space) async throws -> PushRel
     if let message = payload?["messageID"]?.stringValue {
       data["senderGroup"] = try await space.sessions.message(MessageID(message))?.senderGroup.rawValue
     }
-  case .childFailed, .requestDeadline, .sessionSettled, .sessionErrored,
+  case .sessionSettled, .sessionErrored,
        .sessionDisconnected, .contractorDisconnected:
     data["session"] = notification.source
   }

@@ -25,18 +25,6 @@ func sessionToolRosters(_ harness: SessionHarness, executor: SessionToolExecutor
     }
   }
 
-  @Test func imageGenerationTakesAPromptAndARequiredDestination() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness()
-      let roster = try #require(try await sessionToolRosters(harness, executor: .kernel).rosters.first)
-      let tool = try #require(roster.tools.first { $0.name == "generate_image" })
-      let parameters = try #require(tool.parameters.object)
-      #expect(parameters["properties"]?.object?.keys.sorted() == ["destination", "frame_ms", "frames", "model", "prompt", "provider", "quality", "size"])
-      #expect(parameters["required"] == .array(["prompt", "destination"]))
-      #expect(parameters["additionalProperties"] == false)
-    }
-  }
-
   @Test func theExecSchemaOffersEnvAndGroupSecrets() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

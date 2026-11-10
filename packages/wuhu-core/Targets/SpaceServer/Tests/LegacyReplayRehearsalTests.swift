@@ -42,7 +42,7 @@ private struct OfflineRehearsalMedia: MediaResolver {
         #expect(original.pendingToolCallIDs.isEmpty)
         let openRequests = try await space.sessions.openRequests(id)
         let portable = try original.portableHandoff(binding: binding, budget: .init(maxInput: 1_000_000, maxOutput: 1000), runningWork: [], openRequests: openRequests)
-        _ = try await space.sessions.writePortableHandoff(id, expectedGeneration: before, source: original, transcript: portable)
+        _ = try await space.sessions.writePortableHandoff(id, transcript: portable)
         let reopened = try Space.open(file: URL(fileURLWithPath: path))
         guard case let .kernel(adopted) = try await reopened.sessions.hydrate(id).transcript else {
           Issue.record("adopted rehearsal requires kernel transcript")

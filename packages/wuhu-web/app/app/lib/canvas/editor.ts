@@ -40,17 +40,17 @@ export type NewConnector =
   & Partial<Pick<BoardConnector, 'style' | 'offset' | 'arrow' | 'label'>>
 
 export const defaultSize: Record<ItemKind, { w: number; h: number }> = {
-  sticky: { w: 160, h: 160 },
+  sticky: { w: 220, h: 220 },
   text: { w: 240, h: 40 },
   rect: { w: 200, h: 100 },
-  ellipse: { w: 160, h: 120 },
-  diamond: { w: 160, h: 120 },
+  ellipse: { w: 120, h: 120 },
+  diamond: { w: 120, h: 120 },
   section: { w: 600, h: 400 },
   file: { w: 240, h: 160 },
 }
 
 export const defaultColor: Record<ItemKind, CanvasColor | null> = {
-  sticky: 'yellow',
+  sticky: 'blue',
   rect: 'blue',
   ellipse: 'blue',
   diamond: 'blue',

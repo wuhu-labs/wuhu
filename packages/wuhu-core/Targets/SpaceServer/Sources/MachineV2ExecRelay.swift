@@ -19,7 +19,7 @@ import struct OperationProtocol.StartRequest
 import struct OperationProtocol.Verdict
 import Serve
 import struct ServerTelemetry.TraceParent
-import struct SessionDomain.SessionID
+import SessionDomain
 import SpaceCore
 import Synchronization
 
@@ -193,6 +193,7 @@ extension MachineV2Service {
   func serveExec(_ relay: MachineV2ExecRelay) async {
     let key = relay.record.id.rawValue
     if let trace = relay.trace { await trace.run { await relayExec(relay) } } else { await relayExec(relay) }
+    await noticeBackgroundEnd(relay)
     @Dependency(\.date) var date
     execEndpoints[key]?.completed = date.now
     execEndpoints[key]?.operation = nil
@@ -201,6 +202,33 @@ extension MachineV2Service {
     @Dependency(\.continuousClock) var clock
     try? await clock.sleep(for: Self.endpointRetention)
     if execEndpoints[key]?.completed != nil { execEndpoints[key] = nil }
+  }
+
+  private func keepTail(_ bytes: [UInt8], of key: String) {
+    guard var tail = execEndpoints[key]?.tail else { return }
+    tail += bytes
+    execEndpoints[key]?.tail = Array(tail.suffix(16384))
+  }
+
+  /// Tells the session of an exec whose tool call answered `running` how it ended.
+  private func noticeBackgroundEnd(_ relay: MachineV2ExecRelay) async {
+    guard !closing, let record = try? await relay.space.execRecord(relay.record.id), record.background,
+          let session = record.session, let call = record.toolCallID, let terminal = record.terminal else { return }
+    let handle = SubscriptionID.exec(record.id.rawValue).rawValue
+    let output = ToolOutput.tail(String(decoding: execEndpoints[record.id.rawValue]?.tail ?? [], as: UTF8.self)).text
+    let text = switch terminal {
+    case let .exited(code): "\(handle) ended" + (code == 0 ? "" : " with exit code \(code)") + ":\n" + output
+    case let .signaled(signal): "\(handle) ended on signal \(signal):\n" + output
+    case .cancelled where relay.resumed != nil: "\(handle) was killed by a server restart"
+    case .cancelled: "\(handle) was cancelled:\n" + output
+    case .reaped: "\(handle) was reaped"
+    case .machineLost: "machine \(record.machine.rawValue) stopped responding while \(handle) ran; its outcome is unknown"
+    }
+    @Dependency(\.date) var date
+    _ = try? await relay.space.sessions.enqueue(session, input: .notification(.init(
+      id: UUID.deterministic("exec-end", session.rawValue, call.rawValue), timestamp: date.now, kind: .exec,
+      subscriptionID: .exec(record.id.rawValue), content: .init(text: text),
+    )))
   }
 
   private func relayExec(_ relay: MachineV2ExecRelay) async {
@@ -374,6 +402,7 @@ extension MachineV2Service {
         while true {
           try await clock.sleep(for: .seconds(1))
           if await self.callerExpired(key) {
+            if try await space.execRecord(record.id)?.background == true { return nil }
             let cut = await exec.stopOutput()
             try await operation.abandon("callerGone", consumer: state.cutting(at: cut).json())
             return nil
@@ -468,6 +497,7 @@ extension MachineV2Service {
             ledger.add(channel: chunk.channel, from: Offset(rawValue: chunk.from.rawValue + UInt64(skipped)), count: admitted.count, end: used + admitted.count)
           }
           used += admitted.count
+          keepTail(admitted, of: exec.start.id.rawValue)
           cutting = admitted.count < bytes.count || used >= limit
           if let queue {
             queue.enqueue(admitted, to: stream)

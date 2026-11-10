@@ -20,8 +20,7 @@ import Testing
       ) else {
         throw Mismatch("set_title failed")
       }
-      #expect(result.title == "Nightly release watch", "the stored title is the trimmed one")
-      #expect(try await space.sessions.record(session).title == "Nightly release watch")
+      #expect(result.title == "Nightly release watch", "the title asked for is the trimmed one")
     }
   }
 

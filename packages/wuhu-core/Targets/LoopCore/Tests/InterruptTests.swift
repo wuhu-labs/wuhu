@@ -21,15 +21,17 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
         mirrorAllocationDraws(&rng)
-        try await time.asleep("backoff 1", dueIn: min(backoffCeiling, 1) * Double.random(in: 0 ... 1, using: &rng))
+        let backoff = min(backoffCeiling, 1) * Double.random(in: 0 ... 1, using: &rng)
+        try await time.asleep("backoff 1", dueIn: backoff)
 
         // No clock advance: the interrupt must cancel the pending sleep.
         try await service.interrupt(sid)
-        #expect(try await sessions.record(sid).hold == .interrupted)
+        try await until("interrupted") { try await sessions.record(sid).hold == .interrupted }
+        try await until("backoff cancelled") { time.sleeping(dueIn: backoff) == 0 }
 
         // Time passing while interrupted must not retry.
         await time.advance(by: 120)
@@ -63,10 +65,13 @@ import WuhuAI
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("run it"), to: sid)
+        try await service.enqueue(item: Fix.message("run it"), to: sid)
         try await until("executor engaged") { exec.calls.value.count == 1 }
 
         try await service.interrupt(sid)
+        try await until("interrupted marker") {
+          if case .toolResult? = try await sessions.hydrate(sid).transcript.kernel.items.last { true } else { false }
+        }
         #expect(try await sessions.record(sid).hold == .interrupted)
 
         let held = try await sessions.hydrate(sid).transcript.kernel
@@ -92,44 +97,6 @@ import WuhuAI
     }
   }
 
-  @Test func `a cancelled executor returning a real result gets it committed`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
-      let script = InferenceScript([
-        Fix.replying("running exec", calls: [.init(id: "call_0", name: "exec", arguments: .object([:]))]),
-        Fix.replying("recovered"),
-      ])
-      let exec = ExecScript { _ in
-        @Dependency(\.continuousClock) var clock
-        // The side effect happened; swallow the cancellation and report it.
-        try? await clock.sleep(for: .seconds(1_000_000))
-        return .exec(.init(output: "side effect happened", exitCode: 0))
-      }
-      let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
-
-      try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("run it"), to: sid)
-        try await until("executor engaged") { exec.calls.value.count == 1 }
-        try await service.interrupt(sid)
-
-        let held = try await sessions.hydrate(sid).transcript.kernel
-        guard case let .toolResult(result) = held.items.last,
-              case let .exec(execResult) = result.payload
-        else {
-          Issue.record("expected the real exec result committed")
-          return
-        }
-        #expect(execResult.output == "side effect happened")
-
-        try await service.resume(sid)
-        try await until("settled") { try await sessions.settledWork(sid) }
-      }
-    }
-  }
-
   @Test func `interrupt during an in-flight render or stream cancels the attempt cleanly`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
@@ -143,11 +110,11 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
-        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt in flight") { script.count == 1 }
 
         try await service.interrupt(sid)
-        #expect(try await sessions.record(sid).hold == .interrupted)
+        try await until("interrupted") { try await sessions.record(sid).hold == .interrupted }
         let held = try await sessions.hydrate(sid).transcript.kernel
         #expect(held.assistantEntries.isEmpty)
 

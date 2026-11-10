@@ -100,7 +100,11 @@ import Testing
       #expect(try await code(instructed) == "taskInput")
       #expect(try await t.harness.store.pendingCommand(t.task) == nil)
       #expect(try await t.harness.post("/v1/session/\(task)/compact", .null).status == .ok)
-      #expect(try await t.harness.store.pendingCommand(t.task) == .compact(instructions: nil))
+      try await until("compact requested") {
+        try await t.harness.store.transcript(t.task).items.contains {
+          if case let .notification(notification) = $0 { notification.kind == .compactRequest } else { false }
+        }
+      }
     }
   }
 

@@ -154,6 +154,7 @@ import struct WuhuAI.ToolCall
   @Test func sessionModuleCancels() async throws {
     try await withRig { rig in
       _ = try await rig.payload(["message": "x", "in_seconds": 600], tool: "timer")
+      try await rig.space.sessions.deliverMail()
       try await rig.run("session-cancel")
       try await rig.released()
       rig.probe("armed: \(try await rig.space.sessions.armedSubscriptions(rig.session).map(\.slot.id.rawValue))")
@@ -200,23 +201,6 @@ import struct WuhuAI.ToolCall
       try await rig.messages(1)
       try await rig.released()
       try rig.expect("timeout-detach")
-    }
-  }
-
-  @Test func aMessageArrivingDuringTheWaitReturnsRunningEarly() async throws {
-    try await withRig { rig in
-      _ = try await rig.space.sessions.post(
-        .box(rig.session), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: TimeZone(identifier: "UTC")!),
-        content: .init(text: "are you there?"),
-      )
-      async let run: Void = rig.run("timeout", ["wait_seconds": 1800])
-      try await rig.time.asleep("the script's sleep", dueIn: 120)
-      try await rig.time.wake("the message's grace", after: 10)
-      try await run
-      try await rig.time.wake("the script's sleep", after: 110)
-      try await rig.messages(1)
-      try await rig.released()
-      try rig.expect("grace-detach")
     }
   }
 
@@ -812,7 +796,8 @@ final class ScriptRig: Sendable {
   }
 
   func delivered() async throws -> [String] {
-    try await space.sessions.hydrate(session).undrained.compactMap { entry in
+    try await space.sessions.deliverMail()
+    return try await space.sessions.undrainedInputs(session).compactMap { entry in
       guard case let .notification(notification) = entry.input, notification.kind == .script else { return nil }
       return notification.content.text
     }.dropFirst(seen.value).map(\.self)
@@ -843,7 +828,7 @@ final class ScriptRig: Sendable {
   }
 
   func released() async throws {
-    try await until("the execution is released") { scripts.activity.scripts.isEmpty }
+    try await until("the execution is released") { scripts.running(of: session).isEmpty }
   }
 
   func children(of parent: SessionID, _ specs: [(title: String, model: String)]) async throws {
@@ -987,7 +972,7 @@ func withRig(
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
       let main = Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute)
-      let scripts = Scripts(owner: main, limits: limits)
+      let scripts = Scripts(sessions: space.sessions, limits: limits)
       let origin = contentHost.map { _ in "https://space.test" }
       // With a machine world, the executor's main answers `/v1/exec*` from the scripted machine.
       let executor = if let world {

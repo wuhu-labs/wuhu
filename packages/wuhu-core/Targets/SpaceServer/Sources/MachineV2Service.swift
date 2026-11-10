@@ -35,6 +35,8 @@ actor MachineV2Service {
     var completed: Date?
     /// The machine operation the exec runs as, once it has one.
     var operation: OperationClient.Operation?
+    /// The end of its output, for the notice a background exec's session gets.
+    var tail: [UInt8] = []
 
     init(endpoint: ChannelEndpoint, starter: ExecStarter = ExecStarter()) {
       self.endpoint = endpoint; self.starter = starter

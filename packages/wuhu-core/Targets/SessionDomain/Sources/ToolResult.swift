@@ -92,12 +92,10 @@ public struct ScopeContext: Hashable, Sendable, Codable {
 public struct ToolOutcome: Sendable {
   public var payload: ToolResultPayload
   public var context: ScopeContext?
-  public var committed: (@Sendable () async -> Void)?
 
-  public init(payload: ToolResultPayload, context: ScopeContext? = nil, committed: (@Sendable () async -> Void)? = nil) {
+  public init(payload: ToolResultPayload, context: ScopeContext? = nil) {
     self.payload = payload
     self.context = context
-    self.committed = committed
   }
 }
 
@@ -373,6 +371,12 @@ public struct ObserveResult: Hashable, Sendable, Codable {
 public enum TimerSchedule: Hashable, Sendable, Codable {
   case oneShot(Date)
   case cron(String)
+
+  /// When it fires next after `date`; a one-shot never fires again.
+  public func next(after date: Date) -> Date? {
+    guard case let .cron(expression) = self else { return nil }
+    return try? CronSchedule.parse(expression).next(after: date)
+  }
 }
 
 public struct TimerResult: Hashable, Sendable, Codable {
@@ -429,16 +433,14 @@ public struct RequestResult: Hashable, Sendable, Codable {
   public var requestID: RequestID
   public var task: SessionID
   public var conversationID: ConversationID
-  public var deadline: Date?
   // True when a keyed create found the request that already holds its key;
   // nothing was posted, and its clocks stay with whoever opened it.
   public var existing: Bool?
 
-  public init(requestID: RequestID, task: SessionID, conversationID: ConversationID, deadline: Date? = nil, existing: Bool? = nil) {
+  public init(requestID: RequestID, task: SessionID, conversationID: ConversationID, existing: Bool? = nil) {
     self.requestID = requestID
     self.task = task
     self.conversationID = conversationID
-    self.deadline = deadline
     self.existing = existing
   }
 }

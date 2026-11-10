@@ -35,7 +35,7 @@ The destination's extension picks the format. A `.gif` destination makes an anim
 
 References must be private PNG paths in your group, a readable group's `wuhu://<group>.localspace/...`, or an authorized `machines://<name-or-id>/...` file. No public URL or caller staging. At most five references; Qwen 3.0 and dedicated editors accept three and at most 10 MiB per reference. Other references are at most 25 MiB. The server reads bytes and talks to the provider internally; provider result downloads never receive bearer credentials.
 
-Outputs are create-only: an existing destination, system path or another session's home is refused before provider spending. Space writes are atomic create-only; machine writes retain the existing stat/write guards and claims within a script run, not a cross-process atomic guarantee. Up to four image calls in one script run concurrently. Cancellation is propagated and failed calls do not write. `generate_image` uses the same resolver and supports the same optional provider/model/quality/size fields.
+Outputs are create-only: an existing destination, system path or another session's home is refused before provider spending. Space writes are atomic create-only; machine writes retain the existing stat/write guards and claims within a script run, not a cross-process atomic guarantee. Up to four image calls in one script run concurrently. Cancellation is propagated and failed calls do not write.
 
 Unsupported editing/tier requests use `unsupported_feature`.
 

@@ -231,7 +231,6 @@ extension SessionStore {
         sql: "INSERT OR IGNORE INTO message_groups (message_id, grp) VALUES (?, ?)",
         arguments: [messageID.rawValue, poster.group.rawValue],
       )
-      // Read again after `alongside`: a request's deadline lives on its row.
       try alongside?(Conversations.message(id: messageID.rawValue, in: db)!, db)
       let record = try Conversations.message(id: messageID.rawValue, in: db)!
       let enqueued = try deliver(record, conversation: conversation, poster: poster, nowDate: nowDate, now: now, in: db)
@@ -447,7 +446,6 @@ extension SessionStore {
         timestamp: message.createdAt,
         kind: kind,
         requestID: handed ? message.requestID : nil,
-        deadline: handed ? message.deadline : nil,
         replyTarget: message.replyTarget,
         owesReply: owes,
         senderGroup: poster.group == home ? nil : poster.group,
@@ -456,7 +454,7 @@ extension SessionStore {
         content: message.content.attachments(in: conversation.group, for: home),
       ))
       do {
-        _ = try Sessions.enqueue(recipient, input: input, nowDate: nowDate, in: db)
+        try Sessions.enqueue(recipient, input: input, nowDate: nowDate, in: db)
         enqueued.append(SessionID(recipient))
       } catch SessionStoreError.archiveGraceExpired {} catch SessionStoreError.unknownSession {}
     }

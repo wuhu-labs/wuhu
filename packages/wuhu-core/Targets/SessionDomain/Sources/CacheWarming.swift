@@ -11,7 +11,7 @@ extension Transcript {
         if notice.isCacheWarming, !notice.content.text.isEmpty { return true }
         switch notice.kind {
         case .context, .owedReply, .parkReminder: continue
-        case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .exec: return false
+        case .timer, .spaceObservation, .compactRequest, .requestStall, .script, .exec: return false
         }
       case .assistant, .toolResult, .bookmark, .generationHead: continue
       }
@@ -27,20 +27,6 @@ extension Transcript {
     var transcript = self
     for index in pendingCacheWarmingIndices.reversed() { transcript.items.remove(at: index) }
     return transcript.estimatedContextTokens(images: images) >= floorTokens
-  }
-
-  public var hasPendingCacheWarming: Bool { !pendingCacheWarmingIndices.isEmpty }
-
-  public func discardingPendingCacheWarming() -> Transcript {
-    var transcript = self
-    guard let firstWarming = pendingCacheWarmingIndices.first else { return transcript }
-    for index in firstWarming ..< items.count {
-      guard case var .notification(notice) = transcript.items[index],
-            notice.isCacheWarming || (notice.kind == .context && notice.subscriptionID == SubscriptionID("context-pressure")) else { continue }
-      notice.content.text = ""
-      transcript.items[index] = .notification(notice)
-    }
-    return transcript
   }
 
   private var pendingCacheWarmingIndices: [Int] {

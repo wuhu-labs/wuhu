@@ -47,7 +47,7 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
       let harness = try await SessionHarness()
       let id = try await retiredSession(harness)
       try await harness.store.markErrored(id, message: "executor no longer supported")
-      try await harness.runtime.service.interrupt(id)
+      try await harness.runtime.execution.interrupt(id)
       let record = try await harness.store.record(id)
       #expect(record.work == .errored)
       #expect(record.hold == .normal)
@@ -59,9 +59,10 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await retiredSession(harness)
-      try await harness.runtime.service.archive(id)
+      try await harness.runtime.execution.archive(id)
+      try await until("archived") { try await harness.store.record(id).lifecycle != .live }
       await #expect(throws: ExecutorUnavailableError()) {
-        try await harness.runtime.service.unarchive(id)
+        try await harness.runtime.execution.unarchive(id)
       }
       guard case .archived = try await harness.store.record(id).lifecycle else {
         Issue.record("expected the refusal to leave the session archived")

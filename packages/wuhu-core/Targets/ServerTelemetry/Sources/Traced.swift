@@ -14,14 +14,11 @@ public struct SpanName<Outcome: SpanOutcome>: Sendable {
 }
 
 extension SpanName where Outcome == StepOutcome {
-  public static var turn: Self { .init(rawValue: "agent.turn") }
   public static var tool: Self { .init(rawValue: "tool.call", namesMachine: true) }
   public static var firing: Self { .init(rawValue: "handler.firing") }
-  public static var compaction: Self { .init(rawValue: "agent.compaction") }
 }
 
 extension SpanName where Outcome == ModelAttemptOutcome { public static var attempt: Self { .init(rawValue: "model.attempt", expectsCache: true) } }
-extension SpanName where Outcome == InferenceOutcome { public static var inference: Self { .init(rawValue: "agent.inference") } }
 extension SpanName where Outcome == ScriptOutcome { public static var script: Self { .init(rawValue: "script.run") } }
 
 /// Whose work a trace is: set at a root and stamped on every span under it as `wuhu.session.id` and `wuhu.group.id`.
@@ -207,13 +204,6 @@ public final class TelemetrySpan<Outcome: SpanOutcome>: Sendable {
     fill(&fields)
     span.updateAttributes { $0.merge(fields.attributes) }
   }
-
-  public func event(_ name: SpanEventName, _ fill: (inout SpanFields) -> Void) {
-    guard span.isRecording else { return }
-    var fields = SpanFields()
-    fill(&fields)
-    span.addEvent(SpanEvent(name: name.rawValue, attributes: fields.attributes))
-  }
 }
 
 public struct SpanFields {
@@ -223,8 +213,4 @@ public struct SpanFields {
     guard let value else { return }
     attributes.set(key.name, value: key.attribute(value))
   }
-}
-
-public enum SpanEventName: String, Sendable {
-  case drained = "wuhu.input.drained"
 }

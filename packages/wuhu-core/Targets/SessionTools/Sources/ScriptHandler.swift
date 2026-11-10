@@ -1,6 +1,6 @@
+import func MainHub.handlerScriptID
 import func MainHub.resolveScriptModule
 import struct MainHub.ScriptError
-import struct MainHub.ScriptHandlerInvocation
 import struct MainHub.ScriptHandlerResult
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -17,7 +17,7 @@ import Synchronization
 
 final class ScriptHandlerContext: Sendable {
   private struct Output {
-    var stateJSON: String?
+    var returned = false
     var wakes: [String] = []
     var wakeBytes = 0
   }
@@ -25,29 +25,8 @@ final class ScriptHandlerContext: Sendable {
   let input: JSONValue
   private let output = Mutex(Output())
 
-  init(input: ScriptHandlerInvocation.Input?, stateJSON: String?) throws {
-    var fields: OrderedDictionary<String, JSONValue> = ["state": .null]
-    if let stateJSON {
-      guard let state = JSONValue.parse(stateJSON) else { throw ScriptError("invalid saved handler state") }
-      fields["state"] = state
-    }
-    switch input {
-    case let .rows(rows):
-      guard case let .object(snapshot) = Wire.queryOutput(rows), case let .array(values)? = snapshot["rows"] else { preconditionFailure("a query's output has rows") }
-      fields["rows"] = .array(values.map { value in
-        guard case let .array(cells) = value else { preconditionFailure("query rows are arrays") }
-        var object: OrderedDictionary<String, JSONValue> = [:]
-        for (column, cell) in zip(rows.columns, cells) { object[column] = cell }
-        return .object(object)
-      })
-    case let .timer(fireTime):
-      fields["fireTime"] = .string(fireTime.ISO8601Format())
-    case let .event(event):
-      fields["event"] = .object(["id": event.id.map(JSONValue.string) ?? .null, "type": .string(event.event), "data": .string(event.data)])
-    case nil:
-      break
-    }
-    self.input = .object(fields)
+  init(input: JSONValue) {
+    self.input = input
   }
 
   func install(in engine: JSEngine) throws {
@@ -63,11 +42,8 @@ final class ScriptHandlerContext: Sendable {
       }
       return .null
     }
-    engine.define("__handler_return") { [self] args in
-      let json = string(args, 0)
-      guard json.utf8.count <= 16 << 10 else { throw ScriptError("handler state exceeds 16 KiB") }
-      guard JSONValue.parse(json) != nil else { throw ScriptError("handler returned invalid JSON state") }
-      self.output.withLock { $0.stateJSON = json }
+    engine.define("__handler_return") { [self] _ in
+      self.output.withLock { $0.returned = true }
       return .null
     }
     try engine.execute("""
@@ -77,10 +53,8 @@ final class ScriptHandlerContext: Sendable {
       globalThis.wake = (text) => wakeHost(String(text));
       globalThis.__handler_invoke = async (handler) => {
         if (typeof handler !== 'function') throw new TypeError('handler module must export a default function');
-        const state = await handler({...input, wake: globalThis.wake});
-        const json = JSON.stringify(state);
-        if (json === undefined) throw new TypeError('handler must return JSON state (use null for no state)');
-        returned(json);
+        await handler({...input, wake: globalThis.wake});
+        returned();
       };
     })();
     """, name: "<handler>")
@@ -88,8 +62,8 @@ final class ScriptHandlerContext: Sendable {
 
   func result() throws -> ScriptHandlerResult {
     try self.output.withLock {
-      guard let stateJSON = $0.stateJSON else { throw ScriptError("handler did not return JSON state") }
-      return ScriptHandlerResult(stateJSON: stateJSON, wakes: $0.wakes)
+      guard $0.returned else { throw ScriptError("handler did not finish") }
+      return ScriptHandlerResult(wakes: $0.wakes)
     }
   }
 }
@@ -99,16 +73,15 @@ extension Scripts {
     id: UUID = UUID(),
     path: String,
     actor: ScriptActor,
-    input: ScriptHandlerInvocation.Input? = nil,
-    stateJSON: String? = nil,
+    input: JSONValue = .object([:]),
     tools: ToolExecutor,
   ) async throws -> ScriptHandlerResult {
-    let context = try ScriptHandlerContext(input: input, stateJSON: stateJSON)
+    let context = ScriptHandlerContext(input: input)
     let module = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
     let quoted = JSONValue.string(module).jsonString()
     let client = try await tools.client(actor)
     let execution = ScriptExecution(
-      id: ScriptHandlerInvocation.scriptID(id),
+      id: handlerScriptID(id),
       actor: actor,
       source: "import handler from \(quoted); await __handler_invoke(handler); delete globalThis.__handler_invoke;",
       lifetime: .seconds(60),
@@ -118,7 +91,7 @@ extension Scripts {
       kind: .handler(context),
       limits: limits,
     )
-    await execution.run(owner: owner)
+    await execution.run(sessions: sessions)
     let result = try execution.handlerResult()
     return result
   }

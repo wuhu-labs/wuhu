@@ -16,6 +16,7 @@ import OperationClient
 import OperationProtocol
 @testable import OperationRuntime
 import Serve
+import SessionDomain
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 @testable import SpaceServer
@@ -280,6 +281,50 @@ private struct Rig {
       $0.date = DateGenerator { Date() }
     } operation: {
       try await MachineV2Service.$callerGrace.withValue(.seconds(2)) { try await end("callerGone") }
+    }
+  }
+
+  @Test func aBackgroundExecOutlivesItsCallerAndTellsItsSessionHowItEnded() async throws {
+    try await withDependencies {
+      $0.date = DateGenerator { Date() }
+    } operation: {
+      try await MachineV2Service.$callerGrace.withValue(.seconds(1)) {
+        let rig = try await Rig()
+        let hub = MachineHub(space: rig.space)
+        let service = rig.service()
+        await hub.configureV2(service)
+        let session = try await rig.space.sessions.createSession(
+          group: .shared, title: "s", kind: .agent, createdBy: "owner", executor: .kernel(ModelSpecifier(provider: "deepseek", model: "deepseek-v4-pro", effort: "high")),
+        )
+        let minted = try await rig.space.claimExec(machine: rig.machine.id, caller: session.rawValue, toolCallID: ToolCallID(rawValue: "call")).record
+        let endpoint = ChannelEndpoint()
+        let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["gate", "a", "b"], timeout: 30))
+        let events = Events()
+        try await withThrowingTaskGroup(of: Void.self) { tasks in
+          tasks.addTask { await rig.agent.run() }
+          tasks.addTask { try await service.run() }
+          defer { tasks.cancelAll() }
+          let transport = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
+          let caller = Task { await endpoint.run(transport) }
+          let following = events.follow(outgoing)
+          #expect(try await eventually { events.stdout == "a" })
+          #expect(try await rig.space.backgroundExec(minted.id, caller: session.rawValue))
+          transport.close(); caller.cancel(); following.cancel()
+          try await Task.sleep(for: .seconds(2.5))
+          #expect(try await rig.space.execRecord(minted.id)?.terminal == nil)
+          rig.side.release()
+          #expect(try await eventually { try await rig.space.execRecord(minted.id)?.terminal == .exited(code: 5) })
+          let notice = try await eventually {
+            try await rig.space.sessions.deliverMail()
+            return try await rig.space.sessions.undrainedInputs(session).contains { entry in
+              guard case let .notification(notification) = entry.input else { return false }
+              return notification.content.text == "exec.\(minted.id.rawValue) ended with exit code 5:\nab"
+            }
+          }
+          #expect(notice)
+          await rig.agent.shutdown(); await service.shutdown()
+        }
+      }
     }
   }
 

@@ -84,8 +84,7 @@ import Testing
     let message = MessageRecord(
       n: 1, id: MessageID("message"), conversation: ConversationID("conversation"),
       sender: Sender(id: "writer", timeZone: .gmt), senderSession: test.sender,
-      senderGroup: .shared, replyTarget: nil, kind: .message, requestID: nil, deadline: nil,
-      viewing: nil, content: .init(text: test.text), createdAt: Self.now,
+      senderGroup: .shared, replyTarget: nil, kind: .message, requestID: nil, viewing: nil, content: .init(text: test.text), createdAt: Self.now,
     )
     if test.refused {
       #expect(throws: SessionStoreError.taskTakesNoHumanInput(Self.task.rawValue)) {

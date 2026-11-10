@@ -236,7 +236,7 @@ public enum SpaceServer {
     }
     addPushRelayRoutes(&router, space: space, allowedHosts: pushRelayHosts(ProcessInfo.processInfo.environment))
     if let sessions {
-      addSessionRoutes(&router, space: space, runtime: sessions, dev: dev) { request in
+      addSessionRoutes(&router, space: space, hub: hub, runtime: sessions, dev: dev) { request in
         try await requestPrincipal(request, space: space, date: clock)
       }
       addSessionLogRoutes(&router, space: space, runtime: sessions) { request in
@@ -273,10 +273,9 @@ public enum SpaceServer {
       hub: sessions?.owner,
     )
     let api: UpgradingHandler = dev ? gated(routed) : gated(walled(routed: routed, space: space, webContent: webContent, keyStreams: keyStreams))
-    // The worker's tools reach main through this API, in process, as the
+    // The sessions' tools reach main through this API, in process, as the
     // session whose token they carry.
     sessions?.connection.bind(.inProcess(api), dial: inProcessDial(api: api, hub: hub))
-    sessions?.api.bind(api)
     return hostRouted(contentHost, api: api, content: content)
   }
 
@@ -360,7 +359,6 @@ public enum SpaceServer {
     }
   }
 
-  @discardableResult
   public static func serve(
     folder: URL,
     host: String = "127.0.0.1",
@@ -381,8 +379,7 @@ public enum SpaceServer {
     webContent: WebContent = WebContent(),
     telemetryEnvironment: [String: String] = [:],
     hooks: ServeNIOHooks = ServeNIOHooks(),
-    workers: ServeWorkers = .inProcess,
-  ) async throws -> ServeEnd {
+  ) async throws {
     let aiDisclosure: AIDisclosure?
     if let aiDisclosureFile {
       aiDisclosure = try await loadAIDisclosure(file: aiDisclosureFile.path) { try Data(contentsOf: aiDisclosureFile) }
@@ -439,22 +436,6 @@ public enum SpaceServer {
       webContent.webApp = webApp
       logger.notice("web app override: \(webAppDirectory.path) (\(webApp.files.count) files)")
     }
-    // Out of process, main holds its listeners itself, so they outlive a
-    // reboot, and serves its workers on a socket in the folder.
-    var listeners: Listeners?
-    var placement = WorkerPlacement.inProcess
-    if case .process = workers {
-      try MainLock.acquire(folder: folder)
-      let run = folder.appendingPathComponent("run", isDirectory: true)
-      try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-      let socket = run.appendingPathComponent("worker.sock").path
-      // sockaddr_un holds 104 bytes on macOS, 108 on Linux, the NUL included.
-      guard socket.utf8.count < 104 else { throw WorkerSocketPathTooLong(path: socket) }
-      let inherited = Reboot.inherited()
-      listeners = try inherited?.listeners ?? Listeners.open(host: host, port: port, workerSocket: socket)
-      placement = .process(executable: currentExecutable(), socket: socket, handover: try inherited.map { try Handover.take(from: $0.handover) })
-      logger.notice(inherited == nil ? "workers run in their own processes" : "main rebooted in place; workers announce again")
-    }
     let telemetry = try await ServerTelemetryRuntime(environment: telemetryEnvironment, version: version)
     let spaceHost: SpaceHost
     do {
@@ -462,7 +443,7 @@ public enum SpaceServer {
         folder: folder, deployment: deployment, configDirectory: configDirectory, allowEnvironmentCredentials: true,
         fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
         aiDisclosure: aiDisclosure, version: version, webContent: webContent,
-        devImport: devImport, devExport: devExport, placement: placement,
+        devImport: devImport, devExport: devExport,
       )
     } catch {
       await telemetry?.shutdown()
@@ -473,94 +454,23 @@ public enum SpaceServer {
     options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
     options.maximumBodyBytes = maximumPostBodyBytes
     let api: ServeNIOServer
-    var workerAPI: ServeNIOServer?
     do {
-      if let listeners {
-        api = try await ServeNIOServer.bind(
-          listeningSocket: listeners.lend(listeners.api), tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks,
-          upgrading: directory.handler,
-        )
-        workerAPI = try await ServeNIOServer.bind(listeningSocket: listeners.lend(listeners.workers), options: options, upgrading: spaceHost.workerHandler!)
-      } else {
-        api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
-      }
+      api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
     } catch {
       try? await spaceHost.shutdown()
       await telemetry?.shutdown()
       throw error
     }
-    // Serves until cancelled, or until a reboot has put new workers up; then
-    // main hands over while its services still run, so nothing it stops
-    // reaches the workers.
-    let handover = await withTaskGroup(of: Bool?.self, returning: Result<Handover, any Error>?.self) { group in
-      group.addTask { await spaceHost.run(); return nil }
-      group.addTask {
-        await api.runUntilCancelled()
-        return false
-      }
-      if case let .process(reboots) = workers {
-        group.addTask {
-          for await _ in reboots {
-            logger.notice("reboot: putting new workers up")
-            do {
-              try await spaceHost.rollWorkers()
-              return true
-            } catch {
-              logger.error("reboot abandoned: the workers stay", metadata: ["error": "\(error)"])
-            }
-          }
-          return nil
-        }
-      }
-      var rebooting = false
-      while let next = await group.next() {
-        guard let next else { continue }
-        rebooting = next
-        break
-      }
-      defer { group.cancelAll() }
-      guard rebooting else {
-        try? await spaceHost.shutdown()
-        return nil
-      }
-      // New connections wait in the listeners' backlogs from here until the
-      // next main accepts them.
-      logger.notice("reboot: main hands over")
-      await api.stopAccepting()
-      await workerAPI?.stopAccepting()
-      do { return .success(try await spaceHost.handOver()) } catch { return .failure(error) }
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await spaceHost.run() }
+      await api.runUntilCancelled()
+      try? await spaceHost.shutdown()
+      group.cancelAll()
     }
     await api.shutdown()
-    await workerAPI?.shutdown()
     if let telemetry { await telemetry.shutdown() }
-    guard let handover, let listeners else {
-      try await spaceHost.shutdown()
-      return .stopped
-    }
-    let file = folder.appendingPathComponent("run", isDirectory: true).appendingPathComponent("handover.json")
-    try handover.get().write(to: file)
-    return .reboot(Reboot(listeners: listeners, handover: file))
+    try await spaceHost.shutdown()
   }
-}
-
-/// Where `serve` runs the space's workers.
-public enum ServeWorkers: Sendable {
-  case inProcess
-  /// Each in a process of its own; every value `reboots` yields reboots
-  /// main in place (`SIGHUP`).
-  case process(reboots: AsyncStream<Void>)
-}
-
-/// How `serve` ended.
-public enum ServeEnd: Sendable {
-  case stopped
-  /// Main handed over: `Reboot.exec()` becomes the main that takes over.
-  case reboot(Reboot)
-}
-
-public struct WorkerSocketPathTooLong: Error, CustomStringConvertible {
-  public let path: String
-  public var description: String { "the worker socket's path is too long for a Unix socket (\(path.utf8.count) bytes): \(path); serve a folder with a shorter path" }
 }
 
 /// One listener, two planes: the bare host is the API and the web app,

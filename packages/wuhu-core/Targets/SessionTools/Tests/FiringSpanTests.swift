@@ -20,7 +20,7 @@ import Tracing
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      _ = try await space.fs(.shared).write("/tick.js", Data("export default async ({ state, wake }) => { wake('secret wake'); return state }".utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/tick.js", Data("export default async ({ wake }) => { wake('secret wake') }".utf8), ifMatch: nil)
       try await withHandlerFiring(space) { worker, _ in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "secret tick", "in_seconds": 1, "handler": "/tick.js"]))

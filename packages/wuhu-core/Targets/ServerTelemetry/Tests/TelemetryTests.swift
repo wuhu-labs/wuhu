@@ -20,13 +20,13 @@ private func recorded(_ body: () async throws -> Void) async rethrows -> [Finish
 
 @Test func aRootStampsItsOwnerOnEverySpanUnderIt() async throws {
   let spans = await recorded {
-    await traced(.turn, under: .root(owner("s"))) { turn in
-      turn.set(.steps, 2)
+    await traced(.firing, under: .root(owner("s"))) { turn in
+      turn.set(.wakes, 2)
       await traced(.tool) { tool in tool.conclude(.ok) }
       turn.conclude(.ok)
     }
   }
-  let turn = try #require(spans.first { $0.operationName == "agent.turn" })
+  let turn = try #require(spans.first { $0.operationName == "handler.firing" })
   let tool = try #require(spans.first { $0.operationName == "tool.call" })
   #expect(turn.parentSpanID == nil)
   #expect(tool.parentSpanID == turn.spanID)
@@ -36,7 +36,7 @@ private func recorded(_ body: () async throws -> Void) async rethrows -> [Finish
     #expect(span.attributes.get("wuhu.group.id") == .string("g"))
     #expect(span.attributes.get("wuhu.outcome") == .string("ok"))
   }
-  #expect(turn.attributes.get("wuhu.steps") == .int64(2))
+  #expect(turn.attributes.get("wuhu.wakes") == .int64(2))
 }
 
 @Test func aThrowingBodyEndsErroredWithoutItsErrorText() async throws {
@@ -74,7 +74,7 @@ private func recorded(_ body: () async throws -> Void) async rethrows -> [Finish
 
 @Test func aCacheExpectationLandsOnlyOnAttempts() async throws {
   let spans = await recorded {
-    await traced(.inference, under: .root(owner())) { _ in
+    await traced(.firing, under: .root(owner())) { _ in
       await expectingCache(CacheExpectation(tokens: 1200, idleMs: 40)) {
         await traced(.attempt) { _ in }
         await traced(.tool) { _ in }
@@ -89,10 +89,10 @@ private func recorded(_ body: () async throws -> Void) async rethrows -> [Finish
 
 @Test func aSpanThatDoesNotRecordNeverEvaluatesItsValues() async {
   await withDependencies { $0.tracer = NoOpTracer() } operation: {
-    await traced(.turn, under: .root(owner())) { span in
+    await traced(.firing, under: .root(owner())) { span in
       #expect(!span.isRecording)
-      span.set(.steps, { Issue.record("evaluated"); return 1 }())
-      span.event(.drained) { _ in Issue.record("filled") }
+      span.set(.wakes, { Issue.record("evaluated"); return 1 }())
+      span.set { _ in Issue.record("filled") }
     }
   }
 }

@@ -47,8 +47,8 @@ export async function sendMessage(options) {
   return answered(await send(options))
 }
 
-export async function request(id, message, { deadlineSeconds, stallSeconds, kind, key, schema, fields } = {}) {
-  return answered(await ask(String(id), String(message), deadlineSeconds ?? null, stallSeconds ?? null, { kind, key, schema, fields }))
+export async function request(id, message, { stallSeconds, kind, key, schema, fields } = {}) {
+  return answered(await ask(String(id), String(message), stallSeconds ?? null, { kind, key, schema, fields }))
 }
 
 export async function setTags(id, tags) {

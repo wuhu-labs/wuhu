@@ -3,7 +3,6 @@ import struct Instructions.InstructionRenderer
 import struct Instructions.InstructionSourceFailure
 import LoopCore
 import class MainHub.Hub
-import protocol MainHub.Main
 import ModelProviders
 import SessionDomain
 import SessionTools
@@ -14,10 +13,10 @@ import SpaceTools
 import SystemFiles
 
 // The loop's: the models document as the session reads it from main.
-func budgetResolver(owner: any Main, executor: ToolExecutor) -> @Sendable (SessionID) async -> ContextBudget {
+func budgetResolver(store: SessionStore, executor: ToolExecutor) -> @Sendable (SessionID) async -> ContextBudget {
   { id in
-    guard let record = try? await owner.record(id),
-          let specifier = await activeModelSpecifier(record, owner: owner),
+    guard let record = try? await store.record(id),
+          let specifier = await activeModelSpecifier(record, store: store),
           let catalog = try? await executor.catalog(id, includeGroups: false)
     else { return fallbackBudget }
     return contextBudget(specifier, catalog.document) ?? fallbackBudget
@@ -25,11 +24,11 @@ func budgetResolver(owner: any Main, executor: ToolExecutor) -> @Sendable (Sessi
 }
 
 // Main's own, for what it shows of a session's context: the settings group's models document.
-func budgetResolver(owner: Hub) -> @Sendable (SessionID) async -> ContextBudget {
+func budgetResolver(space: Space) -> @Sendable (SessionID) async -> ContextBudget {
   { id in
-    guard let record = try? await owner.record(id),
-          let specifier = await activeModelSpecifier(record, owner: owner),
-          let data = try? await owner.space.fs(.settings).read(ModelsDocument.spacePath).1,
+    guard let record = try? await space.sessions.record(id),
+          let specifier = await activeModelSpecifier(record, store: space.sessions),
+          let data = try? await space.fs(.settings).read(ModelsDocument.spacePath).1,
           let document = try? ModelsDocument(json: data)
     else { return fallbackBudget }
     return contextBudget(specifier, document) ?? fallbackBudget

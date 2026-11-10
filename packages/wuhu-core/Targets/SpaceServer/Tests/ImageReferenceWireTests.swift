@@ -111,7 +111,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
           try await harness.deliver("next turn", to: session)
           try await until("media inference committed") {
             guard !bodies.withLock({ $0.isEmpty }) else { return false }
-            return try await harness.store.record(session).work == .noWork
+            return try await harness.store.settledWork(session)
           }
         }
         #expect(bodies.withLock { $0.contains { $0.contains("data:image/png;base64,\(pngBytes.base64EncodedString())") } })

@@ -21,8 +21,8 @@ import Testing
   }
 
   func queued(_ harness: SessionHarness, _ id: SessionID) async throws -> [ConversationMessage] {
-    try await harness.store.undrainedInputs(id).compactMap {
-      if case let .message(message) = $0.input { message } else { nil }
+    try await harness.store.sent(id).compactMap {
+      if case let .message(message) = $0 { message } else { nil }
     }
   }
 
@@ -105,7 +105,7 @@ import Testing
       #expect(try await refusal(response) == .object([
         "code": "invalidArgument", "message": "viewing is set only on a person's message, never by a session",
       ]))
-      #expect(try await t.harness.store.hydrate(t.stranger).undrained.isEmpty)
+      #expect(try await t.harness.store.sent(t.stranger).isEmpty)
     }
   }
 
