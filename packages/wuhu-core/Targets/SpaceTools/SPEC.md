@@ -11,6 +11,8 @@ SpaceToolContext is the authority boundary shared by HTTP tool/file routes and s
 `discoveryContext(contentHost)` uses the stored calling session's group rather than a caller-supplied principal group and returns session/group/resolved content origin. `discoveryGroups` serves the same membership/readability/admin view for HTTP and script discovery, refreshing read edges on every call. It reads every group the caller administers in one query (`Space.administeredGroups(by:)`, the rule `isAdmin` checks), not one query per group. Live group IDs are publicly discoverable; unreadable groups carry false flags. Anonymous development discovery and human membership retain their existing policy.
 
 
+A path under `/_/session-transcripts/` (hostless or group-qualified) reads through `Space.sessionTranscripts(in:)` after the usual group readability check; `@rev` is unsupported and every write, remove or move is refused as unsupported.
+
 ## Owner filesystem values
 
 `FileBytes` and `FileVersion` expose value initializers so owner adapters can reconstruct the existing semantic result. Byte contents, revision/token guards and store failure behavior are unchanged; transport snapshots belong to the adapter, not the filesystem store.

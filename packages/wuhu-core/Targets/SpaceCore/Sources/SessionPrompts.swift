@@ -9,6 +9,7 @@ import struct SpaceContract.PromptSession
 import struct SpaceContract.SessionPromptOutput
 import StructuredQueries
 import StructuredQueriesSQLite
+import enum WuhuAI.Tool
 
 // A session's prompt for its generation. The row moves to the current
 // generation and revision at creation, after a template clone, at every
@@ -88,10 +89,12 @@ extension SessionStore {
 
   /// Stores `rendered` as the prompt of `pending` and returns the
   /// generation's prompt: one already stored wins, and a rendering for a
-  /// generation or revision that has since moved is returned unstored.
-  public func storePrompt(_ id: SessionID, for pending: PendingPrompt, _ rendered: SessionPromptOutput) async throws -> SessionPromptOutput {
+  /// generation or revision that has since moved is returned unstored. A
+  /// stored prompt and `tools` become the generation's line 0.
+  public func storePrompt(_ id: SessionID, for pending: PendingPrompt, _ rendered: SessionPromptOutput, tools: [Tool]) async throws -> SessionPromptOutput {
     let key = id.rawValue
     let session = String(decoding: try JSONEncoder().encode(rendered.session), as: UTF8.self)
+    let now = dateGen.now
     return try await writer.write { db in
       guard let row = try SessionPrompts.row(key, in: db),
             row.generation == Int64(pending.generation), row.rev == Int64(pending.rev)
@@ -100,6 +103,7 @@ extension SessionStore {
       try SessionPromptRow.where { $0.sessionID.eq(key) }
         .update { $0.prompt = #bind(rendered.prompt); $0.session = #bind(session) }
         .execute(db)
+      try Sessions.writePreamble(key, generation: row.generation, TranscriptPreamble(system: rendered.prompt, tools: tools), at: now, in: db)
       return rendered
     }
   }

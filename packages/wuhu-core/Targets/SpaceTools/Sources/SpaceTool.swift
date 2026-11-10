@@ -273,6 +273,12 @@ struct SpaceView: SpaceVFS {
 
   private func view(_ path: String) async throws -> any SpaceVFS {
     try await Self.requireReadable(group, by: acting, actor: actor, path: path, in: space)
+    if SessionTranscripts.contains(path) {
+      guard rev == nil else {
+        throw ToolRunError.failed(code: .unsupported, message: "session transcripts have no revisions: \(path)", hint: "read it without @rev")
+      }
+      return space.sessionTranscripts(in: group)
+    }
     return await space.fs(group, at: rev.map(Rev.init), acting: acting, attribution: attribution, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
   }
 

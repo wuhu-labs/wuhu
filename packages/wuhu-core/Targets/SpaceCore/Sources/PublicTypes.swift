@@ -171,6 +171,8 @@ public enum SpaceError: Error, Equatable, Sendable {
   case readOnlyView(String)
   /// A write, move or remove under `wuhu://system/`, which ships in the binary.
   case systemReadOnly(String)
+  /// A write, move or remove under `/_/session-transcripts/`, a view of the stored lines.
+  case sessionTranscriptReadOnly(String)
   case foreignHome(path: String, owner: String)
   case queryNotReadOnly
   case queryForbiddenTable(String)

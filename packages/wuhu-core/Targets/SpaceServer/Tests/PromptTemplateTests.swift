@@ -99,7 +99,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
       let agent = try await space.sessions.createSession(group: .shared, title: "a", kind: .agent, createdBy: "owner", model: model)
       guard case let .pending(pending) = try await space.sessions.activatePrompt(agent) else { throw Unexpected() }
       let older = SessionPromptOutput(prompt: "rendered by an older binary", session: PromptSession(try await space.sessions.record(agent)))
-      _ = try await space.sessions.storePrompt(agent, for: pending, older)
+      _ = try await space.sessions.storePrompt(agent, for: pending, older, tools: [])
       #expect(try await sessionPrompt(space: space, session: agent) == older)
     }
   }

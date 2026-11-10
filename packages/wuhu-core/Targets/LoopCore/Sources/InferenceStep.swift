@@ -115,7 +115,7 @@ struct InferenceJob {
       let attemptID = client.uuid()
       retry.attempts += 1
       try save(retry)
-      let request = InferenceRequest(sessionID: params.session, attemptID: attemptID, transcript: transcript, mode: params.mode, idleTimeout: retry.idleTimeout)
+      let request = InferenceRequest(sessionID: params.session, attemptID: attemptID, generation: params.generation, transcript: transcript, mode: params.mode, idleTimeout: retry.idleTimeout)
       let raced = try await ctx.race({ _, messages in
         try await deadline.collecting(messages, { $0.yieldBy }) {
           do { return Result<InferenceReply, any Error>.success(try await client.attempt(request)) }

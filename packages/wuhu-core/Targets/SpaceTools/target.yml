@@ -32,3 +32,4 @@ tests:
     - Dependencies
     - DependenciesTestSupport
     - SpaceToolReference
+    - SessionDomain

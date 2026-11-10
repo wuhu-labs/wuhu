@@ -17,6 +17,7 @@ public enum InferenceMode: Hashable, Sendable, Codable {
 public struct InferenceRequest: Sendable {
   public var sessionID: SessionID
   public var attemptID: UUID
+  public var generation: Int
   public var transcript: Transcript
   public var mode: InferenceMode
   public var idleTimeout: Duration
@@ -24,12 +25,14 @@ public struct InferenceRequest: Sendable {
   public init(
     sessionID: SessionID,
     attemptID: UUID,
+    generation: Int,
     transcript: Transcript,
     mode: InferenceMode,
     idleTimeout: Duration = .seconds(120),
   ) {
     self.sessionID = sessionID
     self.attemptID = attemptID
+    self.generation = generation
     self.transcript = transcript
     self.mode = mode
     self.idleTimeout = idleTimeout

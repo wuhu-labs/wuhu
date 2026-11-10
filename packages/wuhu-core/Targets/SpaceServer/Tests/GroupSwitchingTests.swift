@@ -162,7 +162,7 @@ extension GroupSwitchingTests {
         let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
         var transcript = try await harness.store.transcript(id)
         transcript.append(.direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: now.withLock { $0 }, content: .init(text: "outstanding request"))))
-        let request = InferenceRequest(sessionID: id, attemptID: UUID(), transcript: transcript, mode: .normal)
+        let request = InferenceRequest(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript, mode: .normal)
         await #expect(throws: (any Error).self) { try await infer(request) }
         let failure = try #require(await harness.store.modelRoute(id)?.failure)
         let reset = try #require(failure.retryAt)
@@ -243,7 +243,7 @@ extension GroupSwitchingTests {
       let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
       let transcript = try await harness.store.transcript(id)
       await #expect(throws: error) {
-        try await infer(.init(sessionID: id, attemptID: UUID(), transcript: transcript, mode: .normal))
+        try await infer(.init(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript, mode: .normal))
       }
       try await harness.running {
         try await harness.deliver("request after removal", to: id)
@@ -438,7 +438,7 @@ extension GroupSwitchingTests {
         let committed = try await owner.space.sessions.writeCompaction(id, head: head, kept: kept, transition: transition)
         let access = InferenceAccess(credentials: harness.credentials)
         let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
-        _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: committed, mode: .normal))
+        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: committed, mode: .normal))
         let emitted = requests.withLock { $0 }
         #expect(emitted.count == 2)
         #expect(emitted[1].0 == "Bearer key-alternate")

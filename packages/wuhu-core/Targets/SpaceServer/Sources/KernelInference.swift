@@ -15,6 +15,7 @@ import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
+import struct SessionDomain.TranscriptPreamble
 import enum SpaceContract.SessionToolExecutor
 import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionStore
@@ -109,11 +110,16 @@ func kernelInference(
       lease = nil
     }
     do {
+      let systemPrompt = try await executor.prompt(request.sessionID).prompt
+      let tools = SessionToolExecutor.kernel.tools
+      if let log = access.lineDifferences {
+        await checkLines(log, store: store, request: request, preamble: TranscriptPreamble(system: systemPrompt, tools: tools), at: date.now)
+      }
       let inferenceExecutor = InferenceExecutor(
         session: request.sessionID,
         model: resolved,
-        systemPrompt: try await executor.prompt(request.sessionID).prompt,
-        tools: SessionToolExecutor.kernel.tools,
+        systemPrompt: systemPrompt,
+        tools: tools,
         compactToolName: KernelToolset.compactToolName,
         hub: attempts,
         trace: access.trace,

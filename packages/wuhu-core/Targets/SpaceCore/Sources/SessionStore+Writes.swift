@@ -281,5 +281,6 @@ extension Sessions {
         arguments: [key, generation, position, item.id.uuidString.lowercased()],
       )
     }
+    try writeLines(key, generation: generation, appending: transcript.items, after: 0, in: db)
   }
 }

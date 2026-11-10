@@ -151,6 +151,7 @@ extension SessionRuntime {
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     eventSources: EventSources? = nil,
+    lineDifferences: LineDifferenceLog? = nil,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
     let tokens = tokens ?? ExecTokens(spaceURL: "http://main")
@@ -159,7 +160,7 @@ extension SessionRuntime {
     // in the space (`wuhu models update`), re-read per use, never cached at boot.
     let access = InferenceAccess(
       credentials: credentials, oidcToken: oidcToken, oidcReadiness: oidcReadiness, oidcBindingIdentity: oidcBindingIdentity,
-      trace: attemptLog?.traceClient,
+      trace: attemptLog?.traceClient, lineDifferences: lineDifferences,
     )
     let catalog = groupCatalog(space: space, access: access)
     let toolOwner = Hub(

@@ -217,6 +217,12 @@ Receipt writes accept a synchronous `onCommit` effect, invoked on the database w
 
 `liveToolExecs(caller:)` selects that caller’s nonterminal tool-call records for main-owned archive relay cleanup. `forgetOwedExecs(caller:)` clears only that caller’s tool-call exec end obligations, live or terminal; archive bookkeeping uses it before revoking the worker token.
 
+## Transcript lines
+
+Migration 026 adds `session_lines(session_id, generation, position, at, role, key, message, meta)`. A generation has lines only when it opened with them: `Sessions.append` and `writeGeneration` write the settled lines of what they append in the same transaction, rendering from the last item that flushes held notices, and never rewrite or move a line; an append to a generation without lines writes nothing (one indexed lookup). `storePrompt(…, tools:)` writes position 0 (the `TranscriptPreamble`) when it stores the prompt. Until the loop reads lines, typed items stay the truth and lines are read only by `lines`, `lineGenerations`, `lineDifference` and `sessionTranscripts(in:)`; they are not in the query sandbox. `lineDifference` returns the first position where the stored lines and the render of the typed items disagree (a hash and a 120-character excerpt per side); stored lines past the render do not count.
+
+`/_/session-transcripts/<id>/` (`SessionTranscripts`) serves `current.jsonl`, `current.outline.txt` and `<generation>.jsonl`/`.outline.txt` for each generation with lines, rendered from the rows on every read, in the session's own group only; the root lists nothing. A JSONL record is `{position, at, role, key, meta?, message}`, `meta` (stop reason, usage) only on a line that has one; it drops reasoning and names inline images; the outline is `<position> <at> <role> <key> <first 160 characters>`. Writes, removes and moves throw `sessionTranscriptReadOnly`, and `refuseWrite` refuses every path under it.
+
 ## Groups, settings and administration
 
 A group may record an owner (`groups.personal_account`, unique): a person's own group, seeded with that person as its admin. It is hidden from discovery and from other people, and it keeps its content, sessions and machines. A new human gets that group and no membership in `shared`. A personal group is private and its list is its owner's alone: an entry naming it is refused (`SpaceError.personalGroupPrivate`), and its files read only to its owner (any person) or to a session of that group. Nobody else reads it, space admins included.

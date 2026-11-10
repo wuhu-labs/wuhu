@@ -2,6 +2,7 @@ import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
 import struct Credentials.SpaceSecretStores
 import Dependencies
+import struct ExecutionOwner.LineDifferenceLog
 import Fetch
 import Foundation
 import InferenceKit
@@ -175,7 +176,7 @@ struct SessionHarness {
     return try await space.mintPersona(key: key).name
   }
 
-  init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil, metrics: InferenceMetricsSink = .noop) async throws {
+  init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil, metrics: InferenceMetricsSink = .noop, lineDifferences: LineDifferenceLog? = nil) async throws {
     credentials = credentialResolver ?? .bound { providerID in
       CredentialBinding(credential: .apiKey(CredentialResolver.environmentAPIKey(providerID) ?? ""), identityEpoch: "assembled-fixture-credential")
     }
@@ -194,6 +195,7 @@ struct SessionHarness {
       secrets: nil,
       usage: UsageBoard(),
       oidcToken: oidcToken,
+      lineDifferences: lineDifferences,
     )
     handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     api = ServeTesting.client(upgrading: handler)

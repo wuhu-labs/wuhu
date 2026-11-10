@@ -109,8 +109,8 @@ import Testing
       guard case let .pending(pending) = try await store.activatePrompt(id) else { throw Unexpected() }
       let session = PromptSession(try await store.record(id))
       let first = SessionPromptOutput(prompt: "first", session: session)
-      #expect(try await store.storePrompt(id, for: pending, first) == first)
-      #expect(try await store.storePrompt(id, for: pending, SessionPromptOutput(prompt: "racing", session: session)) == first, "the first stored wins")
+      #expect(try await store.storePrompt(id, for: pending, first, tools: []) == first)
+      #expect(try await store.storePrompt(id, for: pending, SessionPromptOutput(prompt: "racing", session: session), tools: []) == first, "the first stored wins")
       _ = try await store.setTitle(id, to: "renamed")
       #expect(try await store.activatePrompt(id) == .rendered(first))
 
@@ -120,7 +120,7 @@ import Testing
       guard case let .pending(next) = try await store.activatePrompt(id) else { throw Unexpected() }
       #expect(next.rev > pending.rev)
       let stale = SessionPromptOutput(prompt: "stale", session: session)
-      #expect(try await store.storePrompt(id, for: pending, stale) == stale)
+      #expect(try await store.storePrompt(id, for: pending, stale, tools: []) == stale)
       #expect(try await store.activatePrompt(id) == .pending(next), "a render of an older generation is not stored")
     }
   }
@@ -141,7 +141,7 @@ import Testing
       guard case let .pending(restarted) = try await store.activatePrompt(id) else { throw Unexpected() }
       #expect(restarted.rev == started.rev && restarted.generation > started.generation)
 
-      #expect(try await store.storePrompt(id, for: started, stale) == stale)
+      #expect(try await store.storePrompt(id, for: started, stale, tools: []) == stale)
       #expect(try await store.activatePrompt(id) == .pending(restarted), "the old generation's render is not stored")
     }
   }

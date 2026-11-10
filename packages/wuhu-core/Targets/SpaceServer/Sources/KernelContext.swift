@@ -8,6 +8,7 @@ import SessionDomain
 import SessionTools
 import struct SpaceContract.PromptSession
 import struct SpaceContract.SessionPromptOutput
+import enum SpaceContract.SessionToolExecutor
 import SpaceCore
 import SpaceTools
 import SystemFiles
@@ -53,7 +54,7 @@ func sessionPrompt(space: Space, session: SessionID) async throws -> SessionProm
     return output
   case let .pending(pending):
     let record = try await space.sessions.record(session)
-    return try await space.sessions.storePrompt(session, for: pending, renderPrompt(space: space, record: record, rev: pending.rev))
+    return try await space.sessions.storePrompt(session, for: pending, renderPrompt(space: space, record: record, rev: pending.rev), tools: SessionToolExecutor.kernel.tools)
   }
 }
 

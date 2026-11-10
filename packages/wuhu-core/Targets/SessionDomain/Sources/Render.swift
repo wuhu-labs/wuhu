@@ -111,16 +111,19 @@ extension GenerationHead {
   // Role and position are contract: the snapshot is the generation's first
   // user-role message; the summary follows it. A creation head has no summary
   // and gets no nudge.
-  func renderMessages(session: SessionID) -> [Message] {
-    var messages: [Message] = [.user(.init(content: [.text(snapshot.rendered(running: runningWork ?? [], awaiting: awaiting ?? []))]))]
+  func renderLines(session: SessionID) -> [TranscriptLine] {
+    func line(_ key: String, _ text: String) -> TranscriptLine {
+      TranscriptLine(at: timestamp, key: key, message: .user(.init(content: [.text(text)])))
+    }
+    var lines = [line("head", snapshot.rendered(running: runningWork ?? [], awaiting: awaiting ?? []))]
     if let note, !note.isEmpty {
-      messages.append(.user(.init(content: [.text(note)])))
+      lines.append(line("head:note", note))
     }
     if !summary.isEmpty {
-      messages.append(.user(.init(content: [.text("<conversation-summary>\n\(summary)\n</conversation-summary>")])))
-      messages.append(.user(.init(content: [.text(SessionPrompt.compactionNudge(session: session))])))
+      lines.append(line("head:summary", "<conversation-summary>\n\(summary)\n</conversation-summary>"))
+      lines.append(line("head:nudge", SessionPrompt.compactionNudge(session: session)))
     }
-    return messages
+    return lines
   }
 }
 
@@ -131,58 +134,6 @@ extension Transcript {
     systemPrompt: String,
     tools: [Tool]? = nil,
   ) async -> Context {
-    var messages: [Message] = []
-    // Dialects that want a turn's tool results back to back get its context
-    // notices after the last of them.
-    var notices: [Message] = []
-    for item in items {
-      if !item.holdsNotices {
-        messages += notices
-        notices = []
-      }
-      switch item {
-      case let .generationHead(head):
-        messages.append(contentsOf: head.renderMessages(session: session))
-      case let .direct(message):
-        messages.append(.user(.init(content: message.content.blocks(header: message.header))))
-      case let .message(message):
-        messages.append(.user(.init(content: message.content.blocks(header: message.header))))
-      case let .notification(notification) where notification.kind == .context:
-        guard !notification.content.text.isEmpty else { continue }
-        notices.append(.user(.init(content: notification.content.blocks(header: notification.header))))
-      case let .notification(notification):
-        messages.append(.user(.init(content: notification.content.blocks(header: notification.header))))
-      case let .assistant(entry):
-        messages.append(.assistant(.init(content: entry.content)))
-      case let .toolResult(result):
-        switch result.provenance {
-        case let .toolCall(callID):
-          messages.append(contentsOf: result.render(for: .toolResult(callID)))
-        case .compactionReestablishment:
-          messages.append(contentsOf: result.render(for: .autoCalledByCompaction))
-        }
-      case let .bookmark(marker):
-        if let callID = marker.toolCallID {
-          messages.append(.toolResult(.init(
-            toolCallId: callID.rawValue,
-            content: [.text("bookmark recorded" + (marker.name.map { ": \($0)" } ?? ""))],
-          )))
-        }
-      }
-    }
-
-    messages += notices
-
-    return Context(systemPrompt: systemPrompt, messages: messages, tools: tools)
-  }
-}
-
-extension TranscriptItem {
-  fileprivate var holdsNotices: Bool {
-    switch self {
-    case .toolResult, .bookmark: true
-    case let .notification(notification): notification.kind == .context
-    case .direct, .message, .assistant, .generationHead: false
-    }
+    Context(systemPrompt: systemPrompt, messages: Self.lines(session: session, items: items).lines.map(\.message), tools: tools)
   }
 }

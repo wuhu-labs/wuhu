@@ -151,6 +151,7 @@ enum Sessions {
         arguments: [key, generation, startPosition + offset, contentID],
       )
     }
+    try writeLines(key, generation: generation, appending: items, after: startPosition, in: db)
   }
 
   static func openGeneration(_ key: String, generation: Int64, keptCount: Int, in db: Database) throws {

@@ -103,6 +103,7 @@ public actor SpaceHost {
           return try await serverIdentity.inferenceReplayIdentity(audience: audience, space: space.identity().rawValue, group: record.group.rawValue)
         },
         eventSources: .signed(by: serverIdentity, in: space),
+        lineDifferences: lineDifferenceLog(),
       )
       var pushConfiguration = HTTPClient.Configuration()
       pushConfiguration.httpVersion = .automatic
