@@ -24,7 +24,7 @@ import Wuwei
         in: writer, onError: { _ in }, onChange: { _ in wakes.withLock { $0 += 1 } },
       )
       defer { watch.cancel() }
-      let rows = try await space.worker.call(Scribe.ID("a")) { try $0.note("carol") }
+      let rows = try await space.worker.call(Scribe.ID("carol")) { try $0.note("carol") }
       #expect(rows == 1)
       #expect(wakes.withLock { $0 } == 1)
     }

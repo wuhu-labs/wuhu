@@ -283,10 +283,8 @@ import Testing
 
   @Test func watermarksShowOnlyTheReadersOwnRows() async throws {
     let rig = try await makeRig()
-    try await rig.space.writer.write { db in
-      for identity in [rig.p.rawValue, rig.s.rawValue, "someone"] {
-        try db.execute(sql: "INSERT INTO watermarks VALUES (?, ?, 1)", arguments: [identity, rig.s.rawValue])
-      }
+    for identity in [rig.p.rawValue, rig.s.rawValue, "someone"] {
+      try await rig.space.plant("INSERT INTO watermarks VALUES (?, ?, 1)", arguments: [identity, rig.s.rawValue])
     }
     let rows = try await rig.space.query("SELECT identity FROM watermarks", as: Principal(actor: .session(rig.s), group: .shared)).rows
     #expect(rows == [[.text(rig.s.rawValue)]])

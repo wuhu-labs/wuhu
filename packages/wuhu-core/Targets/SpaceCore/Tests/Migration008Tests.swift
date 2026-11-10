@@ -16,7 +16,8 @@ import Testing
 
   // Five requests: answered, on an archived task, past its deadline, before
   // its deadline, and without one. Then the
-  // schema goes back to before 008 (and 009, which builds on it).
+  // schema goes back to before 008 (and 009, which builds on it), on a
+  // connection of its own: the space's writer guards the rows its cells own.
   private func before008(_ database: DatabaseQueue) async throws -> Space {
     let space = try Space(writer: database)
     let store = space.sessions
@@ -34,7 +35,7 @@ import Testing
       default: break
       }
     }
-    try await database.write { db in
+    try await DatabaseQueue(path: database.path).write { db in
       try db.execute(sql: """
       DELETE FROM grdb_migrations WHERE identifier IN ('008', '009');
       CREATE TABLE "session_subscriptions" (
@@ -82,7 +83,7 @@ import Testing
   @Test func `the backfill reports what it made`() async throws {
     let database = try database()
     let original = try await before008(database)
-    let backfill = try await database.writeWithoutTransaction { db in
+    let backfill = try await DatabaseQueue(path: database.path).writeWithoutTransaction { db in
       var backfill: Migration008.Backfill?
       try db.inTransaction {
         backfill = try Migration008.run(db)
@@ -97,7 +98,7 @@ import Testing
   @Test func `a request message without exactly one row stops the migration and changes nothing`() async throws {
     let database = try database()
     let original = try await before008(database)
-    try await database.write { db in
+    try await DatabaseQueue(path: database.path).write { db in
       try db.execute(sql: "DELETE FROM conversation_members WHERE member_kind = 'session' AND member IN (SELECT id FROM sessions WHERE title = 'plain')")
     }
     let reopened = try DatabaseQueue(path: database.path)

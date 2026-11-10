@@ -24,6 +24,25 @@ struct Ledger {
   }
 }
 
+/// Keeps its land in a table that names its owner in a column of its own.
+@Cell
+struct Deed {
+  static let schema = ["CREATE TABLE deed (holder TEXT NOT NULL, land TEXT NOT NULL)"]
+  static let owned = ["deed": "holder"]
+
+  func lands() -> [String] {
+    db.rows("SELECT land FROM deed WHERE holder = cell() ORDER BY land").map { $0[0].text! }
+  }
+
+  mutating func claim(_ land: String, for holder: String) throws {
+    try db.execute("INSERT INTO deed (holder, land) VALUES (?, ?)", .text(holder), .text(land))
+  }
+
+  mutating func seize(from holder: String) throws {
+    try db.execute("UPDATE deed SET holder = cell() WHERE holder = ?", .text(holder))
+  }
+}
+
 /// Adds up `count` numbers, then credits a ledger with the sum.
 @Job
 struct Gather {
@@ -151,6 +170,20 @@ struct Clock {
     world.run(for: .seconds(2))
     #expect(client.cell(first).total() == 3)
     #expect(client.cell(second).total() == 0)
+  }
+
+  @Test func aTableThatNamesItsOwnerColumnIsWrittenOnlyByItsOwner() throws {
+    let world = World(shared: true)
+    _ = try world.node("a", [.cell(Deed.self)])
+    let client = try world.client()
+    let ann = Deed.ID("ann"), bob = Deed.ID("bob")
+    client.send(ann).claim("meadow", for: "ann")
+    client.send(bob).claim("orchard", for: "ann")
+    client.send(bob).seize(from: "ann")
+    client.send(bob).claim("pond", for: "bob")
+    world.run(for: .seconds(2))
+    #expect(client.cell(ann).lands() == ["meadow"])
+    #expect(client.cell(bob).lands() == ["pond"])
   }
 
   @Test(arguments: [false, true])

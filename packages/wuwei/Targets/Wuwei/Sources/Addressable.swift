@@ -10,6 +10,8 @@ public protocol Addressable: SendableMetatype {
   static var kind: String { get }
   /// Applied in order, each statement once, tracked by `PRAGMA user_version`.
   static var schema: [String] { get }
+  /// Tables that name their owner in a column of their own, as one the host program made before a cell owned it does: table to column. The column holds the owner's key, which the owner writes itself, and the table is guarded as one with ``ownerColumn`` is.
+  static var owned: [String: String] { get }
 }
 
 extension Addressable {
@@ -17,6 +19,10 @@ extension Addressable {
 
   public static var schema: [String] {
     []
+  }
+
+  public static var owned: [String: String] {
+    [:]
   }
 
   /// The column that makes a table owned: a row belongs to the addressable whose step wrote it, and `cell()` fills it in. A read keeps to its own rows with `WHERE owner = cell()`, the same on both backends; on the shared backend, a statement writing another addressable's row aborts.

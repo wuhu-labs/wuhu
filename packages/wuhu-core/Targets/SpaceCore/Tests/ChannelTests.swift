@@ -40,10 +40,8 @@ import Testing
     _ = try await space.setUserProfile(principal: "person-id", handle: "hazel", displayName: nil)
     let id = try await space.sessions.createConversation(members: ["owner", "person-id"], in: .shared)
     let owner = Principal.shared(.person(persona: "owner", account: AccountID(rawValue: "owner")))
-    try await space.writer.write { db in
-      for raw in ["hazel", "no-longer-in-directory"] {
-        try db.execute(sql: "INSERT INTO conversation_members VALUES (?, ?, 'user', '2026-01-01T00:00:00Z')", arguments: [id.rawValue, raw])
-      }
+    for raw in ["hazel", "no-longer-in-directory"] {
+      try await space.plant("INSERT INTO conversation_members VALUES (?, ?, 'user', '2026-01-01T00:00:00Z')", arguments: [id.rawValue, raw])
     }
     try await space.sessions.removeChannelMembers(id, people: ["hazel", "no-longer-in-directory", "not-a-member"], as: owner)
     #expect(try await space.sessions.conversation(id).members.map(\.member) == ["owner"])

@@ -382,6 +382,10 @@ private func until(
       }
       let id = try await harness.createSession()
       try await harness.store.markErrored(SessionID(id), message: "provider exploded")
+      // The note is mail to the owner's cell, which takes it a moment after the commit.
+      _ = harness.store.runtime.worker()
+      harness.store.runtime.poke(person: "owner")
+      while harness.store.notifications(recipient: "owner").isEmpty { await Task.yield() }
 
       let before = await harness.stdout.text
       #expect(await harness.run(["inbox"]) == 0)

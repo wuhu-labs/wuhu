@@ -84,13 +84,14 @@ public struct SessionExecution: Sendable {
   public func start() {
     let loops = loops
     guard !loops.isStarted else { return }
+    // The client first: a worker hosts a kind from the moment it is registered, and a poke may land before `start`.
+    loops.provide(client)
     for kind: Registration in [
       .cell(SessionCell.self), .cell(ObserverCell.self),
       .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self),
     ] {
       loops.register(kind)
     }
-    loops.provide(client)
     loops.start()
   }
 

@@ -84,7 +84,7 @@ final class OuterStore: Sendable {
   }
 
   /// Brings a kind's tables in the shared database up to its schema, each statement once, tracked in `wuwei_schema`. Two kinds creating one table is a bug, and traps here.
-  func prepare(kind: String, schema: [String]) {
+  func prepare(kind: String, schema: [String], owned: [String: String]) {
     guard prepared.withLock({ $0.insert(kind).inserted }) else { return }
     do {
       try write { db in
@@ -97,24 +97,28 @@ final class OuterStore: Sendable {
           "INSERT INTO wuwei_schema (kind, applied) VALUES (?, ?) ON CONFLICT (kind) DO UPDATE SET applied = excluded.applied",
           .text(kind), .integer(Int64(schema.count)),
         )
-        try guardOwnedTables(db)
+        try guardOwnedTables(db, named: owned)
       }
     } catch {
       preconditionFailure("could not apply the schema of \(kind): \(error)")
     }
   }
 
-  /// On the writer, a row of a table with an ``Addressable/ownerColumn`` may be written only by its owner: anything else aborts the statement.
-  private func guardOwnedTables(_ db: Connection) throws {
-    let tables = try db.rows(
+  /// On the writer, a row of a table with an ``Addressable/ownerColumn``, or of one `named` with its own, may be written only by its owner: anything else aborts the statement, the host program's own writes outside a step included.
+  private func guardOwnedTables(_ db: Connection, named: [String: String]) throws {
+    let declared = try db.rows(
       """
       SELECT m.name FROM sqlite_master AS m, pragma_table_info(m.name) AS c
       WHERE m.type = 'table' AND c.name = 'owner' AND c.dflt_value = 'cell()'
       """,
     )
-    for table in tables.map({ $0["name"].text! }) {
+    let columns = named.merging(declared.map { ($0["name"].text!, "owner") }) { named, _ in named }
+    for (table, column) in columns {
       let quoted = table.replacing("\"", with: "\"\"")
-      let checks = ["INSERT": "NEW.owner IS NOT cell()", "UPDATE": "NEW.owner IS NOT cell() OR OLD.owner IS NOT cell()", "DELETE": "OLD.owner IS NOT cell()"]
+      let owner = "\"\(column.replacing("\"", with: "\"\""))\""
+      let checks = [
+        "INSERT": "NEW.\(owner) IS NOT cell()", "UPDATE": "NEW.\(owner) IS NOT cell() OR OLD.\(owner) IS NOT cell()", "DELETE": "OLD.\(owner) IS NOT cell()",
+      ]
       for (operation, check) in checks {
         try db.execute(
           """

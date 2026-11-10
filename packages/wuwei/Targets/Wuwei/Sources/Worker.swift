@@ -7,14 +7,15 @@ public struct Registration: Sendable {
   let kind: String
   let isJob: Bool
   let schema: [String]
+  let owned: [String: String]
   let lifecycle: @Sendable (Claim) -> Lifecycle
 
   public static func cell<C: Cell>(_: C.Type) -> Registration {
-    Registration(kind: C.kind, isJob: false, schema: C.schema) { _ in .cell(C.self) }
+    Registration(kind: C.kind, isJob: false, schema: C.schema, owned: C.owned) { _ in .cell(C.self) }
   }
 
   public static func job<J: Job>(_: J.Type) -> Registration {
-    Registration(kind: J.kind, isJob: true, schema: J.schema) { .job(J.self, row: $0.job!) }
+    Registration(kind: J.kind, isJob: true, schema: J.schema, owned: J.owned) { .job(J.self, row: $0.job!) }
   }
 
   func host(_ worker: Worker, _ claim: Claim) throws -> Host {
@@ -88,7 +89,7 @@ public final class Worker: Sendable {
     registrations.withLock { registrations in
       precondition(registrations.updateValue(registration, forKey: registration.kind) == nil, "\(registration.kind) is registered twice")
     }
-    if store.file == nil { store.prepare(kind: registration.kind, schema: registration.schema) }
+    if store.file == nil { store.prepare(kind: registration.kind, schema: registration.schema, owned: registration.owned) }
   }
 
   /// Adds a client the addressables hosted here reach as a dependency, before the worker starts.
@@ -178,7 +179,7 @@ public final class Worker: Sendable {
   /// Layered, an addressable's durable database at one snapshot, its schema applied to this copy alone, so an addressable that never booted reads as a fresh one.
   private func reading<Target: Addressable>(_ address: Address<Target>, within incarnation: Incarnation?) -> Access {
     guard let file = store.file else {
-      store.prepare(kind: Target.kind, schema: Target.schema)
+      store.prepare(kind: Target.kind, schema: Target.schema, owned: Target.owned)
       return .shared(store, owner: address.key, within: incarnation)
     }
     do {

@@ -99,6 +99,13 @@ func settle(_ duration: Duration = .milliseconds(80)) async {
 }
 
 extension Space {
+  /// Rows the program never wrote, as old data is: put there on a connection of their own, which the owner guard on the space's writer does not see.
+  func plant(_ sql: String, arguments: StatementArguments = StatementArguments()) async throws {
+    var configuration = Configuration()
+    configuration.busyMode = .timeout(5)
+    try await DatabaseQueue(path: writer.path, configuration: configuration).write { try $0.execute(sql: sql, arguments: arguments) }
+  }
+
   func registerPeople(_ ids: [String]) async throws {
     for id in ids { _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil) }
   }

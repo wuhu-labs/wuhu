@@ -16,6 +16,8 @@ public struct PersonNote: Hashable, Codable, Sendable {
 /// A person, keyed by the name their notifications are addressed to: a persona's, or `owner`. It keeps the inbox, which only `notify` mail adds to, and how far the person has read each source.
 @Cell
 public struct PersonCell {
+  public static let owned = ["notifications": "recipient", "watermarks": "identity"]
+
   public func notifications(after n: Int64 = 0) -> [NotificationRecord] {
     db.rows(NotificationRow.where { $0.recipient.eq(id.key) && $0.n > n }.order(by: \.n)).map(NotificationRecord.init(row:))
   }

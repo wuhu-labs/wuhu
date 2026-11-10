@@ -53,6 +53,8 @@ enum ConversationTail: Socket {
 /// A conversation (a box, a DM, a channel), keyed by its id. A post is a call: one step checks the poster's reach, writes the message and what its request needs, and mails each recipient: a session its input, a person their notice.
 @Cell
 struct ConversationCell {
+  static let owned = ["conversations": "id", "conversation_members": "conversation_id", "conversation_titles": "conversation_id", "messages": "conversation_id"]
+
   /// A box is there from its session's creation, and written by its first post.
   func record() -> ConversationRecord? {
     guard let row = db.rows(ConversationRow.where { $0.id.eq(id.key) }).first else { return unopenedBox() }

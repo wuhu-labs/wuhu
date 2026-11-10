@@ -69,21 +69,15 @@ import Testing
       try await space.registerPeople(["carol", "dave"])
       let store = space.sessions
       let agent = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "carol", model: .test)
-      let dm = try await space.writer.write { db in
-        let id = Conversations.dmID("carol", agent.rawValue)
-        try db.execute(
-          sql: """
-          INSERT INTO conversations (id, kind, window_messages, window_seconds, created_at, grp) VALUES (:id, 'dm_user', 10, 900, '2026-01-01T00:00:00.000Z', 'shared');
-          INSERT INTO conversation_members VALUES (:id, 'carol', 'user', '2026-01-01T00:00:00.000Z'), (:id, :agent, 'session', '2026-01-01T00:00:00.000Z')
-          """,
-          arguments: ["id": id.rawValue, "agent": agent.rawValue],
-        )
-        try db.execute(
-          sql: "INSERT INTO messages (id, conversation_id, sender_id, sender_timezone, kind, content, created_at) VALUES ('old', ?, 'carol', 'GMT', 'message', ?, '2026-01-01T00:00:00.000Z')",
-          arguments: [id.rawValue, try Sessions.encode(MessageContent(text: "history"))],
-        )
-        return id
-      }
+      let dm = Conversations.dmID("carol", agent.rawValue)
+      try await space.plant(
+        """
+        INSERT INTO conversations (id, kind, window_messages, window_seconds, created_at, grp) VALUES (:id, 'dm_user', 10, 900, '2026-01-01T00:00:00.000Z', 'shared');
+        INSERT INTO conversation_members VALUES (:id, 'carol', 'user', '2026-01-01T00:00:00.000Z'), (:id, :agent, 'session', '2026-01-01T00:00:00.000Z');
+        INSERT INTO messages (id, conversation_id, sender_id, sender_timezone, kind, content, created_at) VALUES ('old', :id, 'carol', 'GMT', 'message', :content, '2026-01-01T00:00:00.000Z')
+        """,
+        arguments: ["id": dm.rawValue, "agent": agent.rawValue, "content": try Sessions.encode(MessageContent(text: "history"))],
+      )
       for (bySession, messageID) in [(true, "new-agent"), (false, "new-person"), (true, "old"), (false, "old")] {
         await #expect(throws: SessionStoreError.humanAgentDirectMessage) {
           _ = try await store.post(
