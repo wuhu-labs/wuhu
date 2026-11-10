@@ -261,8 +261,8 @@ import Testing
   }
 }
 
-// Every statement keyed on a path names its group: a path alone matches that
-// path in every group.
+// Every statement keyed on a path names its group, or the conversation an attachment row belongs to: a path alone
+// matches that path in every group.
 @Suite(.deterministicDependencies) struct StorageLintTests {
   static let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .appending(path: "Sources")
@@ -279,7 +279,7 @@ import Testing
     #expect(!files.isEmpty)
     for file in files {
       for (number, line) in try String(contentsOf: file, encoding: .utf8).split(separator: "\n", omittingEmptySubsequences: false).enumerated()
-        where pathKeyed.contains(where: { line.contains($0) }) && !line.contains("grp")
+        where pathKeyed.contains(where: { line.contains($0) }) && !line.contains("grp") && !line.contains("conversationID")
       {
         offenders.append("\(file.lastPathComponent):\(number + 1): \(line.trimmingCharacters(in: .whitespaces))")
       }

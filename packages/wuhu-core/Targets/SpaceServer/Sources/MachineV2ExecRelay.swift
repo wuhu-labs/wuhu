@@ -244,8 +244,7 @@ extension MachineV2Service {
     let stopping = relay.resumed.flatMap { resumed in
       deadline.flatMap { deadline in
         try? stopScope.run("resumed-exec-timeout") {
-          @Dependency(\.continuousClock) var clock
-          do { try await clock.sleep(for: deadline.untilStop()) } catch { return }
+          do { try await deadline.sleepUntilStop() } catch { return }
           try? await resumed.operation.stop(Self.timeoutStop)
         }
       }
@@ -295,7 +294,7 @@ extension MachineV2Service {
       // Once the timeout has asked for a stop, any failure leaves the process's outcome unknown, and the exit says so instead
       // of passing a placeholder status off as the process's. A failure of a claimed operation once the timeout has passed
       // counts too, and its stop is the timeout's. A failure before any operation was claimed keeps its own message.
-      let overdue = operation != nil && deadline?.untilStop() == .zero
+      let overdue = operation != nil && deadline?.stopIsDue() == true
       release = overdue ? Self.timeoutStop : "callerCancelled"
       if lifetime.ended.withLock({ $0 }) || overdue {
         await answerUnresolved(exec, record: record, space: relay.space, lifetime: lifetime, message: message)
@@ -439,13 +438,12 @@ extension MachineV2Service {
       }
       if let deadline {
         tasks.addTask {
-          @Dependency(\.continuousClock) var clock
-          try await clock.sleep(for: deadline.untilStop())
+          try await deadline.sleepUntilStop()
           lifetime.ended.withLock { $0 = true }
           // Output keeps flowing until the process is gone, so the caller gets the tail and the real termination, but only
           // until the grace ends: then it is answered with an unknown status, and nothing more reaches it.
           try await operation.stop(Self.timeoutStop)
-          try await clock.sleep(for: deadline.untilAnswer())
+          try await deadline.sleepUntilAnswer()
           let message = "Machine exec did not end within \(Self.timeoutStopGrace.components.seconds) s of its timeout stop"
           await self.answerUnresolved(exec, record: record, space: space, lifetime: lifetime, message: message)
           throw TimeoutUnresolved(message: message)
@@ -658,16 +656,21 @@ final class OutputCut: Sendable {
 /// A timed exec's two moments: when its timeout stops it (`stopAt`, fixed when the exec is admitted and kept across restarts),
 /// and the latest its caller is answered, `timeoutStopGrace` later, whether or not the stop has ended the process.
 struct ExecDeadline: Sendable {
-  let untilStop: @Sendable () -> Duration
-  let untilAnswer: @Sendable () -> Duration
+  let sleepUntilStop: @Sendable () async throws -> Void
+  let sleepUntilAnswer: @Sendable () async throws -> Void
+  let stopIsDue: @Sendable () -> Bool
 
-  init(stopAt: Date, now: Date, clock: some Clock<Duration>) {
-    // Both from the stored instant, so a restart past either moment reaches it at once and never renews the grace.
+  init<C: Clock<Duration>>(stopAt: Date, now: Date, clock: C) {
+    // Both from the stored instant and one reading of the clock, so a restart past either moment reaches it at once and never
+    // renews the grace. Sleeping until each instant, not for a duration read before the sleep starts, keeps a late start from
+    // moving it.
     let left = Duration.seconds(stopAt.timeIntervalSince(now))
-    let stop = clock.now.advanced(by: max(.zero, left))
-    let answer = clock.now.advanced(by: max(.zero, left + MachineV2Service.timeoutStopGrace))
-    untilStop = { max(.zero, clock.now.duration(to: stop)) }
-    untilAnswer = { max(.zero, clock.now.duration(to: answer)) }
+    let start = clock.now
+    let stop = start.advanced(by: max(.zero, left))
+    let answer = start.advanced(by: max(.zero, left + MachineV2Service.timeoutStopGrace))
+    sleepUntilStop = { try await clock.sleep(until: stop, tolerance: nil) }
+    sleepUntilAnswer = { try await clock.sleep(until: answer, tolerance: nil) }
+    stopIsDue = { clock.now >= stop }
   }
 }
 

@@ -74,10 +74,13 @@ public struct AttachmentUpload: Sendable {
 extension Attachment {
   public func named(in home: GroupID, for viewer: GroupID) -> Attachment {
     guard home != viewer, path.hasPrefix("/") else { return self }
-    let qualified = FSResolver.address(path, inGroup: home.rawValue)
-    return switch self {
-    case let .image(_, mimeType, size, pixels): .image(path: qualified, mimeType: mimeType, size: size, pixels: pixels)
-    case let .file(_, mimeType, size): .file(path: qualified, mimeType: mimeType, size: size)
+    return at(FSResolver.address(path, inGroup: home.rawValue))
+  }
+
+  func at(_ path: String) -> Attachment {
+    switch self {
+    case let .image(_, mimeType, size, pixels): .image(path: path, mimeType: mimeType, size: size, pixels: pixels)
+    case let .file(_, mimeType, size): .file(path: path, mimeType: mimeType, size: size)
     }
   }
 }
@@ -108,38 +111,6 @@ enum AttachmentFolder {
       "_", "conversations", conversation.rawValue, "attachments",
       padded(parts.year!, 4), padded(parts.month!, 2), padded(parts.day!, 2), time,
     ])
-  }
-
-  static func write(
-    _ staged: [(upload: AttachmentUpload, blob: Blob)],
-    conversation: ConversationID,
-    group: GroupID,
-    at date: Date,
-    mtime: String,
-    in db: Database,
-  ) throws -> (rev: Int64, attachments: [Attachment]) {
-    let folder = try path(conversation: conversation, at: date)
-    let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
-    var attachments: [Attachment] = []
-    for (upload, blob) in staged {
-      let target = try freePath(for: upload.name, in: folder, group: group, db: db)
-      try Substrate.writeFile(target, group: group, blob: blob, rev: rev, mtime: mtime, in: db)
-      attachments.append(upload.attachment(at: target.rawValue))
-    }
-    return (rev, attachments)
-  }
-
-  private static func freePath(for name: String, in folder: SpacePath, group: GroupID, db: Database) throws -> SpacePath {
-    let dot = name.lastIndex(of: ".").flatMap { $0 == name.startIndex ? nil : $0 }
-    let stem = dot.map { String(name[..<$0]) } ?? name
-    let suffix = dot.map { String(name[$0...]) } ?? ""
-    var candidate = try SpacePath(components: folder.components + [name])
-    var ordinal = 1
-    while try Substrate.head(candidate, group: group, in: db) != nil {
-      ordinal += 1
-      candidate = try SpacePath(components: folder.components + ["\(stem)-\(ordinal)\(suffix)"])
-    }
-    return candidate
   }
 
   private static func padded(_ value: Int, _ width: Int) -> String {

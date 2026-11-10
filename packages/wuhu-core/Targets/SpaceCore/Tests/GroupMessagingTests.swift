@@ -115,11 +115,6 @@ import Testing
 
   @Test func anAttachmentLivesInItsConversationsGroupAndEveryRecipientCanNameIt() async throws {
     let rig = try await makeRig()
-    let events = Collector<MutationEvent>()
-    let stream = await rig.space.observeFS(glob: "/_/conversations/**", group: Self.alice).mutations
-    let consumer = Task { for await event in stream { await events.append(event) } }
-    defer { consumer.cancel() }
-
     let own = try await rig.store.post(
       .box(rig.p), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: Self.utc),
       content: .init(text: "for you"), uploads: [AttachmentUpload(name: "note.txt", bytes: Array("mine".utf8))],
@@ -130,9 +125,6 @@ import Testing
     #expect(try await rig.space.fs(Self.alice).read(path).1 == Data("mine".utf8))
     await #expect(throws: (any Error).self) { _ = try await rig.space.fs(.shared).read(path) }
     #expect(try await queued(rig, rig.p).last?.content.attachments.first?.path == path)
-    let written = try await awaitItems(events, atLeast: 1)
-    #expect(written.map(\.path) == [path])
-    #expect(written.map(\.group) == [Self.alice])
 
     let dm = try await rig.store.post(
       .dm(with: rig.s.rawValue), messageID: MessageID("m2"), sender: sender(rig.p), senderSession: rig.p,
@@ -160,6 +152,30 @@ import Testing
     let seen = try #require(try await queued(rig, rig.p).last?.content.attachments.first?.path)
     #expect(seen == "wuhu://shared.localspace" + sharedPath)
     #expect(try await rig.space.attachmentBytes(seen, readingIn: Self.alice) == Data("shared".utf8))
+  }
+
+  @Test func anAttachmentIsAFileOfItsConversationThatNothingRewritesAndMintsNoRevision() async throws {
+    let rig = try await makeRig()
+    func revisions() async throws -> Int { try await rig.space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM revisions")! } }
+    let before = try await revisions()
+    let posted = try await rig.store.post(
+      .box(rig.p), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: Self.utc),
+      content: .init(text: "for you"), uploads: [AttachmentUpload(name: "note.txt", bytes: Array("mine".utf8))],
+      acting: Principal(actor: .anonymous, group: Self.alice),
+    )
+    let path = try #require(posted.message.content.attachments.first?.path)
+    let folder = String(path.dropLast("/note.txt".count))
+    let fs = await rig.space.fs(Self.alice)
+    #expect(try await revisions() == before)
+    #expect(try await fs.stat(path).size == 4)
+    #expect(try await fs.stat(folder).kind == .directory)
+    #expect(try await fs.list(folder).1.map(\.name) == ["note.txt"])
+    #expect(try await fs.list("/_/conversations").1.map(\.name) == [rig.p.rawValue])
+    #expect(try await fs.list("/_").1.map(\.name).contains("conversations"))
+    await #expect(throws: SpaceError.notFound("/_/conversations")) { _ = try await rig.space.fs(Self.bob).list("/_/conversations") }
+    await #expect(throws: SpaceError.alreadyExists(path)) { _ = try await fs.write(path, Data("x".utf8), ifMatch: nil) }
+    await #expect(throws: SpaceError.alreadyExists(folder + "/new.txt")) { _ = try await fs.write(folder + "/new.txt", Data("x".utf8), ifMatch: nil) }
+    await #expect(throws: SpaceError.alreadyExists(path)) { try await fs.delete(path, ifMatch: nil) }
   }
 
   @Test func aTopLevelAgentTakesAReadableGroupOnly() async throws {

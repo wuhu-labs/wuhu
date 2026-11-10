@@ -125,7 +125,10 @@ public actor Space {
     } else {
       live(group, acting: acting ?? group, attribution: attribution, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     }
-    return MachineFolders(base: base, writer: writer, group: group, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
+    return AttachmentFolders(
+      base: MachineFolders(base: base, writer: writer, group: group, listingLimit: listingLimit, listingByteLimit: listingByteLimit),
+      runtime: runtime, writer: writer, blobs: blobs, group: group,
+    )
   }
 
   func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) -> LiveFS {

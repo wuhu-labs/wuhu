@@ -11,20 +11,17 @@ import StructuredQueries
 import StructuredQueriesSQLite
 
 extension SessionStore {
-  /// Whether `member` reads `path` in `group` because it is a member of the
-  /// conversation homed there whose attachment folder holds it, whatever its
-  /// own group reads.
+  /// Whether `member` reads `path` in `group` because it is a member of the conversation homed there whose attachment folder holds it, whatever its own group reads.
   public func readsAttachment(_ path: String, in group: GroupID, member: String) async throws -> Bool {
-    let parts = path.split(separator: "/", omittingEmptySubsequences: true)
-    guard parts.count >= 4, parts[0] == "_", parts[1] == "conversations", parts[3] == "attachments" else { return false }
-    return try await writer.read { db in
-      guard let record = try Conversations.record(String(parts[2]), in: db) else { return false }
-      return record.group == group && record.members.contains { $0.member == member }
-    }
+    try await attachmentConversation(path, in: group)?.members.contains { $0.member == member } == true
   }
 
+  /// The conversation homed in `group` whose folder holds `path`.
   public func attachmentConversation(_ path: String, in group: GroupID) async throws -> ConversationRecord? {
-    try await writer.read { db in try fileConversation(path, in: group, db: db) }
+    let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+    guard parts.count >= 3, parts[0] == "_", parts[1] == "conversations",
+          let record = runtime.worker().cell(ConversationCell.ID(String(parts[2]))).record(), record.group == group else { return nil }
+    return record
   }
 
   public func readsFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
@@ -52,24 +49,14 @@ extension SessionStore {
     }
   }
 
-  /// Whether `principal` may write `path` in `group`: a write role there, or
-  /// membership of the conversation whose attachments folder holds it (a DM
-  /// keeps today's rule).
+  /// Whether `principal` may write `path` in `group`: it reads it and holds a write role there.
   public func writesFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
     guard try await readsFile(path, in: group, as: principal) else { return false }
     if case .anonymous = principal.actor { return true }
     let held = try await writer.read { db in
       try GroupAccess.role(of: principal.actor, in: group, acting: principal.group, in: db)
     }
-    if (held ?? .read) >= .write { return true }
-    let parts = path.split(separator: "/", omittingEmptySubsequences: true)
-    guard parts.count >= 4, parts[1] == "conversations", parts[3] == "attachments", let member = principal.member else {
-      return false
-    }
-    return try await writer.read { db in
-      guard let record = try Conversations.record(String(parts[2]), in: db), record.group == group else { return false }
-      return record.members.contains { $0.member == member }
-    }
+    return (held ?? .read) >= .write
   }
 
   public func conversations(member: String) async throws -> [ConversationRecord] {
@@ -118,10 +105,6 @@ extension SessionStore {
   ) async throws -> MessageDelivery {
     precondition(viewing == nil || senderSession == nil, "only a person's message carries viewing")
     let now = dateGen.now
-    var staged: [(upload: AttachmentUpload, blob: Blob)] = []
-    for upload in uploads {
-      try await staged.append((upload, blobs.stage(upload.bytes)))
-    }
     let me = senderSession?.rawValue ?? sender.id
     // Still main's reads: which conversation holds a message posted before, and who a DM's spelling names.
     let (conversation, place): (ConversationID, Post.Target) = try await writer.read { db in
@@ -147,23 +130,20 @@ extension SessionStore {
       target: place, messageID: messageID, sender: sender, senderSession: senderSession, kind: kind, requestID: requestID, replyTarget: replyTarget,
       viewing: viewing, content: content, acting: acting, at: now,
     )
-    let worker = runtime.worker()
-    let cell = ConversationCell.ID(conversation.rawValue)
+    // The bytes are stored before the call, by their hash: a post the cell then refuses leaves a blob nothing names.
+    var staged: [Blob] = []
+    for upload in uploads {
+      let blob = try await blobs.stage(upload.bytes)
+      staged.append(blob)
+      post.uploads.append(Post.Upload(name: upload.name, blob: blob.hash, size: upload.bytes.count, file: upload.attachment(at: upload.name)))
+    }
     if !staged.isEmpty {
-      // Attachments are still the group's files, written before the call: a post the cell then refuses leaves them behind.
-      let placing = try worker.cell(cell).placing(post)
-      if !placing.replayed {
-        post.content.attachments += try await Substrate.writeEmitting(writer, to: broadcast) { [staged] db, pending in
-          let written = try AttachmentFolder.write(
-            staged, conversation: conversation, group: placing.group, at: now, mtime: SQLiteDateFormat.string(from: now), in: db,
-          )
-          pending += written.attachments.map {
-            MutationEvent(group: placing.group, path: $0.path, rev: Int(written.rev), kind: .write, entry: .file)
-          }
-          return written.attachments
-        }
+      try await writer.write { [staged] db in
+        for blob in staged { try Substrate.record(blob, in: db) }
       }
     }
+    let worker = runtime.worker()
+    let cell = ConversationCell.ID(conversation.rawValue)
     return try await worker.call(cell) { [post] in try $0.post(post) }
   }
 
@@ -180,11 +160,4 @@ extension ConversationRecord {
     if members.contains(where: { $0.member == reader && (kind != .users || $0.kind == .user) }) { return true }
     return kind != .users && self.group == group
   }
-}
-
-private func fileConversation(_ path: String, in group: GroupID, db: Database) throws -> ConversationRecord? {
-  let parts = path.split(separator: "/", omittingEmptySubsequences: true)
-  guard parts.count >= 3, parts[0] == "_", parts[1] == "conversations",
-        let record = try Conversations.record(String(parts[2]), in: db), record.group == group else { return nil }
-  return record
 }

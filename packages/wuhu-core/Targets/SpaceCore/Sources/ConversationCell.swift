@@ -27,9 +27,20 @@ struct Post: Sendable {
   var replyTarget: MessageID?
   var viewing: Viewing?
   var content: MessageContent
+  var uploads: [Upload] = []
   var acting: Principal?
   var request: RequestStep?
   var at: Date
+}
+
+extension Post {
+  /// An upload whose bytes are stored: what the conversation needs to place it. `file` names it by its upload name until then.
+  struct Upload: Sendable {
+    var name: String
+    var blob: String
+    var size: Int
+    var file: Attachment
+  }
 }
 
 /// What a post does to the request it belongs to, in the step that writes its message.
@@ -53,7 +64,7 @@ enum ConversationTail: Socket {
 /// A conversation (a box, a DM, a channel), keyed by its id. A post is a call: one step checks the poster's reach, writes the message and what its request needs, and mails each recipient: a session its input, a person their notice.
 @Cell
 struct ConversationCell {
-  static let owned = ["conversations": "id", "conversation_members": "conversation_id", "conversation_titles": "conversation_id", "messages": "conversation_id", "requests": "conversation_id"]
+  static let owned = ["conversations": "id", "conversation_members": "conversation_id", "conversation_titles": "conversation_id", "messages": "conversation_id", "requests": "conversation_id", "attachments": "conversation_id"]
 
   /// What `@Cell` keeps to this file, for the cell's extensions in the files beside it. Never sent, never escaped.
   var context: CellContext<ConversationCell> {
@@ -85,11 +96,6 @@ struct ConversationCell {
     db.rows("\(Conversations.selection) WHERE m.id = ? AND m.conversation_id = ?", .text(message.rawValue), .text(id.key)).first.map(MessageRecord.init(row:))
   }
 
-  /// Where `post` would land and whether it already did, refusing as `post(_:)` would: what main needs to write a post's attachments first.
-  func placing(_ post: Post) throws -> (group: GroupID, replayed: Bool) {
-    (try admit(post, poster: poster(of: post)).group, message(post.messageID) != nil)
-  }
-
   mutating func attached(_ socket: SocketHandle<ConversationTail>) {
     guard let record = record(), reads(record, as: socket.opening.viewer) else { return socket.close() }
     let missed = messages(where: "m.n > ?", .integer(socket.opening.after), limit: nil)
@@ -116,6 +122,8 @@ struct ConversationCell {
     if conversation.kind == .box {
       try join(ConversationMember(member: post.senderSession?.rawValue ?? post.sender.id, kind: post.senderSession == nil ? .user : .session), now: now)
     }
+    var content = post.content
+    content.attachments += try attach(post.uploads, at: post.at)
     try db.execute(
       """
       INSERT INTO messages
@@ -125,7 +133,7 @@ struct ConversationCell {
       """,
       .text(post.messageID.rawValue), .text(id.key), .text(post.sender.id), text(post.senderSession?.rawValue),
       .text(post.sender.timeZone.identifier), text(post.replyTarget?.rawValue), .text(post.kind.rawValue), text(post.requestID?.rawValue),
-      .text(try Sessions.encode(post.content)), .text(now), text(poster.firing),
+      .text(try Sessions.encode(content)), .text(now), text(poster.firing),
     )
     if let device = post.sender.device {
       try db.execute("INSERT OR IGNORE INTO message_devices (message_id, device_id) VALUES (?, ?)", .text(post.messageID.rawValue), .text(device))
