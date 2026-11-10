@@ -208,20 +208,28 @@ public final class Worker: Sendable {
   }
 
   /// Takes a socket to a cell. `nil` when the cell is not this worker's to host: it lives elsewhere, or this worker does not register its kind. The cell hears `attached` first; `output` runs on the cell's lane, in order, and must not block.
-  public func attach<S: Socket, C: Cell>(_ socket: S.Type, to id: C.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? {
-    attach(socket, to: id.description, output: output)
+  public func attach<S: Socket, C: Cell>(_ socket: S.Type, to id: C.ID, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? {
+    attach(socket, to: id.description, opening: opening, output: output)
+  }
+
+  public func attach<S: Socket, C: Cell>(_ socket: S.Type, to id: C.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? where S.Opening == Void {
+    attach(socket, to: id.description, opening: (), output: output)
   }
 
   /// Takes a socket to a job, which only publishes to it.
-  public func attach<S: Socket, J: Job>(_ socket: S.Type, to id: J.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? where S.Incoming == Never {
-    attach(socket, to: id.description, output: output)
+  public func attach<S: Socket, J: Job>(_ socket: S.Type, to id: J.ID, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? where S.Incoming == Never {
+    attach(socket, to: id.description, opening: opening, output: output)
   }
 
-  private func attach<S: Socket>(_ socket: S.Type, to address: String, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? {
+  public func attach<S: Socket, J: Job>(_ socket: S.Type, to id: J.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? where S.Incoming == Never, S.Opening == Void {
+    attach(socket, to: id.description, opening: (), output: output)
+  }
+
+  private func attach<S: Socket>(_ socket: S.Type, to address: String, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? {
     guard host(address) != nil else { return nil }
     let attachment = sockets.withLock { sockets in
       sockets.count += 1
-      let attachment = Attachment(id: sockets.count, address: address, worker: self, socket, output: output)
+      let attachment = Attachment(id: sockets.count, address: address, worker: self, socket, opening: opening, output: output)
       sockets.attached[address, default: []].append(attachment)
       return attachment
     }

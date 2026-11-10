@@ -40,6 +40,16 @@ enum RequestStep: Sendable {
   case close(as: RequestStatus, result: String?)
 }
 
+/// A conversation's live tail: the messages past `after`, then each one as it is posted. `viewer` is who reads at the other end, nil for one who reads everything; the cell closes the socket instead of sending to a viewer who no longer reads the conversation.
+enum ConversationTail: Socket {
+  struct Opening: Sendable {
+    var after: Int64
+    var viewer: Principal?
+  }
+
+  typealias Outgoing = [MessageRecord]
+}
+
 /// A conversation (a box, a DM, a channel), keyed by its id. A post is a call: one step checks the poster's reach, writes the message and what its request needs, and mails each recipient: a session its input, a person their notice.
 @Cell
 struct ConversationCell {
@@ -69,6 +79,12 @@ struct ConversationCell {
   /// Where `post` would land and whether it already did, refusing as `post(_:)` would: what main needs to write a post's attachments first.
   func placing(_ post: Post) throws -> (group: GroupID, replayed: Bool) {
     (try admit(post, poster: poster(of: post)).conversation.group, message(post.messageID) != nil)
+  }
+
+  mutating func attached(_ socket: SocketHandle<ConversationTail>) {
+    guard let record = record(), reads(record, as: socket.opening.viewer) else { return socket.close() }
+    let missed = messages(where: "m.n > ?", .integer(socket.opening.after), limit: nil)
+    if !missed.isEmpty { socket.send(missed) }
   }
 
   mutating func post(_ post: Post) throws -> MessageDelivery {
@@ -123,7 +139,82 @@ struct ConversationCell {
     if let request = post.request, let id = post.requestID {
       try step(request, of: id, at: record.createdAt)
     }
+    for socket in ctx.sockets(of: ConversationTail.self) {
+      if reads(conversation, as: socket.opening.viewer) { socket.send([record]) } else { socket.close() }
+    }
     return MessageDelivery(message: record, enqueued: try deliver(record, conversation: conversation, poster: poster, at: post.at), replayed: false)
+  }
+}
+
+// MARK: Its pages
+
+extension ConversationCell {
+  private func reads(_ conversation: ConversationRecord, as viewer: Principal?) -> Bool {
+    guard let viewer else { return true }
+    let reader = viewer.member
+    let isSession = reader.map { session($0) != nil } ?? false
+    return conversation.reads(reader, isSession: isSession, group: viewer.group) {
+      guard let reader, !isSession, let account = account(of: reader) else { return space.reach(of: viewer.group) }
+      return space.readable(by: Principal(actor: .person(persona: reader, account: account), group: viewer.group))
+    }
+  }
+
+  /// The messages after sequence `n`, oldest first.
+  func messages(after n: Int64, limit: Int?) throws -> [MessageRecord] {
+    try known()
+    return messages(where: "m.n > ?", .integer(n), limit: limit)
+  }
+
+  /// The last `limit` messages before sequence `n`, or the newest; oldest first.
+  func tail(before n: Int64?, limit: Int) throws -> [MessageRecord] {
+    try known()
+    return messages(where: "m.n < ?", .integer(n ?? .max), newestFirst: true, limit: limit).reversed()
+  }
+
+  /// Anchors resolve to the message sequence, so messages sharing a timestamp are never split across pages. A message id from another conversation is `unknownMessage`.
+  func page(from cursor: MessageCursor, limit: Int) throws -> MessagePage {
+    precondition(limit > 0, "a page holds at least one message")
+    try known()
+    let rows: [MessageRecord]
+    switch cursor {
+    case .latest:
+      rows = messages(where: "m.n < ?", .integer(.max), newestFirst: true, limit: limit + 1)
+    case let .after(anchor):
+      rows = messages(where: "m.n > ?", .integer(try sequence(anchor, bound: "MAX(n)", comparing: "<=") ?? 0), limit: limit + 1)
+      let page = Array(rows.prefix(limit))
+      return MessagePage(messages: page, next: rows.count > limit ? page.last?.id : nil)
+    case let .before(anchor):
+      rows = messages(where: "m.n < ?", .integer(try sequence(anchor, bound: "MIN(n)", comparing: ">=") ?? .max), newestFirst: true, limit: limit + 1)
+    }
+    let page = Array(rows.prefix(limit).reversed())
+    return MessagePage(messages: page, next: rows.count > limit ? page.first?.id : nil)
+  }
+
+  private func known() throws {
+    guard db.one("SELECT 1 FROM conversations WHERE id = ?", .text(id.key)) != nil else { throw SessionStoreError.unknownConversation(id.key) }
+  }
+
+  private func messages(where condition: String, _ bound: Value, newestFirst: Bool = false, limit: Int?) -> [MessageRecord] {
+    db.rows(
+      "\(Conversations.selection) WHERE m.conversation_id = ? AND \(condition) ORDER BY m.n \(newestFirst ? "DESC" : "ASC") LIMIT ?",
+      .text(id.key), bound, .integer(Int64(limit ?? -1)),
+    ).map(MessageRecord.init(row:))
+  }
+
+  /// The sequence an anchor stands at: a message's own, or the last at or before (first at or after) a time. `created_at` rows written before fractional seconds were stored sort wrong as text against newer ones, so times compare through julianday; a time parsed from "…16.326Z" can land a hair under .326 and the format truncates, so it rounds to the millisecond the rows are stored in.
+  private func sequence(_ anchor: MessageAnchor, bound: String, comparing: String) throws -> Int64? {
+    switch anchor {
+    case let .message(message):
+      guard let n = db.one("SELECT n FROM messages WHERE id = ? AND conversation_id = ?", .text(message.rawValue), .text(id.key))?.integer else {
+        throw SessionStoreError.unknownMessage(message.rawValue)
+      }
+      return n
+    case let .time(date):
+      return db.one(
+        "SELECT \(bound) FROM messages WHERE conversation_id = ? AND julianday(created_at) \(comparing) julianday(?)",
+        .text(id.key), .text(SQLiteDateFormat.string(from: date.addingTimeInterval(0.0005))),
+      )?.integer
+    }
   }
 }
 
@@ -464,7 +555,7 @@ private func text(_ value: String?) -> Value {
 
 extension MessageRecord {
   /// A row of `Conversations.selection`.
-  fileprivate init(row: Row) {
+  init(row: Row) {
     self.init(
       n: row["n"].integer!,
       id: MessageID(row["id"].text!),

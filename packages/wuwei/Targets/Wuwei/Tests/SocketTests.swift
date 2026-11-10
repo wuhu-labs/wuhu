@@ -52,11 +52,13 @@ struct Room {
   }
 }
 
+/// Opens with the last number its peer has.
 enum Feed: Socket {
+  typealias Opening = Int64
   typealias Outgoing = Int64
 }
 
-/// Publishes `1 ... count` to its sockets, a second apart, writing each number down before it goes out.
+/// Publishes `1 ... count` to its sockets, a second apart, writing each number down before it goes out; a socket hears the numbers past the one it opened with.
 @Job
 struct Ticker {
   typealias Params = Int64
@@ -67,7 +69,7 @@ struct Ticker {
     while Int64(ticks().count) < ctx.params {
       let n = Int64(ticks().count) + 1
       try db.execute("INSERT INTO tick VALUES (?)", .integer(n))
-      for socket in ctx.sockets(of: Feed.self) {
+      for socket in ctx.sockets(of: Feed.self) where n > socket.opening {
         socket.send(n)
       }
       try await ctx.sleep(for: .seconds(1))
@@ -135,6 +137,17 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(aliceHears.heard == [.frame(.history([])), .frame(.said("hi"))])
     #expect(bobHears.heard == [.frame(.history([])), .frame(.said("hi"))])
     #expect(bobHears.durable.last == ["hi"])
+  }
+
+  @Test(arguments: 1 ... 20 as ClosedRange<UInt64>)
+  func aSocketHearsNothingBeforeItsAttached(seed: UInt64) throws {
+    let world = World(seed: seed)
+    let a = try node("a", in: world)
+    let client = Client<Chat>()
+    _ = try #require(a.worker.attach(Chat.self, to: room) { client.hear($0, durable: []) })
+    a.worker.send(room).announce("early")
+    world.run(for: .seconds(2))
+    #expect([[.frame(.history(["early"]))], [.frame(.history([])), .frame(.said("early"))]].contains(client.heard))
   }
 
   @Test(arguments: 1 ... 5 as ClosedRange<UInt64>)
@@ -227,11 +240,21 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     let ticker = Ticker.ID("t")
     try a.worker.create(ticker, params: 3)
     let client = Client<Feed>()
-    _ = try #require(a.worker.attach(Feed.self, to: ticker) { output in
+    _ = try #require(a.worker.attach(Feed.self, to: ticker, opening: 0) { output in
       client.hear(output, durable: a.worker.job(ticker).ticks().map(String.init))
     })
     world.run(for: .seconds(5))
     #expect(client.heard == [.frame(1), .frame(2), .frame(3), .closed])
     #expect(client.durable.prefix(3) == [["1"], ["1", "2"], ["1", "2", "3"]])
+  }
+
+  @Test func aSocketCarriesWhatItOpenedWith() throws {
+    let a = try node("a")
+    let ticker = Ticker.ID("t")
+    try a.worker.create(ticker, params: 3)
+    let client = Client<Feed>()
+    _ = try #require(a.worker.attach(Feed.self, to: ticker, opening: 2) { client.hear($0, durable: []) })
+    world.run(for: .seconds(5))
+    #expect(client.heard == [.frame(3), .closed])
   }
 }

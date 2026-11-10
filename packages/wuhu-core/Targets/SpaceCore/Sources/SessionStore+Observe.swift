@@ -101,21 +101,16 @@ extension SessionStore {
     after n: Int64 = 0,
     as principal: Principal? = nil,
   ) -> AsyncThrowingStream<[MessageRecord], any Error> {
-    let key = conversation.rawValue
-    let writer = writer
-    return observation(scope: taskScope, writer: writer, tables: ["messages", "conversations", "conversation_members", "group_roles", "groups", "sessions"], state: n) { db, cursor in
-      guard let record = try Conversations.record(key, in: db),
-            try principal.map({ try Conversations.reads(record, reader: $0.member, group: $0.group, in: db) }) ?? true
-      else {
-        throw SessionStoreError.unknownConversation(key)
+    let worker = runtime.worker()
+    return AsyncThrowingStream { continuation in
+      let peer = worker.attach(ConversationTail.self, to: ConversationCell.ID(conversation.rawValue), opening: .init(after: n, viewer: principal)) { output in
+        switch output {
+        case let .frame(messages): continuation.yield(messages)
+        case .closed: continuation.finish(throwing: SessionStoreError.unknownConversation(conversation.rawValue))
+        }
       }
-      let records = try Conversations.fetch(
-        db,
-        where: "conversation_id = ? AND n > ?",
-        arguments: [key, cursor],
-      )
-      guard let last = records.last else { return (nil, cursor) }
-      return (records, last.n)
+      continuation.onTermination = { _ in peer?.close() }
+      if peer == nil { continuation.finish(throwing: SessionStoreError.unknownConversation(conversation.rawValue)) }
     }
   }
 }

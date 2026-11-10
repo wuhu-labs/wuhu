@@ -12,15 +12,6 @@ import StructuredQueries
 import StructuredQueriesSQLite
 
 extension SessionStore {
-  public func conversation(_ id: ConversationID) async throws -> ConversationRecord {
-    try await writer.read { db in
-      guard let record = try Conversations.record(id.rawValue, in: db) else {
-        throw SessionStoreError.unknownConversation(id.rawValue)
-      }
-      return record
-    }
-  }
-
   /// Applies box, DM and channel readership for a session id, persona, or nil (--dev seat).
   public func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID) async throws -> Bool {
     try await writer.read { db in
@@ -230,52 +221,13 @@ extension SessionStore {
   public func message(_ id: MessageID) async throws -> MessageRecord? {
     try await writer.read { db in try Conversations.message(id: id.rawValue, in: db) }
   }
-
-  public func messages(
-    conversation: ConversationID,
-    after n: Int64 = 0,
-    limit: Int? = nil,
-  ) async throws -> [MessageRecord] {
-    let key = conversation.rawValue
-    return try await writer.read { db in
-      guard try Conversations.record(key, in: db) != nil else {
-        throw SessionStoreError.unknownConversation(key)
-      }
-      return try Conversations.fetch(db, where: "conversation_id = ? AND n > ?", arguments: [key, n], limit: limit)
-    }
-  }
-
-  public func messagesTail(
-    conversation: ConversationID,
-    before n: Int64? = nil,
-    limit: Int,
-  ) async throws -> [MessageRecord] {
-    let key = conversation.rawValue
-    return try await writer.read { db in
-      guard try Conversations.record(key, in: db) != nil else {
-        throw SessionStoreError.unknownConversation(key)
-      }
-      let page: [MessageRecord] = if let n {
-        try Conversations.fetch(
-          db, where: "conversation_id = ? AND n < ?", arguments: [key, n], order: "n DESC", limit: limit,
-        )
-      } else {
-        try Conversations.fetch(db, where: "conversation_id = ?", arguments: [key], order: "n DESC", limit: limit)
-      }
-      return page.reversed()
-    }
-  }
 }
 
 extension Conversations {
   static func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID, in db: Database) throws -> Bool {
-    let session = try reader.map { try Sessions.exists($0, in: db) } ?? false
-    if conversation.ownerSession != nil || (conversation.kind == .users && session) {
-      return try reach(reader: reader, group: group, in: db).contains(conversation.group)
+    try conversation.reads(reader, isSession: try reader.map { try Sessions.exists($0, in: db) } ?? false, group: group) {
+      try reach(reader: reader, group: group, in: db)
     }
-    guard let reader else { return conversation.kind != .users && conversation.group == group }
-    if conversation.members.contains(where: { $0.member == reader && (conversation.kind != .users || $0.kind == .user) }) { return true }
-    return conversation.kind != .users && conversation.group == group
   }
 
   /// The groups a reader reaches: a session's own group's reach, a persona's
@@ -290,6 +242,16 @@ extension Conversations {
     return try GroupAccess.readable(
       by: .person(persona: reader, account: AccountID(rawValue: account)), acting: group, in: db,
     )
+  }
+}
+
+extension ConversationRecord {
+  /// Box, DM and channel readership for a session id, a persona, or nil (the --dev seat) acting in `group`. `reach` is the groups that reader reads.
+  func reads(_ reader: String?, isSession: Bool, group: GroupID, reach: () throws -> Set<GroupID>) rethrows -> Bool {
+    if ownerSession != nil || (kind == .users && isSession) { return try reach().contains(self.group) }
+    guard let reader else { return kind != .users && self.group == group }
+    if members.contains(where: { $0.member == reader && (kind != .users || $0.kind == .user) }) { return true }
+    return kind != .users && self.group == group
   }
 }
 

@@ -86,9 +86,9 @@ public struct CellContext<Target: Cell> {
     reach.incarnation.output(.emit(output))
   }
 
-  /// The sockets of type `S` attached to this addressable on this worker, in the order they came.
+  /// The sockets of type `S` attached to this cell on this worker, in the order they came. A socket is among them from its `attached` call on.
   public func sockets<S: Socket>(of type: S.Type) -> [SocketHandle<S>] {
-    reach.worker.attachments(at: id.description).filter { $0.socket == ObjectIdentifier(type) }.map { SocketHandle(attachment: $0, reach: reach) }
+    reach.worker.attachments(at: id.description).filter { $0.socket == ObjectIdentifier(type) && $0.greeted }.map { SocketHandle(attachment: $0, reach: reach) }
   }
 }
 
@@ -149,6 +149,7 @@ extension Lifecycle {
       incarnation.record(.consume(mail: mail.id))
       incarnation.call(C.self) { cell, _ in try cell.receive(decode(C.Message.self, from: mail.payload)) }
     }, socket: { incarnation, attachment, inbound in
+      if case .attached = inbound { attachment.greet() }
       incarnation.call(C.self) { cell, reach in
         let kind: SocketEvent.Kind = switch inbound {
         case .attached: .attached

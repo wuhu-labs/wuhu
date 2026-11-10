@@ -1,8 +1,9 @@
 import DequeModule
 import Synchronization
 
-/// A typed live connection to an addressable, opened by whoever owns the transport: a router, a test. `Incoming` frames go to the addressable, `Outgoing` frames come back. Nothing about a socket is durable: membership lives in the worker that took the socket, a frame can be lost with a failed incarnation, and a close is best effort. Declare one as an empty enum: `enum Chat: Socket { enum Incoming { … }; enum Outgoing { … } }`.
+/// A typed live connection to an addressable, opened by whoever owns the transport: a router, a test. `Incoming` frames go to the addressable, `Outgoing` frames come back. `Opening` is what the transport says once, as it attaches: who is at the other end, where they left off. Nothing about a socket is durable: membership lives in the worker that took the socket, a frame can be lost with a failed incarnation, and a close is best effort. Declare one as an empty enum: `enum Chat: Socket { enum Incoming { … }; enum Outgoing { … } }`.
 public protocol Socket: SendableMetatype {
+  associatedtype Opening: Sendable = Void
   associatedtype Incoming: Sendable = Never
   associatedtype Outgoing: Sendable
 }
@@ -34,6 +35,10 @@ public struct SocketHandle<S: Socket> {
 
   public var id: Int {
     attachment.id
+  }
+
+  public var opening: S.Opening {
+    attachment.opening as! S.Opening
   }
 
   public func send(_ frame: S.Outgoing) {
@@ -77,6 +82,7 @@ final class Attachment: Sendable {
 
   private struct State {
     var gone = false
+    var greeted = false
     var queue = Deque<Inbound>()
     var delivering = false
   }
@@ -85,17 +91,28 @@ final class Attachment: Sendable {
   let address: String
   let socket: ObjectIdentifier
   let name: String
+  let opening: any Sendable
   private let worker: Worker
   private let output: @Sendable ((any Sendable)?) -> Void
   private let state = Mutex(State())
 
-  init<S: Socket>(id: Int, address: String, worker: Worker, _: S.Type, output: @escaping @Sendable (SocketOutput<S>) -> Void) {
+  init<S: Socket>(id: Int, address: String, worker: Worker, _: S.Type, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) {
     self.id = id
     self.address = address
     self.worker = worker
+    self.opening = opening
     socket = ObjectIdentifier(S.self)
     name = "\(S.self)"
     self.output = { frame in output(frame.map { .frame($0 as! S.Outgoing) } ?? .closed) }
+  }
+
+  /// Whether its cell has begun hearing `attached`: only then is it among the cell's sockets, so nothing the cell publishes can come before what `attached` sends.
+  var greeted: Bool {
+    state.withLock { $0.greeted }
+  }
+
+  func greet() {
+    state.withLock { $0.greeted = true }
   }
 
   func enqueue(_ inbound: Inbound) {
