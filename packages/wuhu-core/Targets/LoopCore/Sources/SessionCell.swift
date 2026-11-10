@@ -7,7 +7,7 @@ import struct SpaceCore.SessionRows
 import enum WuhuAI.ContentBlock
 import enum WuhuAI.InferenceError
 import struct WuhuAI.ToolCall
-import WuweiNeo
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

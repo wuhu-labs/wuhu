@@ -7,7 +7,7 @@ import struct SpaceCore.ObserverRows
 import struct SpaceCore.ObserverSlot
 import struct SpaceCore.SessionPut
 import enum SpaceCore.SubscriptionOwner
-import WuweiNeo
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

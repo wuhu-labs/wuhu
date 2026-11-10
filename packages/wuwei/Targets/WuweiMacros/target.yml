@@ -1,0 +1,11 @@
+name: WuweiMacros
+kind: macro
+sources: Sources
+dependencies:
+  - SwiftSyntax
+  - SwiftSyntaxMacros
+  - SwiftSyntaxBuilder
+  - SwiftCompilerPlugin
+tests:
+  dependencies:
+    - SwiftSyntaxMacrosTestSupport

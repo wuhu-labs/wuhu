@@ -182,8 +182,8 @@ extension SessionStore {
           now: now, in: db,
         )
         if try Sessions.remindQuiet(RequestRow.find(request, in: db)!, from: message.createdAt, in: db) {
-          let signals = self.signals
-          db.afterNextTransaction { _ in signals.post(requester.session!) }
+          let runtime = self.runtime
+          db.afterNextTransaction { _ in runtime.poke(requester.session!) }
         }
       },
     )

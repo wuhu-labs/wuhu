@@ -1,8 +1,0 @@
-name: wuwei-neo
-kind: executable
-sources: Sources
-checks:
-  build: [linux, mac]
-dependencies:
-  - WuweiNeo
-  - SSHMachine

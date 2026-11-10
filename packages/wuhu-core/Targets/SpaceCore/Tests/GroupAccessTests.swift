@@ -56,8 +56,12 @@ import Testing
     let readerGroup = try #require(try await space.personalGroup(of: reader.id))
     try await space.setGrant(.account, reader.id.rawValue, role: .read, in: Self.team, by: .anonymous, acting: Self.team)
     let principal = Principal(actor: .person(persona: "reader", account: reader.id), group: readerGroup)
-    #expect(try await space.grants(of: Self.team, by: principal) == [GroupGrant(subject: .account, id: reader.id.rawValue, role: .read)])
+    let team = space.cell(of: Self.team)
+    #expect(team.grants() == [GroupGrant(subject: .account, id: reader.id.rawValue, role: .read)])
     #expect(try await space.role(of: principal, in: Self.team) != nil)
+    #expect(team.role(of: principal.actor, acting: principal.group) == (try await space.role(of: principal, in: Self.team)))
+    #expect(team.record()?.id == Self.team)
+    #expect(space.cell(of: GroupID(rawValue: "nowhere")).record() == nil)
     // Only an admin changes the list, and only for an ordinary group.
     await #expect(throws: SpaceError.groupForbidden("team")) {
       try await space.setGrant(.account, reader.id.rawValue, role: .write, in: Self.team, by: principal.actor, acting: readerGroup)
@@ -120,7 +124,7 @@ import Testing
       try await space.removeGrant(.account, admin.id.rawValue, in: .settings, by: actor, acting: .settings)
     }
     #expect(try await space.isHumanAdmin(admin.id, of: .settings))
-    let settingsList = try await space.grants(of: .settings, by: Principal(actor: actor, group: .settings))
+    let settingsList = space.cell(of: .settings).grants()
     #expect(!settingsList.contains { $0.id == guest.id.rawValue })
     // A guest takes no admin anywhere.
     await #expect(throws: SpaceError.groupForbidden(Self.team.rawValue)) {

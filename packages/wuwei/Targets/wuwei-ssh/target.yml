@@ -1,0 +1,8 @@
+name: wuwei-ssh
+kind: executable
+sources: Sources
+checks:
+  build: [linux, mac]
+dependencies:
+  - Wuwei
+  - SSHMachine

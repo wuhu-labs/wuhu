@@ -254,7 +254,7 @@ extension Hub {
     if let account = person.account, try await space.isGuest(account) {
       throw ToolProblem("a guest's page creates no sessions and posts no messages", code: "groupForbidden")
     }
-    guard try await space.writableGroups(for: person.principal).contains(person.group) else {
+    guard space.cell.writable(by: person.principal).contains(person.group) else {
       throw ToolProblem("the viewer does not write group \(person.group.rawValue)", code: "groupForbidden")
     }
   }

@@ -1,0 +1,12 @@
+name: Wuwei
+kind: library
+sources: Sources
+dependencies:
+  - WuweiMacros
+  - GRDBSQLite
+  - DequeModule
+  - Logging
+tests:
+  dependencies:
+    - WuweiQueries
+    - StructuredQueries

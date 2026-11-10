@@ -7,7 +7,7 @@ import struct MainHub.EventSources
 import class MainHub.Hub
 import struct MainHub.SubscriptionFiring
 import TaskLifetime
-import enum WuweiNeo.Storage
+import enum Wuwei.Storage
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

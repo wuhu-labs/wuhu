@@ -70,14 +70,14 @@ public struct GroupRecord: Hashable, Sendable {
 extension Space {
   public func groups() async throws -> [GroupRecord] {
     try await writer.read { db in
-      try GroupRow.order { ($0.createdAt, $0.id) }.fetchAll(db).map(Self.groupRecord(from:))
+      try GroupRow.order { ($0.createdAt, $0.id) }.fetchAll(db).map(GroupRecord.init(row:))
     }
   }
 
   public func group(_ id: GroupID) async throws -> GroupRecord? {
     try await writer.read { db in
       guard let row = try GroupRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db), row.removedAt == nil else { return nil }
-      return Self.groupRecord(from: row)
+      return GroupRecord(row: row)
     }
   }
 
@@ -135,48 +135,8 @@ extension Space {
     try await writer.read { db in try GroupAccess.writes(group, in: target, in: db) }
   }
 
-  /// The groups `principal` may write: its role in each is write or admin.
-  public func writableGroups(for principal: Principal) async throws -> Set<GroupID> {
-    try await writer.read { db in
-      let snapshot = try GroupAccess.Snapshot(db)
-      switch principal.actor {
-      case .anonymous:
-        return try GroupAccess.reach(of: principal.group, in: db)
-      case let .observer(observer):
-        return (snapshot.role(from: observer.group.rawValue, in: observer.group.rawValue) ?? .read) >= .write ? [observer.group] : []
-      case let .page(page):
-        return Set(snapshot.all.filter { (snapshot.role(of: page, in: $0.rawValue) ?? .read) >= .write })
-      case let .session(id):
-        guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }
-        return Set(snapshot.all.filter { (snapshot.role(of: session, in: $0.rawValue) ?? .read) >= .write })
-      case let .person(_, account):
-        guard let row = try GroupAccess.accountRow(account, in: db) else { return [] }
-        return Set(snapshot.all.filter {
-          (snapshot.role(of: row, in: $0.rawValue, acting: principal.group.rawValue) ?? .read) >= .write
-        })
-      }
-    }
-  }
-
   public func isAdmin(_ actor: Actor, of group: GroupID, acting: GroupID) async throws -> Bool {
     try await role(of: actor, in: group, acting: acting) == .admin
-  }
-
-  /// Every group `actor` administers, by the same rule as `isAdmin`, in one read.
-  public func administeredGroups(by actor: Actor, acting: GroupID) async throws -> Set<GroupID> {
-    try await writer.read { db in
-      let snapshot = try GroupAccess.Snapshot(db)
-      switch actor {
-      case .anonymous, .observer, .page:
-        return []
-      case let .session(id):
-        guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }
-        return snapshot.administered(by: session)
-      case let .person(_, account):
-        guard let row = try GroupAccess.accountRow(account, in: db) else { return [] }
-        return snapshot.administered(by: row)
-      }
-    }
   }
 
   /// A live person holding `admin` in `group`, directly or as a space admin.
@@ -201,17 +161,6 @@ extension Space {
     let rng = rng
     return try await writer.write { db in
       try Groups.ensurePersonalGroup(account: account, created: created, rng: rng, in: db)
-    }
-  }
-
-  /// A group's list: visible to anyone who can read it.
-  public func grants(of group: GroupID, by principal: Principal) async throws -> [GroupGrant] {
-    try await writer.read { db in
-      if case .anonymous = principal.actor { return try GroupAccess.Snapshot(db).grants(of: group.rawValue) }
-      guard try GroupAccess.role(of: principal.actor, in: group, acting: principal.group, in: db) != nil else {
-        throw SpaceError.groupForbidden(group.rawValue)
-      }
-      return try GroupAccess.Snapshot(db).grants(of: group.rawValue)
     }
   }
 
@@ -296,9 +245,11 @@ extension Space {
       )
     }
   }
+}
 
-  private static func groupRecord(from row: GroupRow) -> GroupRecord {
-    GroupRecord(
+extension GroupRecord {
+  init(row: GroupRow) {
+    self.init(
       id: GroupID(rawValue: row.id),
       alias: row.alias,
       name: row.name,

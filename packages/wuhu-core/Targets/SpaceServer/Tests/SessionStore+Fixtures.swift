@@ -7,7 +7,7 @@ import Dependencies
 import GRDB
 import SessionDomain
 @testable import SpaceCore
-import WuweiNeo
+import Wuwei
 
 /// Session writes the cell makes, as fixtures: a test sets a session's state with them directly.
 extension SessionStore {
@@ -44,7 +44,7 @@ extension SessionStore {
     try await writer.write { db in
       try Recipient<Look>(kind: SessionMail.kind, key: id.rawValue).post(.look, on: db.sqliteConnection!)
     }
-    signals.post(id)
+    runtime.poke(id)
   }
 
   /// Nothing to do, and no mail on its way to the session's cell.

@@ -5,7 +5,7 @@
 #endif
 import GRDB
 import SessionDomain
-import WuweiNeo
+import Wuwei
 
 /// An input on its way to a session's queue. One on a `topic` replaces the one on it the model has not seen. It is due at `due`; with a `throttle` instead, no sooner than that long after the model last saw the topic, and a replaced input's time is kept; otherwise at once.
 public struct SessionPut: Hashable, Codable, Sendable {
@@ -57,7 +57,7 @@ extension SessionStore {
   /// Has the session's cell dial `url` and queue what it sends on the subscription's topic.
   public func stream(_ id: SessionID, _ subscription: SubscriptionID, url: URL, throttleSeconds: Double) async throws {
     try await writer.write { db in try Sessions.post(.stream(subscription, url, throttleSeconds), to: id.rawValue, in: db) }
-    signals.post(id)
+    runtime.poke(id)
   }
 }
 

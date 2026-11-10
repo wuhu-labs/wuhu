@@ -21,8 +21,8 @@ dependencies:
   - Dependencies
   - Logging
   - GRDB
-  - WuweiNeo
-  - WuweiNeoQueries
+  - Wuwei
+  - WuweiQueries
   - StructuredQueries
 swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault

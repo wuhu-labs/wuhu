@@ -51,9 +51,13 @@ enum GroupAccess {
     let groups: [String: GroupRow]
     let roles: [GroupRoleRow]
 
+    init(groups: [GroupRow], roles: [GroupRoleRow]) {
+      self.groups = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+      self.roles = roles
+    }
+
     init(_ db: Database) throws {
-      groups = Dictionary(uniqueKeysWithValues: try GroupRow.all.fetchAll(db).map { ($0.id, $0) })
-      roles = try GroupRoleRow.all.fetchAll(db)
+      try self.init(groups: GroupRow.all.fetchAll(db), roles: GroupRoleRow.all.fetchAll(db))
     }
 
     func live(_ group: String) -> GroupRow? {
@@ -102,6 +106,84 @@ enum GroupAccess {
       if group == GroupID.settings.rawValue { return .read }
       if session.isLiveRoot, session.grp == group { return .admin }
       return role(from: session.grp, in: group)
+    }
+
+    /// What `actor` may do in `group` acting out of `acting`; nil for no access.
+    /// The --dev seat is the caller's to admit, and gets no role here.
+    func role<Failure>(of actor: Actor, in group: GroupID, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> GroupRole? {
+      switch actor {
+      case .anonymous:
+        return nil
+      case let .observer(observer):
+        // An observer writes only its own group, whatever that group may write elsewhere.
+        let role = role(from: observer.group.rawValue, in: group.rawValue)
+        return group == observer.group ? role : role.map { min($0, .read) }
+      case let .page(page):
+        return role(of: page, in: group.rawValue)
+      case let .session(id):
+        guard let row = try rows.session(id) else { return nil }
+        return role(of: row, in: group.rawValue)
+      case let .person(_, id):
+        guard let row = try rows.account(id) else { return role(from: acting.rawValue, in: group.rawValue) }
+        return role(of: row, in: group.rawValue, acting: acting.rawValue)
+      }
+    }
+
+    /// The groups sessions acting in `group` reach: a filter over the same role.
+    func reach(of group: GroupID) -> Set<GroupID> {
+      Set(all.filter { role(from: group.rawValue, in: $0.rawValue) != nil })
+    }
+
+    /// The groups `actor` reads: its acting group's reach, plus its account's
+    /// rows. A guest reads only what its account is listed in.
+    func readable<Failure>(by actor: Actor, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> Set<GroupID> {
+      switch actor {
+      case .anonymous:
+        return reach(of: acting)
+      case let .observer(observer):
+        return reach(of: observer.group)
+      case let .page(page):
+        return try readable(by: page.viewer.principal.actor, acting: page.group, rows: rows)
+      case let .session(id):
+        guard let session = try rows.session(id) else { return [] }
+        return Set(all.filter { role(of: session, in: $0.rawValue) != nil })
+      case let .person(_, account):
+        guard let row = try rows.account(account) else { return reach(of: acting) }
+        // The seat a person takes is one they can read; their rows decide the rest.
+        var readable = Set(all.filter { role(of: row, in: $0.rawValue, acting: acting.rawValue) != nil })
+        readable.insert(acting)
+        return readable
+      }
+    }
+
+    /// The groups `actor` may write: its role in each is write or admin.
+    func writable<Failure>(by actor: Actor, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> Set<GroupID> {
+      func writes(_ role: GroupRole?) -> Bool { (role ?? .read) >= .write }
+      switch actor {
+      case .anonymous:
+        return reach(of: acting)
+      case let .observer(observer):
+        return writes(role(from: observer.group.rawValue, in: observer.group.rawValue)) ? [observer.group] : []
+      case let .page(page):
+        return Set(all.filter { writes(role(of: page, in: $0.rawValue)) })
+      case let .session(id):
+        guard let session = try rows.session(id) else { return [] }
+        return Set(all.filter { writes(role(of: session, in: $0.rawValue)) })
+      case let .person(_, account):
+        guard let row = try rows.account(account) else { return [] }
+        return Set(all.filter { writes(role(of: row, in: $0.rawValue, acting: acting.rawValue)) })
+      }
+    }
+
+    func administered<Failure>(by actor: Actor, rows: ActorRows<Failure>) throws(Failure) -> Set<GroupID> {
+      switch actor {
+      case .anonymous, .observer, .page:
+        return []
+      case let .session(id):
+        return try rows.session(id).map(administered(by:)) ?? []
+      case let .person(_, account):
+        return try rows.account(account).map(administered(by:)) ?? []
+      }
     }
 
     func isSpaceAdmin(_ account: String) -> Bool {
@@ -163,57 +245,26 @@ enum GroupAccess {
     try GroupSessionRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)
   }
 
-  /// What `actor` may do in `group` acting out of `acting`; nil for no access.
-  /// The --dev seat is the caller's to admit, and gets no role here.
+  /// How a rule finds the row of the session or the account an actor names.
+  struct ActorRows<Failure: Error> {
+    let session: (SessionID) throws(Failure) -> GroupSessionRow?
+    let account: (AccountID) throws(Failure) -> GroupAccountRow?
+  }
+
+  static func actorRows(in db: Database) -> ActorRows<any Error> {
+    ActorRows(session: { try sessionRow($0, in: db) }, account: { try accountRow($0, in: db) })
+  }
+
   static func role(of actor: Actor, in group: GroupID, acting: GroupID, in db: Database) throws -> GroupRole? {
-    let snapshot = try Snapshot(db)
-    switch actor {
-    case .anonymous:
-      return nil
-    case let .observer(observer):
-      // An observer writes only its own group, whatever that group may write elsewhere.
-      let role = snapshot.role(from: observer.group.rawValue, in: group.rawValue)
-      return group == observer.group ? role : role.map { min($0, .read) }
-    case let .page(page):
-      return snapshot.role(of: page, in: group.rawValue)
-    case let .session(id):
-      guard let session = try sessionRow(id, in: db) else { return nil }
-      return snapshot.role(of: session, in: group.rawValue)
-    case let .person(_, account):
-      guard let row = try accountRow(account, in: db) else {
-        return snapshot.role(from: acting.rawValue, in: group.rawValue)
-      }
-      return snapshot.role(of: row, in: group.rawValue, acting: acting.rawValue)
-    }
+    try Snapshot(db).role(of: actor, in: group, acting: acting, rows: actorRows(in: db))
   }
 
-  /// The groups sessions acting in `group` reach: a filter over the same role.
   static func reach(of group: GroupID, in db: Database) throws -> Set<GroupID> {
-    let snapshot = try Snapshot(db)
-    return Set(snapshot.all.filter { snapshot.role(from: group.rawValue, in: $0.rawValue) != nil })
+    try Snapshot(db).reach(of: group)
   }
 
-  /// The groups `actor` reads: its acting group's reach, plus its account's
-  /// rows. A guest reads only what its account is listed in.
   static func readable(by actor: Actor, acting: GroupID, in db: Database) throws -> Set<GroupID> {
-    let snapshot = try Snapshot(db)
-    switch actor {
-    case .anonymous:
-      return try reach(of: acting, in: db)
-    case let .observer(observer):
-      return try reach(of: observer.group, in: db)
-    case let .page(page):
-      return try readable(by: page.viewer.principal.actor, acting: page.group, in: db)
-    case let .session(id):
-      guard let session = try sessionRow(id, in: db) else { return [] }
-      return Set(snapshot.all.filter { snapshot.role(of: session, in: $0.rawValue) != nil })
-    case let .person(_, account):
-      guard let row = try accountRow(account, in: db) else { return try reach(of: acting, in: db) }
-      // The seat a person takes is one they can read; their rows decide the rest.
-      var readable = Set(snapshot.all.filter { snapshot.role(of: row, in: $0.rawValue, acting: acting.rawValue) != nil })
-      readable.insert(acting)
-      return readable
-    }
+    try Snapshot(db).readable(by: actor, acting: acting, rows: actorRows(in: db))
   }
 
   static func isHumanAdmin(_ account: AccountID, of group: GroupID, in db: Database) throws -> Bool {

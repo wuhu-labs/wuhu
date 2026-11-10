@@ -32,7 +32,7 @@ extension SessionStore {
     let head = uuid()
     let restart = try await rows { try $0.restart(id, executor: executor, note: note, modelRoute: modelRoute, runningWork: runningWork, uuid: { head }) }
     let hydration = try await hydrate(id)
-    if hydration.queueHead > hydration.queueTail { signals.post(id) }
+    if hydration.queueHead > hydration.queueTail { runtime.poke(id) }
     return restart
   }
 }

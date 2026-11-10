@@ -242,7 +242,7 @@ extension SessionStore {
       return MessageDelivery(message: record, enqueued: enqueued, replayed: false)
     }
     for recipient in delivery.enqueued {
-      signals.post(recipient)
+      runtime.poke(recipient)
     }
     return delivery
   }

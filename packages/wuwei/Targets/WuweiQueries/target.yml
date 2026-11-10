@@ -1,0 +1,6 @@
+name: WuweiQueries
+kind: library
+sources: Sources
+dependencies:
+  - Wuwei
+  - StructuredQueriesCore

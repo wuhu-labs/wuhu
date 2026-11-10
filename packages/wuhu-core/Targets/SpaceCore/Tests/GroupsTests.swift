@@ -185,7 +185,7 @@ import Testing
     #expect(try await !space.isAdmin(.anonymous, of: .shared, acting: .shared))
   }
 
-  // administeredGroups(by:) names exactly the groups isAdmin admits, for an
+  // The space cell's administered(by:) names exactly the groups isAdmin admits, for an
   // agent session, a space admin and a person who administers only their own
   // group, and an anonymous caller.
   @Test func administeredGroupsNamesWhatIsAdminAdmitsForEveryActor() async throws {
@@ -208,13 +208,13 @@ import Testing
       (.anonymous, []),
     ]
     for (actor, expected) in cases {
-      #expect(try await space.administeredGroups(by: actor, acting: .shared) == expected, "\(actor)")
+      #expect(space.cell.administered(by: .shared(actor)) == expected, "\(actor)")
       for group in everyGroup {
         #expect(try await space.isAdmin(actor, of: group, acting: .shared) == expected.contains(group), "\(actor) of \(group)")
       }
     }
     _ = try await space.removeAccount(alice.id)
-    #expect(try await space.administeredGroups(by: .person(persona: alicesGroup.rawValue, account: alice.id), acting: .shared).isEmpty)
+    #expect(space.cell.administered(by: .shared(.person(persona: alicesGroup.rawValue, account: alice.id))).isEmpty)
   }
 
   @Test func aPersonAdministersTheirOwnGroupAndTheSpaceOnlyFromTheAdminTable() async throws {

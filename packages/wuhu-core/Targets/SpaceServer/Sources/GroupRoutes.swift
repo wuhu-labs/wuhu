@@ -58,8 +58,7 @@ func addGroupRoutes(
     }
     do {
       let id = try await space.createGroup(alias: input.alias, name: input.name, owner: owner)
-      let principal = Principal(actor: .person(persona: "", account: owner), group: id)
-      return try await Response.json(try groupDetail(id, principal: principal, space: space), status: .created)
+      return try Response.json(try groupDetail(id, space.cell(of: id)), status: .created)
     } catch { return groupErrorResponse(error) }
   }
 
@@ -72,11 +71,9 @@ func addGroupRoutes(
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
-    do {
-      let readable = try await space.role(of: principal, in: group) != nil
-      guard readable else { return unknownGroup(parameters) }
-      return try await Response.json(try groupDetail(group, principal: principal, space: space))
-    } catch { return groupErrorResponse(error) }
+    let cell = space.cell(of: group)
+    guard cell.role(of: principal.actor, acting: principal.group) != nil else { return unknownGroup(parameters) }
+    do { return try Response.json(try groupDetail(group, cell)) } catch { return groupErrorResponse(error) }
   }
 
   // Open/private and the secrets switch: a group admin's call.
@@ -121,7 +118,7 @@ func addGroupRoutes(
       if let secrets {
         try await space.setSecretsScope(secrets, of: group, by: principal.actor, acting: principal.group)
       }
-      return try await Response.json(try groupDetail(group, principal: principal, space: space))
+      return try Response.json(try groupDetail(group, space.cell(of: group)))
     } catch { return groupErrorResponse(error) }
   }
 
@@ -171,11 +168,10 @@ func addGroupRoutes(
   }
 }
 
-private func groupDetail(_ group: GroupID, principal: Principal, space: Space) async throws -> GroupDetail {
-  guard let record = try await space.group(group) else {
-    throw SpaceError.notFound(group.rawValue)
+private func groupDetail(_ id: GroupID, _ group: GroupCell) throws -> GroupDetail {
+  guard let record = group.record() else {
+    throw SpaceError.notFound(id.rawValue)
   }
-  let entries = try await space.grants(of: group, by: principal)
   return GroupDetail(
     id: record.id.rawValue,
     alias: record.alias,
@@ -183,7 +179,7 @@ private func groupDetail(_ group: GroupID, principal: Principal, space: Space) a
     open: record.visibility == .open,
     secrets: record.secretsScope.rawValue,
     personal: record.personalAccount != nil,
-    entries: entries.map { GroupAccessEntry(kind: $0.subject.rawValue, id: $0.id, role: $0.role.rawValue) },
+    entries: group.grants().map { GroupAccessEntry(kind: $0.subject.rawValue, id: $0.id, role: $0.role.rawValue) },
   )
 }
 

@@ -5,7 +5,7 @@
 
 ## In-process execution ownership
 
-`SessionRuntime.assemble` composes one Hub actor (the session verbs main's API serves) and one `SessionExecution` wired by `KernelWorker`: session loops, provider sockets, tool execution, QuickJS scripts and handlers, all in the server process, reading and writing the session tables themselves. The tools reach main's API through `MainConnection`, in process, with the session's token; `SessionRuntime.run` starts the sessions once that API is bound. The routes call the execution's verbs directly and `SubscriptionFiring` mails observer cells through it. Session loops run each inference step as a wuwei-neo job (`InferenceJob`, in `space.sqlite` on the shared backend), which owns the step's retries and attempt records. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
+`SessionRuntime.assemble` composes one Hub actor (the session verbs main's API serves) and one `SessionExecution` wired by `KernelWorker`: session loops, provider sockets, tool execution, QuickJS scripts and handlers, all in the server process, reading and writing the session tables themselves. The tools reach main's API through `MainConnection`, in process, with the session's token; `SessionRuntime.run` starts the sessions once that API is bound. The routes call the execution's verbs directly and `SubscriptionFiring` mails observer cells through it. Session loops run each inference step as a wuwei job (`InferenceJob`, in `space.sqlite` on the shared backend), which owns the step's retries and attempt records. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
 
 ## Person–session DM refusal
 

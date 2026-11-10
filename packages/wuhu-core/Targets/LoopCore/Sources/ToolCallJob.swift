@@ -1,8 +1,8 @@
 import SessionDomain
 import StructuredQueries
 import struct WuhuAI.ToolCall
-import WuweiNeo
-import WuweiNeoQueries
+import Wuwei
+import WuweiQueries
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

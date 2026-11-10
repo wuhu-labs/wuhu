@@ -1,5 +1,5 @@
 import SessionDomain
-import WuweiNeo
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

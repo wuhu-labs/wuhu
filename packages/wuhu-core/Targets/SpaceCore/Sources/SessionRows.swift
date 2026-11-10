@@ -8,12 +8,12 @@ import GRDB
 import SessionDomain
 import StructuredQueries
 
-/// The writes a session makes to its own tables, in a transaction its caller holds: the session cell's, on neo's shared backend, takes them through the space writer's own connection.
+/// The writes a session makes to its own tables, in a transaction its caller holds: the session cell's, on wuwei's shared backend, takes them through the space writer's own connection.
 public struct SessionRows {
   let db: Database
   let store: SessionStore
 
-  /// `host` is the space writer's connection, as neo's shared backend lends it to a cell.
+  /// `host` is the space writer's connection, as wuwei's shared backend lends it to a cell.
   public init(host: AnyObject?, store: SessionStore) {
     guard let db = host as? Database else { preconditionFailure("session rows need the space writer's connection") }
     self.init(db: db, store: store)

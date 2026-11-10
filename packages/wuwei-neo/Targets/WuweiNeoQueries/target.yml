@@ -1,6 +1,0 @@
-name: WuweiNeoQueries
-kind: library
-sources: Sources
-dependencies:
-  - WuweiNeo
-  - StructuredQueriesCore

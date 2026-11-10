@@ -47,9 +47,9 @@ externalPackages:
   wuhu-ai:
     path: ../wuhu-ai
     products: [WuhuAI]
-  wuwei-neo:
-    path: ../wuwei-neo
-    products: [WuweiNeo, WuweiNeoQueries]
+  wuwei:
+    path: ../wuwei
+    products: [Wuwei, WuweiQueries]
   wuhu-fetch:
     path: ../wuhu-fetch
     products: [Fetch, FetchSSE, FetchAsyncHTTPClient, FetchWebSocket, FetchURLSession, FetchTunnel, FetchTunnelWebSocket, PinnedTLS]

@@ -331,16 +331,16 @@ extension SessionStore {
         let payload = try answer(SubscriptionSlot(id: subscriptionID, kind: .timer(schedule, message: timer.content.text)))
         try Sessions.clear(key, topic: subscriptionID.rawValue, in: db)
         try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
-        let signals = self.signals
-        db.afterNextTransaction { _ in signals.post(id) }
+        let runtime = self.runtime
+        db.afterNextTransaction { _ in runtime.poke(id) }
         return payload
       }
       if stored == nil, let stream = try Sessions.streams(key, in: db).first(where: { $0.id == subscriptionID }) {
         let payload = try answer(SubscriptionSlot(id: subscriptionID, kind: .stream(url: stream.url, throttleSeconds: 0)))
         try Sessions.post(.unstream(subscriptionID), to: key, in: db)
         try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
-        let signals = self.signals
-        db.afterNextTransaction { _ in signals.post(id) }
+        let runtime = self.runtime
+        db.afterNextTransaction { _ in runtime.poke(id) }
         return payload
       }
       let payload = try answer(stored)
@@ -493,7 +493,7 @@ extension SessionStore {
         }.execute(db)
       }
     }
-    signals.post(id)
+    runtime.poke(id)
   }
 }
 

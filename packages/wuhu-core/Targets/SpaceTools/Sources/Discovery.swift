@@ -24,16 +24,17 @@ extension SpaceToolContext {
 
   public func discoveryGroups(dev: Bool = false) async throws -> [GroupSummary] {
     let caller = try await discoveryPrincipal()
-    let live = try await space.groups().filter { $0.removedAt == nil }
+    let cell = space.cell
+    let live = cell.groups().filter { $0.removedAt == nil }
     let member: Set<GroupID>
     let readable: Set<GroupID>
     switch caller.actor {
     case .session, .observer, .page:
       member = [caller.group]
-      readable = try await space.reads(for: caller)
+      readable = cell.readable(by: caller)
     case .person:
-      member = try await space.writableGroups(for: caller)
-      readable = try await space.reads(for: caller)
+      member = cell.writable(by: caller)
+      readable = cell.readable(by: caller)
     case .anonymous:
       let all = dev ? Set(live.map(\.id)) : []
       member = all
@@ -46,7 +47,7 @@ extension SpaceToolContext {
       administered = dev ? Set(live.map(\.id)) : []
       named = dev
     } else {
-      administered = try await space.administeredGroups(by: caller.actor, acting: caller.group)
+      administered = cell.administered(by: caller)
       named = true
     }
     return live

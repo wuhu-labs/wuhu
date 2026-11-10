@@ -3,8 +3,8 @@ import Logging
 import struct ServerTelemetry.CacheExpectation
 import SessionDomain
 import StructuredQueries
-import WuweiNeo
-import WuweiNeoQueries
+import Wuwei
+import WuweiQueries
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

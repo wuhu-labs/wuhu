@@ -1,9 +1,10 @@
+import Clocks
 import Dependencies
 import struct MainHub.ScriptHandlerResult
 import func ServerTelemetry.expectingCache
 import SessionDomain
 import SpaceCore
-import WuweiNeo
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -87,23 +88,6 @@ struct LoopClient: Sendable {
   }
 }
 
-extension Worker {
-  /// The runtime the session cells, their steps, tool calls and compactions run on, keeping them in `storage`.
-  static func loops(storage: Storage, client: LoopClient) -> Worker {
-    var dependencies = Dependencies()
-    dependencies.register(client)
-    let worker = Worker(
-      id: "loops", storage: storage, scheduler: client.scheduler,
-      registrations: [
-        .cell(SessionCell.self), .cell(ObserverCell.self),
-        .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self),
-      ],
-      dependencies: dependencies,
-    )
-    return worker
-  }
-}
-
 extension Transcript {
   var hasPendingPressureNotice: Bool {
     for item in items.reversed() {
@@ -118,4 +102,16 @@ extension Transcript {
     }
     return false
   }
+}
+
+extension Date {
+  init(_ instant: Instant) {
+    self.init(timeIntervalSince1970: Double(instant.milliseconds) / 1000)
+  }
+}
+
+func deadlineSleep(after delay: Duration, clock: any NonsendingClock<Duration>) -> @Sendable () async throws -> Void {
+  let clock = AnyClock(clock)
+  let deadline = clock.now.advanced(by: delay)
+  return { try await clock.sleep(until: deadline, tolerance: nil) }
 }

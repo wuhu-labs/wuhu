@@ -172,13 +172,13 @@ public struct SessionStore: Sendable {
   let blobs: BlobStore
   let dateGen: DateGenerator
   let broadcast: FSBroadcast
-  let signals: WorkSignals
+  let runtime: SpaceRuntime
   let rng: WithRandomNumberGenerator
 }
 
 extension Space {
   public nonisolated var sessions: SessionStore {
-    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, signals: workSignals, rng: rng)
+    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, runtime: runtime, rng: rng)
   }
 }
 

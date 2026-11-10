@@ -36,7 +36,7 @@ public enum HandlerOutcome: Hashable, Sendable, Codable {
   case failed(String)
 }
 
-/// The writes an observer cell makes to its slot, in a transaction its caller holds: the space writer's own connection, as neo's shared backend lends it.
+/// The writes an observer cell makes to its slot, in a transaction its caller holds: the space writer's own connection, as wuwei's shared backend lends it.
 public struct ObserverRows {
   let db: Database
   let store: SessionStore

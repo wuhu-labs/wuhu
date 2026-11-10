@@ -4,7 +4,7 @@ import SessionDomain
 import struct SpaceContract.GroupID
 import enum SpaceCore.HandlerOutcome
 import enum SpaceCore.SubscriptionOwner
-import WuweiNeo
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

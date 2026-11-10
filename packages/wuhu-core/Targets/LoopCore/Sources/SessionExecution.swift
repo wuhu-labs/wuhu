@@ -9,7 +9,7 @@ import enum MainHub.SessionError
 import struct MainHub.SubtreeArchiveBusy
 import SessionTools
 import enum SpaceContract.ScriptOutput
-import WuweiNeo
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -18,10 +18,10 @@ import WuweiNeo
 import SessionDomain
 import SpaceCore
 
-/// The sessions' runtime: the loops, the tools and the scripts, the handler slots' observer cells, and the verbs main's routes take for a session. Each loop is a session cell on neo's shared backend over `space`'s database. Nothing runs until `start`: mail waits in the store.
+/// The sessions' runtime: the loops, the tools and the scripts, the handler slots' observer cells, and the verbs main's routes take for a session. Each loop is a session cell on wuwei's shared backend over `space`'s database. Nothing runs until `start`: mail waits in the store.
 public struct SessionExecution: Sendable {
-  private let loops: WuweiNeo.Worker
-  private let scheduler: DependencyScheduler
+  private let space: Space
+  private let client: LoopClient
   let store: SessionStore
   private let scripts: Scripts
   public let tools: ToolExecutor
@@ -55,8 +55,7 @@ public struct SessionExecution: Sendable {
     }
     running = config.runningWork
     @Dependency(\.continuousClock) var clock
-    let scheduler = DependencyScheduler()
-    self.scheduler = scheduler
+    self.space = space
     let handler: @Sendable (HandlerJob.Params) async throws -> ScriptHandlerResult = { params in
       switch params.owner {
       case let .session(session):
@@ -68,28 +67,35 @@ public struct SessionExecution: Sendable {
         }
       }
     }
-    let client = withEscapedDependencies { [config] dependencies in
+    client = withEscapedDependencies { [config] dependencies in
       LoopClient(
-        store: space.sessions, config: config, sleep: { deadlineSleep(after: $0, clock: clock) }, dependencies: dependencies, scheduler: scheduler,
+        store: space.sessions, config: config, sleep: { deadlineSleep(after: $0, clock: clock) }, dependencies: dependencies, scheduler: space.worker.scheduler,
         handler: handler,
       )
     }
     store = space.sessions
-    let database: any SharedDatabase
-    do { database = try space.neoDatabase() } catch { preconditionFailure("the space database took no reader: \(error)") }
-    let loops = WuweiNeo.Worker.loops(storage: .shared(database), client: client)
-    self.loops = loops
-    space.sessions.onMail { loops.poke(SessionCell.ID($0.rawValue).recipient) }
   }
 
-  /// Takes the mail that waited and whatever a restart left to run.
+  private var loops: Wuwei.Worker {
+    space.worker
+  }
+
+  /// Gives the space's worker the loops' kinds and starts it: it takes the mail that waited and whatever a restart left to run.
   public func start() {
+    let loops = loops
+    guard !loops.isStarted else { return }
+    for kind: Registration in [
+      .cell(SessionCell.self), .cell(ObserverCell.self),
+      .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self),
+    ] {
+      loops.register(kind)
+    }
+    loops.provide(client)
     loops.start()
   }
 
   public func shutdown() async {
-    await loops.drain()
-    scheduler.stop()
+    await space.stopWorker()
     await scripts.close()
   }
 

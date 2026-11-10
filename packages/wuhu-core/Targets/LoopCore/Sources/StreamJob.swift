@@ -6,8 +6,8 @@ import enum MainHub.StreamFailure
 import SessionDomain
 import enum SpaceCore.SubscriptionOwner
 import StructuredQueries
-import WuweiNeo
-import WuweiNeoQueries
+import Wuwei
+import WuweiQueries
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

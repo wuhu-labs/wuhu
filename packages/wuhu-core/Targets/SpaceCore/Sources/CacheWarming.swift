@@ -88,7 +88,7 @@ extension SessionStore {
       try Sessions.enqueue(id.rawValue, input: .notification(.init(id: noticeID, timestamp: now, kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: text))), nowDate: now, in: db)
       return true
     }
-    if enqueued { signals.post(id) }
+    if enqueued { runtime.poke(id) }
     return enqueued
   }
 }

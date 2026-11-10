@@ -52,7 +52,7 @@ extension SessionStore {
 
   func requestCommand(_ id: SessionID, _ command: SessionCommand) async throws {
     try await rows { try $0.requestCommand(id, command) }
-    signals.post(id)
+    runtime.poke(id)
   }
 
   @discardableResult
@@ -61,7 +61,7 @@ extension SessionStore {
     let head = uuid()
     let restart = try await rows { try $0.restart(id, executor: executor, note: note, modelRoute: modelRoute, runningWork: runningWork, uuid: { head }) }
     let hydration = try await hydrate(id)
-    if hydration.queueHead > hydration.queueTail { signals.post(id) }
+    if hydration.queueHead > hydration.queueTail { runtime.poke(id) }
     return restart
   }
 

@@ -29,7 +29,7 @@ dependencies:
   - SessionDomain
   - SessionTools
   - LoopCore
-  - WuweiNeo
+  - Wuwei
   - InferenceKit
   - ModelProviders
   - ProviderCapabilities

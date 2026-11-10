@@ -143,14 +143,14 @@ extension SessionStore {
     try await writer.write { db in
       try Sessions.enqueue(key, input: input, topic: topic, due: due, nowDate: nowDate, in: db)
     }
-    signals.post(id)
+    runtime.poke(id)
   }
 
   /// Mails the session's cell to take back the input on `topic` that the model has not seen.
   public func clear(_ id: SessionID, topic: String) async throws {
     let key = id.rawValue
     try await writer.write { db in try Sessions.clear(key, topic: topic, in: db) }
-    signals.post(id)
+    runtime.poke(id)
   }
 
   public func drainQueue(_ id: SessionID) async throws -> QueueDrain {

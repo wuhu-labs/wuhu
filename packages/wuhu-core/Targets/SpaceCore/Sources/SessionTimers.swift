@@ -63,7 +63,7 @@ extension SessionStore {
       try receipt.record(now: now, in: db)
       return receipt.payload
     }
-    signals.post(id)
+    runtime.poke(id)
     return payload
   }
 }
