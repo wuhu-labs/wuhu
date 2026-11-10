@@ -47,7 +47,6 @@ extension SessionStore {
     receipt: (holder: Caller, callID: ToolCallID)? = nil,
     cloneOwed: Bool = false,
     modelRoute: SessionModelRoute? = nil,
-    request: (id: RequestID, requester: Caller, brief: String, terms: RequestTerms, stallSeconds: Double?)? = nil,
     observer: Observer? = nil,
   ) async throws -> SessionID {
     @Dependency(\.uuid) var uuid
@@ -108,12 +107,6 @@ extension SessionStore {
       }
       let id = SessionID(name)
       if let parent { try Self.watchChildren(parent, now: now, in: db) }
-      if let request {
-        try Self.insertRequest(
-          request.id, group: group, requester: request.requester, task: id, brief: request.brief, terms: request.terms,
-          stallSeconds: request.stallSeconds, now: now, in: db,
-        )
-      }
       if let receipt {
         try Sessions.recordReceipt(
           receipt.holder.receiptHolder,

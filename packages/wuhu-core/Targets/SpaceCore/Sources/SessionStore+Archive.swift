@@ -31,20 +31,8 @@ extension SessionStore {
   }
 
   public func closeRequestsForArchive(_ id: SessionID) async throws {
-    let (record, open) = try await writer.read { db in
-      try (Sessions.record(id.rawValue, in: db), RequestRow.open(task: id.rawValue, in: db).map { ($0, try $0.replyTarget(in: db)) })
-    }
-    for (row, target) in open {
-      _ = try await post(
-        target,
-        messageID: MessageID(UUID.deterministic("archived-before-reporting", id.rawValue, row.id).uuidString.lowercased()),
-        sender: Sender(id: id.rawValue, timeZone: TimeZone(identifier: "UTC")!),
-        senderSession: id,
-        kind: .final,
-        requestID: RequestID(row.id),
-        content: MessageContent(text: "session \(id.rawValue) (\(record.title)) was archived before reporting on request \(row.id)"),
-        request: .close(as: .failed, result: nil),
-      )
-    }
+    let record = try await record(id)
+    let now = dateGen.now
+    try await runtime.worker().call(Self.requests(of: id, askedBy: record.parent)) { try $0.archived(id, title: record.title, at: now) }
   }
 }

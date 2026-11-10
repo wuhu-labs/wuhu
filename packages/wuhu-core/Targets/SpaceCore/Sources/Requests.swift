@@ -58,52 +58,13 @@ struct RequestRow {
 
   var requestStatus: RequestStatus { RequestStatus(rawValue: status)! }
 
-  /// The session that asked, or nil when a person did through a page.
-  func requesterSession(in db: Database) throws -> SessionID? {
-    try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM sessions WHERE id = ?)", arguments: [requester])! ? SessionID(requester) : nil
-  }
-
-  /// Where the task answers: its DM with a requesting session, else its own
-  /// box, where the person asked.
-  func replyTarget(in db: Database) throws -> ConversationTarget {
-    try requesterSession(in: db).map { .dm(with: $0.rawValue) } ?? .box(SessionID(task))
-  }
-
-  static func find(_ id: RequestID, in db: Database) throws -> Self? {
-    try Self.where { $0.id.eq(id.rawValue) }.fetchOne(db)
-  }
-
   static func open(task: String, in db: Database) throws -> [Self] {
     try Self.where { $0.task.eq(task) && $0.status.in(RequestStatus.allCases.filter(\.isOpen).map(\.rawValue)) }
       .order(by: \.createdAt).fetchAll(db)
   }
-
-  static func setStatus(_ id: RequestID, from: [RequestStatus], to status: RequestStatus, now: String, in db: Database) throws {
-    try Self.update {
-      $0.status = #bind(status.rawValue)
-      $0.updatedAt = #bind(now)
-    }.where { $0.id.eq(id.rawValue) && $0.status.in(from.map(\.rawValue)) }.execute(db)
-  }
 }
 
 extension SessionStore {
-  /// Inserts the request's row unless it exists.
-  static func insertRequest(
-    _ id: RequestID, group: GroupID, requester: Caller, task: SessionID, brief: String, terms: RequestTerms, stallSeconds: Double?,
-    now: String, in db: Database,
-  ) throws {
-    guard try RequestRow.find(id, in: db) == nil else { return }
-    try RequestRow.insert {
-      RequestRow(
-        id: id.rawValue, group: group.rawValue, requester: requester.name, firing: requester.firing, task: task.rawValue,
-        status: RequestStatus.open.rawValue, brief: brief,
-        schema: terms.schema?.jsonString(sortedKeys: true), fields: terms.fields?.jsonString(sortedKeys: true),
-        result: nil, refusals: "[]", stallSeconds: stallSeconds,
-        createdAt: now, updatedAt: now,
-      )
-    }.execute(db)
-  }
-
   /// The requests `requester` opened that still wait on their final, oldest first.
   public func awaitedRequests(_ requester: SessionID) async throws -> [AwaitedRequest] {
     try await writer.read { db in
@@ -129,8 +90,7 @@ extension SessionStore {
     }
   }
 
-  /// Opens a request on a child, or, for a person, on the top-level agent
-  /// their page created, in its box.
+  /// Opens a request on a child, or, for a person, on the top-level agent their page created, in its box. The conversation checks who asks and writes the row with the message.
   public func openRequest(
     on task: SessionID,
     from requester: Caller,
@@ -139,49 +99,16 @@ extension SessionStore {
     stallSeconds: Double? = nil,
     terms: RequestTerms = .none,
   ) async throws -> MessageDelivery {
-    let key = task.rawValue
-    let request = RequestID(messageID.rawValue)
-    let group = try await writer.read { db in
-      let record = try Sessions.record(key, in: db)
-      switch requester {
-      case let .session(parent):
-        guard record.parent == parent else { throw SessionStoreError.notTheParent(key) }
-      case let .person(person):
-        guard record.parent == nil, record.createdBy == person.persona, record.group == person.group else {
-          throw SessionStoreError.notTheParent(key)
-        }
-      case let .observer(observer):
-        guard record.parent == nil, record.createdBy == observer.member, record.group == observer.group else {
-          throw SessionStoreError.notTheParent(key)
-        }
-      }
-      // A retry of a request that already posted replays it: that request is
-      // the open one, not a second.
-      if try Conversations.message(id: messageID.rawValue, in: db) == nil,
-         let open = try RequestRow.open(task: key, in: db).first(where: { $0.id != request.rawValue })
-      {
-        throw SessionStoreError.requestAlreadyOpen(open.id)
-      }
-      return record.group
-    }
-    // The row and its quiet reminder commit with the message; a replayed
-    // request keeps the ones it got.
-    return try await post(
-      requester.session == nil ? .box(task) : .dm(with: key),
-      messageID: messageID,
-      sender: Sender(id: requester.name, timeZone: TimeZone(identifier: "UTC")!),
-      senderSession: requester.session,
-      kind: .request,
-      requestID: request,
-      content: MessageContent(text: text),
-      acting: requester.principal,
-      request: .open(group: group, requester: requester, task: task, brief: text, terms: terms, stallSeconds: stallSeconds),
+    let post = Post(
+      target: requester.session == nil ? .box : .dm(with: task.rawValue), messageID: messageID,
+      sender: Sender(id: requester.name, timeZone: TimeZone(identifier: "UTC")!), senderSession: requester.session,
+      kind: .request, requestID: RequestID(messageID.rawValue), content: MessageContent(text: text), acting: requester.principal,
+      request: .open(requester: requester, task: task, brief: text, terms: terms, stallSeconds: stallSeconds), at: dateGen.now,
     )
+    return try await runtime.worker().call(Self.requests(of: task, askedBy: requester.session)) { try $0.post(post) }
   }
 
-  /// Posts a report from the task to the request's requester. A final checks
-  /// the request's schema first: a refused one posts nothing, counts against
-  /// the request, and the last allowed refusal fails it.
+  /// Posts a report from the task to the request's requester. A refused final throws `reportRefused` with what is left.
   public func report(
     _ task: SessionID,
     request: RequestID,
@@ -189,71 +116,23 @@ extension SessionStore {
     messageID: MessageID,
     text: String,
   ) async throws -> MessageDelivery {
-    // A retried report is the first one again: its message stands, and what
-    // that message closed stays closed.
-    if let posted = try await message(messageID) {
-      return MessageDelivery(message: posted, enqueued: [], replayed: true)
+    let report = Report(task: task, request: request, kind: kind, messageID: messageID, text: text, at: dateGen.now)
+    switch try await runtime.worker().call(Self.requests(of: task, askedBy: try await record(task).parent), { try $0.report(report) }) {
+    case let .delivered(delivery): return delivery
+    case let .refused(violations, left): throw SessionStoreError.reportRefused(request.rawValue, violations: violations, left: left)
     }
-    let (row, target) = try await writer.read { db in
-      _ = try Sessions.record(task.rawValue, in: db)
-      guard let row = try RequestRow.find(request, in: db), row.task == task.rawValue, row.requestStatus.isOpen else {
-        throw SessionStoreError.unknownRequest(request.rawValue)
-      }
-      return (row, try row.replyTarget(in: db))
-    }
-    var result = JSONValue.string(text).jsonString()
-    if kind == .final, let schema = row.schema {
-      let violations = Self.violations(of: text, against: schema)
-      guard violations.isEmpty else {
-        try await refuse(row, to: target, messageID: messageID, violations: violations)
-      }
-      result = JSONValue.parse(text)!.jsonString()
-    }
-    let finalResult = result
-    return try await post(
-      target,
-      messageID: messageID,
-      sender: Sender(id: task.rawValue, timeZone: TimeZone(identifier: "UTC")!),
-      senderSession: task,
-      kind: kind,
-      requestID: request,
-      content: MessageContent(text: text),
-      request: kind == .final ? .close(as: .done, result: finalResult) : .progress,
-    )
   }
 
+  /// Where a task's requests live: its DM with the session that asks, its parent, else its own box.
+  static func requests(of task: SessionID, askedBy requester: SessionID?) -> ConversationCell.ID {
+    ConversationCell.ID(requester.map { Conversations.dmID($0.rawValue, task.rawValue).rawValue } ?? task.rawValue)
+  }
+}
+
+extension RequestTerms {
   static func violations(of text: String, against schema: String) -> [String] {
     guard let value = JSONValue.parse(text) else { return ["the final report is not JSON; the request's schema wants a JSON value"] }
     return try! JSONSchema(JSONValue.parse(schema)!).violations(of: value)
-  }
-
-  /// A retried attempt, however late, is refused again without counting twice.
-  private func refuse(_ row: RequestRow, to target: ConversationTarget, messageID: MessageID, violations: [String]) async throws -> Never {
-    let refusals = try await writer.write { db in
-      let current = try RequestRow.find(RequestID(row.id), in: db)!
-      var attempts = JSONValue.parse(current.refusals)!.array!
-      guard !attempts.contains(.string(messageID.rawValue)) else { return attempts.count }
-      attempts.append(.string(messageID.rawValue))
-      try RequestRow.update {
-        $0.refusals = #bind(JSONValue.array(attempts).jsonString())
-        $0.updatedAt = #bind(SQLiteDateFormat.string(from: self.dateGen.now))
-      }.where { $0.id.eq(row.id) }.execute(db)
-      return attempts.count
-    }
-    let left = max(RequestTerms.refusalLimit - refusals, 0)
-    if left == 0 {
-      _ = try await post(
-        target,
-        messageID: messageID,
-        sender: Sender(id: row.task, timeZone: TimeZone(identifier: "UTC")!),
-        senderSession: SessionID(row.task),
-        kind: .final,
-        requestID: RequestID(row.id),
-        content: MessageContent(text: "request \(row.id) failed: its final report broke the request's schema \(refusals) times; last: \(violations.joined(separator: "; "))"),
-        request: .close(as: .failed, result: nil),
-      )
-    }
-    throw SessionStoreError.reportRefused(row.id, violations: violations, left: left)
   }
 }
 

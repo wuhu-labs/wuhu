@@ -171,7 +171,6 @@ extension Hub {
         receipt: (holder: caller, callID: callID),
         cloneOwed: template != nil,
         modelRoute: route,
-        request: expectsReply ? (RequestID(messageID.rawValue), requester, order.message!, terms, stall) : nil,
         observer: caller.observer,
       )
     } catch let refusal as ObserverRefusal {

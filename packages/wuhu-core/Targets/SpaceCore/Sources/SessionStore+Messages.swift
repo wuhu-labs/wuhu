@@ -109,6 +109,7 @@ extension SessionStore {
     return readable
   }
 
+  /// A post is a call to its conversation's cell.
   public func post(
     _ target: ConversationTarget,
     messageID: MessageID,
@@ -121,27 +122,6 @@ extension SessionStore {
     content: MessageContent,
     uploads: [AttachmentUpload] = [],
     acting: Principal? = nil,
-  ) async throws -> MessageDelivery {
-    try await post(
-      target, messageID: messageID, sender: sender, senderSession: senderSession, kind: kind, requestID: requestID, replyTarget: replyTarget,
-      viewing: viewing, content: content, uploads: uploads, acting: acting, request: nil,
-    )
-  }
-
-  /// A post is a call to its conversation's cell. `request` is what the message does to its request, written in the same step: a replayed message leaves the request as it is.
-  func post(
-    _ target: ConversationTarget,
-    messageID: MessageID,
-    sender: Sender,
-    senderSession: SessionID? = nil,
-    kind: MessageKind = .message,
-    requestID: RequestID? = nil,
-    replyTarget: MessageID? = nil,
-    viewing: Viewing? = nil,
-    content: MessageContent,
-    uploads: [AttachmentUpload] = [],
-    acting: Principal? = nil,
-    request: RequestStep?,
   ) async throws -> MessageDelivery {
     precondition(viewing == nil || senderSession == nil, "only a person's message carries viewing")
     let now = dateGen.now
@@ -172,7 +152,7 @@ extension SessionStore {
     }
     var post = Post(
       target: place, messageID: messageID, sender: sender, senderSession: senderSession, kind: kind, requestID: requestID, replyTarget: replyTarget,
-      viewing: viewing, content: content, acting: acting, request: request, at: now,
+      viewing: viewing, content: content, acting: acting, at: now,
     )
     let worker = runtime.worker()
     let cell = ConversationCell.ID(conversation.rawValue)
