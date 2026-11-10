@@ -47,21 +47,19 @@ public struct RequestArguments: Decodable, Sendable {
   }
 }
 
-/// A request's kind, key, schema and fields as a caller spells them: flat on
-/// the request tool, under `request` on create_session.
+/// A request's schema and fields as a caller spells them: flat on the request
+/// tool, under `request` on create_session.
 public struct RequestTermsArguments: Decodable, Sendable, Hashable {
-  public var kind: String?
-  public var key: String?
   public var schema: JSONValue?
   public var fields: JSONValue?
 
-  public init(kind: String? = nil, key: String? = nil, schema: JSONValue? = nil, fields: JSONValue? = nil) {
-    self.kind = kind; self.key = key; self.schema = schema; self.fields = fields
+  public init(schema: JSONValue? = nil, fields: JSONValue? = nil) {
+    self.schema = schema; self.fields = fields
   }
 
   func terms() throws -> RequestTerms {
     do throws(RequestTermsError) {
-      return try RequestTerms(kind: kind, key: key, schema: schema, fields: fields)
+      return try RequestTerms(schema: schema, fields: fields)
     } catch {
       throw ToolProblem(error.message, code: "invalidArgument")
     }

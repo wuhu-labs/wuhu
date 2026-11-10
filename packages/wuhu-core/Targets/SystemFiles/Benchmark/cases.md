@@ -209,11 +209,11 @@ _Prompt:_ "Make me a page at {sb}/ask.html with a text box and a button. Pressin
 
 _Afterwards:_ `{sb}/ask.html` imports `createSession` and `sendMessage` from `wuhu:space`, creates a top-level agent in the page's own group with the text as `message`, posts follow-ups into its box with `sendMessage({ session })`, shows a refusal's error, and uses no `/v1/`, `/_/query` or `wuhu:session`.
 
-## keyed-request
+## once-only-request
 
-_Prompt:_ "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {verdict, notes} you can read off without parsing prose. In at most four sentences, name the exact call, what it returns on the re-run, and where you read the verdict. Reading a skill is fine; call no other tool."
+_Prompt:_ "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {verdict, notes} you can read off without parsing prose. In at most four sentences, name the exact calls, how the re-run finds the first child, and where you read the verdict. Reading a skill is fine; call no other tool."
 
-_Afterwards:_ the reply names `createSession` with `expectsReply` (or `create_session` with `expects_reply`) and `request: { kind, key, schema }`, a per-day key, `existing: true` on the re-run, and the `requests` table's `result` as where the verdict lands. No tool calls besides skill reads, no files.
+_Afterwards:_ the reply looks for a session carrying a per-day tag in `sessions` before creating, calls `createSession` with `expectsReply`, that tag and `request: { schema }` (or `create_session` with `expects_reply`) only when there is none, and reads the verdict from the `requests` table's `result`. A `request.key` or `existing: true` is a fail: neither exists. No tool calls besides skill reads, no files.
 
 ## Script skill discovery
 

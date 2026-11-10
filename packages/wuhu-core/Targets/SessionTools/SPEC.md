@@ -38,7 +38,7 @@ One-shot timer delays and archive grace remain relative durations and retain fra
 
 `request` and `create_session` take `stall_seconds`: absent means 1800, `0` turns the quiet reminder off, and a value between 0 and 1 is refused. On `create_session` it needs `expects_reply`. Scripts pass `stallSeconds` to `request(id, message, { deadlineSeconds, stallSeconds })` and `createSession`. `Scripts.stopScripts(of:)` asks each of a session's `run_script` executions to stop without waiting for it; each ends within the stop grace.
 
-`request` takes the request terms `kind`, `key`, `schema` and `fields` flat, `create_session` under `request` (with `expects_reply`), and scripts pass them the same way. Bad terms (a key without a kind, an empty kind or key, an invalid schema, non-object fields) are `invalidArgument` before anything is written. A taken key answers `existing: true` with the holding request and task, posting and creating nothing; the `report` tool refuses a final that breaks the schema with the violations and the refusals left.
+`request` takes the request terms `schema` and `fields` flat, `create_session` under `request` (with `expects_reply`), and scripts pass them the same way. Bad terms (an invalid schema, non-object fields) are `invalidArgument` before anything is written. The `report` tool refuses a final that breaks the schema with the violations and the refusals left.
 
 ## Machine exec receipt and retention
 

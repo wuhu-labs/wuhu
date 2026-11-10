@@ -27,15 +27,12 @@ export function createSession(options: {
   expectsReply?: boolean
   stallSeconds?: number
   request?: {
-    kind?: string
-    key?: string
     schema?: unknown
     fields?: Record<string, unknown>
   }
 }): Promise<{
   id: string
   requestId?: string
-  existing?: boolean
   modelGroup?: string
   member?: string
   provider?: string

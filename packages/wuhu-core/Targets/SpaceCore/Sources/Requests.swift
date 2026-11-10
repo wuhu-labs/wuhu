@@ -16,25 +16,19 @@ enum RequestStatus: String, Hashable, Sendable, Codable, CaseIterable {
   var isOpen: Bool { self != .done && self != .failed }
 }
 
-/// What a requester sets on a request besides its brief. A key makes the
-/// create idempotent within the requester's group: a second create with the
-/// same kind and key returns the first request.
+/// What a requester sets on a request besides its brief.
 public struct RequestTerms: Hashable, Sendable {
   static let refusalLimit = 3
 
-  public var kind: String?
-  public var key: String?
   public var schema: JSONValue?
   public var fields: JSONValue?
 
-  public init(kind: String? = nil, key: String? = nil, schema: JSONValue? = nil, fields: JSONValue? = nil) throws(RequestTermsError) {
-    guard kind != "", key != "" else { throw RequestTermsError(message: "kind and key are nonempty when given") }
-    guard key == nil || kind != nil else { throw RequestTermsError(message: "a key needs a kind: the key is unique per kind") }
+  public init(schema: JSONValue? = nil, fields: JSONValue? = nil) throws(RequestTermsError) {
     if let schema {
       do throws(JSONSchemaError) { _ = try JSONSchema(schema) } catch { throw RequestTermsError(message: "schema: \(error)") }
     }
     if let fields, fields.object == nil { throw RequestTermsError(message: "fields is a JSON object") }
-    self.kind = kind; self.key = key; self.schema = schema; self.fields = fields
+    self.schema = schema; self.fields = fields
   }
 
   public static let none = try! RequestTerms()
@@ -51,8 +45,6 @@ struct RequestRow {
   var requester: String
   var firing: String?
   var task: String
-  var kind: String?
-  var key: String?
   var status: String
   var brief: String
   var schema: String?
@@ -81,11 +73,6 @@ struct RequestRow {
     try Self.where { $0.id.eq(id.rawValue) }.fetchOne(db)
   }
 
-  static func keyed(_ group: GroupID, _ terms: RequestTerms, in db: Database) throws -> Self? {
-    guard let kind = terms.kind, let key = terms.key else { return nil }
-    return try Self.where { $0.group.eq(group.rawValue) && $0.kind.eq(kind) && $0.key.eq(key) }.fetchOne(db)
-  }
-
   static func open(task: String, in db: Database) throws -> [Self] {
     try Self.where { $0.task.eq(task) && $0.status.in(RequestStatus.allCases.filter(\.isOpen).map(\.rawValue)) }
       .order(by: \.createdAt).fetchAll(db)
@@ -99,16 +86,8 @@ struct RequestRow {
   }
 }
 
-/// A keyed create lost to the request that holds its key; nothing it would
-/// have written stays.
-public struct RequestKeyTaken: Error, Hashable, Sendable {
-  public let existing: RequestID
-}
-
 extension SessionStore {
-  /// Inserts the request's row unless it exists. A key already used in the
-  /// group throws `RequestKeyTaken`, so the unique index, not a prior read,
-  /// decides which of two racing creates wins.
+  /// Inserts the request's row unless it exists.
   static func insertRequest(
     _ id: RequestID, group: GroupID, requester: Caller, task: SessionID, brief: String, terms: RequestTerms, stallSeconds: Double?,
     now: String, in db: Database,
@@ -117,22 +96,12 @@ extension SessionStore {
     try RequestRow.insert {
       RequestRow(
         id: id.rawValue, group: group.rawValue, requester: requester.name, firing: requester.firing, task: task.rawValue,
-        kind: terms.kind, key: terms.key, status: RequestStatus.open.rawValue, brief: brief,
+        status: RequestStatus.open.rawValue, brief: brief,
         schema: terms.schema?.jsonString(sortedKeys: true), fields: terms.fields?.jsonString(sortedKeys: true),
         result: nil, refusals: "[]", stallSeconds: stallSeconds,
         createdAt: now, updatedAt: now,
       )
-    } onConflict: { ($0.group, $0.kind, $0.key) }.execute(db)
-    guard db.changesCount == 1 else {
-      throw RequestKeyTaken(existing: RequestID(try RequestRow.keyed(group, terms, in: db)!.id))
-    }
-  }
-
-  /// The request a keyed create in `requester`'s group already made.
-  public func keyedRequest(by requester: Caller, _ terms: RequestTerms) async throws -> (request: RequestID, task: SessionID)? {
-    try await writer.read { db in
-      try RequestRow.keyed(Self.group(of: requester, in: db), terms, in: db).map { (RequestID($0.id), SessionID($0.task)) }
-    }
+    }.execute(db)
   }
 
   /// The requests `requester` opened that still wait on their final, oldest first.
@@ -160,18 +129,8 @@ extension SessionStore {
     }
   }
 
-  static func group(of caller: Caller, in db: Database) throws -> GroupID {
-    switch caller {
-    case let .session(id): try Sessions.group(of: id.rawValue, in: db)
-    case let .person(person): person.group
-    case let .observer(observer): observer.group
-    }
-  }
-
   /// Opens a request on a child, or, for a person, on the top-level agent
-  /// their page created, in its box. A create whose kind and key the group
-  /// already used delivers nothing and answers with that request's message,
-  /// as a replay does.
+  /// their page created, in its box.
   public func openRequest(
     on task: SessionID,
     from requester: Caller,
@@ -182,9 +141,6 @@ extension SessionStore {
   ) async throws -> MessageDelivery {
     let key = task.rawValue
     let request = RequestID(messageID.rawValue)
-    if let existing = try await keyedRequest(by: requester, terms)?.request, existing != request {
-      return try await existingRequest(existing)
-    }
     let group = try await writer.read { db in
       let record = try Sessions.record(key, in: db)
       switch requester {
@@ -210,36 +166,27 @@ extension SessionStore {
     }
     // The row and its quiet reminder commit with the message; a replayed
     // request keeps the ones it got.
-    do {
-      return try await post(
-        requester.session == nil ? .box(task) : .dm(with: key),
-        messageID: messageID,
-        sender: Sender(id: requester.name, timeZone: TimeZone(identifier: "UTC")!),
-        senderSession: requester.session,
-        kind: .request,
-        requestID: request,
-        content: MessageContent(text: text),
-        acting: requester.principal,
-        alongside: { message, db in
-          let now = SQLiteDateFormat.string(from: message.createdAt)
-          try Self.insertRequest(
-            request, group: group, requester: requester, task: task, brief: text, terms: terms, stallSeconds: stallSeconds,
-            now: now, in: db,
-          )
-          if try Sessions.remindQuiet(RequestRow.find(request, in: db)!, from: message.createdAt, in: db) {
-            let signals = self.signals
-            db.afterNextTransaction { _ in signals.post(requester.session!) }
-          }
-        },
-      )
-    } catch let taken as RequestKeyTaken {
-      return try await existingRequest(taken.existing)
-    }
-  }
-
-  private func existingRequest(_ id: RequestID) async throws -> MessageDelivery {
-    guard let message = try await message(MessageID(id.rawValue)) else { throw SessionStoreError.unknownRequest(id.rawValue) }
-    return MessageDelivery(message: message, enqueued: [], replayed: true)
+    return try await post(
+      requester.session == nil ? .box(task) : .dm(with: key),
+      messageID: messageID,
+      sender: Sender(id: requester.name, timeZone: TimeZone(identifier: "UTC")!),
+      senderSession: requester.session,
+      kind: .request,
+      requestID: request,
+      content: MessageContent(text: text),
+      acting: requester.principal,
+      alongside: { message, db in
+        let now = SQLiteDateFormat.string(from: message.createdAt)
+        try Self.insertRequest(
+          request, group: group, requester: requester, task: task, brief: text, terms: terms, stallSeconds: stallSeconds,
+          now: now, in: db,
+        )
+        if try Sessions.remindQuiet(RequestRow.find(request, in: db)!, from: message.createdAt, in: db) {
+          let signals = self.signals
+          db.afterNextTransaction { _ in signals.post(requester.session!) }
+        }
+      },
+    )
   }
 
   /// Posts a report from the task to the request's requester. A final checks

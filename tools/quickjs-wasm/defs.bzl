@@ -19,17 +19,3 @@ _attrs = {
 }
 
 wasm_files = rule(implementation = _wasm_files_impl, attrs = _attrs)
-
-def _wasm_directory_impl(ctx):
-    files = ctx.attr.binary[0][DefaultInfo].files.to_list()
-    out = ctx.actions.declare_directory(ctx.label.name)
-    ctx.actions.run_shell(
-        inputs = files,
-        outputs = [out],
-        command = 'cp "$@" "{}/"'.format(out.path),
-        arguments = [file.path for file in files],
-        mnemonic = "WasmDirectory",
-    )
-    return [DefaultInfo(files = depset([out]))]
-
-wasm_directory = rule(implementation = _wasm_directory_impl, attrs = _attrs)

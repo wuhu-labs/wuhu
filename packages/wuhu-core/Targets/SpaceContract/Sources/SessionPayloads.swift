@@ -12,8 +12,7 @@ public let ownerIdentity: String = "owner"
 // must be one that group reads. From a session, `message` is the brief: with
 // expectsReply it opens a request on the new child (stallSeconds belongs to
 // that request), without it is a DM from the creator. `request` carries that
-// request's terms; with a key, a create whose key is taken creates nothing and
-// answers the session that holds it, `existing` true.
+// request's terms.
 @Contract
 public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let title: String
@@ -34,13 +33,10 @@ public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let request: RequestTermsInput?
 }
 
-// A request's row terms. kind defaults to "task"; key is unique per group and
-// kind; schema is a JSON Schema a final report's content must satisfy as JSON;
-// fields is a JSON object kept on the row.
+// A request's row terms. schema is a JSON Schema a final report's content must
+// satisfy as JSON; fields is a JSON object kept on the row.
 @Contract
 public struct RequestTermsInput: Codable, Equatable, Sendable {
-  public let kind: String?
-  public let key: String?
   public let schema: JSONValue?
   public let fields: JSONValue?
 }
@@ -51,20 +47,15 @@ public struct RequestTermsInput: Codable, Equatable, Sendable {
 public struct SessionRequestInput: Codable, Equatable, Sendable {
   public let message: String
   public let stallSeconds: Double?
-  public let kind: String?
-  public let key: String?
   public let schema: JSONValue?
   public let fields: JSONValue?
 }
 
-// `existing` is true when the key was taken: the answer names the request that
-// holds it, and nothing was posted.
 @Contract
 public struct SessionRequestOutput: Codable, Equatable, Sendable {
   public let requestId: String
   public let task: String
   public let conversationId: String
-  public let existing: Bool?
 }
 
 // A session answering a request open on it: progress keeps it open, final
@@ -171,7 +162,6 @@ public struct SessionCreateOutput: Codable, Equatable, Sendable {
   public let title: String
   public let requestId: String?
   public let member: String?
-  public let existing: Bool?
 }
 
 @Contract
@@ -401,7 +391,7 @@ public struct ConversationCreateInput: Codable, Equatable, Sendable {
 public enum SessionNotificationKind: String, Codable, Equatable, Sendable {
   case conversationMessage = "conversation_message"
   case childFailed = "child_failed"
-  // Only the wuhu-wuwei server raises this one.
+  // History only: no server raises this one.
   case requestDeadline = "request_deadline"
   case sessionSettled = "session_settled"
   case sessionErrored = "session_errored"

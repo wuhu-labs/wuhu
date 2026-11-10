@@ -52,7 +52,6 @@ extension ToolExecutor {
     let opened: SessionRequestOutput = try await verb(actor, call, .post, "/v1/session/\(arguments.task)/request", body: .object(body))
     return .request(.init(
       requestID: RequestID(opened.requestId), task: SessionID(opened.task), conversationID: ConversationID(opened.conversationId),
-      existing: opened.existing,
     ))
   }
 
@@ -92,7 +91,7 @@ extension ToolExecutor {
     // A routed session reports the member it landed on; a concrete one
     // reports nothing beyond what was asked.
     return .createSession(.init(
-      sessionID: SessionID(created.id), title: created.title, requestID: created.requestId.map { RequestID($0) }, existing: created.existing,
+      sessionID: SessionID(created.id), title: created.title, requestID: created.requestId.map { RequestID($0) },
       modelGroup: created.modelGroup, member: created.member,
       provider: created.modelGroup == nil ? nil : created.provider, model: created.modelGroup == nil ? nil : created.model,
     ))
@@ -143,8 +142,6 @@ extension ToolExecutor {
 extension RequestTermsArguments {
   fileprivate var body: OrderedDictionary<String, JSONValue> {
     var body: OrderedDictionary<String, JSONValue> = [:]
-    body["kind"] = kind.map(JSONValue.string)
-    body["key"] = key.map(JSONValue.string)
     body["schema"] = schema
     body["fields"] = fields
     return body

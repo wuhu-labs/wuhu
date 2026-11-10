@@ -63,7 +63,6 @@ func sessionCreateOutput(_ created: CreateSessionResult, store: SessionStore) as
       title: created.title,
       requestId: created.requestID?.rawValue,
       member: created.member,
-      existing: created.existing,
     ))
   } catch {
     return sessionErrorResponse(error)
@@ -108,7 +107,7 @@ func postRequest(_ request: Request, _ parameters: RouteParameters, as caller: C
   let payload = try await owner.answering(as: caller) {
     try await owner.request(caller, callID, RequestArguments(
       task: id.rawValue, message: input.message, stallSeconds: input.stallSeconds,
-      terms: RequestTermsArguments(kind: input.kind, key: input.key, schema: input.schema, fields: input.fields),
+      terms: RequestTermsArguments(schema: input.schema, fields: input.fields),
     ))
   }
   guard case let .request(opened) = payload else { return hubRefusal(payload) }
@@ -116,7 +115,6 @@ func postRequest(_ request: Request, _ parameters: RouteParameters, as caller: C
     requestId: opened.requestID.rawValue,
     task: opened.task.rawValue,
     conversationId: opened.conversationID.rawValue,
-    existing: opened.existing,
   ))
 }
 

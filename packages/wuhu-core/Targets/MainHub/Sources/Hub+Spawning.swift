@@ -30,7 +30,7 @@ extension Hub {
       throw IncompleteSession(id: spawned.id, message: "create_session: session \(spawned.id.rawValue) was created, but \(unfinished)")
     }
     return .createSession(.init(
-      sessionID: spawned.id, title: spawned.title, requestID: spawned.requestID, existing: spawned.existing ? true : nil,
+      sessionID: spawned.id, title: spawned.title, requestID: spawned.requestID,
       modelGroup: spawned.modelGroup, member: spawned.member, provider: spawned.provider, model: spawned.model,
     ))
   }
@@ -74,11 +74,6 @@ extension Hub {
     let parent = topLevel ? nil : creator?.id
     let recorded = try await store.receipt(caller, toolCallID: callID)
     let replayed = recorded != nil
-    // A replay finishes its own create below; another call with a taken key
-    // answers the session that holds it.
-    if !replayed, let existing = try await store.keyedRequest(by: caller, terms) {
-      return try await existingSpawn(existing)
-    }
     var params = SessionCreationParams(
       executor: order.executor,
       modelGroup: order.modelGroup,
@@ -181,8 +176,6 @@ extension Hub {
       )
     } catch let refusal as ObserverRefusal {
       throw ToolProblem(refusal.description, code: refusal.code)
-    } catch let taken as RequestKeyTaken {
-      return try await existingSpawn((taken.existing, try await store.keyedRequest(by: caller, terms)!.task))
     } catch let foreign as ForeignReceipt {
       throw ToolProblem(
         "tool call \(foreign.toolCallID.rawValue) already holds a receipt from another tool; no session was created",
@@ -232,17 +225,6 @@ extension Hub {
     return spawned
   }
 
-  // The session a taken key names. Its request not yet posted means the call
-  // that made it never finished; only that call's retry can.
-  nonisolated private func existingSpawn(_ existing: (request: RequestID, task: SessionID)) async throws -> Spawned {
-    var spawned = Spawned(id: existing.task, title: try await store.record(existing.task).title, requestID: existing.request)
-    spawned.existing = true
-    if try await store.message(MessageID(existing.request.rawValue)) == nil {
-      spawned.unfinished = "its request \(existing.request.rawValue) was never handed over; retry the call that created it"
-    }
-    return spawned
-  }
-
   nonisolated private func sessionKind(_ raw: String) throws -> SessionKind {
     guard let kind = SessionKind(rawValue: raw) else {
       throw ToolProblem("kind is task or agent; got \(raw)")
@@ -257,7 +239,6 @@ private struct Spawned {
   var id: SessionID
   var title: String
   var requestID: RequestID?
-  var existing = false
   var modelGroup: String?
   var member: String?
   var provider: String?

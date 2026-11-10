@@ -194,7 +194,7 @@ extension ToolExecutor {
         ("stall_seconds", number("With expects_reply: remind me once the child has sent no progress report for this many seconds (default 1800; 0 turns it off).")),
         ("request", jsonObject([
           ("type", .string("object")),
-          ("description", .string("With expects_reply: the request's kind, key, schema and fields, as on the request tool. A key your group already used for that kind creates nothing and returns that request's session.")),
+          ("description", .string("With expects_reply: the request's schema and fields, as on the request tool.")),
           ("properties", jsonObject(requestTerms)),
           ("additionalProperties", .bool(false)),
         ])),
@@ -257,8 +257,6 @@ private func number(_ description: String) -> JSONValue {
 }
 
 private let requestTerms: [(String, JSONValue)] = [
-  ("kind", string("What sort of request this is, e.g. review; a column of the requests table.")),
-  ("key", string("Needs kind. Unique per kind in your group: a second request with the same kind and key opens nothing and returns the first.")),
   ("schema", .object([
     "type": .string("object"),
     "description": .string("A JSON Schema the final report must match: the final's content is then JSON, stored parsed as the request's result."),

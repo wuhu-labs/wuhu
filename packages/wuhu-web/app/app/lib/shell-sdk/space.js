@@ -202,7 +202,6 @@ export async function createSession(options) {
   for (
     const key of [
       'requestId',
-      'existing',
       'modelGroup',
       'member',
       'provider',

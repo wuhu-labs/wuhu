@@ -58,74 +58,25 @@ import Testing
     }
   }
 
-  private func terms(kind: String? = nil, key: String? = nil, schema: String? = nil, fields: String? = nil) throws -> RequestTerms {
-    try RequestTerms(kind: kind, key: key, schema: schema.flatMap(JSONValue.parse), fields: fields.flatMap(JSONValue.parse))
+  private func terms(schema: String? = nil, fields: String? = nil) throws -> RequestTerms {
+    try RequestTerms(schema: schema.flatMap(JSONValue.parse), fields: fields.flatMap(JSONValue.parse))
   }
 
   @Test func `a request is a row with its brief and terms`() async throws {
     let fleet = try await Fleet()
-    try await fleet.request("r1", try terms(kind: "review", key: "pr-7", fields: #"{"pr":7}"#))
+    try await fleet.request("r1", try terms(fields: #"{"pr":7}"#))
     let row = try #require(try await fleet.row("r1"))
     #expect(row["grp"] == "shared")
     #expect(row["requester"] == fleet.parent.rawValue)
     #expect(row["task"] == fleet.task.rawValue)
-    #expect(row["kind"] == "review")
-    #expect(row["key"] == "pr-7")
     #expect(row["status"] == "open")
     #expect(row["brief"] == "do r1")
     #expect(row["fields"] == #"{"pr":7}"#)
   }
 
   @Test func `bad terms are refused before anything is written`() throws {
-    #expect(throws: RequestTermsError.self) { try terms(key: "k") }
-    #expect(throws: RequestTermsError.self) { try terms(kind: "") }
     #expect(throws: RequestTermsError.self) { try terms(fields: "[1]") }
     #expect(throws: RequestTermsError.self) { try terms(schema: #"{"type":"nope"}"#) }
-  }
-
-  @Test func `a taken key opens nothing and answers the request that holds it`() async throws {
-    let fleet = try await Fleet(tasks: 2)
-    let keyed = try terms(kind: "review", key: "pr-7")
-    let first = try await fleet.request("r1", keyed)
-    _ = try await fleet.store.drainQueue(fleet.task)
-    let again = try await fleet.request("r2", on: fleet.tasks[1], keyed)
-    #expect(again.message.id == first.message.id)
-    #expect(again.enqueued.isEmpty)
-    #expect(try await fleet.row("r2") == nil)
-    #expect(try await fleet.count("SELECT count(*) FROM messages WHERE kind = 'request'") == 1)
-    #expect(try await fleet.store.keyedRequest(by: .session(fleet.parent), keyed)?.task == fleet.task)
-    // Another kind is another key space.
-    try await fleet.request("r3", on: fleet.tasks[1], try terms(kind: "build", key: "pr-7"))
-    #expect(try await fleet.status("r3") == "open")
-  }
-
-  @Test func `racing creates with one key make one request`() async throws {
-    let fleet = try await Fleet(tasks: 8)
-    let keyed = try terms(kind: "review", key: "pr-7")
-    let deliveries = try await withThrowingTaskGroup(of: MessageDelivery.self) { group in
-      for (n, task) in fleet.tasks.enumerated() {
-        group.addTask { try await fleet.request("r\(n)", on: task, keyed) }
-      }
-      return try await group.reduce(into: []) { $0.append($1) }
-    }
-    #expect(Set(deliveries.map(\.message.id)).count == 1)
-    #expect(try await fleet.count("SELECT count(*) FROM requests") == 1)
-    #expect(try await fleet.count("SELECT count(*) FROM messages WHERE kind = 'request'") == 1)
-  }
-
-  @Test func `a keyed create whose key is taken creates no session`() async throws {
-    let fleet = try await Fleet()
-    let keyed = try terms(kind: "review", key: "pr-7")
-    try await fleet.request("r1", keyed)
-    let sessions = try await fleet.count("SELECT count(*) FROM sessions")
-    await #expect(throws: RequestKeyTaken(existing: RequestID("r1"))) {
-      try await fleet.store.createSession(
-        group: .shared, title: "twin", kind: .task, parent: fleet.parent, createdBy: fleet.parent.rawValue,
-        executor: .kernel(.test), request: (RequestID("r2"), .session(fleet.parent), "do r2", keyed, nil),
-      )
-    }
-    #expect(try await fleet.count("SELECT count(*) FROM sessions") == sessions)
-    #expect(try await fleet.row("r2") == nil)
   }
 
   @Test func `a final closes the row with its text as a JSON string result`() async throws {

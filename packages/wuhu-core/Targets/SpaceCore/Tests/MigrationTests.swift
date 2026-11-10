@@ -376,11 +376,11 @@ import Testing
   @Test func newerDatabaseIsRefusedWithoutChanges() async throws {
     let database = try database()
     let original = try Space(writer: database)
+    let applied = { try await database.read { try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier") } }
+    let known = try await applied()
     try await database.write { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('998'), ('999')") }
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
-    #expect(try await database.read {
-      try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020", "021", "022", "023", "024", "025", "026", "998", "999"])
+    #expect(try await applied() == known + ["998", "999"])
     try await original.close()
   }
 

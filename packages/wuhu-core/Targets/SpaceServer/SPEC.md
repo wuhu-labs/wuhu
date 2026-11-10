@@ -292,8 +292,8 @@ code the `create_session` and `request` tools run:
 ```js
 import { createSession, request, setTags, archive, unarchive, interrupt, resume } from "wuhu:session"
 await createSession({ title, kind, topLevel, provider, model, effort, template,
-                      tags, message, expectsReply, stallSeconds, request, key }) // { id, requestId?, existing? }
-await request(id, message, { stallSeconds, kind, key, schema, fields }) // { requestId, existing?, task? }
+                      tags, message, expectsReply, stallSeconds, request, key }) // { id, requestId? }
+await request(id, message, { stallSeconds, schema, fields }) // { requestId }
 await setTags(id, tags)                                   // replaces the list
 await archive(id, { force: true }); await unarchive(id); await interrupt(id); await resume(id)
 ```

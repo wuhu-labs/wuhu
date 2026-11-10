@@ -300,7 +300,7 @@ wuhu session create --provider anthropic --model claude-sonnet-5 [--effort high]
 wuhu session create --model-group work [--effort high] "Title"
 wuhu session restart --model-group work <session-id>  # Start over with fresh group placement
 wuhu session inspect <session-id>   # requested target, active route, placement reason/evidence (JSON)
-wuhu session request [--stall SECS] [--kind K --key K] [--schema JSON] [--fields JSON] <child-id> "message"   # a session's exec only
+wuhu session request [--stall SECS] [--schema JSON] [--fields JSON] <child-id> "message"   # a session's exec only
 wuhu send <session-id> "message" [--wait [--timeout SECS]] [--viewing PATH]
 wuhu session log <session-id>       # channel view (default, every executor)
 wuhu session log --direct|-v|-vv [--limit N] [--before REF] <session-id>

@@ -86,7 +86,7 @@ import Testing
       let alices = try await cookie(r, r.alice, .shared)
       let options: JSONValue = [
         "title": "helper", "provider": "testing", "model": "test-model", "message": "triage #7", "expectsReply": true,
-        "request": ["kind": "triage", "key": "issue-7", "fields": ["issue": 7]], "key": "call-1",
+        "request": ["fields": ["issue": 7]], "key": "call-1",
       ]
       let created = try await post(r, r.sharedHost, "session", options, cookie: alices)
       #expect(created.status == .ok)
@@ -95,17 +95,8 @@ import Testing
       let id = SessionID(output.id)
       #expect(output.parent == nil)
 
-      let row = try await r.harness.space.query("SELECT requester, task, kind, key, status FROM requests", as: .shared(.anonymous)).rows
-      #expect(row == [[.text(r.persona), .text(output.id), .text("triage"), .text("issue-7"), .text("open")]])
-
-      var retry = options.object!
-      retry["key"] = "call-2"
-      let again = try JSONValueDecoder().decode(
-        SessionCreateOutput.self, from: try #require(JSONValue.parse(try await post(r, r.sharedHost, "session", .object(retry), cookie: alices).text())),
-      )
-      #expect(again.id == output.id)
-      #expect(again.requestId == request)
-      #expect(again.existing == true)
+      let row = try await r.harness.space.query("SELECT requester, task, status FROM requests", as: .shared(.anonymous)).rows
+      #expect(row == [[.text(r.persona), .text(output.id), .text("open")]])
 
       _ = try await r.harness.store.drainQueue(id)
       _ = try await r.harness.store.report(id, request: RequestID(request), kind: .final, messageID: MessageID("f1"), text: "fixed")

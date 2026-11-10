@@ -101,13 +101,7 @@ extension Hub {
         stallSeconds: stall,
         terms: terms,
       )
-      let existing = delivery.message.id != messageID
-      return .request(.init(
-        requestID: delivery.message.requestID!,
-        task: existing ? try await store.keyedRequest(by: caller, terms)!.task : task,
-        conversationID: delivery.message.conversation,
-        existing: existing ? true : nil,
-      ))
+      return .request(.init(requestID: delivery.message.requestID!, task: task, conversationID: delivery.message.conversation))
     } catch let error as SessionStoreError {
       throw problem(error)
     }

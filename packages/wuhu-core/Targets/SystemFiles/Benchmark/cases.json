@@ -521,16 +521,16 @@
       "judge": "PASS only if {sb}/ask.html imports createSession and sendMessage from wuhu:space (not wuhu:session, not a fetch to /v1 or /_/space/*), calls createSession with a title and the text as message without naming another group or kind task, and sends follow-ups with sendMessage({ session: id, message }); a rejected call surfaces its error to the person. Fail made-up APIs or a page that only works from run_script."
     },
     {
-      "id": "keyed-request",
+      "id": "once-only-request",
       "issue": 440,
-      "title": "Makes a delegated request once, with a schema on its final",
-      "prompt": "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {\"verdict\": \"ok\" | \"fix\", \"notes\": string} you can read off without parsing prose. In at most four sentences, name the exact call with its options, what it returns on the re-run, and where you read the verdict afterwards. Reading a skill is fine; call no other tool and create nothing for this smoke.",
+      "title": "Delegates a job once by its tag, with a schema on its final",
+      "prompt": "Text-only smoke: you run every morning and delegate a review of {sb}/plan.md to a new child task. If you get re-run the same morning, no second child or request may appear, and the child's final must be JSON {\"verdict\": \"ok\" | \"fix\", \"notes\": string} you can read off without parsing prose. In at most four sentences, name the exact calls with their options, how the re-run finds the first child, and where you read the verdict afterwards. Reading a skill is fine; call no other tool and create nothing for this smoke.",
       "required": [
-        "keyed_request",
+        "once_only_request",
         "no_files_written",
         "only_skill_reads"
       ],
-      "judge": "PASS only if the answer uses createSession from wuhu:session with expectsReply (or the create_session tool with expects_reply) and request: {kind, key, schema}, a key that varies by day (e.g. a date), and a JSON Schema for {verdict, notes}; says a re-run returns the existing session/request with existing: true and posts or creates nothing; and reads the verdict from the request's row in the requests table (its result column) or the final report. Fail if it dedupes by hand (searching sessions by title, a marker file, a table of its own), invents an API, or calls any tool besides reading a skill."
+      "judge": "PASS only if the answer first looks in the sessions table for a session carrying a tag that varies by day (e.g. review:<date>, via json_each over sessions.tags), creates only when there is none, with createSession from wuhu:session and expectsReply (or the create_session tool with expects_reply), that tag in tags and request: {schema} holding a JSON Schema for {verdict, notes}; and reads the verdict from the request's row in the requests table (its result column) or the final report. Fail if it passes a request kind or key or expects existing: true (neither exists), dedupes by title or a marker file, invents an API, or calls any tool besides reading a skill."
     },
     {
       "id": "script-skill-discovery",

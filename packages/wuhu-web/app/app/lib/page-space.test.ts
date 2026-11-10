@@ -185,19 +185,17 @@ Deno.test('createSession with expectsReply answers the request it opened', async
         kind: 'agent',
         title: 'triage',
         requestId: 'r1',
-        existing: true,
       }),
   ])
   const options = {
     title: 'triage',
     message: 'triage #7',
     expectsReply: true,
-    request: { kind: 'triage', key: 'issue-7' },
+    request: { fields: { issue: 7 } },
   }
   assertEquals(await createSession(options), {
     id: 'calm-sea-fox',
     requestId: 'r1',
-    existing: true,
   })
   assertEquals(JSON.parse(sent[0]!.init!.body as string), {
     ...options,

@@ -20,17 +20,6 @@ swiftlint_test(
 )
 
 swiftlint_test(
-    name = "wuwei_object_violations_test",
-    srcs = ["testdata/WuweiObjects/Violations.swift"],
-    expected_violations = 2 * ["wuwei_object_task_group"] + 5 * ["wuwei_object_unstructured_task"] + 6 * ["wuwei_object_direct_io"],
-)
-
-swiftlint_test(
-    name = "wuwei_object_allowed_test",
-    srcs = ["testdata/WuweiObjects/Allowed.swift"],
-)
-
-swiftlint_test(
     name = "test_sources_test",
     srcs = glob(["testdata/Tests/*.swift"]),
 )

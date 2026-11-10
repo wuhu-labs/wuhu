@@ -143,7 +143,7 @@ extension CreateSessionArguments {
       title: input.title, kind: kind, executor: input.executor, topLevel: input.topLevel, group: input.group,
       provider: input.provider, model: input.model, modelGroup: input.modelGroup, effort: input.effort,
       tags: input.tags, template: input.template, expectsReply: input.expectsReply, message: input.message, stallSeconds: input.stallSeconds,
-      request: input.request.map { RequestTermsArguments(kind: $0.kind, key: $0.key, schema: $0.schema, fields: $0.fields) },
+      request: input.request.map { RequestTermsArguments(schema: $0.schema, fields: $0.fields) },
     )
   }
 }

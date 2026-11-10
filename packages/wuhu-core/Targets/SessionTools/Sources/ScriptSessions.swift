@@ -63,7 +63,6 @@ struct ScriptSessions {
         if let requestID = spawned.requestID {
           made["requestId"] = .string(requestID.rawValue)
         }
-        if spawned.existing == true { made["existing"] = .bool(true) }
         return .object(made)
       }
     })
@@ -82,7 +81,7 @@ struct ScriptSessions {
     engine.define("__wuhu_session_request", promising: { [actor, tools] arguments in
       try await scripted {
         guard case let .string(task)? = arguments[safe: 0], case let .string(message)? = arguments[safe: 1] else {
-          throw ToolProblem("request(id, message, { stallSeconds, kind, key, schema, fields }) wants a session id and a message")
+          throw ToolProblem("request(id, message, { stallSeconds, schema, fields }) wants a session id and a message")
         }
         func seconds(_ value: JSONValue?) -> Double? {
           switch value {
@@ -103,12 +102,7 @@ struct ScriptSessions {
         guard case let .request(opened) = result else {
           preconditionFailure("request answered with \(result)")
         }
-        var answer: OrderedDictionary<String, JSONValue> = ["requestId": .string(opened.requestID.rawValue)]
-        if opened.existing == true {
-          answer["existing"] = .bool(true)
-          answer["task"] = .string(opened.task.rawValue)
-        }
-        return .object(answer)
+        return .object(["requestId": .string(opened.requestID.rawValue)])
       }
     })
     engine.define("__wuhu_session_tags", promising: { [actor, tools] arguments in

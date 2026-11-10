@@ -386,13 +386,9 @@ final class IdentityHarness: Sendable {
       #expect(record.kind == .task)
       #expect(record.parent == h.parent)
 
-      let keyed = ["session", "request", "--stall", "600", "--kind", "build", "--key", "build-1", "--fields", #"{"pr":7}"#, id.rawValue, "do the thing"]
-      let requested = await h.asSession(keyed)
+      let requested = await h.asSession(["session", "request", "--stall", "600", "--fields", #"{"pr":7}"#, id.rawValue, "do the thing"])
       #expect(requested.code == 0, "\(requested.stderr)")
       #expect(requested.stdout.hasPrefix("requested "))
-      let again = await h.asSession(keyed)
-      #expect(again.code == 0, "\(again.stderr)")
-      #expect(again.stdout == requested.stdout.replacingOccurrences(of: "requested ", with: "existing "))
       let badSchema = await h.asSession(["session", "request", "--schema", "{", id.rawValue, "x"])
       #expect(badSchema.code == 64)
       let stranger = await h.asSession(["session", "request", h.stranger.rawValue, "do the thing"])

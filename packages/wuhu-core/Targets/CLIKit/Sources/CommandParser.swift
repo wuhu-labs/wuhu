@@ -640,8 +640,6 @@ extension Command {
       ))
     case "request":
       let stall = try parser.doubleOption("--stall", verb: "session request")
-      let kind = try parser.option("--kind", verb: "session request")
-      let key = try parser.option("--key", verb: "session request")
       let schema = try parser.option("--schema", verb: "session request").map { try Self.jsonArgument($0, flag: "--schema", verb: "session request") }
       let fields = try parser.option("--fields", verb: "session request").map { try Self.jsonArgument($0, flag: "--fields", verb: "session request") }
       let id = try parser.required("session-id", verb: "session request")
@@ -649,7 +647,7 @@ extension Command {
       try parser.finish(verb: "session request")
       return .sessionRequest(
         id: id, message: message, stall: stall,
-        terms: RequestTermsInput(kind: kind, key: key, schema: schema, fields: fields),
+        terms: RequestTermsInput(schema: schema, fields: fields),
       )
     case "restart":
       let provider = try parser.option("--provider", verb: "session restart")
@@ -1970,7 +1968,7 @@ extension Command {
 
     subcommands:
       create [--kind agent|task] [--top-level] [--executor E] [--provider P --model M | --model-group G] [--effort E] [--template NAME] [--extra JSON] [--tag T]... <title>
-      request [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
+      request [--stall SECONDS] [--schema JSON] [--fields JSON] <session-id> <message>
                                from a session's exec: open a request on a
                                child it created, which owes it a final report
       restart [--executor E] [--provider P] [--model M] [--model-group G] [--effort E] [--extra JSON] [--message TEXT] <session-id>
@@ -2028,16 +2026,14 @@ extension Command {
     \(exitCodes)
     """,
     "session request": """
-    usage: wuhu session request [--stall SECONDS] [--kind K] [--key K] [--schema JSON] [--fields JSON] <session-id> <message>
+    usage: wuhu session request [--stall SECONDS] [--schema JSON] [--fields JSON] <session-id> <message>
 
     only from a session's exec (WUHU_EXEC=1): opens a request on a child the
     session created, posting <message> into their DM. the child owes a final
     report. --stall (default 1800, 0 for off) reminds it once the child has sent no progress
-    report for that long. the request is a row of the
-    requests table: --kind sorts it, --key (needs --kind) names it, unique per
-    group and kind, and a key already taken posts nothing and prints the request
-    holding it, marked existing. --schema is a JSON Schema the final report's
-    content must satisfy as JSON; --fields a JSON object kept on the row.
+    report for that long. the request is a row of the requests table.
+    --schema is a JSON Schema the final report's content must satisfy as JSON;
+    --fields a JSON object kept on the row.
     prints the request id and the DM's conversation id.
     \(exitCodes)
     """,

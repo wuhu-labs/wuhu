@@ -28,7 +28,7 @@ export async function createSession(options) {
     throw error
   }
   const result = made.requestId === undefined ? { id: made.id } : { id: made.id, requestId: made.requestId }
-  for (const key of ["existing", "modelGroup", "member", "provider", "model"]) {
+  for (const key of ["modelGroup", "member", "provider", "model"]) {
     if (made[key] !== undefined) result[key] = made[key]
   }
   return result
@@ -47,8 +47,8 @@ export async function sendMessage(options) {
   return answered(await send(options))
 }
 
-export async function request(id, message, { stallSeconds, kind, key, schema, fields } = {}) {
-  return answered(await ask(String(id), String(message), stallSeconds ?? null, { kind, key, schema, fields }))
+export async function request(id, message, { stallSeconds, schema, fields } = {}) {
+  return answered(await ask(String(id), String(message), stallSeconds ?? null, { schema, fields }))
 }
 
 export async function setTags(id, tags) {

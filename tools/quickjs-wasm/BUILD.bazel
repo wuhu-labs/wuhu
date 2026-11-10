@@ -2,7 +2,7 @@ load("@emsdk//emscripten_toolchain:wasm_rules.bzl", "wasm_cc_binary")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//bazel/rules:deno.bzl", "deno_command_test")
 load("//bazel/rules:rules.bzl", "wuhu_platforms")
-load(":defs.bzl", "wasm_directory", "wasm_files")
+load(":defs.bzl", "wasm_files")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -129,41 +129,5 @@ deno_command_test(
     size = "small",
     srcs = ["smoke.ts", "smoke-worker.ts", "imports.json", ":quickjs", ":ffi", ":core", ":ffi_types"],
     command = ["run", "--allow-read", "--allow-net=127.0.0.1", "--allow-import=127.0.0.1", "--import-map=tools/quickjs-wasm/imports.json", "tools/quickjs-wasm/smoke.ts"],
-    target_compatible_with = wuhu_platforms(["linux", "mac"]),
-)
-
-cc_binary(
-    name = "script-guest",
-    srcs = ["guest.c"],
-    copts = ["-Oz", "-funsigned-char"],
-    linkopts = [
-        "-Oz",
-        "--no-entry",
-        "--oformat=wasm",
-        "-sALLOW_MEMORY_GROWTH=1",
-        "-sMAXIMUM_MEMORY=4GB",
-        "-sSTACK_SIZE=1MB",
-        "-sFILESYSTEM=0",
-        "-sSUPPORT_ERRNO=0",
-        "-Wl,--export=__stack_pointer",
-    ],
-    features = ["-precise_long_double_printf"],
-    deps = ["@quickjs//:quickjs"],
-    tags = ["manual"],
-)
-
-wasm_cc_binary(
-    name = "script_guest_wasm",
-    cc_target = ":script-guest",
-    standalone = True,
-    threads = "off",
-    outputs = ["script-guest/guest.wasm"],
-    target_compatible_with = wuhu_platforms(["linux", "mac"]),
-)
-
-wasm_directory(
-    name = "script_guest",
-    binary = ":script_guest_wasm",
-    visibility = ["//visibility:public"],
     target_compatible_with = wuhu_platforms(["linux", "mac"]),
 )

@@ -190,15 +190,12 @@ extension Executor {
     let space = try self.wallet.pinnedSpace()
     var body: JSONValue = .object(["message": .string(message)])
     body.set("stallSeconds", stall.map(JSONValue.number))
-    body.set("kind", terms.kind.map(JSONValue.string))
-    body.set("key", terms.key.map(JSONValue.string))
     body.set("schema", terms.schema)
     body.set("fields", terms.fields)
     let output: SessionRequestOutput = try await self.authenticated(space).api(
       .post, "/v1/session/\(task)/request", body: body,
     )
-    let verb = output.existing == true ? "existing" : "requested"
-    await self.runner.stdout("\(verb) \(output.requestId) in \(output.conversationId)\n")
+    await self.runner.stdout("requested \(output.requestId) in \(output.conversationId)\n")
   }
 
   mutating func sessionAction(_ verb: SessionActionVerb, id: String, force: Bool) async throws {
