@@ -341,7 +341,7 @@ private func buildAssistantContentBlocks(
         "type": .string("tool_use"),
         "id": .string(call.id),
         "name": .string(call.name),
-        "input": call.arguments.json,
+        "input": call.arguments.wireObject,
       ]))
 
     case .hostedTool, .media:

@@ -12,7 +12,7 @@
         "tool_calls" : [
           {
             "function" : {
-              "arguments" : "{}",
+              "arguments" : "{\"number\": 21}",
               "name" : "double_number"
             },
             "id" : "call_00_w7I6iS5wkgs7hsVV7aeF9661",
@@ -32,6 +32,9 @@
     ],
     "model" : "deepseek-v4-pro",
     "stream" : true,
+    "stream_options" : {
+      "include_usage" : true
+    },
     "thinking" : {
       "type" : "enabled"
     },

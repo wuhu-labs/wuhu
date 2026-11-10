@@ -53,7 +53,7 @@ public enum MinimalAgent {
       }
       reminded = false
       if let complete = calls.first(where: { $0.name == Toolbox.complete }) {
-        if let result = complete.arguments.json.object?["result"]?.stringValue {
+        if let result = complete.arguments.object?["result"]?.stringValue {
           for call in calls {
             let done = call.id == complete.id
             try transcript.append(.toolResult(ToolResultMessage(toolCallId: call.id, content: [.text(done ? "completed" : "not run: complete ends the run")], isError: !done)))

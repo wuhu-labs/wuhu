@@ -54,8 +54,8 @@ struct Masker {
       if let arguments = JSONValue.parse(call.arguments.text) {
         let masked = mask(arguments)
         if masked != arguments { call.arguments = ToolArguments(masked) }
-      } else if self(call.arguments.text) != call.arguments.text {
-        call.arguments = ToolArguments(.object([:]))
+      } else {
+        call.arguments = ToolArguments(emitted: self(call.arguments.text))
       }
       return .toolCall(call)
     case let .hostedTool(content):

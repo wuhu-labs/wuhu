@@ -29,6 +29,7 @@ import enum SpaceContract.ToolCallHeader
 import struct SpaceContract.ToolError
 import SpaceCore
 import SpaceTools
+import struct WuhuAI.InvalidToolArguments
 import struct WuhuAI.ToolCall
 
 public struct ToolExecutor: Sendable {
@@ -100,7 +101,7 @@ public struct ToolExecutor: Sendable {
       case .observe: return try await observe(session, call.id, decoded(ObserveArguments.self, call))
       case .timer: return try await timer(session, call.id, decoded(TimerArguments.self, call))
       case .sendMessage:
-        return try await sendMessage(.session(session), call.id, decoded(SendMessageArguments.self, call), user: call.arguments.json.object?["user"])
+        return try await sendMessage(.session(session), call.id, decoded(SendMessageArguments.self, call), user: call.arguments.object?["user"])
       case .request: return try await request(.session(session), call.id, decoded(RequestArguments.self, call))
       case .report: return try await report(session, call.id, decoded(ReportArguments.self, call))
       case .createSession: return try await createSession(.session(session), call.id, decoded(CreateSessionArguments.self, call))
@@ -125,7 +126,9 @@ public struct ToolExecutor: Sendable {
     _ call: ToolCall,
   ) throws(ToolProblem) -> Arguments {
     do {
-      return try JSONValueDecoder().decode(type, from: call.arguments.json)
+      return try call.arguments.decode(type)
+    } catch let error as InvalidToolArguments {
+      throw ToolProblem("\(call.name): \(error)")
     } catch {
       throw ToolProblem("\(call.name): arguments do not match the tool schema: \(error)")
     }

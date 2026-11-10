@@ -21,12 +21,41 @@ public struct ToolArguments: Hashable, Sendable {
     self.init(unchecked: text)
   }
 
+  /// What a model emitted, kept even when it is not a JSON object so the call can be refused and replayed as
+  /// sent. Blank text is `{}`.
+  public init(emitted text: String) {
+    self.init(unchecked: text.allSatisfy(\.isWhitespace) ? "{}" : text)
+  }
+
   public static func object(_ fields: OrderedDictionary<String, JSONValue>) -> ToolArguments {
     ToolArguments(.object(fields))
   }
 
-  public var json: JSONValue {
-    JSONValue.parse(text) ?? .object([:])
+  /// Nil when the model's text is not a JSON object (truncated or malformed): refuse the call, never run it as `{}`.
+  public var object: OrderedDictionary<String, JSONValue>? {
+    JSONValue.parse(text)?.object
+  }
+
+  public func decode<T: Decodable>(_ type: T.Type) throws -> T {
+    guard let object else { throw InvalidToolArguments(text: text) }
+    return try JSONValueDecoder().decode(type, from: .object(object))
+  }
+
+  // Anthropic `input` and Gemini `args` take only an object; the paired error result tells the model why.
+  var wireObject: JSONValue {
+    object.map(JSONValue.object) ?? .object([:])
+  }
+}
+
+public struct InvalidToolArguments: Error, Hashable, Sendable, CustomStringConvertible {
+  public let text: String
+
+  public init(text: String) {
+    self.text = text
+  }
+
+  public var description: String {
+    "the arguments are not valid JSON (one JSON object); send the call again with complete arguments"
   }
 }
 

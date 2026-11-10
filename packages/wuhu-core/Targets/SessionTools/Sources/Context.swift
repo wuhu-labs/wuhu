@@ -30,7 +30,7 @@ extension ToolExecutor {
   /// renamed or its name reassigned while the call runs. A name no machine
   /// carries is left for main to refuse.
   func resolvingMachine(_ session: SessionID, _ tool: RosterTool, _ call: ToolCall) async -> (call: ToolCall, touched: Address?) {
-    guard case var .object(fields) = call.arguments.json else { return (call, nil) }
+    guard var fields = call.arguments.object else { return (call, nil) }
     let field: String
     let raw: String?
     switch tool {

@@ -48,7 +48,7 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
       }
       let config = makeConfig(inference: { request in
-        let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [], mediaResolver: { _ in ReplayImageResolver() })
+        let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [], mediaResolver: ReplayImageResolver())
         let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { _, _ in commits.withLock { $0 += 1 } })
       })
@@ -110,7 +110,7 @@ import WuhuAI
         // The real notification is already durable before anything reaches the provider.
         #expect(try await sessions.hydrate(sid).transcript.kernel == request.transcript)
         let lease = try await registry.acquire(session: sid, model: model)
-        let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object")]))], webSocket: lease.session, mediaResolver: { _ in ReplayImageResolver() })
+        let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object")]))], webSocket: lease.session, mediaResolver: ReplayImageResolver())
         let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
         await registry.release(session: sid, lease: lease.lease)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in

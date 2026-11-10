@@ -119,8 +119,8 @@ private func renderedKernelItem(_ logItem: SessionLogItem, level: Int, clip: Int
 // narrative would otherwise never show what was actually said.
 private func narrativeReplyText(_ call: ToolCall) -> String? {
   switch call.name {
-  case "send_message": call.arguments.json.object?["message"]?.stringValue
-  case "report": call.arguments.json.object?["content"]?.stringValue
+  case "send_message": call.arguments.object?["message"]?.stringValue
+  case "report": call.arguments.object?["content"]?.stringValue
   default: nil
   }
 }

@@ -39,7 +39,7 @@ public struct InferenceExecutor: Sendable {
   public var metrics: InferenceMetricsSink
   public var webSocket: ResponsesWebSocketSession?
   public var receiveQuota: @Sendable (JSONValue) async -> Void
-  public var mediaResolver: (@Sendable (ImageLimits) -> any MediaResolver)?
+  public var mediaResolver: (any MediaResolver)?
 
   public init(
     session: SessionID,
@@ -52,7 +52,7 @@ public struct InferenceExecutor: Sendable {
     metrics: InferenceMetricsSink = .noop,
     webSocket: ResponsesWebSocketSession? = nil,
     receiveQuota: @escaping @Sendable (JSONValue) async -> Void = { _ in },
-    mediaResolver: (@Sendable (ImageLimits) -> any MediaResolver)? = nil,
+    mediaResolver: (any MediaResolver)? = nil,
   ) {
     self.session = session
     self.model = model
@@ -106,7 +106,7 @@ public struct InferenceExecutor: Sendable {
       ))
     }
     if let mediaResolver {
-      endpoint = endpoint.withMediaResolver(mediaResolver(model.budget.images.forRequest(imageCount: context.imageCount)))
+      endpoint = endpoint.withMediaResolver(mediaResolver)
     }
 
     @Dependency(\.continuousClock) var continuousClock
@@ -246,18 +246,5 @@ private func describe(_ usage: Usage) -> String {
 extension Duration {
   fileprivate var milliseconds: Int64 {
     components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000
-  }
-}
-
-extension Context {
-  fileprivate var imageCount: Int {
-    messages.reduce(0) { count, message in
-      let blocks = switch message {
-      case let .user(user): user.content
-      case let .assistant(assistant): assistant.content
-      case let .toolResult(result): result.content
-      }
-      return count + blocks.count { if case .media = $0 { true } else { false } }
-    }
   }
 }

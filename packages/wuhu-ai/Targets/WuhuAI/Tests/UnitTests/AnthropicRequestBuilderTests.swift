@@ -299,6 +299,33 @@ import Testing
     #expect(block["name"] == .string("search"))
   }
 
+  @Test func invalidArgumentsReplayAsAnEmptyInputPairedWithTheirRefusal() async throws {
+    let refusal = "search: " + InvalidToolArguments(text: "").description
+    let context = Context(messages: [
+      .assistant(AssistantMessage(content: [
+        .toolCall(ToolCall(id: "toolu_001", name: "search", arguments: ToolArguments(emitted: #"{"query":"te"#))),
+      ])),
+      .toolResult(ToolResultMessage(toolCallId: "toolu_001", content: [.text(TextContent(text: refusal))], isError: true)),
+    ])
+
+    let (_, _, body) = try await buildAnthropicRequest(
+      model: "m",
+      baseURL: URL(string: "https://a.com/v1")!,
+      context: context,
+      options: RequestOptions(),
+    )
+
+    let messages = body["messages"]?.array ?? []
+    #expect(messages.count == 2)
+    let call = messages.first?.object?["content"]?.array?.first?.object
+    #expect(call?["id"] == .string("toolu_001"))
+    #expect(call?["input"] == .object([:]))
+    let result = messages.last?.object?["content"]?.array?.first?.object
+    #expect(result?["tool_use_id"] == .string("toolu_001"))
+    #expect(result?["content"] == .string(refusal))
+    #expect(result?["is_error"] == .bool(true))
+  }
+
   @Test func groupsConsecutiveToolResults() async throws {
     let context = Context(messages: [
       .toolResult(ToolResultMessage(

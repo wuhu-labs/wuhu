@@ -248,7 +248,7 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
               if let idx = currentToolCallIndex, idx < content.count,
                  let id = currentToolCallID, let name = currentToolCallName
               {
-                let args = ToolArguments(verbatim: argsText) ?? .object([:])
+                let args = ToolArguments(emitted: argsText)
                 let toolCall = ToolCall(id: id, name: name, arguments: args)
                 content[idx] = .toolCall(toolCall)
                 continuation.yield(.toolCallEnd(

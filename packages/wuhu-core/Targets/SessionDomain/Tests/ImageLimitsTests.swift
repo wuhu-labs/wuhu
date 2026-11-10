@@ -30,34 +30,13 @@ import Testing
     #expect(patches(fit, 32) > 28000)
   }
 
-  @Test func `more than twenty images in one Claude request are fitted to 2000 px`() {
-    let size = PixelSize(width: 2400, height: 1200)
-    #expect(ImageLimits.claude.forRequest(imageCount: 20).fitted(size) == size)
-    #expect(ImageLimits.claude.forRequest(imageCount: 21).fitted(size).longEdge == 2000)
-    #expect(ImageLimits.openAI.forRequest(imageCount: 50).maxLongEdge == ImageLimits.openAI.maxLongEdge)
-  }
-
-  @Test func `the images of one request share its byte budget`() {
-    #expect(ImageLimits.openAI.forRequest(imageCount: 1).maxBytes == 20 << 20)
-    #expect(ImageLimits.openAI.forRequest(imageCount: 10).maxBytes == (30 << 20) / 16)
-    #expect(ImageLimits.claude.forRequest(imageCount: 1).maxBytes == 3 << 20)
-    #expect(ImageLimits.claude.forRequest(imageCount: 12).maxBytes == (18 << 20) / 16)
-    for limits in [ImageLimits.claude, .openAI] {
-      let budget = limits.requestBytes ?? 0
-      // Base64 grows the bytes by a third; the rest of the request is text.
-      #expect(budget * 4 / 3 < (limits == .claude ? 32_000_000 : 50_000_000) - 6_000_000)
-      #expect(limits.forRequest(imageCount: 40).maxBytes * 40 <= budget)
+  @Test func `what intake keeps is within what every family takes`() {
+    let kept = ImageLimits.intake.fitted(PixelSize(width: 6000, height: 4000))
+    #expect(kept.longEdge == 2000)
+    for family in [ImageLimits.claude, .openAI] {
+      #expect(family.fitted(kept) == kept)
+      #expect(ImageLimits.intake.maxBytes <= family.maxBytes)
     }
-  }
-
-  @Test func `the share steps only at powers of two, so images already sent keep their bytes`() {
-    let budget = 30 << 20
-    let expected: [(Int, Int)] = [(1, 1), (2, 2), (3, 4), (4, 4), (5, 8), (8, 8), (9, 16), (15, 16), (16, 16), (17, 32), (33, 64)]
-    for (count, shares) in expected {
-      #expect(ImageLimits.openAI.forRequest(imageCount: count).maxBytes == min(20 << 20, budget / shares), "\(count) images")
-    }
-    let steps = Set((1 ... 64).map { ImageLimits.openAI.forRequest(imageCount: $0).maxBytes })
-    #expect(steps.count == 7, "one share for 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64")
   }
 
   @Test func `tokens are counted from the size sent`() {

@@ -129,7 +129,7 @@ enum ParkRefusal: Error, Equatable, CustomStringConvertible {
 }
 
 func decodeArguments<T: Decodable>(_ type: T.Type, from call: ToolCall) throws -> T {
-  try JSONValueDecoder().decode(type, from: call.arguments.json)
+  try call.arguments.decode(type)
 }
 
 struct BookmarkNotFound: Error {

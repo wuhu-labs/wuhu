@@ -88,7 +88,7 @@ func parseAnthropicStream(
             case "tool_use":
               let id = block["id"]?.stringValue ?? UUID().uuidString
               let name = block["name"]?.stringValue ?? "tool"
-              let args = block["input"]?.object.map(ToolArguments.object) ?? .object([:])
+              let args = block["input"].map { $0.object.map(ToolArguments.object) ?? ToolArguments(emitted: $0.jsonString()) } ?? .object([:])
               content.append(.toolCall(ToolCall(
                 id: id,
                 name: name,
@@ -223,8 +223,7 @@ func parseAnthropicStream(
                idx < content.count,
                case let .toolCall(existing) = content[idx]
             {
-              let args = ToolArguments(verbatim: currentToolCallArgumentsBuffer) ?? existing.arguments
-              let toolCall = ToolCall(id: existing.id, name: existing.name, arguments: args)
+              let toolCall = ToolCall(id: existing.id, name: existing.name, arguments: ToolArguments(emitted: currentToolCallArgumentsBuffer))
               content[idx] = .toolCall(toolCall)
               continuation.yield(.toolCallEnd(
                 contentIndex: idx,

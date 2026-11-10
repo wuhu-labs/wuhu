@@ -4,7 +4,7 @@ Each executor attempt, including forced-compaction calls and failed or cancelled
 
 ## Image limits
 
-Provider `imageFamily` optionally selects `claude` or `openAI` limits independently of dialect. Without it, `anthropic` uses Claude limits and `responses`/`codex` use OpenAI limits. Unknown values produce the existing entry-local `CatalogError.invalidProvider`. The provider's resolved limits flow into request media fitting, context estimation, compaction and cache warming.
+Provider `imageFamily` optionally selects `claude` or `openAI` limits independently of dialect. Without it, `anthropic` uses Claude limits and `responses`/`codex` use OpenAI limits. Unknown values produce the existing entry-local `CatalogError.invalidProvider`. The provider's resolved limits price images in context estimation, compaction and cache warming; no request fits an image to them.
 
 ## Kernel endpoints
 

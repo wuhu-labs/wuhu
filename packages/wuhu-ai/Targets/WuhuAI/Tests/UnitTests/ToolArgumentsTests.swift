@@ -11,14 +11,14 @@ import WuhuAI
     let encoded = try JSONEncoder().encode(call)
     let decoded = try JSONDecoder().decode(ToolCall.self, from: encoded)
     #expect(decoded.arguments.text == emitted)
-    #expect(decoded.arguments.json.object?["max_output"] == .integer(30000))
+    #expect(decoded.arguments.object?["max_output"] == .integer(30000))
   }
 
   @Test func `a stored row from before verbatim arguments still decodes`() throws {
     let legacy = #"{"id":"call_1","name":"exec","arguments":{"max_output":30000,"command":"ls"}}"#
     let decoded = try JSONDecoder().decode(ToolCall.self, from: Data(legacy.utf8))
     #expect(decoded.arguments.text == #"{"command":"ls","max_output":30000}"#)
-    #expect(decoded.arguments.json.object?["command"] == .string("ls"))
+    #expect(decoded.arguments.object?["command"] == .string("ls"))
   }
 
   @Test func `arguments we synthesize serialize sorted`() {
@@ -29,5 +29,19 @@ import WuhuAI
     #expect(ToolArguments(verbatim: "not json") == nil)
     #expect(ToolArguments(verbatim: "[1,2]") == nil)
     #expect(ToolArguments(verbatim: "{}")?.text == "{}")
+  }
+
+  @Test func `emitted text that is not an object is kept and refuses to decode`() {
+    let truncated = ToolArguments(emitted: #"{"path":"/a"#)
+    #expect(truncated.text == #"{"path":"/a"#)
+    #expect(truncated.object == nil)
+    #expect(throws: InvalidToolArguments(text: #"{"path":"/a"#)) { try truncated.decode([String: String].self) }
+    #expect(ToolArguments(emitted: " \n").text == "{}")
+  }
+
+  @Test func `invalid emitted text survives a Codable round trip`() throws {
+    let call = ToolCall(id: "c", name: "read", arguments: ToolArguments(emitted: "[1"))
+    let decoded = try JSONDecoder().decode(ToolCall.self, from: JSONEncoder().encode(call))
+    #expect(decoded.arguments.text == "[1")
   }
 }

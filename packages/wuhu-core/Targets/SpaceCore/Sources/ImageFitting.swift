@@ -17,13 +17,24 @@ public enum FittedImage: Hashable, Sendable {
 }
 
 public enum ImageFitting {
-  public static func fit(_ data: Data, mimeType: String, limits: ImageLimits) -> FittedImage {
-    let size = ImageMedia.pixelSize(ofBytes: data)
-    if let size, size.width > Int32.max || size.height > Int32.max
-      || size.width.multipliedReportingOverflow(by: size.height).overflow
-    {
-      return refusal(data, size: size, limits: limits)
+  /// The copy a transcript keeps. A PNG or JPEG is always re-encoded, so nothing of the source
+  /// but its pixels survives; any other format is only fitted.
+  public static func prepare(_ data: Data, mimeType: String, limits: ImageLimits = .intake) -> FittedImage {
+    guard ["image/png", "image/jpeg"].contains(ImageMedia.mimeType(ofBytes: data)) else {
+      return fit(data, mimeType: mimeType, limits: limits)
     }
+    let size = ImageMedia.pixelSize(ofBytes: data)
+    guard !absurd(size) else { return refusal(data, size: size, limits: limits) }
+    #if canImport(ImageIO) || os(Linux)
+      return scaled(data, limits: limits) ?? refusal(data, size: size, limits: limits)
+    #else
+      return fit(data, mimeType: mimeType, limits: limits)
+    #endif
+  }
+
+  public static func fit(_ data: Data, mimeType: String, limits: ImageLimits = .intake) -> FittedImage {
+    let size = ImageMedia.pixelSize(ofBytes: data)
+    guard !absurd(size) else { return refusal(data, size: size, limits: limits) }
     if let size, data.count <= limits.maxBytes, limits.fitted(size) == size {
       return .image(data, mimeType: mimeType)
     }
@@ -33,6 +44,11 @@ public enum ImageFitting {
     // Bytes no codec here can size are left for the provider to judge.
     if size == nil, data.count <= limits.maxBytes { return .image(data, mimeType: mimeType) }
     return refusal(data, size: size, limits: limits)
+  }
+
+  private static func absurd(_ size: PixelSize?) -> Bool {
+    guard let size else { return false }
+    return size.width > Int32.max || size.height > Int32.max || size.width.multipliedReportingOverflow(by: size.height).overflow
   }
 
   /// Whether a codec here decodes every pixel of `data`: `fit` hands back an image already within
@@ -73,7 +89,7 @@ public enum ImageFitting {
   private static func refusal(_ data: Data, size: PixelSize?, limits: ImageLimits) -> FittedImage {
     let shape = size.map { "\($0.width)x\($0.height) px, " } ?? ""
     return .note(
-      "[image not sent: at \(shape)\(data.count) bytes it is past what this model takes (\(limits.maxLongEdge) px on the long edge, \(limits.maxBytes) bytes), and this server could not scale it]",
+      "[image not sent: at \(shape)\(data.count) bytes it is past what a transcript keeps (\(limits.maxLongEdge) px on the long edge, \(limits.maxBytes) bytes), and this server could not re-encode it]",
     )
   }
 }
@@ -81,7 +97,8 @@ public enum ImageFitting {
 #if canImport(ImageIO)
   extension ImageFitting {
     private static func scaled(_ data: Data, limits: ImageLimits) -> FittedImage? {
-      guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+      // A thumbnail of truncated bytes renders what arrived; Linux refuses them.
+      guard decodes(data) == true, let source = CGImageSourceCreateWithData(data as CFData, nil),
             let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
             let width = properties[kCGImagePropertyPixelWidth] as? Int,
             let height = properties[kCGImagePropertyPixelHeight] as? Int
@@ -94,11 +111,9 @@ public enum ImageFitting {
           longEdge -= 1
           continue
         }
-        // At the original size a PNG re-encode would come out as big as the
-        // bytes that were already too many.
-        let formats = size == PixelSize(width: width, height: height)
-          ? [("public.jpeg", "image/jpeg")]
-          : [("public.png", "image/png"), ("public.jpeg", "image/jpeg")]
+        let formats = ImageMedia.mimeType(ofBytes: data) == "image/png"
+          ? [("public.png", "image/png"), ("public.jpeg", "image/jpeg")]
+          : [("public.jpeg", "image/jpeg")]
         for (type, mimeType) in formats {
           if let encoded = encode(image, as: type), encoded.count <= limits.maxBytes {
             return .image(encoded, mimeType: mimeType)

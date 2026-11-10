@@ -86,8 +86,8 @@ extension ToolExecutor {
   }
 
   /// Media a transcript of `session` names, read as the session.
-  public func mediaResolver(_ session: SessionID, limits: ImageLimits) -> any MediaResolver {
-    ClientMediaResolver(tools: self, session: session, limits: limits)
+  public func mediaResolver(_ session: SessionID) -> any MediaResolver {
+    ClientMediaResolver(tools: self, session: session)
   }
 
   /// One inference attempt, reported to main for the session that ran it (`POST /v1/inferences`).

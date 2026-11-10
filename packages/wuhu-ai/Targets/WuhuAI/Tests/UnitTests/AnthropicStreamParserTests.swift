@@ -157,8 +157,32 @@ import Testing
       #expect(toolCalls.count == 1)
       #expect(toolCalls[0].id == "toolu_001")
       #expect(toolCalls[0].name == "search")
-      #expect(toolCalls[0].arguments.json.object?["query"] == .string("test"))
+      #expect(toolCalls[0].arguments.object?["query"] == .string("test"))
     }
+  }
+
+  @Test(arguments: [
+    ("{}", [#"{"query":"#, #""te"#], #"{"query":"te"#),
+    ("[1]", [], "[1]"),
+    (#""q""#, [], #""q""#),
+  ])
+  func keepsArgumentsThatAreNotAnObject(input: String, deltas: [String], emitted: String) async throws {
+    let start = #"{"content_block":{"type":"tool_use","id":"toolu_001","name":"search","input":\#(input)}}"#
+    let events = [
+      jsonEvent("message_start", ["message": ["usage": ["input_tokens": 10]]]),
+      SSEEvent(event: "content_block_start", data: start),
+    ] + deltas.map { jsonEvent("content_block_delta", ["delta": ["type": "input_json_delta", "partial_json": $0]]) } + [
+      jsonEvent("content_block_stop", ["index": 0]),
+      jsonEvent("message_delta", ["delta": ["stop_reason": "max_tokens"], "usage": ["output_tokens": 5]]),
+      jsonEvent("message_stop", [:]),
+    ]
+
+    var results: [InferenceEvent] = []
+    for try await event in parseAnthropicStream(sse(events), providerID: "anthropic", model: "claude") { results.append(event) }
+
+    guard case let .done(message, _) = results.last else { Issue.record("no done event"); return }
+    #expect(message.content == [.toolCall(ToolCall(id: "toolu_001", name: "search", arguments: ToolArguments(emitted: emitted)))])
+    #expect(ToolArguments(emitted: emitted).object == nil)
   }
 
   @Test func emitsContentIndexEvents() async throws {

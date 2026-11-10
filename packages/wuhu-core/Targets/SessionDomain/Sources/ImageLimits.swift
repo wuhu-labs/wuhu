@@ -1,73 +1,49 @@
 import enum SpaceContract.ImageMedia
 import struct SpaceContract.PixelSize
 
-// What one model takes as an image. A bigger one is scaled down when the
-// request is built, so the context estimate counts the size actually sent.
+// What one model counts an image as. Every image is fitted to `intake` once,
+// when it enters a transcript, so the per-model limits only price it.
 public struct ImageLimits: Hashable, Sendable, Codable {
   public var maxLongEdge: Int
   public var patch: Int
   public var maxPatches: Int
   public var tokensPerPatch: Double
   public var maxBytes: Int
-  public var crowding: Crowding?
-  // Every image in the transcript is re-sent on every call, so all of them
-  // together share what one request may carry: base64 grows them by a third
-  // and the text needs room too.
-  public var requestBytes: Int?
 
-  public struct Crowding: Hashable, Sendable, Codable {
-    public var imageCount: Int
-    public var maxLongEdge: Int
-  }
-
-  public init(maxLongEdge: Int, patch: Int, maxPatches: Int, tokensPerPatch: Double, maxBytes: Int, crowding: Crowding? = nil, requestBytes: Int? = nil) {
+  public init(maxLongEdge: Int, patch: Int, maxPatches: Int, tokensPerPatch: Double, maxBytes: Int) {
     self.maxLongEdge = maxLongEdge
     self.patch = patch
     self.maxPatches = maxPatches
     self.tokensPerPatch = tokensPerPatch
     self.maxBytes = maxBytes
-    self.crowding = crowding
-    self.requestBytes = requestBytes
   }
 
-  // Claude refuses a request carrying more than 20 images once any of them
-  // exceeds 2000 px, and any request over 32 MB.
+  // Under every provider's per-image limit at any image count, and under what
+  // Claude Code re-encodes by itself, so the bytes a transcript keeps are the
+  // bytes every request sends.
+  public static let intake: ImageLimits = ImageLimits(
+    maxLongEdge: 2000,
+    patch: 28,
+    maxPatches: 4784,
+    tokensPerPatch: 1,
+    maxBytes: ImageMedia.maxBytes,
+  )
+
   public static let claude: ImageLimits = ImageLimits(
     maxLongEdge: 2576,
     patch: 28,
     maxPatches: 4784,
     tokensPerPatch: 1,
     maxBytes: ImageMedia.maxBytes,
-    crowding: Crowding(imageCount: 20, maxLongEdge: 2000),
-    requestBytes: 18 << 20,
   )
 
-  // With detail "original" OpenAI keeps an image's size and refuses one over
-  // 30,000 patches instead of scaling it, and any request over 50 MB.
   public static let openAI: ImageLimits = ImageLimits(
     maxLongEdge: 65535,
     patch: 32,
     maxPatches: 30000,
     tokensPerPatch: 1.2,
     maxBytes: 20 << 20,
-    requestBytes: 30 << 20,
   )
-
-  public func forRequest(imageCount: Int) -> ImageLimits {
-    var limits = self
-    if let crowding, imageCount > crowding.imageCount {
-      limits.maxLongEdge = min(maxLongEdge, crowding.maxLongEdge)
-    }
-    if let requestBytes, imageCount > 0 {
-      // Each change of the share can re-encode images already sent and break
-      // the prompt cache from there on, so it only steps at powers of two.
-      let shares = 1 << (Int.bitWidth - (imageCount - 1).leadingZeroBitCount)
-      limits.maxBytes = min(maxBytes, requestBytes / shares)
-    }
-    limits.crowding = nil
-    limits.requestBytes = nil
-    return limits
-  }
 
   public func fitted(_ size: PixelSize) -> PixelSize {
     guard size.width > 0, size.height > 0 else { return size }

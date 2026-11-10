@@ -186,7 +186,7 @@ private func buildContents(context: Context, mediaResolver: (any MediaResolver)?
           var funcPart: OrderedDictionary<String, JSONValue> = [
             "functionCall": .object([
               "name": .string(call.name),
-              "args": call.arguments.json,
+              "args": call.arguments.wireObject,
             ]),
           ]
 

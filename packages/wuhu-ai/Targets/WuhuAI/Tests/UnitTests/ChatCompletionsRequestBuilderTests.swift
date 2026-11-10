@@ -105,6 +105,23 @@ import Testing
     #expect(assistantMsg["role"] == .string("assistant"))
   }
 
+  @Test func invalidArgumentsReplayTheirRawText() async throws {
+    let context = Context(messages: [
+      .assistant(AssistantMessage(content: [
+        .toolCall(ToolCall(id: "call_1", name: "search", arguments: ToolArguments(emitted: #"{"query":"te"#))),
+      ])),
+    ])
+    let (_, _, body) = try await buildChatCompletionsRequest(
+      model: "m",
+      baseURL: URL(string: "https://a.com/v1")!,
+      context: context,
+      options: RequestOptions(),
+      mediaResolver: nil,
+    )
+    let call = body["messages"]?.array?.first?.object?["tool_calls"]?.array?.first?.object
+    #expect(call?["function"]?.object?["arguments"] == .string(#"{"query":"te"#))
+  }
+
   @Test func buildsRequestWithToolCalls() async throws {
     let context = Context(messages: [
       .assistant(AssistantMessage(

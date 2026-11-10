@@ -84,7 +84,7 @@ import Testing
 
   @Test func `a 6000 px image is scaled to what each model takes`() throws {
     let png = try #require(Self.png(width: 6000 / 4, height: 4000 / 4))
-    for (limits, patch) in [(Self.quarter(.claude), 28), (Self.quarter(.openAI), 32), (Self.quarter(.claude).forRequest(imageCount: 21), 28)] {
+    for (limits, patch) in [(Self.quarter(.claude), 28), (Self.quarter(.openAI), 32), (Self.quarter(.intake), 28)] {
       guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
         Issue.record("the image must be scaled, not dropped")
         continue
@@ -100,25 +100,42 @@ import Testing
     let limits = Self.quarter(.claude)
     let png = try #require(Self.png(width: 2000 / 4, height: 2000 / 4, noise: true))
     #expect(png.count > limits.maxBytes)
-    guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
+    guard case let .image(data, mime) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
       Issue.record("the image must be re-encoded, not dropped")
       return
     }
     #expect(data.count <= limits.maxBytes)
+    #expect(mime == "image/jpeg")
   }
 
-  @Test func `many mid-size images in one request stay under its byte budget`() throws {
-    // Twelve noisy 1200 px screenshots of about 4 MB each, at a quarter scale.
-    let png = try #require(Self.png(width: 1200 / 4, height: 1200 / 4, noise: true))
-    #expect(png.count > 4_000_000 / 16)
-    for base in [Self.quarter(.openAI), Self.quarter(.claude)] {
-      let budget = try #require(base.requestBytes)
-      guard case let .image(data, _) = ImageFitting.fit(png, mimeType: "image/png", limits: base.forRequest(imageCount: 12)) else {
-        Issue.record("each image must be re-encoded, not dropped")
-        return
+  @Test func `a prepared image keeps its pixels and nothing else of its source`() throws {
+    // 4x2 with a tEXt chunk reading "taken at home".
+    let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFXRFWHRDb21tZW50AHRha2VuIGF0IGhvbWV2YxoJAAAAEklEQVR4nGMwTjvzHxkzoAsAADopEyFyNW0oAAAAAElFTkSuQmCC"))
+    let plain = try #require(Self.png(width: 64, height: 32).flatMap(Self.jpeg))
+    var jpeg = Data(plain.prefix(2)); jpeg.append(contentsOf: [0xFF, 0xFE, 0, 15] + Array("taken at home".utf8)); jpeg.append(plain.dropFirst(2))
+    let note = Data("taken at home".utf8)
+    for (source, mime) in [(png, "image/png"), (jpeg, "image/jpeg")] {
+      #expect(source.range(of: note) != nil)
+      #expect(ImageFitting.fit(source, mimeType: mime) == .image(source, mimeType: mime))
+      guard case let .image(prepared, preparedMime) = ImageFitting.prepare(source, mimeType: mime) else {
+        Issue.record("an image within the budget must be prepared, not dropped"); continue
       }
-      #expect(12 * data.count <= budget)
+      #expect(preparedMime == mime)
+      #expect(prepared.range(of: note) == nil)
+      #expect(ImageMedia.pixelSize(ofBytes: prepared) == ImageMedia.pixelSize(ofBytes: source))
+      #expect(ImageFitting.fit(prepared, mimeType: mime) == .image(prepared, mimeType: mime), "every request sends the prepared bytes")
+      #expect(ImageFitting.prepare(source, mimeType: mime) == .image(prepared, mimeType: mime))
     }
+  }
+
+  @Test func `preparing refuses what no codec here decodes and passes other formats on`() throws {
+    let png = try #require(Self.png(width: 64, height: 32))
+    guard case .note = ImageFitting.prepare(Data(png.prefix(png.count - 20)), mimeType: "image/png") else {
+      Issue.record("a PNG that does not decode must not enter a transcript"); return
+    }
+    #if os(Linux)
+      #expect(ImageFitting.prepare(Self.gif, mimeType: "image/gif") == .image(Self.gif, mimeType: "image/gif"))
+    #endif
   }
 
   @Test func `an iPhone screenshot fits the long edge`() throws {
@@ -157,7 +174,7 @@ import Testing
       guard case let .note(text) = ImageFitting.fit(source, mimeType: mime, limits: .claude) else {
         Issue.record("truncated image must be refused"); continue
       }
-      #expect(text.contains("this server could not scale it"))
+      #expect(text.contains("this server could not re-encode it"))
     }
   }
 
@@ -262,7 +279,7 @@ import Testing
     guard case let .note(note) = ImageFitting.fit(png, mimeType: "image/png", limits: limits) else {
       Issue.record("no encoding fits one byte"); return
     }
-    #expect(note.contains("this server could not scale it"))
+    #expect(note.contains("this server could not re-encode it"))
   }
 
   #if os(Linux)
@@ -333,8 +350,6 @@ import Testing
     limits.maxLongEdge /= 4
     limits.maxPatches /= 16
     limits.maxBytes /= 16
-    limits.crowding?.maxLongEdge /= 4
-    limits.requestBytes = preset.requestBytes.map { $0 / 16 }
     return limits
   }
 

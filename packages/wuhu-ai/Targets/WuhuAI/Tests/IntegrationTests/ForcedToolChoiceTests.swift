@@ -108,7 +108,7 @@ private let forcedCompactCases: [ModelEntry] = [
       )
       let calls = toolCalls(forced.message)
       #expect(calls.map(\.name) == ["compact"])
-      #expect(calls.first?.arguments.json.object?["summary"]?.stringValue?.isEmpty == false)
+      #expect(calls.first?.arguments.object?["summary"]?.stringValue?.isEmpty == false)
       let forcedUsage = try #require(forced.metadata.usage)
       #expect(forcedUsage.totalTokens > 0)
     }

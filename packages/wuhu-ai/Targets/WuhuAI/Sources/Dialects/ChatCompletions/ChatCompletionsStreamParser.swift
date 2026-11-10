@@ -30,8 +30,7 @@ func parseChatCompletionsStream(
       continuation.yield(.start(partial()))
 
       var currentTextIndex: Int?
-      var currentToolCallIndex: Int?
-      var currentToolCallBuffer: (id: String, name: String, arguments: String)?
+      var toolCalls: [Int: (contentIndex: Int, id: String, name: String, arguments: String)] = [:]
       var currentReasoningIndex: Int?
       var sawDoneMarker = false
 
@@ -59,6 +58,19 @@ func parseChatCompletionsStream(
           partial: partial(),
         ))
         currentReasoningIndex = nil
+      }
+
+      func finishToolCalls() {
+        for call in toolCalls.values.sorted(by: { $0.contentIndex < $1.contentIndex }) {
+          let toolCall = ToolCall(
+            id: call.id,
+            name: call.name,
+            arguments: ToolArguments(emitted: call.arguments),
+          )
+          content[call.contentIndex] = .toolCall(toolCall)
+          continuation.yield(.toolCallEnd(contentIndex: call.contentIndex, toolCall: toolCall, partial: partial()))
+        }
+        toolCalls = [:]
       }
 
       do {
@@ -98,7 +110,6 @@ func parseChatCompletionsStream(
                 closeReasoning()
                 content.append(.text(TextContent(text: text)))
                 currentTextIndex = content.count - 1
-                currentToolCallIndex = nil
                 continuation.yield(.textStart(
                   contentIndex: currentTextIndex!,
                   partial: partial(),
@@ -122,7 +133,6 @@ func parseChatCompletionsStream(
                 closeText()
                 content.append(.reasoning(.unencrypted(reasoningText)))
                 currentReasoningIndex = content.count - 1
-                currentToolCallIndex = nil
                 continuation.yield(.reasoningStart(
                   contentIndex: currentReasoningIndex!,
                   partial: partial(),
@@ -157,7 +167,6 @@ func parseChatCompletionsStream(
                       replayScope: replayScope,
                     ))))
                     currentReasoningIndex = content.count - 1
-                    currentToolCallIndex = nil
                     continuation.yield(.reasoningStart(
                       contentIndex: currentReasoningIndex!,
                       partial: partial(),
@@ -172,68 +181,37 @@ func parseChatCompletionsStream(
               }
             }
 
-            // Tool call delta
-            if let toolCalls = delta["tool_calls"]?.array?.compactMap(\.object) {
-              for tc in toolCalls {
-                let id = tc["id"]?.stringValue
-                let function = tc["function"]?.object
-                let name = function?["name"]?.stringValue
-                let arguments = function?["arguments"]?.stringValue
-
-                // Use index to track tool calls
-                if let idx = id ?? name {
-                  if currentToolCallBuffer == nil || currentToolCallBuffer?.id != idx {
-                    // New tool call
-                    let callID = id ?? UUID().uuidString
-                    let callName = name ?? ""
-                    currentToolCallBuffer = (callID, callName, arguments ?? "")
-                    closeText()
-                    closeReasoning()
-                    content.append(.toolCall(ToolCall(
-                      id: callID,
-                      name: callName,
-                      arguments: .object([:]),
-                    )))
-                    currentToolCallIndex = content.count - 1
-                    continuation.yield(.toolCallStart(
-                      contentIndex: currentToolCallIndex!,
-                      partial: partial(),
-                    ))
-                  } else if let args = arguments {
-                    currentToolCallBuffer?.arguments += args
-                    continuation.yield(.toolCallDelta(
-                      contentIndex: currentToolCallIndex!,
-                      delta: args,
-                      partial: partial(),
-                    ))
-                  }
+            // Continuation chunks repeat the wire `index` but may carry no id
+            // (MiniMax) or an empty one (Kimi on Bailian).
+            for tc in delta["tool_calls"]?.array?.compactMap(\.object) ?? [] {
+              guard let key = tc["index"]?.intValue else {
+                throw ChatCompletionsStreamError.toolCallDeltaWithoutIndex(JSONValue.object(tc).jsonString())
+              }
+              let id = tc["id"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+              let function = tc["function"]?.object
+              let name = function?["name"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+              let arguments = function?["arguments"]?.stringValue ?? ""
+              if var call = toolCalls[key] {
+                if call.name.isEmpty, let name { call.name = name }
+                call.arguments += arguments
+                toolCalls[key] = call
+                if !arguments.isEmpty {
+                  continuation.yield(.toolCallDelta(contentIndex: call.contentIndex, delta: arguments, partial: partial()))
                 }
+              } else {
+                closeText()
+                closeReasoning()
+                let callID = id ?? UUID().uuidString
+                content.append(.toolCall(ToolCall(id: callID, name: name ?? "", arguments: .object([:]))))
+                toolCalls[key] = (content.count - 1, callID, name ?? "", arguments)
+                continuation.yield(.toolCallStart(contentIndex: content.count - 1, partial: partial()))
               }
             }
           }
 
           // Handle finish
           if let reason = finishReason {
-            // Finalize tool calls
-            if let idx = currentToolCallIndex,
-               let buffer = currentToolCallBuffer,
-               idx < content.count,
-               case .toolCall = content[idx]
-            {
-              let parsed = ToolArguments(verbatim: buffer.arguments) ?? .object([:])
-              content[idx] = .toolCall(ToolCall(
-                id: buffer.id,
-                name: buffer.name,
-                arguments: parsed,
-              ))
-              continuation.yield(.toolCallEnd(
-                contentIndex: idx,
-                toolCall: ToolCall(id: buffer.id, name: buffer.name, arguments: parsed),
-                partial: partial(),
-              ))
-              currentToolCallIndex = nil
-              currentToolCallBuffer = nil
-            }
+            finishToolCalls()
 
             closeText()
             closeReasoning()
@@ -246,6 +224,7 @@ func parseChatCompletionsStream(
           throw InferenceError.streamCut
         }
 
+        finishToolCalls()
         closeText()
         closeReasoning()
 
@@ -264,6 +243,16 @@ func parseChatCompletionsStream(
 
     continuation.onTermination = { _ in
       task.cancel()
+    }
+  }
+}
+
+enum ChatCompletionsStreamError: Error, Sendable, Equatable, CustomStringConvertible {
+  case toolCallDeltaWithoutIndex(String)
+
+  var description: String {
+    switch self {
+    case let .toolCallDeltaWithoutIndex(delta): "chat completions tool-call delta without index: \(delta)"
     }
   }
 }

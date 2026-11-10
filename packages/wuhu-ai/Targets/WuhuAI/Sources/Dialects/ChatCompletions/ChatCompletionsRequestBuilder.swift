@@ -25,6 +25,8 @@ func buildChatCompletionsRequest(
     "model": .string(model),
     "messages": .array(try await buildMessages(context: context, mediaResolver: mediaResolver)),
     "stream": .bool(true),
+    // Without it some OpenAI-compatible providers (GLM and MiniMax on Bailian) never send a usage chunk.
+    "stream_options": .object(["include_usage": .bool(true)]),
   ]
 
   if let schema = options.outputSchema {

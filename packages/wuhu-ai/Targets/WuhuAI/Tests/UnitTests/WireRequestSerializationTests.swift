@@ -55,6 +55,28 @@ import WuhuAI
     }
   }
 
+  @Test func chatCompletionsEndpointsAskForTheUsageChunk() async throws {
+    let endpoints: [any ModelEndpoint] = [
+      DeepSeekChatEndpoint(model: "m", apiKey: "k"),
+      KimiEndpoint(model: "m", apiKey: "k"),
+      QwenEndpoint(model: "m", apiKey: "k"),
+      GLMEndpoint(model: "m", apiKey: "k"),
+    ]
+    for endpoint in endpoints {
+      let recorder = RequestBodyRecorder()
+      let fetch = FetchClient { request in
+        await recorder.append(try await request.body?.text() ?? "")
+        throw FakeNetworkError()
+      }
+      let context = Context(messages: [.user(.init(content: [.text(.init(text: "hi"))]))])
+      do {
+        for try await _ in endpoint.withFetch(fetch).inference(context: context, options: RequestOptions()).stream() {}
+      } catch {}
+      let body = try #require(JSONValue.parse(await recorder.bodies().first ?? ""))
+      #expect(body.object?["stream_options"] == .object(["include_usage": .bool(true)]), "\(endpoint.providerID)")
+    }
+  }
+
   private static func endpointMatrix() -> [(name: String, endpoint: any ModelEndpoint)] {
     [
       (

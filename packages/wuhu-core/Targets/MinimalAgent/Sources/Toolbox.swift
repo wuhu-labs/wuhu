@@ -48,9 +48,10 @@ struct Toolbox {
   }
 
   func run(_ call: ToolCall) async -> ToolResultMessage {
-    let arguments = call.arguments.json
+    let arguments = call.arguments.object
     func string(_ name: String) throws(ToolFailure) -> String {
-      guard let value = arguments.object?[name]?.stringValue else { throw ToolFailure("\(call.name) needs a string \"\(name)\"") }
+      guard let arguments else { throw ToolFailure("\(call.name): \(InvalidToolArguments(text: call.arguments.text))") }
+      guard let value = arguments[name]?.stringValue else { throw ToolFailure("\(call.name) needs a string \"\(name)\"") }
       return value
     }
     do throws(ToolFailure) {

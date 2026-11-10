@@ -12,6 +12,9 @@
     ],
     "model" : "deepseek-v4-pro",
     "stream" : true,
+    "stream_options" : {
+      "include_usage" : true
+    },
     "thinking" : {
       "type" : "enabled"
     }

@@ -166,7 +166,7 @@ func parseGeminiStream(
 
               } else if let functionCall = part["functionCall"]?.object {
                 let name = functionCall["name"]?.stringValue ?? "tool"
-                let argsJSON = functionCall["args"]?.object.map(ToolArguments.object) ?? .object([:])
+                let argsJSON = functionCall["args"].map { $0.object.map(ToolArguments.object) ?? ToolArguments(emitted: $0.jsonString()) } ?? .object([:])
 
                 let fcID = functionCall["id"]?.stringValue ?? UUID().uuidString
                 content.append(.toolCall(ToolCall(

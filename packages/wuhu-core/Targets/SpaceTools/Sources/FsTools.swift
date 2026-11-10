@@ -22,19 +22,23 @@ extension SpaceToolbox {
     return Wire.object([("token", .string(Wire.string(token))), ("content", .string(content))])
   }
 
-  // An image's bytes go to the blob store and the answer carries the hash,
-  // so a transcript keeps a reference and a client never relays the bytes.
+  // The transcript keeps a reference to a copy prepared once, here: fitted to
+  // the intake budget and re-encoded, so every request sends the same bytes
+  // and the source's metadata never leaves the space.
   private static func image(_ target: SpaceToolContext.Target, as mimeType: String, named path: String, _ context: SpaceToolContext) async throws -> JSONValue {
-    let (token, data) = try await context.read(target, upTo: ImageMedia.maxReadBytes) { size in
+    let (token, source) = try await context.read(target, upTo: ImageMedia.maxReadBytes) { size in
       .failed(code: .unsupported, message: "\(path) is \(size) bytes; read takes images up to \(ImageMedia.maxReadBytes) bytes", hint: nil)
     }
-    let actual = ImageMedia.mimeType(ofBytes: data)
+    let actual = ImageMedia.mimeType(ofBytes: source)
     guard actual == mimeType else {
       throw ToolRunError.failed(
         code: .unsupported,
         message: "\(path) is named as \(mimeType) but its bytes are \(actual ?? "no image format read takes"); rename or convert it",
         hint: nil,
       )
+    }
+    guard case let .image(data, mimeType) = ImageFitting.prepare(source, mimeType: mimeType) else {
+      throw ToolRunError.failed(code: .unsupported, message: "\(path) could not be prepared for a model: this server cannot re-encode it", hint: nil)
     }
     let pixels = ImageMedia.pixelSize(ofBytes: data)
     let hash = try await context.space.storeImage(data)

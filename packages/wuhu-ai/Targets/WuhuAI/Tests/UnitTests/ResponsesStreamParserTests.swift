@@ -86,6 +86,29 @@ private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
     }
   }
 
+  @Test func truncatedFunctionCallArgumentsKeepTheirRawText() async throws {
+    let events = [
+      jsonEvent(["type": "response.output_item.added", "item": [
+        "type": "function_call", "call_id": "call_1", "id": "item_1", "name": "search", "arguments": "",
+      ]]),
+      jsonEvent(["type": "response.function_call_arguments.delta", "delta": #"{"query":"te"#]),
+      jsonEvent(["type": "response.output_item.done", "item": [
+        "type": "function_call", "call_id": "call_1", "name": "search", "arguments": #"{"query":"te"#,
+      ]]),
+      jsonEvent(["type": "response.completed", "response": [
+        "status": "completed",
+        "usage": ["input_tokens": 10, "output_tokens": 5, "total_tokens": 15],
+      ]]),
+    ]
+    var last: InferenceEvent?
+    for try await event in parseResponsesStream(sse(events), providerID: "openai", model: "gpt-5.4") { last = event }
+    guard case let .done(message, _) = last else {
+      Issue.record("stream did not complete")
+      return
+    }
+    #expect(message.content == [.toolCall(ToolCall(id: "call_1", name: "search", arguments: ToolArguments(emitted: #"{"query":"te"#)))])
+  }
+
   @Test func parsesFunctionCall() async throws {
     let events = [
       jsonEvent(["type": "response.output_item.added", "item": [
@@ -122,7 +145,7 @@ private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
       #expect(toolCalls[0].name == "search")
       // Only the `call_id` is persisted; the output-item `id` is dropped.
       #expect(toolCalls[0].id == "call_1")
-      #expect(toolCalls[0].arguments.json.object?["query"] == .string("test"))
+      #expect(toolCalls[0].arguments.object?["query"] == .string("test"))
     }
   }
 

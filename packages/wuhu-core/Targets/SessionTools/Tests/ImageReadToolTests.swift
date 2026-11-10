@@ -4,6 +4,7 @@ import JSONValue
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
+import struct SpaceContract.PixelSize
 import SpaceCore
 @testable import SpaceServer
 import Testing
@@ -38,11 +39,15 @@ private let pngHeader: [UInt8] = [
   0xA0,
 ]
 
+private func png(width: Int, height: Int) throws -> Data {
+  try #require(ImageFitting.png(rgba: [UInt8](repeating: 255, count: width * height * 4), size: PixelSize(width: width, height: height)))
+}
+
 @Suite(.deterministicDependencies) struct ImageReadToolTests {
   @Test func imageFilesReadAsAttachedImages() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      _ = try await space.fs(.shared).write("/shots/login.png", Data(pngMagic), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/shots/login.png", try png(width: 4, height: 2), ifMatch: nil)
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .read(result) = try await world.run("read", .object(["path": "/shots/login.png"])) else {
@@ -50,13 +55,13 @@ private let pngHeader: [UInt8] = [
       }
       let image = try #require(result.image)
       #expect(image.mimeType == "image/png")
-      #expect(image.byteCount == pngMagic.count)
+      #expect(image.pixels == PixelSize(width: 4, height: 2))
       guard case .blob = image.source else {
         Issue.record("an image read must leave a reference in the transcript, not bytes")
         return
       }
-      #expect(try await space.imageBytes(image) == Data(pngMagic))
-      #expect(result.content.contains("image image/png, \(pngMagic.count) bytes"))
+      #expect(try await space.imageBytes(image).count == image.byteCount)
+      #expect(result.content.contains("image image/png, 4x2 px, \(image.byteCount) bytes"))
     }
   }
 
@@ -64,26 +69,39 @@ private let pngHeader: [UInt8] = [
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let fs = FakeMachineFS(opaqueTokens: true)
-      fs.put("/shot.png", bytes: pngHeader, mtime: 100)
+      fs.put("/shot.png", bytes: Array(try png(width: 4, height: 2)), mtime: 100)
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: fs.seam)), session: try await makeSession(space))
       guard case let .read(read) = try await world.run("read", .object(["path": .string("machines://\(machineA.rawValue)/shot.png")])) else { throw Mismatch("opaque image read failed") }
       #expect(read.revision == .machine("opaque:100.0"))
-      #expect(read.image?.pixels != nil)
-      #expect(try await space.imageBytes(try #require(read.image)) == Data(pngHeader))
+      #expect(read.image?.pixels == PixelSize(width: 4, height: 2))
     }
   }
 
-  @Test func imagesRecordTheirPixelSize() async throws {
+  @Test func theTranscriptKeepsACopyFittedOnce() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      _ = try await space.fs(.shared).write("/wide.png", Data(pngHeader), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/wide.png", try png(width: 2400, height: 40), ifMatch: nil)
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .read(result) = try await world.run("read", .object(["path": "/wide.png"])) else {
         throw Mismatch("image read failed")
       }
-      #expect(result.image?.pixels != nil)
-      #expect(result.content.contains("6000x4000 px"))
+      let image = try #require(result.image)
+      #expect(image.pixels == PixelSize(width: 2000, height: 33))
+      #expect(result.content.contains("2000x33 px"))
+      let kept = try await space.imageBytes(image)
+      #expect(ImageFitting.fit(kept, mimeType: image.mimeType) == .image(kept, mimeType: image.mimeType))
+    }
+  }
+
+  @Test func imagesNoCodecHereDecodesAreRefused() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      _ = try await space.fs(.shared).write("/header.png", Data(pngHeader), ifMatch: nil)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+
+      let refused = try await world.run("read", .object(["path": "/header.png"]))
+      #expect(try failureMessage(refused).contains("could not be prepared for a model"))
     }
   }
 

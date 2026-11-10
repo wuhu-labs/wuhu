@@ -187,6 +187,23 @@ import Testing
     #expect(hasOutput)
   }
 
+  @Test func invalidArgumentsReplayTheirRawText() async throws {
+    let context = Context(messages: [
+      .assistant(AssistantMessage(content: [
+        .toolCall(ToolCall(id: "call_1", name: "search", arguments: ToolArguments(emitted: #"{"query":"te"#))),
+      ])),
+    ])
+    let (_, _, body) = try await buildResponsesRequest(
+      model: "m",
+      baseURL: URL(string: "https://a.com/v1")!,
+      context: context,
+      options: RequestOptions(),
+      isCodex: false,
+    )
+    let call = body["input"]?.array?.first { $0.object?["type"] == .string("function_call") }
+    #expect(call?.object?["arguments"] == .string(#"{"query":"te"#))
+  }
+
   @Test func buildsRequestWithReasoningHistory() async throws {
     let context = Context(messages: [
       .assistant(AssistantMessage(

@@ -125,7 +125,7 @@ func kernelInference(
             usage.record(resolved.specifier.provider, plan: parsed.plan, windows: parsed.windows, at: date.now)
           }
         },
-        mediaResolver: { executor.mediaResolver(request.sessionID, limits: $0) },
+        mediaResolver: executor.mediaResolver(request.sessionID),
       )
       let completed = try await inferenceExecutor.run(
         attemptID: request.attemptID,

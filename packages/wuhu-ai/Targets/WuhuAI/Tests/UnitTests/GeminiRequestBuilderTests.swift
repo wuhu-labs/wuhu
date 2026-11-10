@@ -152,6 +152,30 @@ import Testing
     #expect(funcResponse["name"] == .string("search"))
   }
 
+  @Test func invalidArgumentsReplayAsEmptyArgsPairedWithTheirRefusal() async throws {
+    let refusal = "search: " + InvalidToolArguments(text: "").description
+    let context = Context(messages: [
+      .assistant(AssistantMessage(content: [
+        .toolCall(ToolCall(id: "uuid", name: "search", arguments: ToolArguments(emitted: #"{"query":"te"#))),
+      ])),
+      .toolResult(ToolResultMessage(toolCallId: "uuid", content: [.text(TextContent(text: refusal))], isError: true)),
+    ])
+
+    let (_, _, body) = try await buildGeminiRequest(
+      model: "m",
+      baseURL: URL(string: "https://a.com/v1beta")!,
+      context: context,
+      options: RequestOptions(),
+    )
+
+    let contents = body["contents"]?.array ?? []
+    #expect(contents.count == 2)
+    let call = contents.first?.object?["parts"]?.array?.first?.object?["functionCall"]?.object
+    #expect(call == ["name": .string("search"), "args": .object([:])])
+    let response = contents.last?.object?["parts"]?.array?.first?.object?["functionResponse"]?.object
+    #expect(response == ["name": .string("search"), "response": .object(["result": .string(refusal)])])
+  }
+
   @Test func fusesThoughtSignatureWithFollowingTextBlock() async throws {
     let context = Context(messages: [
       .assistant(AssistantMessage(

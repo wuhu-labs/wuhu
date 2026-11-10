@@ -122,8 +122,8 @@ extension ToolResultPayload {
     case let .read(result):
       var result = result
       result.content = backstopped(result.content, limit)
-      // Only bytes carried in the row can poison it; a stored image is fitted
-      // to the model when the request is built.
+      // Only bytes carried in the row can poison it; a stored image was
+      // fitted when it was read.
       if let image = result.image, case .inline = image.source, image.byteCount > ToolOutput.maxImageDataBytes {
         result.image = nil
         result.content += "\n[kernel backstop: attached image was \(image.byteCount) bytes; dropped]"

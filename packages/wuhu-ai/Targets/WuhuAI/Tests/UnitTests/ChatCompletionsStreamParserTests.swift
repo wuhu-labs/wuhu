@@ -132,6 +132,78 @@ private enum UsageProbeFailure: Error { case streamDidNotComplete }
     }
   }
 
+  private func toolCalls(_ chunks: [String], finishReason: String? = "tool_calls") async throws -> [ToolCall] {
+    let finish = finishReason.map { [SSEEvent(data: #"{"choices":[{"index":0,"delta":{},"finish_reason":""# + $0 + #""}]}"#)] } ?? []
+    let events = chunks.map { SSEEvent(data: #"{"choices":[{"index":0,"delta":{"tool_calls":"# + $0 + "}}]}") }
+      + finish + [SSEEvent(data: "[DONE]")]
+    var last: InferenceEvent?
+    for try await event in parseChatCompletionsStream(sse(events), providerID: "test", model: "m") { last = event }
+    guard case let .done(message, _) = last else { return [] }
+    return message.content.compactMap { if case let .toolCall(call) = $0 { call } else { nil } }
+  }
+
+  @Test func continuationChunksWithAnEmptyIDExtendTheCallAtTheirIndex() async throws {
+    let calls = try await toolCalls([
+      #"[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]"#,
+      #"[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"city\":\"Hangzhou\"}"}}]"#,
+    ])
+    #expect(calls == [ToolCall(id: "call_1", name: "get_weather", arguments: ToolArguments(verbatim: #"{"city":"Hangzhou"}"#)!)])
+  }
+
+  @Test func continuationChunksWithoutAnIDExtendTheCallAtTheirIndex() async throws {
+    let calls = try await toolCalls([
+      #"[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]"#,
+      #"[{"type":"function","index":0,"function":{"arguments":"{"}}]"#,
+      #"[{"type":"function","index":0,"function":{"arguments":"\"city\": \"Hangzhou\""}}]"#,
+      #"[{"type":"function","index":0,"function":{"arguments":"}"}}]"#,
+    ])
+    #expect(calls == [ToolCall(id: "call_1", name: "get_weather", arguments: ToolArguments(verbatim: #"{"city": "Hangzhou"}"#)!)])
+  }
+
+  @Test func parallelCallsKeepTheirOwnArguments() async throws {
+    let calls = try await toolCalls([
+      #"[{"index":0,"id":"a","function":{"name":"f","arguments":"{\"x\":"}}]"#,
+      #"[{"index":1,"id":"b","function":{"name":"g","arguments":"{\"y\":2}"}}]"#,
+      #"[{"index":0,"function":{"arguments":"1}"}}]"#,
+    ])
+    #expect(calls == [
+      ToolCall(id: "a", name: "f", arguments: ToolArguments(verbatim: #"{"x":1}"#)!),
+      ToolCall(id: "b", name: "g", arguments: ToolArguments(verbatim: #"{"y":2}"#)!),
+    ])
+  }
+
+  @Test func theEndOfTheStreamClosesCallsWithoutAFinishReason() async throws {
+    let calls = try await toolCalls([
+      #"[{"index":0,"id":"a","function":{"name":"f","arguments":"{\"x\":1}"}}]"#,
+    ], finishReason: nil)
+    #expect(calls == [ToolCall(id: "a", name: "f", arguments: ToolArguments(verbatim: #"{"x":1}"#)!)])
+  }
+
+  @Test func aToolCallDeltaWithoutAnIndexFailsTheStream() async throws {
+    await #expect(throws: ChatCompletionsStreamError.self) {
+      _ = try await toolCalls([#"[{"id":"a","function":{"name":"f","arguments":"{}"}}]"#])
+    }
+  }
+
+  @Test func truncatedArgumentsKeepTheirRawText() async throws {
+    let calls = try await toolCalls([
+      #"[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\": \"Hang"}}]"#,
+    ])
+    #expect(calls.map(\.arguments.text) == [#"{"city": "Hang"#])
+    #expect(calls.first?.arguments.object == nil)
+  }
+
+  @Test func nonObjectArgumentsAreNotAnObject() async throws {
+    let calls = try await toolCalls([#"[{"index":0,"id":"call_1","function":{"name":"f","arguments":"[1]"}}]"#])
+    #expect(calls.map(\.arguments.text) == ["[1]"])
+    #expect(calls.first?.arguments.object == nil)
+  }
+
+  @Test func emptyArgumentsAreAnEmptyObject() async throws {
+    let calls = try await toolCalls([#"[{"index":0,"id":"call_1","function":{"name":"f","arguments":""}}]"#])
+    #expect(calls.map(\.arguments) == [.object([:])])
+  }
+
   @Test func parsesUsageInformation() async throws {
     let usageEvent: [String: Any] = [
       "choices": [[

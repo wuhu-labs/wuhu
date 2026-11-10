@@ -7,7 +7,7 @@ extension ToolExecutor {
   public static let tools: [Tool] = [
     Tool(
       name: "read",
-      description: "Read a file: /<path> is the space, machines://<name-or-id>/<path> a machine, wuhu://system/<path> the read-only system files. Text output is clamped to 2000 lines / 50KB with a continuation notice. Images (png, jpg, jpeg, gif, webp, whose bytes must match the name; up to 50 MiB) arrive as attached images, scaled down to what the model takes; other binary files are refused.",
+      description: "Read a file: /<path> is the space, machines://<name-or-id>/<path> a machine, wuhu://system/<path> the read-only system files. Text output is clamped to 2000 lines / 50KB with a continuation notice. Images (png, jpg, jpeg, gif, webp, whose bytes must match the name; up to 50 MiB) arrive as attached images, fitted to 2000 px on the long edge and re-encoded; other binary files are refused.",
       parameters: schema([
         ("path", string("/<path> in the space, machines://<name-or-id>/<path> or wuhu://system/<path>.")),
         ("lines", string("Line window \"A-B\" or \"A-\" (1-indexed, inclusive), e.g. from a truncation notice.")),

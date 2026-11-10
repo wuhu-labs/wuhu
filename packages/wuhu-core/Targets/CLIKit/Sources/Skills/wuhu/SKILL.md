@@ -98,7 +98,7 @@ environment (`ANTHROPIC_API_KEY` pattern), never the space. Usable context =
 maxInput − (headroomOverride ?? maxOutput); the session self-compacts past
 70% of it and is forced past 85%.
 
-Provider `imageFamily` accepts `claude` or `openAI` to select image limits independently of wire dialect (for example `claude` on a Responses gateway). Absent uses `claude` for `anthropic`, `openAI` for `responses`/`codex`; unknown values invalidate that provider. It governs request fitting, context estimates, compaction and cache warming.
+Provider `imageFamily` accepts `claude` or `openAI` to select image token pricing independently of wire dialect (for example `claude` on a Responses gateway). Absent uses `claude` for `anthropic`, `openAI` for `responses`/`codex`; unknown values invalidate that provider. It governs how images count in context estimates, compaction and cache warming.
 
 One way in: `wuhu send <session-id> "..."` posts into an agent's box. A task
 takes no messages from people; only its parent directs it. The session answers

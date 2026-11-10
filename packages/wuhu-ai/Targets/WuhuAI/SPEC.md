@@ -84,7 +84,15 @@ On October 7, 2026, tiny live calls to the subscription `/backend-api/codex/resp
 
 - `AnthropicEndpoint.promptCache` selects Anthropic's automatic caching: one top-level `cache_control` on the request body, whose breakpoint the API moves to the last cacheable block as the conversation grows. `.oneHour` writes `{"type": "ephemeral", "ttl": "1h"}`, `.fiveMinutes` writes `{"type": "ephemeral"}` at the 5-minute default TTL, and `.disabled`, the default, omits it. Which policy a product runs is the product's choice, never this package's.
 
+## Tool-call arguments
+
+`ToolArguments` keeps the text a model emitted. Text that is not a JSON object (truncated, malformed, an array) is kept as is, never read as `{}`: `object` is nil and `decode` throws `InvalidToolArguments`, whose description is the refusal a tool loop sends back so the model can retry. Blank text is `{}`. Chat Completions and Responses replay the raw text; Anthropic `input` and Gemini `args` take only an object and replay `{}` beside the refusal. Responses WebSocket mode still fails the stream on non-object arguments (below).
+
+Chat Completions assembles each call from its deltas by the wire `index`; an empty `id` or `name` counts as missing, every open call closes at `finish_reason` or the end of the stream, and a delta without `index` fails the stream with `ChatCompletionsStreamError.toolCallDeltaWithoutIndex`.
+
 ## Usage and served model
+
+Chat Completions requests send `stream_options: {include_usage: true}`: without it some providers (GLM and MiniMax on Bailian) send no usage chunk.
 
 `Usage.inputTokens` includes all input, cached or not, across Anthropic, Responses (including Codex), Chat Completions and Gemini. `uncachedInputTokens` subtracts `cacheReadTokens` and `cacheWriteTokens` without double counting and asserts that the remainder is nonnegative. `outputTokens` includes billed reasoning: Gemini adds `thoughtsTokenCount` to `candidatesTokenCount`, while other dialects already include reasoning in their output count. `reasoningTokens` is optional: absent means the provider did not report a separate count, not a reported zero. Anthropic leaves it absent. Existing stored usage with zero remains decodable.
 

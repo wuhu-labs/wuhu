@@ -154,8 +154,8 @@ private final class ToolsWitness: Sendable {
               delegated.toolCalls(named: "create_session").first,
               "agent transcript:\n\(delegated.outline)",
             )
-            #expect(createCall.arguments.json.object?["expects_reply"] == .bool(true))
-            #expect(createCall.arguments.json.object?["message"] != nil)
+            #expect(createCall.arguments.object?["expects_reply"] == .bool(true))
+            #expect(createCall.arguments.object?["message"] != nil)
             let created = try #require(delegated.results.compactMap { payload -> CreateSessionResult? in
               guard case let .createSession(result) = payload else { return nil }
               return result

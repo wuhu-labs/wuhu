@@ -122,8 +122,22 @@ import Testing
       }
       #expect(toolCalls.count == 1)
       #expect(toolCalls[0].name == "search")
-      #expect(toolCalls[0].arguments.json.object?["query"] == .string("test"))
+      #expect(toolCalls[0].arguments.object?["query"] == .string("test"))
     }
+  }
+
+  @Test(arguments: ["[1,2]", #""q""#])
+  func keepsArgumentsThatAreNotAnObject(args: String) async throws {
+    let chunk = #"[{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"search","args":\#(args)}}]},"finishReason":"STOP"}]}]"#
+    let events = [SSEEvent(data: chunk)]
+
+    var results: [InferenceEvent] = []
+    for try await event in parseGeminiStream(sse(events), providerID: "gemini", model: "gemini") { results.append(event) }
+
+    guard case let .done(message, _) = results.last else { Issue.record("no done event"); return }
+    let calls = message.content.compactMap { if case let .toolCall(call) = $0 { call } else { nil } }
+    #expect(calls.map(\.arguments) == [ToolArguments(emitted: args)])
+    #expect(calls.first?.arguments.object == nil)
   }
 
   @Test func handlesThoughtSignatureOnTextPart() async throws {
