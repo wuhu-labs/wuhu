@@ -12,11 +12,15 @@ import WuweiQueries
 extension ConversationCell {
   func reads(_ conversation: ConversationRecord, as viewer: Principal?) -> Bool {
     guard let viewer else { return true }
-    let reader = viewer.member
+    return reads(conversation, reader: viewer.member, group: viewer.group)
+  }
+
+  /// Box, DM and channel readership for a session id, a persona, or nil (the --dev seat) acting in `group`.
+  func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID) -> Bool {
     let isSession = reader.map { session($0) != nil } ?? false
-    return conversation.reads(reader, isSession: isSession, group: viewer.group) {
-      guard let reader, !isSession, let account = account(of: reader) else { return space.reach(of: viewer.group) }
-      return space.readable(by: Principal(actor: .person(persona: reader, account: account), group: viewer.group))
+    return conversation.reads(reader, isSession: isSession, group: group) {
+      guard let reader, !isSession, let account = account(of: reader) else { return space.reach(of: group) }
+      return space.readable(by: Principal(actor: .person(persona: reader, account: account), group: group))
     }
   }
 

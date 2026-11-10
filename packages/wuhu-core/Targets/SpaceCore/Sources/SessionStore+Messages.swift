@@ -11,13 +11,6 @@ import StructuredQueries
 import StructuredQueriesSQLite
 
 extension SessionStore {
-  /// Applies box, DM and channel readership for a session id, persona, or nil (--dev seat).
-  public func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID) async throws -> Bool {
-    try await writer.read { db in
-      try Conversations.reads(conversation, reader: reader, group: group, in: db)
-    }
-  }
-
   /// Whether `member` reads `path` in `group` because it is a member of the
   /// conversation homed there whose attachment folder holds it, whatever its
   /// own group reads.
@@ -35,11 +28,11 @@ extension SessionStore {
   }
 
   public func readsFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
-    try await writer.read { db in
-      let conversation = try fileConversation(path, in: group, db: db)
-      if let conversation, conversation.kind == .users {
-        return try Conversations.reads(conversation, reader: principal.member, group: principal.group, in: db)
-      }
+    let conversation = try await attachmentConversation(path, in: group)
+    if let conversation, conversation.kind == .users {
+      return try await reads(conversation, reader: principal.member, group: principal.group)
+    }
+    return try await writer.read { db in
       // A person's own group is theirs alone: it reads as nothing to everyone
       // else, including a space admin.
       if let owner = try String.fetchOne(
@@ -176,28 +169,6 @@ extension SessionStore {
 
   public func message(_ id: MessageID) async throws -> MessageRecord? {
     try await writer.read { db in try Conversations.message(id: id.rawValue, in: db) }
-  }
-}
-
-extension Conversations {
-  static func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID, in db: Database) throws -> Bool {
-    try conversation.reads(reader, isSession: try reader.map { try Sessions.exists($0, in: db) } ?? false, group: group) {
-      try reach(reader: reader, group: group, in: db)
-    }
-  }
-
-  /// The groups a reader reaches: a session's own group's reach, a persona's
-  /// account and acting group.
-  private static func reach(reader: String?, group: GroupID, in db: Database) throws -> Set<GroupID> {
-    guard let reader, try !Sessions.exists(reader, in: db) else {
-      return try GroupAccess.reach(of: group, in: db)
-    }
-    guard let account = try String.fetchOne(
-      db, sql: "SELECT account_id FROM personas WHERE name = ?", arguments: [reader],
-    ) else { return try GroupAccess.reach(of: group, in: db) }
-    return try GroupAccess.readable(
-      by: .person(persona: reader, account: AccountID(rawValue: account)), acting: group, in: db,
-    )
   }
 }
 

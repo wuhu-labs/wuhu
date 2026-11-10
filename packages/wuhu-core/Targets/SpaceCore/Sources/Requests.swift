@@ -41,6 +41,7 @@ public struct RequestTermsError: Error, Hashable, Sendable {
 @Table("requests")
 struct RequestRow {
   @Column(primaryKey: true) var id: String
+  @Column("conversation_id") var conversationID: String
   @Column("grp") var group: String
   var requester: String
   var firing: String?

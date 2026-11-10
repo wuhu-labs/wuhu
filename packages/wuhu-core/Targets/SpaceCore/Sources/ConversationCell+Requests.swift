@@ -27,17 +27,15 @@ enum Reported: Sendable {
 }
 
 extension ConversationCell {
+  /// A request of this conversation.
   func request(_ id: RequestID) -> RequestRow? {
-    context.db.rows(RequestRow.where { $0.id.eq(id.rawValue) }).first
-  }
-
-  /// A request lives where its requester and its task talk.
-  private func holds(_ row: RequestRow) -> Bool {
-    context.id.key == (session(row.requester) == nil ? row.task : Conversations.dmID(row.requester, row.task).rawValue)
+    context.db.rows(RequestRow.where { $0.id.eq(id.rawValue) && $0.conversationID.eq(context.id.key) }).first
   }
 
   private func open(_ task: SessionID) -> [RequestRow] {
-    context.db.rows(RequestRow.where { $0.task.eq(task.rawValue) && $0.status.eq(RequestStatus.open.rawValue) }.order(by: \.createdAt))
+    context.db.rows(
+      RequestRow.where { $0.conversationID.eq(context.id.key) && $0.task.eq(task.rawValue) && $0.status.eq(RequestStatus.open.rawValue) }.order(by: \.createdAt),
+    )
   }
 
   /// A request is opened on a child by its parent, or on a top-level agent by the person or observer that made it, and a task owes one request at a time. A request that already posted is that one again, never a second.
@@ -59,7 +57,7 @@ extension ConversationCell {
     if let posted = message(report.messageID) {
       return .delivered(MessageDelivery(message: posted, enqueued: [], replayed: true))
     }
-    guard let row = request(report.request), row.task == report.task.rawValue, row.requestStatus.isOpen, holds(row) else {
+    guard let row = request(report.request), row.task == report.task.rawValue, row.requestStatus.isOpen else {
       throw SessionStoreError.unknownRequest(report.request.rawValue)
     }
     var close = RequestStep.progress
@@ -77,7 +75,7 @@ extension ConversationCell {
 
   /// The task was archived owing reports: each of its open requests fails with a final saying so.
   mutating func archived(_ task: SessionID, title: String, at date: Date) throws {
-    for row in open(task) where holds(row) {
+    for row in open(task) {
       _ = try answer(
         row, .final, id: MessageID(UUID.deterministic("archived-before-reporting", task.rawValue, row.id).uuidString.lowercased()),
         text: "session \(task.rawValue) (\(title)) was archived before reporting on request \(row.id)",
@@ -124,7 +122,7 @@ extension ConversationCell {
       if request(id) == nil {
         try context.db.execute(RequestRow.insert {
           RequestRow(
-            id: id.rawValue, group: session(task.rawValue)!.group, requester: requester.name, firing: requester.firing, task: task.rawValue,
+            id: id.rawValue, conversationID: context.id.key, group: session(task.rawValue)!.group, requester: requester.name, firing: requester.firing, task: task.rawValue,
             status: RequestStatus.open.rawValue, brief: brief,
             schema: terms.schema?.jsonString(sortedKeys: true), fields: terms.fields?.jsonString(sortedKeys: true),
             result: nil, refusals: "[]", stallSeconds: stallSeconds,

@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import SessionDomain
+import struct SpaceContract.GroupID
 
 public enum MessageAnchor: Hashable, Sendable {
   case message(MessageID)
@@ -45,6 +46,11 @@ extension SessionStore {
     guard a != b else { return nil }
     let id = Conversations.dmID(a, b)
     return cell(id).record() == nil ? nil : id
+  }
+
+  /// Whether a session id, a persona, or nil (the --dev seat) acting in `group` reads the conversation.
+  public func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID) async throws -> Bool {
+    cell(conversation.id).reads(conversation, reader: reader, group: group)
   }
 
   private func cell(_ id: ConversationID) -> ConversationCell {
