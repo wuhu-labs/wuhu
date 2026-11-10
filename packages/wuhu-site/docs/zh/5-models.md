@@ -53,7 +53,7 @@ agent 能搜网页、生成和编辑图片、转写音频，App 的语音输入�
 
 agent 的脚本和命令也能用密钥，比如某个 web 服务的 token。这些是按组分的，和上面的模型 key 分开放。
 
-组的 admin 在那个组里（`--group <id>`，见[组](/guide/zh/3-people-and-devices.md#组)）用 `wuhu secret set <NAME> < value` 存一条；`wuhu secret list` 列出名字，`wuhu secret remove <NAME>` 删掉一条。它们存在服务器所在主机的 `~/.wuhu/secrets/<space-id>/<group>.json` 里。一个组永远看不到另一个组的。
+组的 admin 在那个组里用 `wuhu secret set <NAME> < value` 存一条：`--group <id>` 是全局参数，写在动词前面，即 `wuhu --group <id> secret set <NAME> < value`（见[组](/guide/zh/3-people-and-devices.md#组)），会话的 exec 则在它自己的组里，除非用 `WUHU_IDENTITY=wallet` 改用你的登录；`wuhu secret list` 列出名字，`wuhu secret remove <NAME>` 删掉一条。它们存在服务器所在主机的 `~/.wuhu/secrets/<space-id>/<group>.json` 里。一个组永远看不到另一个组的。
 
 脚本的密钥来自它的 agent 所在的组；值会被填进脚本对外的请求里，回来的内容里也会被打码。机器上的命令拿到的是机器所在组的密钥，作为环境变量。见[机器](/guide/zh/4-machines.md#机器上的密钥)。
 

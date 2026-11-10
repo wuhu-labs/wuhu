@@ -1,0 +1,28 @@
+--- a/swift/internal/swift_symbol_graph_aspect.bzl
++++ b/swift/internal/swift_symbol_graph_aspect.bzl
+@@ -106,6 +106,12 @@
+                 )
+             ]
+             if compiles_code:
++                swiftc_inputs = getattr(aspect_ctx.rule.attr, "swiftc_inputs", [])
++                response_files = [
++                    aspect_ctx.expand_location(copt, targets = swiftc_inputs)
++                    for copt in getattr(aspect_ctx.rule.attr, "copts", [])
++                    if copt.startswith("@")
++                ]
+                 for module in swift_info.direct_modules:
+                     if module.is_system:
+                         continue
+@@ -133,6 +139,12 @@
+                         minimum_access_level = minimum_access_level,
+                         module_name = module.name,
+                         output_dir = output_dir,
++                        response_file_inputs = [
++                            file
++                            for input in swiftc_inputs
++                            for file in input.files.to_list()
++                        ],
++                        response_files = response_files,
+                         swift_infos = [swift_info],
+                         swift_toolchain = swift_toolchain,
+                     )

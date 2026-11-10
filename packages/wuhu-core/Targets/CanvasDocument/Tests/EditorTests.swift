@@ -30,7 +30,40 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> CanvasR
     #expect((child.x, child.y) == (40, 60))
     #expect(read.frame(of: child) == rect(640, 60, 200, 100))
     #expect(read.item(free)?.color == nil, "free text has no colour")
-    #expect(read.item(sticky)?.text == Inline(plain: "Ship"))
+    #expect(read.item(sticky)?.blocks == [.paragraph(Inline(plain: "Ship"))] && read.item(sticky)?.text.isEmpty == true)
+  }
+
+  @Test func aNewStickyIsBlocksSoConcurrentFirstEditsMergeByCharacter() throws {
+    let doc = board()
+    try doc.setPeerId(peer: 1)
+    var editor = CanvasEditor(doc)
+    let sticky = try editor.insert(.sticky, frame: rect(0, 0, 160, 160), color: .yellow, text: Inline(plain: "Ship the page"))
+    doc.commit()
+    let other = doc.fork()
+    try other.setPeerId(peer: 2)
+    try CanvasEditor(doc).setBlocks(sticky, [.paragraph(Inline(plain: "Ship the canvas page"))])
+    try CanvasEditor(other).setBlocks(sticky, [.paragraph(Inline(plain: "Ship the page today"))])
+    doc.commit()
+    other.commit()
+    _ = try doc.import(bytes: other.export(mode: .snapshot))
+    #expect(CanvasBoard(doc: doc).item(sticky)?.note == [.paragraph(Inline(plain: "Ship the canvas page today"))])
+  }
+
+  @Test func aNewShapeHasItsTextSoConcurrentFirstWordsBothStay() throws {
+    let doc = board()
+    try doc.setPeerId(peer: 1)
+    var editor = CanvasEditor(doc)
+    let shape = try editor.insert(.rect, frame: rect(0, 0, 200, 100), color: .blue)
+    doc.commit()
+    let other = doc.fork()
+    try other.setPeerId(peer: 2)
+    try CanvasEditor(doc).setText(shape, Inline(plain: "API"))
+    try CanvasEditor(other).setText(shape, Inline(plain: "draft"))
+    doc.commit()
+    other.commit()
+    _ = try doc.import(bytes: other.export(mode: .snapshot))
+    let merged = CanvasBoard(doc: doc).item(shape)?.text.plain
+    #expect(merged == "APIdraft" || merged == "draftAPI")
   }
 
   @Test func movingASectionCarriesItsContents() throws {
@@ -142,6 +175,38 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> CanvasR
     #expect(read.item(sticky)?.color == .green)
     #expect(read.item(sticky)?.kind == .rect)
     #expect(read.item(file)?.path == "/designs/hero.png")
+  }
+
+  @Test func setBlocksUpgradesAStickyAndItsCopiesAndLeavingStickyDropsThem() throws {
+    let doc = board()
+    var editor = CanvasEditor(doc)
+    let sticky = try editor.insert(.sticky, frame: rect(0, 0, 100, 100), color: .yellow, text: Inline(plain: "Ship"))
+    let blocks: [Block] = [.heading(level: 1, text: Inline(plain: "Ship")), .list(level: 0, style: .done, text: Inline(plain: "v1"))]
+    try editor.setBlocks(sticky, blocks)
+    let copy = try #require(try editor.duplicate([sticky], dx: 20, dy: 20)[sticky])
+    doc.commit()
+    var read = CanvasBoard(doc: doc)
+    #expect(read.item(sticky)?.blocks == blocks && read.item(sticky)?.text.isEmpty == true)
+    #expect(read.item(copy)?.blocks == blocks)
+
+    try CanvasEditor(doc).setKind(sticky, .rect)
+    try CanvasEditor(doc).setKind(sticky, .sticky)
+    doc.commit()
+    read = CanvasBoard(doc: doc)
+    #expect(read.item(sticky)?.blocks == nil && read.item(sticky)?.note == [])
+  }
+
+  @Test func setBlocksWritesExactlyWhatTheEditorShowsABlankLineIncluded() throws {
+    let doc = board()
+    var editor = CanvasEditor(doc)
+    let sticky = try editor.insert(.sticky, frame: rect(0, 0, 100, 100), color: .yellow)
+    let (one, two) = (Block.paragraph(Inline(plain: "one")), Block.paragraph(Inline(plain: "two")))
+    try editor.setBlocks(sticky, [one, .paragraph(Inline()), .paragraph(Inline()), two])
+    doc.commit()
+    #expect(CanvasBoard(doc: doc).item(sticky)?.blocks == [one, .paragraph(Inline()), .paragraph(Inline()), two])
+    try editor.setBlocks(sticky, [one, .paragraph(Inline()), two])
+    doc.commit()
+    #expect(CanvasBoard(doc: doc).item(sticky)?.blocks == [one, .paragraph(Inline()), two])
   }
 
   @Test func outOfSchemaNodesAreSkipped() throws {

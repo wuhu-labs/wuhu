@@ -31,6 +31,7 @@ packages/*/Apps/*/*-dev.entitlements
 packages/*/Apps/*/*-release.entitlements
 packages/*/Apps/*/*-adhoc.entitlements
 bazel/umbrella/Package.swift
+bazel/lane-floors.bazelrc
 # Per-package Package.resolved files churn locally and are derived
 # state; they're re-resolved from each package's manifest.
 packages/*/Package.resolved

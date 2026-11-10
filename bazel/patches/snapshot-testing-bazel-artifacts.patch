@@ -1,0 +1,27 @@
+diff --git a/Sources/SnapshotTesting/AssertSnapshot.swift b/Sources/SnapshotTesting/AssertSnapshot.swift
+--- a/Sources/SnapshotTesting/AssertSnapshot.swift
++++ b/Sources/SnapshotTesting/AssertSnapshot.swift
+@@ -466,8 +466,10 @@
+         return nil
+       }
+ 
++      let environment = ProcessInfo.processInfo.environment
+       let artifactsUrl = URL(
+-        fileURLWithPath: ProcessInfo.processInfo.environment["SNAPSHOT_ARTIFACTS"]
++        fileURLWithPath: environment["SNAPSHOT_ARTIFACTS"]
++          ?? environment["TEST_UNDECLARED_OUTPUTS_DIR"].map { "\($0)/snapshot-failures" }
+           ?? NSTemporaryDirectory(),
+         isDirectory: true
+       )
+@@ -477,6 +479,11 @@
+         snapshotFileUrl.lastPathComponent
+       )
+       try snapshotting.diffing.toData(diffable).write(to: failedSnapshotFileUrl)
++      for case .data(let data, let name) in attachments {
++        try data.write(
++          to: failedSnapshotFileUrl.deletingPathExtension().appendingPathExtension(name)
++        )
++      }
+ 
+       if !attachments.isEmpty {
+         #if !os(Linux) && !os(Android) && !os(Windows)

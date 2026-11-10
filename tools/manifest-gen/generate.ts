@@ -21,6 +21,16 @@ import {
   platforms as releasePlatforms,
 } from '../lib/plan.ts'
 import { manifestFingerprint } from './provenance.ts'
+import {
+  assertFloorEdges,
+  comparePlatformVersions,
+  type FloorEdge,
+  type Floors,
+  laneFloorsBazelrc,
+  laneFloorsBazelrcContent,
+  lowestFloors,
+  platformFloorRule,
+} from './platform-floors.ts'
 import { assertManualBoundaries, validateManual } from './manual.ts'
 import {
   pinnedRepos,
@@ -33,6 +43,7 @@ import {
   assertPublicEdges,
   discoverOwnedPackages,
   type Owner,
+  referencedLabelPackages,
 } from './owners.ts'
 
 export type { ReleasePlatform }
@@ -2302,7 +2313,7 @@ function unstampedTwin(
     bazelSourceGlob(`Targets/${target.name}/${target.sources}`)
   },\n${swiftSettingsCoptsAttr(target.swiftSettings)}    deps = ${
     starlarkList(deps)
-  },\n${pluginsAttr}${manualAttr(target.manual)}${
+  },\n${pluginsAttr}${platformFloorAttr(pkg)}${manualAttr(target.manual)}${
     platformsAttr(
       libraryPlatforms(pkg, target),
       `${target.manifestDir}/target.yml`,
@@ -2311,6 +2322,16 @@ function unstampedTwin(
 }
 
 const infoPlistVersionPlaceholder = '@WUHU_VERSION@'
+
+function hasPlatformFloor(pkg: PackageManifest): boolean {
+  return Object.keys(pkg.platforms ?? {}).length > 0
+}
+
+function platformFloorAttr(pkg: PackageManifest): string {
+  return hasPlatformFloor(pkg)
+    ? '    platform_floor = ":platform_floor",\n'
+    : ''
+}
 
 // macOS identifies a flat Mach-O by its code-signing identifier, which codesign
 // takes from an embedded `__TEXT,__info_plist` section; without one the
@@ -2445,6 +2466,9 @@ export async function generateBuildBazel(
   if (targets.some((target) => target.kind === 'cLibrary')) {
     loadSymbols.push('wuhu_c_library')
   }
+  if (hasPlatformFloor(pkg)) {
+    loadSymbols.push('wuhu_platform_floor')
+  }
   if (targets.some((target) => target.kind === 'systemLibrary')) {
     loadSymbols.push('wuhu_system_library')
   }
@@ -2478,6 +2502,13 @@ export async function generateBuildBazel(
     // into the package exists (//tools:public-links-test: the public docs'
     // links into packages/).
     `filegroup(\n    name = "files",\n    srcs = glob(["**"], exclude = ["BUILD.bazel"]),\n)\n`,
+    ...(hasPlatformFloor(pkg)
+      ? [platformFloorRule(
+        'platform_floor',
+        pkg.platforms!,
+        `${pkg.name} package.yml`,
+      )]
+      : []),
     // Run together by //packages:swiftlint, the lint CI lane.
     `swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)\n`,
   ]
@@ -2515,7 +2546,7 @@ export async function generateBuildBazel(
         `wuhu_c_library(\n    name = "${target.name}",\n    srcs = glob(["${root}/**/*.c"]),\n    hdrs = glob(["${root}/**/*.h"]),\n    module_map = "${root}/include/module.modulemap",\n    deps = ${
           starlarkList(deps)
         },\n${
-          manualAttr(target.manual) + platformsAttr(
+          platformFloorAttr(pkg) + manualAttr(target.manual) + platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
           )
@@ -2577,7 +2608,7 @@ export async function generateBuildBazel(
           swiftSettingsCoptsAttr(settings)
         }    deps = ${starlarkList(deps)},\n${pluginsAttr}${
           target.info ? infoPlistLinkAttrs(target) : ''
-        }${manualAttr(target.stamp || target.manual)}${
+        }${platformFloorAttr(pkg)}${manualAttr(target.stamp || target.manual)}${
           platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
@@ -2639,7 +2670,7 @@ export async function generateBuildBazel(
           linkedFrameworksLinkoptsAttr(target.linkedFrameworks)
         }    deps = ${starlarkList(deps)},
 ${pluginsAttr}    package_name = "${pkg.packageName}",
-${
+${platformFloorAttr(pkg)}${
           manualAttr(target.manual) + platformsAttr(
             libraryPlatforms(pkg, target),
             `${target.manifestDir}/target.yml`,
@@ -2738,7 +2769,7 @@ ${
           : 'wuhu_swift_test'
         const bundleAttrs = config.macBundle
           ? `    minimum_os_version = "${pkg.platforms!.macOS}",\n`
-          : ''
+          : platformFloorAttr(pkg)
         chunks.push(
           `${hostRule}(\n    name = "${test.name}",\n    package_name = "${pkg.packageName}",\n${bundleAttrs}${sharedAttrs}${
             config.hostLinkopts?.length
@@ -3274,21 +3305,6 @@ function dependencyIdentityFields(external: ExternalPackage): string {
 // satisfy the strictest package in the repo — the highest declared version wins.
 // A package's own deployment target stays its own business: nothing forces two
 // products shipping to different OS floors to agree.
-export function comparePlatformVersions(lhs: string, rhs: string): number {
-  const parse = (version: string) =>
-    version.split('.').map((part) => Number.parseInt(part, 10))
-  const left = parse(lhs)
-  const right = parse(rhs)
-  if (left.some(Number.isNaN) || right.some(Number.isNaN)) {
-    throw new Error(`unparsable platform version: ${lhs} vs ${rhs}`)
-  }
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const diff = (left[index] ?? 0) - (right[index] ?? 0)
-    if (diff !== 0) return diff
-  }
-  return 0
-}
-
 function platformOrder(platform: string): number {
   const order = ['macOS', 'iOS', 'visionOS', 'tvOS', 'watchOS']
   const index = order.indexOf(platform)
@@ -3645,7 +3661,77 @@ export function combineBuildBazel(
   }\n`
 }
 
-async function generatePackage(packageDir: string): Promise<void> {
+interface FloorDeclaration {
+  floors: Floors
+  location: string
+}
+
+interface PackageFloors {
+  declarations: FloorDeclaration[]
+  edges: FloorEdge[]
+}
+
+const hmrPackage = 'packages/hmr'
+
+// A bundle imports the packages its own and its reachable libraries'
+// dependencies name, its package for a `:Target` that is no library, and the
+// HMR runtime and ViewPilot the generator injects.
+export function packageFloorEdges(
+  packageDir: string,
+  pkg: PackageManifest,
+  targets: readonly TargetManifest[],
+  apps: readonly { app: AppManifest; location: string }[],
+): FloorEdge[] {
+  const location = `${packageDir}/package.yml`
+  const edges: FloorEdge[] = [{
+    location,
+    floors: pkg.platforms ?? {},
+    dependsOn: [
+      ...Object.values(pkg.externalPackages ?? {}).flatMap((external) =>
+        external.path ? [normalize(join(packageDir, external.path))] : []
+      ),
+      ...targets.flatMap((target) =>
+        referencedLabelPackages(target.dependencies ?? [])
+      ),
+      ...(targets.some((target) => target.hmr) ? [hmrPackage] : []),
+    ],
+  }]
+  for (const { app, location } of apps) {
+    const byName = new Map(
+      (app.libraries ?? []).map((entry) => [entry.name, entry]),
+    )
+    for (const bundle of appBundles(app)) {
+      const labels = [
+        ...bundle.dependencies,
+        ...[...byName.keys()]
+          .filter((name) => reachesLibrary(bundle.dependencies, name, byName))
+          .flatMap((name) => byName.get(name)!.dependencies ?? []),
+      ]
+      edges.push({
+        location: `${location} ${bundle.name}`,
+        floors: { [bundle.platform]: bundle.minimumOSVersion },
+        dependsOn: [
+          ...referencedLabelPackages(labels),
+          ...(labels.some((label) =>
+              label.startsWith(':') && !byName.has(label.slice(1))
+            )
+            ? [packageDir]
+            : []),
+          ...(app.hmr && app.targets.includes(bundle) &&
+              hmrAppPlatforms.has(bundle.platform)
+            ? [hmrPackage]
+            : []),
+          ...(bundleEmbedsViewPilot(app, bundle) ? [viewPilotPackage] : []),
+        ],
+      })
+    }
+  }
+  return edges
+}
+
+async function generatePackage(
+  packageDir: string,
+): Promise<PackageFloors> {
   const pkg = await readPackageManifest(packageDir)
   await resolveExternalPackages(pkg, packageDir)
   const targets = await discoverTargets(packageDir)
@@ -3710,6 +3796,22 @@ async function generatePackage(packageDir: string): Promise<void> {
   await writeIfChanged(buildOutput, buildBazel)
   if (generateSchemes) {
     await generateSchemesForPackage(packageDir, targets)
+  }
+  const appLocations = apps.map(({ app, pathPrefix }) => ({
+    app,
+    location: `${packageDir}/${shellPath(pathPrefix, 'app.yml')}`,
+  }))
+  return {
+    declarations: [
+      { floors: pkg.platforms ?? {}, location: `${packageDir}/package.yml` },
+      ...appLocations.flatMap(({ app, location }) =>
+        appBundles(app).map((target) => ({
+          floors: { [target.platform]: target.minimumOSVersion },
+          location,
+        }))
+      ),
+    ],
+    edges: packageFloorEdges(packageDir, pkg, targets, appLocations),
   }
 }
 
@@ -4329,6 +4431,28 @@ function appLibraryPlatforms(
   return checkPlatforms.filter((platform) => platforms.includes(platform))
 }
 
+// What the bundles that link the library ship at, the lowest per platform.
+function appLibraryFloors(
+  app: AppManifest,
+  library: AppLibraryManifest,
+): Floors {
+  const byName = new Map(
+    (app.libraries ?? []).map((entry) => [entry.name, entry]),
+  )
+  return Object.fromEntries(
+    lowestFloors(
+      appBundles(app)
+        .filter((target) =>
+          reachesLibrary(target.dependencies, library.name, byName)
+        )
+        .map((target) => ({
+          floors: { [target.platform]: target.minimumOSVersion },
+          location: `${app.name} app.yml`,
+        })),
+    ),
+  )
+}
+
 function reachesLibrary(
   dependencies: string[],
   name: string,
@@ -4404,9 +4528,11 @@ export function generateAppBuildBazel(
       appLoad(platform, extensionPlatforms.has(platform))
     ),
     `load("//bazel/rules:rules.bzl", ${
-      [...coptsSymbols, 'wuhu_platforms'].map((symbol) => `"${symbol}"`).join(
-        ', ',
-      )
+      [
+        ...coptsSymbols,
+        ...(app.libraries?.length ? ['wuhu_platform_floor'] : []),
+        'wuhu_platforms',
+      ].map((symbol) => `"${symbol}"`).join(', ')
     })`,
     `load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")`,
   ]
@@ -4556,7 +4682,18 @@ export function generateAppBuildBazel(
         ...(library.copts ?? []),
       ]),
     ].join(' + ')
+    const libraryPlatformsAttr = platformsAttr(
+      appLibraryPlatforms(app, library),
+      `${app.name} app.yml`,
+    )
+    const floor = `${library.name}.platform_floor`
     chunks.push(
+      platformFloorRule(
+        floor,
+        appLibraryFloors(app, library),
+        `${app.name} app.yml`,
+        manualAttr(app.manual) + libraryPlatformsAttr,
+      ),
       `swift_library(\n    name = "${library.name}",\n${
         manualAttr(app.manual)
       }    srcs = glob(${
@@ -4565,7 +4702,7 @@ export function generateAppBuildBazel(
             `${shellPath(pathPrefix, dir)}/**/*.swift`
           ),
         )
-      }),\n    copts = ${coptsExpr},\n${
+      }),\n    copts = ${coptsExpr} + ["@$(location :${floor})"],\n    swiftc_inputs = [":${floor}"],\n${
         // rules_apple's app_intents aspect refuses a library that does not link
         // AppIntents, and Swift autolinking alone leaves no trace of it in the
         // linking context the aspect reads.
@@ -4577,12 +4714,7 @@ export function generateAppBuildBazel(
         embedsHMR
           ? ' + select({\n        "//bazel/rules:hmr_enabled": ["//packages/hmr:HMRRuntime"],\n        "//conditions:default": [],\n    })'
           : ''
-      },\n${
-        platformsAttr(
-          appLibraryPlatforms(app, library),
-          `${app.name} app.yml`,
-        )
-      })\n`,
+      },\n${libraryPlatformsAttr})\n`,
     )
   }
 
@@ -5296,11 +5428,22 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
     : ['packages/wuhu-core']
   const packageDirs = [...new Set([...requested, ...swiftPMPackages])]
 
+  const floorDeclarations: FloorDeclaration[] = []
+  const floorEdges: FloorEdge[] = []
+  const packageFloors = new Map<string, Floors>()
   for (const packageDir of packageDirs) {
-    await generatePackage(packageDir)
+    const { declarations, edges } = await generatePackage(packageDir)
+    floorDeclarations.push(...declarations)
+    floorEdges.push(...edges)
+    packageFloors.set(packageDir, declarations[0].floors)
   }
 
   if (generateAll) {
+    assertFloorEdges(packageFloors, floorEdges)
+    await writeIfChanged(
+      apply ? laneFloorsBazelrc : `${laneFloorsBazelrc}.generated`,
+      laneFloorsBazelrcContent(lowestFloors(floorDeclarations)),
+    )
     assertPublicEdges(await discoverOwnedPackages('packages'))
     await writeIfChanged(
       join('packages', apply ? 'BUILD.bazel' : 'BUILD.generated.bazel'),

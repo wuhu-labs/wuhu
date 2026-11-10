@@ -18,7 +18,11 @@ extension CanvasBoard {
   }
 
   private func line(of item: CanvasItem) -> String {
-    let body = item.kind == .file ? [item.path ?? ""] : bodyLines(item.text)
+    let body = switch item.kind {
+    case .file: [item.path ?? ""]
+    case .sticky: noteLines(item.note)
+    default: bodyLines(item.text)
+    }
     let head = "- \(item.kind.rawValue) {\(self.attributes(of: item))}"
     return join(head, body)
   }
@@ -77,6 +81,22 @@ func bodyLines(_ text: Inline) -> [String] {
     .map { $0.allSatisfy { $0 == " " } ? "" : String($0) }
 }
 
+/// A sticky's blocks as `.wmd` markdown. One paragraph stays on the item's line, as plain text
+/// always did; anything more starts on the line below.
+private func noteLines(_ blocks: [Block]) -> [String] {
+  let lines = blocks.markdown.split(separator: "\n", omittingEmptySubsequences: false).dropLast().map(String.init)
+  let shown = blocks.filter { if case let .paragraph(text) = $0 { !text.isEmpty } else { true } }
+  if shown.count == 1, case .paragraph = shown[0] { return lines }
+  return [""] + lines
+}
+
+/// The blocks the agent's lines say, `line` being the first one's number.
+func blocks(_ lines: [String], line: Int) throws(CanvasSyntaxError) -> [Block] {
+  do throws(WmdSyntaxError) { return try [Block](markdown: lines.joined(separator: "\n")) } catch {
+    throw CanvasSyntaxError(line: line + error.line - 1, problem: .inline(error.problem))
+  }
+}
+
 /// What the agent's lines say, `line` being the first one's number.
 func inline(_ lines: [String], line: Int) throws(CanvasSyntaxError) -> Inline {
   do throws(WmdSyntaxError) { return try Inline(markdown: lines.joined(separator: "\n"), line: line) } catch {
@@ -89,6 +109,12 @@ func readBack(_ text: Inline) -> Inline {
   var lines = bodyLines(text)
   while lines.count > 1, lines.last == "" { lines.removeLast() }
   return (try? inline(lines, line: 1)) ?? text
+}
+
+func readBack(_ blocks: [Block]) -> [Block] {
+  var lines = noteLines(blocks).map { $0.allSatisfy { $0 == " " || $0 == "\t" } ? "" : $0 }
+  while lines.count > 1, lines.last == "" { lines.removeLast() }
+  return (try? CanvasDocument.blocks(lines, line: 1)) ?? blocks
 }
 
 private func quoted(_ string: String) -> String {

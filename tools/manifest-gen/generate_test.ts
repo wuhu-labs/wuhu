@@ -17,7 +17,6 @@ import {
   assertNoViewPilotDependency,
   collectLoweredDependencies,
   combineBuildBazel,
-  comparePlatformVersions,
   type ExternalPackage,
   generateAppBuildBazel,
   generateBuildBazel,
@@ -902,14 +901,17 @@ Deno.test('app-shell library copts thread extra rule symbols and load them', () 
   // The extra copts symbol is loaded from rules.bzl alongside the base symbol.
   assertStringIncludes(
     build,
-    `load("//bazel/rules:rules.bzl", "WUHU_SWIFT_LANGUAGE_MODE_COPTS", "WUHU_UI_CONTROL_COPTS", "wuhu_platforms")`,
+    `load("//bazel/rules:rules.bzl", "WUHU_SWIFT_LANGUAGE_MODE_COPTS", "WUHU_UI_CONTROL_COPTS", "wuhu_platform_floor", "wuhu_platforms")`,
   )
   // The gated library appends the extra symbol; the plain one does not.
   assertStringIncludes(
     build,
-    'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_UI_CONTROL_COPTS,',
+    'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_UI_CONTROL_COPTS + ["@$(location :GatedLibrary.platform_floor)"],',
   )
-  assertStringIncludes(build, 'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS,')
+  assertStringIncludes(
+    build,
+    'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + ["@$(location :PlainLibrary.platform_floor)"],',
+  )
   assertStringIncludes(
     build,
     'frameworks = [\n        "@example//:DynamicFramework",\n    ],',
@@ -2774,15 +2776,6 @@ Deno.test('isRemovableLegacyPackages refuses when Packages and packages are the 
   }
 })
 
-// The umbrella's floor must satisfy the strictest package, and two products
-// shipping to different OS floors must not be forced to agree.
-Deno.test('comparePlatformVersions orders numerically, not lexically', () => {
-  assertEquals(comparePlatformVersions('26.0', '9.0') > 0, true)
-  assertEquals(comparePlatformVersions('15.0', '26.0') < 0, true)
-  assertEquals(comparePlatformVersions('18.4', '18.10') < 0, true)
-  assertEquals(comparePlatformVersions('26', '26.0'), 0)
-})
-
 Deno.test('assertLockfileHonorsPins catches a stale revision pin', () => {
   const externals = new Map<string, ExternalPackage>([
     ['tca26', {
@@ -3291,7 +3284,7 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
   // so a type-changing patch to a shell source keeps a stable `Body`.
   assertStringIncludes(
     build,
-    'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_HMR_COPTS + WUHU_HMR_VIEW_COPTS,',
+    'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_HMR_COPTS + WUHU_HMR_VIEW_COPTS + ["@$(location :',
   )
   assertEquals(
     generateAppBuildBazel({ ...app, hmr: false }).includes('HMRRuntime'),

@@ -89,12 +89,89 @@ private func ids(_ text: String) -> [String] {
 
   @Test func codeKeepsItsBracesUnescapedAndOutOfTheAttributes() throws {
     let live = LiveReplica(.canvas)
-    try live.write("## `{x}` and \\{y} {@0,0 400x300}\n- sticky {@40,60} run `f{}` [a](u\\{)\n", peer: 40)
+    try live.write("## `{x}` and \\{y} {@0,0 400x300}\n- rect {@40,60} run `f{}` [a](u\\{)\n", peer: 40)
     #expect(live.text.hasPrefix("## `{x}` and \\{y} {#"))
-    #expect(live.text.contains("yellow} run `f{}` [a](u\\{)\n"))
+    #expect(live.text.contains("blue} run `f{}` [a](u\\{)\n"))
     let board = CanvasBoard(doc: try drawnDoc(live))
     #expect(board.items.first { $0.kind == .section }?.text == Inline([InlineRun(text: "{x}", marks: .code), InlineRun(text: " and {y}")]))
     #expect(try live.merge(text: live.text, base: nil, peer: 41) == nil)
+  }
+
+  @Test func aStickyHoldsBlocksAsMarkdownUnderItsLine() throws {
+    let live = LiveReplica(.canvas)
+    try live.write("- sticky {@0,0} ## Launch\n  - [ ] Draft the API\n  - [x] Book the room\n", peer: 42)
+    let id = try #require(ids(live.text).first)
+    let canonical = """
+    - sticky {#\(id) @0,0 160x160 yellow}
+      ## Launch
+
+      - [ ] Draft the API
+      - [x] Book the room
+
+    """
+    #expect(live.text == canonical)
+    #expect(try live.merge(text: live.text, base: nil, peer: 43) == nil)
+    let item = try #require(CanvasBoard(doc: try drawnDoc(live)).item(CanvasID(rawValue: id)!))
+    #expect(item.blocks == [
+      .heading(level: 2, text: Inline(plain: "Launch")),
+      .list(level: 0, style: .todo, text: Inline(plain: "Draft the API")),
+      .list(level: 0, style: .done, text: Inline(plain: "Book the room")),
+    ])
+    #expect(item.text.isEmpty)
+
+    let client = try live.client()
+    let before = client.versionVector
+    try live.write(canonical.replacing("- [ ] Draft", with: "- [x] Draft"), peer: 44)
+    try client.importUpdate(#require(try live.updates(since: before)))
+    #expect(client.text == canonical.replacing("- [ ] Draft", with: "- [x] Draft"))
+  }
+
+  @Test func aCodeBlockWithABlankLookingLineSurvivesAnUnrelatedWrite() throws {
+    var id = CanvasID(rawValue: "aaaaaa")!
+    let live = try drawn { editor in
+      id = try editor.insert(.sticky, frame: rect(0, 0, 160, 160), color: .yellow)
+      try editor.setBlocks(id, [.code("let a = 1\n    \nlet b = 2")])
+    }
+    let before = try #require(CanvasBoard(doc: try drawnDoc(live)).item(id)).blocks
+    try live.write(live.text + "- rect {@300,0} unrelated\n", peer: 47)
+    #expect(CanvasBoard(doc: try drawnDoc(live)).item(id)?.blocks == before)
+  }
+
+  @Test func aStickyStoredAsTextReadsAsParagraphsAndUpgradesOnlyWhenEdited() throws {
+    var old = CanvasID(rawValue: "aaaaaa")!
+    let live = try drawn { editor in
+      old = try editor.insert(.rect, frame: rect(0, 0, 160, 160), color: .yellow, text: Inline(plain: "one\ntwo\n\nthree"))
+      try editor.setKind(old, .sticky)
+    }
+    let canonical = "- sticky {#\(old) @0,0 160x160 yellow}\n  one\n  two\n\n  three\n"
+    #expect(live.text == canonical)
+    try live.write(canonical + "- sticky {@300,0} new\n", peer: 45)
+    var item = try #require(CanvasBoard(doc: try drawnDoc(live)).item(old))
+    #expect(item.blocks == nil && item.text.plain == "one\ntwo\n\nthree", "an untouched sticky stays as it was stored")
+    #expect(item.note == [.paragraph(Inline(plain: "one\ntwo")), .paragraph(Inline()), .paragraph(Inline(plain: "three"))])
+
+    try live.write(live.text.replacing("  three", with: "  - [ ] three"), peer: 46)
+    item = try #require(CanvasBoard(doc: try drawnDoc(live)).item(old))
+    #expect(item.text.isEmpty)
+    #expect(item.blocks == [.paragraph(Inline(plain: "one\ntwo")), .paragraph(Inline()), .list(level: 0, style: .todo, text: Inline(plain: "three"))])
+  }
+
+  @Test func aBlankLineInAStickyIsHiddenFromTheAgentViewAndSurvivesItsWrites() throws {
+    var id = CanvasID(rawValue: "aaaaaa")!
+    var short = CanvasID(rawValue: "bbbbbb")!
+    let todo = { (text: String) in Block.list(level: 0, style: .todo, text: Inline(plain: text)) }
+    let live = try drawn { editor in
+      id = try editor.insert(.sticky, frame: rect(0, 0, 160, 160), color: .yellow)
+      try editor.setBlocks(id, [todo("one"), .paragraph(Inline()), todo("two")])
+      short = try editor.insert(.sticky, frame: rect(200, 0, 160, 160), color: .yellow)
+      try editor.setBlocks(short, [.paragraph(Inline(plain: "Ship it")), .paragraph(Inline())])
+    }
+    #expect(live.text.contains("yellow} Ship it\n"), "a paragraph and a blank line read as the one paragraph")
+    try live.write(live.text + "- rect {@400,0} unrelated\n", peer: 48)
+    try live.write(live.text.replacing("- [ ] two", with: "- [x] two"), peer: 49)
+    let board = CanvasBoard(doc: try drawnDoc(live))
+    #expect(board.item(id)?.blocks == [todo("one"), .paragraph(Inline()), .list(level: 0, style: .done, text: Inline(plain: "two"))])
+    #expect(board.item(short)?.blocks == [.paragraph(Inline(plain: "Ship it")), .paragraph(Inline())])
   }
 
   @Test func connectorsJoinItemsTheBoardAlreadyHas() throws {
@@ -127,7 +204,8 @@ private func ids(_ text: String) -> [String] {
     let item = try #require(board.item(sticky))
     #expect(item.x == 40.4, "an unchanged position keeps its fraction")
     #expect((item.w, item.color) == (200, .pink))
-    #expect(item.text.plain == "Ship it")
+    #expect(item.note == [.paragraph(Inline([InlineRun(text: "Ship "), InlineRun(text: "it", marks: .text(italic: true))]))])
+    #expect(item.text.isEmpty, "the first edit upgrades the sticky to blocks")
     #expect(board.item(other)?.text.plain == "Keep")
   }
 
@@ -157,7 +235,7 @@ private func ids(_ text: String) -> [String] {
     try client.importUpdate(#require(try live.updates(since: before)))
     let board = CanvasBoard(doc: try drawnDoc(client))
     let card = try #require(board.item(CanvasID(rawValue: named[0])!))
-    #expect(card.kind == .sticky && card.path == nil && card.text.plain == "Hero")
+    #expect(card.kind == .sticky && card.path == nil && card.note == [.paragraph(Inline(plain: "Hero"))])
     #expect(board.connectors.count == 1)
     let doc = try drawnDoc(client)
     let tree = doc.getTree(id: CanvasSchema.Key.tree)
@@ -236,6 +314,7 @@ private func ids(_ text: String) -> [String] {
     ("  stray\n", 1, "continues the text"),
     ("- text {pink} a\n", 1, "free text has no colour"),
     ("# Connectors\n- sticky a\n", 2, "come before # Connectors"),
+    ("- sticky\n  ## Plan\n\n  > quoted\n", 4, "block quotes are not supported"),
   ])
   func refusedTextNamesTheLine(text: String, line: Int, reason: String) throws {
     let live = LiveReplica(.canvas)

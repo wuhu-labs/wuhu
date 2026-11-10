@@ -1,0 +1,31 @@
+--- a/swift/internal/symbol_graph_extracting.bzl
++++ b/swift/internal/symbol_graph_extracting.bzl
+@@ -32,6 +32,8 @@
+         minimum_access_level = None,
+         module_name,
+         output_dir,
++        response_file_inputs = [],
++        response_files = [],
+         swift_infos,
+         swift_toolchain,
+         toolchain_type = SWIFT_TOOLCHAIN_TYPE):
+@@ -58,6 +60,10 @@
+             "public").
+         module_name: The name of the module whose symbol graph should be
+             extracted.
++        response_file_inputs: The `File`s that `response_files` name.
++        response_files: The `@file` arguments among the target's `copts`,
++            expanded. They follow the toolchain's flags, so a `-target` in one
++            overrides the toolchain's, as it does for the target's compile.
+         output_dir: A directory-type `File` into which `.symbols.json` files
+             representing the module's symbol graph will be extracted. If
+             extraction is successful, this directory will contain a file named
+@@ -113,6 +119,8 @@
+         minimum_access_level = minimum_access_level,
+         module_name = module_name,
+         output_dir = output_dir,
++        response_file_inputs = response_file_inputs,
++        response_files = response_files,
+         target_label = feature_configuration._label,
+         transitive_modules = transitive_modules,
+         transitive_swift_dependency_inputs = transitive_swift_dependency_inputs_list,

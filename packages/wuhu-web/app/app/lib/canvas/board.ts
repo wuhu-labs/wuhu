@@ -1,6 +1,7 @@
 import {
   type LoroDoc,
   LoroMap,
+  LoroMovableList,
   LoroText,
   type LoroTreeNode,
   type TreeID,
@@ -57,6 +58,9 @@ export interface BoardItem {
   h: number
   color?: CanvasColor
   text: TextRun[]
+  // A sticky stored as blocks: `text` is them read as plain lines, and this
+  // editor leaves them alone.
+  note?: true
   path?: string
 }
 
@@ -100,7 +104,7 @@ function finite(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function runsOf(value: unknown): TextRun[] | undefined {
+export function runsOf(value: unknown): TextRun[] | undefined {
   if (value === undefined) return []
   if (!(value instanceof LoroText)) return undefined
   const runs: TextRun[] = []
@@ -119,6 +123,58 @@ function runsOf(value: unknown): TextRun[] | undefined {
   return runs
 }
 
+const listMarkers: Record<string, string> = {
+  unordered: '• ',
+  todo: '☐ ',
+  done: '☑ ',
+}
+
+// A sticky's blocks as plain lines: a blank line between blocks but not
+// between list items, a list item indented 2 per level behind its marker.
+// A block out of schema, and a view, shows nothing.
+function noteOf(blocks: LoroMovableList): TextRun[] {
+  const runs: TextRun[] = []
+  const numbers: number[] = []
+  let listBefore = false
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks.get(index)
+    if (!(block instanceof LoroMap)) continue
+    const kind = block.get('kind')
+    const text = runsOf(block.get('text'))
+    if (
+      text === undefined ||
+      !['h1', 'h2', 'h3', 'paragraph', 'code', 'list'].includes(kind as string)
+    ) continue
+    let marker = ''
+    if (kind === 'list') {
+      const level = finite(block.get('level'))
+      const style = block.get('style')
+      if (
+        level === undefined || level < 0 ||
+        !['unordered', 'ordered', 'todo', 'done'].includes(style as string)
+      ) continue
+      const depth = Math.trunc(level)
+      numbers.length = depth + 1
+      numbers[depth] = style === 'ordered' ? (numbers[depth] ?? 0) + 1 : 0
+      marker = '  '.repeat(depth) +
+        (style === 'ordered'
+          ? `${numbers[depth]}. `
+          : listMarkers[style as string])
+    } else numbers.length = 0
+    if (runs.length > 0) {
+      runs.push({ text: kind === 'list' && listBefore ? '\n' : '\n\n' })
+    }
+    if (marker !== '') runs.push({ text: marker })
+    runs.push(
+      ...(kind === 'code'
+        ? text.map((run): TextRun => ({ text: run.text, code: true }))
+        : text),
+    )
+    listBefore = kind === 'list'
+  }
+  return runs
+}
+
 function itemOf(meta: LoroMap, parent: string | null): BoardItem | undefined {
   const id = meta.get('id')
   const kind = member(itemKinds, meta.get('kind'))
@@ -127,7 +183,9 @@ function itemOf(meta: LoroMap, parent: string | null): BoardItem | undefined {
   const color = kind === 'text' ? undefined : member(colors, meta.get('color'))
   // Only a file card has a path; one left on another kind is ignored.
   const path = kind === 'file' ? meta.get('path') : undefined
-  const text = runsOf(meta.get('text'))
+  const blocks = kind === 'sticky' ? meta.get('blocks') : undefined
+  const note = blocks instanceof LoroMovableList
+  const text = note ? noteOf(blocks) : runsOf(meta.get('text'))
   if (
     typeof id !== 'string' || !idPattern.test(id) || kind === undefined ||
     x === undefined || y === undefined || w === undefined ||
@@ -144,6 +202,7 @@ function itemOf(meta: LoroMap, parent: string | null): BoardItem | undefined {
     h,
     ...(color === undefined ? {} : { color }),
     text,
+    ...(note ? { note: true as const } : {}),
     ...(typeof path === 'string' ? { path } : {}),
   }
 }

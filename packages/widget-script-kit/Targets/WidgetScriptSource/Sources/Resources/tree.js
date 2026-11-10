@@ -51,10 +51,11 @@ function pageEntry(value, where) {
         throw new TreeError(`${where}: each child is { page, title?, … }`);
     }
     const props = value;
-    for (const name of ['page', 'title', 'status', 'avatar']) {
+    for (const name of ['page', 'title', 'status', 'avatar', 'icon']) {
         optional(props, name, 'string', where);
     }
     optional(props, 'badge', 'number', where);
+    checkIcon(props.icon, where);
     if (!nonblank(props.page) && !nonblank(props.title)) {
         throw new TreeError(`${where}: needs a page or a title`);
     }
@@ -69,6 +70,8 @@ function pageEntry(value, where) {
         entry.badge = props.badge;
     if (props.avatar != null)
         entry.avatar = props.avatar;
+    if (props.icon != null)
+        entry.icon = props.icon;
     return entry;
 }
 export function sidebarTree(value) {

@@ -42,8 +42,10 @@ public struct CanvasItem: Hashable, Sendable {
   public var h: Double
   /// nil for free text, which has no colour.
   public var color: CanvasColor?
-  /// A section's title; a file card's is unused.
+  /// A section's title; a file card's is unused, and a sticky's only if it was stored before blocks, until its first edit.
   public var text: Inline
+  /// A sticky's blocks, nil while it is stored as text; read `note`, which falls back to `text`.
+  public var blocks: [Block]?
   /// The space path a file card shows.
   public var path: String?
   /// The section holding the item.
@@ -51,7 +53,7 @@ public struct CanvasItem: Hashable, Sendable {
 
   public init(
     id: CanvasID, kind: CanvasKind, x: Double, y: Double, w: Double, h: Double, color: CanvasColor? = nil, text: Inline = Inline(),
-    path: String? = nil, parent: CanvasID? = nil,
+    blocks: [Block]? = nil, path: String? = nil, parent: CanvasID? = nil,
   ) {
     self.id = id
     self.kind = kind
@@ -61,8 +63,47 @@ public struct CanvasItem: Hashable, Sendable {
     self.h = h
     self.color = color
     self.text = text
+    self.blocks = blocks
     self.path = path
     self.parent = parent
+  }
+
+  /// What a sticky says: its blocks, or its text read as paragraphs, a blank line an empty one.
+  public var note: [Block] {
+    self.blocks ?? self.text.paragraphs
+  }
+}
+
+extension Inline {
+  /// Lines run together into a paragraph and a blank line is an empty one, so the lines draw as
+  /// they did; blank lines at the end are dropped.
+  var paragraphs: [Block] {
+    var paragraphs: [Block] = []
+    var blank = 0
+    for line in self.lines {
+      if line.plain.allSatisfy({ $0 == " " || $0 == "\t" }) {
+        blank += 1
+      } else if blank == 0, case var .paragraph(paragraph)? = paragraphs.last {
+        paragraph.append(InlineRun(text: "\n"))
+        for run in line.runs { paragraph.append(run) }
+        paragraphs[paragraphs.count - 1] = .paragraph(paragraph)
+      } else {
+        paragraphs += Array(repeating: .paragraph(Inline()), count: blank) + [.paragraph(line)]
+        blank = 0
+      }
+    }
+    return paragraphs
+  }
+
+  fileprivate var lines: [Inline] {
+    var lines = [Inline()]
+    for run in self.runs {
+      for (index, piece) in run.text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+        if index > 0 { lines.append(Inline()) }
+        lines[lines.count - 1].append(InlineRun(text: String(piece), marks: run.marks))
+      }
+    }
+    return lines
   }
 }
 
@@ -159,9 +200,10 @@ public struct CanvasBoard: Hashable, Sendable {
     let path = CanvasSchema.string(value(CanvasSchema.Key.path))
     if kind == .file, path == nil { return nil }
     let color = kind.isColored ? CanvasSchema.string(value(CanvasSchema.Key.color)).flatMap(CanvasColor.init(rawValue:)) : nil
+    let blocks = kind == .sticky ? meta.get(key: CanvasSchema.Key.blocks)?.asLoroMovableList()?.blocks : nil
     return CanvasItem(
       id: id, kind: kind, x: x, y: y, w: w, h: h, color: color, text: Inline(meta.get(key: CanvasSchema.Key.text)?.asLoroText()),
-      path: kind == .file ? path : nil, parent: parent,
+      blocks: blocks, path: kind == .file ? path : nil, parent: parent,
     )
   }
 

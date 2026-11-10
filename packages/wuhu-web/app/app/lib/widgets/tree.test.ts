@@ -68,6 +68,35 @@ Deno.test('a sidebar refuses anything but its two leaves', () => {
   }
 })
 
+Deno.test('a page card keeps an IconaMoon icon and refuses any other', () => {
+  const sidebar = (icon: string) =>
+    el('Sidebar', {
+      name: 'x',
+      children: [
+        el('PageCard', {
+          page: '/a.md',
+          icon,
+          children: [{ page: '/b.md', icon }],
+        }),
+      ],
+    })
+  assertEquals(sidebarTree(sidebar('winking-face')).items, [
+    {
+      kind: 'page',
+      card: {
+        page: '/a.md',
+        icon: 'winking-face',
+        children: [{ page: '/b.md', icon: 'winking-face' }],
+      },
+    },
+  ])
+  assertThrows(
+    () => sidebarTree(sidebar('sparkles')),
+    TreeError,
+    '"sparkles" is not an IconaMoon icon',
+  )
+})
+
 Deno.test('a widget is one catalog card at a size it declares', () => {
   const card = el('Figure', { value: 3, label: 'Landed', to: '/wuhu' })
   assertEquals(widgetTree(card, ['small', 'wide'], 'small'), card)

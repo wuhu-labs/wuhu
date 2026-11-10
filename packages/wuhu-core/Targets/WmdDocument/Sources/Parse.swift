@@ -3,8 +3,19 @@ import JSONValue
 extension Content {
   init(markdown: String) throws(WmdSyntaxError) {
     var parser = Parser(markdown)
-    self = try parser.parse()
+    self = try parser.parse(frontmatter: true)
   }
+}
+
+extension [Block] {
+  /// Blocks alone, as a sticky holds them: a leading `---` is a horizontal rule, not frontmatter.
+  public init(markdown: String) throws(WmdSyntaxError) {
+    var parser = Parser(markdown)
+    self = try parser.parse(frontmatter: false).blocks
+  }
+
+  /// The canonical markdown of blocks without frontmatter.
+  public var markdown: String { Content(blocks: self).markdown }
 }
 
 private struct Parser {
@@ -17,9 +28,9 @@ private struct Parser {
     self.lines = lines.map { $0.hasSuffix("\r") ? $0.dropLast() : $0 }
   }
 
-  mutating func parse() throws(WmdSyntaxError) -> Content {
+  mutating func parse(frontmatter: Bool) throws(WmdSyntaxError) -> Content {
     var content = Content()
-    if self.lines.first == "---" { content.frontmatter = try self.frontmatter() }
+    if frontmatter, self.lines.first == "---" { content.frontmatter = try self.frontmatter() }
     while self.index < self.lines.count {
       if isBlank(self.lines[self.index]) {
         self.index += 1

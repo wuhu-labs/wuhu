@@ -217,13 +217,13 @@
   {
     "name": "text takes .wmd marks, code among them, and the same text writes nothing",
     "ops": [
-      { "op": "insert", "as": "a", "kind": "sticky", "frame": [0, 0, 160, 160], "color": "yellow", "text": [{ "text": "Hi" }] },
+      { "op": "insert", "as": "a", "kind": "rect", "frame": [0, 0, 160, 160], "color": "blue", "text": [{ "text": "Hi" }] },
       { "op": "setText", "id": "a", "text": [{ "text": "Ship " }, { "text": "canvas", "bold": true }, { "text": " v1", "italic": true, "link": "https://wuhu.app" }, { "text": "\nnext " }, { "text": "make", "code": true }] },
       { "op": "setText", "id": "a", "text": [{ "text": "Ship " }, { "text": "canvas", "bold": true }, { "text": " v1", "italic": true, "link": "https://wuhu.app" }, { "text": "\nnext " }, { "text": "make", "code": true }], "noop": true }
     ],
     "expected": {
       "items": [
-        { "id": "a", "kind": "sticky", "x": 0, "y": 0, "w": 160, "h": 160, "color": "yellow", "text": [{ "text": "Ship " }, { "text": "canvas", "bold": true }, { "text": " v1", "italic": true, "link": "https://wuhu.app" }, { "text": "\nnext " }, { "text": "make", "code": true }] }
+        { "id": "a", "kind": "rect", "x": 0, "y": 0, "w": 160, "h": 160, "color": "blue", "text": [{ "text": "Ship " }, { "text": "canvas", "bold": true }, { "text": " v1", "italic": true, "link": "https://wuhu.app" }, { "text": "\nnext " }, { "text": "make", "code": true }] }
       ],
       "connectors": []
     }

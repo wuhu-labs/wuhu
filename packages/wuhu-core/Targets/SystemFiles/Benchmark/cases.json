@@ -682,6 +682,37 @@
       "judge": "PASS only if the agent read {fx}/launch/board.canvas and wrote it back in place with the ordinary file tools: a sticky 'Book the venue' under the `## Venue` heading, a connector line `p1ckd8 -> <its id>` under `# Connectors`, and the rest of the board kept; then, on the follow-up, worked from a fresh read so the 'Draft the announcement' line (and with it its connector) is gone while 'Pick a date', the Venue section and its Budget rect stay. Each reply says what changed in a line or two. Fail a copy or a converted file beside it, a refusal, a rewrite that drops or re-creates existing items with new ids, or a claim the file does not show."
     },
     {
+      "id": "canvas-todos",
+      "issue": 691,
+      "title": "Ticks and adds to-dos on a canvas sticky",
+      "prompt": "On the board {fx}/launch/todo.canvas, I called the hall, so tick that off the Venue sticky, and add 'Confirm catering' to its list.",
+      "required": [
+        "ticked",
+        "todo_added",
+        "kept",
+        "edited_in_place"
+      ],
+      "skills": {
+        "canvas": true
+      },
+      "judge": "PASS only if the agent read {fx}/launch/todo.canvas and wrote it back in place with the ordinary file tools so the sticky #t0d0s1 keeps its `## Venue` heading, reads `- [x] Call the hall`, keeps `- [ ] Ask the library` open and gains an open `- [ ] Confirm catering`, all as markdown lines indented under its item line, while the `Budget is 2k` sticky keeps its id and text. The reply says what changed in a line or two. Fail a new sticky instead of an edit of #t0d0s1, a to-do written as plain text without its checkbox, a copy or a converted file beside it, a refusal, or a claim the file does not show."
+    },
+    {
+      "id": "canvas-spec",
+      "issue": 697,
+      "title": "Turns a canvas sticky into a white spec card",
+      "prompt": "On the board {fx}/launch/todo.canvas, make the Budget sticky a plain white spec card.",
+      "required": [
+        "white",
+        "kept",
+        "edited_in_place"
+      ],
+      "skills": {
+        "canvas": true
+      },
+      "judge": "PASS only if the agent read {fx}/launch/todo.canvas and wrote it back in place with the ordinary file tools so the sticky #n0tes1 carries the colour `white` in its attributes and still reads `Budget is 2k`, while the Venue sticky #t0d0s1 is unchanged. The reply says what changed in a line or two. Fail another colour, a new item instead of an edit of #n0tes1, a copy or a converted file beside it, a refusal, or a claim the file does not show."
+    },
+    {
       "id": "gif-output",
       "issue": 629,
       "title": "Knows how a script asks for an animated GIF",

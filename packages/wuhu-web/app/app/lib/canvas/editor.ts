@@ -1,6 +1,7 @@
 import {
   type LoroDoc,
   LoroMap,
+  LoroMovableList,
   LoroText,
   type LoroTree,
   type LoroTreeNode,
@@ -12,6 +13,7 @@ import {
   type CanvasColor,
   type ItemKind,
   readBoard,
+  runsOf,
   type TextRun,
 } from './board.ts'
 import type { Rect } from './scene.ts'
@@ -116,6 +118,27 @@ export function syncText(text: LoroText, runs: TextRun[]) {
     }
   }
   syncMarks(text, marks, plain.length)
+}
+
+// A sticky's `text` on this board only draws its blocks, so its copy takes
+// the blocks themselves.
+function copyBlocks(from: LoroMap, to: LoroMap) {
+  const source = from.get('blocks')
+  if (!(source instanceof LoroMovableList)) return
+  const blocks = to.setContainer('blocks', new LoroMovableList())
+  for (let index = 0; index < source.length; index++) {
+    const block = source.get(index)
+    if (!(block instanceof LoroMap)) continue
+    const copy = blocks.pushContainer(new LoroMap())
+    for (const key of block.keys()) {
+      const value = block.get(key)
+      if (value instanceof LoroText) {
+        syncText(copy.setContainer(key, new LoroText()), runsOf(value) ?? [])
+      } else if (typeof value !== 'object' || value === null) {
+        copy.set(key, value)
+      }
+    }
+  }
 }
 
 function writeConnector(
@@ -306,14 +329,13 @@ export class CanvasEditor {
           h: item.h,
         }
       }
-      copies.set(
-        item.id,
-        this.insert(item.kind, frame, item.color ?? null, {
-          text: item.text,
-          path: item.path,
-          section: copiedSection ?? item.parent,
-        }),
-      )
+      const copy = this.insert(item.kind, frame, item.color ?? null, {
+        text: item.note ? [] : item.text,
+        path: item.path,
+        section: copiedSection ?? item.parent,
+      })
+      if (item.note) copyBlocks(this.node(item.id).data, this.node(copy).data)
+      copies.set(item.id, copy)
     }
     for (const connector of board.connectors) {
       const from = copies.get(connector.from)

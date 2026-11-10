@@ -548,7 +548,7 @@ export function CanvasEditing({
 
   const startEditing = (id: string) => {
     const item = now.current.board.items.find((i) => i.id === id)
-    if (item === undefined || item.kind === 'file') return
+    if (item === undefined || item.kind === 'file' || item.note) return
     beginEditing(id, item.text)
   }
 

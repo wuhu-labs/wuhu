@@ -46,7 +46,7 @@ extension CanvasSyntaxError.Problem: CustomStringConvertible {
     case .afterConnectors: "items and sections come before # Connectors"
     case .repeatedConnectors: "# Connectors appears once"
     case .strayContinuation: "an indented line continues the text of the item above it, and there is none"
-    case let .attribute(token): "\(token) is no attribute; {…} holds #id, @x,y, WxH and a colour (yellow pink green blue purple gray)"
+    case let .attribute(token): "\(token) is no attribute; {…} holds #id, @x,y, WxH and a colour (yellow pink green blue purple gray white)"
     case let .repeatedAttribute(token): "\(token) repeats an attribute already given"
     case .colorOnText: "free text has no colour"
     case .filePath: "a file card's text is one space path starting with /"
@@ -70,6 +70,8 @@ struct Draft {
     var size: CanvasSize?
     var color: CanvasColor?
     var text = Inline()
+    /// A sticky's.
+    var blocks: [Block]?
     var path: String?
     /// The index in `items` of the section the item is under.
     var section: Int?
@@ -176,11 +178,14 @@ private struct Reader {
       self.blanks = 0
     }
     guard let open = self.open else { return }
-    if draft.items[open.index].kind == .file {
+    switch draft.items[open.index].kind {
+    case .file:
       let path = open.lines[0].trimmingTrailingSpaces
       guard open.lines.count == 1, path.hasPrefix("/") else { throw CanvasSyntaxError(line: open.line, problem: .filePath) }
       draft.items[open.index].path = path
-    } else {
+    case .sticky:
+      draft.items[open.index].blocks = try blocks(open.lines, line: open.line)
+    default:
       draft.items[open.index].text = try inline(open.lines, line: open.line)
     }
   }

@@ -15,17 +15,36 @@ func apply(_ target: Content, to doc: LoroDoc) throws {
   for key in current.frontmatter.keys where target.frontmatter[key] == nil {
     try frontmatter.delete(key: key)
   }
-  let visible = placed.compactMap(Visible.init)
-  let plan = Plan(base: visible, target: target.blocks)
-  let list = doc.getMovableList(id: WmdSchema.Key.blocks)
+  try apply(target.blocks, to: doc.getMovableList(id: WmdSchema.Key.blocks), visible: placed.compactMap(Visible.init))
+}
+
+private func apply(_ target: [Block], to list: LoroMovableList, visible: [Visible]) throws {
+  let plan = Plan(base: visible, target: target)
   for (base, next) in plan.updates {
-    try write(target.blocks[next], into: list.get(index: visible[base].position)!.asLoroMap()!)
+    try write(target[next], into: list.get(index: visible[base].position)!.asLoroMap()!)
   }
   for edit in plan.edits.sorted(by: >) {
     switch edit.kind {
     case .delete: try list.delete(pos: edit.position, len: 1)
-    case let .insert(next): try write(target.blocks[next], into: list.insertMapContainer(pos: edit.position, child: LoroMap()))
+    case let .insert(next): try write(target[next], into: list.insertMapContainer(pos: edit.position, child: LoroMap()))
     }
+  }
+}
+
+extension LoroMovableList {
+  /// The blocks a `.wmd` block list holds; those outside the schema are skipped.
+  public var blocks: [Block] { placed(in: self).map(\.block) }
+
+  /// Makes the list hold `blocks` as the `.wmd` merge does: what reads back unchanged is left
+  /// alone, similar blocks are updated in place, the rest deleted and inserted.
+  public func sync(to blocks: [Block]) throws {
+    try apply(blocks, to: self, visible: placed(in: self).compactMap(Visible.init))
+  }
+
+  /// `sync(to:)` for an editor, which shows every block: one that renders to nothing is kept or
+  /// removed like any other.
+  public func sync(exactly blocks: [Block]) throws {
+    try apply(blocks, to: self, visible: placed(in: self).map { Visible(exactly: $0) })
   }
 }
 
@@ -42,6 +61,12 @@ private struct Visible {
     self.position = placed.position
     self.block = placed.block
     self.reads = reads
+  }
+
+  init(exactly placed: Placed) {
+    self.position = placed.position
+    self.block = placed.block
+    self.reads = [placed.block]
   }
 }
 

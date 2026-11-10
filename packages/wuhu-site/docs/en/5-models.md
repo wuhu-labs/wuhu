@@ -53,7 +53,7 @@ Then store the key under the provider's name: `wuhu auth set brave < key.txt`. A
 
 Agents' scripts and commands can use secrets too, e.g. a token for a web service. These are per group, and kept apart from the model keys above.
 
-An admin of a group stores one with `wuhu secret set <NAME> < value`, acting in that group (`--group <id>`, as in [Groups](/guide/3-people-and-devices.md#groups)); `wuhu secret list` shows names and `wuhu secret remove <NAME>` deletes one. They live in `~/.wuhu/secrets/<space-id>/<group>.json` on the server's host. One group never sees another's.
+An admin of a group stores one with `wuhu secret set <NAME> < value`, acting in that group: `--group <id>` is the global flag and goes before the verb, `wuhu --group <id> secret set <NAME> < value` (as in [Groups](/guide/3-people-and-devices.md#groups)), and a session's exec acts in its session's group unless `WUHU_IDENTITY=wallet` opts into your sign-in; `wuhu secret list` shows names and `wuhu secret remove <NAME>` deletes one. They live in `~/.wuhu/secrets/<space-id>/<group>.json` on the server's host. One group never sees another's.
 
 A script's secrets come from its agent's group; the value is filled into its outgoing requests and masked in what comes back. A command on a machine gets its machine's group's secrets as environment variables. See [Machines](/guide/4-machines.md#secrets-on-the-machine).
 

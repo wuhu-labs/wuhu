@@ -1687,6 +1687,10 @@ extension Command {
 
     space secrets live on the server, outside the space's files and history,
     one store per group: every subcommand acts on the acting group's store.
+    to name another, --group is the global flag, before the verb:
+    wuhu --group <g> secret ... (see wuhu group --help); a session's exec
+    acts in its session's group unless WUHU_IDENTITY=wallet opts into the
+    wallet, which selects the group the same way.
     scripts (run_script) use them through wuhu:secret, and an exec's
     --secret ENV=NAME takes NAME from the store of the machine's group. here,
     setting a secret takes a person who is an admin of the group, and

@@ -1,6 +1,13 @@
-import { LoroDoc, LoroMap, LoroText, type LoroTreeNode } from 'loro-crdt/web'
+import {
+  LoroDoc,
+  LoroMap,
+  LoroMovableList,
+  LoroText,
+  type LoroTreeNode,
+} from 'loro-crdt/web'
 import { configuredDoc, loadLoro } from '~/lib/wmd/loro.ts'
 import { boardOf } from './board.ts'
+import { CanvasEditor } from './editor.ts'
 import { demoDoc } from './demo.ts'
 
 await loadLoro()
@@ -181,4 +188,59 @@ Deno.test('the lab board has the asked-for size and survives a round trip', () =
   copy.import(doc.export({ mode: 'snapshot' }))
   assertEquals(boardOf(copy), read)
   assertEquals(boardOf(demoDoc(500)).items.length, 500)
+})
+
+function blocksOf(sticky: LoroTreeNode) {
+  const blocks = sticky.data.setContainer('blocks', new LoroMovableList())
+  return (fields: Record<string, unknown>, text: string) => {
+    const map = blocks.insertContainer(blocks.length, new LoroMap())
+    for (const [key, value] of Object.entries(fields)) map.set(key, value)
+    const content = map.setContainer('text', new LoroText())
+    content.insert(0, text)
+    return content
+  }
+}
+
+Deno.test('a sticky stored as blocks reads as plain lines and is a note', () => {
+  const { doc, node } = board()
+  const sticky = node(null, { id: 'a1k9z0', kind: 'sticky', ...frame })
+  sticky.data.setContainer('text', new LoroText()).insert(0, 'stale')
+  const block = blocksOf(sticky)
+  block({ kind: 'h2' }, 'Launch')
+  block({ kind: 'list', level: 0, style: 'todo' }, 'Draft the API')
+  block({ kind: 'list', level: 1, style: 'ordered' }, 'Spec')
+  block({ kind: 'list', level: 1, style: 'ordered' }, 'Types')
+  block({ kind: 'list', level: 0, style: 'done' }, 'Book the room')
+  block({ kind: 'list', level: 0, style: 'sideways' }, 'skipped')
+  block({ kind: 'paragraph' }, 'Notes')
+  doc.commit()
+  const [item] = boardOf(doc).items
+  assertEquals(item.note, true)
+  assertEquals(
+    item.text.map((run) => run.text).join(''),
+    'Launch\n\n☐ Draft the API\n  1. Spec\n  2. Types\n☑ Book the room\n\nNotes',
+  )
+})
+
+Deno.test('duplicating a sticky stored as blocks copies its blocks', () => {
+  const { doc, node } = board()
+  const sticky = node(null, { id: 'a1k9z0', kind: 'sticky', ...frame })
+  const block = blocksOf(sticky)
+  block({ kind: 'h2' }, 'Launch')
+  block({ kind: 'list', level: 0, style: 'todo' }, 'Draft the API')
+    .mark({ start: 0, end: 5 }, 'bold', true)
+  block({ kind: 'list', level: 0, style: 'done' }, 'Book the room')
+  doc.commit()
+  const copies = new CanvasEditor(doc).duplicate(['a1k9z0'], 20, 20)
+  doc.commit()
+  const copy = doc.getTree('tree').nodes().find((each) =>
+    each.data.get('id') === copies.get('a1k9z0')
+  )!
+  assertEquals(copy.data.get('text'), undefined)
+  const blocks = (meta: LoroMap) =>
+    (meta.get('blocks') as LoroMovableList).toJSON()
+  assertEquals(blocks(copy.data), blocks(sticky.data))
+  const [original, duplicated] = boardOf(doc).items
+  assertEquals(duplicated.note, true)
+  assertEquals(duplicated.text, original.text)
 })

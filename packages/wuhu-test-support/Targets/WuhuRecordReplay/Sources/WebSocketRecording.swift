@@ -11,7 +11,7 @@ final class SocketRecording: Sendable {
   private let cleanup = Mutex<[@Sendable () async -> Void]>([])
 
   func connector(_ real: WebSocketConnector) -> WebSocketConnector {
-    WebSocketConnector { request in
+    WebSocketConnector { [self] request in
       guard request.url.user == nil, request.url.password == nil else { throw WebSocketError.invalidConfiguration("Recording URL credentials is unsupported") }
       if case .configuration = request.tls { throw WebSocketError.invalidConfiguration("Recording custom TLS configurations is unsupported") }
       let redaction = SocketRedaction(request)

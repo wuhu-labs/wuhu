@@ -153,6 +153,18 @@ private func runs(_ inline: Inline) -> [Run]? {
   }
 }
 
+/// The web editor stores a sticky's text; this one stores it as paragraphs, read back here as that text.
+private func said(_ item: CanvasItem) -> Inline {
+  guard let blocks = item.blocks else { return item.text }
+  var text = Inline()
+  for (index, block) in blocks.enumerated() {
+    guard case let .paragraph(paragraph) = block else { preconditionFailure("a fixture sticky holds only paragraphs") }
+    if index > 0 { text.append(InlineRun(text: "\n")) }
+    for run in paragraph.runs { text.append(run) }
+  }
+  return text
+}
+
 private struct Runner {
   let doc: LoroDoc
   var names: [String: CanvasID] = [:]
@@ -224,7 +236,7 @@ private struct Runner {
       items: board.items.map { item in
         ExpectedItem(
           id: self.name(item.id), kind: item.kind.rawValue, parent: item.parent.map(self.name), x: item.x, y: item.y, w: item.w, h: item.h,
-          color: item.color?.rawValue, text: runs(item.text), path: item.path,
+          color: item.color?.rawValue, text: runs(said(item)), path: item.path,
         )
       },
       connectors: board.connectors.map { connector in

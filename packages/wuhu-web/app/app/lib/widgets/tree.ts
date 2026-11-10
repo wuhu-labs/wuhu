@@ -11,6 +11,7 @@ export interface PageEntry {
   status?: string
   badge?: number
   avatar?: string
+  icon?: string
 }
 
 export interface PageCardSpec extends PageEntry {

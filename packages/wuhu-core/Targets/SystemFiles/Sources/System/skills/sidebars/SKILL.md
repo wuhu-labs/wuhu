@@ -34,7 +34,7 @@ export default async function Studio() {
 ```
 
 - `<Sidebar name icon? home?>`: `icon` is an IconaMoon name (iconamoon.com: `comment`, `component`, `home`, `file-document`, `lightning-1`, …); `home` opens when the sidebar is picked. Children: only `PageCard` and `Widget`.
-- `<PageCard page title? status? badge? avatar? children={[{ page, title?, status?, badge?, avatar? }]} />`: `page` is any address — `/_/sessions/<id>`, `/_/conversations/<id>`, a doc, an HTML page. An agent fills in its own title, status, avatar and unread count; a doc its frontmatter `title`. With `title` and no `page`, it heads a card of its child rows.
+- `<PageCard page title? status? badge? avatar? icon? children={[{ page, title?, status?, badge?, avatar?, icon? }]} />`: `page` is any address — `/_/sessions/<id>`, `/_/conversations/<id>`, a doc, an HTML page. An agent fills in its own title, status, avatar and unread count; a doc its frontmatter `title`. `icon` is an IconaMoon name drawn in the row's tile (its fill style when there is one) instead of the agent's avatar or the kind glyph; `avatar`, an image address, beats it. With `title` and no `page`, it heads a card of its child rows.
 - `<Widget src size?>`: `size` is `wide` (full width, the default) or `small` (half; consecutive smalls share a row).
 
 ## Widget file

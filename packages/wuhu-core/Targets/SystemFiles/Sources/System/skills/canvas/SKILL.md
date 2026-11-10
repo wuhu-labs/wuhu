@@ -11,6 +11,11 @@ A `.canvas` file is a live whiteboard people draw on in the apps. You see it as 
 
 ```
 - sticky {#a1k9z0 @40,60 160x160 yellow} Ship canvas **v1**
+- sticky {#k4p2w8 @240,60 200x200 green}
+  ## Launch
+
+  - [ ] Draft the API
+  - [x] Book the room
 - text {#t7m2qq @40,300 320x40} Free text, line one
   continuation line two
 
@@ -23,7 +28,8 @@ a1k9z0 -> b2c4v6 {#c5n7r8 elbow right:left} "depends on"
 ```
 
 - An item is `- <kind> {<attributes>} <text>`. Kinds: `sticky`, `text`, `rect`, `ellipse`, `diamond`, `file`. Text uses `.wmd` inline markdown (`**bold**`, `*italic*`, `` `code` ``, `[label](url)`); more lines continue indented 2 spaces. A `file` card's text is one space path.
-- Attributes: `#id` (6 base-36 characters), `@x,y` (top-left, absolute, in points), `WxH`, and a colour: `yellow`, `pink`, `green`, `blue`, `purple`, `gray`. Free `text` has no colour.
+- A sticky holds `.wmd` blocks: paragraphs, `#`–`###` headings, `-` and `1.` lists, and to-dos `- [ ]` (open) and `- [x]` (done), with blank lines between blocks as in a `.wmd`. A sticky of one paragraph keeps it on the item line; anything more starts on the next line, every line indented 2 spaces. Tick a to-do by changing its `[ ]` to `[x]`.
+- Attributes: `#id` (6 base-36 characters), `@x,y` (top-left, absolute, in points), `WxH`, and a colour: `yellow`, `pink`, `green`, `blue`, `purple`, `gray`, or `white` for a plain spec card. Free `text` has no colour.
 - A section is a `## Title {…}` heading; the item lines under it are inside it. Sections don't nest. Top-level items come first, then the sections, then `# Connectors`.
 - A connector is `from -> to {#id …} "label"` between item ids: `->` arrow at the end, `<->` both ends, `--` none. Optional `elbow` (default straight), `fromSide:toSide` (`top right bottom left auto`), an elbow offset (a number like `40` or `-20` that slides its middle segment), and a quoted label.
 - Line order inside a block is paint order: later lines draw on top.

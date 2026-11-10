@@ -1,5 +1,8 @@
 load(":manual_tags_tests.bzl", "manual_tags_tests")
+load(":platform_floor_tests.bzl", "platform_floor_tests")
 
 package(default_visibility = ["//tools:__pkg__"])
 
 manual_tags_tests(name = "manual-tags-test")
+
+platform_floor_tests(name = "platform-floor-test")

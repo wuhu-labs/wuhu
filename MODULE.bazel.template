@@ -50,7 +50,9 @@ single_version_override(
 # `STALLED:` line naming every test still running after 60 seconds. Upstream reads `--test_filter`
 # as one unanchored regex (`Suite/a()` also selects `Suite/ab()`); the filter patch gives it the
 # identifier-list grammar the macOS bundle runner hands to xcodebuild, so one filter means the
-# same on every host lane.
+# same on every host lane. Symbol graph extraction takes the toolchain's flags only; the
+# response-file patches hand it the target's `@file` copts too, so DocC reads a package at the
+# same platform floor its compile raised it to (docs/bazel.md, "Platform floors").
 single_version_override(
     module_name = "rules_swift",
     patch_strip = 1,
@@ -60,6 +62,9 @@ single_version_override(
         "//bazel/patches:rules-swift-test-runner-completion.patch",
         "//bazel/patches:rules-swift-stalled-test-watchdog.patch",
         "//bazel/patches:rules-swift-test-filter-identifiers.patch",
+        "//bazel/patches:rules-swift-symbol-graph-response-files-aspect.patch",
+        "//bazel/patches:rules-swift-symbol-graph-response-files-extracting.patch",
+        "//bazel/patches:rules-swift-symbol-graph-response-files-config.patch",
     ],
     version = "3.6.1",
 )
@@ -74,6 +79,17 @@ single_version_override(
     patch_strip = 1,
     patches = ["//bazel/patches:rules-cc-no-system-module-map.patch"],
     version = "0.2.25",
+)
+
+# A package compiles and links above its lane's minimum OS through a `-target` in its copts and
+# linkopts (`wuhu_platform_floor`, docs/bazel.md). apple_support puts the user's link flags before
+# its own `-target`, and clang honors the last one, so without this every such link stays at the
+# lane minimum and ld warns once per newer object file.
+single_version_override(
+    module_name = "apple_support",
+    patch_strip = 1,
+    patches = ["//bazel/patches:apple-support-user-link-flags-last.patch"],
+    version = "2.8.0",
 )
 
 # Our fork of rules_swift_package_manager 1.17.1. Upstream always enables a

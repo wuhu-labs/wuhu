@@ -11,8 +11,8 @@ products:
   - ServeTesting
   - ServeTunnel
 platforms:
-  iOS: "26.0"
-  macOS: "26.0"
+  iOS: "18.4"
+  macOS: "15.4"
   visionOS: "26.0"
 checks:
   build: [linux, mac, ios, visionos]

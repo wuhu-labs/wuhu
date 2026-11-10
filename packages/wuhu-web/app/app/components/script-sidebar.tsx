@@ -6,6 +6,7 @@ import {
   Count,
   EntityCard,
   Glyph,
+  Icon,
   LeadIcon,
   ListCard,
   Row,
@@ -21,6 +22,7 @@ import { type RowTarget, rowTarget, validDestination } from '~/lib/sidebars'
 import { spaceDestination } from '~/lib/space-url'
 import { useObserve } from '~/lib/use-observe'
 import {
+  knownIcon,
   type PageCardSpec,
   type PageEntry,
   type SidebarItem,
@@ -192,23 +194,35 @@ interface Resolved {
   lead: (size: number) => ReactNode
 }
 
+const filled = (name: string) =>
+  knownIcon(`${name}-fill`) ? `${name}-fill` : name
+
 // What a page names, with the fields the card leaves out filled from it.
 function resolve(entry: PageEntry, context: Context): Resolved {
   const group = context.client.group
   const target = entry.page == null
     ? null
     : pageTarget(entry.page, context.firstAgent, group)
+  const icon = entry.icon
   const given = {
     caption: entry.status ?? null,
     badge: entry.badge ?? null,
-    avatar: entry.avatar == null ? null : (size: number) => (
-      <img
-        className='wuhu-avatar'
-        src={entry.avatar}
-        alt=''
-        style={{ width: size, height: size, borderRadius: '50%' }}
-      />
-    ),
+    lead: entry.avatar != null
+      ? (size: number) => (
+        <img
+          className='wuhu-avatar'
+          src={entry.avatar}
+          alt=''
+          style={{ width: size, height: size, borderRadius: '50%' }}
+        />
+      )
+      : icon != null
+      ? () => (
+        <LeadIcon>
+          <Icon name={filled(icon)} size={19} />
+        </LeadIcon>
+      )
+      : null,
   }
   if (target?.kind === 'session') {
     const record = context.sessions?.find((session) => session.id === target.id)
@@ -221,7 +235,7 @@ function resolve(entry: PageEntry, context: Context): Resolved {
         : null,
       caption: given.caption,
       badge: given.badge ?? record?.unread ?? 0,
-      lead: given.avatar ??
+      lead: given.lead ??
         ((size) => (
           <SessionAvatar session={{ id: target.id, title }} size={size} />
         )),
@@ -235,7 +249,7 @@ function resolve(entry: PageEntry, context: Context): Resolved {
       status: null,
       caption: given.caption,
       badge: given.badge ?? channel?.unread ?? 0,
-      lead: given.avatar ?? (() => (
+      lead: given.lead ?? (() => (
         <LeadIcon>
           <Glyph name='bubble' w={16} h={16} />
         </LeadIcon>
@@ -251,7 +265,7 @@ function resolve(entry: PageEntry, context: Context): Resolved {
     status: null,
     caption: given.caption,
     badge: given.badge ?? 0,
-    lead: given.avatar ?? (() => (
+    lead: given.lead ?? (() => (
       <LeadIcon>
         {html
           ? <Glyph name='grid' w={16} h={16} />

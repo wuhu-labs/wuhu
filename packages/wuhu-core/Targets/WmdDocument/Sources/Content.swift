@@ -6,7 +6,8 @@ struct Content: Hashable {
   var blocks: [Block] = []
 }
 
-enum Block: Hashable {
+/// One block of a `.wmd` document, or of a sticky on a board.
+public enum Block: Hashable, Sendable {
   case heading(level: Int, text: Inline)
   case paragraph(Inline)
   case list(level: Int, style: WmdSchema.ListStyle, text: Inline)

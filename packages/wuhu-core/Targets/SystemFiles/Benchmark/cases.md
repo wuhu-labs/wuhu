@@ -181,9 +181,9 @@ _Afterwards:_ `{sb}/welcome.html` exists, its head carries `<meta name="wuhu-lay
 
 ## script-sidebar
 
-_Prompt:_ "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}. Tell me where to hide this sidebar later."
+_Prompt:_ "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a card for {sb}/plan.md with a star icon, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}. Tell me where to hide this sidebar later."
 
-_Afterwards:_ `/.sidebars/bench-{tag}….sidebar.jsx` returns a `<Sidebar>` of `PageCard`s from a `sessions` query and two `<Widget src>` placements, one `size='small'`; the widgets are their own `/.widgets/bench-{tag}….widget.jsx` files that `query` and return one card each, the small one declaring `export const sizes` with `small`. No JSON sidebar or widget. The reply names Settings → Groups to choose which sidebars show.
+_Afterwards:_ `/.sidebars/bench-{tag}….sidebar.jsx` returns a `<Sidebar>` of `PageCard`s from a `sessions` query, a `PageCard page='{sb}/plan.md'` with `icon` an IconaMoon star (`star` or `star-fill`, not an emoji or an image), and two `<Widget src>` placements, one `size='small'`; the widgets are their own `/.widgets/bench-{tag}….widget.jsx` files that `query` and return one card each, the small one declaring `export const sizes` with `small`. No JSON sidebar or widget. The reply names Settings → Groups to choose which sidebars show.
 
 ## prompt-templates
 
@@ -264,6 +264,18 @@ _Afterwards:_ `{fx}/launch/plan.wmd` keeps its content and its Notes gain a line
 _Prompt:_ "On the board {fx}/launch/board.canvas, add a sticky 'Book the venue' inside the Venue section and draw an arrow from 'Pick a date' to it." _Follow-up:_ "Now remove the 'Draft the announcement' sticky."
 
 _Afterwards:_ `{fx}/launch/board.canvas` holds a `Book the venue` sticky under `## Venue`, a connector `p1ckd8 -> <its id>`, and no `dr4ft1` (its connector went with it), while `Pick a date`, the Venue section and its Budget rect keep their ids; written in place with the ordinary file tools after reading the `canvas` skill, the second edit from a fresh read. No copy, nothing in `{sb}`. Each reply is a line or two.
+
+## canvas-spec
+
+_Prompt:_ "On the board {fx}/launch/todo.canvas, make the Budget sticky a plain white spec card."
+
+_Afterwards:_ the sticky `#n0tes1` in `{fx}/launch/todo.canvas` carries `white` and still reads `Budget is 2k`, after reading the `canvas` skill; `#t0d0s1` is unchanged. Written in place with the ordinary file tools; no copy, nothing in `{sb}`. The reply is a line or two.
+
+## canvas-todos
+
+_Prompt:_ "On the board {fx}/launch/todo.canvas, I called the hall, so tick that off the Venue sticky, and add 'Confirm catering' to its list."
+
+_Afterwards:_ the sticky `#t0d0s1` in `{fx}/launch/todo.canvas` still has its `## Venue` heading and reads `- [x] Call the hall`, `- [ ] Ask the library` and a new `- [ ] Confirm catering`, as markdown indented under its item line, after reading the `canvas` skill; the `Budget is 2k` sticky keeps its id and text. Written in place with the ordinary file tools; no copy, nothing in `{sb}`. The reply is a line or two.
 
 ## gif-output
 

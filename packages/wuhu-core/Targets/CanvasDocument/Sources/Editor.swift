@@ -39,17 +39,18 @@ public struct CanvasEditor {
 
   // MARK: Items
 
-  /// A new item on top of its siblings.
+  /// A new item on top of its siblings; a sticky stores `text` as blocks.
   @discardableResult
   public mutating func insert(
     _ kind: CanvasKind, frame: CanvasRect, color: CanvasColor?, text: Inline = Inline(), path: String? = nil, in section: CanvasID? = nil,
   ) throws -> CanvasID {
-    try self.insert(kind, frame: frame, color: color, text: text, path: path, in: section, id: self.newID())
+    try self.insert(kind, frame: frame, color: color, text: text, blocks: nil, path: path, in: section, id: self.newID())
   }
 
   @discardableResult
   mutating func insert(
-    _ kind: CanvasKind, frame: CanvasRect, color: CanvasColor?, text: Inline, path: String?, in section: CanvasID?, id: CanvasID,
+    _ kind: CanvasKind, frame: CanvasRect, color: CanvasColor?, text: Inline, blocks: [Block]?, path: String?, in section: CanvasID?,
+    id: CanvasID,
   ) throws -> CanvasID {
     let parent = try self.parent(for: kind, in: section)
     let node = try self.tree.create(parent: parent)
@@ -63,7 +64,12 @@ public struct CanvasEditor {
     try meta.insert(key: CanvasSchema.Key.h, v: frame.h)
     if kind.isColored, let color { try meta.insert(key: CanvasSchema.Key.color, v: color.rawValue) }
     if kind == .file, let path { try meta.insert(key: CanvasSchema.Key.path, v: path) }
-    if !text.isEmpty { try meta.getOrCreateTextContainer(key: CanvasSchema.Key.text, child: LoroText()).sync(to: text) }
+    if kind == .sticky {
+      try meta.getOrCreateMovableListContainer(key: CanvasSchema.Key.blocks, child: LoroMovableList()).sync(to: blocks ?? text.paragraphs)
+    } else if kind != .file {
+      // Made here even when empty: two peers who each made it on their first keystroke would keep only one's typing.
+      try meta.getOrCreateTextContainer(key: CanvasSchema.Key.text, child: LoroText()).sync(to: text)
+    }
     self.nodes[id] = node
     self.taken.insert(id)
     return id
@@ -187,7 +193,7 @@ public struct CanvasEditor {
         placed = CanvasRect(x: frame.x + dx, y: frame.y + dy, w: item.w, h: item.h)
       }
       let section = copiedSection ?? item.parent
-      copies[item.id] = try self.insert(item.kind, frame: placed, color: item.color, text: item.text, path: item.path, in: section)
+      copies[item.id] = try self.insert(item.kind, frame: placed, color: item.color, text: item.text, blocks: item.blocks, path: item.path, in: section, id: self.newID())
     }
     for connector in board.connectors {
       guard let from = copies[connector.from], let to = copies[connector.to] else { continue }
@@ -211,15 +217,41 @@ public struct CanvasEditor {
     }
   }
 
-  /// Leaving `file` drops the path, so no reader meets a stray one.
+  /// Leaving `file` drops the path and leaving `sticky` the blocks, so no reader meets a stray one.
   public func setKind(_ id: CanvasID, _ kind: CanvasKind) throws {
     let meta = try self.meta(id)
     try set(meta, CanvasSchema.Key.kind, kind.rawValue)
     if kind != .file { try set(meta, CanvasSchema.Key.path, nil as String?) }
+    if kind != .sticky { try set(meta, CanvasSchema.Key.blocks, nil as String?) }
   }
 
   public func setText(_ id: CanvasID, _ text: Inline) throws {
     try self.meta(id).getOrCreateTextContainer(key: CanvasSchema.Key.text, child: LoroText()).sync(to: text)
+  }
+
+  /// A sticky's first edit upgrades it: the blocks are written and the text it was stored as is dropped.
+  public func setBlocks(_ id: CanvasID, _ blocks: [Block]) throws {
+    try self.blockList(id).sync(exactly: blocks)
+  }
+
+  /// `setBlocks` as the agent view says them: a block it does not show (an empty paragraph, a sticky's
+  /// stored text's blank line) stays.
+  func mergeBlocks(_ id: CanvasID, _ blocks: [Block], over item: CanvasItem) throws {
+    if item.blocks == nil { try self.setBlocks(id, item.note) }
+    try self.blockList(id).sync(to: blocks)
+  }
+
+  /// The list a sticky's blocks live in, for a live editor to write; getting it upgrades the sticky.
+  public func blockList(_ id: CanvasID) throws -> LoroMovableList {
+    let meta = try self.meta(id)
+    try set(meta, CanvasSchema.Key.text, nil as String?)
+    return try meta.getOrCreateMovableListContainer(key: CanvasSchema.Key.blocks, child: LoroMovableList())
+  }
+
+  /// Where the item's words live now: its text, and a sticky's block list once it has one.
+  public func containers(of id: CanvasID) throws -> (text: LoroText?, blocks: LoroMovableList?) {
+    let meta = try self.meta(id)
+    return (meta.get(key: CanvasSchema.Key.text)?.asLoroText(), meta.get(key: CanvasSchema.Key.blocks)?.asLoroMovableList())
   }
 
   public func setPath(_ id: CanvasID, _ path: String) throws {

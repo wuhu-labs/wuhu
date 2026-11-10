@@ -125,6 +125,8 @@ private struct Merge {
     if color != old.color { try self.editor.setColor([id], color) }
     if let path = item.path {
       if path != old.path { try self.editor.setPath(id, path) }
+    } else if let blocks = item.blocks {
+      if blocks != readBack(old.note) { try self.editor.mergeBlocks(id, blocks, over: old) }
     } else if item.text != readBack(old.text) {
       try self.editor.setText(id, item.text)
     }
@@ -138,7 +140,8 @@ private struct Merge {
     let id = item.id ?? self.editor.newID(using: &self.random)
     self.ids[index] = id
     try self.editor.insert(
-      item.kind, frame: frame, color: item.color ?? item.kind.defaultColor, text: item.text, path: item.path, in: parent, id: id,
+      item.kind, frame: frame, color: item.color ?? item.kind.defaultColor, text: item.text, blocks: item.blocks, path: item.path, in: parent,
+      id: id,
     )
   }
 

@@ -20,13 +20,14 @@ func project(_ doc: LoroDoc) -> (content: Content, placed: [Placed]) {
   for key in map.keys() {
     if let value = map.get(key: key)?.asValue() { frontmatter[key] = json(value) }
   }
-  let list = doc.getMovableList(id: WmdSchema.Key.blocks)
-  var placed: [Placed] = []
-  for position in 0 ..< list.len() {
-    guard let item = list.get(index: position)?.asLoroMap(), let block = block(of: item) else { continue }
-    placed.append(Placed(position: position, block: block))
-  }
+  let placed = placed(in: doc.getMovableList(id: WmdSchema.Key.blocks))
   return (Content(frontmatter: frontmatter, blocks: placed.map(\.block)), placed)
+}
+
+func placed(in list: LoroMovableList) -> [Placed] {
+  (0 ..< list.len()).compactMap { position in
+    list.get(index: position)?.asLoroMap().flatMap(block(of:)).map { Placed(position: position, block: $0) }
+  }
 }
 
 private func block(of map: LoroMap) -> Block? {

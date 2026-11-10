@@ -14,6 +14,7 @@ public enum CanvasSchema {
     public static let h = "h"
     public static let color = "color"
     public static let text = WmdSchema.Key.text
+    public static let blocks = WmdSchema.Key.blocks
     public static let path = "path"
     public static let from = "from"
     public static let to = "to"
@@ -85,6 +86,8 @@ public enum CanvasColor: String, CaseIterable, Hashable, Sendable {
   case blue
   case purple
   case gray
+  /// The spec card: white with a hairline edge and no shadow.
+  case white
 }
 
 public enum CanvasSide: String, CaseIterable, Hashable, Sendable {

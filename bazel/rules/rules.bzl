@@ -18,6 +18,7 @@ load("@build_bazel_rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hi
 load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")
 load("@build_bazel_rules_swift//swift:swift_test.bzl", "swift_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_swift_package_manager//swiftpkg:build_defs.bzl", "resource_bundle_infoplist")
 load(":docc.bzl", _wuhu_docc_archive = "wuhu_docc_archive", _wuhu_docc_site = "wuhu_docc_site")
 load(":sim_runner.bzl", "wuhu_sim_test_runner")
@@ -402,7 +403,9 @@ WUHU_HMR_COPTS = select({
 })
 
 # Opaque type erasure (Xcode's SWIFT_ENABLE_OPAQUE_TYPE_ERASURE) compiles every
-# `some View` (each `body`, each helper) as SwiftUI's `DebugReplaceableView`.
+# `some View` (each `body`, each helper) as SwiftUI's `DebugReplaceableView`,
+# or as `AnyView` below a 26.0 deployment target, which is why every HMR app
+# shell floors at 26.0.
 # A hot patch swaps a body getter but not the conformance's `Body` type the app
 # was compiled with, so without erasure an edit that changes the body's type
 # (an added modifier, another container) hands SwiftUI a value laid out as the
@@ -419,10 +422,77 @@ WUHU_HMR_VIEW_COPTS = select({
     "//conditions:default": [],
 })
 
+_FLOOR_ATTRS_BY_TRIPLE_OS = {
+    "ios": "ios",
+    "macosx": "macos",
+    "tvos": "tvos",
+    "watchos": "watchos",
+    "xros": "visionos",
+}
+
+def _os_version(text):
+    parts = [int(part) for part in text.split(".")]
+    return parts + [0] * (3 - len(parts))
+
+# The `-target` that raises `triple` to the floor `floors` (attribute name to
+# version) sets for the triple's OS, or None when the floor raises nothing.
+def raised_target(triple, floors):
+    parts = triple.split("-")
+    if len(parts) < 3 or parts[1] != "apple":
+        return None
+    os = parts[2].rstrip("0123456789.")
+    if os not in _FLOOR_ATTRS_BY_TRIPLE_OS:
+        fail("no floor attribute for {}".format(triple))
+    floor = floors.get(_FLOOR_ATTRS_BY_TRIPLE_OS[os])
+    if not floor or _os_version(floor) <= _os_version(parts[2][len(os):]):
+        return None
+    parts[2] = os + floor
+    return "-".join(parts)
+
+# The toolchain's `-target` carries the configuration's minimum OS, which is the
+# lane's lowest floor rather than this package's. swiftc and clang honor the last
+# `-target`, so a response file that repeats it at the package floor raises the
+# compile and the link without touching the configuration: externals and every
+# other package keep the lane's minimum.
+def _wuhu_platform_floor_impl(ctx):
+    target = raised_target(
+        find_cc_toolchain(ctx).target_gnu_system_name,
+        {attr: getattr(ctx.attr, attr) for attr in _FLOOR_ATTRS_BY_TRIPLE_OS.values()},
+    )
+    output = ctx.actions.declare_file(ctx.label.name + ".target.rsp")
+    ctx.actions.write(output, "-target\n{}\n".format(target) if target else "")
+    return [DefaultInfo(files = depset([output]))]
+
+wuhu_platform_floor = rule(
+    implementation = _wuhu_platform_floor_impl,
+    attrs = {
+        "ios": attr.string(),
+        "macos": attr.string(),
+        "tvos": attr.string(),
+        "visionos": attr.string(),
+        "watchos": attr.string(),
+        "_cc_toolchain": attr.label(default = "@rules_cc//cc:current_cc_toolchain"),
+    },
+    fragments = ["cpp"],
+    toolchains = use_cc_toolchain(),
+)
+
+def _platform_floor_args(platform_floor):
+    if not platform_floor:
+        return [], []
+    return _on_apple(["@$(location {})".format(platform_floor)]), _on_apple([platform_floor])
+
+def _on_apple(items):
+    return select({
+        "//bazel/constraints:linux": [],
+        "//conditions:default": items,
+    })
+
 def _swift_6_copts(kwargs):
     return WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_CONTROLLABLE_CLOCK_COPTS + kwargs.pop("copts", [])
 
-def wuhu_swift_library(name, srcs, deps, package_name, hmr = False, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, embedded_directories = None, **kwargs):
+def wuhu_swift_library(name, srcs, deps, package_name, hmr = False, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, embedded_directories = None, platform_floor = None, **kwargs):
+    floor_copts, floor_inputs = _platform_floor_args(platform_floor)
     copy_resources = copy_resources or []
     process_resources = process_resources or []
     embedded_directories = embedded_directories or []
@@ -432,7 +502,8 @@ def wuhu_swift_library(name, srcs, deps, package_name, hmr = False, copy_resourc
     swift_library(
         name = name,
         srcs = srcs + resource_srcs + embedded_srcs,
-        copts = _swift_6_copts(kwargs) + WUHU_HMR_VIEW_COPTS + (WUHU_HMR_COPTS if hmr else []),
+        copts = _swift_6_copts(kwargs) + WUHU_HMR_VIEW_COPTS + (WUHU_HMR_COPTS if hmr else []) + floor_copts,
+        swiftc_inputs = floor_inputs,
         data = data,
         deps = deps + embedded_deps + (select({
             "//bazel/rules:hmr_enabled": ["//packages/hmr:HMRRuntime"],
@@ -443,8 +514,9 @@ def wuhu_swift_library(name, srcs, deps, package_name, hmr = False, copy_resourc
         **kwargs
     )
 
-def wuhu_c_library(name, srcs, hdrs, module_map, deps, **kwargs):
-    wuhu_system_library(name, hdrs, module_map, srcs = srcs, deps = deps, **kwargs)
+def wuhu_c_library(name, srcs, hdrs, module_map, deps, platform_floor = None, **kwargs):
+    floor_copts, floor_inputs = _platform_floor_args(platform_floor)
+    wuhu_system_library(name, hdrs, module_map, srcs = srcs, deps = deps, copts = floor_copts, additional_compiler_inputs = floor_inputs, **kwargs)
 
 def wuhu_system_library(name, hdrs, module_map, linkopts = None, **kwargs):
     hint = "{}_swift_interop".format(name)
@@ -462,11 +534,15 @@ def wuhu_system_library(name, hdrs, module_map, linkopts = None, **kwargs):
         **kwargs
     )
 
-def wuhu_swift_binary(name, srcs, deps, **kwargs):
+def wuhu_swift_binary(name, srcs, deps, platform_floor = None, **kwargs):
+    floor_copts, floor_inputs = _platform_floor_args(platform_floor)
     swift_binary(
         name = name,
         srcs = srcs,
-        copts = _swift_6_copts(kwargs),
+        copts = _swift_6_copts(kwargs) + floor_copts,
+        swiftc_inputs = floor_inputs,
+        additional_linker_inputs = kwargs.pop("additional_linker_inputs", []) + floor_inputs,
+        linkopts = kwargs.pop("linkopts", []) + floor_copts,
         deps = deps,
         **kwargs
     )
@@ -484,7 +560,8 @@ def wuhu_swift_macro(name, srcs, deps, **kwargs):
 # Swift Testing otherwise starts every case of a process at once (docs/bazel.md, Test parallelism).
 WUHU_SWIFT_TEST_WIDTH = "8"
 
-def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, **kwargs):
+def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, platform_floor = None, **kwargs):
+    floor_copts, floor_inputs = _platform_floor_args(platform_floor)
     copy_resources = copy_resources or []
     process_resources = process_resources or []
     resource_srcs, data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources, _manual_tags(kwargs.get("tags")))
@@ -492,14 +569,15 @@ def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, proce
     swift_test(
         name = name,
         srcs = srcs + resource_srcs,
-        copts = _swift_6_copts(kwargs),
+        copts = _swift_6_copts(kwargs) + floor_copts,
+        swiftc_inputs = floor_inputs,
         data = data + copy_resources + (extra_data or []),
         deps = deps,
         env = {"SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH": WUHU_SWIFT_TEST_WIDTH} | kwargs.pop("env", {}),
         module_name = name.replace("-", "_"),
         package_name = package_name,
         # IssueReporting discovers its test bridge with dlsym; an archive dependency alone is stripped.
-        linkopts = kwargs.pop("linkopts", []) + select({
+        linkopts = kwargs.pop("linkopts", []) + floor_copts + select({
             "//bazel/constraints:linux": [
                 "-Wl,--undefined=$s25IssueReportingTestSupport07_recordA0ypyF",
                 "-Wl,--export-dynamic",

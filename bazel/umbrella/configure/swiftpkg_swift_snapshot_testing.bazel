@@ -16,5 +16,8 @@ swift_deps.configure_package(
         # https://github.com/pointfreeco/swift-snapshot-testing/issues/1117
         # https://github.com/pointfreeco/swift-snapshot-testing/pull/1119
         "//bazel/patches:snapshot-testing-image-format.patch",
+        # A failure writes its image, plus the reference and difference that upstream only
+        # attaches under Xcode, to the test's undeclared outputs (docs/bazel.md).
+        "//bazel/patches:snapshot-testing-bazel-artifacts.patch",
     ],
 )
