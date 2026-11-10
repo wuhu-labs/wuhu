@@ -121,51 +121,6 @@ enum Conversations {
       .map { ConversationMember(member: $0.member, kind: MemberKind(rawValue: $0.kind)!) }
   }
 
-  static func create(
-    id: String,
-    kind: ConversationKind,
-    group: GroupID,
-    ownerSession: String?,
-    members: [ConversationMember],
-    now: String,
-    in db: Database,
-  ) throws {
-    if kind == .users, let session = members.first(where: { $0.kind == .session }) {
-      throw ChannelError.sessionMember(session.member)
-    }
-    try ConversationRow.insert {
-      ConversationRow(
-        id: id,
-        kind: kind.rawValue,
-        ownerSession: ownerSession,
-        windowMessages: ConversationDefaults.windowMessages,
-        windowSeconds: ConversationDefaults.windowSeconds,
-        createdAt: now,
-        group: group.rawValue,
-      )
-    } onConflict: { $0.id }
-      .execute(db)
-    for member in members { try join(id, member: member, now: now, in: db) }
-  }
-
-  static func group(of id: String, in db: Database) throws -> GroupID {
-    GroupID(rawValue: try ConversationRow.where { $0.id.eq(id) }.fetchOne(db)?.group ?? GroupID.shared.rawValue)
-  }
-
-  static func join(_ id: String, member: ConversationMember, now: String, in db: Database) throws {
-    if member.kind == .session, try ConversationRow.where({ $0.id.eq(id) }).fetchOne(db)?.kind == ConversationKind.users.rawValue {
-      throw ChannelError.sessionMember(member.member)
-    }
-    try ConversationMemberRow.insert {
-      ConversationMemberRow(conversationID: id, member: member.member, kind: member.kind.rawValue, joinedAt: now)
-    } onConflict: { ($0.conversationID, $0.member) }
-      .execute(db)
-  }
-
-  static func memberKind(of principal: String, in db: Database) throws -> MemberKind {
-    try Sessions.exists(principal, in: db) ? .session : .user
-  }
-
   // The device and the viewed page ride in side tables, so the projection every
   // read shares has to carry them: `messages` itself is untouched and old
   // spaces read correctly.

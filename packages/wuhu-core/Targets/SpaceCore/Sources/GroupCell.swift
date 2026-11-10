@@ -62,6 +62,17 @@ public struct SpaceCell {
     rows.administered(by: principal.actor, rows: GroupAccess.ActorRows(db))
   }
 
+  /// The person a spelling names: by alias, persona name or profile; nil for nobody.
+  func person(_ spelling: String) -> String? {
+    let name = alias(ofPerson: spelling) ?? spelling
+    if !db.rows(PersonaRow.where { $0.name.eq(name) }).isEmpty { return name }
+    return db.rows(UserProfileRow.where { $0.principal.eq(name) }).first?.principal
+  }
+
+  func alias(ofPerson spelling: String) -> String? {
+    db.rows(AliasRow.where { $0.name.eq(spelling.lowercased()) && $0.kind.eq(AliasKind.person) }).first?.target
+  }
+
   private var rows: GroupAccess.Snapshot {
     GroupAccess.Snapshot(groups: db.rows(GroupRow.all), roles: db.rows(GroupRoleRow.all))
   }

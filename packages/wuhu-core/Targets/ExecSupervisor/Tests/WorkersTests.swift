@@ -398,13 +398,28 @@ import Testing
     }
   }
 
-  /// While a start is on its way, a worker that does not know the operation yet says nothing about it: a stop's early unknown
-  /// keeps the route, and retirement waits for the start's answer, then stops what it started.
+  /// An answer the fake worker holds back: the first request that reaches `hold` waits there until `deliver`.
+  final class Held: Sendable {
+    let reached = Mutex(false), delivered = Mutex(false)
+
+    func hold() async throws {
+      guard reached.withLock({ reached in defer { reached = true }; return !reached }) else { return }
+      while !delivered.withLock({ $0 }) { try await ContinuousClock().sleep(for: .milliseconds(5)) }
+    }
+
+    func deliver() { delivered.withLock { $0 = true } }
+    var isReached: Bool { reached.withLock { $0 } }
+  }
+
+  /// While a start is on its way, a worker that does not know the operation yet says nothing about it, even when that answer
+  /// arrives after the start's: neither a caller's early stop nor retirement's own poll drops the route, and retirement waits
+  /// for the start's answer, then stops what it started.
   @Test func aStartOnItsWayIsNeitherLostNorForgottenByRetirement() async throws {
     let home = try MachineHome(); defer { home.remove() }
     try await machine(home) { machine in
       let id = UUID()
-      let arrived = Mutex(false), released = Mutex(false), started = Mutex(false)
+      let arrived = Mutex(false), released = Mutex(false), started = Mutex(false), retiring = Mutex(false)
+      let earlyStop = Held(), retirementPoll = Held()
       let reasons = Mutex<[String]>([])
       try await machine.link(try await machine.launched(), client { request in
         if request.method == .post {
@@ -413,26 +428,36 @@ import Testing
           started.withLock { $0 = true }
           return try snapshot(id)
         }
-        guard started.withLock({ $0 }) else { return try unknown() }
-        if request.url.path.hasSuffix("/stop") {
-          let reason = (try? await request.json(StopRequest.self, upTo: 1024))?.reason ?? ""
-          reasons.withLock { $0.append(reason) }
+        let reason = request.url.path.hasSuffix("/stop") ? (try? await request.json(StopRequest.self, upTo: 1024))?.reason ?? "" : nil
+        guard started.withLock({ $0 }) else {
+          if reason == "early" { try await earlyStop.hold() }
+          if reason == nil, retiring.withLock({ $0 }) { try await retirementPoll.hold() }
+          return try unknown()
         }
+        if let reason { reasons.withLock { $0.append(reason) } }
         guard !reasons.withLock({ $0.isEmpty }) else { return try snapshot(id) }
         return try .json(OperationSnapshot(operation: id, verdict: Verdict(.stopped, reason: StopReason.retired.rawValue), terminalToken: UUID(), finalOffsets: [:], outputConsumed: false))
       })
       let starting = Task { try await machine.handle(start(id)).status.code }
       try await until("the start reaches the worker") { arrived.withLock { $0 } }
-      #expect(try await machine.code(execRequest(id, suffix: "/stop", method: .put, body: .json(StopRequest(reason: "early")))) == .unknownOperation)
-      #expect(await machine.kind.owns(id), "the early unknown did not drop the route")
-      #expect(try await machine.error(execRequest(id)).details == nil, "nor record it lost")
-      let retiring = Task { await machine.workers.retire(.turnedOff, deadline: .seconds(5)) }
-      try await ContinuousClock().sleep(for: .milliseconds(300))
+      #expect(try await machine.error(execRequest(id)).details == nil, "an unknown that arrives while the start is on its way records no loss")
+      let stopping = Task { try await machine.code(execRequest(id, suffix: "/stop", method: .put, body: .json(StopRequest(reason: "early")))) }
+      try await until("the early stop reaches the worker") { earlyStop.isReached }
+      retiring.withLock { $0 = true }
+      let retired = Task { await machine.workers.retire(.turnedOff, deadline: .seconds(5)) }
+      try await until("retirement's poll reaches the worker") { retirementPoll.isReached }
       #expect(reasons.withLock { $0.isEmpty })
       released.withLock { $0 = true }
       #expect(try await starting.value == 201)
-      #expect(await retiring.value == 0)
+      earlyStop.deliver()
+      #expect(try await stopping.value == .unknownOperation)
+      #expect(try await machine.handle(execRequest(id)).status.code < 300, "the early stop's late unknown neither dropped the route nor recorded it lost")
+      retirementPoll.deliver()
+      #expect(await retired.value == 0)
       #expect(reasons.withLock { $0 } == [StopReason.retired.rawValue], "retirement stopped what the start began")
+      let receipt = try await machine.handle(execRequest(id))
+      #expect(receipt.status.code == 200, "retirement's late unknown neither dropped the route nor recorded it lost")
+      #expect(try await receipt.body.json(OperationSnapshot.self).verdict == Verdict(.stopped, reason: StopReason.retired.rawValue))
     }
   }
 

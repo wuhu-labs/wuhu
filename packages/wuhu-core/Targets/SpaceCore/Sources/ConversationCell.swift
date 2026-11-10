@@ -53,8 +53,9 @@ enum ConversationTail: Socket {
 /// A conversation (a box, a DM, a channel), keyed by its id. A post is a call: one step checks the poster's reach, writes the message and what its request needs, and mails each recipient: a session its input, a person their notice.
 @Cell
 struct ConversationCell {
+  /// A box is there from its session's creation, and written by its first post.
   func record() -> ConversationRecord? {
-    guard let row = db.rows(ConversationRow.where { $0.id.eq(id.key) }).first else { return nil }
+    guard let row = db.rows(ConversationRow.where { $0.id.eq(id.key) }).first else { return unopenedBox() }
     let kind = ConversationKind(rawValue: row.kind)!
     return ConversationRecord(
       id: ConversationID(row.id),
@@ -78,7 +79,7 @@ struct ConversationCell {
 
   /// Where `post` would land and whether it already did, refusing as `post(_:)` would: what main needs to write a post's attachments first.
   func placing(_ post: Post) throws -> (group: GroupID, replayed: Bool) {
-    (try admit(post, poster: poster(of: post)).conversation.group, message(post.messageID) != nil)
+    (try admit(post, poster: poster(of: post)).group, message(post.messageID) != nil)
   }
 
   mutating func attached(_ socket: SocketHandle<ConversationTail>) {
@@ -89,8 +90,7 @@ struct ConversationCell {
 
   mutating func post(_ post: Post) throws -> MessageDelivery {
     let poster = poster(of: post)
-    let admitted = try admit(post, poster: poster)
-    let conversation = admitted.conversation
+    let conversation = try admit(post, poster: poster)
     guard conversation.kind != .dmUser || (post.senderSession == nil && !conversation.members.contains(where: { $0.kind == .session })) else {
       throw SessionStoreError.humanAgentDirectMessage
     }
@@ -103,17 +103,7 @@ struct ConversationCell {
         : SessionStoreError.replyTargetInAnotherConversation(replyTarget.rawValue)
     }
     let now = SQLiteDateFormat.string(from: post.at)
-    if admitted.isNew {
-      try db.execute(ConversationRow.insert {
-        ConversationRow(
-          id: id.key, kind: conversation.kind.rawValue, ownerSession: nil,
-          windowMessages: conversation.windowMessages, windowSeconds: conversation.windowSeconds, createdAt: now, group: conversation.group.rawValue,
-        )
-      })
-      for member in conversation.members {
-        try join(member, now: now)
-      }
-    }
+    if !isWritten { try make(conversation, now: now) }
     if conversation.kind == .box {
       try join(ConversationMember(member: post.senderSession?.rawValue ?? post.sender.id, kind: post.senderSession == nil ? .user : .session), now: now)
     }
@@ -191,7 +181,20 @@ extension ConversationCell {
   }
 
   private func known() throws {
-    guard db.one("SELECT 1 FROM conversations WHERE id = ?", .text(id.key)) != nil else { throw SessionStoreError.unknownConversation(id.key) }
+    guard isWritten || unopenedBox() != nil else { throw SessionStoreError.unknownConversation(id.key) }
+  }
+
+  private var isWritten: Bool {
+    db.one("SELECT 1 FROM conversations WHERE id = ?", .text(id.key)) != nil
+  }
+
+  private func unopenedBox() -> ConversationRecord? {
+    guard let owner = session(id.key), owner.kind == .agent else { return nil }
+    return ConversationRecord(
+      id: ConversationID(id.key), kind: .box, ownerSession: SessionID(id.key), title: nil, group: GroupID(rawValue: owner.group),
+      windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
+      members: [ConversationMember(member: id.key, kind: .session)], createdAt: try! SQLiteDateFormat.date(from: owner.createdAt),
+    )
   }
 
   private func messages(where condition: String, _ bound: Value, newestFirst: Bool = false, limit: Int?) -> [MessageRecord] {
@@ -229,12 +232,6 @@ extension ConversationCell {
     var firing: String? {
       if case let .observer(observer)? = actor { observer.firing } else { nil }
     }
-  }
-
-  private struct Admitted {
-    var conversation: ConversationRecord
-    /// A DM its first post is about to make.
-    var isNew = false
   }
 
   private func poster(of post: Post) -> Poster {
@@ -287,7 +284,7 @@ extension ConversationCell {
   }
 
   /// A conversation is there for a poster whose group reads its group, or who is a member; anything else is refused as missing. No dialing in: a DM to a session outside what the poster's group reads is opened or used only when that session has posted in it.
-  private func admit(_ post: Post, poster: Poster) throws -> Admitted {
+  private func admit(_ post: Post, poster: Poster) throws -> ConversationRecord {
     let me = post.senderSession?.rawValue ?? post.sender.id
     let readable = readable(by: poster)
     switch post.target {
@@ -303,14 +300,13 @@ extension ConversationCell {
           guard reaches(other.member, from: readable, in: record) else { throw SessionStoreError.unknownConversation(id.key) }
         }
       }
-      return Admitted(conversation: record)
+      return record
     case .box:
       guard let owner = session(id.key), readable.contains(GroupID(rawValue: owner.group)) else { throw SessionStoreError.unknownSession(id.key) }
       guard owner.kind == .agent else {
         throw post.senderSession == nil ? SessionStoreError.taskTakesNoHumanInput(id.key) : SessionStoreError.taskHasNoBox(id.key)
       }
-      guard let record = record() else { throw SessionStoreError.unknownConversation(id.key) }
-      return Admitted(conversation: record)
+      return record()!
     case let .dm(other):
       precondition(id.key == Conversations.dmID(me, other).rawValue, "a DM's cell is keyed by its two members")
       let existing = record()
@@ -319,17 +315,14 @@ extension ConversationCell {
         let reached = existing.map { reaches(other, from: readable, in: $0) } ?? readable.contains(GroupID(rawValue: theirs.group))
         guard reached else { throw SessionStoreError.unknownSession(other) }
       }
-      if let existing { return Admitted(conversation: existing) }
+      if let existing { return existing }
       let mine: MemberKind = session(me) == nil ? .user : .session
       let their: MemberKind = theirs == nil ? .user : .session
-      return Admitted(
-        conversation: ConversationRecord(
-          id: ConversationID(id.key), kind: mine == .session && their == .session ? .dmSession : .dmUser, ownerSession: nil, title: nil,
-          group: poster.group, windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
-          members: [ConversationMember(member: me, kind: mine), ConversationMember(member: other, kind: their)].sorted { $0.member < $1.member },
-          createdAt: post.at,
-        ),
-        isNew: true,
+      return ConversationRecord(
+        id: ConversationID(id.key), kind: mine == .session && their == .session ? .dmSession : .dmUser, ownerSession: nil, title: nil,
+        group: poster.group, windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
+        members: [ConversationMember(member: me, kind: mine), ConversationMember(member: other, kind: their)].sorted { $0.member < $1.member },
+        createdAt: post.at,
       )
     }
   }
@@ -347,6 +340,83 @@ extension ConversationCell {
     } onConflict: {
       ($0.conversationID, $0.member)
     })
+  }
+}
+
+// MARK: A channel and its people
+
+extension ConversationCell {
+  /// Makes the channel this cell is keyed for, homed in `group`.
+  mutating func open(members: [String], title: String?, in group: GroupID, at date: Date) throws {
+    let people = try members.map(person)
+    try check(title)
+    let now = SQLiteDateFormat.string(from: date)
+    try make(ConversationRecord(
+      id: ConversationID(id.key), kind: .users, ownerSession: nil, title: nil, group: group,
+      windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
+      members: people.map { ConversationMember(member: $0, kind: .user) }, createdAt: date,
+    ), now: now)
+    try db.execute(ConversationTitleRow.upsert { ConversationTitleRow(conversationID: id.key, title: title) })
+  }
+
+  mutating func add(_ people: [String], as principal: Principal, at date: Date) throws {
+    try manage(as: principal)
+    let now = SQLiteDateFormat.string(from: date)
+    for person in try people.map(person) { try join(ConversationMember(member: person, kind: .user), now: now) }
+  }
+
+  /// A person leaves under the name given and under the one it is an alias of; someone who is not a member is no error.
+  mutating func remove(_ people: [String], as principal: Principal) throws {
+    try manage(as: principal)
+    for person in people {
+      guard session(person) == nil else { throw ChannelError.sessionMember(person) }
+      let names = [person, space.alias(ofPerson: person)].compactMap(\.self)
+      try db.execute(ConversationMemberRow.where { $0.conversationID.eq(id.key) && $0.member.in(names) }.delete())
+    }
+  }
+
+  mutating func rename(_ title: String?, as principal: Principal) throws {
+    try check(title)
+    try manage(as: principal)
+    try db.execute(ConversationTitleRow.upsert { ConversationTitleRow(conversationID: id.key, title: title) })
+  }
+
+  /// A channel is managed by its people and by whoever writes its group; to anyone else it is not there.
+  private func manage(as principal: Principal) throws {
+    guard let record = record() else { throw SessionStoreError.unknownConversation(id.key) }
+    let allowed: Bool
+    switch principal.actor {
+    case .session, .observer, .page:
+      let group: GroupCell = ctx.cell(GroupCell.ID(record.group.rawValue))
+      allowed = group.role(of: principal.actor, acting: principal.group).map { $0 >= .write } ?? false
+    case let .person(persona, _):
+      allowed = record.members.contains { $0.member == persona && $0.kind == .user }
+    case .anonymous:
+      allowed = false
+    }
+    guard allowed else { throw SessionStoreError.unknownConversation(id.key) }
+    guard record.kind == .users else { throw ChannelError.notChannel(id.key) }
+  }
+
+  private func person(_ spelling: String) throws -> String {
+    guard session(spelling) == nil else { throw ChannelError.sessionMember(spelling) }
+    guard let person = space.person(spelling) else { throw ChannelError.unknownPerson(spelling) }
+    return person
+  }
+
+  private func check(_ title: String?) throws {
+    if let title, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw ChannelError.invalidTitle }
+  }
+
+  /// Writes a conversation that was only described until now: a new channel, a DM or a box at its first post.
+  private mutating func make(_ conversation: ConversationRecord, now: String) throws {
+    try db.execute(ConversationRow.insert {
+      ConversationRow(
+        id: id.key, kind: conversation.kind.rawValue, ownerSession: conversation.ownerSession?.rawValue,
+        windowMessages: conversation.windowMessages, windowSeconds: conversation.windowSeconds, createdAt: now, group: conversation.group.rawValue,
+      )
+    })
+    for member in conversation.members { try join(member, now: now) }
   }
 }
 
@@ -532,6 +602,7 @@ private struct PostSessionRow {
   @Column("grp") var group: String
   var lifecycle: String
   @Column("grace_expires_at") var graceExpiresAt: String?
+  @Column("created_at") var createdAt: String
 }
 
 @Selection

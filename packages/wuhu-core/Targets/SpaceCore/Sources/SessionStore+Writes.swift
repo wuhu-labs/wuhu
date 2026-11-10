@@ -95,12 +95,6 @@ extension SessionStore {
         ],
       )
       try Sessions.writeModelRoute(name, route: modelRoute, in: db)
-      if kind == .agent {
-        try Conversations.create(
-          id: name, kind: .box, group: group, ownerSession: name,
-          members: [.init(member: name, kind: .session)], now: now, in: db,
-        )
-      }
       try db.execute(
         sql: "INSERT INTO session_runtime (session_id, generation, queue_tail) VALUES (?, 0, 0)",
         arguments: [name],

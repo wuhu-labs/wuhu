@@ -49,6 +49,23 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     try await store.createSession(group: .shared, title: title, kind: .agent, createdBy: "morgan", model: .test)
   }
 
+  @Test func `a box is there from its session's creation and written by its first post`() async throws {
+    let rig = try MovingClockSpace()
+    let owner = try await agent(rig.store)
+    let box = ConversationID(owner.rawValue)
+    let unopened = try await rig.store.conversation(box)
+    #expect(unopened.kind == .box)
+    #expect(unopened.ownerSession == owner)
+    #expect(unopened.members == [ConversationMember(member: owner.rawValue, kind: .session)])
+    #expect(try await rig.store.page(of: box, from: .latest, limit: 5).messages.isEmpty)
+    #expect(try await rig.space.query("SELECT count(*) FROM conversations").rows == [[.integer(0)]])
+    _ = try await rig.store.post(.conversation(box), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "hi"))
+    #expect(try await rig.space.query("SELECT id, kind, owner_session FROM conversations").rows == [[.text(owner.rawValue), .text("box"), .text(owner.rawValue)]])
+    #expect(try await rig.store.conversation(box).members.map(\.member) == ["carol", owner.rawValue].sorted())
+    let task = try await rig.store.createSession(group: .shared, title: "t", kind: .task, parent: owner, createdBy: owner.rawValue, executor: .kernel(.test))
+    await #expect(throws: SessionStoreError.unknownConversation(task.rawValue)) { try await rig.store.conversation(ConversationID(task.rawValue)) }
+  }
+
   @Test func `the box owner hears everything posted into its box`() async throws {
     let rig = try MovingClockSpace()
     let owner = try await agent(rig.store)

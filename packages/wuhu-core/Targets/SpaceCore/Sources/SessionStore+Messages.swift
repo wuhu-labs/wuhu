@@ -1,4 +1,3 @@
-import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -108,29 +107,6 @@ extension SessionStore {
       } else if record.members.contains(where: { $0.member == reader }) { readable.append(record) }
     }
     return readable
-  }
-
-  /// `group` homes it: the group its opener acts in.
-  @discardableResult
-  public func createConversation(members: [String], title: String? = nil, in group: GroupID) async throws -> ConversationID {
-    @Dependency(\.uuid) var uuid
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    let id = ConversationID(uuid().uuidString.lowercased())
-    try await writer.write { db in
-      let members = try Channels.resolve(members, in: db)
-      try Channels.validate(title: title)
-      try Conversations.create(
-        id: id.rawValue,
-        kind: .users,
-        group: group,
-        ownerSession: nil,
-        members: try members.map { .init(member: $0, kind: try Conversations.memberKind(of: $0, in: db)) },
-        now: now,
-        in: db,
-      )
-      try ConversationTitleRow.upsert { ConversationTitleRow(conversationID: id.rawValue, title: title) }.execute(db)
-    }
-    return id
   }
 
   public func post(

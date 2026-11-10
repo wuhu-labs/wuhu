@@ -119,7 +119,8 @@ actor ExecWorkers {
     var acknowledged: Set<String> = []
 
     enum Phase: Equatable {
-      /// Its start is on its way to the worker: an answer that the worker does not know it says nothing yet.
+      /// Its start is on its way to the worker: an answer to a request sent now that the worker does not know it says nothing,
+      /// even one that arrives after the start's.
       case starting
       /// No verdict seen; `stopping` while a stop this agent sent for retirement is on its way.
       case running(stopping: Bool)
@@ -137,6 +138,15 @@ actor ExecWorkers {
 
     var settled: Bool { phase == .settled }
   }
+
+  /// What an answer is judged against, taken as its request leaves: who the request went to, and whether its operation's start
+  /// was still on its way.
+  struct Sent {
+    let owner: Owner
+    let duringStart: Bool
+  }
+
+  func sent(_ id: UUID, to owner: Owner) -> Sent { Sent(owner: owner, duringStart: routes[id]?.phase == .starting) }
 
   /// Whether the agent serves the machine.
   enum Service: Equatable {
@@ -461,8 +471,9 @@ actor ExecWorkers {
   func stop(_ id: UUID, owner: Owner, link: (client: FetchClient, nonce: String), reason: StopReason) async {
     do {
       let request = Request(url: try url(id, "/stop"), method: .put, body: try .json(StopRequest(reason: reason.rawValue)))
+      let sent = self.sent(id, to: owner)
       let (response, data) = try await Self.exchange(scope: self.transportScope, request, client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id)
-      try record(request, response, data, id, owner)
+      try record(request, response, data, id, sent)
       if Self.unknownOperation(response, data) || response.status.code == 200 { return }
     } catch {}
     if routes[id]?.phase == .running(stopping: true) { routes[id]?.phase = .running(stopping: false) }
@@ -497,10 +508,11 @@ actor ExecWorkers {
 
   /// One poll of a routed operation, recorded like any forwarded answer; nil unless it answered with a snapshot.
   func poll(_ id: UUID, _ query: String) async -> OperationSnapshot? {
-    guard let route = routes[id], let link = linked(route.owner, operation: id), let request = try? Request(url: url(id, query)),
-          let (response, data) = try? await Self.exchange(scope: self.transportScope, request, client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id)
+    guard let route = routes[id], let link = linked(route.owner, operation: id), let request = try? Request(url: url(id, query)) else { return nil }
+    let sent = self.sent(id, to: route.owner)
+    guard let (response, data) = try? await Self.exchange(scope: self.transportScope, request, client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id)
     else { return nil }
-    try? record(request, response, data, id, route.owner)
+    try? record(request, response, data, id, sent)
     guard response.status.code == 200 else { return nil }
     return try? JSONDecoder().decode(OperationSnapshot.self, from: data)
   }
@@ -613,17 +625,20 @@ actor ExecWorkers {
   func forward(_ request: Request, _ id: UUID, to owner: Owner) async throws -> Response {
     guard let link = try await link(to: owner, operation: id) else { throw OperationError(.unknownOperation) }
     routes[id]?.lastRequest = clock.now()
+    let sent = self.sent(id, to: owner)
     let (response, data) = try await Self.exchange(scope: self.transportScope, request, client: link.client, nonce: link.nonce, deadline: Self.requestDeadline, operation: id)
-    try record(request, response, data, id, owner)
+    try record(request, response, data, id, sent)
     return response
   }
 
   /// What a forwarded answer says about its operation. An answer that outlived its route changes nothing. A worker that says
-  /// it does not know an operation last seen unsettled dropped it unsettled.
-  func record(_ request: Request, _ response: Response, _ data: Data, _ id: UUID, _ owner: Owner) throws {
+  /// it does not know an operation last seen unsettled dropped it unsettled, unless the request left while its start was on
+  /// its way.
+  func record(_ request: Request, _ response: Response, _ data: Data, _ id: UUID, _ sent: Sent) throws {
+    let owner = sent.owner
     guard var route = routes[id], route.owner == owner else { return }
     if Self.unknownOperation(response, data) {
-      if route.phase != .starting, owner != .supervisor, route.settled || recordLost([id]) { routes.removeValue(forKey: id) }
+      if !sent.duringStart, route.phase != .starting, owner != .supervisor, route.settled || recordLost([id]) { routes.removeValue(forKey: id) }
       return
     }
     let path = request.url.path.split(separator: "/")

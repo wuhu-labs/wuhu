@@ -71,9 +71,12 @@ import Testing
       let agent = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "carol", model: .test)
       let dm = try await space.writer.write { db in
         let id = Conversations.dmID("carol", agent.rawValue)
-        try Conversations.create(
-          id: id.rawValue, kind: .dmUser, group: .shared, ownerSession: nil,
-          members: [.init(member: "carol", kind: .user), .init(member: agent.rawValue, kind: .session)], now: "2026-01-01T00:00:00.000Z", in: db,
+        try db.execute(
+          sql: """
+          INSERT INTO conversations (id, kind, window_messages, window_seconds, created_at, grp) VALUES (:id, 'dm_user', 10, 900, '2026-01-01T00:00:00.000Z', 'shared');
+          INSERT INTO conversation_members VALUES (:id, 'carol', 'user', '2026-01-01T00:00:00.000Z'), (:id, :agent, 'session', '2026-01-01T00:00:00.000Z')
+          """,
+          arguments: ["id": id.rawValue, "agent": agent.rawValue],
         )
         try db.execute(
           sql: "INSERT INTO messages (id, conversation_id, sender_id, sender_timezone, kind, content, created_at) VALUES ('old', ?, 'carol', 'GMT', 'message', ?, '2026-01-01T00:00:00.000Z')",

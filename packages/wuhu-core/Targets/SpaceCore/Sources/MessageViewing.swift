@@ -65,13 +65,6 @@ extension Viewing {
     }
     return Viewing(group: address.group, path: path)
   }
-
-  static func insert(_ viewing: Viewing, message: String, in db: Database) throws {
-    try db.execute(
-      sql: "INSERT INTO message_viewing (message_id, path) VALUES (?, ?)",
-      arguments: [message, viewing.stored],
-    )
-  }
 }
 
 extension Space {
