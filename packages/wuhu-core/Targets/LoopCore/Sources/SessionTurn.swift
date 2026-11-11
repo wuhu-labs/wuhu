@@ -3,7 +3,7 @@ import StructuredQueries
 import struct WuhuAI.ToolCall
 import WuweiQueries
 
-/// Where a session's turn stands and what it owes, written by its cell in the step that writes the transcript: the cell's next move without reading the transcript back. The cell does not read it yet; each step checks it against the transcript's fold (`init(folding:generation:)`).
+/// Where a session's turn stands and what it owes, written by its cell in the step that writes the transcript: the cell's next move without reading the transcript back. While the typed transcript is stored, each step checks the row against its fold (`init(folding:generation:nags:)`), which wins.
 @Table("session_state")
 struct SessionTurn: Owned, Equatable, Encodable, Sendable {
   var generation: Int
@@ -31,6 +31,11 @@ struct SessionTurn: Owned, Equatable, Encodable, Sendable {
     case idle
     /// Parked by this compact call: the next delivery runs the fold.
     case folding(call: ToolCallID)
+  }
+
+  /// The first of the reply's calls that is not answered.
+  var call: ToolCall? {
+    if case let .tools(calls) = turn { calls.first } else { nil }
   }
 
   /// The model's reply.
@@ -109,5 +114,20 @@ extension SessionTurn {
       .inert
     }
     self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply, nags: nags, seen: true, armed: true)
+  }
+}
+
+extension Transcript {
+  fileprivate var hasFreshReply: Bool {
+    items[keptCount...].contains { if case .assistant = $0 { true } else { false } }
+  }
+
+  /// The generation head's re-establishing reads that are not answered, while the generation has none of its own replies.
+  var reestablishments: [ToolCall] {
+    guard needsReestablishment, case let .generationHead(head) = items.first else { return [] }
+    let done = items[keptCount...].count { item in
+      if case let .toolResult(result) = item, result.provenance == .compactionReestablishment { true } else { false }
+    }
+    return Array(head.reestablishmentCalls.dropFirst(done))
   }
 }

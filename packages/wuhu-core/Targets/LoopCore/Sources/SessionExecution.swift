@@ -190,7 +190,7 @@ public struct SessionExecution: Sendable {
     guard try await store.pendingCommand(session) == nil else { return false }
     if try await store.record(session).stopped { return true }
     guard !loops.hasMail(for: SessionCell.ID(session.rawValue).recipient) else { return false }
-    let state = SessionState(try await store.hydrate(session))
+    let state = SessionState(try await store.hydrate(session), turn: loops.cell(SessionCell.ID(session.rawValue)).turn())
     return state.settled && (state.slot.working(exists: { [loops] work in
       switch work {
       case let .step(id): loops.exists(id)

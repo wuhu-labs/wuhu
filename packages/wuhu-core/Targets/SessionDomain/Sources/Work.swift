@@ -1,5 +1,4 @@
 import Foundation
-import struct WuhuAI.ToolCall
 
 extension TranscriptItem: Identifiable {
   public var id: UUID {
@@ -58,17 +57,6 @@ extension Transcript {
     default:
       return true
     }
-  }
-
-  public var nextPendingToolCall: ToolCall? {
-    guard let pending = pendingToolCallIDs.first else { return nil }
-    for item in items {
-      guard case let .assistant(entry) = item else { continue }
-      if let call = entry.toolCalls.first(where: { $0.id == pending.rawValue }) {
-        return call
-      }
-    }
-    preconditionFailure("pending tool call id \(pending.rawValue) has no originating call")
   }
 
   // Settled once the generation contains a FRESH assistant message

@@ -60,12 +60,8 @@ struct SessionCell {
   /// What `advance` leaves a parked model with: its next reminder, unless something else will wake it.
   private func parkWake() throws -> Date? {
     let session = try load()
-    let transcript = session.transcript
-    guard !session.stopped, working(session) == nil, session.queueHead == session.queueTail, !transcript.hasWork,
-          transcript.nextPendingToolCall == nil, case .assistant? = transcript.items.last
-    else { return nil }
-    if case .foldPending = transcript.phase { return nil }
-    return transcript.environment.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow())
+    guard !session.stopped, working(session) == nil, session.queueHead == session.queueTail, session.turn.turn == .idle else { return nil }
+    return session.transcript.environment.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow())
   }
 
   /// Stops the job the session works on and nothing else: main has marked the session errored.
@@ -169,7 +165,7 @@ struct SessionCell {
 
   mutating func stepped(_ step: InferenceJob.ID, _ result: StepResult) throws {
     let session = try load()
-    if !session.transcript.hasFreshReply { try sendPrompt() }
+    if !session.turn.replied { try sendPrompt() }
     guard session.record.lifecycle == .live else { return }
     let forced = step == session.slot.step(forced: true)
     guard forced || step == session.slot.step(forced: false) else { return }
@@ -225,7 +221,7 @@ struct SessionCell {
       return
     case let .requestTooLarge(limit, failure):
       // A generation that never replied was just made: a fresh compaction did not make the request fit.
-      guard session.generation == 0 || session.transcript.hasFreshReply else {
+      guard session.generation == 0 || session.turn.replied else {
         try rows.markErrored(id.session, message: limit.map { String(describing: InferenceError.requestTooLargeAfterCompaction(limitBytes: $0)) } ?? failure)
         return
       }
@@ -248,7 +244,7 @@ struct SessionCell {
   mutating func called(_ call: ToolCallJob.ID, _ answer: ToolCallAnswer) throws {
     let session = try load()
     guard session.record.lifecycle == .live, call == session.slot.call else { return }
-    let provenance: ToolResultItem.Provenance = session.transcript.nextPendingToolCall.map { .toolCall(ToolCallID($0.id)) } ?? .compactionReestablishment
+    let provenance: ToolResultItem.Provenance = session.turn.call.map { .toolCall(ToolCallID($0.id)) } ?? .compactionReestablishment
     switch answer {
     case let .result(payload, context): try writeToolResult(session, provenance, payload, context: context)
     case .interrupted: try writeToolResult(session, provenance, .failure(.init(message: interruptedToolMessage)))
@@ -265,7 +261,7 @@ struct SessionCell {
       head.snapshot.subscriptions = slots
       transition?.transcript.open(armed: slots)
       let closing = call.flatMap { call in
-        session.transcript.phase == .live ? ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary))) : nil
+        session.turn.turn == .folding(call: call) ? nil : ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary)))
       }
       let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, completingCompact: true, transition: transition)
       try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
@@ -297,15 +293,15 @@ struct SessionCell {
 
   /// The session's next step; true when it was written and there may be another.
   private mutating func next(_ session: SessionState) throws -> Bool {
-    let transcript = session.transcript
+    let turn = session.turn
     // A pending fold has no work, nags or forced compaction, and a compact
     // request finds it compacted already: only a delivery runs the fold.
-    if case let .foldPending(call) = transcript.phase {
+    if case let .folding(call) = turn.turn {
       try rows.takeCommand(id.session)
       if session.queueHead > session.queueTail { start(session.slot.compaction, .fold(call)) }
       return false
     }
-    if let call = transcript.nextPendingToolCall { return try run(call, session) }
+    if let call = turn.call { return try run(call, session) }
     if session.queueHead > session.queueTail {
       let drained = try rows.drainQueue(id.session)
       try move(wrote: drained.items) { $0.input(drained.items.count) }
@@ -317,8 +313,8 @@ struct SessionCell {
       start(try load().slot.step(forced: true), .forcedCompact)
       return false
     }
-    if transcript.hasWork {
-      if let call = transcript.reestablishments.first {
+    if turn.turn == .model {
+      if let call = turn.reestablish.first {
         try start(session.slot.call, call)
       } else {
         start(session.slot.step(forced: false), .normal)
@@ -327,10 +323,10 @@ struct SessionCell {
     }
     // Only a model that stopped is asked whether it may; a generation that never
     // ran (created, restarted) is inert. What is left is a park wake (`nextWake`).
-    guard case .assistant? = transcript.items.last else { return false }
+    guard turn.turn == .idle else { return false }
     let openRequests = try rows.openRequests(id.session)
     let now = client.now()
-    if let nag = transcript.environment.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: client.dueNow()) {
+    if let nag = session.transcript.environment.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: client.dueNow()) {
       try append(session, [.notification(nag.notification(id: client.uuid(), at: now))]) { $0.input(1) }
       return true
     }
@@ -377,7 +373,12 @@ struct SessionCell {
   }
 
   private func load() throws -> SessionState {
-    SessionState(try rows.hydrate(id.session))
+    SessionState(try rows.hydrate(id.session), turn: turn())
+  }
+
+  /// The row as the cell last wrote it: nil for a session whose cell has taken no step.
+  func turn() -> SessionTurn? {
+    db.rows(SessionTurn.all).first
   }
 
   /// The job the session works on: one at its transcript's end that has not ended, or has ended with something still to write. A step that was cancelled or parked has nothing.
@@ -534,22 +535,25 @@ struct SessionState {
   let transcript: Transcript
   let queueHead: Int
   let queueTail: Int
+  /// The cell's row, or what the transcript folds to for a session whose cell has not written one.
+  let turn: SessionTurn
   let slot: Slot
 
-  init(_ hydration: SessionHydration) {
+  init(_ hydration: SessionHydration, turn row: SessionTurn?) {
     record = hydration.record
     generation = hydration.generation
     transcript = switch hydration.transcript { case let .kernel(transcript): transcript }
     queueHead = hydration.queueHead
     queueTail = hydration.queueTail
-    slot = Slot(session: hydration.record.id, generation: hydration.generation, position: transcript.items.count, stepTry: hydration.stepTry)
+    turn = row ?? SessionTurn(folding: transcript, generation: hydration.generation, nags: transcript.environment.nags)
+    slot = Slot(session: hydration.record.id, generation: hydration.generation, position: turn.position, stepTry: hydration.stepTry)
   }
 
   var isTask: Bool { record.kind == .task }
   var stopped: Bool { record.stopped }
 
   /// Nothing to do, now or once its job answers: what an archive or a restart waits for.
-  var settled: Bool { stopped || (queueHead == queueTail && !transcript.hasWork) }
+  var settled: Bool { stopped || (queueHead == queueTail && turn.turn != .model && turn.call == nil) }
 }
 
 /// The transcript's end, which names every job that can answer there: `<session>:<generation>:<position>` for a tool call and a compaction, plus `:<resumes>` for a step and `:compact` for a forced one.
@@ -616,21 +620,6 @@ extension SessionRecord {
 
 extension Address where Target == SessionCell {
   var session: SessionID { SessionID(key) }
-}
-
-extension Transcript {
-  var hasFreshReply: Bool {
-    items[keptCount...].contains { if case .assistant = $0 { true } else { false } }
-  }
-
-  /// The generation head's re-establishing reads that are not answered, while the generation has none of its own replies.
-  var reestablishments: [ToolCall] {
-    guard needsReestablishment, case let .generationHead(head) = items.first else { return [] }
-    let done = items[keptCount...].count { item in
-      if case let .toolResult(result) = item, result.provenance == .compactionReestablishment { true } else { false }
-    }
-    return Array(head.reestablishmentCalls.dropFirst(done))
-  }
 }
 
 extension AssistantEntry {
