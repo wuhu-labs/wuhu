@@ -10,6 +10,7 @@
 /app/lib/contract.gen.ts
 /app/lib/space-url.vectors.json
 /app/lib/viewing.vectors.json
+/app/lib/session-line.vectors.json
 # Canvas fixtures (in-graph from //packages/wuhu-core CanvasDocument)
 /app/lib/canvas/scene-cases.json
 /app/lib/canvas/editor-cases.json

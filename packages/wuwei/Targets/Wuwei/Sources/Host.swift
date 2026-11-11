@@ -220,21 +220,21 @@ final class Incarnation {
     return value
   }
 
-  /// Runs `body` as one durable step: if it throws, everything it wrote, sent and emitted is rolled back, and it returns false.
+  /// Runs `body` as one durable step: if it throws, everything it wrote, sent and emitted is rolled back, and it returns what it threw; `nil` when the step committed.
   @discardableResult
-  func atomically(_ body: () throws -> Void) -> Bool {
+  func atomically(_ body: () throws -> Void) -> (any Error)? {
     pending = []
-    var committed = true
+    var rollback: (any Error)?
     do {
       try step(body)
     } catch {
-      committed = false
+      rollback = error
       pending = []
       if !dead { worker.log.error("\(address) rolled back a call: \(error)") }
     }
     hold(pending!)
     pending = nil
-    return committed
+    return rollback
   }
 
   /// What outside callbacks use to get back onto the lane.

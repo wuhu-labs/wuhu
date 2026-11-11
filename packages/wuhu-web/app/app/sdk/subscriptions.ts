@@ -3,11 +3,12 @@ import type {
   ConversationMessagePayload,
   QueryOutput,
   RevisionEvents,
-  SessionStreamEvent,
+  SessionLineEvent,
+  SessionLinePayload,
+  SessionLinesPageOutput,
 } from '~/lib/contract.gen'
 import type { Subscription } from './observe'
 import { api, inGroup } from './http'
-import type { HistoryPage } from './history-window'
 import { normalizeSQL } from '~/lib/shell-sdk/open-cache.js'
 
 // Per entry, so one long history never takes its kind's whole budget.
@@ -116,81 +117,66 @@ export function tableSubscription(
   )
 }
 
-export function directSubscription(
+export function linesSubscription(
   session: string,
   group: string,
-): GroupSubscription<SessionStreamEvent> {
-  const url = `/v1/session/${session}/direct`
-  const item = (
+): GroupSubscription<SessionLineEvent> {
+  const line = (
     generation: number,
-    entry: PositionedItem,
-  ): SessionStreamEvent => ({ kind: 'item', generation, ...entry })
+    line: SessionLinePayload,
+  ): SessionLineEvent => ({ kind: 'line', generation, line })
   return {
     group,
     from: null,
     history: {
-      async page(
-        before,
-        generation,
-        signal,
-        historyEpoch,
-      ): Promise<HistoryPage<SessionStreamEvent>> {
+      async page(before, generation, signal) {
         const query = before === null
           ? ''
-          : `&generation=${generation}&before=${before}${
-            historyEpoch === null
-              ? ''
-              : `&epoch=${encodeURIComponent(historyEpoch)}`
-          }`
-        const page = await api<TranscriptPage>(
-          `/v1/session/${session}/transcript/page?limit=200${query}`,
+          : `&generation=${generation}&before=${before}`
+        const page = await api<SessionLinesPageOutput>(
+          `/v1/session/${session}/lines/page?limit=200${query}`,
           { headers: inGroup(group), signal },
         )
-        const entries = (rows: PositionedItem[]) =>
-          rows.map((entry) => ({
-            position: entry.position,
-            event: item(page.generation, entry),
-          }))
         return {
-          ...page,
-          historyEpoch: page.historyEpoch ?? null,
-          headPosition: page.headPosition ?? -1,
-          entries: entries(page.entries),
-          origins: entries(page.origins),
+          generation: page.generation,
+          historyEpoch: null,
+          entries: page.lines.map((entry) => ({
+            position: entry.position,
+            event: line(page.generation, entry),
+          })),
+          origins: [],
+          before: page.lines[0]?.position ?? null,
+          hasEarlier: page.hasEarlier,
+          headPosition: page.lines.at(-1)?.position ?? -1,
         }
       },
-      url: (generation, position, historyEpoch) =>
-        `${url}?paged=true&generation=${generation}&position=${position}${
-          historyEpoch === null
-            ? ''
-            : `&epoch=${encodeURIComponent(historyEpoch)}`
-        }`,
-      position: (event) => event.kind === 'item' ? event.position : null,
-      generation: (event) =>
-        event.kind === 'item' || event.kind === 'reset'
-          ? event.generation
-          : null,
+      url: (generation, position) =>
+        `/v1/session/${session}/lines?generation=${generation}&after=${position}`,
+      position: (event) => event.kind === 'line' ? event.line.position : null,
+      // A prompt line is written late, below the head, and is resent on
+      // every catch-up.
+      pinned: (event) => event.kind === 'line' && event.line.prompt,
+      generation: (event) => event.generation,
       reset: (generation) => ({ kind: 'reset', generation }),
       isReset: (event) => event.kind === 'reset',
     },
-    url: () => url,
-    cursorOf: (event) => event.kind === 'item' ? event.position : null,
+    url: () => `/v1/session/${session}/lines`,
+    cursorOf: (event) => event.kind === 'line' ? event.line.position : null,
     retention: {
       kind: 'transcript',
-      key: session,
-      retain: retainTranscript,
+      key: `${session}:lines`,
+      retain: retainLines,
       maxBytes: transcriptBytes,
       pinned: 1,
     },
   }
 }
 
-function retainTranscript(
-  kept: SessionStreamEvent[],
-  event: SessionStreamEvent,
-): SessionStreamEvent[] {
+function retainLines(
+  kept: SessionLineEvent[],
+  event: SessionLineEvent,
+): SessionLineEvent[] {
   if (event.kind === 'reset') return [event]
-  if (event.kind !== 'item') return kept
   kept.push(event)
   return kept
 }
@@ -200,19 +186,4 @@ interface ConversationPage {
   before: number | null
   hasEarlier: boolean
   headPosition: number | null
-}
-
-interface PositionedItem {
-  position: number
-  item: Extract<SessionStreamEvent, { kind: 'item' }>['item']
-}
-
-interface TranscriptPage {
-  generation: number
-  historyEpoch?: string | null
-  entries: PositionedItem[]
-  origins: PositionedItem[]
-  before: number | null
-  hasEarlier: boolean
-  headPosition?: number | null
 }

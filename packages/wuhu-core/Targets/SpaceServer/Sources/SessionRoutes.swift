@@ -1030,24 +1030,31 @@ extension SessionExecutor {
   }
 }
 
-/// A session in a group the acting group does not read answers as a missing
-/// one, before the route does anything.
 func refusingUnseen(
   _ id: SessionID, _ request: Request, space: Space,
   principalOf: @Sendable (Request) async throws -> PrincipalVerdict,
 ) async throws -> Response? {
+  guard case let .refused(response) = try await reader(of: id, request, space: space, principalOf: principalOf) else { return nil }
+  return response
+}
+
+/// Who reads the session. A session in a group the reader does not read answers as a missing one, before the route does anything.
+func reader(
+  of id: SessionID, _ request: Request, space: Space,
+  principalOf: @Sendable (Request) async throws -> PrincipalVerdict,
+) async throws -> PrincipalVerdict {
   let principal: Principal
   switch try await principalOf(request) {
   case let .principal(resolved): principal = resolved
-  case let .refused(response): return response
+  case let .refused(response): return .refused(response)
   }
   do {
     let record = try await space.sessions.record(id)
     guard try await space.reads(for: principal).contains(record.group) else {
       throw SessionStoreError.unknownSession(id.rawValue)
     }
-    return nil
+    return .principal(principal)
   } catch {
-    return sessionErrorResponse(error)
+    return .refused(sessionErrorResponse(error))
   }
 }

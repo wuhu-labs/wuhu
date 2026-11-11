@@ -154,8 +154,13 @@ struct SessionCell {
     try look()
   }
 
+  mutating func attached(_ socket: SocketHandle<TranscriptTail>) throws {
+    try catchUp(socket)
+  }
+
   mutating func stepped(_ step: InferenceJob.ID, _ result: StepResult) throws {
     let session = try load()
+    if !session.transcript.hasFreshReply { try sendPrompt() }
     guard session.record.lifecycle == .live else { return }
     let forced = step == session.slot.step(forced: true)
     guard forced || step == session.slot.step(forced: false) else { return }
@@ -540,7 +545,7 @@ struct SessionCell {
     ctx.emit { await invalidate(session) }
   }
 
-  private var rows: SessionRows {
+  var rows: SessionRows {
     SessionRows(host: db.host, store: client.store)
   }
 

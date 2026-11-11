@@ -11,6 +11,11 @@ public struct GroupCell {
     rows.role(of: actor, in: GroupID(rawValue: id.key), acting: acting, rows: GroupAccess.ActorRows(db))
   }
 
+  /// Whether `principal` reads the group: the rule `SpaceCell.readable` filters every group by, which differs from `role` for the anonymous --dev seat and for a page, read with its viewer's rights.
+  public func reads(_ principal: Principal) -> Bool {
+    rows.reads(rows.reader(principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(db)), id.key)
+  }
+
   /// Whether the person behind `account` administers the group: its owner, a space admin, or an admin on its list.
   public func isHumanAdmin(_ account: AccountID) -> Bool {
     GroupAccess.ActorRows(db).account(account).map { rows.isHumanAdmin($0, of: id.key) } ?? false

@@ -10,6 +10,7 @@ import {
   boundHistory,
   emptyWindow,
   type HistoryPage,
+  type HistoryWindow,
   mergePage,
   visibleHistory,
 } from './history-window.ts'
@@ -26,7 +27,13 @@ const tick = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve()
 }
 type Event =
-  | { kind: 'item'; generation: number; position: number; body: string }
+  | {
+    kind: 'item'
+    generation: number
+    position: number
+    body: string
+    pinned?: boolean
+  }
   | { kind: 'reset'; generation: number }
   | { kind: 'delta'; body: string }
 const item = (position: number, generation = 1): Event => ({
@@ -154,6 +161,7 @@ function fixture(cache?: Cache) {
           }`,
         generation: (event) => event.kind === 'delta' ? null : event.generation,
         position: (event) => event.kind === 'item' ? event.position : null,
+        pinned: (event) => event.kind === 'item' && event.pinned === true,
         isReset: (event) => event.kind === 'reset',
         reset: (generation) => ({ kind: 'reset', generation }),
       },
@@ -214,6 +222,37 @@ Deno.test('tail paints bounded page, then stream starts at exact head and dedupl
   equal(f.store.getSnapshot().data.rows.length, 201)
   equal(f.requests.length, 1)
   f.store.close()
+})
+
+Deno.test('a pinned event below the head shows without moving the head and survives the cache', async () => {
+  const cache = new Cache()
+  const f = fixture(cache)
+  await tick()
+  f.requests[0]!.resolve(page(800, 999))
+  await tick()
+  f.streams[0]!.opened()
+  f.streams[0]!.send({
+    kind: 'item',
+    generation: 1,
+    position: 0,
+    body: '0',
+    pinned: true,
+  })
+  f.streams[0]!.send(item(1000))
+  equal(f.store.getSnapshot().data.rows.slice(0, 2), [0, 800])
+  equal(f.store.getSnapshot().data.rows.length, 202)
+  f.clock.fire(1000)
+  const saved = cache.value as HistoryWindow<Event>
+  equal(saved.headPosition, 1000)
+  equal(saved.pinned!.map((entry) => entry.position), [0])
+  f.store.close()
+  const reopened = fixture(cache)
+  await tick()
+  equal(reopened.store.getSnapshot().data.rows[0], 0)
+  reopened.requests[0]!.resolve(page(801, 1000))
+  await tick()
+  equal(reopened.store.getSnapshot().data.rows.slice(0, 2), [0, 801])
+  reopened.store.close()
 })
 
 Deno.test('backfill is single-flight, merges overlap, keeps forward head and active text', async () => {

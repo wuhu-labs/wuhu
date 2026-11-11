@@ -1,0 +1,189 @@
+[
+  {
+    "line" : {
+      "at" : 1791000000,
+      "key" : "system",
+      "message" : {
+        "rendered" : "0f3a"
+      },
+      "position" : 0,
+      "prompt" : true,
+      "role" : "system"
+    },
+    "name" : "system"
+  },
+  {
+    "line" : {
+      "at" : 1791000001,
+      "key" : "group",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "Be brief."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 1,
+      "prompt" : true,
+      "role" : "user"
+    },
+    "name" : "group instructions"
+  },
+  {
+    "line" : {
+      "at" : 1791000003,
+      "key" : "message:m1",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "hello"
+              }
+            }
+          ]
+        }
+      },
+      "position" : 3,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "user text"
+  },
+  {
+    "line" : {
+      "at" : 1791000004,
+      "key" : "attempt:a1",
+      "message" : {
+        "assistant" : {
+          "content" : [
+            {
+              "reasoning" : {
+                "model" : "claude",
+                "opaque" : "c2ln",
+                "provider_id" : "anthropic",
+                "redacted" : false,
+                "summary" : "thinking it over"
+              }
+            },
+            {
+              "reasoning" : {
+                "unencrypted" : "plain thought"
+              }
+            },
+            {
+              "text" : {
+                "text" : "Reading it."
+              }
+            },
+            {
+              "tool_call" : {
+                "arguments" : "{\"path\":\"/a.md\"}",
+                "id" : "c1",
+                "name" : "read"
+              }
+            }
+          ]
+        }
+      },
+      "position" : 4,
+      "prompt" : false,
+      "role" : "assistant"
+    },
+    "name" : "assistant reasoning, text and a tool call"
+  },
+  {
+    "line" : {
+      "at" : 1791000005,
+      "key" : "call:c1",
+      "message" : {
+        "tool_result" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "no such file"
+              }
+            }
+          ],
+          "is_error" : true,
+          "tool_call_id" : "c1"
+        }
+      },
+      "position" : 5,
+      "prompt" : false,
+      "role" : "tool_result"
+    },
+    "name" : "failed tool result"
+  },
+  {
+    "line" : {
+      "at" : 1791000006,
+      "key" : "message:m2",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "[inline image image/png, 30 bytes as a data URL]"
+              }
+            }
+          ]
+        }
+      },
+      "position" : 6,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "inline image"
+  },
+  {
+    "line" : {
+      "at" : 1791000007,
+      "key" : "attempt:a2",
+      "message" : {
+        "assistant" : {
+          "content" : [
+            {
+              "hosted_tool" : {
+                "action" : "search",
+                "payload" : "{\"type\":\"web_search_call\",\"action\":{\"type\":\"search\"}}",
+                "provider_id" : "openai",
+                "type" : "web_search_call"
+              }
+            }
+          ]
+        }
+      },
+      "position" : 7,
+      "prompt" : false,
+      "role" : "assistant"
+    },
+    "name" : "hosted web search"
+  },
+  {
+    "line" : {
+      "at" : 1791000008,
+      "key" : "message:m3",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "media" : {
+                "mime_type" : "image/jpeg",
+                "url" : "https://example.com/cat.png"
+              }
+            }
+          ]
+        }
+      },
+      "position" : 8,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "linked image"
+  }
+]

@@ -283,6 +283,11 @@ materializes the session actor.
 
 - **Channel SSE** (`GET /v1/channel/:id/observe?after=<n>`): each SSE message
   is one `ChannelEntryPayload`; `n` is the resume cursor.
+- **Lines SSE** (`GET /v1/session/:id/lines?generation=&after=`): each SSE
+  message is one `SessionLineEvent`: `reset(generation)` drops every line
+  held, `line(generation, line)` places a `SessionLinePayload` at its
+  position. Prompt lines (keys `system`, `group`, `session`) can arrive after
+  later positions; a resume resends them.
 - **Direct view SSE** (`GET /v1/session/:id/direct?generation=&position=`):
   each SSE message is one `SessionStreamEvent`.
   - `reset(generation)` opens every connection whose cursor is absent or names

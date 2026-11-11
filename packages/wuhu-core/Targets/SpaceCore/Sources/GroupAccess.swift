@@ -134,26 +134,44 @@ enum GroupAccess {
       Set(all.filter { role(from: group.rawValue, in: $0.rawValue) != nil })
     }
 
-    /// The groups `actor` reads: its acting group's reach, plus its account's
-    /// rows. A guest reads only what its account is listed in.
-    func readable<Failure>(by actor: Actor, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> Set<GroupID> {
+    /// Who reads, with the rows behind them looked up once.
+    enum Reader {
+      case reach(of: String)
+      case session(GroupSessionRow?)
+      case person(GroupAccountRow, acting: String)
+    }
+
+    func reader<Failure>(_ actor: Actor, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> Reader {
       switch actor {
       case .anonymous:
-        return reach(of: acting)
+        return .reach(of: acting.rawValue)
       case let .observer(observer):
-        return reach(of: observer.group)
+        return .reach(of: observer.group.rawValue)
       case let .page(page):
-        return try readable(by: page.viewer.principal.actor, acting: page.group, rows: rows)
+        return try reader(page.viewer.principal.actor, acting: page.group, rows: rows)
       case let .session(id):
-        guard let session = try rows.session(id) else { return [] }
-        return Set(all.filter { role(of: session, in: $0.rawValue) != nil })
+        return try .session(rows.session(id))
       case let .person(_, account):
-        guard let row = try rows.account(account) else { return reach(of: acting) }
-        // The seat a person takes is one they can read; their rows decide the rest.
-        var readable = Set(all.filter { role(of: row, in: $0.rawValue, acting: acting.rawValue) != nil })
-        readable.insert(acting)
-        return readable
+        guard let row = try rows.account(account) else { return .reach(of: acting.rawValue) }
+        return .person(row, acting: acting.rawValue)
       }
+    }
+
+    /// Whether `reader` reads `group`: its acting group's reach, or its account's rows. A guest reads only what its account is listed in; the seat a person takes is one they can read.
+    func reads(_ reader: Reader, _ group: String) -> Bool {
+      switch reader {
+      case let .reach(source): role(from: source, in: group) != nil
+      case let .session(row): row.flatMap { role(of: $0, in: group) } != nil
+      case let .person(row, acting): group == acting || role(of: row, in: group, acting: acting) != nil
+      }
+    }
+
+    /// The groups `actor` reads: a filter over `reads`.
+    func readable<Failure>(by actor: Actor, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> Set<GroupID> {
+      let reader = try reader(actor, acting: acting, rows: rows)
+      var readable = Set(all.filter { reads(reader, $0.rawValue) })
+      if case let .person(_, acting) = reader { readable.insert(GroupID(rawValue: acting)) }
+      return readable
     }
 
     /// The groups `actor` may write: its role in each is write or admin.

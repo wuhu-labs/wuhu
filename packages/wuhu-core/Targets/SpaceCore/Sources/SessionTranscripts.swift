@@ -115,7 +115,7 @@ extension TranscriptFiles {
     encoder.outputFormatting = .sortedKeys
     func quoted(_ string: String) throws -> String { String(decoding: try encoder.encode(string), as: UTF8.self) }
     return try lines.map { line in
-      let message = line.role == .system ? line.message : String(decoding: try encoder.encode(try viewed(line.message)), as: UTF8.self)
+      let message = try line.shownMessage(reasoning: .dropped)
       return "{\"position\":\(line.position),\"at\":\(try quoted(line.at.formatted(.iso8601))),\"role\":\"\(line.role.rawValue)\",\"key\":\(try quoted(line.key)),\(line.meta.map { "\"meta\":\($0)," } ?? "")\"message\":\(message)}\n"
     }.joined()
   }
@@ -124,34 +124,10 @@ extension TranscriptFiles {
     lines.map { line in
       let text = line.role == .system
         ? (try? JSONDecoder().decode([String: String].self, from: Data(line.message.utf8))["rendered"]).map(RenderedFiles.path) ?? ""
-        : (try? viewed(line.message)).map(summary) ?? ""
+        : (try? line.shown(reasoning: .dropped)).map(summary) ?? ""
       let flat = String(text.map { $0.isNewline ? " " : $0 }.prefix(160))
       return "\(line.position) \(line.at.formatted(.iso8601)) \(line.role.rawValue) \(line.key) \(flat)\n"
     }.joined()
-  }
-
-  // Thinking is not shown, and an inline image is named, never inlined.
-  private static func viewed(_ json: String) throws -> Message {
-    func shown(_ blocks: [ContentBlock]) -> [ContentBlock] {
-      blocks.compactMap { block in
-        switch block {
-        case .reasoning: nil
-        case let .media(media) where media.url.scheme == "data": .text("[inline image \(media.mimeType), \(media.url.absoluteString.utf8.count) bytes as a data URL]")
-        default: block
-        }
-      }
-    }
-    switch try JSONDecoder().decode(Message.self, from: Data(json.utf8)) {
-    case var .user(user):
-      user.content = shown(user.content)
-      return .user(user)
-    case var .assistant(assistant):
-      assistant.content = shown(assistant.content)
-      return .assistant(assistant)
-    case var .toolResult(result):
-      result.content = shown(result.content)
-      return .toolResult(result)
-    }
   }
 
   private static func summary(_ message: Message) -> String {
@@ -169,5 +145,43 @@ extension TranscriptFiles {
       case .reasoning: ""
       }
     }.filter { !$0.isEmpty }.joined(separator: " ")
+  }
+}
+
+extension StoredTranscriptLine {
+  public enum Reasoning: Sendable {
+    case kept
+    case dropped
+  }
+
+  /// The message as JSON a reader sees: an inline image is named, never inlined. A system line is as stored: it names its preamble.
+  public func shownMessage(reasoning: Reasoning) throws -> String {
+    guard role != .system else { return message }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    return String(decoding: try encoder.encode(try shown(reasoning: reasoning)), as: UTF8.self)
+  }
+
+  func shown(reasoning: Reasoning) throws -> Message {
+    func shown(_ blocks: [ContentBlock]) -> [ContentBlock] {
+      blocks.compactMap { block in
+        switch block {
+        case .reasoning where reasoning == .dropped: nil
+        case let .media(media) where media.url.scheme == "data": .text("[inline image \(media.mimeType), \(media.url.absoluteString.utf8.count) bytes as a data URL]")
+        default: block
+        }
+      }
+    }
+    switch try JSONDecoder().decode(Message.self, from: Data(message.utf8)) {
+    case var .user(user):
+      user.content = shown(user.content)
+      return .user(user)
+    case var .assistant(assistant):
+      assistant.content = shown(assistant.content)
+      return .assistant(assistant)
+    case var .toolResult(result):
+      result.content = shown(result.content)
+      return .toolResult(result)
+    }
   }
 }

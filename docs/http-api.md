@@ -147,6 +147,8 @@ admin-only rule get `403 adminRequired`.
 | `GET /v1/session/:id/transcript` | One-shot transcript snapshot of the current generation. |
 | `GET /v1/session/:id/log?level=&limit=&before=` | A page of the current generation's transcript (`SessionLogOutput`): `items`, each with a stable `ref`, filtered to `level` 1–3 (default 1, the least detail), the last `limit` (default 50, at most 500) before the `before` ref, plus the session's `context` usage. |
 | `GET /v1/session/:id/entry/:ref` | One transcript item by the `ref` a log page gave it (`SessionEntryOutput`). |
+| `GET /v1/session/:id/lines?generation=&after=` (SSE) | The transcript lines stream: `reset` then the generation's lines (`SessionLineEvent`), each new line as it is written, a `reset` per new generation. |
+| `GET /v1/session/:id/lines/page?generation=&before=&limit=` | A page of a generation's lines before `before` (`SessionLinesPageOutput`). |
 | `GET /v1/session/:id/direct?generation=&position=` (SSE) | The direct view stream: committed items plus the ephemeral attempt side channel. |
 | `POST /v1/watermark` | Advance a human read watermark for `(identity, source)`, wholesale. A conversation is unread while a `conversation_message` notification to the identity sits above it; clients post it when a conversation is opened. |
 | `GET /v1/notifications?identity=&after=` | Notification rows above the cursor, from every group: a person has one inbox and one read position across their groups. Each row's `group` names its group, and a `conversation_message` payload's `senderGroup` names an outside sender's. |

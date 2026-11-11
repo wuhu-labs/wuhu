@@ -199,6 +199,20 @@ public struct SessionExecution: Sendable {
     }, outcome: { [loops] in loops.job($0).outcome() }) == nil)
   }
 
+  /// The session's lines as `viewer` reads them, past `after` (`TranscriptTail`); the stream ends when the cell closes the socket.
+  public func lines(_ session: SessionID, after: TranscriptCursor?, as viewer: Principal) -> AsyncStream<TranscriptTail.Outgoing> {
+    AsyncStream { [loops] continuation in
+      let peer = loops.attach(TranscriptTail.self, to: SessionCell.ID(session.rawValue), opening: .init(after: after, viewer: viewer)) { output in
+        switch output {
+        case let .frame(frame): continuation.yield(frame)
+        case .closed: continuation.finish()
+        }
+      }
+      continuation.onTermination = { _ in peer?.close() }
+      if peer == nil { continuation.finish() }
+    }
+  }
+
   /// Mail to a handler slot's observer cell.
   public func observe(_ owner: SubscriptionOwner, _ subscription: SubscriptionID, _ mail: ObserverMail) {
     let cell = loops.send(ObserverCell.ID(owner, subscription))

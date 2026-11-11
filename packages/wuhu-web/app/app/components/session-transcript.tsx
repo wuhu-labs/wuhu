@@ -3,62 +3,52 @@ import { useShell } from '@wuhu/ui'
 import { HistoryEdge, useOlderIntent } from '~/components/history-edge'
 import { Avatar } from '~/components/avatar'
 import { stampLabel } from '~/lib/chat'
-import { senderIsSession, senderName } from '~/lib/directory'
-import { Attachments } from '~/components/attachments'
-import { crossOriginFor } from '~/lib/groups'
-import {
-  useDirectory,
-  useGroupOrigin,
-  useSessionTitles,
-} from '~/lib/use-directory'
 import { Markdown } from '~/components/markdown-view'
-import type { SessionStreamEvent } from '~/lib/contract.gen'
+import type { SessionLineEvent } from '~/lib/contract.gen'
 import type { SessionRecord } from '~/lib/session-model'
 import {
-  type DirectState,
-  foldDirect,
-  initialDirectState,
-} from '~/lib/transcript-fold'
+  foldLines,
+  hasContent,
+  initialLines,
+  type LineBlock,
+  type LinesState,
+  type LineView,
+  lineView,
+} from '~/lib/transcript-lines'
 import { useObserve } from '~/lib/use-observe'
 import { useFollowLatest } from '~/lib/use-follow-latest'
-import { eventKey, type WorkEvent, workEvents } from '~/lib/work-events'
-import { directSubscription } from '~/sdk/subscriptions'
+import { linesSubscription } from '~/sdk/subscriptions'
 
 export function SessionTranscript({ record }: { record: SessionRecord }) {
-  const origin = useGroupOrigin(record.group)
-  const direct = useObserve<DirectState, SessionStreamEvent>(
-    directSubscription(record.id, record.group),
-    foldDirect,
-    initialDirectState,
+  const lines = useObserve<LinesState, SessionLineEvent>(
+    linesSubscription(record.id, record.group),
+    foldLines,
+    initialLines,
   )
-  const events = useMemo(
-    () => workEvents(direct.data).filter(hasContent),
-    [direct.data],
+  const views = useMemo(
+    () => lines.data.lines.map(lineView).filter(hasContent),
+    [lines.data],
   )
   const now = new Date()
   const { canvas } = useShell()
-  useOlderIntent(canvas, direct.history)
-  useFollowLatest(
-    canvas,
-    `${record.id}:${direct.data.generation}:${
-      direct.history?.historyEpoch ?? ''
-    }`,
-  )
+  useOlderIntent(canvas, lines.history)
+  useFollowLatest(canvas, `${record.id}:${lines.data.generation}`)
   return (
     <section
       className='wuhu-content wuhu-reader wuhu-transcript wuhu-markdown'
       aria-label='Session transcript'
     >
       <h1>Transcript</h1>
-      <HistoryEdge edge={direct.history} />
-      {events.length === 0 && <p>Nothing yet.</p>}
-      {events.map((event) => (
-        <article key={eventKey(event.id)} data-history-id={eventKey(event.id)}>
+      <HistoryEdge edge={lines.history} />
+      {views.length === 0 && <p>Nothing yet.</p>}
+      {views.map((view) => (
+        <article
+          key={`line-${view.position}`}
+          data-history-id={`line-${view.position}`}
+        >
           <header>
             <strong>
-              {event.kind === 'input'
-                ? <TranscriptSender input={event.input} />
-                : event.kind === 'assistantText' || event.kind === 'reasoning'
+              {view.role === 'assistant'
                 ? (
                   <>
                     <Avatar
@@ -68,166 +58,83 @@ export function SessionTranscript({ record }: { record: SessionRecord }) {
                       size={18}
                     />
                     {record.title || record.id}
-                    {event.kind === 'reasoning'
-                      ? ' · reasoning'
-                      : event.streaming
-                      ? ' · writing'
-                      : ''}
                   </>
                 )
-                : eventLabel(event)}
+                : lineLabel(view)}
             </strong>
-            {event.timestamp && (
-              <time dateTime={event.timestamp.toISOString()}>
-                {stampLabel(event.timestamp, now)}
-              </time>
-            )}
+            <time dateTime={view.at.toISOString()}>
+              {stampLabel(view.at, now)}
+            </time>
           </header>
-          {event.kind === 'input' && (
-            <Attachments
-              attachments={event.input.attachments}
-              origin={origin}
-              crossOrigin={crossOriginFor(record.group)}
+          {view.rendered !== null && <code>/_/rendered/{view.rendered}</code>}
+          {view.blocks.map((block, index) => (
+            <LineBlockView
+              key={index}
+              block={block}
+              prose={view.role === 'assistant'}
             />
-          )}
-          <TranscriptBody event={event} />
+          ))}
         </article>
       ))}
     </section>
   )
 }
 
-function TranscriptSender(
-  { input }: { input: Extract<WorkEvent, { kind: 'input' }>['input'] },
+const keyLabels: Record<string, string> = {
+  system: 'System prompt',
+  group: 'Group instructions',
+  session: 'Session instructions',
+  head: 'Session state',
+  'head:note': 'Note',
+  'head:summary': 'Conversation summary',
+  'head:nudge': 'Compaction notice',
+  reestablish: 'Re-established files',
+  direct: 'Direct message',
+  message: 'Message',
+  subscription: 'Notice',
+}
+
+function lineLabel(view: LineView): string {
+  if (view.role === 'tool_result') {
+    return view.failed ? 'Tool result · failed' : 'Tool result'
+  }
+  return keyLabels[view.key] ?? keyLabels[view.key.split(':')[0]!] ??
+    view.key
+}
+
+function LineBlockView(
+  { block, prose }: { block: LineBlock; prose: boolean },
 ) {
-  const directory = useDirectory()
-  const sessions = useSessionTitles()
-  const message = {
-    sender: input.senderSession ?? input.sender,
-    senderKind: input.senderSession == null ? undefined : 'session',
-  }
-  const fromSession = senderIsSession(sessions, message)
-  const name = senderName(directory, message, sessions)
-  return (
-    <>
-      <Avatar
-        principal={message.sender}
-        name={fromSession ? name : undefined}
-        session={fromSession}
-        size={18}
-      />
-      {name}
-    </>
-  )
-}
-
-const noticeLabels: Record<string, string> = {
-  timer: 'Timer',
-  spaceObservation: 'Observation',
-  compactRequest: 'Compaction request',
-  owedReply: 'Reply reminder',
-  parkReminder: 'Park reminder',
-  childFailed: 'Child session failed',
-  requestDeadline: 'Request deadline',
-  requestStall: 'Request stalled',
-  script: 'Script',
-  exec: 'Command',
-  context: 'Context',
-}
-
-function hasContent(event: WorkEvent): boolean {
-  switch (event.kind) {
-    case 'input':
-      return event.input.text.trim() !== '' ||
-        event.input.attachments.length > 0
-    case 'notification':
-      return event.notice.text.trim() !== ''
-    case 'assistantText':
-      return event.text.trim() !== ''
-    case 'reasoning':
-      return event.summary.trim() !== ''
-    case 'generationHead':
-      return event.head.summary.trim() !== '' ||
-        (event.head.note ?? '').trim() !== ''
-    case 'toolResult':
-      return event.result.output != null &&
-        (typeof event.result.output !== 'string' ||
-          event.result.output.trim() !== '')
-    case 'toolCall':
-    case 'bookmark':
-      return true
-  }
-}
-
-function eventLabel(event: WorkEvent): string {
-  switch (event.kind) {
-    case 'input':
-      return event.input.kind === 'message' ? 'Message' : 'Input'
-    case 'notification':
-      return noticeLabels[event.notice.kind] ?? event.notice.kind
-        .replace(/([a-z])([A-Z])/g, '$1 $2')
-        .replace(/[_-]/g, ' ')
-        .replace(/^./, (letter) => letter.toUpperCase())
-    case 'assistantText':
-      return event.streaming ? 'Assistant · writing' : 'Assistant'
-    case 'reasoning':
-      return 'Reasoning'
-    case 'toolCall':
-      return event.call.name
-    case 'toolResult':
-      return event.result.failed ? 'Tool result · failed' : 'Tool result'
-    case 'bookmark':
-      return 'Bookmark'
-    case 'generationHead':
-      return 'Generation summary'
-  }
-}
-
-function TranscriptBody({ event }: { event: WorkEvent }) {
-  switch (event.kind) {
-    case 'input':
-      return <Markdown>{event.input.text}</Markdown>
-    case 'notification':
-      return <Markdown>{event.notice.text}</Markdown>
-    case 'assistantText':
-      return <Markdown>{event.text}</Markdown>
+  switch (block.kind) {
+    case 'text':
+      return prose
+        ? <Markdown>{block.text}</Markdown>
+        : <pre className='wuhu-text'>{block.text}</pre>
     case 'reasoning':
       return (
         <details>
-          <summary>Show reasoning</summary>
-          <Markdown>{event.summary}</Markdown>
+          <summary>Reasoning</summary>
+          <Markdown>{block.text}</Markdown>
         </details>
       )
     case 'toolCall':
       return (
         <details>
-          <summary>Arguments</summary>
-          <pre className='wuhu-text'>
-            {toolText(event.call.arguments)}
-          </pre>
+          <summary>{block.name}</summary>
+          <pre className='wuhu-text'>{toolArguments(block.arguments)}</pre>
         </details>
       )
-    case 'toolResult':
-      return (
-        <details>
-          <summary>Output</summary>
-          <pre className='wuhu-text'>
-            {toolText(event.result.output)}
-          </pre>
-        </details>
-      )
-    case 'bookmark':
-      return <p>{event.name ?? 'Unnamed bookmark'}</p>
-    case 'generationHead':
-      return (
-        <>
-          <Markdown>{event.head.summary}</Markdown>
-          {event.head.note && <p>{event.head.note}</p>}
-        </>
-      )
+    case 'media':
+      return <p>Image ({block.mimeType})</p>
+    case 'hostedTool':
+      return <p>{block.type}</p>
   }
 }
 
-function toolText(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+function toolArguments(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
 }

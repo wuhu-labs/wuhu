@@ -15,6 +15,8 @@ public protocol Cell: Addressable {
   func nextWake() -> Instant?
   /// One durable step, like a message, run once `nextWake()` has come.
   mutating func wake() throws
+  /// Wraps every call of the owner, whatever reached it: a message, a socket event, a wake or `Worker.call`. What it does after `call` runs in the same step, so a cell can tell its sockets about every write, whichever handler made it.
+  mutating func around(_ call: (inout Self) throws -> Void) throws
 }
 
 extension Cell {
@@ -27,6 +29,10 @@ extension Cell {
   }
 
   public mutating func wake() throws {}
+
+  public mutating func around(_ call: (inout Self) throws -> Void) throws {
+    try call(&self)
+  }
 }
 
 /// What a cell's code reaches: its database, mail, best-effort outputs, read handles and time. The writes go to the owner's incarnation; a read handle has none, and writing through one traps.
@@ -165,33 +171,30 @@ extension Lifecycle {
 extension Incarnation {
   /// One call of a cell's owner: one durable step, which ends by reading the cell's `nextWake()` and recording it, when it moved, for the scan to find. `woke` is when a wake began: still being due at its end is a bug in the cell.
   @discardableResult
-  fileprivate func call<C: Cell>(_: C.Type, woke: Instant? = nil, _ body: (inout C, Reach) throws -> Void) -> Bool {
+  fileprivate func call<C: Cell>(_: C.Type, woke: Instant? = nil, _ body: (inout C, Reach) throws -> Void) -> (any Error)? {
     var next: Instant?
-    let committed = atomically {
+    let rollback = atomically {
       let reach = Reach(worker: worker, writer: .incarnation(self))
       var cell = C(_context: CellContext(id: C.ID(key), db: Database(access: .live(self)), reach: reach))
-      try body(&cell, reach)
+      try cell.around { try body(&$0, reach) }
       next = cell.nextWake()
       if let woke, let due = next { precondition(due > woke, "\(address) is still due after its wake") }
       if next != wakeAt { record(.wakes(at: next)) }
     }
     armIdle()
-    if committed, next != wakeAt {
+    if rollback == nil, next != wakeAt {
       wakeAt = next
       armWake(C.self, at: next)
     }
-    return committed
+    return rollback
   }
 
   /// A call from outside any addressable, answered once its step is durable. `nil` means this incarnation is gone or leaving.
   func answer<C: Cell, Value>(_: C.Type, _ body: (inout C) throws -> Value) async throws -> Value? {
     guard await admit() else { return nil }
-    var result: Result<Value, any Error>?
-    call(C.self) { cell, _ in
-      result = Result { try body(&cell) }
-      _ = try result!.get()
-    }
-    guard let value = try result?.get() else { throw Evicted(address: address) }
+    var value: Value?
+    if let rollback = call(C.self, { cell, _ in value = try body(&cell) }) { throw dead ? Evicted(address: address) : rollback }
+    guard let value else { throw Evicted(address: address) }
     try await gate()
     return value
   }
@@ -211,7 +214,7 @@ extension Incarnation {
   private func wake<C: Cell>(_: C.Type, _ generation: Int) {
     guard generation == wakeGeneration, !dead, !retiring else { return }
     let now = worker.scheduler.now
-    if !call(C.self, woke: now, { cell, _ in try cell.wake() }) {
+    if call(C.self, woke: now, { cell, _ in try cell.wake() }) != nil {
       armWake(C.self, at: wakeAt.map { max($0, now + worker.options.retryDelay) })
     }
   }

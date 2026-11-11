@@ -2,6 +2,7 @@ import Fetch
 import Foundation
 import InferenceKit
 import JSONValue
+import Logging
 import Serve
 import ServeSSE
 import SessionDomain
@@ -10,6 +11,27 @@ import SpaceCore
 import Synchronization
 import TaskLifetime
 import struct WuhuAI.AssistantMessage
+
+/// Runs `produce` under `scope`, sending what it sends; its end ends the stream, and a failure is logged.
+func sseResponse(
+  _ name: String, scope: TaskScope, clock: any Clock<Duration>,
+  _ produce: @escaping @Sendable (_ send: (SSEEvent) -> Void) async throws -> Void,
+) -> Response {
+  let stream = AsyncStream<SSEEvent> { continuation in
+    let task = try? scope.run(name) {
+      do {
+        try await produce { continuation.yield($0) }
+      } catch is CancellationError {
+      } catch {
+        Logger(label: "wuhu.sse").error("event stream failed", metadata: ["stream": "\(name)", "error": "\(error)"])
+      }
+      continuation.finish()
+    }
+    if task == nil { continuation.finish() }
+    continuation.onTermination = { _ in task?.cancel() }
+  }
+  return .sse(stream, heartbeat: .seconds(1), clock: clock)
+}
 
 func conversationStreamResponse(
   space: Space,
@@ -21,21 +43,14 @@ func conversationStreamResponse(
   reader: String? = nil,
   clock: any Clock<Duration>,
 ) -> Response {
-  let events = AsyncStream<SSEEvent> { continuation in
-    let task = try? scope.run("conversation-events") {
-      do {
-        for try await batch in store.observeConversation(conversation, after: after, as: Principal(actor: reader.map { .person(persona: $0, account: AccountID(rawValue: $0)) } ?? .anonymous, group: viewer)) {
-          for payload in try await messagePayloads(batch, sessions: store, space: space, viewer: viewer) {
-            continuation.yield(try .json(payload))
-          }
-        }
-      } catch {}
-      continuation.finish()
+  let principal = Principal(actor: reader.map { .person(persona: $0, account: AccountID(rawValue: $0)) } ?? .anonymous, group: viewer)
+  return sseResponse("conversation-events", scope: scope, clock: clock) { send in
+    for try await batch in store.observeConversation(conversation, after: after, as: principal) {
+      for payload in try await messagePayloads(batch, sessions: store, space: space, viewer: viewer) {
+        send(try .json(payload))
+      }
     }
-    if task == nil { continuation.finish() }
-    continuation.onTermination = { _ in task?.cancel() }
   }
-  return .sse(events, heartbeat: .seconds(1), clock: clock)
 }
 
 func directStreamResponse(runtime: SessionRuntime, session: SessionID, cursor: TranscriptCursor?, bounded: Bool = false, historyEpoch: String? = nil) -> Response {

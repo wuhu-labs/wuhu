@@ -201,6 +201,10 @@ public enum ContractSchemas {
     ("SessionLogOutput", SessionLogOutput.jsonSchema),
     ("SessionEntryOutput", SessionEntryOutput.jsonSchema),
     ("SessionStreamEvent", SessionStreamEvent.jsonSchema),
+    ("SessionLineRole", SessionLineRole.jsonSchema),
+    ("SessionLinePayload", SessionLinePayload.jsonSchema),
+    ("SessionLineEvent", SessionLineEvent.jsonSchema),
+    ("SessionLinesPageOutput", SessionLinesPageOutput.jsonSchema),
 
     ("MutationEvent", MutationEvent.jsonSchema),
     ("RevisionEvents", RevisionEvents.jsonSchema),

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SessionLineRole","type":"string","enum":["system","user","assistant","tool_result"]}

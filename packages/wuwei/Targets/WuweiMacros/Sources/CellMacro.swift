@@ -146,6 +146,7 @@ private struct Message {
   static func isMessage(_ method: FunctionDeclSyntax) -> Bool {
     let modifiers = method.modifiers.map(\.name.tokenKind)
     if method.name.text == "wake", method.signature.parameterClause.parameters.isEmpty { return false }
+    if method.name.text == "around", method.signature.parameterClause.parameters.count == 1 { return false }
     if method.signature.returnClause != nil { return false }
     return modifiers.contains(.keyword(.mutating)) && !modifiers.contains(.keyword(.private)) && !modifiers.contains(.keyword(.fileprivate))
   }

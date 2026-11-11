@@ -6,6 +6,7 @@
     ".react-router",
     "build",
     "app/lib/viewing.vectors.json",
+    "app/lib/session-line.vectors.json",
     "app/lib/canvas/scene-cases.json",
     "app/lib/canvas/editor-cases.json",
     "public/_/worklets/bubble.js",
@@ -21,6 +22,7 @@
     "app/lib/contract.gen.ts": "//tools/contract-ts:space-contract",
     "app/lib/space-url.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/space-url-vectors.json",
     "app/lib/viewing.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/viewing-vectors.json",
+    "app/lib/session-line.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/session-line-vectors.json",
     "app/lib/canvas/scene-cases.json": "//packages/wuhu-core:Targets/CanvasDocument/Tests/Fixtures/scene-cases.json",
     "app/lib/canvas/editor-cases.json": "//packages/wuhu-core:Targets/CanvasDocument/Tests/Fixtures/editor-cases.json",
     "app/lib/widgets/quickjs/emscripten-module.browser.mjs": "//tools/quickjs-wasm:emscripten-module.browser.mjs",
@@ -51,7 +53,7 @@
     "jsxImportSource": "react"
   },
   "tasks": {
-    "gen-contract": "test ! -f ../../../tools/contract-ts/emit.ts && echo 'gen-contract: emitter absent (in-graph inject); skipping' || (deno run --allow-read --allow-write ../../../tools/contract-ts/emit.ts ../../wuhu-core/Targets/SpaceContract/Tests/contract --out app/lib/contract.gen.ts && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/space-url-vectors.json app/lib/space-url.vectors.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/viewing-vectors.json app/lib/viewing.vectors.json)",
+    "gen-contract": "test ! -f ../../../tools/contract-ts/emit.ts && echo 'gen-contract: emitter absent (in-graph inject); skipping' || (deno run --allow-read --allow-write ../../../tools/contract-ts/emit.ts ../../wuhu-core/Targets/SpaceContract/Tests/contract --out app/lib/contract.gen.ts && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/space-url-vectors.json app/lib/space-url.vectors.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/viewing-vectors.json app/lib/viewing.vectors.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/session-line-vectors.json app/lib/session-line.vectors.json)",
     "dev": "deno task gen-contract && deno run -A npm:@react-router/dev dev",
     "build": "deno run -A npm:@react-router/dev build",
     "typecheck": "deno task gen-contract && deno run -A npm:@react-router/dev typegen && deno run -A npm:typescript/tsc -p tsconfig.check.json",

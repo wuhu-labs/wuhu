@@ -11,14 +11,14 @@ import type { ViewerCache } from './open-cache.ts'
 import {
   conversationBytes,
   conversationSubscription,
-  directSubscription,
   globSubscription,
+  linesSubscription,
   transcriptBytes,
 } from './subscriptions.ts'
 import type {
   ConversationMessagePayload,
   RevisionEvents,
-  SessionStreamEvent,
+  SessionLineEvent,
 } from '~/lib/contract.gen'
 import { byteLength } from '~/lib/shell-sdk/open-cache.js'
 
@@ -444,28 +444,29 @@ Deno.test('offline tears the stream down at once; online reconnects without back
   assertEquals(net.streams.length, 2)
 })
 
-Deno.test('a transcript keeps its last generation, items only, within its byte cap', () => {
-  const retention = directSubscription('s', 'shared').retention!
-  let kept: SessionStreamEvent[] = []
-  // Three UTF-8 bytes a character: each item is just over 300 KB stored.
-  const item = (position: number): SessionStreamEvent => ({
-    kind: 'item',
+Deno.test('a transcript keeps its last generation within its byte cap', () => {
+  const retention = linesSubscription('s', 'shared').retention!
+  let kept: SessionLineEvent[] = []
+  // Three UTF-8 bytes a character: each line is just over 300 KB stored.
+  const line = (position: number): SessionLineEvent => ({
+    kind: 'line',
     generation: 2,
-    position,
-    item: { text: '中'.repeat(100_000) },
-  } as unknown as SessionStreamEvent)
+    line: {
+      position,
+      at: 0,
+      role: 'user',
+      key: `message:${position}`,
+      prompt: false,
+      message: { text: '中'.repeat(100_000) },
+    },
+  })
   kept = retention.retain(kept, { kind: 'reset', generation: 1 })
-  kept = retention.retain(kept, item(0))
+  kept = retention.retain(kept, line(0))
   kept = retention.retain(kept, { kind: 'reset', generation: 2 })
   assertEquals(kept, [{ kind: 'reset', generation: 2 }])
   for (let position = 0; position < 10; position++) {
-    kept = retention.retain(kept, item(position))
+    kept = retention.retain(kept, line(position))
   }
-  kept = retention.retain(kept, {
-    kind: 'delta',
-    attemptId: 'a',
-    text: 'x',
-  } as SessionStreamEvent)
   assertEquals(kept.length, 11)
 
   const stored = bounded(kept, retention)
@@ -475,8 +476,8 @@ Deno.test('a transcript keeps its last generation, items only, within its byte c
   )
   assertEquals(stored.length, 7)
   assertEquals(stored[0], { kind: 'reset', generation: 2 })
-  assertEquals(stored[1], item(4))
-  assertEquals(stored[6], item(9))
+  assertEquals(stored[1], line(4))
+  assertEquals(stored[6], line(9))
 })
 
 Deno.test('a conversation keeps its latest messages within its byte cap', () => {

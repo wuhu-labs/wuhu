@@ -6,7 +6,7 @@ import XCTest
 final class CellMacroTests: XCTestCase {
   private let macros: [String: any Macro.Type] = ["Cell": CellMacro.self, "Job": JobMacro.self]
 
-  func testMutatingMethodsBecomeMessages() {
+  func testMutatingMethodsBecomeMessagesButWakeAndAround() {
     assertMacroExpansion(
       """
       @Cell
@@ -16,6 +16,8 @@ final class CellMacroTests: XCTestCase {
         mutating func rename(to name: String) {}
         mutating func withdraw(_ amount: Int64) throws -> Int64 { amount }
         private mutating func audit() {}
+        mutating func wake() throws {}
+        mutating func around(_ call: (inout Account) throws -> Void) throws { try call(&self) }
       }
       """,
       expandedSource: """
@@ -25,6 +27,8 @@ final class CellMacroTests: XCTestCase {
         mutating func rename(to name: String) {}
         mutating func withdraw(_ amount: Int64) throws -> Int64 { amount }
         private mutating func audit() {}
+        mutating func wake() throws {}
+        mutating func around(_ call: (inout Account) throws -> Void) throws { try call(&self) }
 
         var _context: CellContext<Account>
 

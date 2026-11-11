@@ -7,6 +7,7 @@ import {
   type HistoryPage,
   type HistoryWindow,
   mergePage,
+  pinHistory,
   visibleHistory,
 } from './history-window'
 
@@ -19,6 +20,9 @@ export interface HistorySubscription<Event> {
   ): Promise<HistoryPage<Event>>
   url(generation: number, position: number, historyEpoch: string | null): string
   position(event: Event): number | null
+  // A pinned event may land below the head and stays visible whatever range
+  // is loaded.
+  pinned?(event: Event): boolean
   generation(event: Event): number | null
   reset(generation: number): Event | null
   isReset(event: Event): boolean
@@ -190,7 +194,11 @@ export function pagedObserveStore<Data, Event>(
       const generation = history.generation(event)
       if (generation !== null && generation !== window.generation) return
       const position = history.position(event)
-      if (position !== null) {
+      if (position !== null && history.pinned?.(event)) {
+        window = pinHistory(window, [{ position, event }])
+        data = fold(data, event)
+        save()
+      } else if (position !== null) {
         if (position <= window.headPosition) return
         window = appendHistory(window, position, event)
         data = fold(data, event)
@@ -245,7 +253,10 @@ export function pagedObserveStore<Data, Event>(
         page.generation !== window.generation ||
         page.historyEpoch !== window.historyEpoch
       ) resetVersion++
-      window = mergePage(window, page, before)
+      window = pinHistory(
+        mergePage(window, page, before),
+        page.entries.filter((entry) => history.pinned?.(entry.event)),
+      )
       if (before === null) {
         project()
       } else {

@@ -24,6 +24,8 @@ export interface HistoryWindow<Event> {
   origins: { position: number; event: Event }[]
   ranges: HistoryRange[]
   headPosition: number
+  // Shown whatever the ranges hold; a window cached before pins had none.
+  pinned?: { position: number; event: Event }[]
 }
 
 export function emptyWindow<Event>(generation = 0): HistoryWindow<Event> {
@@ -35,6 +37,7 @@ export function emptyWindow<Event>(generation = 0): HistoryWindow<Event> {
     origins: [],
     ranges: [],
     headPosition: -1,
+    pinned: [],
   }
 }
 
@@ -107,15 +110,26 @@ export function appendHistory<Event>(
   }
 }
 
+export function pinHistory<Event>(
+  window: HistoryWindow<Event>,
+  entries: HistoryWindow<Event>['entries'],
+): HistoryWindow<Event> {
+  return entries.length === 0 ? window : {
+    ...window,
+    pinned: mergeEntries(window.pinned ?? [], entries),
+  }
+}
+
 export function visibleHistory<Event>(
   window: HistoryWindow<Event>,
 ): HistoryWindow<Event>['entries'] {
   const tail = window.ranges.at(-1)
-  return tail
+  const ranged = tail
     ? window.entries.filter((entry) =>
       entry.position >= tail.low && entry.position <= tail.high
     )
     : []
+  return mergeEntries(ranged, window.pinned ?? [])
 }
 
 export function boundHistory<Event>(

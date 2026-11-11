@@ -1,19 +1,31 @@
 import { assertEquals } from 'jsr:@std/assert@1'
 import { observeStore, realTimer } from './observe.ts'
 import { openAuthorizedStream } from './sse.ts'
-import { foldDirect, initialDirectState } from '~/lib/transcript-fold'
-import { directSubscription } from './subscriptions.ts'
+import { foldLines, initialLines } from '~/lib/transcript-lines'
+import { linesSubscription } from './subscriptions.ts'
 
-Deno.test('paged transcript stream pins generation, exact head and encoded Claude history epoch', () => {
-  const subscription = directSubscription('stable-session', 'shared')
+Deno.test('a lines stream pins the generation and the head it resumes after', () => {
+  const subscription = linesSubscription('stable-session', 'shared')
   assertEquals(
-    subscription.history!.url(4, 999, 'projection / +'),
-    '/v1/session/stable-session/direct?paged=true&generation=4&position=999&epoch=projection%20%2F%20%2B',
+    subscription.history!.url(4, 999, null),
+    '/v1/session/stable-session/lines?generation=4&after=999',
   )
   assertEquals(
     subscription.history!.url(4, -1, null),
-    '/v1/session/stable-session/direct?paged=true&generation=4&position=-1',
+    '/v1/session/stable-session/lines?generation=4&after=-1',
   )
+})
+
+Deno.test('a prompt line is pinned at its position, whatever the head', () => {
+  const history = linesSubscription('s', 'shared').history!
+  const line = (key: string, position: number, prompt: boolean) => ({
+    kind: 'line' as const,
+    generation: 1,
+    line: { position, at: 0, role: 'user' as const, key, prompt, message: {} },
+  })
+  assertEquals(history.position(line('group', 1, true)), 1)
+  assertEquals(history.pinned?.(line('group', 1, true)), true)
+  assertEquals(history.pinned?.(line('message:m', 5, false)), false)
 })
 
 function request<T>(result: T) {
@@ -22,7 +34,7 @@ function request<T>(result: T) {
   return pending
 }
 
-Deno.test('empty wire page adapter opens after -1 and accepts the first live committed entry', async () => {
+Deno.test('an empty lines page opens after -1 and accepts the first live line', async () => {
   const previousFetch = globalThis.fetch
   const previousDatabase = globalThis.indexedDB
   globalThis.indexedDB = {
@@ -37,22 +49,7 @@ Deno.test('empty wire page adapter opens after -1 and accepts the first live com
   try {
     for (
       const wire of [
-        {
-          generation: 7,
-          entries: [],
-          origins: [],
-          before: null,
-          hasEarlier: false,
-        },
-        {
-          generation: 7,
-          historyEpoch: 'claude-ready-empty',
-          entries: [],
-          origins: [],
-          before: null,
-          hasEarlier: false,
-          headPosition: null,
-        },
+        { generation: 7, lines: [], hasEarlier: false },
       ]
     ) {
       const urls: string[] = []
@@ -60,7 +57,7 @@ Deno.test('empty wire page adapter opens after -1 and accepts the first live com
       globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
         urls.push(url)
-        if (url.includes('/transcript/page')) {
+        if (url.includes('/lines/page')) {
           return Promise.resolve(Response.json(wire))
         }
         const body = new ReadableStream<Uint8Array>({
@@ -78,9 +75,9 @@ Deno.test('empty wire page adapter opens after -1 and accepts the first live com
         )
       }
       const store = observeStore({
-        subscription: directSubscription('empty', 'shared'),
-        initial: initialDirectState,
-        fold: foldDirect,
+        subscription: linesSubscription('empty', 'shared'),
+        initial: initialLines,
+        fold: foldLines,
         open: openAuthorizedStream,
         timer: realTimer,
       })
@@ -88,25 +85,21 @@ Deno.test('empty wire page adapter opens after -1 and accepts the first live com
         store.subscribe(() => {})
         for (let i = 0; i < 40; i++) await Promise.resolve()
         assertEquals(urls, [
-          '/v1/session/empty/transcript/page?limit=200',
-          `/v1/session/empty/direct?paged=true&generation=7&position=-1${
-            'historyEpoch' in wire ? '&epoch=claude-ready-empty' : ''
-          }`,
+          '/v1/session/empty/lines/page?limit=200',
+          '/v1/session/empty/lines?generation=7&after=-1',
         ])
         assertEquals(store.getSnapshot().liveness, 'live')
         const event = {
-          kind: 'item',
+          kind: 'line',
           generation: 7,
-          position: 0,
-          item: {
-            assistant: {
-              _0: {
-                id: 'new-entry',
-                timestamp: 0,
-                content: [{ text: { text: 'first live entry' } }],
-                stopReason: 'end_turn',
-                usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
-              },
+          line: {
+            position: 3,
+            at: 0,
+            role: 'assistant',
+            key: 'attempt:new-entry',
+            prompt: false,
+            message: {
+              assistant: { content: [{ text: { text: 'first live entry' } }] },
             },
           },
         }
@@ -114,7 +107,10 @@ Deno.test('empty wire page adapter opens after -1 and accepts the first live com
           new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
         )
         for (let i = 0; i < 10; i++) await Promise.resolve()
-        assertEquals(store.getSnapshot().data.items.get(0)?.kind, 'assistant')
+        assertEquals(
+          store.getSnapshot().data.lines.map((line) => line.key),
+          ['attempt:new-entry'],
+        )
         assertEquals(store.getSnapshot().history?.hasEarlier, false)
       } finally {
         store.close()

@@ -530,6 +530,40 @@ public enum SessionStreamEvent: Codable, Equatable, Sendable {
 }
 
 @Contract
+public enum SessionLineRole: String, Codable, Equatable, Sendable {
+  case system
+  case user
+  case assistant
+  case toolResult = "tool_result"
+}
+
+/// A line of a session's transcript, as the request carried it: `message` is the line's message, thinking kept and an inline image named, or for the system line `{rendered}`, naming its preamble. Tell lines apart by `key`, never by position. A `prompt` line can arrive after lines past its position: place it without moving the stream's cursor.
+@Contract
+public struct SessionLinePayload: Codable, Equatable, Sendable {
+  public let position: Int
+  public let at: Double
+  public let role: SessionLineRole
+  public let key: String
+  public let prompt: Bool
+  public let meta: JSONValue?
+  public let message: JSONValue
+}
+
+/// `reset` drops every line held: the lines after it are the generation's.
+@Contract
+public enum SessionLineEvent: Codable, Equatable, Sendable {
+  case reset(generation: Int)
+  case line(generation: Int, line: SessionLinePayload)
+}
+
+@Contract
+public struct SessionLinesPageOutput: Codable, Equatable, Sendable {
+  public let generation: Int
+  public let lines: [SessionLinePayload]
+  public let hasEarlier: Bool
+}
+
+@Contract
 public struct ChannelMembersInput: Codable, Equatable, Sendable {
   public let people: [String]
 }

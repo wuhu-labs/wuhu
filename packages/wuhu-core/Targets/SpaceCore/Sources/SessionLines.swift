@@ -147,12 +147,7 @@ extension Sessions {
   }
 
   static func lines(_ key: String, generation: Int64, in db: Database) throws -> [StoredTranscriptLine] {
-    try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) }.order(by: \.position).fetchAll(db).map { row in
-      StoredTranscriptLine(
-        position: Int(row.position), at: try SQLiteDateFormat.date(from: row.at), role: TranscriptLine.Role(rawValue: row.role)!,
-        key: row.key, message: row.message, meta: row.meta,
-      )
-    }
+    try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) }.order(by: \.position).fetchAll(db).map(StoredTranscriptLine.init(row:))
   }
 }
 
