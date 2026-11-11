@@ -23,7 +23,7 @@ struct SessionStoreTests {
       #expect(hydration.record.work == .noWork)
       #expect(hydration.record.lifecycle == .live)
       #expect(hydration.record.errorMessage == nil)
-      #expect(hydration.transcript.kernel == Transcript(registeredSubscriptions: []))
+      #expect(hydration.transcript.kernel == Transcript())
       #expect(hydration.queueHead == hydration.queueTail)
       #expect(hydration.queueHead == 0)
       #expect(hydration.queueTail == 0)

@@ -43,7 +43,7 @@ struct CompactionJob {
         let kept = try transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark)
         let head = GenerationHead(
           id: client.uuid(), timestamp: client.now(), summary: arguments.summary,
-          snapshot: .init(carrying: environment.tools, arguments: arguments), settle: environment.settle,
+          snapshot: .init(preReads: arguments.preReads ?? []), settle: environment.settle,
           runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
         )
         let transition: ModelRouteTransition?
@@ -57,7 +57,7 @@ struct CompactionJob {
         let outcome = try await client.compact(params.session, transcript)
         let head = GenerationHead(
           id: client.uuid(), timestamp: client.now(), summary: outcome.summary,
-          snapshot: .init(subscriptions: environment.tools.subscriptions, preReads: outcome.preReads), settle: environment.settle,
+          snapshot: .init(preReads: outcome.preReads), settle: environment.settle,
           runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
         )
         let transition = try await client.prepareCompaction(params.session, transcript.compacted(head: head, kept: outcome.kept), nil)

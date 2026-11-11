@@ -87,7 +87,6 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
         let hydration = try await space.sessions.hydrate(session)
         #expect(try await space.sessions.undrainedInputs(session).count == 1)
         #expect(hydration.record.work == .hasWork)
-        #expect(try await space.sessions.transcript(session).environment.tools.subscriptions.count == 3)
         _ = try await space.sessions.drainQueue(session)
         _ = try await space.mutateRows(watched, [.insert([.integer(1)])], in: .shared, acting: .shared)
         try await until("the existing observation still fires") { try await observationNotifications(space, session: session).count == 1 }
@@ -268,7 +267,6 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       ) else { throw Mismatch("cancel of the observation failed") }
       try await space.sessions.deliverMail()
       #expect(try await space.sessions.armedSubscriptions().isEmpty)
-      #expect(world.state.subscriptions.isEmpty, "the fold retires the cancelled subscriptions")
 
       // An ended subscription reads as one that never was, for its owner as
       // for another session.

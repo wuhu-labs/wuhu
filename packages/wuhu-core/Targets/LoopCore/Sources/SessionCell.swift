@@ -64,7 +64,7 @@ struct SessionCell {
           transcript.nextPendingToolCall == nil, case .assistant? = transcript.items.last
     else { return nil }
     if case .foldPending = transcript.phase { return nil }
-    return transcript.environment.nextTimer(openRequests: try rows.openRequests(id.session), now: client.dueNow())
+    return transcript.environment.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow())
   }
 
   /// Stops the job the session works on and nothing else: main has marked the session errored.
@@ -129,7 +129,7 @@ struct SessionCell {
     }
     try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false, nags: nil, seen: true, armed: true))
     try db.execute(Seen.delete())
-    try write(Armed.folding(load().transcript.environment.tools))
+    try fillArmed()
     invalidateInference()
     try advance()
   }
@@ -166,7 +166,7 @@ struct SessionCell {
       // The model tried to finish. A nag due now is written with its message,
       // so the session never reads settled while it owes one.
       let now = client.now()
-      if !forced, entry.toolCalls.isEmpty, let nag = transcript.environment.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), now: client.dueNow()) {
+      if !forced, entry.toolCalls.isEmpty, let nag = transcript.environment.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow()) {
         transcript.append(.notification(nag.notification(id: client.uuid(), at: now)))
       }
       let appended = Array(transcript.items[session.slot.position...])
@@ -246,7 +246,10 @@ struct SessionCell {
     let session = try load()
     guard session.record.lifecycle == .live, compaction == session.slot.compaction else { return }
     switch answer {
-    case let .folded(head, kept, transition, call):
+    case .folded(var head, let kept, var transition, let call):
+      let slots = try armedSlots()
+      head.snapshot.subscriptions = slots
+      transition?.transcript.open(armed: slots)
       let closing = call.flatMap { call in
         session.transcript.phase == .live ? ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary))) : nil
       }
@@ -256,7 +259,8 @@ struct SessionCell {
       invalidateInference()
     case let .refused(call, message):
       try writeToolResult(session, .toolCall(call), .failure(.init(message: message)))
-    case let .handoff(transcript):
+    case .handoff(var transcript):
+      transcript.open(armed: try armedSlots())
       let written = try rows.writePortableHandoff(id.session, transcript: transcript)
       try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
       try see(only: written)
@@ -312,7 +316,7 @@ struct SessionCell {
     guard case .assistant? = transcript.items.last else { return false }
     let openRequests = try rows.openRequests(id.session)
     let now = client.now()
-    if let nag = transcript.environment.nag(task: session.isTask, openRequests: openRequests, now: client.dueNow()) {
+    if let nag = transcript.environment.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: client.dueNow()) {
       try append(session, [.notification(nag.notification(id: client.uuid(), at: now))]) { $0.input(1) }
       return true
     }
@@ -432,11 +436,11 @@ struct SessionCell {
     var transcript = session.transcript
     for item in items { transcript.append(item) }
     try rows.append(id.session, items: items, inputOrigin: transcript.cacheWarmingInputOrigin)
-    try move(wrote: items, handlers: transcript.handlerSubscriptions, change)
+    try move(wrote: items, change)
   }
 
   /// A session that has no turn row yet gets one from its transcript at its next step (`check`).
-  private mutating func move(wrote items: [TranscriptItem] = [], handlers: Set<SubscriptionID> = [], _ change: (inout SessionTurn) -> Void) throws {
+  private mutating func move(wrote items: [TranscriptItem] = [], _ change: (inout SessionTurn) -> Void) throws {
     guard var turn = db.rows(SessionTurn.all).first else { return }
     change(&turn)
     for item in items { turn.nags?.apply(item) }
@@ -444,9 +448,36 @@ struct SessionCell {
     if turn.seen == true { try see(items) }
     guard turn.armed == true else { return }
     for item in items {
-      let armed = try Armed.armed(by: item, handlers: handlers)
-      if let id = Armed.ended(by: item)?.rawValue ?? armed?.subscription { try db.execute(Armed.where { $0.subscription.eq(id) }.delete()) }
-      if let armed { try db.execute(Armed.insert { armed }) }
+      let arming = Armed.armed(by: item)
+      if let slot = Armed.ended(by: item) ?? arming?.id { try db.execute(Armed.where { $0.subscription.eq(slot.rawValue) }.delete()) }
+      guard let arming else { continue }
+      let armed = try Armed(arming.id, arming.slot, handler: rows.armedSlots(id.session).handlers.contains(arming.id))
+      try db.execute(Armed.insert { armed })
+    }
+  }
+
+  /// What the session has armed: its rows that the stores still hold, since a slot that ended without an item keeps its row.
+  private func armed() throws -> [Armed] {
+    let held = try rows.armedSlots(id.session).slots
+    return db.rows(Armed.all).filter { held[$0.id] != nil }
+  }
+
+  private func armedSlots() throws -> [SubscriptionID: Subscription] {
+    Dictionary(uniqueKeysWithValues: try armed().map { ($0.id, try $0.decoded()) })
+  }
+
+  /// A parked model with a plain timer armed needs no reminder: the timer wakes it.
+  private func armedWake() throws -> Bool {
+    try armed().contains { try $0.wakesModel }
+  }
+
+  /// The rows as the stores have them: for a session from before the cell kept them, and at Start over.
+  private mutating func fillArmed() throws {
+    let held = try rows.armedSlots(id.session)
+    try db.execute(Armed.delete())
+    for (slot, subscription) in held.slots {
+      let armed = try Armed(slot, subscription, handler: held.handlers.contains(slot))
+      try db.execute(Armed.insert { armed })
     }
   }
 
@@ -477,11 +508,6 @@ struct SessionCell {
     try db.execute(SessionTurn.insert { turn })
   }
 
-  private mutating func write(_ armed: Set<Armed>) throws {
-    try db.execute(Armed.delete())
-    for slot in armed { try db.execute(Armed.insert { slot }) }
-  }
-
   /// A turn row that is not what the transcript folds to is reported and replaced, so each divergence is reported once.
   private mutating func check(_ session: SessionState) throws {
     let environment = session.transcript.environment
@@ -494,12 +520,7 @@ struct SessionCell {
     stored?.armed = true
     if let stored, stored != folded { report(.turn(stored), .turn(folded)) }
 
-    let registered = session.transcript.registeredSubscriptions
-    let (armed, arming) = (Set(db.rows(Armed.all)).filter { registered?.contains(SubscriptionID($0.subscription)) != false }, try Armed.folding(environment.tools))
-    if armed != arming {
-      try write(arming)
-      if row?.armed == true { report(.armed(armed.subtracting(arming).sorted { $0.subscription < $1.subscription }), .armed(arming.subtracting(armed).sorted { $0.subscription < $1.subscription })) }
-    }
+    if row?.armed != true { try fillArmed() }
 
     let (seen, shown) = (Set(db.rows(Seen.all)), try Seen.folding(environment.tools))
     guard seen != shown else { return }

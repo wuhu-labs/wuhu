@@ -171,29 +171,3 @@ extension SessionStore {
     }.delete().execute(db)
   }
 }
-
-extension Sessions {
-  static func registeredSubscriptions(_ key: String, in db: Database) throws -> (ids: Set<SubscriptionID>, handlers: Set<SubscriptionID>) {
-    let rows = try SubscriptionRow.of(.session(SessionID(key))).fetchAll(db)
-    var ids: Set<SubscriptionID> = []
-    var handlers: Set<SubscriptionID> = []
-    for row in rows {
-      let payload = JSONValue.parse(row.payload)?.object
-      let id = SubscriptionID(row.subscriptionID)
-      ids.insert(id)
-      if case .string? = payload?["handler"] { handlers.insert(id) }
-    }
-    ids.formUnion(try pendingTimers(key, in: db).map(\.subscriptionID))
-    ids.formUnion(try streams(key, in: db).map(\.id))
-    return (ids, handlers)
-  }
-}
-
-extension SessionStore {
-  public func registeredSubscriptions(_ id: SessionID) async throws -> (ids: Set<SubscriptionID>, handlers: Set<SubscriptionID>) {
-    try await writer.read { db in
-      _ = try Sessions.record(id.rawValue, in: db)
-      return try Sessions.registeredSubscriptions(id.rawValue, in: db)
-    }
-  }
-}

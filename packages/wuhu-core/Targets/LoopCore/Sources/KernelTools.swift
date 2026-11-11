@@ -186,12 +186,6 @@ private func isPairedToEarlierCall(_ item: TranscriptItem) -> Bool {
   }
 }
 
-extension StateSnapshot {
-  init(carrying state: ToolExecutionState, arguments: CompactArguments) {
-    self.init(subscriptions: state.subscriptions, preReads: arguments.preReads ?? [])
-  }
-}
-
 extension GenerationHead {
   var reestablishmentCalls: [ToolCall] {
     snapshot.preReads.map { path in

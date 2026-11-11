@@ -67,7 +67,6 @@ import Testing
         for await _ in committed.stream { break }
         let transcript = try #require(seen.value.first)
         #expect(seen.value.count == 1)
-        #expect(transcript.environment.tools.subscriptions[.init("timer.keep")] == .timer(.cron("* * * * *")))
         #expect(transcript.items.contains { if case let .message(message) = $0 { return message.content.text == "waiting before restart" }; return false })
         let rendered = await transcript.renderRequest(session: id, systemPrompt: "test")
         let text = rendered.messages.compactMap(\.user).flatMap(\.content).compactMap { block -> String? in

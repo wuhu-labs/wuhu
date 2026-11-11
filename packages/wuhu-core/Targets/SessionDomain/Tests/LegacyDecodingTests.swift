@@ -15,16 +15,6 @@ import Testing
     }
   }
 
-  @Test func `a stored tool state from before repository context decodes with no folders`() throws {
-    let stored = ToolExecutionState(fileAccessLog: ["/a.md": .journal(3)], folderRoots: ["machines://m1/repo": nil])
-    let decoded = try reshaped(stored) {
-      $0["folderRoots"] = nil
-      $0["deliveredContext"] = nil
-      $0["mounts"] = ["stack": [["location": "/notes"]], "emittedVersions": ["/notes": 1]]
-    }
-    #expect(decoded == ToolExecutionState(fileAccessLog: ["/a.md": .journal(3)]))
-  }
-
   @Test func `a notification from before repository context decodes without folder roots`() throws {
     let stored = SystemNotification(
       id: UUID(), timestamp: Date(timeIntervalSince1970: 0), kind: .timer, subscriptionID: .init("tim-1"),

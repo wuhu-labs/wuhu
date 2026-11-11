@@ -115,11 +115,7 @@ enum Sessions {
       arguments: [key, generation, count ?? -1],
     )
     let items = try payloads.map { try decode(TranscriptItem.self, from: $0) }
-    let registrations = try registeredSubscriptions(key, in: db)
-    return Transcript(
-      items: items, keptCount: keptCount,
-      registeredSubscriptions: registrations.ids, handlerSubscriptions: registrations.handlers,
-    )
+    return Transcript(items: items, keptCount: keptCount)
   }
 
   // The next position comes from the pointer table, never from a caller's

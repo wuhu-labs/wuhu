@@ -248,7 +248,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
         Fix.replying("waiting"),
         { request in
           #expect(Self.parkNotices(request.transcript) == 1)
-          #expect(request.transcript.environment.tools.subscriptions[timerID] == .timer(schedule))
           return Fix.reply("park reminder received")
         },
       ])

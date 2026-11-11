@@ -41,11 +41,11 @@ public enum Nag: Hashable, Sendable, Codable {
 // its tools did, the settle state and the tool state together. It is reduced
 // in log order from stored effects, so it never depends on when anything ran.
 //
-// Order: subscriptions and file reads merge by key, so parallel tool results
+// Order: file reads merge by key, so parallel tool results
 // commute. The owed map does not
 // commute (a delivery sets it, a post clears it): it is ordered by log
 // position, which is what the caller's event order is.
-public struct SessionEnvironment: Hashable, Sendable, Codable {
+public struct SessionEnvironment: Hashable, Sendable {
   public enum Event: Hashable, Sendable {
     case delivered(QueueInput, at: Date)
     case toolResult(ToolResultPayload, at: Date)
@@ -82,10 +82,6 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
       apply(item)
       nags.settle = settled
     }
-    tools.handlerSubscriptions = transcript.handlerSubscriptions
-    if let registered = transcript.registeredSubscriptions {
-      tools.subscriptions = registeredSubscriptionState(tools.subscriptions, registered: registered)
-    }
   }
 
   public mutating func apply(_ event: Event) {
@@ -102,36 +98,27 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
   mutating func apply(_ item: TranscriptItem) {
     if case let .generationHead(head) = item {
       nags = NagState(settle: head.settle ?? SettleState())
-      tools = ToolExecutionState(resuming: head.snapshot)
+      tools = ToolExecutionState()
     } else if let event = Event(item) {
       apply(event)
     }
   }
 
-  // A handler timer can stay silent; only a plain timer guarantees a model wake.
-  var hasArmedWake: Bool {
-    tools.subscriptions.contains { id, subscription in
-      switch subscription {
-      case .timer: !tools.handlerSubscriptions.contains(id)
-      case .observe, .stream: false
-      }
-    }
-  }
-
   // An agent owes replies in its conversations; any session a parent opened a
-  // request on, agent or task, owes that request its final report.
-  public func nag(task: Bool, openRequests: [OpenRequest], now: Date) -> Nag? {
+  // request on, agent or task, owes that request its final report. `armedWake`:
+  // the session has a plain timer armed, which will wake the model by itself.
+  public func nag(task: Bool, openRequests: [OpenRequest], armedWake: Bool, now: Date) -> Nag? {
     if !task, !settle.owedConversations.isEmpty {
       return .owedReply(conversations: settle.owedConversations)
     }
-    guard !hasArmedWake else { return nil }
+    guard !armedWake else { return nil }
     return openRequests.sorted { $0.id.rawValue < $1.id.rawValue }
       .first { nextParkReminder($0, now: now) == now }
       .map { .park(request: $0.id) }
   }
 
-  public func nextTimer(openRequests: [OpenRequest], now: Date) -> Date? {
-    guard !hasArmedWake else { return nil }
+  public func nextTimer(openRequests: [OpenRequest], armedWake: Bool, now: Date) -> Date? {
+    guard !armedWake else { return nil }
     return openRequests.map { nextParkReminder($0, now: now) }.min()
   }
 

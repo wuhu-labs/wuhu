@@ -7,7 +7,7 @@ import Testing
 import WuhuAI
 
 @Suite struct ArmedTests {
-  @Test func `a slot has a row from the item that arms it to the item that ends it`() async throws {
+  @Test func `a slot has a row from the item that arms it to the item that ends it, and a generation's head lists the ones still held`() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -17,7 +17,16 @@ import WuhuAI
       let script = InferenceScript([
         Fix.replying("arming", calls: ["plain", "quiet", "watch"].map { ToolCall(id: $0, name: $0, arguments: .object([:])) }),
         Fix.replying("cancelling", calls: [ToolCall(id: "cancel", name: "cancel", arguments: .object([:]))]),
-        Fix.replying("armed"),
+        Fix.replying("folding", calls: [fold("first")]),
+        { request in
+          #expect(request.transcript.armed == [plain: .timer(once), quiet: .timer(yearly)])
+          return Fix.reply("armed")
+        },
+        Fix.replying("folding", calls: [fold("second")]),
+        { request in
+          #expect(request.transcript.armed == [plain: .timer(once)])
+          return Fix.reply("the handler's is gone")
+        },
         Fix.replying("nothing"),
         Fix.replying("nothing"),
       ])
@@ -39,10 +48,14 @@ import WuhuAI
       }, inference: { try await script($0) })
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("arm them"), to: sid)
-        try await until("it armed three and cancelled one") { try await sessions.settledWork(sid) && script.count == 3 }
+        try await until("it armed three, cancelled one and folded") { try await sessions.settledWork(sid) && script.count == 4 }
         #expect(try await armed(space) == ["timer.plain": false, "timer.quiet": true])
-        // The handler's slot ends without an item, and the one-shot's last notice is drained with the message, whether or not its own wake came first. Time keeps moving so the worker's scan does: the jump takes the cell past its idle eviction.
+        // The handler's slot ends without an item: its row stays, and the next generation's head leaves it out.
         try await sessions.cancelSubscription(.session(sid), subscriptionID: quiet)
+        try await service.enqueue(item: Fix.message("fold again"), to: sid)
+        try await until("it folded again") { try await sessions.settledWork(sid) && script.count == 6 }
+        #expect(try await armed(space) == ["timer.plain": false, "timer.quiet": true])
+        // The one-shot's last notice is drained with the message, whether or not its own wake came first. Time keeps moving so the worker's scan does: the jump takes the cell past its idle eviction.
         await time.advance(by: 60)
         try await service.enqueue(item: Fix.message("anything left?"), to: sid)
         try await until("the one-shot's last notice ended its row") {
@@ -52,6 +65,18 @@ import WuhuAI
         }
       }
     }
+  }
+}
+
+private func fold(_ id: String) -> ToolCall {
+  ToolCall(id: id, name: "compact", arguments: .object(["summary": .string("so far")]))
+}
+
+private extension Transcript {
+  /// What the generation's head says the session had armed.
+  var armed: [SubscriptionID: Subscription] {
+    guard case let .generationHead(head)? = items.first else { return [:] }
+    return head.snapshot.subscriptions
   }
 }
 

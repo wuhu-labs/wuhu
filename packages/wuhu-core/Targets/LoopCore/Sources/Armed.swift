@@ -7,7 +7,7 @@ import SessionDomain
 import StructuredQueries
 import WuweiQueries
 
-/// A timer, an observation or a stream the session armed with a tool and has not heard the end of. Written by the session's cell with the item that arms or ends it; the cell does not read it yet. A slot that ends without an item (a handler's cancel, a script's) keeps its row, so whoever compares or reads asks the stores which rows are still registered.
+/// A timer, an observation or a stream the session armed with a tool and has not heard the end of. Written by the session's cell with the item that arms or ends it. A slot that ends without an item (a handler's cancel, a script's) keeps its row, so the cell reads only the rows the stores still hold (`SessionCell.armed`).
 @Table("session_armed")
 struct Armed: Owned, Hashable, Encodable, Sendable {
   @Column("id") var subscription: String
@@ -24,22 +24,30 @@ extension Armed {
     self.init(subscription: id.rawValue, slot: String(decoding: try encoder.encode(slot), as: UTF8.self), handler: handler)
   }
 
-  static func folding(_ tools: ToolExecutionState) throws -> Set<Armed> {
-    Set(try tools.subscriptions.map { try Armed($0, $1, handler: tools.handlerSubscriptions.contains($0)) })
+  var id: SubscriptionID { SubscriptionID(subscription) }
+
+  func decoded() throws -> Subscription {
+    try JSONDecoder().decode(Subscription.self, from: Data(slot.utf8))
   }
 
-  /// The slot an item arms; `handlers` are the session's slots that run one.
-  static func armed(by item: TranscriptItem, handlers: Set<SubscriptionID>) throws -> Armed? {
+  /// A handler timer can stay silent; only a plain timer is sure to wake the model.
+  var wakesModel: Bool {
+    get throws {
+      if case .timer = try decoded() { !handler } else { false }
+    }
+  }
+
+  /// The slot an item arms.
+  static func armed(by item: TranscriptItem) -> (id: SubscriptionID, slot: Subscription)? {
     guard case let .toolResult(result) = item else { return nil }
     switch result.payload {
     case let .observe(observed):
-      let slot: Subscription = switch observed.source {
-      case let .query(sql): .observe(sql: sql)
-      case let .stream(url): .stream(url)
+      return switch observed.source {
+      case let .query(sql): (observed.subscriptionID, .observe(sql: sql))
+      case let .stream(url): (observed.subscriptionID, .stream(url))
       }
-      return try Armed(observed.subscriptionID, slot, handler: handlers.contains(observed.subscriptionID))
     case let .timer(timer):
-      return try Armed(timer.subscriptionID, .timer(timer.schedule), handler: handlers.contains(timer.subscriptionID))
+      return (timer.subscriptionID, .timer(timer.schedule))
     default:
       return nil
     }
@@ -59,5 +67,14 @@ extension Armed {
     default:
       nil
     }
+  }
+}
+
+extension Transcript {
+  /// A generation's head says what the session has armed as it opens: the `<session-state>` the model reads.
+  mutating func open(armed: [SubscriptionID: Subscription]) {
+    guard case var .generationHead(head)? = items.first else { return }
+    head.snapshot.subscriptions = armed
+    items[0] = .generationHead(head)
   }
 }

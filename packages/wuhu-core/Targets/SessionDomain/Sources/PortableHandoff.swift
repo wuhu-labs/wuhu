@@ -94,7 +94,7 @@ extension Transcript {
       let head = GenerationHead(
         id: uuid(), timestamp: now,
         summary: "Mechanical portable handoff: \(folded.count) earlier item(s) folded without model summarization. Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read files/history if needed.\n" + digest,
-        snapshot: .init(carrying: environment.tools, preReads: []), settle: environment.settle,
+        snapshot: StateSnapshot(), settle: environment.settle,
         note: "Replay binding changed or legacy unscoped content was adopted; prior opaque replay was removed.",
         replayBinding: binding, runningWork: runningWork,
       )
@@ -103,7 +103,7 @@ extension Transcript {
         content: .init(text: "Portable replay handoff completed. Earlier tool calls have their committed receipts; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the full carried input; re-read files/history as needed."),
       ))
       let carried = [TranscriptItem.generationHead(head)] + projected.indices.filter { selected.contains($0) }.map { projected[$0] } + [notice]
-      let result = Transcript(items: carried, keptCount: carried.count, registeredSubscriptions: registeredSubscriptions, handlerSubscriptions: handlerSubscriptions)
+      let result = Transcript(items: carried, keptCount: carried.count)
       if result.items.reduce(0, { $0 + $1.estimatedTokens(budget.images) }) <= budget.usableTokens { return result }
       guard tailBudget > 0 else { throw PortableHandoffError.modelHandoffTooLarge }
       tailBudget = tailBudget > 256 ? tailBudget / 2 : 0

@@ -10,88 +10,6 @@ import SessionDomain
 import Testing
 
 @Suite(.deterministicDependencies) struct SubscriptionReconciliationTests {
-  @Test func silentHandlerRetirementReconcilesLoadedHydratedAndCompactedStateWithoutDelivery() async throws {
-    let folder = try ScratchFolder("subscription-reconciliation")
-    let file = folder.url.appending(path: "space.sqlite")
-    try await withSessionDeps {
-      func run() async throws -> SessionID {
-        let space = try Space.open(file: file)
-        let store = space.sessions
-        let id = try await ObserverRowsTests().owner(store)
-        let subscriptionID = SubscriptionID("timer.silent")
-        let schedule = TimerSchedule.oneShot(fixedDate)
-        let slot = try await store.armSubscription(id, slot: .init(
-          id: subscriptionID, kind: .timer(schedule, message: "unused"), handler: "/silent.js",
-        ), nextFireAt: fixedDate)
-        let result = TranscriptItem.toolResult(.init(
-          id: UUID(), timestamp: fixedDate, provenance: .toolCall(.init("timer-call")),
-          payload: .timer(.init(subscriptionID: subscriptionID, schedule: schedule, message: "unused")),
-        ))
-        var loaded = try await store.transcript(id)
-        loaded.append(result)
-        try await store.append(id, items: [result], inputOrigin: loaded.cacheWarmingInputOrigin)
-        loaded = try await store.transcript(id)
-        let staleSnapshot = StateSnapshot(carrying: loaded.environment.tools, preReads: ["/keep.md"])
-        #expect(staleSnapshot.subscriptions == [subscriptionID: .timer(schedule)])
-        let before = try await store.record(id)
-        let begun = try await ObserverRowsTests().begin(store, slot)
-        #expect(try await ObserverRowsTests().finish(store, begun, .ok(wakes: []), .retire).isEmpty)
-        #expect(try await store.armedSubscriptions(id).isEmpty)
-        #expect(try await store.record(id).work == before.work)
-        #expect(try await store.undrainedInputs(id).isEmpty)
-        #expect(try await store.hydrate(id).transcript.kernel.environment.tools.subscriptions.isEmpty)
-        #expect(try await store.transcript(id).environment.tools.subscriptions.isEmpty)
-        #expect(loaded.environment.tools.subscriptions[subscriptionID] != nil, "an already-loaded read snapshot needs refreshing")
-        let registrations = try await store.registeredSubscriptions(id)
-        loaded.registeredSubscriptions = registrations.ids
-        loaded.handlerSubscriptions = registrations.handlers
-        #expect(loaded.environment.tools.subscriptions.isEmpty)
-
-        let compacted = try await store.writeCompaction(id, head: .init(
-          id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: staleSnapshot,
-          runningWork: [],
-        ), kept: (loaded.items.count - 1) ..< loaded.items.count)
-        #expect(compacted.items.last == result, "retained tool results cannot resurrect silently retired timers")
-        #expect(compacted.environment.tools.subscriptions.isEmpty)
-        guard case let .generationHead(head) = compacted.items[0] else { Issue.record("missing head"); return id }
-        #expect(head.snapshot.subscriptions.isEmpty)
-        #expect(head.snapshot.preReads == ["/keep.md"])
-        #expect(try await store.undrainedInputs(id).isEmpty)
-        try await space.close()
-        return id
-      }
-      let id = try await run()
-      let reopened = try Space.open(file: file)
-      #expect(try await reopened.sessions.hydrate(id).transcript.kernel.environment.tools.subscriptions.isEmpty)
-      #expect(try await reopened.sessions.armedSubscriptions(id).isEmpty)
-      #expect(try await reopened.sessions.undrainedInputs(id).isEmpty)
-      try await reopened.close()
-    }
-  }
-
-  @Test func reconciliationPreservesArmedPublicSlots() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let id = try await ObserverRowsTests().owner(store)
-      let kept = SubscriptionID("timer.keep")
-      let removed = SubscriptionID("timer.remove")
-      let observer = SubscriptionID("observer")
-      _ = try await store.armSubscription(id, slot: .init(id: kept, kind: .timer(.cron("* * * * *"), message: "tick")), nextFireAt: fixedDate)
-      _ = try await store.armSubscription(id, slot: .init(id: removed, kind: .timer(.oneShot(fixedDate), message: "old")), nextFireAt: fixedDate)
-      _ = try await store.armSubscription(id, slot: .init(id: observer, kind: .observe(sql: "SELECT 1", throttleSeconds: 30)))
-      let snapshot = StateSnapshot(subscriptions: [
-        kept: .timer(.cron("* * * * *")), removed: .timer(.oneShot(fixedDate)),
-        observer: .observe(sql: "SELECT 1"),
-      ])
-      _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "snapshot", snapshot: snapshot, runningWork: []), kept: nil)
-      try await store.cancelSubscription(.session(id), subscriptionID: removed)
-      let subscriptions = try await store.hydrate(id).transcript.kernel.environment.tools.subscriptions
-      #expect(subscriptions == [kept: .timer(.cron("* * * * *")), observer: .observe(sql: "SELECT 1")])
-      #expect(try await store.registeredSubscriptions(id).ids == [kept, observer])
-      #expect(try await store.undrainedInputs(id).isEmpty)
-    }
-  }
-
   @Test(arguments: [false, true])
   func archiveAndUnarchivePreserveUnfiredPlainAndHandlerTimers(handler: Bool) async throws {
     let folder = try ScratchFolder("unfired-subscription-grace")
@@ -166,42 +84,19 @@ import Testing
     }
   }
 
-  @Test func storageProjectsHandlerIDsTogetherWithRegistrationIDsAcrossReopenAndCompaction() async throws {
-    let folder = try ScratchFolder("handler-metadata")
-    let file = folder.url.appending(path: "space.sqlite")
+  @Test func armedSlotsAreWhatTheStoresHoldWithTheOnesThatRunAHandler() async throws {
     try await withSessionDeps {
-      func armAndCompact() async throws -> SessionID {
-        let space = try Space.open(file: file)
-        let store = space.sessions
-        let id = try await ObserverRowsTests().owner(store)
-        for (name, handler) in [("plain", false), ("handler", true)] {
-          _ = try await store.armSubscription(id, slot: .init(
-            id: .init(name), kind: .timer(.cron("* * * * *"), message: "tick"), handler: handler ? "/timer.js" : nil,
-          ), nextFireAt: fixedDate)
-        }
-        _ = try await store.armSubscription(id, slot: .init(id: .init("observer"), kind: .observe(sql: "SELECT 1", throttleSeconds: 30), handler: "/observe.js"))
-        let registrations = try await store.registeredSubscriptions(id)
-        #expect(registrations.ids == [.init("plain"), .init("handler"), .init("observer")])
-        #expect(registrations.handlers == [.init("handler"), .init("observer")])
-        let snapshot = StateSnapshot(subscriptions: [
-          .init("plain"): .timer(.cron("* * * * *")), .init("handler"): .timer(.cron("* * * * *")), .init("observer"): .observe(sql: "SELECT 1"),
-        ])
-        let compacted = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: snapshot, runningWork: []), kept: nil)
-        #expect(compacted.handlerSubscriptions == registrations.handlers)
-        #expect(compacted.environment.tools.handlerSubscriptions == registrations.handlers)
-        try await space.close()
-        return id
-      }
-      let id = try await armAndCompact()
-      let space = try Space.open(file: file)
-      let hydrated = try await space.sessions.hydrate(id).transcript.kernel
-      #expect(hydrated.handlerSubscriptions == [.init("handler"), .init("observer")])
-      #expect(hydrated.environment.tools.handlerSubscriptions == hydrated.handlerSubscriptions)
-      try await space.sessions.cancelSubscription(.session(id), subscriptionID: .init("handler"))
-      let registrations = try await space.sessions.registeredSubscriptions(id)
-      #expect(registrations.ids == [.init("plain"), .init("observer")])
-      #expect(registrations.handlers == [.init("observer")])
-      try await space.close()
+      let store = try makeSpace().sessions
+      let id = try await ObserverRowsTests().owner(store)
+      let (plain, quiet, removed, observer) = (SubscriptionID("plain"), SubscriptionID("quiet"), SubscriptionID("removed"), SubscriptionID("observer"))
+      _ = try await store.armSubscription(id, slot: .init(id: plain, kind: .timer(.cron("* * * * *"), message: "tick")), nextFireAt: fixedDate)
+      _ = try await store.armSubscription(id, slot: .init(id: quiet, kind: .timer(.cron("* * * * *"), message: "tick"), handler: "/timer.js"), nextFireAt: fixedDate)
+      _ = try await store.armSubscription(id, slot: .init(id: removed, kind: .timer(.oneShot(fixedDate), message: "old")), nextFireAt: fixedDate)
+      _ = try await store.armSubscription(id, slot: .init(id: observer, kind: .observe(sql: "SELECT 1", throttleSeconds: 30), handler: "/observe.js"))
+      try await store.cancelSubscription(.session(id), subscriptionID: removed)
+      let armed = try await store.rows { try $0.armedSlots(id) }
+      #expect(armed.slots == [plain: .timer(.cron("* * * * *")), quiet: .timer(.cron("* * * * *")), observer: .observe(sql: "SELECT 1")])
+      #expect(armed.handlers == [quiet, observer])
     }
   }
 }

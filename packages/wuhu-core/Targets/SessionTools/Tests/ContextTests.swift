@@ -70,7 +70,7 @@ private func rendered(_ path: String) -> String {
       #expect(!second.text.contains("Run the linter before committing."))
       let third = try #require(try await readContext(&world, "/work/third/README.md"))
       #expect(third.text.contains("identical to \(rendered("/work/repo/AGENTS.md"))"))
-      world.state = ToolExecutionState(resuming: StateSnapshot(carrying: world.state, preReads: []))
+      world.state = ToolExecutionState()
       let again = try #require(try await readContext(&world, "/work/copy/README.md"))
       #expect(again.text.contains("repo manual"))
       #expect(again.text.contains("Run the linter before committing."))
@@ -281,7 +281,7 @@ private func rendered(_ path: String) -> String {
       #expect(try await readContext(&world, "/work/repo/README.md") != nil)
       #expect(try await readContext(&world, "/work/repo/README.md") == nil)
 
-      world.state = ToolExecutionState(resuming: StateSnapshot(carrying: world.state, preReads: []))
+      world.state = ToolExecutionState()
       let again = try #require(try await readContext(&world, "/work/repo/README.md"))
       #expect(again.text.contains("repo manual"))
     }

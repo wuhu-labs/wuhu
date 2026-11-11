@@ -14,29 +14,13 @@ import WuhuAI
     ])
   }
 
-  @Test func `snapshot carries promises and records the re-establishment lists`() {
-    let snapshot = StateSnapshot(carrying: workedTranscript.environment.tools, preReads: ["space://a.md"])
-
-    #expect(snapshot.subscriptions == [SubscriptionID("tim-1"): .timer(.cron("0 * * * *"))])
-    #expect(snapshot.preReads == ["space://a.md"])
-  }
-
-  @Test func `resuming a snapshot drops fileAccessLog and delivered context`() {
-    let snapshot = StateSnapshot(carrying: workedTranscript.environment.tools, preReads: ["space://a.md"])
-    let resumed = ToolExecutionState(resuming: snapshot)
-    #expect(resumed.fileAccessLog.isEmpty)
-    #expect(resumed.folderRoots.isEmpty)
-
-    #expect(resumed.subscriptions == snapshot.subscriptions)
-  }
-
   @Test func `compacted transcript starts at its head and marks everything carried`() {
     let transcript = workedTranscript
     let head = GenerationHead(
       id: UUID(),
       timestamp: Fix.instant,
       summary: "did things",
-      snapshot: .init(carrying: transcript.environment.tools, preReads: []),
+      snapshot: StateSnapshot(),
       runningWork: [],
     )
     let next = transcript.compacted(head: head, kept: nil)

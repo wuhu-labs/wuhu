@@ -246,7 +246,7 @@ func withHandlerFiring(
     }
   }
 
-  @Test func silentOneShotRetiresWithoutNotificationAndHydrationDropsFoldedTimer() async throws {
+  @Test func silentOneShotRetiresWithoutNotification() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
@@ -254,19 +254,10 @@ func withHandlerFiring(
       try await withHandlerFiring(space) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 10, "handler": "/silent.js"]))
-        _ = try await space.sessions.writeCompaction(session, head: .init(
-          id: UUID(), timestamp: anchor, summary: "waiting for quiet timer", snapshot: .init(subscriptions: world.state.subscriptions),
-          runningWork: [],
-        ), kept: nil)
-        let before = try await space.sessions.transcript(session)
-        #expect(!before.environment.tools.subscriptions.isEmpty)
         let queueHead = try await space.sessions.queueHead(session)
         await time.advance(by: 11)
         try await untilAdvancing("silent timer retires", time) { try await space.sessions.armedSubscriptions(session).isEmpty }
-        let hydration = try await space.sessions.hydrate(session)
-        guard case let .kernel(transcript) = hydration.transcript else { Issue.record("expected kernel transcript"); return }
-        #expect(transcript.environment.tools.subscriptions.isEmpty)
-        #expect(hydration.queueHead == queueHead)
+        #expect(try await space.sessions.hydrate(session).queueHead == queueHead)
         #expect(try await handlerNotifications(space, session).isEmpty)
       }
     }

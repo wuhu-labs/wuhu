@@ -272,7 +272,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
       _ = try await space.fs(.shared).write("/_/machines/studio/AGENTS.md", Data("edited manual".utf8), ifMatch: nil)
       #expect(try await touch(&world, "machines://studio/work/loose/a.txt").isEmpty)
 
-      world.state = ToolExecutionState(resuming: StateSnapshot(carrying: world.state, preReads: []))
+      world.state = ToolExecutionState()
       #expect(try await touch(&world, "machines://studio/tmp/b.txt").contains("edited manual"))
     }
   }

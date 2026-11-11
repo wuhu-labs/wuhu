@@ -58,21 +58,6 @@ extension SessionRows {
     let runtime = try Sessions.runtime(key, in: db)
     try Sessions.discardCommand(key, in: db)
     try CacheWarmingRow.reset(key, in: db)
-    var subscriptions: [SubscriptionID: Subscription] = [:]
-    for armed in try SubscriptionRow.of(.session(id)).fetchAll(db).map(store.armedSubscription) {
-      switch armed.slot.kind {
-      case let .observe(sql, _): subscriptions[armed.slot.id] = .observe(sql: sql)
-      case let .stream(url, _): subscriptions[armed.slot.id] = .stream(url)
-      case let .timer(schedule, _): subscriptions[armed.slot.id] = .timer(schedule)
-      case .children: continue
-      }
-    }
-    for notice in try Sessions.pendingTimers(key, in: db) {
-      subscriptions[notice.subscriptionID] = notice.schedule.map(Subscription.timer)
-    }
-    for stream in try Sessions.streams(key, in: db) {
-      subscriptions[stream.id] = .stream(stream.url)
-    }
     do {
       head.settle = try Sessions.settleState(key, through: nowDate, in: db)
     } catch where isUnreadableSessionData(error) {
@@ -85,7 +70,7 @@ extension SessionRows {
     }
     let generation = runtime.generation + 1
     do {
-      head.snapshot = .init(subscriptions: subscriptions)
+      head.snapshot = .init(subscriptions: try armedSlots(id).slots)
       head.settleBoundary = .init(
         queueTail: queue.tail,
         messageTail: try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(n), 0) FROM messages WHERE sender_session_id = ?", arguments: [key])!,
@@ -105,6 +90,31 @@ extension SessionRows {
     try SessionPrompts.advance(key, in: db)
     if try Sessions.queueHead(key, tail: queue.tail, at: now, in: db) > queue.tail { try Sessions.markHasWork(key, now: now, in: db) }
     return SessionRestart(generation: Int(generation), executor: try Sessions.record(key, in: db).executor)
+  }
+}
+
+extension SessionRows {
+  /// What the stores hold of the session's own slots, and which of them run a handler: its rows of `subscription_slots` but the children watch, the plain timers waiting on its queue and its streams.
+  public func armedSlots(_ id: SessionID) throws -> (slots: [SubscriptionID: Subscription], handlers: Set<SubscriptionID>) {
+    var slots: [SubscriptionID: Subscription] = [:]
+    var handlers: Set<SubscriptionID> = []
+    for row in try SubscriptionRow.of(.session(id)).fetchAll(db) {
+      let slot = try store.armedSubscription(row).slot
+      switch slot.kind {
+      case let .observe(sql, _): slots[slot.id] = .observe(sql: sql)
+      case let .stream(url, _): slots[slot.id] = .stream(url)
+      case let .timer(schedule, _): slots[slot.id] = .timer(schedule)
+      case .children: continue
+      }
+      if slot.handler != nil { handlers.insert(slot.id) }
+    }
+    for notice in try Sessions.pendingTimers(id.rawValue, in: db) {
+      slots[notice.subscriptionID] = notice.schedule.map(Subscription.timer)
+    }
+    for stream in try Sessions.streams(id.rawValue, in: db) {
+      slots[stream.id] = .stream(stream.url)
+    }
+    return (slots, handlers)
   }
 }
 

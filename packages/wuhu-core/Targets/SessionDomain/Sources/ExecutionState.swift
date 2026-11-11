@@ -10,34 +10,21 @@ public struct ToolExecutionState: Hashable, Sendable {
   public var fileAccessLog: [String: FileRevision]
   public var folderRoots: [String: String?]
   public var deliveredContext: [String: String]
-  public var subscriptions: [SubscriptionID: Subscription]
-  public var handlerSubscriptions: Set<SubscriptionID> = []
 
   public init(
     fileAccessLog: [String: FileRevision] = [:],
     folderRoots: [String: String?] = [:],
     deliveredContext: [String: String] = [:],
-    subscriptions: [SubscriptionID: Subscription] = [:],
-    handlerSubscriptions: Set<SubscriptionID> = [],
   ) {
     self.fileAccessLog = fileAccessLog
     self.folderRoots = folderRoots
     self.deliveredContext = deliveredContext
-    self.subscriptions = subscriptions
-    self.handlerSubscriptions = handlerSubscriptions
-  }
-
-  public init(resuming snapshot: StateSnapshot) {
-    self.init(subscriptions: snapshot.subscriptions)
   }
 
   public mutating func apply(delivered input: QueueInput) {
     guard case let .notification(notification) = input else { return }
     folderRoots.merge(notification.folderRoots ?? [:]) { $1 }
     deliveredContext.merge(notification.deliveredContext ?? [:]) { first, _ in first }
-    if notification.endsSubscription {
-      subscriptions.removeValue(forKey: notification.subscriptionID)
-    }
   }
 
   public mutating func apply(_ payload: ToolResultPayload) {
@@ -49,19 +36,8 @@ public struct ToolExecutionState: Hashable, Sendable {
     case let .edit(result):
       fileAccessLog[result.path] = result.revision
     case .grep, .find, .exec, .mount, .machines, .templates, .query, .createSession, .setTitle, .compact,
-         .manipulateUI, .script, .text, .failure, .sendMessage, .report, .request:
+         .manipulateUI, .script, .text, .failure, .sendMessage, .report, .request, .observe, .timer, .cancelObservation, .cancelTimer:
       break
-    case let .observe(result):
-      subscriptions[result.subscriptionID] = switch result.source {
-      case let .query(sql): .observe(sql: sql)
-      case let .stream(url): .stream(url)
-      }
-    case let .timer(result):
-      subscriptions[result.subscriptionID] = .timer(result.schedule)
-    case let .cancelObservation(result):
-      subscriptions.removeValue(forKey: result.subscriptionID)
-    case let .cancelTimer(result):
-      subscriptions.removeValue(forKey: result.subscriptionID)
     }
   }
 }
@@ -86,26 +62,8 @@ extension SubscriptionID {
   }
 }
 
-extension ToolExecutionState: Codable {
-  enum CodingKeys: String, CodingKey {
-    case fileAccessLog
-    case folderRoots
-    case deliveredContext
-    case subscriptions
-  }
-
-  public init(from decoder: any Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    self.init(
-      fileAccessLog: try container.decode([String: FileRevision].self, forKey: .fileAccessLog),
-      folderRoots: try container.decodeIfPresent([String: String?].self, forKey: .folderRoots) ?? [:],
-      deliveredContext: try container.decodeIfPresent([String: String].self, forKey: .deliveredContext) ?? [:],
-      subscriptions: try container.decode([SubscriptionID: Subscription].self, forKey: .subscriptions),
-    )
-  }
-}
-
 public struct StateSnapshot: Hashable, Sendable, Codable {
+  /// What the session had armed when its cell wrote the generation.
   public var subscriptions: [SubscriptionID: Subscription]
   public var preReads: [String]
 
@@ -119,19 +77,5 @@ public struct StateSnapshot: Hashable, Sendable, Codable {
 
   public var isEmpty: Bool {
     subscriptions.isEmpty && preReads.isEmpty
-  }
-
-  public init(carrying state: ToolExecutionState, preReads: [String]) {
-    self.init(subscriptions: state.subscriptions, preReads: preReads)
-  }
-}
-
-func registeredSubscriptionState(
-  _ subscriptions: [SubscriptionID: Subscription], registered: Set<SubscriptionID>,
-) -> [SubscriptionID: Subscription] {
-  subscriptions.filter { id, subscription in
-    switch subscription {
-    case .observe, .stream, .timer: registered.contains(id)
-    }
   }
 }
