@@ -580,7 +580,7 @@ Sessions read, post and manage without joining the channel; legacy session membe
 
 ## Transcript line check
 
-`WUHU_TRANSCRIPT_DIFF_LOG` names a JSONL file on the server's disk; unset or empty, there is no check. With it set, every kernel inference compares the generation's stored lines with its prompt, tools and typed-item render before the request goes out and appends `{time, session, generation, position, line, render}` (a hash and an excerpt per side, a missing side omitted) at the first difference. The check never fails or delays a request beyond its read; its own failure is logged. A session cell's turn row that differs from its transcript's fold (LoopCore SPEC) appends `{time, session, stored, folded}` to the same file.
+`WUHU_TRANSCRIPT_DIFF_LOG` names a JSONL file on the server's disk; unset or empty, there is no check. With it set, every kernel inference compares the generation's stored lines with its prompt, tools and typed-item render before the request goes out and appends `{time, session, generation, position, line, render}` (a hash and an excerpt per side, a missing side omitted) at the first difference. The check never fails or delays a request beyond its read; its own failure is logged. A session cell's turn row, or its rows of what the generation saw, that differ from the transcript's fold (LoopCore SPEC) append `{time, session, stored, folded}` to the same file.
 
 ## Space host composition
 

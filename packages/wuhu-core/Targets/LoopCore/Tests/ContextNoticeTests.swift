@@ -7,6 +7,10 @@ import Testing
 import struct WuhuAI.ToolCall
 
 @Suite struct ContextNoticeTests {
+  private struct Path: Decodable {
+    var path: String
+  }
+
   @Test func `a tool call that touched a repository is followed by its context notice`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
@@ -53,6 +57,51 @@ import struct WuhuAI.ToolCall
       let expected: [String: String?] = [repo: repo]
       #expect(transcript.environment.tools.folderRoots == expected)
       #expect(transcript.environment.tools.deliveredContext == ["hash": repo + "/AGENTS.md"])
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func `a fold keeps the files its kept tail read, and Start over none`(kept: Bool) async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let repo = "machines://m1/repo"
+      func read(_ file: String) -> ToolCall {
+        ToolCall(id: "call_" + file, name: "read", arguments: .object(["path": .string(repo + "/" + file)]))
+      }
+      let script = InferenceScript([
+        Fix.replying("marking", calls: [.init(id: "call_m", name: "bookmark", arguments: .object(["name": .string("b")]))]),
+        Fix.replying("reading", calls: [read("a")]),
+        Fix.replying("reading on", calls: [read("b")]),
+        Fix.replying("folding", calls: [.init(id: "call_f", name: "compact", arguments: .object(kept ? ["summary": .string("s"), "bookmark": .string("b")] : ["summary": .string("s")]))]),
+        Fix.replying("after the fold"),
+        Fix.replying("started over"),
+      ])
+      var config = makeConfig(inference: { try await script($0) })
+      config.executeTool = { invocation in
+        let path = try invocation.call.arguments.decode(Path.self).path
+        return ToolOutcome(
+          payload: .read(.init(path: path, revision: .mtime(Date(timeIntervalSince1970: 1_700_000_000.123456)), content: path)),
+          context: ScopeContext(folders: [repo: path], deliveredContext: ["hash": path + "/AGENTS.md"], text: "manual by " + path),
+        )
+      }
+
+      let folded = Box<ToolExecutionState?>(nil)
+      try await runService(space, config) { service in
+        try await service.enqueue(item: Fix.message("go"), to: sid)
+        try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 5 }
+        let tools = try await sessions.hydrate(sid).transcript.kernel.environment.tools
+        folded.withLock { $0 = tools }
+        _ = try await service.restart(sid, executor: nil, note: nil)
+        try await service.enqueue(item: Fix.message("again", message: "m2"), to: sid)
+        try await until("the restarted generation stops") { try await sessions.settledWork(sid) && script.count == 6 }
+      }
+
+      #expect(Set(try #require(folded.value).fileAccessLog.keys) == (kept ? [repo + "/a", repo + "/b"] : []))
+      #expect(folded.value?.folderRoots.isEmpty == true)
+      #expect(folded.value?.deliveredContext.isEmpty == true)
+      #expect(try await sessions.hydrate(sid).transcript.kernel.environment.tools.fileAccessLog.isEmpty)
     }
   }
 }

@@ -141,7 +141,7 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
 }
 
 extension SessionEnvironment.Event {
-  init?(_ item: TranscriptItem) {
+  public init?(_ item: TranscriptItem) {
     switch item {
     case .direct, .assistant, .bookmark, .generationHead:
       return nil

@@ -15,6 +15,8 @@ struct SessionTurn: Owned, Equatable, Encodable, Sendable {
   var replied: Bool
   /// Nil until the cell's next step takes it from the transcript: a row from before the column, or a generation Start over opened, whose head the store works out from the queue and the messages.
   @Column(as: NagState.JSONRepresentation?.self) var nags: NagState?
+  /// Nil in a row from before the cell kept what the generation saw (`Seen`): the next step takes that from the transcript.
+  var seen: Bool?
 
   enum Turn: Equatable, Codable, Sendable {
     /// A generation nothing was said in: created or started over.
@@ -69,12 +71,25 @@ struct SessionTurn: Owned, Equatable, Encodable, Sendable {
 public struct TurnDifference: Sendable, Encodable {
   var time: String
   var session: String
-  var stored: SessionTurn
-  var folded: SessionTurn
+  var stored: Side
+  var folded: Side
+
+  /// The row, or the rows of what the generation saw that the other side lacks.
+  enum Side: Sendable, Encodable {
+    case turn(SessionTurn)
+    case seen([Seen])
+
+    func encode(to encoder: any Encoder) throws {
+      switch self {
+      case let .turn(turn): try turn.encode(to: encoder)
+      case let .seen(seen): try seen.encode(to: encoder)
+      }
+    }
+  }
 }
 
 extension SessionTurn {
-  init(folding transcript: Transcript, generation: Int) {
+  init(folding transcript: Transcript, generation: Int, nags: NagState) {
     let pending = Set(transcript.pendingToolCallIDs.map(\.rawValue))
     let calls = transcript.items.flatMap { item -> [ToolCall] in
       guard case let .assistant(entry) = item else { return [] }
@@ -91,6 +106,6 @@ extension SessionTurn {
     } else {
       .inert
     }
-    self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply, nags: transcript.environment.nags)
+    self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply, nags: nags, seen: true)
   }
 }
