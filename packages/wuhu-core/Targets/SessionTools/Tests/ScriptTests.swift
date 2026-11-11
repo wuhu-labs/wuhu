@@ -153,12 +153,13 @@ import struct WuhuAI.ToolCall
 
   @Test func sessionModuleCancels() async throws {
     try await withRig { rig in
+      let worker = await firingWorker(Hub(space: rig.space))
       _ = try await rig.payload(["message": "x", "in_seconds": 600], tool: "timer")
-      try await rig.space.sessions.deliverMail()
       try await rig.run("session-cancel")
       try await rig.released()
       rig.probe("armed: \(try await rig.space.sessions.armedSubscriptions(rig.session).map(\.slot.id.rawValue))")
       try rig.expect("session-cancel")
+      await worker.shutdown()
     }
   }
 

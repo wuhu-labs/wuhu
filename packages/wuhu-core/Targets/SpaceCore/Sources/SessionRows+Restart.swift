@@ -100,12 +100,8 @@ extension SessionRows {
     var handlers: Set<SubscriptionID> = []
     for row in try SubscriptionRow.of(.session(id)).fetchAll(db) {
       let slot = try store.armedSubscription(row).slot
-      switch slot.kind {
-      case let .observe(sql, _): slots[slot.id] = .observe(sql: sql)
-      case let .stream(url, _): slots[slot.id] = .stream(url)
-      case let .timer(schedule, _): slots[slot.id] = .timer(schedule)
-      case .children: continue
-      }
+      guard let subscription = slot.kind.subscription else { continue }
+      slots[slot.id] = subscription
       if slot.handler != nil { handlers.insert(slot.id) }
     }
     for notice in try Sessions.pendingTimers(id.rawValue, in: db) {

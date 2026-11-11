@@ -346,3 +346,16 @@ extension SessionExecution {
     try await store.enqueue(session, input: item)
   }
 }
+
+// A tool's arm and cancel, as the gate makes them once main has checked the call.
+extension Space {
+  @discardableResult
+  func arm(_ session: SessionID, _ slot: SubscriptionSlot, nextFireAt: Date? = nil, answering call: String) async throws -> ToolResultPayload {
+    try await worker.call(SessionCell.ID(session.rawValue)) { try $0.arm(Arming(slot, nextFireAt: nextFireAt), answering: ToolCallID(call)) }
+  }
+
+  @discardableResult
+  func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: String) async throws -> ToolResultPayload {
+    try await worker.call(SessionCell.ID(session.rawValue)) { try $0.disarm(subscription, answering: ToolCallID(call)) }
+  }
+}

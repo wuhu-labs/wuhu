@@ -199,6 +199,16 @@ public struct SessionExecution: Sendable {
     }, outcome: { [loops] in loops.job($0).outcome() }) == nil)
   }
 
+  /// Arms a slot for the session's tool call, in a step of its cell; a call already answered gets that answer.
+  public func arm(_ session: SessionID, _ arming: Arming, answering call: ToolCallID) async throws -> ToolResultPayload {
+    try await loops.call(SessionCell.ID(session.rawValue)) { try $0.arm(arming, answering: call) }
+  }
+
+  /// Ends a slot of the session's for a call of its own; one it does not have throws a `notFound` `ToolProblem`.
+  public func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: ToolCallID) async throws -> ToolResultPayload {
+    try await loops.call(SessionCell.ID(session.rawValue)) { try $0.disarm(subscription, answering: call) }
+  }
+
   /// The session's lines as `viewer` reads them, past `after` (`TranscriptTail`); the stream ends when the cell closes the socket.
   public func lines(_ session: SessionID, after: TranscriptCursor?, as viewer: Principal) -> AsyncStream<TranscriptTail.Outgoing> {
     AsyncStream { [loops] continuation in

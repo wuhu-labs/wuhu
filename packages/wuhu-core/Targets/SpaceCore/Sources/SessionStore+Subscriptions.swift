@@ -125,33 +125,10 @@ extension SessionStore {
   ) async throws -> ArmedSubscription {
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
-    let prepared = prepared(slot)
+    @Dependency(\.uuid) var uuid
+    let prepared = prepared(slot, uuid: { uuid() })
     return try await writer.write { db in
       try self.armSubscription(key, slot: prepared, name: name, nextFireAt: nextFireAt, marker: marker, now: now, in: db)
-    }
-  }
-
-  // The arm as a tool call's effect: the call's answer is looked up and
-  // recorded in the write that arms, so a call already answered (an earlier
-  // run, or an overlapping twin of this one) gets that answer and arms
-  // nothing, whether its slot still stands or has since fired or been
-  // cancelled.
-  public func armSubscription(
-    _ id: SessionID,
-    slot: SubscriptionSlot,
-    name: String? = nil,
-    nextFireAt: Date? = nil,
-    marker: String? = nil,
-    answering receipt: ToolReceipt,
-  ) async throws -> ToolResultPayload {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    let prepared = prepared(slot)
-    return try await writer.write { db in
-      if let recorded = try receipt.recorded(in: db) { return recorded }
-      try self.armSubscription(key, slot: prepared, name: name, nextFireAt: nextFireAt, marker: marker, now: now, in: db)
-      try receipt.record(now: now, in: db)
-      return receipt.payload
     }
   }
 
@@ -168,7 +145,8 @@ extension SessionStore {
     guard slot.handler != nil else { throw ObserverRefusal.handlerRequired }
     let owner = SubscriptionOwner.group(group)
     let now = SQLiteDateFormat.string(from: dateGen.now)
-    let prepared = prepared(slot)
+    @Dependency(\.uuid) var uuid
+    let prepared = prepared(slot, uuid: { uuid() })
     return try await writer.write { db in
       guard try Self.actingGroup(of: owner, in: db) != nil else { throw SpaceError.groupForbidden(group.rawValue) }
       if let standing = try SubscriptionRow.of(owner).where({ $0.name.eq(terms.name) }).fetchOne(db) {
@@ -241,8 +219,7 @@ extension SessionStore {
 
   // The slot as it is stored: an observation gets its incarnation, a handler
   // a fresh one. A request's deadline slot needs neither.
-  private func prepared(_ slot: SubscriptionSlot) -> SubscriptionSlot {
-    @Dependency(\.uuid) var uuid
+  func prepared(_ slot: SubscriptionSlot, uuid: () -> UUID) -> SubscriptionSlot {
     var inserted = slot
     if inserted.kind.observes, inserted.observationProgress == nil {
       inserted.observationProgress = ObservationProgress(incarnation: uuid(), deliverySequence: 0)
@@ -305,49 +282,6 @@ extension SessionStore {
 
   public func cancelSubscription(_ owner: SubscriptionOwner, subscriptionID: SubscriptionID) async throws {
     try await writer.write { db in try SubscriptionRow.delete(owner, subscriptionID.rawValue, in: db) }
-  }
-
-  // The cancel as a tool call's effect. `answer` sees the slot as stored (nil
-  // when there is none) and says what the call returns, or throws why it
-  // cannot; the lookup, the cancel and the answer's receipt are one write, so
-  // a call already answered (an earlier run, or an overlapping twin of this
-  // one) gets that answer, never a refusal for the slot its twin removed. A
-  // firing in progress runs on.
-  public func cancelSubscription(
-    _ id: SessionID,
-    subscriptionID: SubscriptionID,
-    answering callID: ToolCallID,
-    _ answer: @escaping @Sendable (SubscriptionSlot?) throws -> ToolResultPayload,
-  ) async throws -> ToolResultPayload {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      if let recorded = try Sessions.receipt(key, toolCallID: callID.rawValue, in: db) { return recorded }
-      let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db)
-      let stored = try row.map { try Sessions.decode(SubscriptionSlot.self, from: $0.payload) }
-      if stored == nil, let timer = try Sessions.pendingTimers(key, in: db).first(where: { $0.subscriptionID == subscriptionID }),
-         let schedule = timer.schedule
-      {
-        let payload = try answer(SubscriptionSlot(id: subscriptionID, kind: .timer(schedule, message: timer.content.text)))
-        try Sessions.clear(key, topic: subscriptionID.rawValue, in: db)
-        try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
-        let runtime = self.runtime
-        db.afterNextTransaction { _ in runtime.poke(id) }
-        return payload
-      }
-      if stored == nil, let stream = try Sessions.streams(key, in: db).first(where: { $0.id == subscriptionID }) {
-        let payload = try answer(SubscriptionSlot(id: subscriptionID, kind: .stream(url: stream.url, throttleSeconds: 0)))
-        try Sessions.post(.unstream(subscriptionID), to: key, in: db)
-        try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
-        let runtime = self.runtime
-        db.afterNextTransaction { _ in runtime.poke(id) }
-        return payload
-      }
-      let payload = try answer(stored)
-      if stored != nil { try Self.deleteSubscription(key, subscriptionID, in: db) }
-      try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
-      return payload
-    }
   }
 
   /// Ends a slot whose owner can no longer act: an archived session, a
@@ -498,6 +432,16 @@ extension SessionStore {
 }
 
 extension SubscriptionSlot.Kind {
+  /// The slot as its session lists it; the children watch is never listed.
+  public var subscription: Subscription? {
+    switch self {
+    case let .observe(sql, _): .observe(sql: sql)
+    case let .stream(url, _): .stream(url)
+    case let .timer(schedule, _): .timer(schedule)
+    case .children: nil
+    }
+  }
+
   /// Whether it watches a source (a query, a stream) rather than a clock.
   var observes: Bool {
     switch self {

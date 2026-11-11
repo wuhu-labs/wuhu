@@ -8,8 +8,7 @@ import Testing
 @Suite struct SessionMailTests {
   @Test func `the cell takes what main mails as its own messages`() throws {
     #expect(SessionCell.kind == SessionMail.kind)
-    let stream = SubscriptionID("obs.1")
-    for mail in [SessionMail.put(SessionPut(Fix.message("one"), topic: "t", due: anchor, throttle: 30)), .clear("t"), .stream(stream, URL(string: "https://example.com/events")!, 30), .unstream(stream)] {
+    for mail in [SessionMail.put(SessionPut(Fix.message("one"), topic: "t", due: anchor, throttle: 30)), .clear("t")] {
       let message = try JSONDecoder().decode(SessionCell.Message.self, from: JSONEncoder().encode(mail))
       #expect(try JSONDecoder().decode(SessionMail.self, from: JSONEncoder().encode(message)) == mail)
     }

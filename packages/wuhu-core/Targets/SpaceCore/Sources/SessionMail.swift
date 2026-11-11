@@ -30,9 +30,6 @@ public enum SessionMail: Hashable, Codable, Sendable {
   case put(SessionPut)
   /// Takes back the input on the topic that the model has not seen.
   case clear(String)
-  /// A plain stream observation: the cell runs it as a job until `unstream`.
-  case stream(SubscriptionID, URL, Double)
-  case unstream(SubscriptionID)
 }
 
 extension Sessions {
@@ -50,14 +47,6 @@ extension Sessions {
 
   static func post(_ mail: SessionMail, to key: String, in db: GRDB.Database) throws {
     try Recipient<SessionMail>(kind: SessionMail.kind, key: key).post(mail, on: db.sqliteConnection!)
-  }
-}
-
-extension SessionStore {
-  /// Has the session's cell dial `url` and queue what it sends on the subscription's topic.
-  public func stream(_ id: SessionID, _ subscription: SubscriptionID, url: URL, throttleSeconds: Double) async throws {
-    try await writer.write { db in try Sessions.post(.stream(subscription, url, throttleSeconds), to: id.rawValue, in: db) }
-    runtime.poke(id)
   }
 }
 

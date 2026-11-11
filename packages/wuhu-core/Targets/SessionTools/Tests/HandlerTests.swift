@@ -113,6 +113,7 @@ func withHandlerFiring(
       _ = try await space.fs(.shared).write("/must-not-run.js", Data("import {writeText} from 'wuhu:space'; export default async () => { await writeText('/ran.md','bad',{ifMatch:null}); wake('bad'); return null; };".utf8), ifMatch: nil)
       let watched = try SpacePath(validating: "/archived-input.table")
       _ = try await space.createTable(watched, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
+      _ = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       for handler in [false, true] {
         var timer: [String: JSONValue] = ["message": "bad", "in_seconds": 10]

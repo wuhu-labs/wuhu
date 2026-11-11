@@ -134,15 +134,6 @@ struct SessionCell {
     try advance()
   }
 
-  mutating func stream(_ subscription: SubscriptionID, _ url: URL, _ throttle: Double) {
-    ctx.create(streamJob(subscription), params: .init(dialer: .session(id.session), session: id.session, subscription: subscription, url: url, throttle: throttle, owner: id.recipient.retyped()))
-  }
-
-  mutating func unstream(_ subscription: SubscriptionID) {
-    guard ctx.exists(streamJob(subscription)) else { return }
-    ctx.send(.stop, to: streamJob(subscription))
-  }
-
   /// An archived session ends the stream instead of taking the event.
   mutating func streamed(_ batch: StreamBatch) throws {
     guard try load().record.lifecycle == .live else {
@@ -367,10 +358,6 @@ struct SessionCell {
     }
   }
 
-  private func streamJob(_ subscription: SubscriptionID) -> StreamJob.ID {
-    .init("\(id.session.rawValue):\(subscription.rawValue)")
-  }
-
   private func load() throws -> SessionState {
     SessionState(try rows.hydrate(id.session))
   }
@@ -452,37 +439,8 @@ struct SessionCell {
     try write(turn)
     if turn.seen == true { try see(items) }
     guard turn.armed == true else { return }
-    for item in items {
-      let arming = Armed.armed(by: item)
-      if let slot = Armed.ended(by: item) ?? arming?.id { try db.execute(Armed.where { $0.subscription.eq(slot.rawValue) }.delete()) }
-      guard let arming else { continue }
-      let armed = try Armed(arming.id, arming.slot, handler: rows.armedSlots(id.session).handlers.contains(arming.id))
-      try db.execute(Armed.insert { armed })
-    }
-  }
-
-  /// What the session has armed: its rows that the stores still hold, since a slot that ended without an item keeps its row.
-  private func armed() throws -> [Armed] {
-    let held = try rows.armedSlots(id.session).slots
-    return db.rows(Armed.all).filter { held[$0.id] != nil }
-  }
-
-  private func armedSlots() throws -> [SubscriptionID: Subscription] {
-    Dictionary(uniqueKeysWithValues: try armed().map { ($0.id, try $0.decoded()) })
-  }
-
-  /// A parked model with a plain timer armed needs no reminder: the timer wakes it.
-  private func armedWake() throws -> Bool {
-    try armed().contains { try $0.wakesModel }
-  }
-
-  /// The rows as the stores have them: for a session from before the cell kept them, and at Start over.
-  private mutating func fillArmed() throws {
-    let held = try rows.armedSlots(id.session)
-    try db.execute(Armed.delete())
-    for (slot, subscription) in held.slots {
-      let armed = try Armed(slot, subscription, handler: held.handlers.contains(slot))
-      try db.execute(Armed.insert { armed })
+    for case let .notification(notice) in items where notice.endsSubscription {
+      try db.execute(Armed.where { $0.subscription.eq(notice.subscriptionID.rawValue) }.delete())
     }
   }
 
@@ -549,7 +507,7 @@ struct SessionCell {
     SessionRows(host: db.host, store: client.store)
   }
 
-  private var client: LoopClient {
+  var client: LoopClient {
     ctx.dependency(LoopClient.self)
   }
 }

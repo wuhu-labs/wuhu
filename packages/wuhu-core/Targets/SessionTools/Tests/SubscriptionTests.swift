@@ -69,15 +69,17 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       let child = try await space.sessions.createSession(group: .shared, title: "child", kind: .task, parent: session, createdBy: session.rawValue, executor: try await space.sessions.record(session).executor)
       let watched = try tablePath("/restart.table")
       _ = try await space.createTable(watched, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
+      // Arming is a step of the session's cell. Both are held, so their cells leave the queues for this test to read.
+      try await space.sessions.markInterrupted(session)
+      try await space.sessions.markInterrupted(child)
+      _ = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       guard case let .observe(observation) = try await world.run("observe", .object(["sql": "SELECT n FROM \"/restart.table\"", "throttle_seconds": 1])) else { throw Mismatch("observe failed") }
       _ = try await world.run("timer", .object(["message": "cron survives", "cron": "* * * * *"]))
       _ = try await world.run("timer", .object(["message": "once survives", "in_seconds": 120]))
       _ = try await space.sessions.openRequest(on: child, from: .session(session), messageID: .init("restart-duty"), text: "still owed")
-      try await space.sessions.deliverMail()
       _ = try await space.sessions.drainQueue(child)
       try await space.sessions.put(session, input: .message(.init(id: UUID(), messageID: .init("queued"), conversationID: .init("ch1"), sender: .init(id: "morgan", timeZone: TimeZone(identifier: "UTC")!), timestamp: anchor, content: .init(text: "queued before Start over"))))
-      try await space.sessions.markInterrupted(session)
       let before = try await space.sessions.armedSubscriptions(session)
       try await runningFiring(space) {
         _ = try await space.sessions.restart(session, note: "catch up")
@@ -119,11 +121,13 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
+      // Held, so its cell arms the timer and leaves the queue for this test to drain.
+      try await space.sessions.markInterrupted(session)
+      let worker = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       guard case let .timer(armed) = try await world.run(
         "timer", .object(["message": "check the build", "in_seconds": 60]),
       ) else { throw Mismatch("timer arming failed") }
-      try await space.sessions.deliverMail()
       #expect(try await space.sessions.armedSubscriptions().isEmpty, "a plain timer is no slot")
 
       await time.advance(by: 59)
@@ -137,6 +141,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       #expect(fired.content.text == "check the build")
       await time.advance(by: 3600)
       #expect(try await space.sessions.drainQueue(session).items.isEmpty, "a one-shot puts nothing next")
+      await worker.shutdown()
     }
   }
 
@@ -144,9 +149,11 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
+      // Held, so its cell arms the timer and leaves the queue for this test to drain.
+      try await space.sessions.markInterrupted(session)
+      let worker = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       guard case .timer = try await world.run("timer", .object(["message": "tick", "cron": "*/5 * * * *"])) else { throw Mismatch("cron arming failed") }
-      try await space.sessions.deliverMail()
 
       await time.advance(by: 5 * 60 + 1)
       let first = try await space.sessions.drainQueue(session).items
@@ -159,6 +166,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       #expect(try await space.sessions.drainQueue(session).items.isEmpty, "the next firing is after the drain")
       await time.advance(by: 60)
       #expect(try await space.sessions.drainQueue(session).items.count == 1)
+      await worker.shutdown()
     }
   }
 
@@ -235,6 +243,9 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
+      // Held, so its cell arms and cancels and leaves the queue for this test to drain.
+      try await space.sessions.markInterrupted(session)
+      let worker = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       guard case let .timer(timer) = try await world.run(
@@ -243,7 +254,6 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       guard case let .observe(observation) = try await world.run(
         "observe", .object(["sql": "SELECT 1"]),
       ) else { throw Mismatch("observe arming failed") }
-      try await space.sessions.deliverMail()
 
       let unknown = try await world.run("cancel", .object(["id": "timer.nope"]))
       #expect(try failure(unknown).code == "notFound")
@@ -265,7 +275,6 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       guard case .cancelObservation = try await world.run(
         "cancel", .object(["id": .string(observation.subscriptionID.rawValue)]),
       ) else { throw Mismatch("cancel of the observation failed") }
-      try await space.sessions.deliverMail()
       #expect(try await space.sessions.armedSubscriptions().isEmpty)
 
       // An ended subscription reads as one that never was, for its owner as
@@ -281,13 +290,13 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       // or a cancel retried after it committed.
       var stale = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       _ = try await stale.run("timer", .object(["message": "y", "in_seconds": 600]), id: "tc-t2")
-      try await space.sessions.deliverMail()
       await time.advance(by: 601)
       _ = try await space.sessions.drainQueue(session)
       let ended = try await stale.run(
         "cancel", .object(["id": .string(SubscriptionID.timer(.init("tc-t2")).rawValue)]),
       )
       #expect(try failure(ended).code == "notFound")
+      await worker.shutdown()
     }
   }
 
@@ -295,6 +304,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
+      let worker = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       let first = try await world.run("timer", .object(["message": "x", "in_seconds": 60]), id: "tc-timer")
@@ -303,17 +313,18 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
         throw Mismatch("timer arming failed")
       }
       #expect(a.subscriptionID == b.subscriptionID)
-      try await space.sessions.deliverMail()
       let pending = try await space.writer.read { db in
         try Int.fetchOne(db, sql: "SELECT count(*) FROM session_queue WHERE topic = ?", arguments: [a.subscriptionID.rawValue])
       }
       #expect(pending == 1, "the retry puts nothing more")
+      await worker.shutdown()
     }
   }
 
   @Test func aSubscriptionIsNamedAfterItsHandlerUnlessNamed() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let worker = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
       _ = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "handler": "/h/nightly.js"]), id: "tc-default")
       _ = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "handler": "/h/nightly.js", "name": "evening"]), id: "tc-named")
@@ -322,6 +333,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       #expect(names == ["evening", "nightly", "rows"])
       let empty = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "name": ""]), id: "tc-empty")
       #expect(try failure(empty).code == "invalidArgument")
+      await worker.shutdown()
     }
   }
 
@@ -382,6 +394,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
 
       let session = try await makeSession(space)
       try await space.sessions.markInterrupted(session)
+      _ = await firingWorker(Hub(space: space))
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       let sql = "SELECT n FROM \"/watched.table\" ORDER BY n"
       guard case let .observe(armed) = try await world.run(

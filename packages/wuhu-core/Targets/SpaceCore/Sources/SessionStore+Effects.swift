@@ -31,11 +31,6 @@ public struct ToolReceipt: Sendable {
   func record(now: String, in db: Database) throws {
     try Sessions.recordReceipt(session.rawValue, toolCallID: callID.rawValue, payload: try Sessions.encode(payload), now: now, in: db)
   }
-
-  /// The answer this call already has, if any.
-  func recorded(in db: Database) throws -> ToolResultPayload? {
-    try Sessions.receipt(session.rawValue, toolCallID: callID.rawValue, in: db)
-  }
 }
 
 extension SessionStore {

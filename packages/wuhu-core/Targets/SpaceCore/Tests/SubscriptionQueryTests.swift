@@ -18,9 +18,7 @@ import Testing
       let id = try await tests.owner(store)
       let observation = try await tests.arm(store, id)
       func timer(_ name: String, _ schedule: TimerSchedule, due: Date) async throws {
-        let payload = ToolResultPayload.timer(.init(subscriptionID: .init(name), schedule: schedule, message: name))
-        _ = try await store.armTimer(id, timer: .init(name), schedule: schedule, message: name, due: due, answering: ToolReceipt(session: id, callID: .init("tc-\(name)"), payload: payload))
-        try await store.deliverMail()
+        try await store.rows { try $0.arm(id, Arming(.init(id: .init(name), kind: .timer(schedule, message: name)), nextFireAt: due), uuid: UUID.init) }
       }
       try await timer("timer", .cron("* * * * *"), due: fixedDate.addingTimeInterval(60))
       let initial = try await space.query("SELECT id, session_id, kind, sql, schedule, handler, armed_at, last_fired_at, last_error FROM subscriptions ORDER BY id")

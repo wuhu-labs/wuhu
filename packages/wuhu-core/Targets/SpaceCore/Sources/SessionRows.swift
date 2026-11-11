@@ -24,7 +24,7 @@ public struct SessionRows {
     self.store = store
   }
 
-  private var now: String { SQLiteDateFormat.string(from: store.dateGen.now) }
+  var now: String { SQLiteDateFormat.string(from: store.dateGen.now) }
 
   public func hydrate(_ id: SessionID) throws -> SessionHydration {
     try Sessions.hydrate(id.rawValue, at: now, in: db)

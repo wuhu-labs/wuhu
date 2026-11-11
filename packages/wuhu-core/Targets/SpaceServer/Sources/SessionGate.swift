@@ -12,7 +12,6 @@ import struct InferenceKit.InferenceMetricsSink
 import JSONValue
 import struct LoopCore.SessionExecution
 import MachineContract
-import struct MainHub.CancelArguments
 import struct MainHub.CreateSessionArguments
 import func MainHub.fetchOrigin
 import class MainHub.Hub
@@ -476,7 +475,8 @@ private func sessionRouter(
   }
 
   // One durable slot of the session's own, keyed by the tool call that arms
-  // it, so a retried arm lands on the same slot.
+  // it, so a retried arm lands on the same slot. Main checks what is armed;
+  // the session's cell arms and ends it.
   router.post("/v1/subscription") { request, _ in
     let input: SubscriptionInput
     do {
@@ -485,14 +485,17 @@ private func sessionRouter(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a subscription body: \(error)")
     }
     let payload: ToolResultPayload
+    let (session, call) = (principal().session, callID(request))
     switch (input.observe, input.timer) {
     case let (observe?, nil):
       payload = try await answered {
-        try await owner.observe(principal().session, callID(request), ObserveArguments(sql: observe.sql, url: observe.url, throttleSeconds: observe.throttleSeconds, handler: input.handler, name: input.name))
+        let arming = try await owner.arming(session, call, ObserveArguments(sql: observe.sql, url: observe.url, throttleSeconds: observe.throttleSeconds, handler: input.handler, name: input.name))
+        return try await execution.arm(session, arming, answering: call)
       }
     case let (nil, timer?):
       payload = try await answered {
-        try await owner.timer(principal().session, callID(request), TimerArguments(message: timer.message, inSeconds: timer.inSeconds, cron: timer.cron, handler: input.handler, name: input.name))
+        let arming = try owner.arming(call, TimerArguments(message: timer.message, inSeconds: timer.inSeconds, cron: timer.cron, handler: input.handler, name: input.name))
+        return try await execution.arm(session, arming, answering: call)
       }
     default:
       return errorResponse(.badRequest, code: "invalidArgument", message: "a subscription is exactly one of observe and timer")
@@ -504,9 +507,8 @@ private func sessionRouter(
     guard let id = parameters["id"], !id.isEmpty else {
       return errorResponse(.notFound, code: "notFound", message: "unknown subscription")
     }
-    let payload = try await answered {
-      try await owner.cancel(principal().session, callID(request), CancelArguments(id: id))
-    }
+    let (session, call) = (principal().session, callID(request))
+    let payload = try await answered { try await execution.disarm(session, SubscriptionID(id), answering: call) }
     guard let output = subscriptionOutput(payload) else { return hubRefusal(payload) }
     return try Response.json(output)
   }

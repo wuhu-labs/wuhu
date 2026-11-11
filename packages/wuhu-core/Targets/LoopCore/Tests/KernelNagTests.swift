@@ -221,7 +221,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
         ])
         let config = makeConfig(executeTool: { _ in
           if case let .timer(timer) = wake {
-            _ = try await sessions.armSubscription(sid, slot: .init(id: timer.subscriptionID, kind: .timer(timer.schedule, message: timer.message)), nextFireAt: anchor.addingTimeInterval(3600))
+            try await space.arm(sid, .init(id: timer.subscriptionID, kind: .timer(timer.schedule, message: timer.message)), nextFireAt: anchor.addingTimeInterval(3600), answering: "c-1")
           }
           return wake
         }, inference: { try await script($0) })
@@ -252,8 +252,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
         },
       ])
       let config = makeConfig(executeTool: { _ in
-        _ = try await sessions.armSubscription(sid, slot: .init(id: timerID, kind: .timer(schedule, message: "unused"), handler: "/quiet.js"), nextFireAt: anchor.addingTimeInterval(3600))
-        return .timer(.init(subscriptionID: timerID, schedule: schedule, message: "unused"))
+        try await space.arm(sid, .init(id: timerID, kind: .timer(schedule, message: "unused"), handler: "/quiet.js"), nextFireAt: anchor.addingTimeInterval(3600), answering: "quiet")
       }, inference: { try await script($0) })
       try await runService(space, config) { _ in
         try await sessions.openParentRequest(on: sid)

@@ -1,13 +1,14 @@
 import Foundation
 import GRDB
 @testable import LoopCore
+import struct MainHub.ToolProblem
 import SessionDomain
 @testable import SpaceCore
 import Testing
 import WuhuAI
 
 @Suite struct ArmedTests {
-  @Test func `a slot has a row from the item that arms it to the item that ends it, and a generation's head lists the ones still held`() async throws {
+  @Test func `a slot has a row from the step that arms it to the step that ends it, and a generation's head lists the ones still held`() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -33,24 +34,25 @@ import WuhuAI
       let config = makeConfig(executeTool: { call in
         switch call.name {
         case "plain":
-          let payload = ToolResultPayload.timer(.init(subscriptionID: plain, schedule: once, message: "ping"))
-          return try await sessions.armTimer(sid, timer: plain, schedule: once, message: "ping", due: anchor.addingTimeInterval(60), answering: ToolReceipt(session: sid, callID: .init("tc-plain"), payload: payload))
+          return try await space.arm(sid, .init(id: plain, kind: .timer(once, message: "ping")), nextFireAt: anchor.addingTimeInterval(60), answering: "plain")
         case "quiet":
-          _ = try await sessions.armSubscription(sid, slot: .init(id: quiet, kind: .timer(yearly, message: "unused"), handler: "/quiet.js"), nextFireAt: anchor.addingTimeInterval(86400))
-          return .timer(.init(subscriptionID: quiet, schedule: yearly, message: "unused"))
+          return try await space.arm(sid, .init(id: quiet, kind: .timer(yearly, message: "unused"), handler: "/quiet.js"), nextFireAt: anchor.addingTimeInterval(86400), answering: "quiet")
         case "watch":
-          _ = try await sessions.armSubscription(sid, slot: .init(id: watch, kind: .observe(sql: "SELECT 1", throttleSeconds: 30)), nextFireAt: nil)
-          return .observe(.init(subscriptionID: watch, source: .query("SELECT 1")))
+          return try await space.arm(sid, .init(id: watch, kind: .observe(sql: "SELECT 1", throttleSeconds: 30)), answering: "watch")
         default:
-          try await sessions.cancelSubscription(.session(sid), subscriptionID: watch)
-          return .cancelObservation(.init(subscriptionID: watch))
+          return try await space.disarm(sid, watch, answering: "cancel")
         }
       }, inference: { try await script($0) })
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("arm them"), to: sid)
         try await until("it armed three, cancelled one and folded") { try await sessions.settledWork(sid) && script.count == 4 }
         #expect(try await armed(space) == ["timer.plain": false, "timer.quiet": true])
-        // The handler's slot ends without an item: its row stays, and the next generation's head leaves it out.
+        // A call that already ran gets its answer and arms nothing; a slot that ended is as unknown as one that never was.
+        #expect(try await space.arm(sid, .init(id: plain, kind: .timer(yearly, message: "again")), nextFireAt: anchor, answering: "plain") == .timer(.init(subscriptionID: plain, schedule: once, message: "ping")))
+        #expect(try await space.disarm(sid, watch, answering: "cancel") == .cancelObservation(.init(subscriptionID: watch)))
+        await #expect(throws: ToolProblem.self) { try await space.disarm(sid, watch, answering: "cancel-again") }
+        #expect(try await armed(space) == ["timer.plain": false, "timer.quiet": true])
+        // The handler's slot ends without a step of the cell: its row stays, and the next generation's head leaves it out.
         try await sessions.cancelSubscription(.session(sid), subscriptionID: quiet)
         try await service.enqueue(item: Fix.message("fold again"), to: sid)
         try await until("it folded again") { try await sessions.settledWork(sid) && script.count == 6 }

@@ -44,26 +44,3 @@ extension Sessions {
     }
   }
 }
-
-extension SessionStore {
-  public func armTimer(
-    _ id: SessionID,
-    timer: SubscriptionID,
-    schedule: TimerSchedule,
-    message: String,
-    due: Date,
-    answering receipt: ToolReceipt,
-  ) async throws -> ToolResultPayload {
-    let nowDate = dateGen.now
-    let now = SQLiteDateFormat.string(from: nowDate)
-    let payload = try await writer.write { db in
-      if let recorded = try receipt.recorded(in: db) { return recorded }
-      let put = Sessions.timerPut(id.rawValue, id: timer, schedule: schedule, message: message, due: due)
-      try Sessions.enqueue(id.rawValue, input: put.input, topic: put.topic, due: put.due, nowDate: nowDate, in: db)
-      try receipt.record(now: now, in: db)
-      return receipt.payload
-    }
-    runtime.poke(id)
-    return payload
-  }
-}

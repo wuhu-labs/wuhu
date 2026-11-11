@@ -92,7 +92,7 @@ private func cursor(_ space: Space) async throws -> String? {
   @Test func `events wait on their topic for the throttle and a new dial resumes after the last one taken`() async throws {
     let events = EventServer()
     try await streaming(events, replies: ["one", "two"]) { space, session, execution, time in
-      try await space.sessions.stream(session, observation, url: url, throttleSeconds: 30)
+      _ = try await execution.arm(session, Arming(.init(id: observation, kind: .stream(url: url, throttleSeconds: 30))), answering: ToolCallID("arm"))
       try await until("first dial") { events.dials.count == 1 }
       let listed = try await space.query("SELECT id, url FROM subscriptions", as: space.principal(of: session))
       #expect(listed.rows == [[.text(observation.rawValue), .text(url.absoluteString)]])
@@ -121,7 +121,7 @@ private func cursor(_ space: Space) async throws -> String? {
   @Test func `a refused stream says why once and ends`() async throws {
     let events = EventServer { _ in Response(status: .notFound) }
     try await streaming(events, replies: ["seen"]) { space, session, execution, _ in
-      try await space.sessions.stream(session, observation, url: url, throttleSeconds: 0)
+      _ = try await execution.arm(session, Arming(.init(id: observation, kind: .stream(url: url, throttleSeconds: 0))), answering: ToolCallID("arm"))
       try await until("the ending wakes the session") { try await observed(space, session).count == 1 }
       let ending = try await observed(space, session)[0]
       #expect(ending.content.text == "observation \(observation.rawValue) of \(url) failed and was cancelled: \(url) answered HTTP 404")
@@ -134,11 +134,9 @@ private func cursor(_ space: Space) async throws -> String? {
   @Test func `unstreaming closes the connection and unlists the stream`() async throws {
     let events = EventServer()
     try await streaming(events) { space, session, execution, _ in
-      try await space.sessions.stream(session, observation, url: url, throttleSeconds: 0)
+      _ = try await execution.arm(session, Arming(.init(id: observation, kind: .stream(url: url, throttleSeconds: 0))), answering: ToolCallID("arm"))
       try await until("first dial") { events.dials.count == 1 }
-      _ = try await space.sessions.cancelSubscription(session, subscriptionID: observation, answering: ToolCallID("cancel")) { _ in
-        .cancelObservation(.init(subscriptionID: observation))
-      }
+      #expect(try await execution.disarm(session, observation, answering: ToolCallID("cancel")) == .cancelObservation(.init(subscriptionID: observation)))
       try await until("the connection closes") { !events.send(": ping\n\n", on: 0) }
       try await until("unlisted") { try await space.query("SELECT id FROM subscriptions", as: space.principal(of: session)).rows.isEmpty }
       #expect(events.dials.count == 1)
