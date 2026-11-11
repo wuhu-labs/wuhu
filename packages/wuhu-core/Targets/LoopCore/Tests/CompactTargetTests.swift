@@ -8,8 +8,9 @@ import Synchronization
 import Testing
 import WuhuAI
 
-private func targetedCompact(model: String?, effort: String? = nil) -> ToolCall {
+private func targetedCompact(model: String?, effort: String? = nil, preReads: [String] = []) -> ToolCall {
   var arguments: [String: JSONValue] = ["summary": .string("where things stand")]
+  if !preReads.isEmpty { arguments["pre_reads"] = .array(preReads.map { .string($0) }) }
   if let model { arguments["model"] = .string(model) }
   if let effort { arguments["effort"] = .string(effort) }
   return .init(id: "call_t", name: "compact", arguments: .object(.init(uniqueKeysWithValues: arguments.sorted { $0.key < $1.key })))
@@ -87,6 +88,31 @@ private struct TargetRefused: Error, CustomStringConvertible {
         return
       }
       #expect(head.summary == "where things stand")
+    }
+  }
+
+  @Test func aMovedGenerationReReadsUnderItsOwnHead() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let old = SessionModelRoute(group: "work", member: "primary", specifier: .test, bindingFingerprint: "fixture", epoch: "primary", reason: .create, placedAt: Date(timeIntervalSince1970: 0), evidence: [])
+      let id = try await sessions.createSession(group: .shared, title: "moved", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: old)
+      let script = InferenceScript([
+        Fix.replying("switching", calls: [targetedCompact(model: nil, preReads: ["/notes.md"])]),
+        Fix.replying("continuing"),
+      ])
+      var config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
+      config.prepareCompaction = { _, compacted, _ in
+        var next = old
+        next.specifier.effort = "low"
+        let moved = try compacted.portableHandoff(binding: .init(identity: "scope", epoch: old.epoch), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [], openRequests: [])
+        return ModelRouteTransition(expectedEpoch: old.epoch, route: next, transcript: moved)
+      }
+      try await runService(space, config) { service in
+        try await service.enqueue(item: Fix.message("work"), to: id)
+        try await until("the moved generation re-reads and continues") { try await sessions.settledWork(id) && script.count == 2 }
+      }
+      #expect(try await sessions.generationState(id).generation == 1)
     }
   }
 }

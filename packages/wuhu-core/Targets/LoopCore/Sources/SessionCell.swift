@@ -244,7 +244,7 @@ struct SessionCell {
         session.transcript.phase == .live ? ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary))) : nil
       }
       let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, completingCompact: true, transition: transition)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: head.reestablishmentCalls, replied: false, nags: carried(into: written), seen: true))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true))
       try see(only: written)
       invalidateInference()
     case let .refused(call, message):
