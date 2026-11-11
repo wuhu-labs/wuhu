@@ -1,0 +1,94 @@
+import SessionDomain
+import StructuredQueries
+import struct WuhuAI.ToolCall
+import WuweiQueries
+
+/// Where a session's turn stands, written by its cell in the step that writes the transcript: the cell's next move without reading the transcript back. The cell does not read it yet; each step checks it against the transcript's fold (`init(folding:generation:)`).
+@Table("session_state")
+struct SessionTurn: Owned, Equatable, Encodable, Sendable {
+  var generation: Int
+  /// Items in the generation, which is where the next one goes.
+  var position: Int
+  @Column(as: Turn.JSONRepresentation.self) var turn: Turn
+  /// The reads the generation's head asks for that are not answered yet. Empty once the generation has a reply of its own.
+  @Column(as: [ToolCall].JSONRepresentation.self) var reestablish: [ToolCall]
+  var replied: Bool
+
+  enum Turn: Equatable, Codable, Sendable {
+    /// A generation nothing was said in: created or started over.
+    case inert
+    /// The model owes a step, or the next of `reestablish` first.
+    case model
+    /// The calls of the model's reply that are not answered, in its order.
+    case tools(calls: [ToolCall])
+    /// The model spoke last.
+    case idle
+    /// Parked by this compact call: the next delivery runs the fold.
+    case folding(call: ToolCallID)
+  }
+
+  /// The model's reply.
+  mutating func reply(_ calls: [ToolCall]) {
+    position += 1
+    replied = true
+    reestablish = []
+    turn = calls.isEmpty ? .idle : .tools(calls: calls)
+  }
+
+  /// `count` inputs or notices went after the tail.
+  mutating func input(_ count: Int) {
+    guard count > 0 else { return }
+    position += count
+    if turn == .idle || turn == .inert { turn = .model }
+  }
+
+  /// The answer to one of the reply's calls.
+  mutating func answer(_ call: ToolCallID) {
+    position += 1
+    guard case var .tools(calls) = turn else { return }
+    calls.removeAll { $0.id == call.rawValue }
+    turn = calls.isEmpty ? .model : .tools(calls: calls)
+  }
+
+  /// The answer to the first of `reestablish`.
+  mutating func reestablished() {
+    position += 1
+    reestablish = Array(reestablish.dropFirst())
+  }
+
+  /// The answer to a compact call that parks: the reply's other calls go unanswered.
+  mutating func park(_ call: ToolCallID) {
+    position += 1
+    turn = .folding(call: call)
+  }
+}
+
+/// A turn row that differed from its transcript's fold, as the mismatch log takes it.
+public struct TurnDifference: Sendable, Encodable {
+  var time: String
+  var session: String
+  var stored: SessionTurn
+  var folded: SessionTurn
+}
+
+extension SessionTurn {
+  init(folding transcript: Transcript, generation: Int) {
+    let pending = Set(transcript.pendingToolCallIDs.map(\.rawValue))
+    let calls = transcript.items.flatMap { item -> [ToolCall] in
+      guard case let .assistant(entry) = item else { return [] }
+      return entry.toolCalls.filter { pending.contains($0.id) }
+    }
+    let turn: Turn = if case let .foldPending(call) = transcript.phase {
+      .folding(call: call)
+    } else if !calls.isEmpty {
+      .tools(calls: calls)
+    } else if transcript.hasWork {
+      .model
+    } else if case .assistant? = transcript.items.last {
+      .idle
+    } else {
+      .inert
+    }
+    self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply)
+  }
+}

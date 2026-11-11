@@ -6,6 +6,7 @@ import struct ExecutionOwner.LineDifferenceLog
 #endif
 import Logging
 import struct LoopCore.InferenceRequest
+import struct LoopCore.TurnDifference
 import struct SessionDomain.TranscriptPreamble
 import struct SpaceCore.SessionStore
 import struct SpaceCore.TranscriptLineDifference
@@ -19,6 +20,15 @@ func lineDifferenceLog(environment: [String: String] = ProcessInfo.processInfo.e
   } catch {
     Logger(label: "wuhu.lines").error("transcript diff log unavailable", metadata: ["path": "\(path)", "error": "\(error)"])
     return nil
+  }
+}
+
+extension LineDifferenceLog {
+  func record(_ difference: TurnDifference) async {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    guard let line = try? encoder.encode(difference) else { return }
+    await append(line + Data("\n".utf8))
   }
 }
 

@@ -61,6 +61,7 @@ struct KernelWorker: Sendable {
         invalidateInference: { await sockets.invalidate($0) },
         thresholds: thresholds,
         sources: sources,
+        turnDifference: access.lineDifferences.map { log in { @Sendable difference in await log.record(difference) } },
       )
     }
   }

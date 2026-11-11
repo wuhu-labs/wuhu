@@ -131,7 +131,11 @@ func runService(
   _ config: LoopConfig,
   body: (SessionExecution) async throws -> Void,
 ) async throws {
+  var config = config
+  let differences = Box<[TurnDifference]>([])
+  config.turnDifference = { difference in differences.withLock { $0.append(difference) } }
   try await runService(SessionExecution(space: space, loopConfig: config), body: body)
+  #expect(differences.value.isEmpty, "turn rows that differed from their transcripts: \(differences.value)")
 }
 
 func runService(

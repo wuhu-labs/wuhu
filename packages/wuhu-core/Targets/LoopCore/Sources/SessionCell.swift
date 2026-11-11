@@ -18,6 +18,9 @@ import Wuwei
 @Cell
 struct SessionCell {
   static let kind = SessionMail.kind
+  static let schema = [
+    "CREATE TABLE session_state (\(ownerColumn), generation INTEGER NOT NULL, position INTEGER NOT NULL, turn TEXT NOT NULL, reestablish TEXT NOT NULL, replied INTEGER NOT NULL, UNIQUE (owner))",
+  ]
 
   /// An input for the queue. Looking at it is a step of its own, so the input stays whatever that step meets.
   mutating func put(_ put: SessionPut) throws {
@@ -116,9 +119,10 @@ struct SessionCell {
   /// Start over. Main checked the session was settled; one that started a job since keeps it, and the restart is dropped. Queued input waits for the new generation.
   mutating func restart(_ executor: SessionExecutor?, _ route: SessionModelRoute?, _ note: String?, _ runningWork: [String]) throws {
     if let session = try? load(), working(session) != nil { return }
-    try client.dependencies.yield {
+    let restart = try client.dependencies.yield {
       try rows.restart(id.session, executor: executor, note: note, modelRoute: route, runningWork: runningWork, uuid: client.uuid)
     }
+    try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false))
     invalidateInference()
     try advance()
   }
@@ -158,7 +162,12 @@ struct SessionCell {
       if !forced, entry.toolCalls.isEmpty, let nag = transcript.environment.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), now: client.dueNow()) {
         transcript.append(.notification(nag.notification(id: client.uuid(), at: now)))
       }
-      try rows.append(id.session, items: Array(transcript.items[session.slot.position...]), inputOrigin: transcript.cacheWarmingInputOrigin, completingCompact: forced)
+      let appended = Array(transcript.items[session.slot.position...])
+      try rows.append(id.session, items: appended, inputOrigin: transcript.cacheWarmingInputOrigin, completingCompact: forced)
+      try move {
+        $0.reply(entry.toolCalls)
+        $0.input(appended.count - 1)
+      }
       let next = Slot(session.slot, position: transcript.items.count)
       if forced, !entry.callsCompact {
         start(next.compaction, .fallback)
@@ -189,7 +198,7 @@ struct SessionCell {
         call bookmark to mark a cut point, then compact to fold everything before it.
         </compaction-notice>
         """),
-      ))])
+      ))]) { $0.input(1) }
     case .compact:
       start(session.slot.compaction, .fallback)
       return
@@ -230,12 +239,14 @@ struct SessionCell {
       let closing = call.flatMap { call in
         session.transcript.phase == .live ? ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary))) : nil
       }
-      _ = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, completingCompact: true, transition: transition)
+      let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, completingCompact: true, transition: transition)
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: head.reestablishmentCalls, replied: false))
       invalidateInference()
     case let .refused(call, message):
       try writeToolResult(session, .toolCall(call), .failure(.init(message: message)))
     case let .handoff(transcript):
-      _ = try rows.writePortableHandoff(id.session, transcript: transcript)
+      let written = try rows.writePortableHandoff(id.session, transcript: transcript)
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false))
       invalidateInference()
     case let .failed(message):
       try rows.markErrored(id.session, message: message)
@@ -248,6 +259,7 @@ struct SessionCell {
   private mutating func advance() throws {
     while true {
       let session = try load()
+      try check(session)
       guard !session.stopped, working(session) == nil, try next(session) else { return }
     }
   }
@@ -264,16 +276,18 @@ struct SessionCell {
     }
     if let call = transcript.nextPendingToolCall { return try run(call, session) }
     if session.queueHead > session.queueTail {
-      _ = try rows.drainQueue(id.session)
+      let drained = try rows.drainQueue(id.session)
+      try move { $0.input(drained.items.count) }
       return true
     }
-    if try rows.materializeCompactRequest(id.session, uuid: client.uuid) {
+    if let written = try rows.materializeCompactRequest(id.session, uuid: client.uuid) {
+      try move { $0.input(written) }
       try rows.markCompacting(id.session, active: true)
       start(try load().slot.step(forced: true), .forcedCompact)
       return false
     }
     if transcript.hasWork {
-      if let call = transcript.nextReestablishment {
+      if let call = transcript.reestablishments.first {
         try start(session.slot.call, call)
       } else {
         start(session.slot.step(forced: false), .normal)
@@ -286,7 +300,7 @@ struct SessionCell {
     let openRequests = try rows.openRequests(id.session)
     let now = client.now()
     if let nag = transcript.environment.nag(task: session.isTask, openRequests: openRequests, now: client.dueNow()) {
-      try append(session, [.notification(nag.notification(id: client.uuid(), at: now))])
+      try append(session, [.notification(nag.notification(id: client.uuid(), at: now))]) { $0.input(1) }
       return true
     }
     return false
@@ -298,7 +312,7 @@ struct SessionCell {
     case .bookmark:
       do {
         let arguments = try decodeArguments(BookmarkArguments.self, from: call)
-        try append(session, [.bookmark(BookmarkMarker(id: client.uuid(), timestamp: client.now(), name: arguments.name, toolCallID: callID))])
+        try append(session, [.bookmark(BookmarkMarker(id: client.uuid(), timestamp: client.now(), name: arguments.name, toolCallID: callID))]) { $0.answer(callID) }
       } catch {
         try writeToolResult(session, .toolCall(callID), .failure(.init(message: "invalid bookmark arguments: \(error)")))
       }
@@ -386,18 +400,49 @@ struct SessionCell {
     ctx.create(compaction, params: .init(session: id.session, generation: slot.generation, position: slot.position, kind: kind))
   }
 
-  private func writeToolResult(_ session: SessionState, _ provenance: ToolResultItem.Provenance, _ payload: ToolResultPayload, context: ScopeContext? = nil) throws {
+  private mutating func writeToolResult(_ session: SessionState, _ provenance: ToolResultItem.Provenance, _ payload: ToolResultPayload, context: ScopeContext? = nil) throws {
     // The backstop, not the budget: whatever the tool layer missed must not
     // enter the transcript unclamped.
     var items: [TranscriptItem] = [.toolResult(ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: provenance, payload: payload.clamped()))]
     if let context { items.append(.notification(context.notice(id: client.uuid(), at: client.now()))) }
-    try append(session, items)
+    try append(session, items) { turn in
+      switch (provenance, payload) {
+      case let (.toolCall(call), .compact): turn.park(call)
+      case let (.toolCall(call), _): turn.answer(call)
+      case (.compactionReestablishment, _): turn.reestablished()
+      }
+      turn.input(context == nil ? 0 : 1)
+    }
   }
 
-  private func append(_ session: SessionState, _ items: [TranscriptItem]) throws {
+  private mutating func append(_ session: SessionState, _ items: [TranscriptItem], _ change: (inout SessionTurn) -> Void) throws {
     var transcript = session.transcript
     for item in items { transcript.append(item) }
     try rows.append(id.session, items: items, inputOrigin: transcript.cacheWarmingInputOrigin)
+    try move(change)
+  }
+
+  /// A session that has no turn row yet gets one from its transcript at its next step (`check`).
+  private mutating func move(_ change: (inout SessionTurn) -> Void) throws {
+    guard var turn = db.rows(SessionTurn.all).first else { return }
+    change(&turn)
+    try write(turn)
+  }
+
+  private mutating func write(_ turn: SessionTurn) throws {
+    try db.execute(SessionTurn.delete())
+    try db.execute(SessionTurn.insert { turn })
+  }
+
+  /// A turn row that is not what the transcript folds to is reported and replaced, so each divergence is reported once.
+  private mutating func check(_ session: SessionState) throws {
+    let folded = SessionTurn(folding: session.transcript, generation: session.generation)
+    let stored = db.rows(SessionTurn.all).first
+    guard stored != folded else { return }
+    try write(folded)
+    guard let stored, let report = client.config.turnDifference else { return }
+    let difference = TurnDifference(time: client.now().formatted(.iso8601), session: id.key, stored: stored, folded: folded)
+    ctx.emit { await report(difference) }
   }
 
   private mutating func invalidateInference() {
@@ -510,13 +555,13 @@ extension Transcript {
     items[keptCount...].contains { if case .assistant = $0 { true } else { false } }
   }
 
-  /// The generation head's next re-establishing read, while the generation has none of its own replies.
-  var nextReestablishment: ToolCall? {
-    guard needsReestablishment, case let .generationHead(head) = items.first else { return nil }
+  /// The generation head's re-establishing reads that are not answered, while the generation has none of its own replies.
+  var reestablishments: [ToolCall] {
+    guard needsReestablishment, case let .generationHead(head) = items.first else { return [] }
     let done = items[keptCount...].count { item in
       if case let .toolResult(result) = item, result.provenance == .compactionReestablishment { true } else { false }
     }
-    return done < head.reestablishmentCalls.count ? head.reestablishmentCalls[done] : nil
+    return Array(head.reestablishmentCalls.dropFirst(done))
   }
 }
 

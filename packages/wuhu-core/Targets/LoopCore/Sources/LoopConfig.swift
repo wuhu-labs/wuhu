@@ -114,6 +114,8 @@ public struct LoopConfig: Sendable {
   public var thresholds: CompactionThresholds
   /// Where a session's plain stream observations dial.
   public var sources: EventSources
+  /// Takes each turn row a session's cell found different from its transcript.
+  public var turnDifference: (@Sendable (TurnDifference) async -> Void)?
 
   public init(
     executeTool: @escaping @Sendable (ToolInvocation) async throws -> ToolOutcome,
@@ -126,6 +128,7 @@ public struct LoopConfig: Sendable {
     runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] },
     thresholds: CompactionThresholds = .init(),
     sources: EventSources = .unavailable,
+    turnDifference: (@Sendable (TurnDifference) async -> Void)? = nil,
   ) {
     self.prepareCompaction = prepareCompaction
     self.executeTool = executeTool
@@ -137,5 +140,6 @@ public struct LoopConfig: Sendable {
     self.runningWork = runningWork
     self.thresholds = thresholds
     self.sources = sources
+    self.turnDifference = turnDifference
   }
 }

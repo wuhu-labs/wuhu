@@ -65,10 +65,10 @@ public struct SessionRows {
     return row.command
   }
 
-  /// Puts a pending compact command's instructions in the transcript as one notification, once: the forced step answers the slot after it. False when no compact command is pending.
-  public func materializeCompactRequest(_ id: SessionID, uuid: () -> UUID) throws -> Bool {
+  /// Puts a pending compact command's instructions in the transcript as one notification, once: the forced step answers the slot after it. Answers how many items that wrote, nil when no compact command is pending.
+  public func materializeCompactRequest(_ id: SessionID, uuid: () -> UUID) throws -> Int? {
     let key = id.rawValue
-    guard case let .compact(instructions)? = try SessionCommandRow.find(key, in: db)?.command else { return false }
+    guard case let .compact(instructions)? = try SessionCommandRow.find(key, in: db)?.command else { return nil }
     let runtime = try Sessions.runtime(key, in: db)
     var transcript = try Sessions.transcript(key, in: db)
     let text = MessageContent(text: instructions ?? "")
@@ -79,12 +79,12 @@ public struct SessionRows {
       guard case let .notification(notification) = item else { return false }
       return notification.kind == .compactRequest && notification.content == text
     }
-    guard !materialized else { return true }
+    guard !materialized else { return 0 }
     let item = TranscriptItem.notification(SystemNotification(id: uuid(), timestamp: store.dateGen.now, kind: .compactRequest, subscriptionID: .compactRequest, content: text))
     try Sessions.append(key, generation: runtime.generation, items: [item], in: db)
     transcript.append(item)
     try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
-    return true
+    return 1
   }
 
   // A drained input is unanswered by construction — it lands after any
