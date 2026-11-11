@@ -23,6 +23,8 @@ struct SessionCell {
     "ALTER TABLE session_state ADD COLUMN nags TEXT",
     "ALTER TABLE session_state ADD COLUMN seen INTEGER",
     "CREATE TABLE session_seen (\(ownerColumn), kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT, UNIQUE (owner, kind, key))",
+    "ALTER TABLE session_state ADD COLUMN armed INTEGER",
+    "CREATE TABLE session_armed (\(ownerColumn), id TEXT NOT NULL, slot TEXT NOT NULL, handler INTEGER NOT NULL, UNIQUE (owner, id))",
   ]
 
   /// An input for the queue. Looking at it is a step of its own, so the input stays whatever that step meets.
@@ -125,8 +127,9 @@ struct SessionCell {
     let restart = try client.dependencies.yield {
       try rows.restart(id.session, executor: executor, note: note, modelRoute: route, runningWork: runningWork, uuid: client.uuid)
     }
-    try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false, nags: nil, seen: true))
+    try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false, nags: nil, seen: true, armed: true))
     try db.execute(Seen.delete())
+    try write(Armed.folding(load().transcript.environment.tools))
     invalidateInference()
     try advance()
   }
@@ -248,14 +251,14 @@ struct SessionCell {
         session.transcript.phase == .live ? ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary))) : nil
       }
       let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, completingCompact: true, transition: transition)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
       try see(only: written)
       invalidateInference()
     case let .refused(call, message):
       try writeToolResult(session, .toolCall(call), .failure(.init(message: message)))
     case let .handoff(transcript):
       let written = try rows.writePortableHandoff(id.session, transcript: transcript)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
       try see(only: written)
       invalidateInference()
     case let .failed(message):
@@ -429,16 +432,22 @@ struct SessionCell {
     var transcript = session.transcript
     for item in items { transcript.append(item) }
     try rows.append(id.session, items: items, inputOrigin: transcript.cacheWarmingInputOrigin)
-    try move(wrote: items, change)
+    try move(wrote: items, handlers: transcript.handlerSubscriptions, change)
   }
 
   /// A session that has no turn row yet gets one from its transcript at its next step (`check`).
-  private mutating func move(wrote items: [TranscriptItem] = [], _ change: (inout SessionTurn) -> Void) throws {
+  private mutating func move(wrote items: [TranscriptItem] = [], handlers: Set<SubscriptionID> = [], _ change: (inout SessionTurn) -> Void) throws {
     guard var turn = db.rows(SessionTurn.all).first else { return }
     change(&turn)
     for item in items { turn.nags?.apply(item) }
     try write(turn)
     if turn.seen == true { try see(items) }
+    guard turn.armed == true else { return }
+    for item in items {
+      let armed = try Armed.armed(by: item, handlers: handlers)
+      if let id = Armed.ended(by: item)?.rawValue ?? armed?.subscription { try db.execute(Armed.where { $0.subscription.eq(id) }.delete()) }
+      if let armed { try db.execute(Armed.insert { armed }) }
+    }
   }
 
   /// A file or a folder is seen as it was last; an instruction text keeps the path it first came from.
@@ -468,6 +477,11 @@ struct SessionCell {
     try db.execute(SessionTurn.insert { turn })
   }
 
+  private mutating func write(_ armed: Set<Armed>) throws {
+    try db.execute(Armed.delete())
+    for slot in armed { try db.execute(Armed.insert { slot }) }
+  }
+
   /// A turn row that is not what the transcript folds to is reported and replaced, so each divergence is reported once.
   private mutating func check(_ session: SessionState) throws {
     let environment = session.transcript.environment
@@ -477,7 +491,15 @@ struct SessionCell {
     var stored = row
     if stored?.nags == nil { stored?.nags = folded.nags }
     stored?.seen = true
+    stored?.armed = true
     if let stored, stored != folded { report(.turn(stored), .turn(folded)) }
+
+    let registered = session.transcript.registeredSubscriptions
+    let (armed, arming) = (Set(db.rows(Armed.all)).filter { registered?.contains(SubscriptionID($0.subscription)) != false }, try Armed.folding(environment.tools))
+    if armed != arming {
+      try write(arming)
+      if row?.armed == true { report(.armed(armed.subtracting(arming).sorted { $0.subscription < $1.subscription }), .armed(arming.subtracting(armed).sorted { $0.subscription < $1.subscription })) }
+    }
 
     let (seen, shown) = (Set(db.rows(Seen.all)), try Seen.folding(environment.tools))
     guard seen != shown else { return }

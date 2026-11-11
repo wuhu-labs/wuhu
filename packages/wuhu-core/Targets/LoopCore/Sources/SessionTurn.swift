@@ -17,6 +17,8 @@ struct SessionTurn: Owned, Equatable, Encodable, Sendable {
   @Column(as: NagState.JSONRepresentation?.self) var nags: NagState?
   /// Nil in a row from before the cell kept what the generation saw (`Seen`): the next step takes that from the transcript.
   var seen: Bool?
+  /// Nil in a row from before the cell kept what the session armed (`Armed`): the next step takes that from the transcript.
+  var armed: Bool?
 
   enum Turn: Equatable, Codable, Sendable {
     /// A generation nothing was said in: created or started over.
@@ -74,15 +76,17 @@ public struct TurnDifference: Sendable, Encodable {
   var stored: Side
   var folded: Side
 
-  /// The row, or the rows of what the generation saw that the other side lacks.
+  /// The row, or the rows of what the generation saw or the session armed that the other side lacks.
   enum Side: Sendable, Encodable {
     case turn(SessionTurn)
     case seen([Seen])
+    case armed([Armed])
 
     func encode(to encoder: any Encoder) throws {
       switch self {
       case let .turn(turn): try turn.encode(to: encoder)
       case let .seen(seen): try seen.encode(to: encoder)
+      case let .armed(armed): try armed.encode(to: encoder)
       }
     }
   }
@@ -106,6 +110,6 @@ extension SessionTurn {
     } else {
       .inert
     }
-    self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply, nags: nags, seen: true)
+    self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply, nags: nags, seen: true, armed: true)
   }
 }
