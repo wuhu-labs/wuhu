@@ -18,6 +18,11 @@ changes here are contract changes.
   the externally-tagged `{"<case>": {…}}` wrapper and never a `_0` key. The
   `@Contract` macro derives both the schema and the matching `Codable` from one
   source, so they cannot drift.
+- **Fallback cases** are opt-in: `@Contract(fallback: "unknown")` names the
+  case a value this type does not know decodes to, `case unknown` in a string
+  enum and `case unknown(kind: String)` (labelled by the discriminator) in a
+  union; the macro rejects any other shape. The case is left out of the schema
+  and is receive-only: encoding it throws, so a writer never sends it.
 - **Optional fields** are omitted from the object when absent (never sent as an
   explicit `null`), and are absent from the schema's `required`.
 - **`JSONValue` leaf** (`QueryOutput.rows` cells, `RowOp` insert/update `values`)
@@ -270,10 +275,6 @@ server-local.
   `data` both carry `group`, the notification's group, and an outside
   sender's title reads `<sender> (group <senderGroup>)`, as `wuhu inbox`
   prints it.
-- **`TranscriptReadOutput`** (`GET /v1/session/:id/transcript`): one-shot
-  snapshot of the current generation for the CLI transcript views; `items` are
-  the same opaque canonical `TranscriptItem` encodings the direct-view stream
-  carries.
 
 ## Session observation streams
 
@@ -287,25 +288,10 @@ materializes the session actor.
   message is one `SessionLineEvent`: `reset(generation)` drops every line
   held, `line(generation, line)` places a `SessionLinePayload` at its
   position. Prompt lines (keys `system`, `group`, `session`) can arrive after
-  later positions; a resume resends them.
-- **Direct view SSE** (`GET /v1/session/:id/direct?generation=&position=`):
-  each SSE message is one `SessionStreamEvent`.
-  - `reset(generation)` opens every connection whose cursor is absent or names
-    a superseded generation (compaction bumped it): drop held state, the full
-    current generation follows as `item` events from position 0.
-  - `item(generation, position, item)` is a committed transcript entry;
-    `(generation, position)` is the resume cursor. `item` is an opaque JSON
-    leaf: the session domain's canonical `TranscriptItem` encoding (the same
-    bytes the store persists), not a `@Contract` mirror.
-  - Attempt events narrate the ephemeral inference side channel: `started`,
-    `delta` (append `text` to the attempt's accumulated stream), `cancelled`
-    (drop the bubble; the attempt will retry or park). Late joiners receive
-    `started` plus one `delta` carrying the accumulated text so far.
-  - `materialized(attemptId, entryId)` fires strictly after the durable
-    commit (it is derived from the committed-row observation, not from the
-    inference stream) and precedes its `item` event; the client swaps the
-    streamed bubble for the entry by exact `entryId` match. The committed
-    assistant entry's id equals its attempt id by construction.
+  later positions; a resume resends them. `SessionLineEvent` and
+  `SessionLineRole` have an `unknown` fallback: a client skips an event kind
+  or line role it does not know, so a newer server never stalls an older
+  client's tail.
 
 ## Space URLs
 

@@ -662,66 +662,6 @@ func addSessionRoutes(
     }
   }
 
-  router.get("/v1/session/:id/transcript/page") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
-    let query = queryValues(of: request.url)
-    guard let limit = Int(query["limit"] ?? "200"), (1 ... 200).contains(limit),
-          query["generation"].map({ Int($0) != nil }) ?? true,
-          query["before"].map({ Int($0) != nil }) ?? true
-    else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "invalid transcript page cursor or limit")
-    }
-    do {
-      let page = try await store.transcriptHistory(id, limit: limit, generation: query["generation"].flatMap(Int.init), before: query["before"].flatMap(Int.init), epoch: query["epoch"])
-      return try Response.json(TranscriptHistoryOutput(
-        historyEpoch: page.historyEpoch,
-        generation: page.generation,
-        entries: page.entries.map { TranscriptHistoryEntryPayload(position: $0.position, item: itemJSON($0.item)) },
-        origins: page.origins.map { TranscriptHistoryEntryPayload(position: $0.position, item: itemJSON($0.item)) },
-        before: page.before,
-        hasEarlier: page.hasEarlier,
-        headPosition: page.headPosition,
-      ))
-    } catch let error as TranscriptHistoryError {
-      switch error {
-      case .invalidPage:
-        return errorResponse(.badRequest, code: "invalidArgument", message: "pass a valid generation and exclusive before together")
-      case .generationChanged, .historyChanged:
-        return errorResponse(.conflict, code: "generationChanged", message: "transcript generation changed; bootstrap the recent page")
-      case .preparing:
-        return errorResponse(.serviceUnavailable, code: "transcriptPreparing", message: "Preparing history; retry this page")
-      }
-    } catch { return sessionErrorResponse(error) }
-  }
-
-  router.get("/v1/session/:id/transcript") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
-    do {
-      let (generation, items) = try await store.transcriptSnapshot(id)
-      return try Response.json(TranscriptReadOutput(generation: generation, items: items.map(itemJSON)))
-    } catch {
-      return sessionErrorResponse(error)
-    }
-  }
-
-  router.get("/v1/session/:id/direct") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
-    let query = queryValues(of: request.url)
-    let cursor: TranscriptCursor?
-    switch (query["generation"].flatMap(Int.init), query["position"].flatMap(Int.init)) {
-    case let (generation?, position?):
-      cursor = TranscriptCursor(generation: generation, position: position)
-    case (nil, nil):
-      cursor = nil
-    default:
-      return errorResponse(.badRequest, code: "invalidArgument", message: "pass generation and position together, or neither")
-    }
-    return directStreamResponse(runtime: runtime, session: id, cursor: cursor, bounded: query["paged"] == "true", historyEpoch: query["epoch"])
-  }
-
   router.post("/v1/watermark") { request, _ in
     let input: WatermarkInput
     do {

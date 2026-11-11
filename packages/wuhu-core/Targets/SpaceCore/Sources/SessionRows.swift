@@ -70,7 +70,7 @@ public struct SessionRows {
     let key = id.rawValue
     guard case let .compact(instructions)? = try SessionCommandRow.find(key, in: db)?.command else { return nil }
     let runtime = try Sessions.runtime(key, in: db)
-    var transcript = try Sessions.transcript(key, in: db)
+    let transcript = try Sessions.transcript(key, in: db)
     let text = MessageContent(text: instructions ?? "")
     let pending = transcript.items.reversed().prefix { item in
       switch item { case .assistant, .generationHead: false; default: true }
@@ -82,14 +82,14 @@ public struct SessionRows {
     guard !materialized else { return 0 }
     let item = TranscriptItem.notification(SystemNotification(id: uuid(), timestamp: store.dateGen.now, kind: .compactRequest, subscriptionID: .compactRequest, content: text))
     try Sessions.append(key, generation: runtime.generation, items: [item], in: db)
-    transcript.append(item)
-    try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
     return 1
   }
 
-  // A drained input is unanswered by construction — it lands after any
-  // assistant entry — so the work flag follows from having drained anything
-  // and needs no transcript.
+  /// What the session's turn owes, shown on its row with whether due input waits: the cell says so whenever its turn moves.
+  public func show(_ id: SessionID, owed: SessionRunState) throws {
+    try Sessions.refreshWork(id.rawValue, owed: owed, now: now, in: db)
+  }
+
   public func drainQueue(_ id: SessionID) throws -> QueueDrain {
     let key = id.rawValue
     let now = now
@@ -122,8 +122,6 @@ public struct SessionRows {
     )
     try Sessions.markDrained(key, through: Int64(lastID), now: now, in: db)
     try Sessions.putNextTimers(key, after: entries.map(\.input), now: try SQLiteDateFormat.date(from: now), in: db)
-    try Sessions.markHasWork(key, now: now, in: db)
-    try Sessions.markInferenceOwed(key, now: now, in: db)
     return QueueDrain(items: items, queueTail: lastID, firings: try Sessions.firings(of: entries.map(\.input), in: db))
   }
 
@@ -139,7 +137,6 @@ public struct SessionRows {
     if items.contains(where: { if case .assistant = $0 { true } else { false } }) {
       try CacheWarmingRow.recordInference(key, origin: inputOrigin, now: store.dateGen.now, in: db)
     }
-    try Sessions.refreshWork(key, transcript: try Sessions.transcript(key, in: db), now: now, in: db)
   }
 
   public func writeCompaction(
@@ -169,7 +166,6 @@ public struct SessionRows {
       }
     }
     try Sessions.writeGeneration(key, generation: runtime.generation + 1, transcript: compacted, in: db)
-    try Sessions.refreshWork(key, transcript: compacted, now: now, in: db)
     try SessionPrompts.advance(key, in: db)
     return compacted
   }
@@ -193,7 +189,6 @@ public struct SessionRows {
       }
     }
     try Sessions.writeGeneration(key, generation: runtime.generation + 1, transcript: transcript, in: db)
-    try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
     try SessionPrompts.advance(key, in: db)
     return transcript
   }
@@ -220,30 +215,14 @@ public struct SessionRows {
     if record.work == .errored {
       try db.execute(sql: "UPDATE sessions SET work = 'no_work' WHERE id = ?", arguments: [key])
     }
-    // Resuming re-derives both the work flag (after an error) and what the
-    // loop is about to do (after an interrupt).
-    if record.work == .errored || record.hold == .interrupted {
-      let transcript = switch record.executor {
-      case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
-      case .retired: Transcript()
-      }
-      try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
-    }
   }
 
-  /// A forced compaction is an inference the transcript does not owe: it can
-  /// start from a settled turn. `active` shows it as `inference`; ending it
-  /// re-derives the run state from the transcript.
-  public func markCompacting(_ id: SessionID, active: Bool) throws {
+  /// A forced compaction is an inference the turn does not owe: it can start from a settled turn, and shows as `inference` until the turn next moves.
+  public func markCompacting(_ id: SessionID) throws {
     let key = id.rawValue
     let record = try Sessions.record(key, in: db)
-    guard record.work != .errored else { return }
-    if active {
-      guard record.hold == .normal, case .live = record.lifecycle else { return }
-      try Sessions.setRunState(key, .inference, now: now, in: db)
-    } else {
-      try Sessions.refreshWork(key, transcript: try Sessions.transcript(key, in: db), now: now, in: db)
-    }
+    guard record.work != .errored, record.hold == .normal, case .live = record.lifecycle else { return }
+    try Sessions.setRunState(key, .inference, now: now, in: db)
   }
 
   public func markErrored(_ id: SessionID, message: String) throws {

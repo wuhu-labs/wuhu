@@ -468,34 +468,11 @@ public struct PushRelayGrantDeleteInput: Codable, Equatable, Sendable {
 }
 
 @Contract
-public struct TranscriptHistoryEntryPayload: Codable, Equatable, Sendable {
-  public let position: Int
-  public let item: JSONValue
-}
-
-@Contract
-public struct TranscriptHistoryOutput: Codable, Equatable, Sendable {
-  public let historyEpoch: String?
-  public let generation: Int
-  public let entries: [TranscriptHistoryEntryPayload]
-  public let origins: [TranscriptHistoryEntryPayload]
-  public let before: Int?
-  public let hasEarlier: Bool
-  public let headPosition: Int?
-}
-
-@Contract
 public struct ConversationHistoryOutput: Codable, Equatable, Sendable {
   public let messages: [ConversationMessagePayload]
   public let before: Int?
   public let hasEarlier: Bool
   public let headPosition: Int?
-}
-
-@Contract
-public struct TranscriptReadOutput: Codable, Equatable, Sendable {
-  public let generation: Int
-  public let items: [JSONValue]
 }
 
 // ref is an opaque, short-lived per-item handle minted by the server; it dies
@@ -519,22 +496,13 @@ public struct SessionEntryOutput: Codable, Equatable, Sendable {
   public let item: SessionLogItem
 }
 
-@Contract
-public enum SessionStreamEvent: Codable, Equatable, Sendable {
-  case reset(generation: Int)
-  case item(generation: Int, position: Int, item: JSONValue)
-  case started(attemptId: String)
-  case delta(attemptId: String, text: String)
-  case cancelled(attemptId: String, reason: String)
-  case materialized(attemptId: String, entryId: String)
-}
-
-@Contract
+@Contract(fallback: "unknown")
 public enum SessionLineRole: String, Codable, Equatable, Sendable {
   case system
   case user
   case assistant
   case toolResult = "tool_result"
+  case unknown
 }
 
 /// A line of a session's transcript, as the request carried it: `message` is the line's message, thinking kept and an inline image named, or for the system line `{rendered}`, naming its preamble. Tell lines apart by `key`, never by position. A `prompt` line can arrive after lines past its position: place it without moving the stream's cursor.
@@ -550,10 +518,11 @@ public struct SessionLinePayload: Codable, Equatable, Sendable {
 }
 
 /// `reset` drops every line held: the lines after it are the generation's.
-@Contract
+@Contract(fallback: "unknown")
 public enum SessionLineEvent: Codable, Equatable, Sendable {
   case reset(generation: Int)
   case line(generation: Int, line: SessionLinePayload)
+  case unknown(kind: String)
 }
 
 @Contract

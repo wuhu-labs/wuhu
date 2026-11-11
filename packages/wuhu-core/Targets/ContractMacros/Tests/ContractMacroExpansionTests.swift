@@ -357,4 +357,80 @@ final class ContractMacroExpansionTests: XCTestCase {
       macros: macros,
     )
   }
+
+  func testUnionFallbackOfTheWrongShapeDiagnoses() {
+    assertMacroExpansion(
+      """
+      @Contract(fallback: "unknown")
+      enum Bad {
+          case tick(count: Int)
+          case unknown(type: String)
+      }
+      """,
+      expandedSource: """
+      enum Bad {
+          case tick(count: Int)
+          case unknown(type: String)
+      }
+      """,
+      diagnostics: [
+        DiagnosticSpec(
+          message: "@Contract fallback 'unknown' must be declared as `case unknown(kind: String)`: the case a value this type does not know decodes to",
+          line: 1,
+          column: 1,
+        ),
+      ],
+      macros: macros,
+    )
+  }
+
+  func testMissingStringFallbackDiagnoses() {
+    assertMacroExpansion(
+      """
+      @Contract(fallback: "other")
+      enum Bad: String {
+          case light
+          case unknown
+      }
+      """,
+      expandedSource: """
+      enum Bad: String {
+          case light
+          case unknown
+      }
+      """,
+      diagnostics: [
+        DiagnosticSpec(
+          message: "@Contract fallback 'other' must be declared as `case other`: the case a value this type does not know decodes to",
+          line: 1,
+          column: 1,
+        ),
+      ],
+      macros: macros,
+    )
+  }
+
+  func testFallbackOnStructDiagnoses() {
+    assertMacroExpansion(
+      """
+      @Contract(fallback: "unknown")
+      struct Bad {
+          let sql: String
+      }
+      """,
+      expandedSource: """
+      struct Bad {
+          let sql: String
+      }
+      """,
+      diagnostics: [
+        DiagnosticSpec(
+          message: "@Contract takes a fallback only on an enum",
+          line: 1,
+          column: 1,
+        ),
+      ],
+      macros: macros,
+    )
+  }
 }

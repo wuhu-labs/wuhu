@@ -18,7 +18,7 @@ func replacementRoute(_ held: SessionModelRoute, catalog: ProviderCatalog, usage
   let group = try catalog.validatedGroup(id, effort: held.specifier.effort).declaration
   @Dependency(\.date.now) var now
   @Dependency(\.uuid) var uuid
-  let placed = try placeModelGroup(id: id, group: group, providers: catalog.document.providers, usage: groupUsage(group, usage: usage, at: now), now: now, reason: reason)
+  let placed = try placeModelGroup(id: id, group: group, providers: catalog.document.providers, usage: groupUsage(group, usage: usage, at: now), now: now, reason: reason, held: held.member)
   return .init(group: id, member: placed.member.id, specifier: .init(provider: placed.member.provider, model: placed.member.model, effort: held.specifier.effort), bindingFingerprint: catalog.document.providers[placed.member.provider]!.routeFingerprint, epoch: uuid().uuidString.lowercased(), reason: reason, placedAt: now, evidence: placed.evidence)
 }
 

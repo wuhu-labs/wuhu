@@ -1,7 +1,6 @@
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import FetchSSE
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -31,17 +30,6 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
 }
 
 @Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct RetiredExecutorTests {
-  @Test(arguments: [0, 99]) func retiredCursorResetsAndCloses(generation: Int) async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness()
-      let id = try await retiredSession(harness)
-      let response = try await harness.get("/v1/session/\(id.rawValue)/direct", query: ["paged": "true", "generation": String(generation), "position": "10"])
-      var events: [SessionStreamEvent] = []
-      for try await frame in response.sse() { events.append(try streamEvent(frame.data)) }
-      #expect(events == [.reset(generation: 0)])
-    }
-  }
-
   @Test func interruptDoesNotClearARetiredSessionsError() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
@@ -111,20 +99,19 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
 
   @Test func aLiveRetiredSessionIsNeverDrained() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("handed over") }
+      let harness = try await SessionHarness { _ in reply("handed over") }
       let id = try await retiredSession(harness)
       try await harness.running {
         try await harness.deliver("waiting", to: id)
         try await until("the message stays queued") { try await harness.store.record(id).work == .hasWork }
         #expect(try await harness.store.transcriptSnapshot(id).items.isEmpty)
-        #expect(try await harness.store.transcriptHistory(id).entries.isEmpty)
       }
     }
   }
 
   @Test func aLiveRetiredSessionRestartsOntoAModel() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("handed over") }
+      let harness = try await SessionHarness { _ in reply("handed over") }
       let id = try await retiredSession(harness)
       try await harness.running {
         let restarted = try await harness.call("/v1/session/\(id.rawValue)/restart", .object([

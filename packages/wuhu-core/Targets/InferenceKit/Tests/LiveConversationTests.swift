@@ -31,7 +31,6 @@ private let liveCases: [(provider: String, model: String)] = [
       document: try ModelsDocument(json: fixtureJSON),
       credentials: .environmentOnly,
     )
-    let hub = AttemptHub()
     let scratch = try ScratchFolder("wuhu-live-attempts")
     defer { scratch.remove() }
     let logDirectory = ProcessInfo.processInfo.environment["TEST_UNDECLARED_OUTPUTS_DIR"]
@@ -41,7 +40,6 @@ private let liveCases: [(provider: String, model: String)] = [
       model: try await catalog.resolve(.init(provider: provider, model: model, effort: "high"), session: SessionID("live-conversation-tests")),
       systemPrompt: "You are a Wuhu session agent. Answer in at most two sentences.",
       tools: [],
-      hub: hub,
       trace: AttemptLogConfig(directory: logDirectory).traceClient,
     )
     let sender = Sender(id: "morgan", timeZone: TimeZone(identifier: "Asia/Shanghai")!)

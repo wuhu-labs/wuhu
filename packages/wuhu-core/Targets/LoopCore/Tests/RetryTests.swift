@@ -358,7 +358,7 @@ import WuhuAI
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let document = ModelsDocument(providers: ["gateway": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
       let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "gateway", model: "test", effort: "low"), session: sid)
-      let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [], hub: AttemptHub())
+      let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [])
       let rounds = boundedFailureLimit * 2
       let requests = Box(0)
       let gateway = FetchClient { _ in

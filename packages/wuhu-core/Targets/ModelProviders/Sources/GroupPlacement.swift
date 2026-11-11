@@ -163,6 +163,10 @@ extension ModelsDocument {
   }
 }
 
+let heldMemberMargin = 1.1
+
+/// `held` is the member the session holds now, if any; under quota-aware placement it keeps
+/// the session while it scores above 0 at pace and no member reaches ``heldMemberMargin`` times its score.
 public func placeModelGroup(
   id: String,
   group: ModelsDocument.Group,
@@ -170,6 +174,7 @@ public func placeModelGroup(
   usage: [String: ModelUsageSnapshot],
   now: Date,
   reason: ModelPlacementReason,
+  held: String? = nil,
 ) throws -> ModelPlacement {
   let group = try ModelsDocument(providers: providers, groups: [id: group]).validatedGroup(id).declaration
   let placed = group.members.map { member -> ModelPlacementEvidence in
@@ -206,9 +211,15 @@ public func placeModelGroup(
       guard let pace = evidence.shortWindowPace, pace < 1 else { return (2, score) }
       return (1, pace)
     }
-    chosen = zip(group.members, placed).filter { $1.score.map { $0 > 0 } ?? true }.max { lhs, rhs in
+    let candidates = zip(group.members, placed).filter { $1.score.map { $0 > 0 } ?? true }
+    let best = candidates.max { lhs, rhs in
       rank(lhs.1) != rank(rhs.1) ? rank(lhs.1) < rank(rhs.1) : lhs.0.id > rhs.0.id
-    }?.0
+    }
+    let kept = candidates.first { member, evidence in
+      guard member.id == held, rank(evidence).0 == 2, let score = evidence.score, let lead = best?.1.score else { return false }
+      return lead < score * heldMemberMargin
+    }
+    chosen = (kept ?? best)?.0
   }
   guard let chosen else { throw CatalogError.noUsableMembers(id) }
   return ModelPlacement(member: chosen, reason: reason, evidence: placed)

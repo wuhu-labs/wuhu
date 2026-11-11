@@ -110,7 +110,6 @@ private final class SessionCLIHarness: Sendable {
       _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
     let hub = MachineHub(space: space)
-    let attempts = AttemptHub()
     let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
     let config = LoopConfig(
       executeTool: { invocation in
@@ -130,7 +129,7 @@ private final class SessionCLIHarness: Sendable {
     let tokens = ExecTokens(spaceURL: "http://space")
     let connection = MainConnection()
     let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, space: owner.space) { _ in config }
-    let runtime = SessionRuntime(execution: worker, attempts: attempts, owner: owner, tokens: tokens, connection: connection)
+    let runtime = SessionRuntime(execution: worker, owner: owner, tokens: tokens, connection: connection)
     let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     worker.start()
     serviceTask = Task {

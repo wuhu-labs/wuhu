@@ -185,5 +185,368 @@
       "role" : "user"
     },
     "name" : "linked image"
+  },
+  {
+    "line" : {
+      "at" : 1791000009,
+      "key" : "message:m4",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>minsheng (plum-otter-kite)</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>conversation/c1</source>\n<type>reply</type>\n<message-id>m4</message-id>\n<reply-target>m3</reply-target>\n\nLook at these.\n\n<attachments>\n/photos/a cat.png (image/png)\n/docs/r.pdf (application/pdf, 1200 bytes)\n</attachments>"
+              }
+            },
+            {
+              "media" : {
+                "mime_type" : "image/png",
+                "url" : "wuhu-space:/photos/a%20cat.png"
+              }
+            }
+          ]
+        }
+      },
+      "position" : 9,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "reply with attachments"
+  },
+  {
+    "line" : {
+      "at" : 1791000010,
+      "key" : "subscription:context",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>system</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>context</source>\n<type>system notice</type>\n\nContext is 80% full."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 10,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "system notice"
+  },
+  {
+    "line" : {
+      "at" : 1791000011,
+      "key" : "direct:d11",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>direct</source>\n<type>direct message</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 11,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header direct message"
+  },
+  {
+    "line" : {
+      "at" : 1791000012,
+      "key" : "message:m12",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>conversation/c1</source>\n<type>message</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 12,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header message"
+  },
+  {
+    "line" : {
+      "at" : 1791000013,
+      "key" : "message:m13",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>conversation/c1</source>\n<type>reply</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 13,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header reply"
+  },
+  {
+    "line" : {
+      "at" : 1791000014,
+      "key" : "message:m14",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>conversation/c1</source>\n<type>request</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 14,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header request"
+  },
+  {
+    "line" : {
+      "at" : 1791000015,
+      "key" : "message:m15",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>conversation/c1</source>\n<type>progress report</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 15,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header progress report"
+  },
+  {
+    "line" : {
+      "at" : 1791000016,
+      "key" : "message:m16",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>conversation/c1</source>\n<type>final report</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 16,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header final report"
+  },
+  {
+    "line" : {
+      "at" : 1791000017,
+      "key" : "subscription:s17",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s17</source>\n<type>timer</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 17,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header timer"
+  },
+  {
+    "line" : {
+      "at" : 1791000018,
+      "key" : "subscription:s18",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s18</source>\n<type>space observation</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 18,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header space observation"
+  },
+  {
+    "line" : {
+      "at" : 1791000019,
+      "key" : "subscription:s19",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s19</source>\n<type>compact request</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 19,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header compact request"
+  },
+  {
+    "line" : {
+      "at" : 1791000020,
+      "key" : "subscription:s20",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s20</source>\n<type>owed reply</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 20,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header owed reply"
+  },
+  {
+    "line" : {
+      "at" : 1791000021,
+      "key" : "subscription:s21",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s21</source>\n<type>park reminder</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 21,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header park reminder"
+  },
+  {
+    "line" : {
+      "at" : 1791000022,
+      "key" : "subscription:s22",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s22</source>\n<type>request stall</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 22,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header request stall"
+  },
+  {
+    "line" : {
+      "at" : 1791000023,
+      "key" : "subscription:s23",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s23</source>\n<type>script</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 23,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header script"
+  },
+  {
+    "line" : {
+      "at" : 1791000024,
+      "key" : "subscription:s24",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s24</source>\n<type>exec</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 24,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header exec"
+  },
+  {
+    "line" : {
+      "at" : 1791000025,
+      "key" : "subscription:s25",
+      "message" : {
+        "user" : {
+          "content" : [
+            {
+              "text" : {
+                "text" : "<sender>plum-otter-kite</sender>\n<timestamp>2026-10-03T04:00:09Z</timestamp>\n<source>s25</source>\n<type>system notice</type>\n\nBody."
+              }
+            }
+          ]
+        }
+      },
+      "position" : 25,
+      "prompt" : false,
+      "role" : "user"
+    },
+    "name" : "header system notice"
   }
 ]

@@ -22,26 +22,26 @@ import Testing
   @Test func `an agent owes in transcript order and is reminded once per delivery`() {
     let owed = Nag.owedReply(conversations: [.init("box")])
     var items = [Fix.message(conversation: "box")]
-    #expect(Self.environment(items).nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == owed)
+    #expect(Self.environment(items).nags.nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == owed)
     items.append(Self.nag(owed))
-    #expect(Self.environment(items).nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == nil, "the nag in the transcript is the record that it was shown")
+    #expect(Self.environment(items).nags.nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == nil, "the nag in the transcript is the record that it was shown")
     items.append(Fix.message(conversation: "box"))
-    #expect(Self.environment(items).nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == owed, "a new delivery owes again")
+    #expect(Self.environment(items).nags.nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == owed, "a new delivery owes again")
     items.append(Fix.post(conversation: "box"))
-    #expect(Self.environment(items).nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == nil)
+    #expect(Self.environment(items).nags.nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == nil)
     items.append(Fix.message(conversation: "box"))
-    #expect(Self.environment(items).nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == owed, "a delivery after the post owes, whatever its timestamp")
-    #expect(Self.environment([Fix.message(conversation: "grp", owesReply: false)]).nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == nil)
+    #expect(Self.environment(items).nags.nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == owed, "a delivery after the post owes, whatever its timestamp")
+    #expect(Self.environment([Fix.message(conversation: "grp", owesReply: false)]).nags.nag(task: false, openRequests: [], armedWake: false, now: Fix.instant) == nil)
   }
 
   @Test func `a task's park reminders back off from the ones its transcript shows`() {
     let items = [Self.request, Self.nag(Self.park)]
     let environment = Self.environment(items)
-    #expect(environment.nag(task: true, openRequests: Self.open, armedWake: false, now: Fix.instant) == nil)
-    #expect(environment.nextTimer(openRequests: Self.open, armedWake: false, now: Fix.instant) == Self.later)
+    #expect(environment.nags.nag(task: true, openRequests: Self.open, armedWake: false, now: Fix.instant) == nil)
+    #expect(environment.nags.nextTimer(openRequests: Self.open, armedWake: false, now: Fix.instant) == Self.later)
     let second = Self.environment(items + [Self.nag(Self.park, at: Self.later)])
-    #expect(second.nextTimer(openRequests: Self.open, armedWake: false, now: Self.later) == Self.later.addingTimeInterval(300))
-    #expect(environment.nextTimer(openRequests: [], armedWake: false, now: Fix.instant) == nil, "a closed request is owed nothing")
+    #expect(second.nags.nextTimer(openRequests: Self.open, armedWake: false, now: Self.later) == Self.later.addingTimeInterval(300))
+    #expect(environment.nags.nextTimer(openRequests: [], armedWake: false, now: Fix.instant) == nil, "a closed request is owed nothing")
   }
 
   @Test func `a compaction head carries the settle state and the backoff restarts from the carried tail`() {
@@ -53,16 +53,16 @@ import Testing
     )
     let carried = closed.compacted(head: head, kept: 2 ..< 3)
     #expect(carried.environment.settle == closed.environment.settle)
-    #expect(closed.environment.nextTimer(openRequests: Self.open, armedWake: false, now: Self.later) == Self.later.addingTimeInterval(300))
-    #expect(carried.environment.nextTimer(openRequests: Self.open, armedWake: false, now: Self.later) == Self.later.addingTimeInterval(60))
+    #expect(closed.environment.nags.nextTimer(openRequests: Self.open, armedWake: false, now: Self.later) == Self.later.addingTimeInterval(300))
+    #expect(carried.environment.nags.nextTimer(openRequests: Self.open, armedWake: false, now: Self.later) == Self.later.addingTimeInterval(60))
   }
 
   @Test func `park reminders back off 1, 5, 15 minutes, then flat`() {
     var items = [Self.request]
-    #expect(Self.environment(items).nextTimer(openRequests: Self.open, armedWake: false, now: Fix.instant) == Fix.instant)
+    #expect(Self.environment(items).nags.nextTimer(openRequests: Self.open, armedWake: false, now: Fix.instant) == Fix.instant)
     for delay in [60.0, 300, 900, 900] {
       items.append(Self.nag(Self.park))
-      #expect(Self.environment(items).nextTimer(openRequests: Self.open, armedWake: false, now: Fix.instant) == Fix.instant.addingTimeInterval(delay))
+      #expect(Self.environment(items).nags.nextTimer(openRequests: Self.open, armedWake: false, now: Fix.instant) == Fix.instant.addingTimeInterval(delay))
     }
   }
 }

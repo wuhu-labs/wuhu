@@ -26,7 +26,6 @@ func kernelInference(
   executor: ToolExecutor,
   access: InferenceAccess,
   sockets: ResponsesSocketRegistry,
-  attempts: AttemptHub,
   usage: UsageBoard,
   committedWarming: @escaping @Sendable (SessionID, CacheWarmingPolicy) async -> Void = { _, _ in },
 ) -> @Sendable (InferenceRequest) async throws -> InferenceReply {
@@ -127,7 +126,6 @@ func kernelInference(
         opening: prompt.opening,
         tools: tools,
         compactToolName: KernelToolset.compactToolName,
-        hub: attempts,
         trace: access.trace,
         metrics: metrics,
         webSocket: lease?.session,

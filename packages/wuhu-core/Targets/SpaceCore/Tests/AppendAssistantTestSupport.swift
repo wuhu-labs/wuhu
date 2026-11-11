@@ -18,6 +18,7 @@ extension SessionStore {
     let before = transcript.items.count
     transcript.appendAssistant(message, id: attemptID, metadata: metadata)
     try await append(id, items: Array(transcript.items[before...]), inputOrigin: transcript.cacheWarmingInputOrigin)
+    try await show(id)
   }
 }
 
@@ -34,6 +35,7 @@ extension SessionStore {
     var transcript = try await transcript(id)
     for item in items { transcript.append(item) }
     try await append(id, items: items, inputOrigin: transcript.cacheWarmingInputOrigin)
+    try await show(id)
   }
 }
 

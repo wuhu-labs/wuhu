@@ -143,7 +143,7 @@ import enum WuhuAI.InferenceError
   @Test func aBareRestartLeavesTheKernelSessionInertUnderALoopPass() async throws {
     try await withSessionDeps {
       let attempts = Mutex<[SessionID]>([])
-      let harness = try await SessionHarness(inference: { request, _ in
+      let harness = try await SessionHarness(inference: { request in
         attempts.withLock { $0.append(request.sessionID) }
         throw InferenceError.other(status: nil, body: "no inference expected here")
       })

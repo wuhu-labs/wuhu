@@ -18,7 +18,7 @@ import Testing
   @Test func `the lines stream resets to the generation, then sends each line the page reads, the late prompt once`() async throws {
     try await withSessionDeps {
       let session = Mutex<(Space, SessionID)?>(nil)
-      let harness = try await SessionHarness { _, _ in
+      let harness = try await SessionHarness { _ in
         if let (space, id) = session.withLock({ $0 }) { _ = try await sessionPrompt(space: space, session: id) }
         return reply("Hello")
       }
@@ -33,7 +33,7 @@ import Testing
       var heard: [SessionLinePayload] = []
       for (text, replies) in [("hi", 1), ("again", 2)] {
         try await harness.deliver(text, to: id)
-        while heard.count { $0.role == .assistant } < replies {
+        while heard.count(where: { $0.role == .assistant }) < replies {
           guard case let .line(0, line) = try event(try #require(await frames.next()).data) else {
             Issue.record("heard a reset")
             return
@@ -54,7 +54,7 @@ import Testing
 
   @Test func `the lines page walks back from the newest line by position`() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("Hello") }
+      let harness = try await SessionHarness { _ in reply("Hello") }
       let id = try await harness.createSession()
       try await harness.deliver("hi", to: id)
       try await until("the reply's line") {

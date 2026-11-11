@@ -1,4 +1,5 @@
 import SessionDomain
+import enum SpaceCore.SessionRunState
 import StructuredQueries
 import struct WuhuAI.ToolCall
 import WuweiQueries
@@ -36,6 +37,14 @@ struct SessionTurn: Owned, Equatable, Encodable, Sendable {
   /// The first of the reply's calls that is not answered.
   var call: ToolCall? {
     if case let .tools(calls) = turn { calls.first } else { nil }
+  }
+
+  var owed: SessionRunState {
+    switch turn {
+    case .tools: .tool
+    case .model: .inference
+    case .inert, .idle, .folding: .noRun
+    }
   }
 
   /// The model's reply.

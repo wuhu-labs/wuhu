@@ -122,12 +122,12 @@ import WuhuAI
     }
   }
 
-  @Test func `a session waiting on the model reads inference`() async throws {
+  @Test func `a session waiting on the model reads inference, held or resumed included`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let script = InferenceScript([Fix.hanging])
+      let script = InferenceScript([Fix.hanging, Fix.hanging])
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
@@ -136,6 +136,12 @@ import WuhuAI
         let thinking = try await row(space, sid)
         #expect(thinking.run == "inference")
         #expect(thinking.progress != nil)
+
+        try await service.interrupt(sid)
+        try await until("held") { try await row(space, sid).run == "no_run" }
+        try await service.resume(sid)
+        try await until("the step asked again") { script.count == 2 }
+        #expect(try await row(space, sid).run == "inference")
       }
     }
   }

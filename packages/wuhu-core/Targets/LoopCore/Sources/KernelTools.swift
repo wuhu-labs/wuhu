@@ -110,8 +110,8 @@ enum ParkRefusal: Error, Equatable, CustomStringConvertible {
   case owesReply(conversations: [ConversationID])
   case owesReport(requests: [RequestID])
 
-  init?(_ environment: SessionEnvironment, task: Bool, openRequests: [OpenRequest]) {
-    if !task, case let owed = environment.settle.owedConversations, !owed.isEmpty {
+  init?(_ nags: NagState, task: Bool, openRequests: [OpenRequest]) {
+    if !task, case let owed = nags.settle.owedConversations, !owed.isEmpty {
       self = .owesReply(conversations: owed)
     } else if !openRequests.isEmpty {
       self = .owesReport(requests: openRequests.map(\.id).sorted { $0.rawValue < $1.rawValue })

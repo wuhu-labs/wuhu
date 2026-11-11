@@ -159,7 +159,7 @@ extension GroupSwitchingTests {
         harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: nil), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: now.withLock { $0 })
         let owner = Hub(space: harness.space)
         let access = InferenceAccess(credentials: harness.credentials)
-        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
         var transcript = try await harness.store.transcript(id)
         transcript.append(.direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: now.withLock { $0 }, content: .init(text: "outstanding request"))))
         let request = InferenceRequest(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript, mode: .normal)
@@ -240,7 +240,7 @@ extension GroupSwitchingTests {
       let error = CatalogError.modelRouteInvalid(group: "work", member: "a")
       #expect(try await recordRouteFailure(error, session: id, store: owner.space.sessions, catalog: catalog, inferenceStarted: false) == nil)
       let access = InferenceAccess(credentials: harness.credentials)
-      let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+      let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
       let transcript = try await harness.store.transcript(id)
       await #expect(throws: error) {
         try await infer(.init(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript, mode: .normal))
@@ -332,6 +332,21 @@ extension GroupSwitchingTests {
 }
 
 extension GroupSwitchingTests {
+  @Test(arguments: [CompactionTarget?.none, CompactionTarget(model: "work")]) func compactionKeepsTheHeldMemberAgainstAFivePercentLead(target: CompactionTarget?) async throws {
+    try await withSessionDeps {
+      let (harness, owner, catalog, id) = try await setup()
+      let held = try #require(await owner.space.sessions.modelRoute(id))
+      #expect(held.member == "a")
+      let reset = Date().timeIntervalSince1970 + 18000
+      for (provider, weekly) in [("testing", 50.0), ("alternate", 47.5)] {
+        harness.runtime.usage.record(provider, plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: weekly, resetsAt: nil)], at: Date())
+      }
+      let compacted = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "stay", snapshot: .init(), runningWork: []), kept: nil)
+      #expect(try await compactionPlacement(store: owner.space.sessions, catalog: { _ in catalog }, usage: harness.runtime.usage)(id, compacted, target) == nil)
+      #expect(try await owner.space.sessions.modelRoute(id) == held)
+    }
+  }
+
   @Test func unusedQuotaRefusalIsNotACandidateButMissingCredentialRemainsTyped() async throws {
     try await withSessionDeps {
       let (harness, owner, source, id) = try await setup()
@@ -437,7 +452,7 @@ extension GroupSwitchingTests {
         #expect(transition.route.member == "b")
         let committed = try await owner.space.sessions.writeCompaction(id, head: head, kept: kept, transition: transition)
         let access = InferenceAccess(credentials: harness.credentials)
-        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: committed, mode: .normal))
         let emitted = requests.withLock { $0 }
         #expect(emitted.count == 2)

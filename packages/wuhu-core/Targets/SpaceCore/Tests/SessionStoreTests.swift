@@ -170,47 +170,6 @@ struct SessionStoreTests {
     }
   }
 
-  @Test func workFlipsCommitWithTheTranscript() async throws {
-    try await withSessionDeps {
-      let space = try makeSpace()
-      let store = space.sessions
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      #expect(try await store.record(sid).work == .noWork)
-
-      try await store.put(sid, input: SessionFix.message())
-      #expect(try await store.record(sid).work == .hasWork)
-
-      _ = try await store.drainQueue(sid)
-      #expect(try await store.record(sid).work == .hasWork)
-
-      _ = try await store.appendAssistant(sid, attemptID: UUID(), message: SessionFix.assistant(), metadata: SessionFix.metadata)
-      let settled = try await store.hydrate(sid)
-      #expect(settled.record.work == .noWork)
-      #expect(settled.transcript.kernel.items.count == 2)
-    }
-  }
-
-  @Test func failedWriteRollsBackFlipAndAppendTogether() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let inputID = UUID()
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await store.put(sid, input: SessionFix.message(id: inputID))
-      _ = try await store.drainQueue(sid)
-      _ = try await store.appendAssistant(sid, attemptID: UUID(), message: SessionFix.assistant(), metadata: SessionFix.metadata)
-      #expect(try await store.record(sid).work == .noWork)
-
-      // Colliding with an existing content id makes the append fail mid
-      // transaction; the work flip it would have carried must vanish with it.
-      await #expect(throws: DatabaseError.self) {
-        try await store.append(sid, items: [.toolResult(SessionFix.toolResult(callID: "k-2", id: UUID())), .toolResult(SessionFix.toolResult(callID: "k-1", id: inputID))], inputOrigin: nil)
-      }
-      let hydration = try await store.hydrate(sid)
-      #expect(hydration.record.work == .noWork)
-      #expect(hydration.transcript.kernel.items.count == 2)
-    }
-  }
-
   @Test func aKernelSettleQueuesNoNag() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions

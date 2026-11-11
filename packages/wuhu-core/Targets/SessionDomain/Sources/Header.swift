@@ -64,7 +64,7 @@ public struct MessageHeader: Hashable, Sendable {
     }
   }
 
-  public enum Kind: Hashable, Sendable {
+  public enum Kind: Hashable, Sendable, CaseIterable {
     case directMessage
     case message
     case reply

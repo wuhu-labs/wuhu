@@ -329,13 +329,13 @@ enum Sessions {
   }
 
   // The coarse-transition gate: the induced sessions row is written only when
-  // a derived axis actually flips, never per item. Besides `work`, the row
-  // carries what the loop is doing (`run_state`): `tool` while a tool call is
-  // unanswered, `inference` while the model owes the next step, `no_run`
-  // otherwise. `run_progress_at` is when that phase began, and
-  // `last_activity_at` moves with every flip, so a session waiting in a long
-  // tool call reads as such instead of as one that never ran.
-  static func refreshWork(_ key: String, transcript: Transcript, now: String, in db: Database) throws {
+  // an axis actually flips, never per item. Besides `work`, the row carries
+  // what the loop is doing (`run_state`): what the cell's turn owes (`owed`),
+  // `inference` when only due input waits, `no_run` otherwise.
+  // `run_progress_at` is when that phase began, and `last_activity_at` moves
+  // with every flip, so a session waiting in a long tool call reads as such
+  // instead of as one that never ran.
+  static func refreshWork(_ key: String, owed: SessionRunState, now: String, in db: Database) throws {
     let row = try Row.fetchOne(db, sql: "SELECT work, hold, lifecycle FROM sessions WHERE id = ?", arguments: [key])!
     let current: String = row["work"]
     let hold: String = row["hold"]
@@ -347,16 +347,14 @@ enum Sessions {
       sql: "SELECT COUNT(*) FROM session_queue WHERE session_id = ? AND id > ? AND \(due)",
       arguments: [key, runtime.queueTail, now],
     )!
-    let derived = (backlog > 0 || transcript.hasWork) ? SessionWork.hasWork : SessionWork.noWork
+    let derived = (backlog > 0 || owed != .noRun) ? SessionWork.hasWork : SessionWork.noWork
     let running = hold == SessionHold.normal.rawValue && lifecycle == "live"
     let run: SessionRunState = if !running {
       .noRun
-    } else if !transcript.pendingToolCallIDs.isEmpty {
-      .tool
-    } else if derived == .hasWork {
+    } else if owed == .noRun, derived == .hasWork {
       .inference
     } else {
-      .noRun
+      owed
     }
     if derived.rawValue != current {
       try db.execute(
@@ -365,17 +363,6 @@ enum Sessions {
       )
     }
     try setRunState(key, run, now: now, in: db)
-  }
-
-  /// Drained input is unanswered by construction, so a running session's
-  /// next step is the model's.
-  static func markInferenceOwed(_ key: String, now: String, in db: Database) throws {
-    let row = try Row.fetchOne(db, sql: "SELECT work, hold, lifecycle FROM sessions WHERE id = ?", arguments: [key])!
-    let work: String = row["work"]
-    let hold: String = row["hold"]
-    let lifecycle: String = row["lifecycle"]
-    guard work == SessionWork.hasWork.rawValue, hold == SessionHold.normal.rawValue, lifecycle == "live" else { return }
-    try setRunState(key, .inference, now: now, in: db)
   }
 
   /// Writes `run_state` only when it changes; a flip stamps
@@ -393,7 +380,7 @@ enum Sessions {
 
 /// What a kernel session's loop is doing, as the `run_state` column of the
 /// induced `sessions` table shows it.
-enum SessionRunState: String, Sendable {
+public enum SessionRunState: String, Sendable {
   case inference
   case tool
   case noRun = "no_run"

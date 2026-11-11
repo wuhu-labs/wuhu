@@ -116,7 +116,7 @@ final class Story: Sendable {
         budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
       )
     }
-    let runtime = SessionRuntime(execution: execution, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: MainConnection())
+    let runtime = SessionRuntime(execution: execution, owner: owner, tokens: tokens, connection: MainConnection())
     handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens, machineV2Hub: machineV2Hub)
     api = ServeTesting.client(upgrading: handler)
     connection.bind(api, dial: inProcessDial(api: handler, hub: hub))

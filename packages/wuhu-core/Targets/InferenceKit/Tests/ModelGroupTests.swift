@@ -149,8 +149,37 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware) throws -
     ])
   }
 
-  func pick(_ doc: ModelsDocument, _ snapshots: [String: ModelUsageSnapshot], reason: ModelPlacementReason = .create) throws -> ModelPlacement {
-    try placeModelGroup(id: "work", group: doc.groups["work"]!, providers: doc.providers, usage: snapshots, now: now, reason: reason)
+  func pick(_ doc: ModelsDocument, _ snapshots: [String: ModelUsageSnapshot], reason: ModelPlacementReason = .create, held: String? = nil) throws -> ModelPlacement {
+    try placeModelGroup(id: "work", group: doc.groups["work"]!, providers: doc.providers, usage: snapshots, now: now, reason: reason, held: held)
+  }
+
+  @Test func aHeldMemberYieldsOnlyToATenPercentLead() throws {
+    let doc = try groupDocument()
+    let fivePercent = ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 47.5)]
+    #expect(try pick(doc, fivePercent, reason: .compaction, held: "primary").member.id == "primary")
+    #expect(try pick(doc, fivePercent).member.id == "secondary", "with nothing held the best score wins by any margin")
+    #expect(try pick(doc, ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 45)], reason: .compaction, held: "primary").member.id == "secondary")
+  }
+
+  @Test func aHeldMemberMovesWhenExhaustedUnknownOrBehindItsShortWindowPace() throws {
+    let doc = try groupDocument()
+    #expect(try pick(doc, ["anthropic": usage(100), "openai": usage(0, weekly: 90)], reason: .compaction, held: "primary").member.id == "secondary")
+    #expect(try pick(doc, [:], reason: .compaction, held: "secondary").member.id == "primary")
+    let behind = try pick(doc, ["anthropic": usage(60), "openai": usage(0, weekly: 50)], reason: .compaction, held: "primary")
+    #expect(try #require(behind.evidence[0].shortWindowPace) < 1)
+    #expect(behind.member.id == "secondary")
+  }
+
+  @Test func nearEqualScoresDoNotTradeTheSessionBackAndForth() throws {
+    var doc = try groupDocument()
+    doc.providers["anthropic"]!.capacity = ["seven_day": 4]
+    doc.providers["openai"]!.capacity = ["seven_day": 4]
+    let scored = { (primary: Double, secondary: Double) in
+      ["anthropic": usage(0, weekly: 100 - primary * 25), "openai": usage(0, weekly: 100 - secondary * 25)]
+    }
+    for (held, primary, secondary) in [("primary", 2.392, 2.404), ("secondary", 2.392, 2.290), ("secondary", 2.392, 2.404)] {
+      #expect(try pick(doc, scored(primary, secondary), reason: .compaction, held: held).member.id == held)
+    }
   }
 
   @Test func relativeCapacityBeatsRawPercentAndEvidenceIsRecorded() throws {

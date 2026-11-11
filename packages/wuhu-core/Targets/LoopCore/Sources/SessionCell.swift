@@ -61,7 +61,7 @@ struct SessionCell {
   private func parkWake() throws -> Date? {
     let session = try load()
     guard !session.stopped, working(session) == nil, session.queueHead == session.queueTail, session.turn.turn == .idle else { return nil }
-    return session.transcript.environment.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow())
+    return session.nags.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow())
   }
 
   /// Stops the job the session works on and nothing else: main has marked the session errored.
@@ -91,9 +91,10 @@ struct SessionCell {
   }
 
   mutating func resume() throws {
-    let record = try load().record
-    guard record.hold == .interrupted || record.work == .errored else { return }
+    let session = try load()
+    guard session.record.hold == .interrupted || session.record.work == .errored else { return }
     try rows.markResumed(id.session)
+    try rows.show(id.session, owed: session.turn.owed)
     try advance()
   }
 
@@ -176,7 +177,7 @@ struct SessionCell {
       // The model tried to finish. A nag due now is written with its message,
       // so the session never reads settled while it owes one.
       let now = client.now()
-      if !forced, entry.toolCalls.isEmpty, let nag = transcript.environment.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow()) {
+      if !forced, entry.toolCalls.isEmpty, let nag = session.nags.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow()) {
         transcript.append(.notification(nag.notification(id: client.uuid(), at: now)))
       }
       let appended = Array(transcript.items[session.slot.position...])
@@ -192,7 +193,7 @@ struct SessionCell {
       }
       // A step checks the hard threshold before it infers; a model that stopped past it is compacted before anything else.
       if !forced, entry.toolCalls.isEmpty, fullness >= client.config.thresholds.hard {
-        try rows.markCompacting(id.session, active: true)
+        try rows.markCompacting(id.session)
         start(next.step(forced: true), .forcedCompact)
         return
       }
@@ -200,7 +201,7 @@ struct SessionCell {
       break
     case let .full(fullness):
       if fullness >= client.config.thresholds.hard {
-        try rows.markCompacting(id.session, active: true)
+        try rows.markCompacting(id.session)
         start(session.slot.step(forced: true), .forcedCompact)
         return
       }
@@ -309,7 +310,7 @@ struct SessionCell {
     }
     if let written = try rows.materializeCompactRequest(id.session, uuid: client.uuid) {
       try move { $0.input(written) }
-      try rows.markCompacting(id.session, active: true)
+      try rows.markCompacting(id.session)
       start(try load().slot.step(forced: true), .forcedCompact)
       return false
     }
@@ -326,7 +327,7 @@ struct SessionCell {
     guard turn.turn == .idle else { return false }
     let openRequests = try rows.openRequests(id.session)
     let now = client.now()
-    if let nag = session.transcript.environment.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: client.dueNow()) {
+    if let nag = session.nags.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: client.dueNow()) {
       try append(session, [.notification(nag.notification(id: client.uuid(), at: now))]) { $0.input(1) }
       return true
     }
@@ -360,7 +361,7 @@ struct SessionCell {
         start(session.slot.compaction, .fold(callID))
         return false
       }
-      if let refusal = ParkRefusal(session.transcript.environment, task: session.isTask, openRequests: try rows.openRequests(id.session)) {
+      if let refusal = ParkRefusal(session.nags, task: session.isTask, openRequests: try rows.openRequests(id.session)) {
         try writeToolResult(session, .toolCall(callID), .failure(.init(message: refusal.description)))
       } else {
         try writeToolResult(session, .toolCall(callID), .compact(.init(summary: arguments.summary)))
@@ -374,6 +375,11 @@ struct SessionCell {
 
   private func load() throws -> SessionState {
     SessionState(try rows.hydrate(id.session), turn: turn())
+  }
+
+  /// What the generation was shown, as the tool call at its end goes by it.
+  func shown() throws -> ToolExecutionState {
+    try Seen.state(db.rows(Seen.all))
   }
 
   /// The row as the cell last wrote it: nil for a session whose cell has taken no step.
@@ -485,6 +491,7 @@ struct SessionCell {
   private mutating func write(_ turn: SessionTurn) throws {
     try db.execute(SessionTurn.delete())
     try db.execute(SessionTurn.insert { turn })
+    try rows.show(id.session, owed: turn.owed)
   }
 
   /// A turn row that is not what the transcript folds to is reported and replaced, so each divergence is reported once.
@@ -537,6 +544,8 @@ struct SessionState {
   let queueTail: Int
   /// The cell's row, or what the transcript folds to for a session whose cell has not written one.
   let turn: SessionTurn
+  /// What the session owes: the row's, or the transcript's fold until the cell's next step takes it (a row from before the column, a generation Start over opened).
+  let nags: NagState
   let slot: Slot
 
   init(_ hydration: SessionHydration, turn row: SessionTurn?) {
@@ -546,6 +555,7 @@ struct SessionState {
     queueHead = hydration.queueHead
     queueTail = hydration.queueTail
     turn = row ?? SessionTurn(folding: transcript, generation: hydration.generation, nags: transcript.environment.nags)
+    nags = turn.nags ?? transcript.environment.nags
     slot = Slot(session: hydration.record.id, generation: hydration.generation, position: turn.position, stepTry: hydration.stepTry)
   }
 

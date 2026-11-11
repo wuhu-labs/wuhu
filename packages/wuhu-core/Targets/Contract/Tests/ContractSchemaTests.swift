@@ -110,6 +110,25 @@ private enum Command: Codable, Equatable {
   case put(path: String, retries: Int?)
 }
 
+@Contract(fallback: "unknown")
+private enum Shade: String, Codable, Equatable {
+  case light
+  case dark
+  case unknown
+}
+
+@Contract
+private enum Mood: String, Codable, Equatable {
+  case calm
+  case unknown
+}
+
+@Contract(fallback: "unknown")
+private enum Frame: Codable, Equatable {
+  case tick(count: Int)
+  case unknown(kind: String)
+}
+
 @Suite
 struct ContractSchemaTests {
   @Test func scalarsSchema() {
@@ -373,5 +392,30 @@ struct ContractSchemaTests {
     #expect(throws: (any Error).self) {
       try JSONValueDecoder().decode(Command.self, from: .object(["kind": "explode"]))
     }
+  }
+
+  @Test func aFallbackIsLeftOutOfTheSchemaCatchesANewerValueAndNeverEncodes() throws {
+    #expect(Shade.jsonSchema == .object(["type": .string("string"), "enum": .array([.string("light"), .string("dark")])]))
+    let decoder = JSONValueDecoder()
+    #expect(try decoder.decode(Shade.self, from: "dark") == .dark)
+    #expect(try decoder.decode(Shade.self, from: "sepia") == .unknown)
+
+    #expect(Frame.jsonSchema == .object(["oneOf": .array([.object([
+      "type": .string("object"),
+      "properties": .object(["kind": .object(["const": .string("tick")]), "count": .object(["type": .string("integer")])]),
+      "required": .array([.string("kind"), .string("count")]),
+      "additionalProperties": .bool(false),
+    ])])]))
+    #expect(try decoder.decode(Frame.self, from: .object(["kind": "tick", "count": 2])) == .tick(count: 2))
+    #expect(try decoder.decode(Frame.self, from: .object(["kind": "attemptStarted", "attempt": "a1"])) == .unknown(kind: "attemptStarted"))
+    #expect(try JSONValueEncoder().encode(Frame.tick(count: 2)) == .object(["kind": "tick", "count": 2]))
+    #expect(try JSONValueEncoder().encode(Shade.dark) == "dark")
+    #expect(throws: EncodingError.self) { try JSONValueEncoder().encode(Frame.unknown(kind: "attemptStarted")) }
+    #expect(throws: EncodingError.self) { try JSONValueEncoder().encode(Shade.unknown) }
+  }
+
+  @Test func aCaseNamedUnknownWithoutAFallbackIsAWireCase() throws {
+    #expect(Mood.jsonSchema == .object(["type": .string("string"), "enum": .array([.string("calm"), .string("unknown")])]))
+    #expect(throws: (any Error).self) { try JSONValueDecoder().decode(Mood.self, from: "sepia") }
   }
 }

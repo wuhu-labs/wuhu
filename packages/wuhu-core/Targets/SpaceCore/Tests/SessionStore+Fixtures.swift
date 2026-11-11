@@ -74,6 +74,13 @@ extension SessionStore {
 
   func markResumed(_ id: SessionID) async throws {
     try await rows { try $0.markResumed(id) }
+    try await show(id)
+  }
+
+  /// The session's cell shows what its turn owes on the row; a test that drives the store alone says it from the transcript.
+  func show(_ id: SessionID) async throws {
+    let transcript = try await transcript(id)
+    try await rows { try $0.show(id, owed: !transcript.pendingToolCallIDs.isEmpty ? .tool : transcript.hasWork ? .inference : .noRun) }
   }
 
   func requestCommand(_ id: SessionID, _ command: SessionCommand) async throws {

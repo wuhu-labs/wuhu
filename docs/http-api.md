@@ -144,12 +144,10 @@ admin-only rule get `403 adminRequired`.
 | `GET /v1/conversation/:id/observe?after=` (SSE) | Conversation stream: one `ConversationMessagePayload` per event. |
 | `GET /v1/conversations?identity=` | Conversations the caller is a member of, plus channels a session caller reads by group. Each `ConversationPayload` has nullable `title`; channel members are people only. |
 | `GET /v1/session/:id/conversation` | The induced box of an agent, with its member list and attention-window bounds. `409 noBox` for a task. |
-| `GET /v1/session/:id/transcript` | One-shot transcript snapshot of the current generation. |
 | `GET /v1/session/:id/log?level=&limit=&before=` | A page of the current generation's transcript (`SessionLogOutput`): `items`, each with a stable `ref`, filtered to `level` 1–3 (default 1, the least detail), the last `limit` (default 50, at most 500) before the `before` ref, plus the session's `context` usage. |
 | `GET /v1/session/:id/entry/:ref` | One transcript item by the `ref` a log page gave it (`SessionEntryOutput`). |
 | `GET /v1/session/:id/lines?generation=&after=` (SSE) | The transcript lines stream: `reset` then the generation's lines (`SessionLineEvent`), each new line as it is written, a `reset` per new generation. |
 | `GET /v1/session/:id/lines/page?generation=&before=&limit=` | A page of a generation's lines before `before` (`SessionLinesPageOutput`). |
-| `GET /v1/session/:id/direct?generation=&position=` (SSE) | The direct view stream: committed items plus the ephemeral attempt side channel. |
 | `POST /v1/watermark` | Advance a human read watermark for `(identity, source)`, wholesale. A conversation is unread while a `conversation_message` notification to the identity sits above it; clients post it when a conversation is opened. |
 | `GET /v1/notifications?identity=&after=` | Notification rows above the cursor, from every group: a person has one inbox and one read position across their groups. Each row's `group` names its group, and a `conversation_message` payload's `senderGroup` names an outside sender's. |
 
@@ -186,7 +184,7 @@ squatting a session's word-name and stealing its messages.
 
 Both session SSE endpoints follow one contract: **snapshot-then-tail, no
 gaps, no duplicates, resumable by cursor** — `after=<n>` for conversations,
-`(generation, position)` for the direct view (a superseded generation cursor
+`(generation, after)` for transcript lines (a superseded generation cursor
 gets a `reset` followed by the full current generation). Observing a cold
 session never materializes it. The full event vocabulary is in
 [SpaceContract/SPEC.md](../packages/wuhu-core/Targets/SpaceContract/SPEC.md) under "Session observation streams".

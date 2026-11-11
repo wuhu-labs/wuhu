@@ -79,8 +79,10 @@ import struct WuhuAI.ToolCall
         Fix.replying("started over"),
       ])
       var config = makeConfig(inference: { try await script($0) })
+      let secondCall = Box<ToolExecutionState?>(nil)
       config.executeTool = { invocation in
         let path = try invocation.call.arguments.decode(Path.self).path
+        if path.hasSuffix("/b") { secondCall.withLock { $0 = invocation.state } }
         return ToolOutcome(
           payload: .read(.init(path: path, revision: .mtime(Date(timeIntervalSince1970: 1_700_000_000.123456)), content: path)),
           context: ScopeContext(folders: [repo: path], deliveredContext: ["hash": path + "/AGENTS.md"], text: "manual by " + path),
@@ -98,6 +100,9 @@ import struct WuhuAI.ToolCall
         try await until("the restarted generation stops") { try await sessions.settledWork(sid) && script.count == 6 }
       }
 
+      #expect(secondCall.value?.fileAccessLog == [repo + "/a": .mtime(Date(timeIntervalSince1970: 1_700_000_000.123456))], "a tool call goes by what the generation was shown")
+      #expect(secondCall.value?.deliveredContext == ["hash": repo + "/a/AGENTS.md"])
+      #expect(secondCall.value?.folderRoots.keys.sorted() == [repo])
       #expect(Set(try #require(folded.value).fileAccessLog.keys) == (kept ? [repo + "/a", repo + "/b"] : []))
       #expect(folded.value?.folderRoots.isEmpty == true)
       #expect(folded.value?.deliveredContext.isEmpty == true)

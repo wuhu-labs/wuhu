@@ -101,7 +101,7 @@ import Testing
 
   @Test func httpArchiveDefaultsToFalseAndRejectsMalformedForce() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness(inference: { _, _ in
+      let harness = try await SessionHarness(inference: { _ in
         try await ContinuousClock().sleep(for: .seconds(3600))
         return reply("done")
       })
@@ -128,7 +128,7 @@ import Testing
     try await withSessionDeps {
       let entered = Gate()
       let release = Gate()
-      let harness = try await SessionHarness(inference: { _, _ in
+      let harness = try await SessionHarness(inference: { _ in
         entered.open()
         await release.wait()
         try Task.checkCancellation()
@@ -175,7 +175,7 @@ import Testing
     try await withSessionDeps {
       let entered = Gate()
       let release = Gate()
-      let harness = try await SessionHarness(inference: { _, _ in
+      let harness = try await SessionHarness(inference: { _ in
         entered.open()
         await release.wait()
         return reply("done")

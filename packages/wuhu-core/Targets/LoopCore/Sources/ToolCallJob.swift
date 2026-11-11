@@ -41,7 +41,7 @@ struct ToolCallJob {
     try db.execute(CallRow.update { $0.started = true })
     let client = ctx.dependency(LoopClient.self)
     let params = ctx.params
-    let state = try await ctx.effect { try await client.transcript(params.session, params.generation, params.position) }.environment.tools
+    let state = try ctx.cell(SessionCell.ID(params.session.rawValue)).shown()
     let deadline = YieldDeadline(params.yieldBy)
     let raced = try await ctx.race({ _, messages in
       let invocation = ToolInvocation(sessionID: params.session, call: params.call, state: state, yielded: { await deadline.passed(client) })

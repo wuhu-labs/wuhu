@@ -68,7 +68,7 @@ import Testing
 
   @Test func verbsRoundTripTheStateAxes() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("ok") }
+      let harness = try await SessionHarness { _ in reply("ok") }
       let id = try await harness.createSession()
 
       _ = try await harness.call("/v1/session/\(id.rawValue)/interrupt", .null, as: [String: String].self)
@@ -506,33 +506,6 @@ extension SessionHarness {
   }
 }
 
-@Suite(.deterministicDependencies) struct HistoryRoutesTests {
-  @Test func historyIsAdditiveAuthorizedAndValidatesItsCursor() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness()
-      let id = try await harness.createSession()
-      let bounded = try await harness.get("/v1/session/\(id.rawValue)/transcript/page")
-      #expect(bounded.status == .ok)
-      let page = try await bounded.json(TranscriptHistoryOutput.self)
-      #expect(page.entries.count <= 200)
-      #expect(!page.hasEarlier)
-      let legacy = try await harness.get("/v1/session/\(id.rawValue)/transcript")
-      #expect(try await legacy.json(TranscriptReadOutput.self).items.count == page.entries.count)
-      let invalid = try await harness.get("/v1/session/\(id.rawValue)/transcript/page", query: ["before": "1"])
-      #expect(invalid.status == .badRequest)
-      let over = try await harness.get("/v1/session/\(id.rawValue)/transcript/page", query: ["limit": "201"])
-      #expect(over.status == .badRequest)
-      let before = page.generation
-      _ = try await harness.store.restart(id)
-      let stale = try await harness.get("/v1/session/\(id.rawValue)/transcript/page", query: ["generation": String(before), "before": "0"])
-      #expect(stale.status == .conflict)
-      #expect(JSONValue.parse(try await stale.text())?.object?["code"] == "generationChanged")
-    }
-  }
-}
-
-@Suite(.deterministicDependencies) struct ClaudeHistoryRoutesTests {}
-
 @Suite(.deterministicDependencies) struct ConversationHistoryRoutesTests {
   @Test func sparseOrdinalsUseExtraRowExhaustionAndExclusiveBoundaries() async throws {
     try await withSessionDeps {
@@ -566,8 +539,8 @@ extension SessionHarness {
     try await withSessionDeps {
       let harness = try await SessionHarness(dev: false)
       let id = try await harness.store.createSession(group: .shared, title: "private", kind: .agent, createdBy: "owner", model: ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
-      let transcript = try await harness.get("/v1/session/\(id.rawValue)/transcript/page")
-      #expect(transcript.status == .unauthorized)
+      let lines = try await harness.get("/v1/session/\(id.rawValue)/lines/page")
+      #expect(lines.status == .unauthorized)
       let conversation = try await harness.get("/v1/conversation/\(id.rawValue)/messages", query: ["tail": "100", "paged": "true"])
       #expect(conversation.status == .unauthorized)
     }

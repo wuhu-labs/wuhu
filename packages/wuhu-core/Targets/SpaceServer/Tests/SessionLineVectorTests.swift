@@ -1,6 +1,6 @@
 import Foundation
 import JSONValue
-import SessionDomain
+@testable import SessionDomain
 import SpaceContract
 @testable import SpaceCore
 @testable import SpaceServer
@@ -33,6 +33,12 @@ import WuhuAI
     )
   }
 
+  static let sent = Date(timeIntervalSince1970: 1_791_000_009)
+  static let reply = MessageContent(text: "Look at these.", attachments: [
+    .image(path: "/photos/a cat.png", mimeType: "image/png", size: 2048),
+    .file(path: "/docs/r.pdf", mimeType: "application/pdf", size: 1200),
+  ])
+
   static func vectors() throws -> [Vector] {
     let system = StoredTranscriptLine(position: 0, at: Date(timeIntervalSince1970: 1_791_000_000), role: .system, key: "system", message: #"{"rendered":"0f3a"}"#, meta: nil)
     let lines: [(String, StoredTranscriptLine)] = try [
@@ -51,7 +57,23 @@ import WuhuAI
         .hostedTool(HostedToolContent(providerID: "openai", payload: .object(["type": .string("web_search_call"), "action": .object(["type": .string("search")])]))!),
       ])))),
       ("linked image", stored(8, "message:m3", .user(.init(content: [.media(.init(url: URL(string: "https://example.com/cat.png")!, mimeType: "image/jpeg"))])))),
-    ]
+      ("reply with attachments", stored(9, "message:m4", .user(.init(content: Self.reply.blocks(header: MessageHeader(
+        sender: "plum-otter-kite", senderHandle: "minsheng", timestamp: Self.sent, timeZone: TimeZone(identifier: "UTC")!,
+        source: .conversation(ConversationID("c1")), kind: .reply, messageID: "m4", replyTarget: "m3",
+      )))))),
+      ("system notice", stored(10, "subscription:context", .user(.init(content: MessageContent(text: "Context is 80% full.").blocks(
+        header: .systemNotice(source: SubscriptionID("context"), at: Self.sent),
+      ))))),
+    ] + MessageHeader.Kind.allCases.enumerated().map { index, kind in
+      let position = 11 + index
+      let (key, source): (String, MessageHeader.Source) = switch kind {
+      case .directMessage: ("direct:d\(position)", .direct)
+      case .message, .reply, .request, .progress, .final: ("message:m\(position)", .conversation(ConversationID("c1")))
+      default: ("subscription:s\(position)", .subscription(SubscriptionID("s\(position)")))
+      }
+      let header = MessageHeader(sender: "plum-otter-kite", timestamp: Self.sent, timeZone: TimeZone(identifier: "UTC")!, source: source, kind: kind)
+      return try ("header \(kind.rendered)", stored(position, key, .user(.init(content: MessageContent(text: "Body.").blocks(header: header)))))
+    }
     return try lines.map { try Vector(name: $0.0, line: SessionLinePayload($0.1)) }
   }
 

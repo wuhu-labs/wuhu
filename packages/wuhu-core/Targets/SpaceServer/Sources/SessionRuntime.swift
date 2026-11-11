@@ -37,7 +37,6 @@ public struct SessionRuntime: Sendable {
   let streamScope = TaskScope()
   /// The sessions' loops, tools and scripts, and the verbs the routes take for a session.
   public let execution: SessionExecution
-  public let attempts: AttemptHub
   /// What a session's tools present to main's API, and the line they present it over.
   let tokens: ExecTokens
   let connection: MainConnection
@@ -57,19 +56,18 @@ public struct SessionRuntime: Sendable {
   let budget: @Sendable (SessionID) async -> ContextBudget
 
   init(
-    execution: SessionExecution, attempts: AttemptHub, owner: Hub, access: InferenceAccess = InferenceAccess(), metrics: InferenceMetricsSink = .noop,
+    execution: SessionExecution, owner: Hub, access: InferenceAccess = InferenceAccess(), metrics: InferenceMetricsSink = .noop,
     tokens: ExecTokens, connection: MainConnection,
   ) {
     let usage = UsageBoard()
     self.init(
-      execution: execution, attempts: attempts, usage: usage, sockets: ResponsesSocketRegistry(), refresher: nil, owner: owner, metrics: metrics,
+      execution: execution, usage: usage, sockets: ResponsesSocketRegistry(), refresher: nil, owner: owner, metrics: metrics,
       catalog: groupCatalog(space: owner.space, access: access), tokens: tokens, connection: connection,
     )
   }
 
   init(
     execution: SessionExecution,
-    attempts: AttemptHub,
     usage: UsageBoard,
     sockets: ResponsesSocketRegistry?,
     refresher: UsageRefresher?,
@@ -84,7 +82,6 @@ public struct SessionRuntime: Sendable {
     self.startup = startup
     self.execution = execution
     self.metrics = metrics
-    self.attempts = attempts
     self.tokens = tokens
     self.connection = connection
     store = space.sessions
@@ -153,7 +150,6 @@ extension SessionRuntime {
     eventSources: EventSources? = nil,
     lineDifferences: LineDifferenceLog? = nil,
   ) async -> SessionRuntime {
-    let attempts = AttemptHub()
     let tokens = tokens ?? ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
     // What this process brings to the inferences it runs; the catalog is data
@@ -172,12 +168,11 @@ extension SessionRuntime {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
     )
     let worker = KernelWorker(
-      connection: connection, tokens: tokens, machines: hub, access: access, attempts: attempts, usage: usage,
+      connection: connection, tokens: tokens, machines: hub, access: access, usage: usage,
       sources: eventSources ?? .unavailable, space: space,
     )
     return SessionRuntime(
       execution: worker.execution,
-      attempts: attempts,
       usage: usage,
       sockets: worker.sockets,
       refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
@@ -199,10 +194,10 @@ extension SessionRuntime {
     identity: IdentityController? = nil,
   ) -> UpgradingHandler {
     let execution = execution ?? KernelWorker(
-      connection: connection, tokens: tokens, machines: hub, access: InferenceAccess(credentials: credentials), attempts: AttemptHub(), usage: UsageBoard(), space: owner.space,
+      connection: connection, tokens: tokens, machines: hub, access: InferenceAccess(credentials: credentials), usage: UsageBoard(), space: owner.space,
     ).execution
     let runtime = SessionRuntime(
-      execution: execution, attempts: AttemptHub(), owner: owner, metrics: .recording(in: owner.space), tokens: tokens, connection: connection,
+      execution: execution, owner: owner, metrics: .recording(in: owner.space), tokens: tokens, connection: connection,
     )
     return SpaceServer.configuredHandler(
       space: owner.space, hub: hub ?? MachineHub(space: owner.space), sessions: runtime, origin: origin, contentHostPattern: contentHostPattern,

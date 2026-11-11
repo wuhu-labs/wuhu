@@ -18,15 +18,6 @@ public struct TranscriptCursor: Hashable, Sendable {
   }
 }
 
-public struct TranscriptPage: Hashable, Sendable {
-  public var generation: Int
-  public var startPosition: Int
-  public var items: [TranscriptItem]
-  // A reset page replaces everything the client holds: the cursor was absent
-  // or named a superseded generation (compaction bumped it).
-  public var reset: Bool
-}
-
 extension SessionStore {
   public func transcriptSnapshot(_ id: SessionID) async throws -> (generation: Int, items: [TranscriptItem]) {
     let key = id.rawValue
@@ -35,64 +26,6 @@ extension SessionStore {
       let generation = Int(runtime.generation)
       if try Sessions.record(key, in: db).executor.isRetired { return (generation, []) }
       return (generation, try Sessions.transcript(key, in: db).items)
-    }
-  }
-
-  public func observeTranscript(
-    _ id: SessionID,
-    from cursor: TranscriptCursor? = nil,
-    bounded: Bool = false,
-    historyEpoch: String? = nil,
-  ) -> AsyncThrowingStream<TranscriptPage, any Error> {
-    let key = id.rawValue
-    let writer = writer
-    return observation(
-      scope: taskScope,
-      writer: writer,
-      tables: ["session_pointers", "session_runtime"],
-      state: TranscriptObservation(cursor: cursor),
-    ) { db, state in
-      let runtime = try Sessions.runtime(key, in: db)
-      let generation = Int(runtime.generation)
-      if try Sessions.record(key, in: db).executor.isRetired {
-        var next = state
-        next.cursor = TranscriptCursor(generation: generation, position: -1)
-        let reset = state.cursor?.generation != generation || state.cursor?.position != -1
-        return (reset ? TranscriptPage(generation: generation, startPosition: 0, items: [], reset: true) : nil, next)
-      }
-      let reset = state.cursor?.generation != generation
-      let start = reset ? 0 : state.cursor!.position + 1
-      var next = state
-      if bounded {
-        if reset { return (TranscriptPage(generation: generation, startPosition: 0, items: [], reset: true), next) }
-        let boundary = Int64(start)
-        let rows = try SessionPointerRow
-          .where { $0.sessionID.eq(key) && $0.generation.eq(runtime.generation) && $0.position >= boundary }
-          .order(by: \.position).limit(201)
-          .join(SessionContentRow.all) { $0.sessionID.eq($1.sessionID) && $0.contentID.eq($1.id) }
-          .select { $1.payload }.fetchAll(db)
-        if rows.count > 200 {
-          return (TranscriptPage(generation: generation, startPosition: 0, items: [], reset: true), next)
-        }
-        let items = try rows.map { try Sessions.decode(TranscriptItem.self, from: $0) }
-        guard !items.isEmpty else { return (nil, next) }
-        next.cursor = TranscriptCursor(generation: generation, position: start + items.count - 1)
-        return (TranscriptPage(generation: generation, startPosition: start, items: items, reset: false), next)
-      }
-      let items: [TranscriptItem]
-      items = try Row.fetchAll(
-        db,
-        sql: """
-        SELECT c.payload FROM session_pointers p
-        JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
-        WHERE p.session_id = ? AND p.generation = ? AND p.position >= ?
-        ORDER BY p.position
-        """,
-        arguments: [key, runtime.generation, start],
-      ).map { try Sessions.decode(TranscriptItem.self, from: $0["payload"]) }
-      guard reset || !items.isEmpty else { return (nil, next) }
-      next.cursor = TranscriptCursor(generation: generation, position: start + items.count - 1)
-      return (TranscriptPage(generation: generation, startPosition: start, items: items, reset: reset), next)
     }
   }
 
@@ -112,44 +45,5 @@ extension SessionStore {
       continuation.onTermination = { _ in peer?.close() }
       if peer == nil { continuation.finish(throwing: SessionStoreError.unknownConversation(conversation.rawValue)) }
     }
-  }
-}
-
-private struct TranscriptObservation: Sendable {
-  var cursor: TranscriptCursor?
-}
-
-// Cursor-native observation: each wakeup reads past the cursor in one snapshot
-// and advances it, so the client-visible stream has no gaps and no duplicates
-// regardless of how the region observation coalesces commits.
-private func observation<State: Sendable, Element: Sendable>(
-  scope: TaskScope,
-  writer: any DatabaseWriter,
-  tables: [String],
-  state: State,
-  poll: @escaping @Sendable (Database, State) throws -> (Element?, State),
-) -> AsyncThrowingStream<Element, any Error> {
-  AsyncThrowingStream { continuation in
-    let task = try? scope.run("session-observation") {
-      let dirty = regionWakes(tables.map { Table($0) }, in: writer)
-      var state = state
-      do {
-        func wake() async throws {
-          let (element, next) = try await writer.read { [state] db in try poll(db, state) }
-          state = next
-          if let element { continuation.yield(element) }
-        }
-        try await wake()
-        for await _ in dirty {
-          if Task.isCancelled { break }
-          try await wake()
-        }
-        continuation.finish()
-      } catch {
-        continuation.finish(throwing: error)
-      }
-    }
-    if task == nil { continuation.finish(throwing: TaskScopeClosed()) }
-    continuation.onTermination = { _ in task?.cancel() }
   }
 }

@@ -184,7 +184,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func uploadedBytesLandInTheMessagesOwnFolderUnderItsOriginalName() async throws {
     try await withFixedClock {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       let (post, attachments) = try await harness.accepted(harness.multipart(id, [("shot.png", pixels)]))
       let copy = "/_/conversations/\(post.conversationId)/attachments/2026/09/25/052449Z/shot.png"
@@ -195,7 +195,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func aStoredImageRecordsItsSize() async throws {
     try await withFixedClock {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       let (post, attachments) = try await harness.accepted(harness.multipart(id, [("shot.png", pixels)]))
       #expect(try await harness.stored(post) == [.image(path: attachments[0], mimeType: "image/png", size: pixels.count)])
@@ -204,7 +204,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func anyFileTypeIsStoredWithItsTypeAndSizeAndOnlyMatchingImagesAreImages() async throws {
     try await withFixedClock {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       let pdf = Data("%PDF-1.7 not much of one".utf8)
       let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0])
@@ -232,7 +232,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func aPathAttachmentIsCopiedAndLaterEditsToTheOriginalDoNotReachIt() async throws {
     try await withFixedClock {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       _ = try await harness.space.fs(.shared).write("/shots/shot.png", pixels, ifMatch: nil)
       _ = try await harness.space.fs(.shared).write("/notes/plan.md", Data("# plan".utf8), ifMatch: nil)
@@ -250,7 +250,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func aClashingNameTakesTheNextFreeOrdinalWithinAPostAndAcrossPostsInOneSecond() async throws {
     try await withFixedClock {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       _ = try await harness.space.fs(.shared).write("/elsewhere/shot.png", pixels, ifMatch: nil)
 
@@ -267,7 +267,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func anUploadedNameIsReducedToOneValidPathComponent() async throws {
     try await withFixedClock {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       let (post, attachments) = try await harness.accepted(harness.multipart(id, [("../dir/a#b?.png", pixels), ("..", pixels)]))
       let folder = "/_/conversations/\(post.conversationId)/attachments/2026/09/25/052449Z"
@@ -277,7 +277,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func theAttachmentFolderIsWriteOnceForTheFileVerbs() async throws {
     try await withFixedClock {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       _ = try await harness.space.fs(.shared).write("/loose.png", pixels, ifMatch: nil)
       let (post, attachments) = try await harness.accepted(harness.multipart(id, [("shot.png", pixels)]))
@@ -306,7 +306,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func theBase64JSONUploadIsGone() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       let response = try await harness.post(
         "/v1/conversation/message",
@@ -321,7 +321,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func aFileOverTheSizeLimitIsRefusedWhileItStreams() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       let over = try await refusal(harness.streamed(id, sizes: [AttachmentLimits.maxFileBytes + 1]))
       #expect(over == (.contentTooLarge, "attachmentTooLarge"))
@@ -330,7 +330,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func moreAttachmentsThanTheCapAreRefused() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       let files = (0 ... AttachmentLimits.maxPerMessage).map { ("shot\($0).png", pixels) }
       #expect(try await refusal(harness.multipart(id, files)) == (.badRequest, "tooManyAttachments"))
@@ -343,7 +343,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func aSpacePathCountsTowardTheSizeLimitBeforeItIsRead() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       _ = try await harness.space.fs(.shared).write("/big.bin", Data(repeating: 1, count: AttachmentLimits.maxFileBytes + 1), ifMatch: nil)
       #expect(try await refusal(harness.postToBox(id, paths: ["/big.bin"])) == (.contentTooLarge, "attachmentTooLarge"))
@@ -352,7 +352,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func malformedPostsAreRefused() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       var noMessage = MultipartForm(boundary: boundary)
       noMessage.appendFile(name: "file", filename: "a.txt", contentType: "text/plain", bytes: Data("a".utf8))
@@ -370,7 +370,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func anAttachmentThatIsNotInTheSpaceIsRefused() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       #expect(try await harness.postToBox(id, paths: ["/shots/gone.png"]).status == .notFound)
     }
@@ -378,7 +378,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
 
   @Test func aPathThatIsNotAnAbsoluteSpacePathIsRefused() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness { _, _ in reply("seen") }
+      let harness = try await SessionHarness { _ in reply("seen") }
       let id = try await harness.createSession()
       _ = try await harness.space.fs(.shared).write("/shots/a.png", Data("a".utf8), ifMatch: nil)
       for path in ["machines://m1/shot.png", "shots/a.png"] {

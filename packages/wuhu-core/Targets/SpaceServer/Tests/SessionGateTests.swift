@@ -81,7 +81,7 @@ import Testing
       let t = try await tree()
       for (method, path) in [
         (Fetch.Method.get, "/v1/users"), (.get, "/v1/accounts"),
-        (.post, "/v1/machine-v2"), (.get, "/v1/providers"), (.get, "/v1/session/\(t.child.rawValue)/transcript"),
+        (.post, "/v1/machine-v2"), (.get, "/v1/providers"), (.get, "/v1/session/\(t.child.rawValue)/lines/page"),
       ] {
         var request = Request(url: URL(string: "http://space\(path)")!, method: method)
         request.headers[.authorization] = "Bearer " + t.token

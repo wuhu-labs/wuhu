@@ -23,8 +23,7 @@ import WuhuAI
       let sid = try await sessions.createSession(group: .shared, title: "partial", kind: .agent, createdBy: "morgan", model: .test)
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
       let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
-      let hub = AttemptHub()
-      let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [], hub: hub)
+      let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [])
       let requests = Box<[JSONValue]>([])
       let commits = Box<[UUID]>([])
       let provider = FetchClient { request in
@@ -47,7 +46,6 @@ import WuhuAI
           try await service.enqueue(item: Fix.message("hello"), to: sid)
           try await until("failed attempt") { script.count == 1 }
           try await time.asleep("retry", dueIn: delay)
-          #expect(hub.inFlight(session: sid).isEmpty)
           #expect(try await sessions.record(sid).work != .errored)
           #expect(try await sessions.record(sid).errorMessage == nil)
           #expect(try await sessions.hydrate(sid).transcript.kernel.assistantEntries.isEmpty)

@@ -103,28 +103,6 @@ public struct SessionEnvironment: Hashable, Sendable {
       apply(event)
     }
   }
-
-  // An agent owes replies in its conversations; any session a parent opened a
-  // request on, agent or task, owes that request its final report. `armedWake`:
-  // the session has a plain timer armed, which will wake the model by itself.
-  public func nag(task: Bool, openRequests: [OpenRequest], armedWake: Bool, now: Date) -> Nag? {
-    if !task, !settle.owedConversations.isEmpty {
-      return .owedReply(conversations: settle.owedConversations)
-    }
-    guard !armedWake else { return nil }
-    return openRequests.sorted { $0.id.rawValue < $1.id.rawValue }
-      .first { nextParkReminder($0, now: now) == now }
-      .map { .park(request: $0.id) }
-  }
-
-  public func nextTimer(openRequests: [OpenRequest], armedWake: Bool, now: Date) -> Date? {
-    guard !armedWake else { return nil }
-    return openRequests.map { nextParkReminder($0, now: now) }.min()
-  }
-
-  private func nextParkReminder(_ request: OpenRequest, now: Date) -> Date {
-    ParkBackoff.nextFire(reminded: nags.parks[request.id], now: now)
-  }
 }
 
 extension SessionEnvironment.Event {
@@ -180,5 +158,27 @@ public struct NagState: Hashable, Sendable, Codable {
     case let .nagged(.park(request), at):
       parks[request] = ParkReminders(count: (parks[request]?.count ?? 0) + 1, last: at.timeIntervalSinceReferenceDate)
     }
+  }
+
+  // An agent owes replies in its conversations; any session a parent opened a
+  // request on, agent or task, owes that request its final report. `armedWake`:
+  // the session has a plain timer armed, which will wake the model by itself.
+  public func nag(task: Bool, openRequests: [OpenRequest], armedWake: Bool, now: Date) -> Nag? {
+    if !task, !settle.owedConversations.isEmpty {
+      return .owedReply(conversations: settle.owedConversations)
+    }
+    guard !armedWake else { return nil }
+    return openRequests.sorted { $0.id.rawValue < $1.id.rawValue }
+      .first { nextParkReminder($0, now: now) == now }
+      .map { .park(request: $0.id) }
+  }
+
+  public func nextTimer(openRequests: [OpenRequest], armedWake: Bool, now: Date) -> Date? {
+    guard !armedWake else { return nil }
+    return openRequests.map { nextParkReminder($0, now: now) }.min()
+  }
+
+  private func nextParkReminder(_ request: OpenRequest, now: Date) -> Date {
+    ParkBackoff.nextFire(reminded: parks[request.id], now: now)
   }
 }

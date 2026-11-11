@@ -103,7 +103,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         source.items += items
         try await harness.store.append(id, items: items, inputOrigin: source.cacheWarmingInputOrigin)
         let access = InferenceAccess(credentials: harness.credentials)
-        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
         var adopted: Transcript
         if boundary == .compaction {
           adopted = try await owner.space.sessions.writeCompaction(id, head: .init(id: UUID(), timestamp: Date(), summary: "ordinary compaction", snapshot: .init(), replayBinding: target, runningWork: []), kept: 0 ..< source.items.count, transition: nil)
@@ -171,7 +171,7 @@ extension PortableThinkingTests {
         _ = try await owner.space.sessions.writeCompaction(id, head: head, kept: 0 ..< source.items.count, transition: transition)
         #expect(try await owner.space.sessions.modelRoute(id)?.member == "b")
         let access = InferenceAccess(credentials: harness.credentials)
-        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
         var adopted = try await harness.store.transcript(id)
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted, mode: .normal))
         #expect(bodies.withLock { $0.last?.object?["thinking"] } == nil)

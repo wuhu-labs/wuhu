@@ -93,7 +93,6 @@ private let echoTool = Tool(
 private func makeExecutor(
   provider: String = "deepseek",
   model: String = "deepseek-v4-pro",
-  hub: AttemptHub? = nil,
   trace: AttemptTraceClient? = nil,
   metrics: InferenceMetricsSink = .noop,
 ) async throws -> InferenceExecutor {
@@ -103,7 +102,6 @@ private func makeExecutor(
     model: try await catalog.resolve(.init(provider: provider, model: model, effort: "high"), session: SessionID("executor-tests")),
     systemPrompt: "You are a session.",
     tools: [echoTool, compactTool],
-    hub: hub,
     trace: trace,
     metrics: metrics,
   )
@@ -216,64 +214,6 @@ private func run(
     #expect(body["tool_choice"] == .object(["type": .string("tool"), "name": .string("compact")]))
     #expect(body["thinking"]?.object?["type"] == .string("adaptive"))
     #expect(body["output_config"] == .object(["effort": .string("high")]))
-  }
-
-  @Test func publishesAttemptLifecycleToHub() async throws {
-    let hub = AttemptHub()
-    let executor = try await makeExecutor(hub: hub)
-    let attemptID = UUID(7)
-
-    let events = hub.events(session: SessionID("test-session-one"))
-    async let collected: [AttemptEvent] = {
-      var seen: [AttemptEvent] = []
-      for await event in events {
-        seen.append(event)
-        if case .finished = event { break }
-      }
-      return seen
-    }()
-
-    _ = try await run(executor, sse: textSSE, mode: .normal, attemptID: attemptID)
-
-    let seen = await collected
-    guard case .started(attemptID) = seen.first else {
-      Issue.record("expected started first, got \(seen)")
-      return
-    }
-    guard case let .finished(finishedID, .done(message, metadata)) = seen.last else {
-      Issue.record("expected finished(done) last, got \(seen)")
-      return
-    }
-    #expect(finishedID == attemptID)
-    #expect(metadata.usage?.totalTokens == 19)
-    #expect(!message.content.isEmpty)
-    #expect(seen.count > 2)
-    #expect(hub.inFlight(session: SessionID("test-session-one")).isEmpty)
-  }
-
-  @Test func lateJoinSnapshotTracksPartials() {
-    let hub = AttemptHub()
-    let session = SessionID("test-session-three")
-    let attempt = UUID(4)
-    hub.publish(session: session, .started(attemptID: attempt))
-    #expect(hub.inFlight(session: session) == [attempt: AssistantMessage()])
-
-    let partial = AssistantMessage(content: [.text("Hel")])
-    hub.publish(session: session, .delta(
-      attemptID: attempt,
-      event: .textDelta(contentIndex: 0, delta: "Hel", partial: partial),
-    ))
-    #expect(hub.inFlight(session: session) == [attempt: partial])
-
-    hub.publish(session: session, .finished(attemptID: attempt, outcome: .failed(reason: "cancelled")))
-    #expect(hub.inFlight(session: session).isEmpty)
-  }
-
-  @Test func coldSessionIsASilentTopic() {
-    let hub = AttemptHub()
-    #expect(hub.inFlight(session: SessionID("test-session-nine")).isEmpty)
-    hub.publish(session: SessionID("test-session-nine"), .finished(attemptID: UUID(8), outcome: .failed(reason: "x")))
-    #expect(hub.inFlight(session: SessionID("test-session-nine")).isEmpty)
   }
 
   @Test func attemptLogCapturesRequestAndRawSSE() async throws {

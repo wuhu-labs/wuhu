@@ -80,7 +80,7 @@ struct SessionHarness {
     cacheWarmingUsage: UsageBoard? = nil,
     metrics: InferenceMetricsSink = .noop,
     machineV2: Bool = true,
-    inference: @escaping @Sendable (LoopCore.InferenceRequest, AttemptHub) async throws -> LoopCore.InferenceReply = { _, _ in
+    inference: @escaping @Sendable (LoopCore.InferenceRequest) async throws -> LoopCore.InferenceReply = { _ in
       throw InferenceError.other(status: nil, body: "no inference scripted")
     },
   ) async throws {
@@ -94,11 +94,10 @@ struct SessionHarness {
     let tokens = execTokens ?? ExecTokens(spaceURL: "http://space")
     let hub = MachineHub(space: space, tokens: tokens)
     self.hub = hub
-    let attempts = AttemptHub()
     let cacheUsage = cacheWarmingUsage ?? UsageBoard()
     let config = LoopConfig(
       executeTool: { _ in ToolOutcome(payload: .failure(.init(message: "no tools in this harness"))) },
-      inference: { request in try await inference(request, attempts) },
+      inference: { request in try await inference(request) },
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
@@ -113,7 +112,7 @@ struct SessionHarness {
     )
     let connection = MainConnection()
     let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, access: access, space: space) { _ in config }
-    runtime = SessionRuntime(execution: worker, attempts: attempts, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
+    runtime = SessionRuntime(execution: worker, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
       credentials: credentials, secrets: secrets, execTokens: tokens,
@@ -290,17 +289,6 @@ func until(
   }
   Issue.record("timed out waiting for \(description)")
   throw SessionTestTimeout()
-}
-
-func streamEvent(_ frameData: String) throws -> SessionStreamEvent {
-  try JSONValueDecoder().decode(SessionStreamEvent.self, from: #require(JSONValue.parse(frameData)))
-}
-
-extension SessionStreamEvent {
-  var isMaterialized: Bool {
-    if case .materialized = self { return true }
-    return false
-  }
 }
 
 final class SessionTestToolStates: Sendable {

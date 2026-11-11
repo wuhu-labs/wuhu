@@ -7,7 +7,7 @@ import SessionDomain
 import StructuredQueries
 import WuweiQueries
 
-/// Something this generation of a session was shown, which a later tool call goes by: a file at a revision (what a write is checked against), a folder whose instructions were delivered with the repository root found for it, an instruction text by its hash with the path it first came from. Written by the session's cell with the item that shows it; the cell does not read it yet.
+/// Something this generation of a session was shown, which a later tool call goes by: a file at a revision (what a write is checked against), a folder whose instructions were delivered with the repository root found for it, an instruction text by its hash with the path it first came from. Written by the session's cell with the item that shows it; a tool call reads the rows through the cell.
 @Table("session_seen")
 struct Seen: Owned, Hashable, Encodable, Sendable {
   var kind: Kind
@@ -31,6 +31,18 @@ struct Seen: Owned, Hashable, Encodable, Sendable {
       seen.insert(Seen(kind: .file, key: path, value: String(decoding: try encoder.encode(revision), as: UTF8.self)))
     }
     return seen
+  }
+
+  static func state(_ rows: [Seen]) throws -> ToolExecutionState {
+    var state = ToolExecutionState()
+    for seen in rows {
+      switch seen.kind {
+      case .file: state.fileAccessLog[seen.key] = try JSONDecoder().decode(FileRevision.self, from: Data(seen.value!.utf8))
+      case .folder: state.folderRoots.updateValue(seen.value, forKey: seen.key)
+      case .text: state.deliveredContext[seen.key] = seen.value!
+      }
+    }
+    return state
   }
 
   /// What one item shows.

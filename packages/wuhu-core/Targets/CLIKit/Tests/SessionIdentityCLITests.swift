@@ -126,7 +126,7 @@ final class IdentityHarness: Sendable {
     let connection = MainConnection()
     let access = InferenceAccess(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "identity-fixture") })
     let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, access: access, space: owner.space) { _ in config }
-    let runtime = SessionRuntime(execution: worker, attempts: AttemptHub(), owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
+    let runtime = SessionRuntime(execution: worker, owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: dev, execTokens: tokens)
     worker.start()
     self.serviceTask = Task {

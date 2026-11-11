@@ -48,14 +48,14 @@ import Testing
     var environment = SessionEnvironment()
     environment.apply(.delivered(Self.message("box"), at: Self.t0))
     let nag = Nag.owedReply(conversations: [.init("box")])
-    #expect(environment.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nag)
+    #expect(environment.nags.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nag)
     environment.apply(.nagged(nag, at: Self.t0))
-    #expect(environment.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nil)
+    #expect(environment.nags.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nil)
     environment.apply(.delivered(Self.message("box"), at: Self.t0))
-    #expect(environment.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nag, "a new delivery owes again")
+    #expect(environment.nags.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nag, "a new delivery owes again")
     environment.apply(.toolResult(Self.post("box"), at: Self.t0))
-    #expect(environment.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nil)
-    #expect(environment.nextTimer(openRequests: [], armedWake: false, now: Self.t0) == nil)
+    #expect(environment.nags.nag(task: false, openRequests: [], armedWake: false, now: Self.t0) == nil)
+    #expect(environment.nags.nextTimer(openRequests: [], armedWake: false, now: Self.t0) == nil)
   }
 
   @Test func anAgentWithAnOpenRequestIsRemindedAfterItsOwedReplies() {
@@ -63,35 +63,35 @@ import Testing
     var environment = SessionEnvironment()
     environment.apply(.delivered(Self.message("box"), at: Self.t0))
     let owed = Nag.owedReply(conversations: [.init("box")])
-    #expect(environment.nag(task: false, openRequests: open, armedWake: false, now: Self.t0) == owed, "the reply is owed first")
+    #expect(environment.nags.nag(task: false, openRequests: open, armedWake: false, now: Self.t0) == owed, "the reply is owed first")
     environment.apply(.nagged(owed, at: Self.t0))
     let park = Nag.park(request: .init("r1"))
-    #expect(environment.nag(task: false, openRequests: open, armedWake: false, now: Self.t0) == park)
+    #expect(environment.nags.nag(task: false, openRequests: open, armedWake: false, now: Self.t0) == park)
     environment.apply(.nagged(park, at: Self.t0))
-    #expect(environment.nextTimer(openRequests: open, armedWake: false, now: Self.t0) == Self.t0.addingTimeInterval(60))
-    #expect(environment.nag(task: false, openRequests: [], armedWake: false, now: Self.t0.addingTimeInterval(60)) == nil)
-    #expect(environment.nextTimer(openRequests: [], armedWake: false, now: Self.t0) == nil)
+    #expect(environment.nags.nextTimer(openRequests: open, armedWake: false, now: Self.t0) == Self.t0.addingTimeInterval(60))
+    #expect(environment.nags.nag(task: false, openRequests: [], armedWake: false, now: Self.t0.addingTimeInterval(60)) == nil)
+    #expect(environment.nags.nextTimer(openRequests: [], armedWake: false, now: Self.t0) == nil)
   }
 
   @Test func aParkedTaskIsRemindedOnTheBackoffUnlessATimerIsArmed() {
     let open = [OpenRequest(id: .init("r1"))]
     var environment = SessionEnvironment()
     let nag = Nag.park(request: .init("r1"))
-    #expect(environment.nag(task: true, openRequests: open, armedWake: false, now: Self.t0) == nag, "the first reminder is due at once")
+    #expect(environment.nags.nag(task: true, openRequests: open, armedWake: false, now: Self.t0) == nag, "the first reminder is due at once")
     environment.apply(.nagged(nag, at: Self.t0))
-    #expect(environment.nag(task: true, openRequests: open, armedWake: false, now: Self.t0) == nil)
-    #expect(environment.nextTimer(openRequests: open, armedWake: false, now: Self.t0) == Self.t0.addingTimeInterval(60))
-    #expect(environment.nag(task: true, openRequests: open, armedWake: false, now: Self.t0.addingTimeInterval(60)) == nag)
+    #expect(environment.nags.nag(task: true, openRequests: open, armedWake: false, now: Self.t0) == nil)
+    #expect(environment.nags.nextTimer(openRequests: open, armedWake: false, now: Self.t0) == Self.t0.addingTimeInterval(60))
+    #expect(environment.nags.nag(task: true, openRequests: open, armedWake: false, now: Self.t0.addingTimeInterval(60)) == nag)
 
-    #expect(environment.nag(task: true, openRequests: open, armedWake: true, now: Self.t0.addingTimeInterval(60)) == nil, "a timer is certain to wake it")
-    #expect(environment.nextTimer(openRequests: open, armedWake: true, now: Self.t0) == nil)
+    #expect(environment.nags.nag(task: true, openRequests: open, armedWake: true, now: Self.t0.addingTimeInterval(60)) == nil, "a timer is certain to wake it")
+    #expect(environment.nags.nextTimer(openRequests: open, armedWake: true, now: Self.t0) == nil)
   }
 
   @Test func aRequestMessageInTheTranscriptOwesNothingTheTableDoesNotHold() {
     var environment = SessionEnvironment()
     environment.apply(.delivered(Self.message("dm", owesReply: false, request: "r1"), at: Self.t0))
-    #expect(environment.nag(task: true, openRequests: [], armedWake: false, now: Self.t0) == nil)
-    #expect(environment.nextTimer(openRequests: [], armedWake: false, now: Self.t0) == nil)
+    #expect(environment.nags.nag(task: true, openRequests: [], armedWake: false, now: Self.t0) == nil)
+    #expect(environment.nags.nextTimer(openRequests: [], armedWake: false, now: Self.t0) == nil)
   }
 
   @Test func aNagRendersWithTheKernelsHeaderTags() {

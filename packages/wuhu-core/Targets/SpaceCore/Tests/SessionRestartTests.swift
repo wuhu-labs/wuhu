@@ -202,11 +202,11 @@ import Testing
       let nag = Nag.park(request: .init("parked"))
       try await store.append(task, items: (0 ..< 3).map { _ in .notification(nag.notification(id: UUID(), at: fixedDate)) }, inputOrigin: nil)
       let open = try await store.openRequests(task)
-      #expect(try await store.transcript(task).environment.nextTimer(openRequests: open, armedWake: false, now: fixedDate) == fixedDate.addingTimeInterval(900))
+      #expect(try await store.transcript(task).environment.nags.nextTimer(openRequests: open, armedWake: false, now: fixedDate) == fixedDate.addingTimeInterval(900))
       try await store.markInterrupted(task)
       _ = try await store.restart(task)
       #expect(try await store.openRequests(task) == [OpenRequest(id: .init("parked"))])
-      #expect(try await store.transcript(task).environment.nextTimer(openRequests: open, armedWake: false, now: fixedDate) == fixedDate)
+      #expect(try await store.transcript(task).environment.nags.nextTimer(openRequests: open, armedWake: false, now: fixedDate) == fixedDate)
     }
   }
 

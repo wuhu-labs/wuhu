@@ -14,6 +14,9 @@ enum ContractMacroError: Error, CustomStringConvertible {
   case enumNeedsRawOrAssociated(name: String)
   case nonLiteralDiscriminator
   case discriminatorOutsideUnion
+  case nonLiteralFallback
+  case fallbackOutsideEnum
+  case fallbackShape(name: String, expected: String)
 
   var description: String {
     switch self {
@@ -42,6 +45,12 @@ enum ContractMacroError: Error, CustomStringConvertible {
       return "@Contract needs a plain string-literal discriminator"
     case .discriminatorOutsideUnion:
       return "@Contract takes a discriminator only on an enum with associated values (a discriminated union)"
+    case .nonLiteralFallback:
+      return "@Contract needs a plain string-literal fallback case name"
+    case .fallbackOutsideEnum:
+      return "@Contract takes a fallback only on an enum"
+    case let .fallbackShape(name, expected):
+      return "@Contract fallback '\(name)' must be declared as `\(expected)`: the case a value this type does not know decodes to"
     }
   }
 }
@@ -66,24 +75,24 @@ public struct ContractMacro: MemberMacro {
     conformingTo _: [TypeSyntax],
     in _: some MacroExpansionContext,
   ) throws -> [DeclSyntax] {
-    let discriminator = try discriminatorArgument(of: node)
+    let discriminator = try stringArgument("discriminator", of: node, orThrow: .nonLiteralDiscriminator)
+    let fallback = try stringArgument("fallback", of: node, orThrow: .nonLiteralFallback)
     if let structDecl = declaration.as(StructDeclSyntax.self) {
       guard discriminator == nil else { throw ContractMacroError.discriminatorOutsideUnion }
+      guard fallback == nil else { throw ContractMacroError.fallbackOutsideEnum }
       return try structMembers(structDecl)
     }
     if let enumDecl = declaration.as(EnumDeclSyntax.self) {
-      return try enumMembers(enumDecl, discriminator: discriminator)
+      return try enumMembers(enumDecl, discriminator: discriminator, fallback: fallback)
     }
     throw ContractMacroError.notStructOrEnum
   }
 
-  private static func discriminatorArgument(of node: AttributeSyntax) throws -> String? {
+  private static func stringArgument(_ label: String, of node: AttributeSyntax, orThrow error: ContractMacroError) throws -> String? {
     guard case let .argumentList(arguments) = node.arguments,
-          let argument = arguments.first(where: { $0.label?.text == "discriminator" })
+          let argument = arguments.first(where: { $0.label?.text == label })
     else { return nil }
-    guard let literal = stringLiteralValue(argument.expression) else {
-      throw ContractMacroError.nonLiteralDiscriminator
-    }
+    guard let literal = stringLiteralValue(argument.expression) else { throw error }
     return literal
   }
 
@@ -112,13 +121,20 @@ public struct ContractMacro: MemberMacro {
     """
   }
 
-  private static func enumMembers(_ enumDecl: EnumDeclSyntax, discriminator: String?) throws -> [DeclSyntax] {
+  private static func enumMembers(_ enumDecl: EnumDeclSyntax, discriminator: String?, fallback: String?) throws -> [DeclSyntax] {
     let cases = enumCases(of: enumDecl)
     let access = accessPrefix(of: enumDecl.modifiers)
+    let known = cases.filter { $0.name != fallback }
     if cases.contains(where: { !$0.parameters.isEmpty }) {
       let key = discriminator ?? "kind"
-      let schema = try discriminatedUnionExpr(cases, discriminator: key)
-      let coding = discriminatedUnionCoding(cases, typeName: enumDecl.name.text, access: access, discriminator: key)
+      if let fallback {
+        let shape = cases.first { $0.name == fallback }
+        guard let shape, shape.parameters.count == 1, shape.parameters[0].name == key, shape.parameters[0].typeText == "String" else {
+          throw ContractMacroError.fallbackShape(name: fallback, expected: "case \(fallback)(\(key): String)")
+        }
+      }
+      let schema = try discriminatedUnionExpr(known, discriminator: key)
+      let coding = discriminatedUnionCoding(known, fallback: fallback, typeName: enumDecl.name.text, access: access, discriminator: key)
       return [
         DeclSyntax("\(raw: access)static var jsonSchema: JSONValue { \(raw: schema) }"),
         DeclSyntax("\(raw: coding.encode)"),
@@ -129,7 +145,25 @@ public struct ContractMacro: MemberMacro {
     guard hasStringRawType(enumDecl) else {
       throw ContractMacroError.enumNeedsRawOrAssociated(name: enumDecl.name.text)
     }
-    return [DeclSyntax("\(raw: access)static var jsonSchema: JSONValue { \(raw: try stringEnumExpr(cases)) }")]
+    let schema = DeclSyntax("\(raw: access)static var jsonSchema: JSONValue { \(raw: try stringEnumExpr(known)) }")
+    guard let fallback else { return [schema] }
+    guard known.count < cases.count else { throw ContractMacroError.fallbackShape(name: fallback, expected: "case \(fallback)") }
+    let name = escaped(fallback)
+    return [schema, DeclSyntax("""
+    \(raw: access)init(from decoder: any Decoder) throws {
+    self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .\(raw: name)
+    }
+    """), DeclSyntax("""
+    \(raw: access)func encode(to encoder: any Encoder) throws {
+    if case .\(raw: name) = self { throw \(raw: receiveOnly(enumDecl.name.text, fallback)) }
+    var container = encoder.singleValueContainer()
+    try container.encode(self.rawValue)
+    }
+    """)]
+  }
+
+  private static func receiveOnly(_ typeName: String, _ fallback: String) -> String {
+    "EncodingError.invalidValue(self, EncodingError.Context(codingPath: encoder.codingPath, debugDescription: \"\(typeName).\(fallback) is receive-only\"))"
   }
 
   private static func accessPrefix(of modifiers: DeclModifierListSyntax) -> String {
@@ -285,6 +319,7 @@ public struct ContractMacro: MemberMacro {
   // Codable would silently contradict the schema, which the design forbids.
   private static func discriminatedUnionCoding(
     _ cases: [Case],
+    fallback: String?,
     typeName: String,
     access: String,
     discriminator: String,
@@ -322,6 +357,11 @@ public struct ContractMacro: MemberMacro {
       let payload = decoded.isEmpty ? "" : "(\(decoded.joined(separator: ", ")))"
       decodeCases.append("case \"\(enumCase.name)\":\nself = .\(escaped(enumCase.name))\(payload)")
     }
+    if let fallback {
+      encodeCases.append("case .\(escaped(fallback)):\nthrow \(receiveOnly(typeName, fallback))")
+    }
+    let unknownKind = fallback.map { "self = .\(escaped($0))(\(discriminatorKey): kind)" }
+      ?? "throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: container.codingPath, debugDescription: \"Unknown \(typeName) \(discriminator): \\(kind)\"))"
 
     let encode = """
     \(access)func encode(to encoder: any Encoder) throws {
@@ -340,7 +380,7 @@ public struct ContractMacro: MemberMacro {
     switch kind {
     \(decodeCases.joined(separator: "\n"))
     default:
-    throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: container.codingPath, debugDescription: "Unknown \(typeName) \(discriminator): \\(kind)"))
+    \(unknownKind)
     }
     }
     """

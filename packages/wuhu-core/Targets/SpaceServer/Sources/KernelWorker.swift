@@ -6,14 +6,14 @@ import SessionDomain
 import SessionTools
 import SpaceCore
 
-/// The sessions' runtime as the kernel wires it: the loops with the real inference, the tools and the scripts. Its tools reach main's API through `connection` as the session, with the session's token from `tokens`. `attempts` and `usage` are where its inferences report their streams and the providers' plan usage; `machines` is where an archived session's execs and an observer firing's processes are ended.
+/// The sessions' runtime as the kernel wires it: the loops with the real inference, the tools and the scripts. Its tools reach main's API through `connection` as the session, with the session's token from `tokens`. `usage` is where its inferences report the providers' plan usage; `machines` is where an archived session's execs and an observer firing's processes are ended.
 struct KernelWorker: Sendable {
   let execution: SessionExecution
   /// The provider sockets its inferences hold open; `run` keeps them.
   let sockets: ResponsesSocketRegistry
 
   init(
-    connection: MainConnection, tokens: ExecTokens, machines: MachineHub?, access: InferenceAccess, attempts: AttemptHub, usage: UsageBoard,
+    connection: MainConnection, tokens: ExecTokens, machines: MachineHub?, access: InferenceAccess, usage: UsageBoard,
     thresholds: CompactionThresholds = CompactionThresholds(), sources: EventSources = .unavailable, space: Space, scripts: Scripts? = nil,
   ) {
     let store = space.sessions
@@ -42,7 +42,7 @@ struct KernelWorker: Sendable {
           try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state, yielded: invocation.yielded)
         },
         inference: kernelInference(
-          store: store, executor: executor, access: access, sockets: sockets, attempts: attempts,
+          store: store, executor: executor, access: access, sockets: sockets,
           usage: usage,
           committedWarming: { id, policy in
             do { try await store.scheduleCacheWarming(id, intervalSeconds: policy.intervalSeconds) }
