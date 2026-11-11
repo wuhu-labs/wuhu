@@ -166,6 +166,7 @@ import Testing
         as: ConversationPostOutput.self,
       )
 
+      try await harness.store.inboxesSettled()
       let inbox = try JSONValueDecoder().decode(
         NotificationsOutput.self,
         from: try await json(try await harness.get("/v1/notifications", query: ["identity": alice])),
@@ -331,6 +332,7 @@ import Testing
       )
       let otherPersona = try #require(try await harness.space.persona(account: otherKey.account)).name
       #expect(otherPersona != persona)
+      try await harness.store.inboxesSettled()
       let inbox = try JSONValueDecoder().decode(
         NotificationsOutput.self,
         from: try await json(try await harness.get("/v1/notifications", bearer: bearer)),

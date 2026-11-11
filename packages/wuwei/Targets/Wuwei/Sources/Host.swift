@@ -132,7 +132,13 @@ final class Incarnation {
   }
 
   func record(_ write: Write) {
+    onLane()
     writes.append(write)
+  }
+
+  /// A closure inside a job's `start` can leave the lane with the job's context and the compiler says nothing (swift#87503): a write from there traps rather than corrupt the incarnation.
+  private func onLane() {
+    host?.preconditionIsolated("\(address) wrote off its lane")
   }
 
   func output(_ output: Output) {
@@ -181,6 +187,7 @@ final class Incarnation {
 
   /// One durable step. If `body` throws, what it wrote and staged is undone. Layered, it is a savepoint of the inner database, sealed at the next drain. Shared, it is one write transaction that also commits everything staged before it and checks the fence, and is durable when it returns; a failed commit ends the incarnation.
   func step<T>(_ body: () throws -> T) throws -> T {
+    onLane()
     guard !dead else { throw Evicted(address: address) }
     let staged = writes.count
     guard case .shared = tables else {

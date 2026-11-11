@@ -136,12 +136,14 @@ public struct JobContext<Target: Job> {
   }
 
   /// Runs `body` as an effect in a child task, unless a message for which `stop` holds comes first: then `body` is cancelled and awaited, and that message is taken as `receive` takes it. Messages for which `stop` does not hold are taken and handed to `body` in `messages`.
-  public func race<Value: Sendable>(_ body: @escaping @Sendable (Effects, AsyncStream<Target.Message>) async throws -> Value, until stop: (Target.Message) -> Bool) async throws -> Raced<Value, Target.Message> where Target.Message: Sendable {
+  public func race<Value: Sendable>(_ body: @escaping @Sendable (Effects, AsyncStream<Target.Message>) async throws -> Value, until stop: (Target.Message) -> Bool, isolation: isolated (any Actor)? = #isolation) async throws -> Raced<Value, Target.Message> where Target.Message: Sendable {
     let (messages, others) = AsyncStream<Target.Message>.makeStream()
     defer { others.finish() }
     if let message = try take(until: stop, others: others) { return .message(message) }
     let effects = effects
     return try await withThrowingTaskGroup(of: Value?.self) { group in
+      // Without this capture the group's body, which takes mail, runs off the lane: swift#87503.
+      _ = isolation
       group.addTask { try await effects.effect { try await body(effects, messages) } }
       group.addTask {
         try await effects.host.mail()
