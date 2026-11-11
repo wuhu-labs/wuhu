@@ -117,13 +117,6 @@ public struct SessionExecution: Sendable {
     cell(session).retag(tags)
   }
 
-  public func compact(_ session: SessionID, instructions: String?) async throws {
-    if try await store.record(session).kind == .task, instructions?.isEmpty == false {
-      throw SessionStoreError.taskTakesNoHumanInput(session.rawValue)
-    }
-    cell(session).compact(instructions)
-  }
-
   public func interrupt(_ session: SessionID) async throws {
     _ = try await store.record(session)
     cell(session).interrupt()

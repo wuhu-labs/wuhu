@@ -162,7 +162,7 @@ extension GroupSwitchingTests {
         let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
         var transcript = try await harness.store.transcript(id)
         transcript.append(.direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: now.withLock { $0 }, content: .init(text: "outstanding request"))))
-        let request = InferenceRequest(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript, mode: .normal)
+        let request = InferenceRequest(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript)
         await #expect(throws: (any Error).self) { try await infer(request) }
         let failure = try #require(await harness.store.modelRoute(id)?.failure)
         let reset = try #require(failure.retryAt)
@@ -243,7 +243,7 @@ extension GroupSwitchingTests {
       let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
       let transcript = try await harness.store.transcript(id)
       await #expect(throws: error) {
-        try await infer(.init(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript, mode: .normal))
+        try await infer(.init(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript))
       }
       try await harness.running {
         try await harness.deliver("request after removal", to: id)
@@ -453,7 +453,7 @@ extension GroupSwitchingTests {
         let committed = try await owner.space.sessions.writeCompaction(id, head: head, kept: kept, transition: transition)
         let access = InferenceAccess(credentials: harness.credentials)
         let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
-        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: committed, mode: .normal))
+        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: committed))
         let emitted = requests.withLock { $0 }
         #expect(emitted.count == 2)
         #expect(emitted[1].0 == "Bearer key-alternate")
@@ -539,51 +539,6 @@ extension GroupSwitchingTests {
       let transition = try #require(await compactionPlacement(store: owner.space.sessions, catalog: { _ in ready }, usage: harness.runtime.usage)(id, compacted, nil))
       #expect(transition.route.member == "b")
       #expect(transition.route.failure == nil)
-    }
-  }
-
-  @Test(arguments: [false, true]) func aCompactionDuringAQuotaWaitFoldsMechanicallyOntoAMemberWithRoom(refusedByTheCompaction: Bool) async throws {
-    try await withSessionDeps {
-      let requests = Mutex<[String]>([])
-      try await withDependencies {
-        $0.fetch = FetchClient { request in
-          let key = request.headers.sensitiveValues["authorization"] ?? ""
-          let round = requests.withLock { $0.append(key); return $0.count }
-          if round > 1, key == "Bearer key-testing" {
-            var headers = Headers()
-            headers[.retryAfter] = "7800"
-            return Response(status: .tooManyRequests, headers: headers, body: .string("quota"))
-          }
-          let completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
-          return Response(status: .ok, body: .bytes(Data(completed.utf8), contentType: "text/event-stream"))
-        }
-      } operation: {
-        let models = testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"responses\"")
-        let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { provider in .init(credential: .apiKey("key-" + provider), identityEpoch: provider) })
-        try await ModelGroupRouteTests().install(harness)
-        let created = try await harness.call("/v1/session", .object(["title": "Compacts while waiting", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
-        let id = SessionID(created.id)
-        let original = try #require(await harness.store.modelRoute(id))
-        #expect(original.member == "a")
-        try await harness.running {
-          try await harness.deliver("first request", to: id)
-          try await until("first reply on the held member") { try await harness.store.settledWork(id) && requests.withLock { $0.count } == 1 }
-          let reset = Date().addingTimeInterval(7800)
-          harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 100, resetsAt: reset.timeIntervalSince1970), .init(name: "seven_day", usedPercent: 40, resetsAt: nil)], at: Date())
-          harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 10, resetsAt: reset.timeIntervalSince1970), .init(name: "seven_day", usedPercent: 10, resetsAt: nil)], at: Date())
-          if !refusedByTheCompaction {
-            try await harness.store.updateModelRouteFailure(id, expectedEpoch: original.epoch, failure: .init(reason: .quota, firstFailureAt: Date(), retryAt: reset))
-          }
-          #expect(try await harness.post("/v1/session/\(id.rawValue)/compact", .null).status == .ok)
-          try await until("compaction re-placed the session") { try await harness.store.modelRoute(id)?.member == "b" }
-        }
-        let moved = try #require(await harness.store.modelRoute(id))
-        #expect(moved.reason == .compaction)
-        #expect(moved.failure == nil)
-        #expect(try await harness.store.modelRouteHistory(id) == [original, moved])
-        #expect(try await harness.store.generationState(id).generation == 1)
-        #expect(requests.withLock { $0 }.filter { $0 == "Bearer key-testing" }.count == (refusedByTheCompaction ? 2 : 1))
-      }
     }
   }
 }

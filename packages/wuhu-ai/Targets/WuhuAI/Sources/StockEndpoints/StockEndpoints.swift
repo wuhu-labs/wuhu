@@ -265,12 +265,6 @@ public struct DeepSeekChatEndpoint: ChatCompletionsEndpoint {
     case .budget:
       break
     }
-    // DeepSeek's OpenAI dialect rejects every tool_choice forcing form while
-    // thinking is on (reasoning XOR forced tool on this dialect).
-    if options.toolChoice != .none {
-      body["thinking"] = .object(["type": .string("disabled")])
-      body["reasoning_effort"] = nil
-    }
   }
 
   public func modifyHeaders(_ headers: inout RequestHeaders, options: RequestOptions) {
@@ -319,17 +313,6 @@ public struct DeepSeekAnthropicEndpoint: AnthropicMessagesEndpoint {
         "type": .string("enabled"),
         "budget_tokens": .integer(tokens),
       ])
-    }
-    // DeepSeek dialect divergence (2026-07-05 research note): a named forced
-    // tool is rejected while thinking is on; tool_choice {type:"any"} works
-    // with thinking. Disable thinking for named-force turns only.
-    if case .tool = options.toolChoice {
-      body["thinking"] = .object(["type": .string("disabled")])
-      if let schema = options.outputSchema {
-        body["output_config"] = .object(["format": .object(["type": .string("json_schema"), "schema": schema])])
-      } else {
-        body["output_config"] = nil
-      }
     }
     // Under thinking, DeepSeek rejects a tool_use turn that carries no thinking
     // block ("content[].thinking ... must be passed back"). The block's text is

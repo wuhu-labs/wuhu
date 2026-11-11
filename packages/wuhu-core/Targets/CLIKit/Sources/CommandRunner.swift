@@ -340,7 +340,6 @@ enum Command: Equatable {
   case sessionCreate(SessionCreateCommand)
   case sessionRequest(id: String, message: String, stall: Double?, terms: RequestTermsInput)
   case sessionAction(SessionActionVerb, id: String, force: Bool = false)
-  case sessionCompact(id: String, instructions: String?)
   case sessionRename(id: String, title: String)
   case sessionTags(id: String, tags: [String])
   case sessionRestart(SessionRestartCommand)

@@ -200,7 +200,7 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(textSSE.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
+        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
         return InferenceReply(message: completed.message, metadata: completed.metadata)
       }
       let script = InferenceScript([step, step])

@@ -82,10 +82,6 @@ struct LoopClient: Sendable {
   func prepareCompaction(_ session: SessionID, _ compacted: Transcript, _ target: CompactionTarget?) async throws -> ModelRouteTransition? {
     try await dependencies.yield { try await config.prepareCompaction(session, compacted, target) }
   }
-
-  func compact(_ session: SessionID, _ transcript: Transcript) async throws -> CompactionResult {
-    try await dependencies.yield { try await config.compact(session, transcript) }
-  }
 }
 
 extension Transcript {

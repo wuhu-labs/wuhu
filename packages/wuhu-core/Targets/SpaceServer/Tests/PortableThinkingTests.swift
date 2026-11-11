@@ -109,7 +109,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
           adopted = try await owner.space.sessions.writeCompaction(id, head: .init(id: UUID(), timestamp: Date(), summary: "ordinary compaction", snapshot: .init(), replayBinding: target, runningWork: []), kept: 0 ..< source.items.count, transition: nil)
         } else {
           do {
-            _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 0, transcript: source, mode: .normal))
+            _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 0, transcript: source))
             Issue.record("expected a replay boundary before inference")
             return
           } catch let required as ReplayBoundaryRequired {
@@ -120,7 +120,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         }
         // Rehydrate to prove the decision is not ephemeral executor state.
         adopted = try await harness.store.transcript(id)
-        let first = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted, mode: .normal))
+        let first = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted))
         #expect(first.message.content.contains(.text("completed")))
         #expect(try #require(bodies.withLock { $0.last }).object?["thinking"]?.object?["type"]?.stringValue == duringTurn)
         #expect(!bodies.withLock { $0.last!.jsonString() }.contains("OLD_SIGNATURE"))
@@ -129,11 +129,11 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let continued = adopted.appendAssistant(.init(content: [.toolCall(nextCall)]), id: UUID(), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 2)), replayBinding: first.replayBinding)
         let kernelCall = try #require(continued.toolCalls.first)
         adopted.append(.toolResult(.init(id: UUID(), timestamp: Date(), provenance: .toolCall(.init(kernelCall.id)), payload: .failure(.init(message: "second committed receipt")))))
-        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted, mode: .normal))
+        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted))
         #expect(try #require(bodies.withLock { $0.last }).object?["thinking"]?.object?["type"]?.stringValue == duringTurn)
 
         adopted.append(.message(.init(id: UUID(), messageID: .init("new-input"), conversationID: .init(id.rawValue), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: .init(text: "a fresh turn"))))
-        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted, mode: .normal))
+        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted))
         let emitted = bodies.withLock { $0 }
         #expect(emitted.count == 3)
         #expect(emitted.last?.object?["thinking"]?.object?["type"]?.stringValue == (flavor == "deepseek" ? "enabled" : "adaptive"))
@@ -173,11 +173,11 @@ extension PortableThinkingTests {
         let access = InferenceAccess(credentials: harness.credentials)
         let infer = kernelInference(store: owner.space.sessions, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), usage: harness.runtime.usage)
         var adopted = try await harness.store.transcript(id)
-        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted, mode: .normal))
+        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted))
         #expect(bodies.withLock { $0.last?.object?["thinking"] } == nil)
         #expect(!bodies.withLock { $0.last!.jsonString() }.contains("OLD_SIGNATURE"))
         adopted.append(.direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: .init(text: "new turn"))))
-        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted, mode: .normal))
+        _ = try await infer(.init(sessionID: id, attemptID: UUID(), generation: 1, transcript: adopted))
         #expect(bodies.withLock { $0.last?.object?["thinking"]?.object?["type"]?.stringValue } == "adaptive")
         #expect(try await owner.space.sessions.modelRoute(id)?.member == "b")
       }

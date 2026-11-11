@@ -212,11 +212,6 @@ public struct SessionArchiveInput: Codable, Equatable, Sendable {
 }
 
 @Contract
-public struct SessionCompactInput: Codable, Equatable, Sendable {
-  public let instructions: String?
-}
-
-@Contract
 public struct SessionTitleInput: Codable, Equatable, Sendable {
   public let title: String
 }

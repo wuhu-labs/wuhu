@@ -615,7 +615,7 @@ extension Command {
 
   private static func parseSession(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
-      throw UsageError(message: "session: missing <create|request|restart|rename|tags|interrupt|resume|compact|archive|unarchive|log|entry|inspect|list>")
+      throw UsageError(message: "session: missing <create|request|restart|rename|tags|interrupt|resume|archive|unarchive|log|entry|inspect|list>")
     }
     switch subcommand {
     case "create":
@@ -680,11 +680,6 @@ extension Command {
         tags.append(tag)
       }
       return .sessionTags(id: id, tags: tags)
-    case "compact":
-      let instructions = try parser.option("--instructions", verb: "session compact")
-      let id = try parser.required("session-id", verb: "session compact")
-      try parser.finish(verb: "session compact")
-      return .sessionCompact(id: id, instructions: instructions)
     case "interrupt", "resume", "archive", "unarchive":
       let force = subcommand == "archive" && parser.flag("--force")
       let id = try parser.required("session-id", verb: "session \(subcommand)")
@@ -1971,7 +1966,7 @@ extension Command {
     mentions, reply targets and the existing attention window still apply.
     """,
     "session": """
-    usage: wuhu session <create|request|restart|rename|tags|interrupt|resume|compact|archive|unarchive|log|entry|inspect|list> ...
+    usage: wuhu session <create|request|restart|rename|tags|interrupt|resume|archive|unarchive|log|entry|inspect|list> ...
 
     subcommands:
       create [--kind agent|task] [--top-level] [--executor E] [--provider P --model M | --model-group G] [--effort E] [--template NAME] [--extra JSON] [--tag T]... <title>
@@ -1988,9 +1983,6 @@ extension Command {
                                clears it; archived sessions included
       interrupt <session-id>   stop after the current step; resume to continue
       resume <session-id>      clear interrupt/error and continue
-      compact <session-id> [--instructions ...]
-                               ask a session to fold its context at its next
-                               quiet point; works on every executor
       archive <session-id> [--force]
                                archive its subtree; force interrupts busy
                                sessions and closes all open requests in

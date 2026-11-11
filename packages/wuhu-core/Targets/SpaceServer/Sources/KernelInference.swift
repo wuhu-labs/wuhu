@@ -104,7 +104,7 @@ func kernelInference(
     // The generation's prompt as stored, tool list included: an upgrade changes neither until the next generation renders, and the session is told once what changed.
     let prompt = try await executor.prompt(request.sessionID)
     let tools = try prompt.tools.map { try JSONValueDecoder().decode(Tool.self, from: $0) }
-    if request.mode == .normal, let changed = ToolRosterChanged(stored: tools, live: SessionToolExecutor.kernel.tools, told: request.transcript) {
+    if let changed = ToolRosterChanged(stored: tools, live: SessionToolExecutor.kernel.tools, told: request.transcript) {
       span.conclude(.handoff)
       throw changed
     }
@@ -125,7 +125,6 @@ func kernelInference(
         systemPrompt: prompt.prompt,
         opening: prompt.opening,
         tools: tools,
-        compactToolName: KernelToolset.compactToolName,
         trace: access.trace,
         metrics: metrics,
         webSocket: lease?.session,
@@ -140,7 +139,6 @@ func kernelInference(
       let completed = try await inferenceExecutor.run(
         attemptID: request.attemptID,
         transcript: request.transcript,
-        mode: request.mode == .forcedCompact ? .forcedCompact : .normal,
         idleTimeout: request.idleTimeout,
       )
       span.set(.finishReason, completed.metadata.stopReason.rawValue)

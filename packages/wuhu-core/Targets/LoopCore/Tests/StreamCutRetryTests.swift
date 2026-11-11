@@ -34,7 +34,7 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
-        let result = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
+        let result = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
         return InferenceReply(message: result.message, metadata: result.metadata, committed: { entry, _ in commits.withLock { $0.append(entry.id) } })
       }
       let script = InferenceScript([step, step])

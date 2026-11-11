@@ -112,7 +112,6 @@ final class Story: Sendable {
             metadata: AssistantMessageMetadata(stopReason: .stop, usage: Usage(inputTokens: 1, outputTokens: 1, totalTokens: 10)),
           )
         },
-        compact: { _, _ in CompactionResult(summary: "compacted") },
         budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
       )
     }

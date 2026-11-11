@@ -456,7 +456,6 @@ public struct RequestOptions: Hashable, Sendable {
   public var temperature: Double?
   public var maxTokens: Int?
   public var reasoning: ReasoningOptions
-  public var toolChoice: ToolChoice
   public var idleTimeout: Duration?
   public var outputSchema: JSONValue?
 
@@ -464,14 +463,12 @@ public struct RequestOptions: Hashable, Sendable {
     temperature: Double? = nil,
     maxTokens: Int? = nil,
     reasoning: ReasoningOptions = .automatic,
-    toolChoice: ToolChoice = .none,
     idleTimeout: Duration? = nil,
     outputSchema: JSONValue? = nil,
   ) {
     self.temperature = temperature
     self.maxTokens = maxTokens
     self.reasoning = reasoning
-    self.toolChoice = toolChoice
     self.idleTimeout = idleTimeout
     self.outputSchema = outputSchema
   }
@@ -482,12 +479,6 @@ public enum ReasoningOptions: Hashable, Sendable {
   case automatic
   case effort(String)
   case budget(Int)
-}
-
-public enum ToolChoice: Hashable, Sendable {
-  case none
-  case any
-  case tool(name: String)
 }
 
 public enum ResponseVerbosity: String, Hashable, Sendable {

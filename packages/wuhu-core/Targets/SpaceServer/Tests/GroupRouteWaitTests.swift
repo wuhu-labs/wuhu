@@ -14,46 +14,6 @@ import Testing
 import WuhuAI
 
 extension GroupSwitchingTests {
-  @Test func aCompactRequestedDuringAMidTurnQuotaWaitFoldsOntoAnotherMemberWithoutAResume() async throws {
-    try await withSessionDeps {
-      let requests = Mutex<[String]>([])
-      try await withDependencies {
-        $0.fetch = FetchClient { request in
-          let key = request.headers.sensitiveValues["authorization"] ?? ""
-          requests.withLock { $0.append(key) }
-          if key == "Bearer key-testing" {
-            var headers = Headers()
-            headers[.retryAfter] = "7800"
-            return Response(status: .tooManyRequests, headers: headers, body: .string("quota"))
-          }
-          return completedResponse()
-        }
-      } operation: {
-        let harness = try await responsesHarness()
-        let created = try await harness.call("/v1/session", .object(["title": "Walled mid-turn", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
-        let id = SessionID(created.id)
-        let original = try #require(await harness.store.modelRoute(id))
-        #expect(original.member == "a")
-        try await harness.running {
-          try await harness.deliver("request that meets the wall", to: id)
-          try await until("the turn waits on the held member's quota") { try await harness.store.modelRoute(id)?.failure?.reason == .quota }
-          #expect(try await harness.post("/v1/session/\(id.rawValue)/compact", .null).status == .ok)
-          try await until("the compaction moved the session and it answered there") {
-            let member = try await harness.store.modelRoute(id)?.member
-            let work = try await harness.store.record(id).work
-            return member == "b" && work == .noWork
-          }
-        }
-        let moved = try #require(await harness.store.modelRoute(id))
-        #expect(moved.reason == .compaction)
-        #expect(moved.failure == nil)
-        #expect(try await harness.store.modelRouteHistory(id) == [original, moved])
-        #expect(try await harness.store.generationState(id).generation == 1)
-        #expect(requests.withLock { $0 }.filter { $0 == "Bearer key-testing" }.count == 1)
-      }
-    }
-  }
-
   @Test func nineConsecutiveOutagesWaitInsteadOfParkingAGroupSession() async throws {
     try await withSessionDeps {
       let failures = 9

@@ -35,27 +35,6 @@ data: {}
 
 """
 
-private let compactSSE = """
-event: message_start
-data: {"message":{"usage":{"input_tokens":50}}}
-
-event: content_block_start
-data: {"content_block":{"type":"tool_use","id":"call_1","name":"compact","input":{}}}
-
-event: content_block_delta
-data: {"delta":{"type":"input_json_delta","partial_json":"{\\"summary\\":\\"folded\\"}"}}
-
-event: content_block_stop
-data: {"index":0}
-
-event: message_delta
-data: {"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}
-
-event: message_stop
-data: {}
-
-"""
-
 private final class RequestBox: Sendable {
   private let bodies = Mutex<[JSONValue]>([])
   var captured: [JSONValue] { bodies.withLock { $0 } }
@@ -140,7 +119,6 @@ private final class SteppingClock: NonsendingClock, Sendable {
 private func run(
   _ executor: InferenceExecutor,
   sse: String,
-  mode: InferenceMode,
   attemptID: UUID = UUID(2),
 ) async throws -> (reply: CompletedInference, requests: [JSONValue]) {
   let box = RequestBox()
@@ -148,7 +126,7 @@ private func run(
     $0.fetch = stubFetch(sse: sse, into: box)
     $0.continuousClock = ImmediateClock()
   } operation: {
-    try await executor.run(attemptID: attemptID, transcript: transcript, mode: mode)
+    try await executor.run(attemptID: attemptID, transcript: transcript)
   }
   return (reply, box.captured)
 }
@@ -176,7 +154,7 @@ private func run(
   }
 
   @Test func normalTurnCarriesEffortVerbatimAndNoForcing() async throws {
-    let (reply, requests) = try await run(try await makeExecutor(), sse: textSSE, mode: .normal)
+    let (reply, requests) = try await run(try await makeExecutor(), sse: textSSE)
 
     let body = try #require(requests.first?.object)
     #expect(body["tool_choice"] == nil)
@@ -185,35 +163,6 @@ private func run(
     #expect(body["max_tokens"] == .integer(32768))
 
     #expect(reply.metadata.usage?.totalTokens == 19)
-  }
-
-  @Test func forcedCompactAppliesDeepSeekRecipeWithIdenticalToolList() async throws {
-    let executor = try await makeExecutor()
-    let normal = try await run(executor, sse: textSSE, mode: .normal)
-    let forced = try await run(executor, sse: compactSSE, mode: .forcedCompact)
-
-    let normalBody = try #require(normal.requests.first?.object)
-    let forcedBody = try #require(forced.requests.first?.object)
-    #expect(forcedBody["tool_choice"] == .object(["type": .string("tool"), "name": .string("compact")]))
-    #expect(forcedBody["thinking"] == .object(["type": .string("disabled")]))
-    #expect(forcedBody["output_config"] == nil)
-    #expect(forcedBody["tools"] == normalBody["tools"])
-
-    let calls = forced.reply.message.content.compactMap { block -> ToolCall? in
-      if case let .toolCall(call) = block { return call }
-      return nil
-    }
-    #expect(calls.map(\.name) == ["compact"])
-  }
-
-  @Test func forcedCompactKeepsAnthropicAdaptiveThinking() async throws {
-    let executor = try await makeExecutor(provider: "anthropic", model: "claude-sonnet-5")
-    let forced = try await run(executor, sse: compactSSE, mode: .forcedCompact)
-
-    let body = try #require(forced.requests.first?.object)
-    #expect(body["tool_choice"] == .object(["type": .string("tool"), "name": .string("compact")]))
-    #expect(body["thinking"]?.object?["type"] == .string("adaptive"))
-    #expect(body["output_config"] == .object(["effort": .string("high")]))
   }
 
   @Test func attemptLogCapturesRequestAndRawSSE() async throws {
@@ -225,7 +174,7 @@ private func run(
       return AttemptTraceSink { chunk in bytes.withLock { $0.append(chunk) } }
     }
     let executor = try await makeExecutor(trace: trace)
-    _ = try await run(executor, sse: textSSE, mode: .normal, attemptID: attemptID)
+    _ = try await run(executor, sse: textSSE, attemptID: attemptID)
 
     #expect(opened.withLock { $0 } == [attemptID])
     let logged = String(decoding: bytes.withLock { $0 }, as: UTF8.self)
@@ -245,7 +194,7 @@ private func run(
       $0.continuousClock = SteppingClock()
       $0.date = .constant(fixed)
     } operation: {
-      try await executor.run(attemptID: UUID(2), transcript: transcript, mode: .normal)
+      try await executor.run(attemptID: UUID(2), transcript: transcript)
     }
 
     let metric = try #require(box.metric)
@@ -281,7 +230,7 @@ private func run(
         $0.continuousClock = ImmediateClock()
         $0.date = .constant(Date(timeIntervalSince1970: 0))
       } operation: {
-        try await executor.run(attemptID: UUID(3), transcript: transcript, mode: .normal)
+        try await executor.run(attemptID: UUID(3), transcript: transcript)
       }
     }
 
@@ -310,7 +259,7 @@ private func run(
         $0.fetch = stubFetch(sse: partial, into: RequestBox())
         $0.continuousClock = ImmediateClock()
       } operation: {
-        try await executor.run(attemptID: UUID(4), transcript: transcript, mode: .forcedCompact)
+        try await executor.run(attemptID: UUID(4), transcript: transcript)
       }
     }
     let metric = try #require(box.metric)
@@ -336,7 +285,7 @@ extension ExecutorTests {
     let requests = RequestBox()
     let executor = InferenceExecutor(session: .init("none-test"), model: resolved, systemPrompt: "offline", tools: [])
     try await withDependencies { $0.fetch = stubFetch(sse: textSSE, into: requests) } operation: {
-      let result = try await executor.run(attemptID: UUID(99), transcript: transcript, mode: .normal)
+      let result = try await executor.run(attemptID: UUID(99), transcript: transcript)
       #expect(result.message.content.contains { if case .text = $0 { true } else { false } })
     }
     let body = try #require(requests.captured.first?.object)
@@ -372,7 +321,7 @@ extension ExecutorTests {
     let requests = RequestBox()
     let executor = InferenceExecutor(session: session, model: resolved, systemPrompt: "offline", tools: [])
     try await withDependencies { $0.fetch = stubFetch(sse: textSSE, into: requests) } operation: {
-      _ = try await executor.run(attemptID: UUID(98), transcript: transcript, mode: .normal)
+      _ = try await executor.run(attemptID: UUID(98), transcript: transcript)
     }
     #expect(requests.captured.first?.object?["thinking"]?.object?["type"] == .string("adaptive"))
     setenv(name, "env-thinking-replacement", 1)
@@ -391,10 +340,10 @@ extension ExecutorTests {
       $0.uuid = .incrementing
     } operation: {
       var warming = transcript
-      let reply = try await executor.run(attemptID: UUID(40), transcript: warming, mode: .normal)
+      let reply = try await executor.run(attemptID: UUID(40), transcript: warming)
       warming.appendAssistant(reply.message, id: UUID(40), metadata: reply.metadata)
       warming.append(.notification(.init(id: UUID(41), timestamp: Date(timeIntervalSince1970: 3400), kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: "<cache-warming-notice>Ignore if there is nothing to do.</cache-warming-notice>"))))
-      _ = try await executor.run(attemptID: UUID(42), transcript: warming, mode: .normal)
+      _ = try await executor.run(attemptID: UUID(42), transcript: warming)
       let before = try #require(box.captured.first?.object)
       let after = try #require(box.captured.last?.object)
       let encoder = JSONEncoder()

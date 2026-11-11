@@ -132,7 +132,7 @@ import WuhuAI
       }
     } operation: {
       let model = resolved ?? self.model(scope: scope, claude: claude)
-      _ = try await InferenceExecutor(session: .init("continuation-test"), model: model, systemPrompt: "test", tools: []).run(attemptID: UUID(), transcript: transcript, mode: .normal)
+      _ = try await InferenceExecutor(session: .init("continuation-test"), model: model, systemPrompt: "test", tools: []).run(attemptID: UUID(), transcript: transcript)
     }
     return try #require(bodies.withLock { $0.first })
   }

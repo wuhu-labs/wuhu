@@ -174,7 +174,6 @@ final class InferenceScript: Sendable {
 
   struct Attempt: Sendable {
     var id: UUID
-    var mode: InferenceMode
     var at: Date
     var itemCount: Int
     var idleTimeout: Duration
@@ -192,7 +191,6 @@ final class InferenceScript: Sendable {
     attempts.withLock {
       $0.append(Attempt(
         id: request.attemptID,
-        mode: request.mode,
         at: date.now,
         itemCount: request.transcript.items.count,
         idleTimeout: request.idleTimeout,
@@ -222,20 +220,6 @@ final class ExecScript: Sendable {
   }
 }
 
-final class CompactScript: Sendable {
-  let count = Box<Int>(0)
-  private let result: CompactionResult
-
-  init(_ result: CompactionResult) {
-    self.result = result
-  }
-
-  func callAsFunction(_ transcript: Transcript) async throws -> CompactionResult {
-    count.withLock { $0 += 1 }
-    return result
-  }
-}
-
 func makeConfig(
   executeTool: @escaping @Sendable (ToolCall) async throws -> ToolResultPayload = { call in
     throw UnexpectedCall("executeTool(\(call.name))")
@@ -243,15 +227,11 @@ func makeConfig(
   inference: @escaping @Sendable (InferenceRequest) async throws -> InferenceReply = { _ in
     throw UnexpectedCall("inference")
   },
-  compact: @escaping @Sendable (Transcript) async throws -> CompactionResult = { _ in
-    throw UnexpectedCall("compact")
-  },
   budget: ContextBudget = .init(maxInput: 1_001_000, maxOutput: 1000),
 ) -> LoopConfig {
   LoopConfig(
     executeTool: { ToolOutcome(payload: try await executeTool($0.call)) },
     inference: inference,
-    compact: { _, transcript in try await compact(transcript) },
     budget: { _ in budget },
   )
 }

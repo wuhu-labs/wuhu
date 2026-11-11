@@ -49,7 +49,7 @@ import WuhuAI
       }
       let config = makeConfig(inference: { request in
         let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [], mediaResolver: ReplayImageResolver())
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
+        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { _, _ in commits.withLock { $0 += 1 } })
       })
       try await withDependencies { $0.fetch = fetch } operation: {
@@ -111,7 +111,7 @@ import WuhuAI
         #expect(try await sessions.hydrate(sid).transcript.kernel == request.transcript)
         let lease = try await registry.acquire(session: sid, model: model)
         let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object")]))], webSocket: lease.session, mediaResolver: ReplayImageResolver())
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
+        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
         await registry.release(session: sid, lease: lease.lease)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in
           let count = commits.withLock { $0.append(entry); return $0.count }

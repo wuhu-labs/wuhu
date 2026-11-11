@@ -227,9 +227,9 @@ import Testing
   @Test func aThinkingOffRequestIsLeftAlone() async throws {
     let body = try await body(
       [user("your move"), toolCall("c1", thinking: false), toolResult("c1")],
-      options: RequestOptions(reasoning: .effort("high"), toolChoice: .tool(name: "await_reply")),
+      options: RequestOptions(reasoning: .none),
     )
-    #expect(body["thinking"] == .object(["type": .string("disabled")]))
+    #expect(body["thinking"]?.object?["type"] != .string("enabled"))
     #expect(thinkingTexts(body) == [nil])
   }
 }

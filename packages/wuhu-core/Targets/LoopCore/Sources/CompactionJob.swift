@@ -6,7 +6,7 @@ import Wuwei
   import Foundation
 #endif
 
-/// One compaction of the generation its id names, at `position`: what it needs from outside the session (running work, placement, the mechanical compactor, open requests) gathered into the next generation's head, which its session cell writes. A restart computes it again.
+/// One compaction of the generation its id names, at `position`: what it needs from outside the session (running work, placement, open requests) gathered into the next generation's head, which its session cell writes. A restart computes it again.
 @Job
 struct CompactionJob {
   struct Params: Codable {
@@ -19,8 +19,8 @@ struct CompactionJob {
   enum Kind: Codable {
     /// The model's `compact` call.
     case fold(ToolCallID)
-    /// The mechanical compactor's, when the model's own compaction failed or the request does not fit.
-    case fallback
+    /// No summary and nothing kept: the head points at the files of the generation it closes. Past the hard threshold, or when the provider refused the request for its size.
+    case pointer
     case handoff(ReplayBinding, ContextBudget)
   }
 
@@ -53,15 +53,14 @@ struct CompactionJob {
           return .refused(callID, "compact target \"\(arguments.target!.model)\" refused, nothing was folded: \(refusal)")
         }
         return .folded(head: head, kept: kept, transition: transition, call: callID)
-      case .fallback:
-        let outcome = try await client.compact(params.session, transcript)
+      case .pointer:
         let head = GenerationHead(
-          id: client.uuid(), timestamp: client.now(), summary: outcome.summary,
-          snapshot: .init(preReads: outcome.preReads), settle: environment.settle,
+          id: client.uuid(), timestamp: client.now(), summary: SessionPrompt.pointerSummary(session: params.session, generation: params.generation),
+          snapshot: .init(), settle: environment.settle,
           runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
         )
-        let transition = try await client.prepareCompaction(params.session, transcript.compacted(head: head, kept: outcome.kept), nil)
-        return .folded(head: head, kept: outcome.kept, transition: transition, call: nil)
+        let transition = try await client.prepareCompaction(params.session, transcript.compacted(head: head, kept: nil), nil)
+        return .folded(head: head, kept: nil, transition: transition, call: nil)
       case let .handoff(binding, budget):
         let openRequests = try await client.store.openRequests(params.session)
         let runningWork = try await client.runningWork(params.session)

@@ -320,8 +320,6 @@ struct Executor {
       try await self.sessionRequest(id: id, message: message, stall: stall, terms: terms)
     case let .sessionAction(verb, id, force):
       try await self.sessionAction(verb, id: id, force: force)
-    case let .sessionCompact(id, instructions):
-      try await self.sessionCompact(id: id, instructions: instructions)
     case let .sessionRename(id, title):
       try await self.sessionRename(id: id, title: title)
     case let .sessionTags(id, tags):

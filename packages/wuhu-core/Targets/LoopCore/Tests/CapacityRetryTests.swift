@@ -19,16 +19,12 @@ import WuhuAI
       let sid = try await sessions.createSession(group: .shared, title: "capacity size", kind: .agent, createdBy: "morgan", model: .test)
       let error = InferenceError.capacityExceeded(code: code, message: "payload too large", status: 413)
       let script = InferenceScript([Fix.failing(error), Fix.failing(error), Fix.replying("must not run")])
-      let compactions = Box(0)
-      try await runService(space, makeConfig(inference: { try await script($0) }, compact: { _ in
-        compactions.withLock { $0 += 1 }
-        return .init(summary: "folded")
-      })) { service in
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("errored") { try await sessions.record(sid).work == .errored }
       }
       #expect(script.count == 2)
-      #expect(compactions.value == 1)
+      #expect(try await sessions.generationState(sid).generation == 1)
       #expect(try await sessions.record(sid).errorMessage == String(describing: error))
     }
   }

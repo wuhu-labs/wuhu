@@ -27,6 +27,7 @@ struct SessionCell {
     "ALTER TABLE session_state ADD COLUMN armed INTEGER",
     "CREATE TABLE session_armed (\(ownerColumn), id TEXT NOT NULL, slot TEXT NOT NULL, handler INTEGER NOT NULL, UNIQUE (owner, id))",
     "ALTER TABLE session_state ADD COLUMN compact TEXT",
+    "ALTER TABLE session_state DROP COLUMN compact",
   ]
 
   /// An input for the queue. Looking at it is a step of its own, so the input stays whatever that step meets.
@@ -41,7 +42,7 @@ struct SessionCell {
     ctx.send(id).look()
   }
 
-  /// The queue changed, or a command is pending.
+  /// The queue changed.
   mutating func look() throws {
     if let work = working(try load()) { try yield(work) }
     try advance()
@@ -76,13 +77,6 @@ struct SessionCell {
 
   mutating func retag(_ tags: [String]) throws {
     try rows.retag(id.session, tags)
-  }
-
-  /// The step at hand yields to it if it can; the forced step runs next. One that is not answered yet is replaced.
-  mutating func compact(_ instructions: String?) throws {
-    _ = try check(load())
-    try move { $0.compact = .init(instructions: instructions) }
-    try look()
   }
 
   mutating func interrupt() throws {
@@ -169,9 +163,7 @@ struct SessionCell {
   mutating func stepped(_ step: InferenceJob.ID, _ result: StepResult) throws {
     let session = try load()
     if !session.turn.replied { try sendPrompt() }
-    guard session.record.lifecycle == .live else { return }
-    let forced = step == session.slot.step(forced: true)
-    guard forced || step == session.slot.step(forced: false) else { return }
+    guard session.record.lifecycle == .live, step == session.slot.step else { return }
     switch result.ending {
     case let .reply(entry, fullness):
       var transcript = session.transcript
@@ -179,7 +171,7 @@ struct SessionCell {
       // The model tried to finish. A nag due now is written with its message,
       // so the session never reads settled while it owes one.
       let now = client.now()
-      if !forced, entry.toolCalls.isEmpty, let nag = session.nags.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow()) {
+      if entry.toolCalls.isEmpty, let nag = session.nags.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow()) {
         transcript.append(.notification(nag.notification(id: client.uuid(), at: now)))
       }
       let appended = Array(transcript.items[session.slot.position...])
@@ -187,25 +179,28 @@ struct SessionCell {
       try move(wrote: appended) {
         $0.reply(entry.toolCalls)
         $0.input(appended.count - 1)
-        if forced { $0.compact = nil }
       }
-      let next = Slot(session.slot, position: transcript.items.count)
-      if forced, !entry.callsCompact {
-        start(next.compaction, .fallback)
-        return
-      }
-      // A step checks the hard threshold before it infers; a model that stopped past it is compacted before anything else.
-      if !forced, entry.toolCalls.isEmpty, fullness >= client.config.thresholds.hard {
-        try rows.markCompacting(id.session)
-        start(next.step(forced: true), .forcedCompact)
-        return
+      if fullness >= client.config.thresholds.hard {
+        // The request was the prompt and the head alone.
+        guard session.droppable else {
+          try rows.markErrored(id.session, message: unfit(fullness))
+          return
+        }
+        // A step checks the hard threshold before it infers; a model that stopped past it gets its next generation before anything else.
+        if entry.toolCalls.isEmpty {
+          start(Slot(session.slot, position: transcript.items.count).compaction, .pointer)
+          return
+        }
       }
     case .cancelled:
       break
     case let .full(fullness):
       if fullness >= client.config.thresholds.hard {
-        try rows.markCompacting(id.session)
-        start(session.slot.step(forced: true), .forcedCompact)
+        guard session.droppable else {
+          try rows.markErrored(id.session, message: unfit(fullness))
+          return
+        }
+        start(session.slot.compaction, .pointer)
         return
       }
       try append(session, [.notification(.init(
@@ -220,16 +215,19 @@ struct SessionCell {
         </compaction-notice>
         """),
       ))]) { $0.input(1) }
-    case .compact:
-      start(session.slot.compaction, .fallback)
+    case .contextTooLong:
+      guard session.droppable else {
+        try rows.markErrored(id.session, message: String(describing: InferenceError.contextTooLong))
+        return
+      }
+      start(session.slot.compaction, .pointer)
       return
     case let .requestTooLarge(limit, failure):
-      // A generation that never replied was just made: a fresh compaction did not make the request fit.
-      guard session.generation == 0 || session.turn.replied else {
+      guard session.droppable else {
         try rows.markErrored(id.session, message: limit.map { String(describing: InferenceError.requestTooLargeAfterCompaction(limitBytes: $0)) } ?? failure)
         return
       }
-      start(session.slot.compaction, .fallback)
+      start(session.slot.compaction, .pointer)
       return
     case let .handoff(binding, budget):
       start(session.slot.compaction, .handoff(binding, budget))
@@ -268,9 +266,7 @@ struct SessionCell {
         session.turn.turn == .folding(call: call) ? nil : ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary)))
       }
       let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, transition: transition)
-      // A fallback that keeps a tail keeps the forced reply at its end, whose calls are still to run.
-      let turn: SessionTurn.Turn = if call == nil, kept != nil, case .tools = session.turn.turn { session.turn.turn } else { .model }
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: turn, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
       try see(only: written)
       invalidateInference()
     case let .refused(call, message):
@@ -278,7 +274,7 @@ struct SessionCell {
     case .handoff(var transcript):
       transcript.open(armed: try armedSlots())
       let written = try rows.writePortableHandoff(id.session, transcript: transcript)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true, compact: session.turn.compact.map { .init(instructions: $0.instructions) }))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
       try see(only: written)
       invalidateInference()
     case let .failed(message):
@@ -305,10 +301,8 @@ struct SessionCell {
   /// The session's next step; true when it was written and there may be another.
   private mutating func next(_ session: SessionState) throws -> Bool {
     let turn = session.turn
-    // A pending fold has no work, nags or forced compaction, and a compact
-    // request finds it compacted already: only a delivery runs the fold.
+    // A pending fold has no work or nags: only a delivery runs the fold.
     if case let .folding(call) = turn.turn {
-      if turn.compact != nil { try move { $0.compact = nil } }
       if session.queueHead > session.queueTail { start(session.slot.compaction, .fold(call)) }
       return false
     }
@@ -318,24 +312,11 @@ struct SessionCell {
       try move(wrote: drained.items) { $0.input(drained.items.count) }
       return true
     }
-    if let compact = turn.compact {
-      if !compact.asked {
-        try append(session, [.notification(.init(
-          id: client.uuid(), timestamp: client.now(), kind: .compactRequest, subscriptionID: .compactRequest, content: .init(text: compact.instructions ?? ""),
-        ))]) {
-          $0.input(1)
-          $0.compact?.asked = true
-        }
-      }
-      try rows.markCompacting(id.session)
-      start(try load().slot.step(forced: true), .forcedCompact)
-      return false
-    }
     if turn.turn == .model {
       if let call = turn.reestablish.first {
         try start(session.slot.call, call)
       } else {
-        start(session.slot.step(forced: false), .normal)
+        start(session.slot.step)
       }
       return false
     }
@@ -415,16 +396,13 @@ struct SessionCell {
     }, outcome: { ctx.job($0).outcome() })
   }
 
-  /// Tells the work at hand when to give the turn back to the input that waits: a step at once for a pending compact command. A forced step and a compaction never yield.
+  /// Tells the work at hand when to give the turn back to the input that waits. A compaction never yields.
   private mutating func yield(_ work: Slot.Work) throws {
+    guard let by = try rows.yieldDeadline(id.session) else { return }
     switch work {
-    case let .step(step) where !step.key.hasSuffix(forcedSuffix):
-      let by = turn()?.compact != nil ? client.now() : try rows.yieldDeadline(id.session)
-      if let by { ctx.send(.yield(by: by), to: step) }
-    case let .call(call):
-      if let by = try rows.yieldDeadline(id.session) { ctx.send(.yield(by: by), to: call) }
-    case .step, .compaction:
-      break
+    case let .step(step): ctx.send(.yield(by: by), to: step)
+    case let .call(call): ctx.send(.yield(by: by), to: call)
+    case .compaction: break
     }
   }
 
@@ -436,9 +414,9 @@ struct SessionCell {
     }
   }
 
-  private mutating func start(_ step: InferenceJob.ID, _ mode: InferenceMode) {
+  private mutating func start(_ step: InferenceJob.ID) {
     let slot = Slot(step)
-    ctx.create(step, params: .init(session: id.session, generation: slot.generation, position: slot.position, mode: mode))
+    ctx.create(step, params: .init(session: id.session, generation: slot.generation, position: slot.position))
   }
 
   private mutating func start(_ call: ToolCallJob.ID, _ toolCall: ToolCall) throws {
@@ -515,8 +493,7 @@ struct SessionCell {
   private mutating func check(_ session: SessionState) throws -> Bool {
     let environment = session.transcript.environment
     let row = db.rows(SessionTurn.all).first
-    var folded = SessionTurn(folding: session.transcript, generation: session.generation, nags: environment.nags)
-    folded.compact = row?.compact
+    let folded = SessionTurn(folding: session.transcript, generation: session.generation, nags: environment.nags)
     if row != folded { try write(folded) }
     var stored = row
     if stored?.nags == nil { stored?.nags = folded.nags }
@@ -580,13 +557,24 @@ struct SessionState {
   }
 
   var isTask: Bool { record.kind == .task }
+  /// A pointer compaction would drop something: the generation holds more than its head and the pressure notices it was given. One that does not and still does not fit errors the session.
+  var droppable: Bool {
+    transcript.items.contains { item in
+      switch item {
+      case .generationHead: false
+      case let .notification(notice): notice.subscriptionID != SubscriptionID("context-pressure")
+      default: true
+      }
+    }
+  }
+
   var stopped: Bool { record.stopped }
 
   /// Nothing to do, now or once its job answers: what an archive or a restart waits for.
   var settled: Bool { stopped || (queueHead == queueTail && turn.turn != .model && turn.call == nil) }
 }
 
-/// The transcript's end, which names every job that can answer there: `<session>:<generation>:<position>` for a tool call and a compaction, plus `:<resumes>` for a step and `:compact` for a forced one.
+/// The transcript's end, which names every job that can answer there: `<session>:<generation>:<position>` for a tool call and a compaction, plus `:<resumes>` for a step.
 struct Slot {
   let session: SessionID
   let generation: Int
@@ -611,7 +599,7 @@ struct Slot {
 
   private var key: String { "\(session.rawValue):\(generation):\(position)" }
 
-  func step(forced: Bool) -> InferenceJob.ID { .init("\(key):\(stepTry)\(forced ? forcedSuffix : "")") }
+  var step: InferenceJob.ID { .init("\(key):\(stepTry)") }
   var call: ToolCallJob.ID { .init(key) }
   var compaction: CompactionJob.ID { .init(key) }
 
@@ -621,9 +609,7 @@ struct Slot {
 
   func working(exists: (Work) -> Bool, outcome: (InferenceJob.ID) -> StepResult?) -> Work? {
     if exists(.compaction(compaction)) { return .compaction(compaction) }
-    for forced in [true, false] {
-      let step = step(forced: forced)
-      guard exists(.step(step)) else { continue }
+    if exists(.step(step)) {
       switch outcome(step)?.ending {
       case .cancelled?, .parked?: return nil
       default: return .step(step)
@@ -633,10 +619,12 @@ struct Slot {
   }
 }
 
-private let forcedSuffix = ":compact"
-
 /// How the session tables write their times.
 let queueDate = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+
+private func unfit(_ fullness: Double) -> String {
+  "the context is \(Int((fullness * 100).rounded()))% full with nothing left to drop: the prompt and the generation's head do not fit this model"
+}
 
 let interruptedToolMessage = """
 Tool execution was interrupted by the user. It may have partially run; \
@@ -650,13 +638,4 @@ extension SessionRecord {
 
 extension Address where Target == SessionCell {
   var session: SessionID { SessionID(key) }
-}
-
-extension AssistantEntry {
-  fileprivate var callsCompact: Bool {
-    content.contains { block in
-      guard case let .toolCall(call) = block else { return false }
-      return call.name == KernelTool.compact.rawValue
-    }
-  }
 }

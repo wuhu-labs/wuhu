@@ -116,7 +116,6 @@ private final class SessionCLIHarness: Sendable {
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
       },
       inference: { request in try await inference(request) },
-      compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
     let catalog = groupCatalog(space: space, access: InferenceAccess())
@@ -680,15 +679,6 @@ private func until(
     #expect(try Command.parse(["session", "archive", "abc"]) == .sessionAction(.archive, id: "abc"))
     #expect(throws: (any Error).self) { try Command.parse(["session", "unarchive", "abc", "--force"]) }
     #expect(try Command.parse(["session", "interrupt", "abc"]) == .sessionAction(.interrupt, id: "abc"))
-    #expect(try Command.parse(["session", "compact", "abc"]) == .sessionCompact(id: "abc", instructions: nil))
-    #expect(
-      try Command.parse(["session", "compact", "abc", "--instructions", "keep the notes"])
-        == .sessionCompact(id: "abc", instructions: "keep the notes"),
-    )
-    #expect(
-      try Command.parse(["session", "compact", "--instructions", "keep the notes", "abc"])
-        == .sessionCompact(id: "abc", instructions: "keep the notes"),
-    )
     #expect(try Command.parse(["session", "rename", "abc", "New title"]) == .sessionRename(id: "abc", title: "New title"))
     #expect(throws: (any Error).self) { try Command.parse(["session", "rename", "abc"]) }
     #expect(try Command.parse(["session", "tags", "abc", "wuhu:13", "gate"]) == .sessionTags(id: "abc", tags: ["wuhu:13", "gate"]))

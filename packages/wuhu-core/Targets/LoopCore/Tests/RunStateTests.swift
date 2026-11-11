@@ -85,40 +85,6 @@ import WuhuAI
     }
   }
 
-  // A compact command with no instructions runs a real inference from a
-  // settled transcript, which on its own derives no_run.
-  @Test func `a forced compaction from a settled turn reads inference until it ends`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let release = Latch()
-      let compacting = Box(0)
-      let config = makeConfig(inference: { request in
-        guard request.mode == .forcedCompact else { return Fix.reply("hi") }
-        compacting.withLock { $0 += 1 }
-        await release.wait(unless: { Task.isCancelled })
-        try Task.checkCancellation()
-        return Fix.reply("done")
-      }, compact: { _ in .init(summary: "folded") })
-
-      try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("settled") { try await sessions.settledWork(sid) }
-        #expect(try await row(space, sid).run == "no_run")
-
-        try await service.compact(sid, instructions: nil)
-        try await until("compaction engaged") { compacting.value == 1 }
-        let folding = try await row(space, sid)
-        #expect(folding.run == "inference")
-        #expect(folding.progress != nil)
-
-        release.release()
-        try await until("compaction done") { try await row(space, sid).run == "no_run" }
-      }
-    }
-  }
-
   @Test func `a session waiting on the model reads inference, held or resumed included`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()

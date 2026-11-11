@@ -142,7 +142,7 @@ import WuhuAI
       }
     } operation: {
       for step in 1 ... 5 {
-        let completed = try await executor.run(attemptID: UUID(), transcript: transcript, mode: .normal)
+        let completed = try await executor.run(attemptID: UUID(), transcript: transcript)
         if step == 5 { break }
         guard case let .reasoning(.encrypted(thinking))? = completed.message.content.first else {
           Issue.record("Missing recorded-shape thinking"); return
@@ -179,7 +179,7 @@ import WuhuAI
         return Response(status: .ok, body: .string(toolStepResponse(step: 9, signed: provider == .claude, model: provider.model)))
       }
     } operation: {
-      _ = try await executor.run(attemptID: UUID(), transcript: transcript, mode: .normal)
+      _ = try await executor.run(attemptID: UUID(), transcript: transcript)
     }
     return try #require(captured.withLock { $0 })
   }

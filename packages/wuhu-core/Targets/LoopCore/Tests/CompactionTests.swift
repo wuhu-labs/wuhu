@@ -5,7 +5,6 @@ import JSONValue
 import SessionDomain
 import SessionTools
 import SpaceCore
-import Synchronization
 import Testing
 import WuhuAI
 
@@ -50,140 +49,37 @@ private func compactCall(
     }
   }
 
-  @Test func `hard pressure schedules a forced-compact inference and re-establishes state`() async throws {
+  @Test func `a model that stops past the hard threshold starts its next generation from a pointer`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
-      let script = InferenceScript([
-        Fix.replying("big turn", tokens: 900),
-        Fix.replying(
-          "folding",
-          calls: [compactCall(summary: "did big things", preReads: ["space://a.md"])],
-          tokens: 950,
-        ),
-        Fix.replying("fresh start", tokens: 100),
-      ])
-      let exec = ExecScript { call in
-        switch call.name {
-        case "read":
-          return .read(.init(path: "space://a.md", revision: .journal(1), content: "body"))
-        default:
-          throw UnexpectedCall("executor saw \(call.name)")
-        }
-      }
-      let config = makeConfig(
-        executeTool: { try await exec($0) },
-        inference: { try await script($0) },
-        budget: tightBudget,
-      )
-
-      try await runService(space, config) { service in
+      let script = InferenceScript([Fix.replying("big turn", tokens: 900), Fix.replying("fresh start", tokens: 100)])
+      try await runService(space, makeConfig(inference: { try await script($0) }, budget: tightBudget)) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
-        // The work axis flips no_work at the first big commit already; the
-        // ladder converges only once the post-compaction turn has landed.
-        try await until("fresh turn landed") {
-          guard script.count == 3 else { return false }
-          return try await sessions.settledWork(sid)
-        }
+        try await until("fresh turn landed") { try await sessions.settledWork(sid) && script.count == 2 }
       }
-
-      // The kernel dispatched compact itself: the executor saw only the
-      // re-establishment calls, and the forcing seam saw exactly one request.
-      #expect(script.attempts.value.map(\.mode) == [.normal, .forcedCompact, .normal])
-      #expect(exec.calls.value.map(\.name) == ["read"])
-
       let transcript = try await sessions.hydrate(sid).transcript.kernel
-      guard case let .generationHead(head) = transcript.items.first else {
-        Issue.record("expected the new generation to start at its head")
-        return
-      }
-      #expect(head.summary == "did big things")
-      #expect(head.snapshot.preReads == ["space://a.md"])
-      #expect(transcript.keptCount == 1)
-
-      let provenances = transcript.items.compactMap { item -> ToolResultItem.Provenance? in
-        guard case let .toolResult(result) = item else { return nil }
-        return result.provenance
-      }
-      #expect(provenances == [.compactionReestablishment])
-      guard case .assistant = transcript.items.last else {
-        Issue.record("expected the fresh turn to end the transcript")
-        return
-      }
+      #expect(try await sessions.generationState(sid).generation == 1)
+      #expect(transcript.head?.summary == SessionPrompt.pointerSummary(session: sid, generation: 0))
+      #expect(transcript.head?.summary.contains("/_/session-transcripts/\(sid.rawValue)/0.outline.txt") == true)
+      #expect(transcript.items.count == 2, "nothing is kept: the head, then the fresh reply")
     }
   }
 
-  @Test func `a forced turn that fails hard falls back to the out-of-band compactor`() async throws {
+  @Test func aGenerationWithNothingToDropThatStillDoesNotFitErrors() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
-      let script = InferenceScript([
-        Fix.replying("big turn", tokens: 900),
-        Fix.failing(.invalidInput(status: 400, body: "too big")),
-        Fix.replying("fresh start", tokens: 100),
-      ])
-      let compactor = CompactScript(.init(summary: "fallback summary"))
-      let config = makeConfig(
-        inference: { try await script($0) },
-        compact: { try await compactor($0) },
-        budget: tightBudget,
-      )
-
-      try await runService(space, config) { service in
+      let script = InferenceScript([Fix.replying("big turn", tokens: 900), Fix.replying("the prompt alone is as big", tokens: 900)])
+      try await runService(space, makeConfig(inference: { try await script($0) }, budget: tightBudget)) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("fresh turn landed") {
-          guard script.count == 3 else { return false }
-          return try await sessions.settledWork(sid)
-        }
+        try await until("errored") { try await sessions.record(sid).work == .errored }
       }
-
-      #expect(script.attempts.value.map(\.mode) == [.normal, .forcedCompact, .normal])
-      #expect(compactor.count.value == 1)
-      let record = try await sessions.record(sid)
-      #expect(record.work == .noWork)
-      #expect(record.errorMessage == nil)
-
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      guard case let .generationHead(head) = transcript.items.first else {
-        Issue.record("expected a generation head from the fallback")
-        return
-      }
-      #expect(head.summary == "fallback summary")
-    }
-  }
-
-  @Test func `a forced turn that refuses the call falls back too`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
-      let script = InferenceScript([
-        Fix.replying("big turn", tokens: 900),
-        Fix.replying("I refuse to compact", tokens: 950),
-        Fix.replying("fresh start", tokens: 100),
-      ])
-      let compactor = CompactScript(.init(summary: "fallback summary"))
-      let config = makeConfig(
-        inference: { try await script($0) },
-        compact: { try await compactor($0) },
-        budget: tightBudget,
-      )
-
-      try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("fresh turn landed") {
-          guard script.count == 3 else { return false }
-          return try await sessions.settledWork(sid)
-        }
-      }
-
-      #expect(script.attempts.value.map(\.mode) == [.normal, .forcedCompact, .normal])
-      #expect(compactor.count.value == 1)
+      #expect(script.count == 2)
+      #expect(try await sessions.generationState(sid).generation == 1, "one pointer dropped the turn; a second would drop nothing")
+      #expect(try await sessions.record(sid).errorMessage?.contains("nothing left to drop") == true)
     }
   }
 
@@ -197,8 +93,7 @@ private func compactCall(
         Fix.failing(.contextTooLong),
         Fix.replying("fits now"),
       ])
-      let compactor = CompactScript(.init(summary: "squeezed"))
-      let config = makeConfig(inference: { try await script($0) }, compact: { try await compactor($0) })
+      let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
@@ -206,7 +101,8 @@ private func compactCall(
         try await until("settled") { try await sessions.settledWork(sid) }
       }
 
-      #expect(compactor.count.value == 1)
+      #expect(try await sessions.generationState(sid).generation == 1)
+      #expect(try await sessions.hydrate(sid).transcript.kernel.head?.summary == SessionPrompt.pointerSummary(session: sid, generation: 0))
       #expect(script.count == 2)
     }
   }
@@ -307,127 +203,5 @@ private func compactCall(
       #expect(script.attempts.value.first?.itemCount == 2)
       #expect(transcript.assistantEntries.count == 1)
     }
-  }
-
-  @Test func `the compact command forces a compaction turn and injects its instructions`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
-      let script = InferenceScript([
-        Fix.replying("first turn"),
-        Fix.replying("folding", calls: [compactCall(summary: "kept the build notes")]),
-        Fix.replying("fresh start"),
-      ])
-      let config = makeConfig(inference: { try await script($0) })
-
-      try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("first turn settled") {
-          guard script.count == 1 else { return false }
-          return try await sessions.settledWork(sid)
-        }
-        try await service.compact(sid, instructions: "keep the build notes")
-        try await until("the forced turn landed") {
-          guard script.count == 3 else { return false }
-          return try await sessions.settledWork(sid)
-        }
-      }
-
-      #expect(script.attempts.value.map(\.mode) == [.normal, .forcedCompact, .normal])
-
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      guard case let .generationHead(head) = transcript.items.first else {
-        Issue.record("expected the compaction boundary to open the new generation")
-        return
-      }
-      #expect(head.summary == "kept the build notes")
-    }
-  }
-
-  @Test func `a compact command without instructions appends one empty request`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
-      let seen = TranscriptSpy()
-      let script = InferenceScript([
-        Fix.replying("first turn"),
-        { request in
-          seen.record(request.transcript)
-          return Fix.reply("folding", calls: [compactCall(summary: "folded")])
-        },
-        Fix.replying("fresh start"),
-      ])
-      let config = makeConfig(inference: { try await script($0) })
-
-      try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("first turn settled") {
-          guard script.count == 1 else { return false }
-          return try await sessions.settledWork(sid)
-        }
-        try await service.compact(sid, instructions: nil)
-        try await until("the forced turn landed") {
-          guard script.count == 3 else { return false }
-          return try await sessions.settledWork(sid)
-        }
-      }
-
-      let forced = try #require(seen.first())
-      let notifications = forced.items.compactMap { item -> SystemNotification? in
-        guard case let .notification(notification) = item else { return nil }
-        return notification
-      }
-      #expect(notifications.map(\.kind) == [.compactRequest] && notifications[0].content.text.isEmpty, "a bare compact is one empty request")
-    }
-  }
-
-  @Test func aForcedReplyThatCallsAnotherToolRunsItAfterTheFallback() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let script = InferenceScript([
-        Fix.replying("first turn"),
-        Fix.replying("not compacting", calls: [ToolCall(id: "stray", name: "exec", arguments: .object([:]))]),
-        { request in
-          #expect(request.transcript.items.contains { if case .toolResult = $0 { true } else { false } }, "the kept reply's call was answered")
-          return Fix.reply("went on")
-        },
-      ])
-      let ran = Box(0)
-      let config = makeConfig(
-        executeTool: { _ in
-          ran.withLock { $0 += 1 }
-          return .failure(.init(message: "no such command"))
-        },
-        inference: { try await script($0) },
-        compact: { transcript in .init(summary: "mechanical", kept: transcript.items.count - 1 ..< transcript.items.count) },
-      )
-      try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("first turn settled") { try await sessions.settledWork(sid) && script.count == 1 }
-        try await service.compact(sid, instructions: nil)
-        try await until("the model went on") { try await sessions.settledWork(sid) && script.count == 3 }
-      }
-      #expect(ran.value == 1)
-      #expect(try await sessions.generationState(sid).generation == 1)
-      #expect(try await sessions.record(sid).work == .noWork)
-    }
-  }
-}
-
-private final class TranscriptSpy: Sendable {
-  private let seen = Mutex<[Transcript]>([])
-
-  func record(_ transcript: Transcript) {
-    seen.withLock { $0.append(transcript) }
-  }
-
-  func first() -> Transcript? {
-    seen.withLock(\.first)
   }
 }

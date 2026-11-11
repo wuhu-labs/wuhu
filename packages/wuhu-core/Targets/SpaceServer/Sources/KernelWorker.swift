@@ -49,9 +49,6 @@ struct KernelWorker: Sendable {
             catch { Logger(label: "wuhu.cache-warmer").error("could not schedule cache warming", metadata: ["session": "\(id.rawValue)", "error": "\(error)"]) }
           },
         ),
-        compact: { id, transcript in
-          await mechanicalCompaction(of: transcript, images: budget(id).images)
-        },
         budget: budget,
         prepareCompaction: compactionPlacement(store: store, catalog: { try await executor.catalog($0, includeGroups: true) }, usage: usage),
         killInterruptedTool: { invocation in

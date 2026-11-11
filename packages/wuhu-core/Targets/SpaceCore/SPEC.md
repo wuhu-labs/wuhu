@@ -146,7 +146,7 @@ Claims atomically reserve capacity, persist dispatch_consumed and unique `(grp, 
 
 Machine exchanges are traced as OpenTelemetry spans by OperationClient, never in the space database: migration 013 drops the former `machine_v2_trace`, `machine_v2_incidents` and `machine_v2_problem_index` tables with their incident retention and problems maintenance rows, and leaves any `/wuhu/machine-v2-problems.table` content alone. Operational tables and encrypted payloads are not in the query catalog.
 
-## Session rows and compact commands
+## Session rows
 
 A session's own writes are `SessionRows` functions over a transaction its caller holds: the session cell's, on the space writer's connection that wuwei lends it; `SessionStore`'s async methods of the same name wrap them in a write of their own. Hydration returns the generation from the same database snapshot as the transcript, and `stepTry` (`session_runtime.step_try`, migration 018), which `markResumed` increments.
 
@@ -181,7 +181,7 @@ The additive `session_cache_warming` table stores only an agent's next deadline,
 
 ## Session run state
 
-The induced `sessions` row carries `run_state` for kernel sessions. The session's cell says what its turn owes whenever the turn moves (`SessionRows.show`), in the step that writes the transcript: `tool` while a call of the model's reply is unanswered, `inference` while the model owes the next step or only due input waits, and `no_run` otherwise; `work` is `has_work` for the first two. Interrupt, error, archive and Start over write `no_run`; a resume shows the turn again. A forced compaction (the hard context limit, or a compact command) can start from a settled turn, so the cell calls `markCompacting`, which writes `inference` for a live, unheld, unerrored session until the turn next moves. The row is written only when the value changes: each change stamps `run_progress_at` (null for `no_run`) and moves `last_activity_at`. A pending tool call survives restart and its exec rejoins, so a session waiting in one keeps reading `tool`. `run_heartbeat_at` stays null.
+The induced `sessions` row carries `run_state` for kernel sessions. The session's cell says what its turn owes whenever the turn moves (`SessionRows.show`), in the step that writes the transcript: `tool` while a call of the model's reply is unanswered, `inference` while the model owes the next step or only due input waits, and `no_run` otherwise; `work` is `has_work` for the first two. Interrupt, error, archive and Start over write `no_run`; a resume shows the turn again. The row is written only when the value changes: each change stamps `run_progress_at` (null for `no_run`) and moves `last_activity_at`. A pending tool call survives restart and its exec rejoins, so a session waiting in one keeps reading `tool`. `run_heartbeat_at` stays null.
 
 ## Atomic route transitions and durable failure episodes
 

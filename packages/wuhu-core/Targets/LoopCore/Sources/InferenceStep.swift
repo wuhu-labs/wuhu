@@ -22,21 +22,17 @@ struct StepResult: Sendable, Codable {
   enum Ending: Sendable, Codable {
     /// `fullness` is the transcript's with the reply.
     case reply(AssistantEntry, fullness: Double)
-    /// Interrupted, or yielded to waiting input or a compact command while it waited.
+    /// Interrupted, or yielded to waiting input while it waited.
     case cancelled
     /// The transcript is past a compaction threshold: no attempt was made.
     case full(Double)
-    case compact(CompactCause)
+    /// The provider refused the request as past its context window.
+    case contextTooLong
     case requestTooLarge(limitBytes: Int?, failure: String)
     case handoff(ReplayBinding, ContextBudget)
     /// The binary's tools changed under the generation: the notice the session is owed before it goes on.
     case roster(String)
     case parked(String)
-  }
-
-  enum CompactCause: String, Sendable, Codable {
-    case forced
-    case contextTooLong
   }
 
   var ending: Ending
@@ -50,7 +46,7 @@ struct AttemptRow: Owned {
   var failure: String?
 }
 
-/// One step as a job: it owns its attempts, each with a fresh id that the wire shows, the waits between them and their records, and keeps its outcome, so a restart never pays for a reply twice. It reads the transcript its id names (generation, first `position` items) before every attempt, and answers its session cell. A normal step first checks the compaction thresholds. `interrupt` ends it at once; a wait between attempts ends at the earliest `yield(by:)` it was mailed, an attempt never.
+/// One step as a job: it owns its attempts, each with a fresh id that the wire shows, the waits between them and their records, and keeps its outcome, so a restart never pays for a reply twice. It reads the transcript its id names (generation, first `position` items) before every attempt, and answers its session cell. It first checks the compaction thresholds. `interrupt` ends it at once; a wait between attempts ends at the earliest `yield(by:)` it was mailed, an attempt never.
 @Job
 struct InferenceJob {
   static let schema = [
@@ -65,7 +61,6 @@ struct InferenceJob {
     let session: SessionID
     let generation: Int
     let position: Int
-    let mode: InferenceMode
   }
 
   enum Message: Codable, Equatable {
@@ -86,7 +81,7 @@ struct InferenceJob {
     if let outcome = retry.outcome { return answer(outcome) }
     let client = ctx.dependency(LoopClient.self)
     let params = ctx.params
-    if params.mode == .normal, retry.attempts == 0, let fullness = try await ctx.effect({ try await client.overThreshold(params) }) {
+    if retry.attempts == 0, let fullness = try await ctx.effect({ try await client.overThreshold(params) }) {
       return try finish(.full(fullness), retry)
     }
     let deadline = YieldDeadline(nil)
@@ -117,7 +112,7 @@ struct InferenceJob {
       let attemptID = client.uuid()
       retry.attempts += 1
       try save(retry)
-      let request = InferenceRequest(sessionID: params.session, attemptID: attemptID, generation: params.generation, transcript: transcript, mode: params.mode, idleTimeout: retry.idleTimeout)
+      let request = InferenceRequest(sessionID: params.session, attemptID: attemptID, generation: params.generation, transcript: transcript, idleTimeout: retry.idleTimeout)
       let raced = try await ctx.race({ _, messages in
         try await deadline.collecting(messages, { $0.yieldBy }) {
           do { return Result<InferenceReply, any Error>.success(try await client.attempt(request)) }
@@ -143,7 +138,7 @@ struct InferenceJob {
         // A draining worker cancels its jobs: that is no outcome, the step goes on where it is hosted next.
         try Task.checkCancellation()
         try db.execute(AttemptRow.insert { AttemptRow(id: attemptID.uuidString.lowercased(), failure: String(describing: error)) })
-        switch retry.failed(error, mode: params.mode, session: params.session, now: client.now(), jitter: client.jitter) {
+        switch retry.failed(error, session: params.session, now: client.now(), jitter: client.jitter) {
         case let .end(ending):
           return try finish(ending, retry)
         case let .wait(seconds):
@@ -208,12 +203,9 @@ struct Step: Owned {
     idleTimeoutSchedule[idleTimeouts]
   }
 
-  mutating func failed(_ error: any Error, mode: InferenceMode, session: SessionID, now: Date, jitter: () -> Double) -> Next {
+  mutating func failed(_ error: any Error, session: SessionID, now: Date, jitter: () -> Double) -> Next {
     if let boundary = error as? ReplayBoundaryRequired { return .end(.handoff(boundary.binding, boundary.budget)) }
     if let changed = error as? ToolRosterChanged { return .end(.roster(changed.notice)) }
-    // A compaction during a quota wait folds mechanically, so placement can
-    // move the next generation to a member with room.
-    if mode == .forcedCompact, waitsOnQuota(error) { return .end(.compact(.forced)) }
     if let waiting = error as? ModelRouteWaiting { return .wait(seconds: delay(attempt: 1, until: waiting.retryAt, now: now, jitter: jitter)) }
     switch classify(error) {
     case let .outage(retryAt):
@@ -226,7 +218,7 @@ struct Step: Owned {
         idleTimeouts += 1
         if idleTimeouts == idleTimeoutSchedule.count {
           Logger(label: "wuhu.loop").notice("inference parked after consecutive idle timeouts", metadata: ["session": "\(session.rawValue)", "consecutive_timeouts": "\(idleTimeouts)"])
-          return .end(park(error, mode: mode))
+          return .end(.parked(String(describing: error)))
         }
       } else {
         idleTimeouts = 0
@@ -234,22 +226,18 @@ struct Step: Owned {
       boundedFailures += 1
       if boundedFailures == boundedFailureLimit {
         Logger(label: "wuhu.loop").notice("inference parked after consecutive unretryable failures", metadata: ["session": "\(session.rawValue)", "failures": "\(boundedFailures)", "error": "\(error)"])
-        return .end(park(error, mode: mode))
+        return .end(.parked(String(describing: error)))
       }
     case let .requestTooLarge(normalized):
       let limit: Int? = if case let .requestTooLarge(limit) = normalized { limit } else { nil }
       return .end(.requestTooLarge(limitBytes: limit, failure: String(describing: normalized)))
     case .contextTooLong:
-      return .end(.compact(.contextTooLong))
+      return .end(.contextTooLong)
     case .terminal:
-      return .end(park(error, mode: mode))
+      return .end(.parked(String(describing: error)))
     }
     backoffAttempt += 1
     return .wait(seconds: delay(attempt: backoffAttempt, now: now, jitter: jitter))
-  }
-
-  private func park(_ error: any Error, mode: InferenceMode) -> StepResult.Ending {
-    mode == .forcedCompact ? .compact(.forced) : .parked(String(describing: error))
   }
 
   private func delay(attempt: Int, until retryAt: Date? = nil, now: Date, jitter: () -> Double) -> Double {
@@ -307,12 +295,6 @@ func classify(_ error: any Error) -> FailureClass {
   case .requestTooLarge, .capacityExceeded: .requestTooLarge(normalized)
   case .requestTooLargeAfterCompaction, .malformedModelMessage, .oidcSigningFailed, .credentialRefreshRefused, .authenticationRefused, .invalidInput, .other: .terminal
   }
-}
-
-private func waitsOnQuota(_ error: any Error) -> Bool {
-  if error is ModelRouteWaiting { return true }
-  if case .rateLimited = InferenceError.normalize(error) { return true }
-  return false
 }
 
 extension Transcript {

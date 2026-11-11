@@ -11,11 +11,6 @@ import Logging
 import SessionDomain
 import WuhuAI
 
-public enum InferenceMode: Hashable, Sendable {
-  case normal
-  case forcedCompact
-}
-
 public struct CompletedInference: Sendable {
   public var message: AssistantMessage
   public var metadata: AssistantMessageMetadata
@@ -34,7 +29,6 @@ public struct InferenceExecutor: Sendable {
   public var systemPrompt: String
   public var opening: [String]
   public var tools: [Tool]
-  public var compactToolName: String
   public var trace: AttemptTraceClient?
   public var metrics: InferenceMetricsSink
   public var webSocket: ResponsesWebSocketSession?
@@ -47,7 +41,6 @@ public struct InferenceExecutor: Sendable {
     systemPrompt: String,
     opening: [String] = [],
     tools: [Tool],
-    compactToolName: String = "compact",
     trace: AttemptTraceClient? = nil,
     metrics: InferenceMetricsSink = .noop,
     webSocket: ResponsesWebSocketSession? = nil,
@@ -59,7 +52,6 @@ public struct InferenceExecutor: Sendable {
     self.systemPrompt = systemPrompt
     self.opening = opening
     self.tools = tools
-    self.compactToolName = compactToolName
     self.trace = trace
     self.metrics = metrics
     self.mediaResolver = mediaResolver
@@ -70,7 +62,6 @@ public struct InferenceExecutor: Sendable {
   public func run(
     attemptID: UUID,
     transcript: Transcript,
-    mode: InferenceMode,
     idleTimeout: Duration? = nil,
   ) async throws -> CompletedInference {
     let context = await transcript.renderRequest(
@@ -79,16 +70,11 @@ public struct InferenceExecutor: Sendable {
       opening: opening,
       tools: tools,
     )
-    var options = RequestOptions(
+    let options = RequestOptions(
       maxTokens: model.budget.maxOutput,
       reasoning: reasoning(for: transcript),
       idleTimeout: idleTimeout,
     )
-    if mode == .forcedCompact {
-      // Cache discipline: the tool list stays byte-identical on a forced turn;
-      // only tool_choice (and, per dialect, thinking) vary.
-      options.toolChoice = .tool(name: compactToolName)
-    }
 
     let sizes = TrafficSizes()
     var endpoint: any ModelEndpoint = model.endpoint
@@ -154,18 +140,17 @@ public struct InferenceExecutor: Sendable {
     let ttft = firstEventSeen ? ttftDuration : nil
 
     if let failure {
-      logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "failed(\(failure))", usage: nil, elapsed: elapsed)
+      logAttempt(attemptID: attemptID, sizes: sizes, status: "failed(\(failure))", usage: nil, elapsed: elapsed)
       await metrics.record(metric(timestamp: timestamp, error: failure, cancelled: false, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
       throw failure
     }
     guard let completed else {
-      logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "cancelled", usage: nil, elapsed: elapsed)
+      logAttempt(attemptID: attemptID, sizes: sizes, status: "cancelled", usage: nil, elapsed: elapsed)
       await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: true, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
       throw InferenceCancelled()
     }
     logAttempt(
       attemptID: attemptID,
-      mode: mode,
       sizes: sizes,
       status: "done(\(completed.metadata.stopReason.rawValue))",
       usage: completed.metadata.usage,
@@ -210,7 +195,6 @@ public struct InferenceExecutor: Sendable {
 
   private func logAttempt(
     attemptID: UUID,
-    mode: InferenceMode,
     sizes: TrafficSizes,
     status: String,
     usage: Usage?,
@@ -224,7 +208,6 @@ public struct InferenceExecutor: Sendable {
       "provider": "\(model.specifier.provider)",
       "model": "\(model.specifier.model)",
       "effort": "\(model.specifier.effort)",
-      "mode": "\(mode)",
       "status": "\(status)",
       "request_bytes": "\(sizes.request)",
       "response_bytes": "\(sizes.response)",

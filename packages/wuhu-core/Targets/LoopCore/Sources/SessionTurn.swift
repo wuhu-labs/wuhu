@@ -20,14 +20,6 @@ struct SessionTurn: Owned, Equatable, Encodable, Sendable {
   var seen: Bool?
   /// Nil in a row from before the cell kept what the session armed (`Armed`): the next step takes that from the stores.
   var armed: Bool?
-  /// A compact command the session has not answered: its forced step does, or a pending fold takes it.
-  @Column(as: Compact.JSONRepresentation?.self) var compact: Compact?
-
-  struct Compact: Equatable, Codable, Sendable {
-    var instructions: String?
-    /// The instructions are in the transcript, where they go once.
-    var asked = false
-  }
 
   enum Turn: Equatable, Codable, Sendable {
     /// A generation nothing was said in: created or started over.

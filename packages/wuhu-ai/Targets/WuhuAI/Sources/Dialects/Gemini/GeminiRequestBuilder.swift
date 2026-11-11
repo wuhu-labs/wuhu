@@ -63,24 +63,6 @@ func buildGeminiRequest(
     ])
   }
 
-  switch options.toolChoice {
-  case .none:
-    break
-  case .any:
-    precondition(!(context.tools ?? []).isEmpty, "tool forcing requires tools")
-    body["toolConfig"] = .object([
-      "functionCallingConfig": .object(["mode": .string("ANY")]),
-    ])
-  case let .tool(name):
-    precondition(!(context.tools ?? []).isEmpty, "tool forcing requires tools")
-    body["toolConfig"] = .object([
-      "functionCallingConfig": .object([
-        "mode": .string("ANY"),
-        "allowedFunctionNames": .array([.string(name)]),
-      ]),
-    ])
-  }
-
   return (url, headers, body)
 }
 

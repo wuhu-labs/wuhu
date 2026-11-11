@@ -98,7 +98,6 @@ struct SessionHarness {
     let config = LoopConfig(
       executeTool: { _ in ToolOutcome(payload: .failure(.init(message: "no tools in this harness"))) },
       inference: { request in try await inference(request) },
-      compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
     let access = InferenceAccess(credentials: credentials)

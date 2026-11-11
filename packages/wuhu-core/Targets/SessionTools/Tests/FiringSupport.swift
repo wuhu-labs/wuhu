@@ -30,7 +30,6 @@ func firingWorker(_ owner: Hub, sources: EventSources = .unavailable) async -> S
     LoopConfig(
       executeTool: { try await tools.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
       inference: { _ in throw Mismatch("unexpected inference in a firing test: hold the session so its cell leaves its queue alone") },
-      compact: { _, _ in throw Mismatch("unexpected compaction in subscription test") },
       budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
       sources: sources,
     )

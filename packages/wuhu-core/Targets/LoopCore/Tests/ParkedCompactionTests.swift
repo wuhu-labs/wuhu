@@ -21,12 +21,14 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
   Fix.replying(text, calls: [parkingCompact()])
 }
 
-private extension Transcript {
+extension Transcript {
   var head: GenerationHead? {
     guard case let .generationHead(head)? = items.first else { return nil }
     return head
   }
+}
 
+private extension Transcript {
   func carries(message text: String) -> Bool {
     items.contains { if case let .message(message) = $0 { message.content.text == text } else { false } }
   }
@@ -205,34 +207,6 @@ private extension Transcript {
       }
       #expect(try await sessions.generationState(id).generation == 0)
       #expect(try await sessions.hydrate(id).transcript.kernel.phase == .live)
-    }
-  }
-
-  @Test func aCompactRequestFindsAPendingFoldCompactedAlready() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
-      let script = InferenceScript([
-        parks(),
-        { request in
-          #expect(request.transcript.head?.summary == summary)
-          #expect(!request.transcript.items.contains { if case let .notification(notice) = $0 { notice.kind == .compactRequest } else { false } })
-          return Fix.reply("on it")
-        },
-      ])
-      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("wrap up"), to: id)
-        try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
-        try await service.compact(id, instructions: "keep the build notes")
-        try await holds("no fold and no inference") { script.count == 1 }
-        #expect(try await sessions.generationState(id).generation == 0)
-        guard case .foldPending = try await sessions.hydrate(id).transcript.kernel.phase else { throw UnexpectedCall("the request ran the fold") }
-        try await service.enqueue(item: Fix.message("next", message: "m2"), to: id)
-        try await until("the wake runs the fold") { try await sessions.settledWork(id) && script.count == 2 }
-      }
-      #expect(try await sessions.generationState(id).generation == 1)
     }
   }
 

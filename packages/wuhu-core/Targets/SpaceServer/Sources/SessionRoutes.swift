@@ -272,27 +272,6 @@ func addSessionRoutes(
     }
   }
 
-  router.post("/v1/session/:id/compact") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
-    let input: SessionCompactInput
-    if request.body == nil {
-      input = SessionCompactInput(instructions: nil)
-    } else {
-      do {
-        input = try await request.json(SessionCompactInput.self)
-      } catch {
-        return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-compact body: \(error)")
-      }
-    }
-    do {
-      try await service.compact(id, instructions: input.instructions)
-      return jsonResponse(.object([:]))
-    } catch {
-      return sessionErrorResponse(error)
-    }
-  }
-
   router.post("/v1/session/:id/restart") { request, parameters in
     guard let id = sessionID(parameters) else { return unknownSession(parameters) }
     if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }

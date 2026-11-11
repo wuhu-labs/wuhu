@@ -228,19 +228,6 @@ extension Executor {
     await self.runner.stdout(output.tags.map { $0 + "\n" }.joined())
   }
 
-  mutating func sessionCompact(id: String, instructions: String?) async throws {
-    let session = try sessionKey(id)
-    let space = try self.wallet.pinnedSpace()
-    struct Empty: Decodable {}
-    var body: JSONValue = .object([:])
-    if let instructions {
-      body = .object(["instructions": .string(instructions)])
-    }
-    let _: Empty = try await self.authenticated(space).api(
-      .post, "/v1/session/\(session)/compact", body: body,
-    )
-  }
-
   mutating func sessionRestart(_ command: SessionRestartCommand) async throws {
     let session = try sessionKey(command.id)
     let space = try self.wallet.pinnedSpace()

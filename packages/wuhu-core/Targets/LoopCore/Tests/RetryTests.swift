@@ -50,7 +50,6 @@ import WuhuAI
       let attempts = script.attempts.value
       #expect(attempts.count == 4)
       #expect(Set(attempts.map(\.id)).count == 4)
-      #expect(attempts.map(\.mode) == [.normal, .normal, .normal, .normal])
 
       let expected = delays.reduce(into: [0.0]) { acc, delay in
         acc.append(acc.last! + delay)
@@ -366,7 +365,7 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
-        let result = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
+        let result = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
         return InferenceReply(message: result.message, metadata: result.metadata, committed: { _, _ in })
       }
       let script = InferenceScript(Array(repeating: step, count: rounds + 1))

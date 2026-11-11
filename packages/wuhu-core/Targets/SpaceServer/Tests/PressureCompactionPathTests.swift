@@ -11,8 +11,7 @@ import Testing
 import WuhuAI
 
 @Suite(.deterministicDependencies) struct PressureCompactionPathTests {
-  @Test(arguments: [false, true])
-  func modelBookmarkAndMechanicalCompactionDropRetainedPressure(mechanical: Bool) async throws {
+  @Test func aBookmarkFoldDropsRetainedPressure() async throws {
     let timestamp = Date(timeIntervalSince1970: 0)
     let sid = SessionID("pressure-compaction")
     let pressure = TranscriptItem.notification(.init(id: UUID(), timestamp: timestamp, kind: .context, subscriptionID: .init("context-pressure"), content: .init(text: "<compaction-notice>Context is 86% full. Compact now.</compaction-notice>")))
@@ -24,14 +23,8 @@ import WuhuAI
       context,
       pressure,
     ])
-    let kept: Range<Int>?
-    if mechanical {
-      kept = mechanicalCompaction(of: transcript, images: .claude).kept
-    } else {
-      transcript.append(.assistant(.init(id: UUID(), timestamp: timestamp, content: [.toolCall(.init(id: "compact", name: "compact", arguments: .object([:])))], stopReason: .stop, usage: .init(inputTokens: 860, outputTokens: 0, totalTokens: 860), toolCallIDs: [:])))
-      kept = try transcript.compactKeptRange(callID: .init("compact"), bookmark: "keep")
-    }
-    let range = try #require(kept)
+    transcript.append(.assistant(.init(id: UUID(), timestamp: timestamp, content: [.toolCall(.init(id: "compact", name: "compact", arguments: .object([:])))], stopReason: .stop, usage: .init(inputTokens: 860, outputTokens: 0, totalTokens: 860), toolCallIDs: [:])))
+    let range = try #require(try transcript.compactKeptRange(callID: .init("compact"), bookmark: "keep"))
     #expect(transcript.items[range].contains(pressure))
     let head = GenerationHead(id: UUID(), timestamp: timestamp, summary: "folded", snapshot: .init(subscriptions: [:], preReads: []), runningWork: [])
     let compacted = transcript.compacted(head: head, kept: range)

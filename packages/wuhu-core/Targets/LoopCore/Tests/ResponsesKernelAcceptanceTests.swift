@@ -44,19 +44,19 @@ import WuhuAI
   }
 
   @Test(arguments: [false, true])
-  func modelAndMechanicalCompactionInvalidateRuntimeInference(mechanical: Bool) async throws {
+  func aCompactionInvalidatesRuntimeInference(pointer: Bool) async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "compaction", kind: .agent, createdBy: "morgan", model: .test)
       let compact = ToolCall(id: "call_compact", name: "compact", arguments: .object(["summary": .string("folded")]))
-      let script = InferenceScript([Fix.replying("large", tokens: 900), mechanical ? Fix.failing(.contextTooLong) : Fix.replying("folding", calls: [compact], tokens: 950), Fix.replying("fresh", tokens: 100)])
+      let script = InferenceScript([pointer ? Fix.replying("large", tokens: 900) : Fix.replying("folding", calls: [compact]), Fix.replying("fresh", tokens: 100)])
       let invalidated = Box<[SessionID]>([])
-      var config = makeConfig(inference: { try await script($0) }, compact: { _ in .init(summary: "mechanical") }, budget: .init(maxInput: 1100, maxOutput: 100))
+      var config = makeConfig(inference: { try await script($0) }, budget: .init(maxInput: 1100, maxOutput: 100))
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("fresh committed turn") { guard script.count == 3 else { return false }; return try await sessions.settledWork(sid) }
+        try await until("fresh committed turn") { guard script.count == 2 else { return false }; return try await sessions.settledWork(sid) }
         #expect(invalidated.value == [sid])
       }
     }
@@ -93,7 +93,7 @@ import WuhuAI
       }, inference: { request in
         let lease = try await registry.acquire(session: sid, model: resolved)
         let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline acceptance", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object"), "properties": .object([:])]))], webSocket: lease.session)
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
+        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
         await registry.release(session: sid, lease: lease.lease)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in
           commits.withLock { $0.append(entry) }

@@ -54,7 +54,7 @@ private let liveCases: [(provider: String, model: String)] = [
       func send(_ text: String) async throws -> String {
         transcript.append(.direct(.init(id: UUID(), sender: sender, timestamp: Date(), content: .init(text: text))))
         let attemptID = UUID()
-        let reply = try await executor.run(attemptID: attemptID, transcript: transcript, mode: .normal)
+        let reply = try await executor.run(attemptID: attemptID, transcript: transcript)
         transcript.appendAssistant(reply.message, id: attemptID, metadata: reply.metadata)
         let answer = reply.message.content.compactMap { block -> String? in
           if case let .text(t) = block { return t.text }

@@ -182,14 +182,6 @@ public struct SessionRows {
     }
   }
 
-  /// A forced compaction is an inference the turn does not owe: it can start from a settled turn, and shows as `inference` until the turn next moves.
-  public func markCompacting(_ id: SessionID) throws {
-    let key = id.rawValue
-    let record = try Sessions.record(key, in: db)
-    guard record.work != .errored, record.hold == .normal, case .live = record.lifecycle else { return }
-    try Sessions.setRunState(key, .inference, now: now, in: db)
-  }
-
   public func markErrored(_ id: SessionID, message: String) throws {
     let key = id.rawValue
     let now = now

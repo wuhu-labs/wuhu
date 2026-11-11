@@ -10,17 +10,11 @@ import struct WuhuAI.AssistantMessageMetadata
 import enum WuhuAI.Tool
 import struct WuhuAI.ToolCall
 
-public enum InferenceMode: Hashable, Sendable, Codable {
-  case normal
-  case forcedCompact
-}
-
 public struct InferenceRequest: Sendable {
   public var sessionID: SessionID
   public var attemptID: UUID
   public var generation: Int
   public var transcript: Transcript
-  public var mode: InferenceMode
   public var idleTimeout: Duration
 
   public init(
@@ -28,14 +22,12 @@ public struct InferenceRequest: Sendable {
     attemptID: UUID,
     generation: Int,
     transcript: Transcript,
-    mode: InferenceMode,
     idleTimeout: Duration = .seconds(120),
   ) {
     self.sessionID = sessionID
     self.attemptID = attemptID
     self.generation = generation
     self.transcript = transcript
-    self.mode = mode
     self.idleTimeout = idleTimeout
   }
 }
@@ -119,22 +111,9 @@ public struct InferenceReply: Sendable {
   }
 }
 
-public struct CompactionResult: Sendable {
-  public var summary: String
-  public var preReads: [String]
-  public var kept: Range<Int>?
-
-  public init(summary: String, preReads: [String] = [], kept: Range<Int>? = nil) {
-    self.summary = summary
-    self.preReads = preReads
-    self.kept = kept
-  }
-}
-
 public struct LoopConfig: Sendable {
   public var executeTool: @Sendable (ToolInvocation) async throws -> ToolOutcome
   public var inference: @Sendable (InferenceRequest) async throws -> InferenceReply
-  public var compact: @Sendable (SessionID, Transcript) async throws -> CompactionResult
   // The compacted transcript and the target a compact call named, if any. A
   // throw with a target is the model's refusal: nothing folds.
   public var prepareCompaction: @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition?
@@ -155,7 +134,6 @@ public struct LoopConfig: Sendable {
   public init(
     executeTool: @escaping @Sendable (ToolInvocation) async throws -> ToolOutcome,
     inference: @escaping @Sendable (InferenceRequest) async throws -> InferenceReply,
-    compact: @escaping @Sendable (SessionID, Transcript) async throws -> CompactionResult,
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
     prepareCompaction: @escaping @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? = { _, _, _ in nil },
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
@@ -168,7 +146,6 @@ public struct LoopConfig: Sendable {
     self.prepareCompaction = prepareCompaction
     self.executeTool = executeTool
     self.inference = inference
-    self.compact = compact
     self.budget = budget
     self.killInterruptedTool = killInterruptedTool
     self.invalidateInference = invalidateInference

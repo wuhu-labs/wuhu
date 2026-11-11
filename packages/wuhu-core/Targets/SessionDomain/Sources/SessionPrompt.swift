@@ -15,6 +15,12 @@ public enum SessionPrompt {
     "Context was compacted; your home is \(session.homePath)/, re-read AGENTS.md and any notes you keep there."
   }
 
+  /// The summary of a generation the server opened without one.
+  public static func pointerSummary(session: SessionID, generation: Int) -> String {
+    let files = "/_/session-transcripts/\(session.rawValue)/\(generation)"
+    return "No summary: your context outgrew the model's limit before you compacted, so this generation starts without one. The generation it closed is in \(files).outline.txt, one line per message, and \(files).jsonl, the messages themselves. Read its end to pick up what you were doing."
+  }
+
   public static let parkReminderTemplate: String =
     "Request {request} is still open and nothing is scheduled to wake you. Finish the work and call report(request_id: \"{request}\", kind: \"final\", content: ...), or arm a timer if you must genuinely wait."
 

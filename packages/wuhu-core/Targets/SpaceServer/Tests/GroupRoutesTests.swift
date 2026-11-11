@@ -125,7 +125,6 @@ import Testing
         #expect(try await code(response) == "notFound", "\(path)")
       }
       let steering: [(String, JSONValue?)] = [
-        ("compact", .object(["instructions": "forget everything"])),
         ("restart", .object(["message": "wake up"])),
         ("tags", .object(["tags": .array(["x"])])),
         ("title", .object(["title": "mine"])),

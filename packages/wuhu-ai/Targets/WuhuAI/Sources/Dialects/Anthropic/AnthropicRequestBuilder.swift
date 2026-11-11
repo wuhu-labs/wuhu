@@ -65,17 +65,6 @@ func buildAnthropicRequest(
     body["tools"] = .array(tools)
   }
 
-  switch options.toolChoice {
-  case .none:
-    break
-  case .any:
-    precondition(!(context.tools ?? []).isEmpty, "tool forcing requires tools")
-    body["tool_choice"] = .object(["type": .string("any")])
-  case let .tool(name):
-    precondition(!(context.tools ?? []).isEmpty, "tool forcing requires tools")
-    body["tool_choice"] = .object(["type": .string("tool"), "name": .string(name)])
-  }
-
   return (url, headers, body)
 }
 

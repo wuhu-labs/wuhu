@@ -126,7 +126,7 @@ import WuhuAI
         #expect(keys.contains { $0.hasPrefix("call:") })
 
         let transcript = try await harness.store.transcript(id)
-        let request = InferenceRequest(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript, mode: .normal)
+        let request = InferenceRequest(sessionID: id, attemptID: UUID(), generation: 0, transcript: transcript)
         await checkLines(log, store: harness.store, request: request, rendered: "another", at: Date())
         let planted = try #require(records.withLock { $0 }.first?.object)
         #expect(records.withLock { $0.count } == 1)

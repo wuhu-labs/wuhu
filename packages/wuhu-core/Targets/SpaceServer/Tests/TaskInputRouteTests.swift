@@ -92,18 +92,6 @@ import Testing
       let bare = try await t.harness.call("/v1/session/\(task)/restart", .null, as: SessionRestartOutput.self)
       #expect(bare.generation == 1, "the refused restart changed nothing")
       #expect(try await !t.harness.store.transcript(t.task).hasWork)
-
-      let instructed = try await t.harness.post(
-        "/v1/session/\(task)/compact", .object(["instructions": "keep the plan"]),
-      )
-      #expect(instructed.status == .forbidden)
-      #expect(try await code(instructed) == "taskInput")
-      #expect(try await t.harness.post("/v1/session/\(task)/compact", .null).status == .ok)
-      try await until("compact requested") {
-        try await t.harness.store.transcript(t.task).items.contains {
-          if case let .notification(notification) = $0 { notification.kind == .compactRequest } else { false }
-        }
-      }
     }
   }
 

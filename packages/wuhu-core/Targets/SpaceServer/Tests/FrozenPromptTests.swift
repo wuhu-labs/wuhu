@@ -68,7 +68,8 @@ import Testing
           _ = try await harness.store.setTitle(first, to: "renamed")
           #expect(try await turn(first) == firstPrompt, "an edit or a rename within a generation waits for a compaction")
 
-          #expect(try await harness.post("/v1/session/\(first.rawValue)/compact", .object([:])).status == .ok)
+          tap.foldNext()
+          try await harness.deliver("fold", to: first)
           try await until("first compacts", timeout: .seconds(60)) {
             guard try await harness.store.generationState(first).generation == 1 else { return false }
             return try await harness.store.settledWork(first)
@@ -105,6 +106,10 @@ private let responsesModels = """
 // that open it, and answers every one with a short final answer.
 private final class PromptTap: Sendable {
   private let prompts = Mutex<[[String]]>([])
+  private let folds = Mutex(false)
+
+  /// The next request is answered with a `compact` call.
+  func foldNext() { folds.withLock { $0 = true } }
 
   var count: Int { prompts.withLock { $0.count } }
 
@@ -120,10 +125,21 @@ private final class PromptTap: Sendable {
         let opening = input.dropFirst().prefix(2).compactMap { $0.object?["content"]?.array?.first?.object?["text"]?.stringValue }
         self.prompts.withLock { $0.append([system] + opening.filter { $0.hasSuffix("-instructions>") }) }
       }
-      return Response(status: .ok, headers: HTTPFields(), body: .bytes(Data(finalAnswer.utf8), contentType: "text/event-stream"))
+      let fold = self.folds.withLock { fold in defer { fold = false }; return fold }
+      return Response(status: .ok, headers: HTTPFields(), body: .bytes(Data((fold ? compactCall : finalAnswer).utf8), contentType: "text/event-stream"))
     }
   }
 }
+
+private let compactCall: String = {
+  let call: JSONValue = ["type": "function_call", "call_id": "call_fold", "name": "compact", "arguments": .string((["summary": "folded"] as JSONValue).jsonString())]
+  let events: [JSONValue] = [
+    ["type": "response.output_item.added", "item": call],
+    ["type": "response.output_item.done", "item": call],
+    ["type": "response.completed", "response": ["status": "completed", "usage": ["input_tokens": 10, "output_tokens": 5, "total_tokens": 15]]],
+  ]
+  return events.map { "data: " + $0.jsonString() + "\n\n" }.joined()
+}()
 
 private let finalAnswer = """
 event: response.output_item.done

@@ -18,71 +18,37 @@ private let payloadError = InferenceError.requestTooLarge(limitBytes: 128 << 20)
 private let compactedPayloadError = InferenceError.requestTooLargeAfterCompaction(limitBytes: 128 << 20)
 
 @Suite struct PayloadCompactionTests {
-  @Test(arguments: [false, true])
-  func repeatedOversizeErrorsAfterOneCompactionEvenOnForcedTurn(forced: Bool) async throws {
+  @Test func repeatedOversizeErrorsAfterOneCompaction() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "oversize", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.failing(payloadError), Fix.failing(payloadError), Fix.replying("must not run")])
-      let compactions = Box(0)
-      let config = makeConfig(inference: { try await script($0) }, compact: { transcript in
-        compactions.withLock { $0 += 1 }
-        let start: Int = if case .generationHead? = transcript.items.first { 1 } else { 0 }
-        return .init(summary: "one gigantic retained item", kept: start ..< transcript.items.count)
-      })
-      if forced { try await sessions.put(sid, input: Fix.message("retain this item")) }
-      try await runService(space, config) { service in
-        if forced {
-          try await service.compact(sid, instructions: nil)
-        } else {
-          try await service.enqueue(item: Fix.message("retain this item"), to: sid)
-        }
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+        try await service.enqueue(item: Fix.message("one gigantic item"), to: sid)
         try await until("payload permanently errored") { try await sessions.record(sid).work == .errored }
       }
-      #expect(compactions.value == 1)
+      #expect(try await sessions.generationState(sid).generation == 1)
       #expect(script.count == 2)
       #expect(try await sessions.record(sid).errorMessage == String(describing: compactedPayloadError))
       let transcript = try await sessions.hydrate(sid).transcript.kernel
       #expect(transcript.assistantEntries.isEmpty)
-      #expect(transcript.items.contains { if case let .message(message) = $0 { message.content.text == "retain this item" } else { false } })
     }
   }
 
-  @Test func unrelatedContextCompactionDoesNotResetPayloadBudget() async throws {
+  @Test func aFreshGenerationTheProviderStillRefusesErrors() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "mixed payload", kind: .agent, createdBy: "morgan", model: .test)
-      let script = InferenceScript([Fix.failing(payloadError), Fix.failing(.contextTooLong), Fix.failing(payloadError)])
-      let compactor = CompactScript(.init(summary: "folded"))
-      try await runService(space, makeConfig(inference: { try await script($0) }, compact: { try await compactor($0) })) { service in
+      let script = InferenceScript([Fix.failing(payloadError), Fix.failing(.contextTooLong)])
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("mixed payload errored") { try await sessions.record(sid).work == .errored }
       }
-      #expect(compactor.count.value == 2)
-      #expect(script.count == 3)
-      #expect(try await sessions.record(sid).errorMessage == String(describing: compactedPayloadError))
-    }
-  }
-
-  @Test func oversizedCompactorNeverLoops() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "oversized compactor", kind: .agent, createdBy: "morgan", model: .test)
-      let compactions = Box(0)
-      let script = InferenceScript([Fix.failing(payloadError)])
-      let config = makeConfig(inference: { try await script($0) }, compact: { _ in
-        compactions.withLock { $0 += 1 }
-        throw payloadError
-      })
-      try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("hello"), to: sid)
-        try await until("oversized compactor errored") { try await sessions.record(sid).work == .errored }
-      }
-      #expect(compactions.value == 1)
-      #expect(script.count == 1)
+      #expect(try await sessions.generationState(sid).generation == 1)
+      #expect(script.count == 2)
+      #expect(try await sessions.record(sid).errorMessage == String(describing: InferenceError.contextTooLong))
     }
   }
 
@@ -92,14 +58,13 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "payload reset", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.failing(payloadError), Fix.replying("first"), Fix.failing(payloadError), Fix.replying("second")])
-      let compactor = CompactScript(.init(summary: "fits"))
-      try await runService(space, makeConfig(inference: { try await script($0) }, compact: { try await compactor($0) })) { service in
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         for round in 0 ..< 2 {
           try await service.enqueue(item: Fix.message("round \(round)"), to: sid)
           try await until("settled \(round)") { guard script.count == (round + 1) * 2 else { return false }; return try await sessions.settledWork(sid) }
         }
       }
-      #expect(compactor.count.value == 2)
+      #expect(try await sessions.generationState(sid).generation == 2)
       #expect(try await sessions.record(sid).errorMessage == nil)
     }
   }
@@ -111,7 +76,6 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
       let sid = try await sessions.createSession(group: .shared, title: "socket payload", kind: .agent, createdBy: "morgan", model: .test)
       let socket = ResponsesWebSocketSession()
       let endpoint = OpenAIGPTEndpoint(model: "test", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline")
-      let compactions = Box(0)
       let dials = Box(0)
       let bodies = Box<[JSONValue]>([])
       let commits = Box(0)
@@ -128,14 +92,10 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
         }, close: { _ in inbound.continuation.finish() }, abort: { inbound.continuation.finish() })
       }
       var config = makeConfig(inference: { request in
-        let context = Context(systemPrompt: compactions.value == 0 ? "original" : "compacted", messages: [.user(.init(content: [.text("retained")]))])
+        let context = Context(systemPrompt: request.generation == 0 ? "original" : "compacted", messages: [.user(.init(content: [.text("retained")]))])
         let inference = endpoint.withWebSocket(session: socket, attemptID: request.attemptID.uuidString).inference(context: context)
         let message = try await inference.collect()
         return InferenceReply(message: message, metadata: Fix.reply("usage").metadata, committed: { _, _ in commits.withLock { $0 += 1 } })
-      }, compact: { transcript in
-        #expect(transcript.assistantEntries.isEmpty)
-        compactions.withLock { $0 += 1 }
-        return .init(summary: "compacted")
       })
       config.invalidateInference = { _ in
         invalidations.withLock { $0 += 1 }
@@ -152,7 +112,7 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
         }
       }
       #expect(dials.value == 2)
-      #expect(compactions.value == 1)
+      #expect(try await sessions.generationState(sid).generation == 1)
       #expect(commits.value == 1)
       #expect(bodies.value.count == 2)
       #expect(bodies.value.allSatisfy { $0.object?["previous_response_id"] == nil })
