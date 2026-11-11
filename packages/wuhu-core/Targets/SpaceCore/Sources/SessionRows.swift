@@ -53,38 +53,6 @@ public struct SessionRows {
     ).map(SQLiteDateFormat.date(from:))
   }
 
-  public func pendingCommand(_ id: SessionID) throws -> SessionCommand? {
-    try Sessions.pendingCommand(id.rawValue, in: db)
-  }
-
-  @discardableResult
-  public func takeCommand(_ id: SessionID) throws -> SessionCommand? {
-    let key = id.rawValue
-    guard let row = try SessionCommandRow.find(key, in: db) else { return nil }
-    try Sessions.discardCommand(key, in: db)
-    return row.command
-  }
-
-  /// Puts a pending compact command's instructions in the transcript as one notification, once: the forced step answers the slot after it. Answers how many items that wrote, nil when no compact command is pending.
-  public func materializeCompactRequest(_ id: SessionID, uuid: () -> UUID) throws -> Int? {
-    let key = id.rawValue
-    guard case let .compact(instructions)? = try SessionCommandRow.find(key, in: db)?.command else { return nil }
-    let runtime = try Sessions.runtime(key, in: db)
-    let transcript = try Sessions.transcript(key, in: db)
-    let text = MessageContent(text: instructions ?? "")
-    let pending = transcript.items.reversed().prefix { item in
-      switch item { case .assistant, .generationHead: false; default: true }
-    }
-    let materialized = pending.contains { item in
-      guard case let .notification(notification) = item else { return false }
-      return notification.kind == .compactRequest && notification.content == text
-    }
-    guard !materialized else { return 0 }
-    let item = TranscriptItem.notification(SystemNotification(id: uuid(), timestamp: store.dateGen.now, kind: .compactRequest, subscriptionID: .compactRequest, content: text))
-    try Sessions.append(key, generation: runtime.generation, items: [item], in: db)
-    return 1
-  }
-
   /// What the session's turn owes, shown on its row with whether due input waits: the cell says so whenever its turn moves.
   public func show(_ id: SessionID, owed: SessionRunState) throws {
     try Sessions.refreshWork(id.rawValue, owed: owed, now: now, in: db)
@@ -127,12 +95,11 @@ public struct SessionRows {
 
   /// `items` go after the generation's tail; `inputOrigin` is the appended
   /// transcript's `cacheWarmingInputOrigin`, the one thing of it the store
-  /// keeps. `completingCompact` ends the pending compact command.
-  public func append(_ id: SessionID, items: [TranscriptItem], inputOrigin: Bool?, completingCompact: Bool = false) throws {
+  /// keeps.
+  public func append(_ id: SessionID, items: [TranscriptItem], inputOrigin: Bool?) throws {
     guard !items.isEmpty else { return }
     let key = id.rawValue
     let runtime = try Sessions.runtime(key, in: db)
-    if completingCompact { try Sessions.discardCommand(key, in: db) }
     try Sessions.append(key, generation: runtime.generation, items: items, in: db)
     if items.contains(where: { if case .assistant = $0 { true } else { false } }) {
       try CacheWarmingRow.recordInference(key, origin: inputOrigin, now: store.dateGen.now, in: db)
@@ -144,13 +111,11 @@ public struct SessionRows {
     closing: ToolResultItem? = nil,
     head: GenerationHead,
     kept: Range<Int>?,
-    completingCompact: Bool = false,
     transition: ModelRouteTransition? = nil,
   ) throws -> Transcript {
     let key = id.rawValue
     let runtime = try Sessions.runtime(key, in: db)
     let transcript = try Sessions.transcript(key, in: db)
-    if completingCompact { try Sessions.discardCommand(key, in: db) }
     // The closing result joins the OLD generation in the same commit; the
     // kept range never includes it (it was computed before the close).
     if let closing {
@@ -268,13 +233,6 @@ public struct SessionRows {
     let key = id.rawValue
     _ = try Sessions.record(key, in: db)
     try db.execute(sql: "UPDATE sessions SET tags = ? WHERE id = ?", arguments: [try Sessions.encode(tags), key])
-  }
-
-  public func requestCommand(_ id: SessionID, _ command: SessionCommand) throws {
-    let key = id.rawValue
-    _ = try Sessions.record(key, in: db)
-    let row = SessionCommandRow(sessionID: key, kind: command.kind, instructions: command.instructions, createdAt: now)
-    try SessionCommandRow.upsert { row }.execute(db)
   }
 
   @discardableResult

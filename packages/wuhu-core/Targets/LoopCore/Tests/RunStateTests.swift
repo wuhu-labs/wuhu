@@ -107,17 +107,14 @@ import WuhuAI
         try await until("settled") { try await sessions.settledWork(sid) }
         #expect(try await row(space, sid).run == "no_run")
 
-        try await sessions.requestCommand(sid, .compact(instructions: nil))
+        try await service.compact(sid, instructions: nil)
         try await until("compaction engaged") { compacting.value == 1 }
         let folding = try await row(space, sid)
         #expect(folding.run == "inference")
         #expect(folding.progress != nil)
 
         release.release()
-        try await until("compaction done") {
-          guard try await sessions.pendingCommand(sid) == nil else { return false }
-          return try await row(space, sid).run == "no_run"
-        }
+        try await until("compaction done") { try await row(space, sid).run == "no_run" }
       }
     }
   }

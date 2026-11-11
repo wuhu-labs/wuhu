@@ -98,7 +98,6 @@ import Testing
       )
       #expect(instructed.status == .forbidden)
       #expect(try await code(instructed) == "taskInput")
-      #expect(try await t.harness.store.pendingCommand(t.task) == nil)
       #expect(try await t.harness.post("/v1/session/\(task)/compact", .null).status == .ok)
       try await until("compact requested") {
         try await t.harness.store.transcript(t.task).items.contains {

@@ -57,7 +57,6 @@ extension SessionRows {
     }
     try Sessions.writeModelRoute(key, route: modelRoute, in: db)
     let runtime = try Sessions.runtime(key, in: db)
-    try Sessions.discardCommand(key, in: db)
     try CacheWarmingRow.reset(key, in: db)
     do {
       head.settle = try Sessions.settleState(key, through: nowDate, in: db)

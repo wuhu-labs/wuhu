@@ -26,6 +26,7 @@ struct SessionCell {
     "CREATE TABLE session_seen (\(ownerColumn), kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT, UNIQUE (owner, kind, key))",
     "ALTER TABLE session_state ADD COLUMN armed INTEGER",
     "CREATE TABLE session_armed (\(ownerColumn), id TEXT NOT NULL, slot TEXT NOT NULL, handler INTEGER NOT NULL, UNIQUE (owner, id))",
+    "ALTER TABLE session_state ADD COLUMN compact TEXT",
   ]
 
   /// An input for the queue. Looking at it is a step of its own, so the input stays whatever that step meets.
@@ -77,9 +78,10 @@ struct SessionCell {
     try rows.retag(id.session, tags)
   }
 
-  /// The step at hand yields to it if it can; the forced step runs next.
+  /// The step at hand yields to it if it can; the forced step runs next. One that is not answered yet is replaced.
   mutating func compact(_ instructions: String?) throws {
-    try rows.requestCommand(id.session, .compact(instructions: instructions))
+    _ = try check(load())
+    try move { $0.compact = .init(instructions: instructions) }
     try look()
   }
 
@@ -181,10 +183,11 @@ struct SessionCell {
         transcript.append(.notification(nag.notification(id: client.uuid(), at: now)))
       }
       let appended = Array(transcript.items[session.slot.position...])
-      try rows.append(id.session, items: appended, inputOrigin: transcript.cacheWarmingInputOrigin, completingCompact: forced)
+      try rows.append(id.session, items: appended, inputOrigin: transcript.cacheWarmingInputOrigin)
       try move(wrote: appended) {
         $0.reply(entry.toolCalls)
         $0.input(appended.count - 1)
+        if forced { $0.compact = nil }
       }
       let next = Slot(session.slot, position: transcript.items.count)
       if forced, !entry.callsCompact {
@@ -264,8 +267,10 @@ struct SessionCell {
       let closing = call.flatMap { call in
         session.turn.turn == .folding(call: call) ? nil : ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary)))
       }
-      let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, completingCompact: true, transition: transition)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
+      let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, transition: transition)
+      // A fallback that keeps a tail keeps the forced reply at its end, whose calls are still to run.
+      let turn: SessionTurn.Turn = if call == nil, kept != nil, case .tools = session.turn.turn { session.turn.turn } else { .model }
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: turn, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
       try see(only: written)
       invalidateInference()
     case let .refused(call, message):
@@ -273,7 +278,7 @@ struct SessionCell {
     case .handoff(var transcript):
       transcript.open(armed: try armedSlots())
       let written = try rows.writePortableHandoff(id.session, transcript: transcript)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written), seen: true, armed: true, compact: session.turn.compact.map { .init(instructions: $0.instructions) }))
       try see(only: written)
       invalidateInference()
     case let .failed(message):
@@ -285,9 +290,14 @@ struct SessionCell {
 
   /// Takes every step that writes at once, until one needs a job or there is nothing to do.
   private mutating func advance() throws {
+    var healed = false
     while true {
       let session = try load()
-      try check(session)
+      // Once: a row that still differs after its replacement is a fault of the check, not a reason to spin.
+      if try check(session), !healed {
+        healed = true
+        continue
+      }
       guard !session.stopped, working(session) == nil, try next(session) else { return }
     }
   }
@@ -298,7 +308,7 @@ struct SessionCell {
     // A pending fold has no work, nags or forced compaction, and a compact
     // request finds it compacted already: only a delivery runs the fold.
     if case let .folding(call) = turn.turn {
-      try rows.takeCommand(id.session)
+      if turn.compact != nil { try move { $0.compact = nil } }
       if session.queueHead > session.queueTail { start(session.slot.compaction, .fold(call)) }
       return false
     }
@@ -308,8 +318,15 @@ struct SessionCell {
       try move(wrote: drained.items) { $0.input(drained.items.count) }
       return true
     }
-    if let written = try rows.materializeCompactRequest(id.session, uuid: client.uuid) {
-      try move { $0.input(written) }
+    if let compact = turn.compact {
+      if !compact.asked {
+        try append(session, [.notification(.init(
+          id: client.uuid(), timestamp: client.now(), kind: .compactRequest, subscriptionID: .compactRequest, content: .init(text: compact.instructions ?? ""),
+        ))]) {
+          $0.input(1)
+          $0.compact?.asked = true
+        }
+      }
       try rows.markCompacting(id.session)
       start(try load().slot.step(forced: true), .forcedCompact)
       return false
@@ -402,7 +419,7 @@ struct SessionCell {
   private mutating func yield(_ work: Slot.Work) throws {
     switch work {
     case let .step(step) where !step.key.hasSuffix(forcedSuffix):
-      let by = try rows.pendingCommand(id.session) != nil ? client.now() : try rows.yieldDeadline(id.session)
+      let by = turn()?.compact != nil ? client.now() : try rows.yieldDeadline(id.session)
       if let by { ctx.send(.yield(by: by), to: step) }
     case let .call(call):
       if let by = try rows.yieldDeadline(id.session) { ctx.send(.yield(by: by), to: call) }
@@ -494,11 +511,12 @@ struct SessionCell {
     try rows.show(id.session, owed: turn.owed)
   }
 
-  /// A turn row that is not what the transcript folds to is reported and replaced, so each divergence is reported once.
-  private mutating func check(_ session: SessionState) throws {
+  /// A turn row that is not what the transcript folds to is reported and replaced, so each divergence is reported once. True when the session as loaded went by a row that was replaced.
+  private mutating func check(_ session: SessionState) throws -> Bool {
     let environment = session.transcript.environment
-    let folded = SessionTurn(folding: session.transcript, generation: session.generation, nags: environment.nags)
     let row = db.rows(SessionTurn.all).first
+    var folded = SessionTurn(folding: session.transcript, generation: session.generation, nags: environment.nags)
+    folded.compact = row?.compact
     if row != folded { try write(folded) }
     var stored = row
     if stored?.nags == nil { stored?.nags = folded.nags }
@@ -508,11 +526,13 @@ struct SessionCell {
 
     if row?.armed != true { try fillArmed() }
 
+    let replaced = row != nil && row != folded
     let (seen, shown) = (Set(db.rows(Seen.all)), try Seen.folding(environment.tools))
-    guard seen != shown else { return }
+    guard seen != shown else { return replaced }
     try db.execute(Seen.delete())
     for seen in shown { try db.execute(Seen.insert { seen }) }
     if row?.seen == true { report(.seen(seen.subtracting(shown).sorted { $0.key < $1.key }), .seen(shown.subtracting(seen).sorted { $0.key < $1.key })) }
+    return replaced
   }
 
   private mutating func report(_ stored: TurnDifference.Side, _ folded: TurnDifference.Side) {

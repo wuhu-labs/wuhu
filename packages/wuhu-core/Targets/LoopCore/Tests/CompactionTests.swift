@@ -328,7 +328,7 @@ private func compactCall(
           guard script.count == 1 else { return false }
           return try await sessions.settledWork(sid)
         }
-        try await sessions.requestCommand(sid, .compact(instructions: "keep the build notes"))
+        try await service.compact(sid, instructions: "keep the build notes")
         try await until("the forced turn landed") {
           guard script.count == 3 else { return false }
           return try await sessions.settledWork(sid)
@@ -336,7 +336,6 @@ private func compactCall(
       }
 
       #expect(script.attempts.value.map(\.mode) == [.normal, .forcedCompact, .normal])
-      #expect(try await sessions.takeCommand(sid) == nil, "the loop consumes the standing command")
 
       let transcript = try await sessions.hydrate(sid).transcript.kernel
       guard case let .generationHead(head) = transcript.items.first else {
@@ -370,7 +369,7 @@ private func compactCall(
           guard script.count == 1 else { return false }
           return try await sessions.settledWork(sid)
         }
-        try await sessions.requestCommand(sid, .compact(instructions: nil))
+        try await service.compact(sid, instructions: nil)
         try await until("the forced turn landed") {
           guard script.count == 3 else { return false }
           return try await sessions.settledWork(sid)
@@ -383,6 +382,40 @@ private func compactCall(
         return notification
       }
       #expect(notifications.map(\.kind) == [.compactRequest] && notifications[0].content.text.isEmpty, "a bare compact is one empty request")
+    }
+  }
+
+  @Test func aForcedReplyThatCallsAnotherToolRunsItAfterTheFallback() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        Fix.replying("first turn"),
+        Fix.replying("not compacting", calls: [ToolCall(id: "stray", name: "exec", arguments: .object([:]))]),
+        { request in
+          #expect(request.transcript.items.contains { if case .toolResult = $0 { true } else { false } }, "the kept reply's call was answered")
+          return Fix.reply("went on")
+        },
+      ])
+      let ran = Box(0)
+      let config = makeConfig(
+        executeTool: { _ in
+          ran.withLock { $0 += 1 }
+          return .failure(.init(message: "no such command"))
+        },
+        inference: { try await script($0) },
+        compact: { transcript in .init(summary: "mechanical", kept: transcript.items.count - 1 ..< transcript.items.count) },
+      )
+      try await runService(space, config) { service in
+        try await service.enqueue(item: Fix.message("hello"), to: sid)
+        try await until("first turn settled") { try await sessions.settledWork(sid) && script.count == 1 }
+        try await service.compact(sid, instructions: nil)
+        try await until("the model went on") { try await sessions.settledWork(sid) && script.count == 3 }
+      }
+      #expect(ran.value == 1)
+      #expect(try await sessions.generationState(sid).generation == 1)
+      #expect(try await sessions.record(sid).work == .noWork)
     }
   }
 }

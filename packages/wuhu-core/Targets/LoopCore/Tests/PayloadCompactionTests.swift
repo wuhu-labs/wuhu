@@ -24,7 +24,6 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
       let space = try Space.inMemory()
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "oversize", kind: .agent, createdBy: "morgan", model: .test)
-      if forced { try await sessions.requestCommand(sid, .compact(instructions: nil)) }
       let script = InferenceScript([Fix.failing(payloadError), Fix.failing(payloadError), Fix.replying("must not run")])
       let compactions = Box(0)
       let config = makeConfig(inference: { try await script($0) }, compact: { transcript in
@@ -32,8 +31,13 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
         let start: Int = if case .generationHead? = transcript.items.first { 1 } else { 0 }
         return .init(summary: "one gigantic retained item", kept: start ..< transcript.items.count)
       })
+      if forced { try await sessions.put(sid, input: Fix.message("retain this item")) }
       try await runService(space, config) { service in
-        try await service.enqueue(item: Fix.message("retain this item"), to: sid)
+        if forced {
+          try await service.compact(sid, instructions: nil)
+        } else {
+          try await service.enqueue(item: Fix.message("retain this item"), to: sid)
+        }
         try await until("payload permanently errored") { try await sessions.record(sid).work == .errored }
       }
       #expect(compactions.value == 1)

@@ -83,11 +83,6 @@ extension SessionStore {
     try await rows { try $0.show(id, owed: !transcript.pendingToolCallIDs.isEmpty ? .tool : transcript.hasWork ? .inference : .noRun) }
   }
 
-  func requestCommand(_ id: SessionID, _ command: SessionCommand) async throws {
-    try await rows { try $0.requestCommand(id, command) }
-    runtime.poke(id)
-  }
-
   @discardableResult
   func restart(_ id: SessionID, executor: SessionExecutor? = nil, note: String? = nil, modelRoute: SessionModelRoute? = nil, runningWork: [String] = []) async throws -> SessionRestart {
     @Dependency(\.uuid) var uuid

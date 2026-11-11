@@ -44,11 +44,6 @@ extension SessionStore {
     try await rows { try $0.markInterrupted(id) }
   }
 
-  func requestCommand(_ id: SessionID, _ command: SessionCommand) async throws {
-    try await rows { try $0.requestCommand(id, command) }
-    try await look(id)
-  }
-
   @discardableResult
   func restart(_ id: SessionID, executor: SessionExecutor? = nil, note: String? = nil, modelRoute: SessionModelRoute? = nil, runningWork: [String] = []) async throws -> SessionRestart {
     @Dependency(\.uuid) var uuid
@@ -57,11 +52,6 @@ extension SessionStore {
     let hydration = try await hydrate(id)
     if hydration.queueHead > hydration.queueTail { try await look(id) }
     return restart
-  }
-
-  @discardableResult
-  func takeCommand(_ id: SessionID) async throws -> SessionCommand? {
-    try await rows { try $0.takeCommand(id) }
   }
 }
 

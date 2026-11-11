@@ -90,11 +90,6 @@ extension SessionStore {
     try await rows { try $0.markResumed(id) }
   }
 
-  func requestCommand(_ id: SessionID, _ command: SessionCommand) async throws {
-    try await rows { try $0.requestCommand(id, command) }
-    try await look(id)
-  }
-
   @discardableResult
   func restart(_ id: SessionID, executor: SessionExecutor? = nil, note: String? = nil, modelRoute: SessionModelRoute? = nil, runningWork: [String] = []) async throws -> SessionRestart {
     @Dependency(\.uuid) var uuid
@@ -110,11 +105,6 @@ extension SessionStore {
     let title = try SessionStore.usableTitle(title)
     try await rows { try $0.retitle(id, title) }
     return title
-  }
-
-  @discardableResult
-  func takeCommand(_ id: SessionID) async throws -> SessionCommand? {
-    try await rows { try $0.takeCommand(id) }
   }
 
   func unarchive(_ id: SessionID) async throws {

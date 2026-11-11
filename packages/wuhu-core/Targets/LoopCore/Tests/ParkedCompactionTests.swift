@@ -225,9 +225,7 @@ private extension Transcript {
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
-        try await sessions.requestCommand(id, .compact(instructions: "keep the build notes"))
-        try await sessions.look(id)
-        try await until("the request completes") { try await sessions.pendingCommand(id) == nil }
+        try await service.compact(id, instructions: "keep the build notes")
         try await holds("no fold and no inference") { script.count == 1 }
         #expect(try await sessions.generationState(id).generation == 0)
         guard case .foldPending = try await sessions.hydrate(id).transcript.kernel.phase else { throw UnexpectedCall("the request ran the fold") }
