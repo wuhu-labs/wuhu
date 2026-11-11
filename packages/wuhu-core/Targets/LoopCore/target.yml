@@ -29,6 +29,7 @@ swiftSettings:
 tests:
   dependencies:
     - MainHub
+    - Scratch
     - ServerTelemetry
     - InMemoryTracing
     - Tracing

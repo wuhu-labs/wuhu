@@ -1,4 +1,3 @@
-import Clocks
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
@@ -510,22 +509,18 @@ import WuhuAI
   @Test func idleTimeoutUsesInjectedClockAndInvalidatesTheSocket() async throws {
     let server = ScriptedResponsesSocket(scripts: [[]])
     let session = ResponsesWebSocketSession()
-    let clock = TestClock()
-    let task = Task {
+    let clock = VirtualClock()
+    let inference = Task {
       try await withDependencies {
         $0[WebSocketConnector.self] = server.connector
         $0.continuousClock = clock
       } operation: {
-        var options = RequestOptions(); options.idleTimeout = .seconds(1)
-        return try await endpoint().withWebSocket(session: session, attemptID: "one").inference(context: initial(), options: options).collect()
+        try await endpoint().withWebSocket(session: session, attemptID: "one").inference(context: initial(), options: RequestOptions(idleTimeout: .seconds(1))).collect()
       }
     }
     await server.waitForSend(1)
-    await clock.sleeping()
-    await clock.advance(by: .seconds(3))
-    switch await task.result {
-    case .success: Issue.record("Idle turn succeeded")
-    case .failure(let error): #expect(error as? InferenceError == .transport(.idleTimeout))
+    await #expect(throws: InferenceError.transport(.idleTimeout)) {
+      try await clock.run(through: VirtualClock.at(.seconds(2))) { try await inference.value }
     }
     #expect(server.aborts.withLock { $0 } >= 1)
   }

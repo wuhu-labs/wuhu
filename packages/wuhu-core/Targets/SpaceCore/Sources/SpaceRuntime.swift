@@ -26,7 +26,8 @@ final class SpaceRuntime: Sendable {
         do { database = try WuweiDatabase(writer: writer) } catch { preconditionFailure("the space database took no reader: \(error)") }
       }
       let scheduler = DependencyScheduler()
-      let worker = Worker(id: "space", storage: .shared(database!), scheduler: scheduler, registrations: [.cell(GroupCell.self), .cell(SpaceCell.self), .cell(PersonCell.self), .cell(ConversationCell.self)])
+      // A worker retakes a lease held under its own id at once, so two processes on one database never share an id.
+      let worker = Worker(id: "space-\(UUID().uuidString.lowercased())", storage: .shared(database!), scheduler: scheduler, registrations: [.cell(GroupCell.self), .cell(SpaceCell.self), .cell(PersonCell.self), .cell(ConversationCell.self)])
       running.withLock { $0 = (worker, scheduler) }
       return worker
     }

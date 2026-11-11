@@ -20,7 +20,6 @@ tests:
     - HTTPTypes
     - JSONValue
     - OrderedCollections
-    - Clocks
   exclude:
     - TestHelpers/RECORDING.md
   resources:
