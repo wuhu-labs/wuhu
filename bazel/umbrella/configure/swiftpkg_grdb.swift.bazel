@@ -1,0 +1,12 @@
+# GRDB 7.10 can leave a read-write connection query-only after a cancelled
+# read. `beginReadOnly` runs a cached `PRAGMA query_only = 1`; SQLite applies
+# the flag when the statement is re-prepared inside `sqlite3_step`, so an
+# interrupt between that prepare and the step throws with the flag on and the
+# depth uncounted, and every write fails with SQLITE_READONLY until the next
+# read on that connection ends. The patch turns the flag back off before
+# rethrowing. Drop this block once every read runs on a read-only connection.
+swift_deps.configure_package(
+    name = "swiftpkg_grdb.swift",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:grdb-query-only-after-interrupt.patch"],
+)

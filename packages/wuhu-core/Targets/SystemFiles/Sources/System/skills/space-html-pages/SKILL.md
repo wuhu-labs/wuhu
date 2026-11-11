@@ -54,13 +54,13 @@ A page writes with its group's authority minus admin, recorded as the viewer, an
 
 The page-only `import { createSession, sendMessage } from "wuhu:space"` start and talk to agents as the person viewing the page, with `wuhu:session`'s option and result shapes. Both stay inside the page's own group: `createSession` makes a top-level agent there (a `group` naming any other is refused), and `sendMessage` posts only into that group's conversations and session boxes, attaching only that group's files. Anything outside rejects with `code: "outsidePageGroup"`; a guest viewer, or one who only reads the group, is refused with `groupForbidden`. A create that made the session but not its message rejects with `code: "incompleteSession"` and the session's `id`; the same call with the same `key` finishes it.
 
-- `createSession({ title, provider, model, modelGroup, effort, template, tags, message, key, expectsReply, stallSeconds, request })` → `{ id, requestId?, modelGroup?, member?, provider?, model? }`. `message` lands in the new agent's box as the viewer. The same `key` from the same viewer returns the first session instead of making another, so a retried click is safe. A task needs a parent session, so a page creates agents only. With `expectsReply`, `message` opens a request on the agent: a row of the `requests` table whose `requester` is the viewer, with `request: { schema, fields }` as on `wuhu:session`; the agent's reports, final included, arrive in its box, so a page watches `requests` or the box for the answer.
+- `createSession({ title, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, request })` → `{ id, requestId?, modelGroup?, member?, provider?, model? }`. `message` lands in the new agent's box as the viewer. Every call makes a session, so disable the button while a click is in flight. A task needs a parent session, so a page creates agents only. With `expectsReply`, `message` opens a request on the agent: a row of the `requests` table whose `requester` is the viewer, with `request: { schema, fields }` as on `wuhu:session`; the agent's reports, final included, arrive in its box, so a page watches `requests` or the box for the answer.
 - `sendMessage({ message, conversation | session, reply_target, attachments })` → `{ messageId, conversationId }`: `session` posts into that agent's box, `conversation` into a channel. Attachments are space paths; a page reaches no machine.
 
 ```html
 <script type="module">
   import { createSession, sendMessage } from "wuhu:space";
-  const { id } = await createSession({ title: "Triage", message: "Triage today's inbox", key: "triage-today" });
+  const { id } = await createSession({ title: "Triage", message: "Triage today's inbox" });
   await sendMessage({ session: id, message: "Start with the oldest" });
 </script>
 ```

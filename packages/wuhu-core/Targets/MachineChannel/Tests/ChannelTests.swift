@@ -44,6 +44,19 @@ struct ChannelTests {
     }
   }
 
+  @Test func aStartIsAcceptedOnceThePeerHoldsIt() async throws {
+    let caller = ChannelEndpoint()
+    let machine = ChannelEndpoint()
+    let exec = await caller.startExec(makeStart(execID(1)))
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await drive(caller, machine) }
+      await exec.accepted()
+      var incoming = machine.incomingExecs.makeAsyncIterator()
+      #expect(await incoming.next()?.start.id == execID(1))
+      group.cancelAll()
+    }
+  }
+
   @Test func killIsDeliveredOnceAndExitFlowsBack() async throws {
     let caller = ChannelEndpoint()
     let machine = ChannelEndpoint()

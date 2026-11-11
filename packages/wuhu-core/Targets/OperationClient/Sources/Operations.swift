@@ -143,12 +143,16 @@ public actor MachineOperations {
     while let pending = opening[owner] { _ = try? await pending.value }
     // A shutdown that ran while this open waited fenced only the claims it saw.
     guard !closed else { throw OperationError(.requestCancelled) }
+    let (claimed, claiming) = AsyncStream<Never>.makeStream()
     let task = try taskScope.run("operation-claim") {
       // Cleared by the task itself, before any waiter resumes, so a waiter never finds a finished task still registered.
-      defer { self.opening[owner] = nil }
+      defer { self.opening[owner] = nil; claiming.finish() }
       return try await self.claim(owner, machine: machine, start: start, consumer: consumer)
     }
     opening[owner] = task
+    // A cancelled caller leaves at once. Its claim runs on and stays in the store: the owner's next open is that operation.
+    for await _ in claimed {}
+    try Task.checkCancellation()
     return try await task.value
   }
 

@@ -66,12 +66,6 @@ enum ConversationTail: Socket {
 struct ConversationCell {
   static let owned = ["conversations": "id", "conversation_members": "conversation_id", "conversation_titles": "conversation_id", "messages": "conversation_id", "requests": "conversation_id", "attachments": "conversation_id"]
 
-  /// What `@Cell` keeps to this file, for the cell's extensions in the files beside it. Never sent, never escaped.
-  var context: CellContext<ConversationCell> {
-    get { ctx }
-    set { ctx = newValue }
-  }
-
   /// A box is there from its session's creation, and written by its first post.
   func record() -> ConversationRecord? {
     guard let row = db.rows(ConversationRow.where { $0.id.eq(id.key) }).first else { return unopenedBox() }

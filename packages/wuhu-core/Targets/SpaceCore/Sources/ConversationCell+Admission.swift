@@ -29,7 +29,7 @@ extension ConversationCell {
   }
 
   var space: SpaceCell {
-    context.cell(SpaceCell.ID("space"))
+    ctx.cell(SpaceCell.ID("space"))
   }
 
   /// The groups the poster reads: its account's entries and its acting group's reach.
@@ -46,7 +46,7 @@ extension ConversationCell {
   }
 
   func isAdmin(_ poster: Poster, of group: GroupID) -> Bool {
-    let cell: GroupCell = context.cell(GroupCell.ID(group.rawValue))
+    let cell: GroupCell = ctx.cell(GroupCell.ID(group.rawValue))
     switch poster.actor {
     case .anonymous:
       return true
@@ -58,11 +58,11 @@ extension ConversationCell {
   }
 
   func account(of persona: String) -> AccountID? {
-    context.db.rows(PersonaRow.where { $0.name.eq(persona) }).first.map { AccountID(rawValue: $0.accountID) }
+    db.rows(PersonaRow.where { $0.name.eq(persona) }).first.map { AccountID(rawValue: $0.accountID) }
   }
 
   func session(_ key: String) -> PostSessionRow? {
-    context.db.rows(PostSessionRow.where { $0.id.eq(key) }).first
+    db.rows(PostSessionRow.where { $0.id.eq(key) }).first
   }
 
   func group(ofSession key: String) -> GroupID {
@@ -76,25 +76,25 @@ extension ConversationCell {
     switch post.target {
     case .conversation:
       guard let record = record(), readable.contains(record.group) || record.members.contains(where: { $0.member == me }) else {
-        throw SessionStoreError.unknownConversation(context.id.key)
+        throw SessionStoreError.unknownConversation(id.key)
       }
       if record.kind == .users && post.senderSession == nil && !record.members.contains(where: { $0.member == me && $0.kind == .user }) {
-        throw SessionStoreError.unknownConversation(context.id.key)
+        throw SessionStoreError.unknownConversation(id.key)
       }
       if record.kind == .dmUser || record.kind == .dmSession {
         for other in record.members where other.kind == .session && other.member != me {
-          guard reaches(other.member, from: readable, in: record) else { throw SessionStoreError.unknownConversation(context.id.key) }
+          guard reaches(other.member, from: readable, in: record) else { throw SessionStoreError.unknownConversation(id.key) }
         }
       }
       return record
     case .box:
-      guard let owner = session(context.id.key), readable.contains(GroupID(rawValue: owner.group)) else { throw SessionStoreError.unknownSession(context.id.key) }
+      guard let owner = session(id.key), readable.contains(GroupID(rawValue: owner.group)) else { throw SessionStoreError.unknownSession(id.key) }
       guard owner.kind == .agent else {
-        throw post.senderSession == nil ? SessionStoreError.taskTakesNoHumanInput(context.id.key) : SessionStoreError.taskHasNoBox(context.id.key)
+        throw post.senderSession == nil ? SessionStoreError.taskTakesNoHumanInput(id.key) : SessionStoreError.taskHasNoBox(id.key)
       }
       return record()!
     case let .dm(other):
-      precondition(context.id.key == Conversations.dmID(me, other).rawValue, "a DM's cell is keyed by its two members")
+      precondition(id.key == Conversations.dmID(me, other).rawValue, "a DM's cell is keyed by its two members")
       let existing = record()
       let theirs = session(other)
       if let theirs {
@@ -105,7 +105,7 @@ extension ConversationCell {
       let mine: MemberKind = session(me) == nil ? .user : .session
       let their: MemberKind = theirs == nil ? .user : .session
       return ConversationRecord(
-        id: ConversationID(context.id.key), kind: mine == .session && their == .session ? .dmSession : .dmUser, ownerSession: nil, title: nil,
+        id: ConversationID(id.key), kind: mine == .session && their == .session ? .dmSession : .dmUser, ownerSession: nil, title: nil,
         group: poster.group, windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
         members: [ConversationMember(member: me, kind: mine), ConversationMember(member: other, kind: their)].sorted { $0.member < $1.member },
         createdAt: post.at,
@@ -117,12 +117,12 @@ extension ConversationCell {
   func reaches(_ key: String, from readable: Set<GroupID>, in conversation: ConversationRecord) -> Bool {
     if conversation.ownerSession?.rawValue == key { return true }
     if readable.contains(group(ofSession: key)) { return true }
-    return context.db.one("SELECT 1 FROM messages WHERE conversation_id = ? AND sender_session_id = ? LIMIT 1", .text(context.id.key), .text(key)) != nil
+    return db.one("SELECT 1 FROM messages WHERE conversation_id = ? AND sender_session_id = ? LIMIT 1", .text(id.key), .text(key)) != nil
   }
 
   mutating func join(_ member: ConversationMember, now: String) throws {
-    try context.db.execute(ConversationMemberRow.insert {
-      ConversationMemberRow(conversationID: context.id.key, member: member.member, kind: member.kind.rawValue, joinedAt: now)
+    try db.execute(ConversationMemberRow.insert {
+      ConversationMemberRow(conversationID: id.key, member: member.member, kind: member.kind.rawValue, joinedAt: now)
     } onConflict: {
       ($0.conversationID, $0.member)
     })

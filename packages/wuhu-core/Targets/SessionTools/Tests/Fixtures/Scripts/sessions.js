@@ -20,13 +20,11 @@ names.set(stranger, "<stranger>")
 
 const out = {}
 const helper = await createSession({
-  title: "  helper  ", kind: "agent", tags: ["a"], message: "brief", expectsReply: true, key: "helper",
+  title: "  helper  ", kind: "agent", tags: ["a"], message: "brief", expectsReply: true,
 })
 out.helper = { ...(await shape(helper.id)), requestId: typeof helper.requestId }
-const again = await createSession({ title: "helper, again", key: "helper" })
-out.sameKey = again.id === helper.id && again.requestId === helper.requestId
-const unkeyed = [await createSession({ title: "twin" }), await createSession({ title: "twin" })]
-out.unkeyedTwins = unkeyed[0].id !== unkeyed[1].id
+const twins = [await createSession({ title: "twin" }), await createSession({ title: "twin" })]
+out.twins = twins[0].id !== twins[1].id
 
 const infra = await createSession({ title: "Wuhu Infra", topLevel: true, message: "your brief" })
 names.set(infra.id, "<infra>")
@@ -39,7 +37,7 @@ out.badTitle = await settle(createSession({ title: "two\nlines" }))
 out.noTitle = await settle(createSession({ kind: "agent" }))
 out.noOptions = await settle(createSession())
 
-const worker = unkeyed[0]
+const worker = twins[0]
 names.set(worker.id, "<twin>")
 await setTags(worker.id, ["wuhu:13", "gate"])
 out.retagged = (await shape(worker.id)).tags

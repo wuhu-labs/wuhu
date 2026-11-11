@@ -29,12 +29,12 @@ enum Reported: Sendable {
 extension ConversationCell {
   /// A request of this conversation.
   func request(_ id: RequestID) -> RequestRow? {
-    context.db.rows(RequestRow.where { $0.id.eq(id.rawValue) && $0.conversationID.eq(context.id.key) }).first
+    db.rows(RequestRow.where { $0.id.eq(id.rawValue) && $0.conversationID.eq(self.id.key) }).first
   }
 
   private func open(_ task: SessionID) -> [RequestRow] {
-    context.db.rows(
-      RequestRow.where { $0.conversationID.eq(context.id.key) && $0.task.eq(task.rawValue) && $0.status.eq(RequestStatus.open.rawValue) }.order(by: \.createdAt),
+    db.rows(
+      RequestRow.where { $0.conversationID.eq(id.key) && $0.task.eq(task.rawValue) && $0.status.eq(RequestStatus.open.rawValue) }.order(by: \.createdAt),
     )
   }
 
@@ -89,7 +89,7 @@ extension ConversationCell {
     var attempts = JSONValue.parse(row.refusals)!.array!
     if !attempts.contains(.string(report.messageID.rawValue)) {
       attempts.append(.string(report.messageID.rawValue))
-      try context.db.execute(RequestRow.update {
+      try db.execute(RequestRow.update {
         $0.refusals = #bind(JSONValue.array(attempts).jsonString())
         $0.updatedAt = #bind(SQLiteDateFormat.string(from: report.at))
       }.where { $0.id.eq(row.id) })
@@ -120,9 +120,9 @@ extension ConversationCell {
     switch step {
     case let .open(requester, task, brief, terms, stallSeconds):
       if request(id) == nil {
-        try context.db.execute(RequestRow.insert {
+        try db.execute(RequestRow.insert {
           RequestRow(
-            id: id.rawValue, conversationID: context.id.key, group: session(task.rawValue)!.group, requester: requester.name, firing: requester.firing, task: task.rawValue,
+            id: id.rawValue, conversationID: self.id.key, group: session(task.rawValue)!.group, requester: requester.name, firing: requester.firing, task: task.rawValue,
             status: RequestStatus.open.rawValue, brief: brief,
             schema: terms.schema?.jsonString(sortedKeys: true), fields: terms.fields?.jsonString(sortedKeys: true),
             result: nil, refusals: "[]", stallSeconds: stallSeconds,
@@ -135,13 +135,13 @@ extension ConversationCell {
       if let row = request(id) { try remindQuiet(row, from: date) }
     case let .close(status, result):
       guard let row = request(id) else { return }
-      try context.db.execute(RequestRow.update {
+      try db.execute(RequestRow.update {
         $0.status = #bind(status.rawValue)
         $0.result = #bind(result)
         $0.updatedAt = #bind(now)
       }.where { $0.id.eq(row.id) })
       if session(row.requester) != nil {
-        context.send(.clear(Sessions.quietTopic(row.id)), to: Recipient<SessionMail>(kind: SessionMail.kind, key: row.requester))
+        ctx.send(.clear(Sessions.quietTopic(row.id)), to: Recipient<SessionMail>(kind: SessionMail.kind, key: row.requester))
       }
     }
   }

@@ -30,6 +30,7 @@ public actor ChannelEndpoint {
   private let expirations: AsyncStream<(ExecID, @Sendable () async throws -> Void, AsyncStream<Void>)>
   private let expirationContinuation: AsyncStream<(ExecID, @Sendable () async throws -> Void, AsyncStream<Void>)>.Continuation
   private var terminalWaiters: [ExecID: [AsyncStream<Void>.Continuation]] = [:]
+  private var acceptanceWaiters: [ExecID: [AsyncStream<Void>.Continuation]] = [:]
 
   private let incomingResume: IncomingResume?
 
@@ -207,6 +208,15 @@ public actor ChannelEndpoint {
     exec.killsContinuation.finish()
     exec.acksContinuation.finish()
     for waiter in terminalWaiters.removeValue(forKey: id) ?? [] { waiter.finish() }
+    for waiter in acceptanceWaiters.removeValue(forKey: id) ?? [] { waiter.finish() }
+  }
+
+  /// Returns once the peer acknowledged the exec's start, or the exec is gone; early when the waiting task is cancelled.
+  func accepted(exec id: ExecID) async {
+    guard let exec = execs[id], !exec.accepted else { return }
+    let (accepted, continuation) = AsyncStream<Void>.makeStream()
+    acceptanceWaiters[id, default: []].append(continuation)
+    for await _ in accepted {}
   }
 
   @discardableResult
@@ -392,9 +402,8 @@ public actor ChannelEndpoint {
     execs[start.id] = exec
     execsByStream[frame.streamID] = exec
     nextStreamID = max(nextStreamID, frame.streamID + 1)
-    if exec.acknowledgedInbound > 0 {
-      outbound?.yield(Frame(streamID: exec.streamID, opcode: .ack, payload: Ack(id: start.id, cursor: exec.acknowledgedInbound)))
-    }
+    // Sent for every start, a zero cursor included: it tells the peer this endpoint holds the exec.
+    outbound?.yield(Frame(streamID: exec.streamID, opcode: .ack, payload: Ack(id: start.id, cursor: exec.acknowledgedInbound)))
     incomingExecsContinuation.yield(IncomingExec(
       start: start,
       stdin: StdinStream(endpoint: self, id: start.id, frames: exec.frames, initialConsumed: exec.acknowledgedInbound, autoAcknowledge: incomingResume == nil),
@@ -408,6 +417,10 @@ public actor ChannelEndpoint {
     guard let exec = execsByStream[frame.streamID], let ack = try? frame.payload(Ack.self) else { return }
     guard ack.id == exec.start.id else { return }
     exec.sender.acknowledge(through: ack.cursor)
+    if exec.role == .outgoing, !exec.accepted {
+      exec.accepted = true
+      for waiter in acceptanceWaiters.removeValue(forKey: ack.id) ?? [] { waiter.finish() }
+    }
     if exec.role == .incoming { exec.acksContinuation.yield(exec.sender.ackedThrough) }
     if exec.role == .incoming, exec.sender.exit != nil, ack.terminal == true, ack.cursor == exec.sender.nextCursor {
       retire(ack.id)
@@ -437,6 +450,8 @@ private final class ExecState {
   let acksContinuation: AsyncStream<Int>.Continuation
   var acknowledgedInbound: Int = 0
   var exitReceived: Bool = false
+  /// The peer acknowledged this outgoing exec's start.
+  var accepted: Bool = false
   var exitCursor: Int?
   var terminalAckPending: Bool = false
   var retentionCancellation: AsyncStream<Void>.Continuation?

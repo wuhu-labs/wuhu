@@ -2,7 +2,7 @@ import { createSession } from "wuhu:session"
 
 try {
   const made = await createSession({
-    title: "coder", template: "coder", expectsReply: true, message: "go", key: "coder",
+    title: "coder", template: "coder", expectsReply: true, message: "go",
   })
   result({ made: true, requestId: typeof made.requestId })
 } catch (error) {

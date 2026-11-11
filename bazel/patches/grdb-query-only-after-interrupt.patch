@@ -1,0 +1,20 @@
+--- a/GRDB/Core/Database.swift
++++ b/GRDB/Core/Database.swift
+@@ -835,7 +835,16 @@
+     func beginReadOnly() throws {
+         if configuration.readonly { return }
+         if readOnlyDepth == 0 {
+-            try internalCachedStatement(sql: "PRAGMA query_only = 1").execute()
++            do {
++                try internalCachedStatement(sql: "PRAGMA query_only = 1").execute()
++            } catch {
++                // SQLite applies the flag when the statement is prepared, so
++                // an interrupted step can throw with query_only already on.
++                try? ignoringInterruption {
++                    try internalCachedStatement(sql: "PRAGMA query_only = 0").execute()
++                }
++                throw error
++            }
+         }
+         readOnlyDepth += 1
+     }

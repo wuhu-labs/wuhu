@@ -51,7 +51,7 @@ extension ConversationCell {
       createdAt: SQLiteDateFormat.string(from: now),
     )
     for member in routed.notified {
-      context.send(PersonCell.ID(member)).notify(note)
+      ctx.send(PersonCell.ID(member)).notify(note)
     }
     return enqueued
   }
@@ -60,7 +60,7 @@ extension ConversationCell {
   mutating func put(_ put: SessionPut, to session: String, at now: Date) throws -> Bool {
     guard let row = self.session(session) else { return false }
     if row.lifecycle != "live", let grace = row.graceExpiresAt, now >= (try SQLiteDateFormat.date(from: grace)) { return false }
-    context.send(.put(put), to: Recipient<SessionMail>(kind: SessionMail.kind, key: session))
+    ctx.send(.put(put), to: Recipient<SessionMail>(kind: SessionMail.kind, key: session))
     return true
   }
 
@@ -77,9 +77,9 @@ extension ConversationCell {
     }
     let replySender: RoutingSnapshot.ReplySender = message.replyTarget.flatMap { self.message($0)?.senderSession }.map { .session($0) } ?? .unaddressed
     let before = message.n
-    let tail = context.db.rows(#sql("""
+    let tail = db.rows(#sql("""
     SELECT sender_session_id, created_at FROM messages
-    WHERE \(conversation.kind.isOpen) AND conversation_id = \(bind: context.id.key) AND n < \(bind: before)
+    WHERE \(conversation.kind.isOpen) AND conversation_id = \(bind: id.key) AND n < \(bind: before)
     ORDER BY n DESC LIMIT \(bind: max(0, conversation.windowMessages))
     """, as: RoutingMessage.self))
     var seen: Set<String> = []
@@ -93,7 +93,7 @@ extension ConversationCell {
     if let owner = conversation.ownerSession { candidates.append(owner.rawValue) }
     if case let .session(parent) = replySender { candidates.append(parent.rawValue) }
     let readable = readable(by: poster)
-    let sessions = context.db.rows(PostSessionRow.where { $0.id.in(candidates) }).map { row in
+    let sessions = db.rows(PostSessionRow.where { $0.id.in(candidates) }).map { row in
       (SessionID(row.id), (kind: row.kind, reachable: reaches(row.id, from: readable, in: conversation)))
     }
     let postedByPerson: Bool = if case .observer? = poster.actor { false } else { message.senderSession == nil }
@@ -110,21 +110,21 @@ extension ConversationCell {
   /// A person post has no sender session and no observer firing. The tail stops at the last post before `since`; only a window without one walks back to the latest. `+sender_session_id` keeps both on the box's index: unanalyzed, SQLite would pick `messages_by_sender_session` and scan the whole space's person posts.
   private func boxWrites(before: Int64, since: Date, needsLatest: Bool) throws -> [RoutingSnapshot.Write] {
     let horizon = SQLiteDateFormat.string(from: since)
-    var posts = context.db.rows(#sql("""
+    var posts = db.rows(#sql("""
     SELECT sender_id, n, created_at FROM messages
-    WHERE conversation_id = \(bind: context.id.key) AND n < \(bind: before)
+    WHERE conversation_id = \(bind: id.key) AND n < \(bind: before)
       AND +sender_session_id IS NULL AND firing IS NULL
       AND n > COALESCE((
         SELECT n FROM messages
-        WHERE conversation_id = \(bind: context.id.key) AND n < \(bind: before) AND created_at < \(bind: horizon)
+        WHERE conversation_id = \(bind: id.key) AND n < \(bind: before) AND created_at < \(bind: horizon)
         ORDER BY n DESC LIMIT 1
       ), 0)
     ORDER BY n DESC
     """, as: PersonPost.self))
     if posts.isEmpty, needsLatest {
-      posts = context.db.rows(#sql("""
+      posts = db.rows(#sql("""
       SELECT sender_id, n, created_at FROM messages
-      WHERE conversation_id = \(bind: context.id.key) AND n < \(bind: before)
+      WHERE conversation_id = \(bind: id.key) AND n < \(bind: before)
         AND +sender_session_id IS NULL AND firing IS NULL
       ORDER BY n DESC LIMIT 1
       """, as: PersonPost.self))

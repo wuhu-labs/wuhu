@@ -46,6 +46,11 @@ public struct ExecSession: Sendable {
     await execution.ready().acknowledgeExit()
   }
 
+  /// Returns once the server holds the exec's start: a caller that leaves before then leaves an exec that never runs.
+  public func accepted() async {
+    await execution.ready().accepted()
+  }
+
   /// Consumption acknowledgement for a run without `autoAcknowledge`.
   public func acknowledge(through cursor: Int) async {
     await execution.ready().acknowledge(through: cursor)
@@ -107,11 +112,11 @@ public struct ExecSession: Sendable {
     onEvent: (@Sendable (ExecEvent) async -> Void)? = nil,
     onTermination: (@Sendable (Termination) async -> Void)? = nil,
   ) async throws -> Termination {
-    let url = try self.client.url("/v1/exec/\(self.start.id.rawValue)")
     let clock: any Clock<Duration> = Dependency(\.continuousClock).wrappedValue
     let endpoint = ChannelEndpoint()
     let exec = await endpoint.startExec(self.start, autoAcknowledge: autoAcknowledge)
     await execution.set(exec)
+    let url = try self.client.url("/v1/exec/\(self.start.id.rawValue)")
     return await withTaskGroup(of: Termination?.self, returning: Termination.self) { group in
       group.addTask { await self.pumpStdin(input, into: exec) }
       group.addTask { await self.maintainConnection(endpoint, url: url, clock: clock) }

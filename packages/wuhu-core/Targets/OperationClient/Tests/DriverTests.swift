@@ -593,6 +593,30 @@ private func expected(chunks: Int, size: Int, from first: Int = 0) -> Data {
     await wire.close()
   }
 
+  /// A caller cancelled while the machine's answer to its start is on the way leaves at once; its claim stays, and the owner's
+  /// next open is that operation, started once.
+  @Test func anOpenWhoseCallerLeftKeepsItsClaim() async throws {
+    let wire = try Wire()
+    let arrived = Signal(), answered = Signal()
+    let fetch = FetchClient { request in
+      let response = try await wire.fetch(request)
+      if request.method == .post { arrived.fire(); await answered.wait() }
+      return response
+    }
+    let operations = try MachineOperations(origin: URL(string: "https://memory.invalid")!, fetch: fetch, store: MemoryOperationStore())
+    let owner = OperationOwner(scope: "test", key: "left")
+    let caller = Task { try await operations.open(owner, machine: "disk", start: emit(chunks: 1, size: 8)) }
+    await arrived.wait()
+    caller.cancel()
+    await #expect(throws: CancellationError.self) { _ = try await caller.value }
+    #expect(try await operations.lookup(owner) != nil)
+    answered.fire()
+    let operation = try await operations.open(owner, machine: "disk", start: emit(chunks: 1, size: 8))
+    #expect(try await drain(operation) == expected(chunks: 1, size: 8))
+    #expect(wire.posts.withLock { $0 } == 1)
+    await operations.shutdown(); await wire.close()
+  }
+
   /// Unacknowledged output stays within the channel window; the driver takes more only as the consumer acknowledges.
   @Test func retainedOutputNeverExceedsTheChannelWindow() async throws {
     let wire = try Wire()

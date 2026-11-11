@@ -58,14 +58,12 @@ import Testing
     try await withSessionDeps {
       let r = try await rig()
       let alices = try await cookie(r, r.alice, .shared)
-      let options: JSONValue = ["title": "helper", "provider": "testing", "model": "test-model", "message": "start", "key": "helper"]
+      let options: JSONValue = ["title": "helper", "provider": "testing", "model": "test-model", "message": "start"]
       let created = try await post(r, r.sharedHost, "session", options, cookie: alices)
       #expect(created.status == .ok)
       let output = try JSONValueDecoder().decode(SessionCreateOutput.self, from: try #require(JSONValue.parse(try await created.text())))
       #expect(output.kind == .agent)
       #expect(output.parent == nil)
-      let replayed = try await post(r, r.sharedHost, "session", options, cookie: alices)
-      #expect(try JSONValueDecoder().decode(SessionCreateOutput.self, from: try #require(JSONValue.parse(try await replayed.text()))).id == output.id)
 
       let id = SessionID(output.id)
       let record = try await r.harness.store.record(id)
@@ -86,7 +84,7 @@ import Testing
       let alices = try await cookie(r, r.alice, .shared)
       let options: JSONValue = [
         "title": "helper", "provider": "testing", "model": "test-model", "message": "triage #7", "expectsReply": true,
-        "request": ["fields": ["issue": 7]], "key": "call-1",
+        "request": ["fields": ["issue": 7]],
       ]
       let created = try await post(r, r.sharedHost, "session", options, cookie: alices)
       #expect(created.status == .ok)
@@ -168,23 +166,6 @@ import Testing
 
   func created(_ response: Response) async throws -> SessionID {
     SessionID(try JSONValueDecoder().decode(SessionCreateOutput.self, from: try #require(JSONValue.parse(try await response.text()))).id)
-  }
-
-  @Test func aKeyTheViewerUsedInAnotherGroupNeverReplaysThere() async throws {
-    try await withSessionDeps {
-      let r = try await rig()
-      let options: JSONValue = ["title": "helper", "provider": "testing", "model": "test-model", "key": "k"]
-      var privately = options.object!
-      privately["message"] = "private"
-      let mine = try await created(post(r, r.aliceHost, "session", .object(privately), cookie: cookie(r, r.alice, r.aliceGroup)))
-      var publicly = options.object!
-      publicly["message"] = "public"
-      let theirs = try await created(post(r, r.sharedHost, "session", .object(publicly), cookie: cookie(r, r.alice, .shared)))
-      #expect(theirs != mine)
-      #expect(try await r.harness.store.record(theirs).group == .shared)
-      #expect(try await r.harness.store.messages(conversation: ConversationID(mine.rawValue)).map(\.content.text) == ["private"])
-      #expect(try await r.harness.store.messages(conversation: ConversationID(theirs.rawValue)).map(\.content.text) == ["public"])
-    }
   }
 
   @Test func aPageAttachesOnlyItsOwnGroupsFiles() async throws {

@@ -36,16 +36,8 @@ struct ScriptSessions {
         guard case let .object(options)? = arguments.first else {
           throw ToolProblem("createSession wants an options object: { title, kind, topLevel, ... }")
         }
-        let callID: String
-        switch options["key"] {
-        case let .string(key)? where !key.isEmpty:
-          callID = "script-key:\(key)"
-        case nil, .null?:
-          @Dependency(\.uuid) var uuid
-          callID = "script:\(uuid().uuidString.lowercased())"
-        default:
-          throw ToolProblem("createSession: key is a non-empty string")
-        }
+        @Dependency(\.uuid) var uuid
+        let callID = "script:\(uuid().uuidString.lowercased())"
         let reply: ToolResultPayload
         do {
           reply = try await tools.createSession(actor, callID, createArguments(.object(options)))

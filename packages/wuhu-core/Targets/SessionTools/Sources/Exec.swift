@@ -68,7 +68,11 @@ extension ToolExecutor {
           return .ended(.streamFailed(String(describing: error)))
         }
       }
-      group.addTask { await WaitCut.first(wait: wait, yielded: yielded).map(ExecWaitEnd.cut) }
+      // `running` is true only of an exec the server holds: until it does, the call keeps the leg that carries the start.
+      group.addTask {
+        await connection.accepted()
+        return await WaitCut.first(wait: wait, yielded: yielded).map(ExecWaitEnd.cut)
+      }
       defer { group.cancelAll() }
       while let next = await group.next() {
         if let next { return next }

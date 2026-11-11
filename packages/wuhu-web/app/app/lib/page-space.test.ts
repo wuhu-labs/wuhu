@@ -141,7 +141,7 @@ Deno.test('createSession and sendMessage post as the page and answer wuhu:sessio
       }, 422),
   ])
   assertEquals(
-    await createSession({ title: 'helper', message: 'start', key: 'helper' }),
+    await createSession({ title: 'helper', message: 'start' }),
     { id: 'calm-sea-fox', model: 'm' },
   )
   assertEquals(
@@ -152,7 +152,6 @@ Deno.test('createSession and sendMessage post as the page and answer wuhu:sessio
   assertEquals(JSON.parse(sent[0]!.init!.body as string), {
     title: 'helper',
     message: 'start',
-    key: 'helper',
     page: '/apps/tasks.html',
   })
   assertEquals(sent[1]!.url.href, `${origin}/_/space/message`)
@@ -167,7 +166,7 @@ Deno.test('createSession and sendMessage post as the page and answer wuhu:sessio
   )
   assertEquals(refused.code, 'outsidePageGroup')
   const incomplete = await assertRejects(
-    () => createSession({ title: 'x', message: 'start', key: 'x' }),
+    () => createSession({ title: 'x', message: 'start' }),
     SpaceError,
   )
   assertEquals([incomplete.code, incomplete.id], [

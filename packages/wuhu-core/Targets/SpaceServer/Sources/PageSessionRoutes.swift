@@ -25,12 +25,7 @@ func pageSessionResponse(space: Space, caller: WebCaller, dev: Bool, hub: Hub?, 
   @Dependency(\.uuid) var uuid
   let response: Response
   if request.url.path == "/_/space/session" {
-    let callID: ToolCallID
-    switch body.removeValue(forKey: "key") {
-    case let .string(key)? where !key.isEmpty: callID = ToolCallID("page-key:\(key)")
-    case nil, .null?: callID = ToolCallID("page:\(uuid().uuidString.lowercased())")
-    default: return errorResponse(.badRequest, code: "invalidArgument", message: "key is a non-empty string")
-    }
+    let callID = ToolCallID("page:\(uuid().uuidString.lowercased())")
     let arguments: CreateSessionArguments
     do {
       arguments = try CreateSessionArguments(body: .object(body))

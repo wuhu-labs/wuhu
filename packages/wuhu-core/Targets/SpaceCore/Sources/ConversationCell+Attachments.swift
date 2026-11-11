@@ -21,17 +21,17 @@ struct AttachmentRow {
 
 extension ConversationCell {
   func attachment(_ path: String) -> AttachmentRow? {
-    context.db.rows(AttachmentRow.where { $0.conversationID.eq(context.id.key) && $0.path.eq(path) }).first
+    db.rows(AttachmentRow.where { $0.conversationID.eq(id.key) && $0.path.eq(path) }).first
   }
 
   func attachments() -> [AttachmentRow] {
-    context.db.rows(AttachmentRow.where { $0.conversationID.eq(context.id.key) }.order(by: \.path))
+    db.rows(AttachmentRow.where { $0.conversationID.eq(id.key) }.order(by: \.path))
   }
 
   /// Places each upload in the folder of the post's second, under its own name or the next free one.
   mutating func attach(_ uploads: [Post.Upload], at date: Date) throws -> [Attachment] {
     guard !uploads.isEmpty else { return [] }
-    let folder = try AttachmentFolder.path(conversation: ConversationID(context.id.key), at: date)
+    let folder = try AttachmentFolder.path(conversation: ConversationID(id.key), at: date)
     let now = SQLiteDateFormat.string(from: date)
     var placed: [Attachment] = []
     for upload in uploads {
@@ -44,8 +44,8 @@ extension ConversationCell {
         ordinal += 1
         path = try SpacePath(components: folder.components + ["\(stem)-\(ordinal)\(suffix)"]).rawValue
       }
-      try context.db.execute(AttachmentRow.insert {
-        AttachmentRow(conversationID: context.id.key, path: path, blob: upload.blob, size: upload.size, createdAt: now)
+      try db.execute(AttachmentRow.insert {
+        AttachmentRow(conversationID: id.key, path: path, blob: upload.blob, size: upload.size, createdAt: now)
       })
       placed.append(upload.file.at(path))
     }

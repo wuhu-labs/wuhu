@@ -109,7 +109,7 @@ public struct JobMacro: MemberMacro, ExtensionMacro {
   }
 }
 
-/// The stored context the protocol needs; the private `ctx`, `db` and `id` the type's own code uses; and `kind` unless the type declares it.
+/// The stored context the protocol needs; the `ctx`, `db` and `id` the type's own code uses; and `kind` unless the type declares it.
 private func contextMembers(of type: StructDeclSyntax, kind: String, access: String) -> [DeclSyntax] {
   let name = type.name.text
   let declaresKind = type.memberBlock.members.contains { member in
@@ -117,10 +117,10 @@ private func contextMembers(of type: StructDeclSyntax, kind: String, access: Str
   }
   var members: [DeclSyntax] = [
     "\(raw: access)var _context: \(raw: kind)Context<\(raw: name)>",
-    "private var ctx: \(raw: kind)Context<\(raw: name)> { get { _context } set { _context = newValue } }",
+    "var ctx: \(raw: kind)Context<\(raw: name)> { get { _context } set { _context = newValue } }",
     "\(raw: access)init(_context: \(raw: kind)Context<\(raw: name)>) { self._context = _context }",
-    "private var db: \(raw: kind == "Job" ? "JobDatabase" : "Database") { get { _context.db } set { _context.db = newValue } }",
-    "private var id: ID { _context.id }",
+    "var db: \(raw: kind == "Job" ? "JobDatabase" : "Database") { get { _context.db } set { _context.db = newValue } }",
+    "var id: ID { _context.id }",
   ]
   if !declaresKind { members.append("\(raw: access)static let kind = \(literal: name)") }
   return members

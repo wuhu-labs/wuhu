@@ -17,6 +17,11 @@ public struct OutgoingExec: Sendable {
     await endpoint.requestKill(exec: id)
   }
 
+  /// Returns once the peer holds the exec's start: from then on the exec no longer depends on this side staying connected.
+  public func accepted() async {
+    await endpoint.accepted(exec: id)
+  }
+
   public func acknowledgeExit() async {
     await endpoint.acknowledgeExit(exec: id)
   }

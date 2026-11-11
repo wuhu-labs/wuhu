@@ -12,14 +12,14 @@ script_exports: {"wuhu:session":["archive","cancel","cancelObserver","createObse
 import { createSession, request, setTags, archive, unarchive, interrupt, resume } from "wuhu:session"
 ```
 
-- `createSession({ title, kind, topLevel, group, executor, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, request, key })` resolves to `{ id, requestId? }` as soon as the session exists. It takes what the `create_session` tool takes:
+- `createSession({ title, kind, topLevel, group, executor, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, request })` resolves to `{ id, requestId? }` as soon as the session exists. It takes what the `create_session` tool takes:
   - `kind` is `"task"` (the default) or `"agent"`. An agent has a box; a task answers only through `report`. An agent template, or `topLevel`, makes `"agent"` the default.
   - `topLevel: true` makes a root agent with no parent. Only an agent may create one, and `expectsReply` is refused: a root has nobody to report to. It belongs to the humans: it gives you no parent/ancestry control, but you retain the creator archive/unarchive exception below. `created_by` records you as its creator.
   - A child lives in your group. Only a top-level agent takes `group`: it lands in your group unless `group` names another one your group reads.
   - With `expectsReply` (and a `message`) the child starts on the message and owes you one final report; `request: { schema, fields }` sets that request's terms, as on `request` below. Without it, `message` arrives as a DM from you and nothing is owed.
   - `modelGroup` requests a session routing group from `wuhu://settings.localspace/model-groups.json`; it is mutually exclusive with `provider`/`model`. Omitted targets inherit your requested target, not your group's active member. A template's target wins over that default, and an explicit target replaces both as a whole. `effort` is optional and must be supported by every group member.
-  - `key` makes a retry safe: the same key from the same session returns the first session instead of creating a second. Without a key, every call creates.
-  - If cloning the template or handing over the message fails after the session exists, it throws an `Error` whose `id` is the new session. It is not rolled back. A retry with the same `key` finishes what is missing, or throws the same way again.
+  - Every call creates a session; a job that must be delegated once is found by its tag, below.
+  - If cloning the template or handing over the message fails after the session exists, it throws an `Error` whose `id` is the new session. It is not rolled back: message it, or archive it.
 - `executor` accepts only `"kernel"`; any other executor is refused.
 - `sendMessage({ message, conversation?, session?, reply_target?, attachments? })` posts with the same rights as `send_message` and resolves to `{ messageId, conversationId }`.
 - `toolRoster()` resolves to `{ rosters: [{ executor, tools: [{ name, description, parameters }] }] }`.
@@ -49,7 +49,6 @@ const { id } = await createSession({
   topLevel: true,
   provider: "claude",
   model: "claude-opus-5-5",
-  key: "ops",
   message: [
     "You are Ops. You own the build server and the nightly backups.",
     "Read /ops/README.md first. Post outages in your box.",
@@ -70,7 +69,6 @@ const children = await Promise.all(topics.map((topic, n) => createSession({
   title: `Research: ${topic}`,
   expectsReply: true,
   tags: ["research"],
-  key: `research-${n}`,
   message: `Research ${topic}. Report your findings with sources in one final report.`,
 })))
 result(children.map(({ id, requestId }) => ({ id, requestId })))

@@ -97,10 +97,7 @@ struct ScriptSessionTests {
     }
   }
 
-  // Finding: a keyed retry after a failed clone must not answer with a
-  // half-made session. It fails the same way until the clone can succeed,
-  // then clones, opens the request once and returns the first session.
-  @Test func aKeyedRetryFinishesASessionWhoseCloneFailed() async throws {
+  @Test func aCreateWhoseCloneFailedThrowsTheNewSessionsID() async throws {
     let space = try Space.inMemory()
     try await withRig(
       space: { space },
@@ -114,33 +111,6 @@ struct ScriptSessionTests {
       },
     ) { rig in
       try await rig.run("sessions-clone")
-      try await rig.run("sessions-clone")
-      let receipt = try #require(try await space.sessions.receipt(.session(rig.session), toolCallID: ToolCallID("script-key:coder")))
-      guard case let .createSession(first) = receipt else { throw Mismatch("expected a create receipt, got \(receipt)") }
-      let home = SessionHome.path(of: first.sessionID) + "/AGENTS.md"
-      let cloned = (try? await space.fs(.shared).read(home)) != nil
-      rig.probe("owed: \(first.cloneOwed == true), home: \(cloned)")
-
-      await space.failTemplateClones(nil)
-      try await rig.run("sessions-clone")
-      guard case let .createSession(settled)? = try await space.sessions.receipt(
-        .session(rig.session),
-        toolCallID: ToolCallID("script-key:coder"),
-      ) else { throw Mismatch("the receipt is gone") }
-      let clone = String(decoding: try await space.fs(.shared).read(home).1, as: UTF8.self)
-      rig.probe("owed: \(settled.cloneOwed == true), home: \(clone)")
-
-      // Settled: a further replay leaves the session's own edits alone.
-      _ = try await space.fs(.shared).write(home, Data("my own notes".utf8), ifMatch: nil)
-      try await rig.run("sessions-clone")
-      var briefs = 0
-      for conversation in try await space.sessions.conversations(member: first.sessionID.rawValue)
-        where conversation.kind == .dmSession
-      {
-        briefs += try await space.sessions.messages(conversation: conversation.id).count
-      }
-      let kept = String(decoding: try await space.fs(.shared).read(home).1, as: UTF8.self)
-      rig.probe("home: \(kept), briefs: \(briefs)")
       try rig.expect("sessions-clone")
     }
   }

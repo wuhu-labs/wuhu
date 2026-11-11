@@ -18,7 +18,7 @@ export async function toolRoster() {
 
 export async function createSession(options) {
   if (options === null || typeof options !== "object") {
-    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, key, request }")
+    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, request }")
   }
   const made = await create(options)
   if (made.error !== undefined) {

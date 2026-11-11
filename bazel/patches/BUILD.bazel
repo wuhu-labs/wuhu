@@ -6,6 +6,7 @@ exports_files([
     "rspm-trait-condition-any.patch",
     "concurrency-extras-linux-locking.patch",
     "crdtkit-dependency-compatibility.patch",
+    "grdb-query-only-after-interrupt.patch",
     "concurrency-extras-linux-lockisolated.patch",
     "issue-reporting-linux-app-host.patch",
     "issue-reporting-linux-lock.patch",

@@ -28,7 +28,7 @@ final class CellMacroTests: XCTestCase {
 
         var _context: CellContext<Account>
 
-        private var ctx: CellContext<Account> {
+        var ctx: CellContext<Account> {
           get {
             _context
           }
@@ -41,7 +41,7 @@ final class CellMacroTests: XCTestCase {
           self._context = _context
         }
 
-        private var db: Database {
+        var db: Database {
           get {
             _context.db
           }
@@ -50,7 +50,7 @@ final class CellMacroTests: XCTestCase {
           }
         }
 
-        private var id: ID {
+        var id: ID {
           _context.id
         }
 
@@ -104,7 +104,7 @@ final class CellMacroTests: XCTestCase {
 
         var _context: CellContext<Account>
 
-        private var ctx: CellContext<Account> {
+        var ctx: CellContext<Account> {
           get {
             _context
           }
@@ -117,7 +117,7 @@ final class CellMacroTests: XCTestCase {
           self._context = _context
         }
 
-        private var db: Database {
+        var db: Database {
           get {
             _context.db
           }
@@ -126,7 +126,7 @@ final class CellMacroTests: XCTestCase {
           }
         }
 
-        private var id: ID {
+        var id: ID {
           _context.id
         }
 
@@ -172,7 +172,7 @@ final class CellMacroTests: XCTestCase {
 
         var _context: CellContext<Room>
 
-        private var ctx: CellContext<Room> {
+        var ctx: CellContext<Room> {
           get {
             _context
           }
@@ -185,7 +185,7 @@ final class CellMacroTests: XCTestCase {
           self._context = _context
         }
 
-        private var db: Database {
+        var db: Database {
           get {
             _context.db
           }
@@ -194,7 +194,7 @@ final class CellMacroTests: XCTestCase {
           }
         }
 
-        private var id: ID {
+        var id: ID {
           _context.id
         }
 
@@ -259,7 +259,7 @@ final class CellMacroTests: XCTestCase {
 
         var _context: CellContext<Room>
 
-        private var ctx: CellContext<Room> {
+        var ctx: CellContext<Room> {
           get {
             _context
           }
@@ -272,7 +272,7 @@ final class CellMacroTests: XCTestCase {
           self._context = _context
         }
 
-        private var db: Database {
+        var db: Database {
           get {
             _context.db
           }
@@ -281,7 +281,7 @@ final class CellMacroTests: XCTestCase {
           }
         }
 
-        private var id: ID {
+        var id: ID {
           _context.id
         }
 
@@ -325,7 +325,7 @@ final class CellMacroTests: XCTestCase {
 
         public var _context: JobContext<Fetch>
 
-        private var ctx: JobContext<Fetch> {
+        var ctx: JobContext<Fetch> {
           get {
             _context
           }
@@ -338,7 +338,7 @@ final class CellMacroTests: XCTestCase {
           self._context = _context
         }
 
-        private var db: JobDatabase {
+        var db: JobDatabase {
           get {
             _context.db
           }
@@ -347,7 +347,7 @@ final class CellMacroTests: XCTestCase {
           }
         }
 
-        private var id: ID {
+        var id: ID {
           _context.id
         }
 

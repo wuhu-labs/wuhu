@@ -56,26 +56,26 @@ extension ConversationCell {
   }
 
   private func known() throws {
-    guard isWritten || unopenedBox() != nil else { throw SessionStoreError.unknownConversation(context.id.key) }
+    guard isWritten || unopenedBox() != nil else { throw SessionStoreError.unknownConversation(id.key) }
   }
 
   var isWritten: Bool {
-    context.db.one("SELECT 1 FROM conversations WHERE id = ?", .text(context.id.key)) != nil
+    db.one("SELECT 1 FROM conversations WHERE id = ?", .text(id.key)) != nil
   }
 
   func unopenedBox() -> ConversationRecord? {
-    guard let owner = session(context.id.key), owner.kind == .agent else { return nil }
+    guard let owner = session(id.key), owner.kind == .agent else { return nil }
     return ConversationRecord(
-      id: ConversationID(context.id.key), kind: .box, ownerSession: SessionID(context.id.key), title: nil, group: GroupID(rawValue: owner.group),
+      id: ConversationID(id.key), kind: .box, ownerSession: SessionID(id.key), title: nil, group: GroupID(rawValue: owner.group),
       windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
-      members: [ConversationMember(member: context.id.key, kind: .session)], createdAt: try! SQLiteDateFormat.date(from: owner.createdAt),
+      members: [ConversationMember(member: id.key, kind: .session)], createdAt: try! SQLiteDateFormat.date(from: owner.createdAt),
     )
   }
 
   func messages(where condition: String, _ bound: Value, newestFirst: Bool = false, limit: Int?) -> [MessageRecord] {
-    context.db.rows(
+    db.rows(
       "\(Conversations.selection) WHERE m.conversation_id = ? AND \(condition) ORDER BY m.n \(newestFirst ? "DESC" : "ASC") LIMIT ?",
-      .text(context.id.key), bound, .integer(Int64(limit ?? -1)),
+      .text(id.key), bound, .integer(Int64(limit ?? -1)),
     ).map(MessageRecord.init(row:))
   }
 
@@ -83,14 +83,14 @@ extension ConversationCell {
   private func sequence(_ anchor: MessageAnchor, bound: String, comparing: String) throws -> Int64? {
     switch anchor {
     case let .message(message):
-      guard let n = context.db.one("SELECT n FROM messages WHERE id = ? AND conversation_id = ?", .text(message.rawValue), .text(context.id.key))?.integer else {
+      guard let n = db.one("SELECT n FROM messages WHERE id = ? AND conversation_id = ?", .text(message.rawValue), .text(id.key))?.integer else {
         throw SessionStoreError.unknownMessage(message.rawValue)
       }
       return n
     case let .time(date):
-      return context.db.one(
+      return db.one(
         "SELECT \(bound) FROM messages WHERE conversation_id = ? AND julianday(created_at) \(comparing) julianday(?)",
-        .text(context.id.key), .text(SQLiteDateFormat.string(from: date.addingTimeInterval(0.0005))),
+        .text(id.key), .text(SQLiteDateFormat.string(from: date.addingTimeInterval(0.0005))),
       )?.integer
     }
   }

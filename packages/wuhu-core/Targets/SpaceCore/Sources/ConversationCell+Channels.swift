@@ -16,11 +16,11 @@ extension ConversationCell {
     try check(title)
     let now = SQLiteDateFormat.string(from: date)
     try make(ConversationRecord(
-      id: ConversationID(context.id.key), kind: .users, ownerSession: nil, title: nil, group: group,
+      id: ConversationID(id.key), kind: .users, ownerSession: nil, title: nil, group: group,
       windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
       members: people.map { ConversationMember(member: $0, kind: .user) }, createdAt: date,
     ), now: now)
-    try context.db.execute(ConversationTitleRow.upsert { ConversationTitleRow(conversationID: context.id.key, title: title) })
+    try db.execute(ConversationTitleRow.upsert { ConversationTitleRow(conversationID: id.key, title: title) })
   }
 
   mutating func add(_ people: [String], as principal: Principal, at date: Date) throws {
@@ -35,31 +35,31 @@ extension ConversationCell {
     for person in people {
       guard session(person) == nil else { throw ChannelError.sessionMember(person) }
       let names = [person, space.alias(ofPerson: person)].compactMap(\.self)
-      try context.db.execute(ConversationMemberRow.where { $0.conversationID.eq(context.id.key) && $0.member.in(names) }.delete())
+      try db.execute(ConversationMemberRow.where { $0.conversationID.eq(id.key) && $0.member.in(names) }.delete())
     }
   }
 
   mutating func rename(_ title: String?, as principal: Principal) throws {
     try check(title)
     try manage(as: principal)
-    try context.db.execute(ConversationTitleRow.upsert { ConversationTitleRow(conversationID: context.id.key, title: title) })
+    try db.execute(ConversationTitleRow.upsert { ConversationTitleRow(conversationID: id.key, title: title) })
   }
 
   /// A channel is managed by its people and by whoever writes its group; to anyone else it is not there.
   private func manage(as principal: Principal) throws {
-    guard let record = record() else { throw SessionStoreError.unknownConversation(context.id.key) }
+    guard let record = record() else { throw SessionStoreError.unknownConversation(id.key) }
     let allowed: Bool
     switch principal.actor {
     case .session, .observer, .page:
-      let group: GroupCell = context.cell(GroupCell.ID(record.group.rawValue))
+      let group: GroupCell = ctx.cell(GroupCell.ID(record.group.rawValue))
       allowed = group.role(of: principal.actor, acting: principal.group).map { $0 >= .write } ?? false
     case let .person(persona, _):
       allowed = record.members.contains { $0.member == persona && $0.kind == .user }
     case .anonymous:
       allowed = false
     }
-    guard allowed else { throw SessionStoreError.unknownConversation(context.id.key) }
-    guard record.kind == .users else { throw ChannelError.notChannel(context.id.key) }
+    guard allowed else { throw SessionStoreError.unknownConversation(id.key) }
+    guard record.kind == .users else { throw ChannelError.notChannel(id.key) }
   }
 
   private func person(_ spelling: String) throws -> String {
@@ -74,9 +74,9 @@ extension ConversationCell {
 
   /// Writes a conversation that was only described until now: a new channel, a DM or a box at its first post.
   mutating func make(_ conversation: ConversationRecord, now: String) throws {
-    try context.db.execute(ConversationRow.insert {
+    try db.execute(ConversationRow.insert {
       ConversationRow(
-        id: context.id.key, kind: conversation.kind.rawValue, ownerSession: conversation.ownerSession?.rawValue,
+        id: id.key, kind: conversation.kind.rawValue, ownerSession: conversation.ownerSession?.rawValue,
         windowMessages: conversation.windowMessages, windowSeconds: conversation.windowSeconds, createdAt: now, group: conversation.group.rawValue,
       )
     })
