@@ -17,7 +17,7 @@ public struct SubscriptionFiring: Sendable {
     await space.observeQuery(sql, throttle: .zero, as: principal)
   }
 
-  /// Mails a handler slot's observer cell.
+  /// Mails a slot's owner: a handler slot's observer cell, or the session's cell for a plain one. Main writes no slot: an owner that can no longer act ends its own when the mail comes.
   private let observe: @Sendable (SubscriptionOwner, SubscriptionID, ObserverMail) async throws -> Void
 
   public init(space: Space, observe: @escaping @Sendable (SubscriptionOwner, SubscriptionID, ObserverMail) async throws -> Void) {
@@ -61,15 +61,15 @@ public struct SubscriptionFiring: Sendable {
           post.yield(.failed(error))
         }
       }
-      var running: [Arming: (generation: Int, task: Task<Void, Never>)] = [:]
-      var retries: [Arming: Int] = [:]
-      var cells: Set<Arming> = []
+      var running: [Registration: (generation: Int, task: Task<Void, Never>)] = [:]
+      var retries: [Registration: Int] = [:]
+      var cells: Set<Registration> = []
       var generation = 0
       var failure: (any Error)?
       do {
         for await event in events {
           if Task.isCancelled { break }
-          var completion: (Arming, Result<Void, any Error>)?
+          var completion: (Registration, Result<Void, any Error>)?
           switch event {
           case .changed:
             break
@@ -82,7 +82,7 @@ public struct SubscriptionFiring: Sendable {
             throw error
           }
           let registrations = try await space.sessions.subscriptionRegistrations()
-          let current = registrations.map { (Arming($0.subscription, callbackID: $0.callbackID, orphaned: $0.orphaned), $0.subscription) }
+          let current = registrations.map { (Registration($0.subscription, callbackID: $0.callbackID, orphaned: $0.orphaned), $0.subscription) }
           let keys = Set(current.map(\.0))
           retries = retries.filter { keys.contains($0.key) }
           // An observer cell reads its slot itself: it hears of every change.
@@ -104,6 +104,7 @@ public struct SubscriptionFiring: Sendable {
             running[arming] = nil
           }
           for (arming, subscription) in current where running[arming] == nil {
+            guard subscription.slot.handler != nil || subscription.owner.session != nil else { continue }
             let sql: String
             switch subscription.slot.kind {
             case let .observe(query, _): sql = query
@@ -155,24 +156,22 @@ public struct SubscriptionFiring: Sendable {
       } catch {
         guard invalidObservationQuery(error) else { throw error }
         log.warning("observation \(subscription.slot.id.rawValue) query failed: \(error)")
-        guard let session = try await wakes(subscription, orPause: "observation query failed: \(error)") else { return }
-        try await notifyObservation(
-          subscription,
-          to: session,
-          callbackID: callbackID,
-          text: "observation \(subscription.slot.id.rawValue) failed and was cancelled: \(error)",
-          advance: .retire,
-        )
+        let cancelled = "observation \(subscription.slot.id.rawValue) failed and was cancelled: \(error)"
+        if subscription.slot.handler == nil {
+          try await observe(subscription.owner, subscription.slot.id, .plain(callbackID, .failed(text: cancelled)))
+        } else {
+          try await observe(subscription.owner, subscription.slot.id, .failed(subscription.owner.session == nil ? "observation query failed: \(error)" : cancelled))
+        }
         return
       }
       guard let rows else { throw FiringFailure.observationStreamEnded }
       let marker: String
-      if case .children = subscription.slot.kind, case let .session(parent) = subscription.owner {
+      if case .children = subscription.slot.kind {
         // Its marker is the errored children last seen: only one joining them is news.
         let errored = rows.rows.compactMap { if case let .text(id) = $0[0] { id } else { nil } }
         marker = errored.joined(separator: ",")
         if Set(errored).isSubset(of: (delivered ?? "").split(separator: ",").map(String.init)) {
-          if marker != delivered ?? "" { try await space.sessions.observedQuietly(parent, subscriptionID: subscription.slot.id, marker: marker) }
+          if marker != delivered ?? "" { try await observe(subscription.owner, subscription.slot.id, .plain(callbackID, .quiet(marker: marker))) }
           delivered = marker
           continue
         }
@@ -180,42 +179,15 @@ public struct SubscriptionFiring: Sendable {
         marker = rowsMarker(rows)
         guard marker != delivered else { continue }
       }
-      guard try await retireIfOrphaned(subscription) == false else { return }
       if subscription.slot.handler != nil {
         try await observe(subscription.owner, subscription.slot.id, .rows(handlerInput(rows), marker: marker))
         delivered = marker
         continue
       }
-      guard let session = try await wakes(subscription, orPause: "a group observer runs a handler") else { return }
-      try await notifyObservation(
-        subscription,
-        to: session,
-        callbackID: callbackID,
-        text: observedText(subscription.slot.kind, sql: sql, rows: rows),
-        advance: .observed(marker: marker),
-      )
+      try await observe(subscription.owner, subscription.slot.id, .plain(callbackID, .change(text: observedText(subscription.slot.kind, sql: sql, rows: rows), marker: marker)))
       delivered = marker
     }
     throw CancellationError()
-  }
-
-  private func notifyObservation(
-    _ subscription: ArmedSubscription,
-    to session: SessionID,
-    callbackID: UUID,
-    text: String,
-    advance: SessionStore.SubscriptionAdvance,
-  ) async throws {
-    @Dependency(\.date) var date
-    let notification = SystemNotification(
-      id: callbackID,
-      timestamp: date.now,
-      kind: .spaceObservation,
-      subscriptionID: subscription.slot.id,
-      endsSubscription: advance == .retire,
-      content: .init(text: text),
-    )
-    try await deliver(subscription, to: session, notification: notification, advance: advance)
   }
 
   private func principal(of subscription: ArmedSubscription) async throws -> Principal {
@@ -223,52 +195,6 @@ public struct SubscriptionFiring: Sendable {
     case let .session(id): try await space.principal(of: id)
     case let .group(group): Observer(group: group, name: subscription.name!, firing: nil).principal
     }
-  }
-
-  /// The session a notifying slot wakes. A group's slot wakes no one: it
-  /// pauses instead, `error` its last error.
-  private func wakes(_ subscription: ArmedSubscription, orPause error: @autoclosure () -> String) async throws -> SessionID? {
-    switch subscription.owner {
-    case let .session(id):
-      return id
-    case let .group(group):
-      try await space.sessions.pauseObserver(group, subscriptionID: subscription.slot.id, error: error())
-      return nil
-    }
-  }
-
-  private func deliver(
-    _ subscription: ArmedSubscription,
-    to session: SessionID,
-    notification: SystemNotification,
-    advance: SessionStore.SubscriptionAdvance,
-  ) async throws {
-    do {
-      try await space.sessions.fireSubscription(
-        session,
-        subscriptionID: subscription.slot.id,
-        notification: notification,
-        advance: advance,
-      )
-    } catch let error as SessionStoreError {
-      switch error {
-      case .archiveGraceExpired, .unknownSession:
-        try await retire(subscription)
-      case .modelRouteInvalid, .unknownPerson, .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
-           .selfDirectMessage, .humanAgentDirectMessage, .taskHasNoBox, .taskTakesNoHumanInput, .notTheParent,
-           .requestAlreadyOpen, .unknownRequest, .reportRefused,
-           .busyForRestart, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:
-        throw error
-      }
-    }
-  }
-
-  private func retireIfOrphaned(_ subscription: ArmedSubscription) async throws -> Bool {
-    try await space.sessions.retireOrphanedSubscription(subscription.owner, subscriptionID: subscription.slot.id)
-  }
-
-  private func retire(_ subscription: ArmedSubscription) async throws {
-    try await space.sessions.cancelSubscription(subscription.owner, subscriptionID: subscription.slot.id)
   }
 }
 
@@ -292,7 +218,7 @@ private enum FiringFailure: Error {
 
 private enum RegistryEvent: Sendable {
   case changed
-  case finished(Arming, Int, Result<Void, any Error>)
+  case finished(Registration, Int, Result<Void, any Error>)
   case failed(any Error)
 }
 
@@ -301,7 +227,7 @@ private struct Pair: Hashable {
   var subscription: SubscriptionID
 }
 
-private struct Arming: Hashable, Sendable {
+private struct Registration: Hashable, Sendable {
   var owner: SubscriptionOwner
   var subscription: SubscriptionID
   var kind: SubscriptionSlot.Kind

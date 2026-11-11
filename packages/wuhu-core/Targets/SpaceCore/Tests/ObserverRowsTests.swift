@@ -126,7 +126,7 @@ import Testing
       let id = try await owner(store)
       let armed = try await arm(store, id)
       let begun = try await begin(store, armed, marker: "m")
-      try await store.cancelSubscription(.session(id), subscriptionID: armed.slot.id)
+      try await store.writer.write { try ObserverRows(db: $0, store: store).retire(.session(id), armed.slot.id) }
       try await finish(store, begun, .ok(wakes: ["before", "after"]), .taken(marker: "m"))
       let wakes = try await store.undrainedInputs(id).compactMap { input -> SystemNotification? in
         if case let .notification(notification) = input.input { notification } else { nil }

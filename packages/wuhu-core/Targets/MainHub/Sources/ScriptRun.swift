@@ -22,10 +22,13 @@ public struct ScriptHandlerResult: Sendable {
 /// The id a handler firing's script runs under, and owns its machine processes by.
 public func handlerScriptID(_ firing: UUID) -> String { "handler-" + firing.uuidString.lowercased() }
 
-/// What main tells an observer cell: its slot changed (armed, paused, gone, its owner archived), or its query's rows did.
+/// What main tells a slot's owner. A handler slot's observer cell: its slot changed (armed, paused, gone, its owner archived), or its query's rows did. A session's cell, for a plain slot armed as the token: what main saw of it.
 public enum ObserverMail: Sendable {
   case look
   case rows(JSONValue, marker: String)
+  case plain(UUID, Observed)
+  /// A handler slot's query can no longer run.
+  case failed(String)
 }
 
 /// A file run as a space script from the CLI (`wuhu script`): by a session

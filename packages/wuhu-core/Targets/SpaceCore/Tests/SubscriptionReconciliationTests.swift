@@ -28,8 +28,6 @@ import Testing
       try await reopened.sessions.unarchive(id)
       #expect(try await reopened.sessions.armedSubscriptions(id) == [slot])
       #expect(try await reopened.sessions.undrainedInputs(id).isEmpty)
-      try await reopened.sessions.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
-      #expect(try await space.sessions.armedSubscriptions(id).isEmpty)
       try await reopened.close()
       try await space.close()
     }
@@ -61,26 +59,21 @@ import Testing
     }
   }
 
-  @Test(arguments: [false, true])
-  func archivedRetirementIsConditionalAndSilent(handler: Bool) async throws {
+  @Test func anArchivedSessionsPlainQueryEndsSilentlyWhenItsRowsChange() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let id = try await ObserverRowsTests().owner(store)
-      let slot = try await store.armSubscription(id, slot: .init(
-        id: .init("timer"), kind: .timer(.oneShot(fixedDate), message: "tick"), handler: handler ? "/timer.js" : nil,
-      ), nextFireAt: fixedDate)
-      #expect(try await !store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
-      #expect(try await store.armedSubscriptions(id) == [slot])
+      let slot = try await store.armSubscription(id, slot: .init(id: .init("watch"), kind: .observe(sql: "SELECT 1", throttleSeconds: 0)), marker: "A")
+      func observed(_ marker: String) async throws -> Observed.Outcome {
+        try await store.rows { try $0.observed(id, slot.slot.id, token: observationToken(slot), .change(text: marker, marker: marker)) }
+      }
+      #expect(try await observed("B") == .stands)
       _ = try await store.archive(id, grace: .seconds(100))
-      try await store.unarchive(id)
-      #expect(try await !store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
-      #expect(try await store.armedSubscriptions(id) == [slot])
-      _ = try await store.archive(id, grace: .seconds(100))
-      #expect(try await store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
-      #expect(try await !store.retireOrphanedSubscription(.session(id), subscriptionID: slot.slot.id))
+      #expect(try await observed("C") == .ended)
+      #expect(try await observed("D") == .ignored)
       try await store.unarchive(id)
       #expect(try await store.armedSubscriptions(id).isEmpty)
-      #expect(try await store.undrainedInputs(id).isEmpty)
+      #expect(try await store.undrainedInputs(id).count == 1)
     }
   }
 
@@ -88,12 +81,10 @@ import Testing
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let id = try await ObserverRowsTests().owner(store)
-      let (plain, quiet, removed, observer) = (SubscriptionID("plain"), SubscriptionID("quiet"), SubscriptionID("removed"), SubscriptionID("observer"))
+      let (plain, quiet, observer) = (SubscriptionID("plain"), SubscriptionID("quiet"), SubscriptionID("observer"))
       _ = try await store.armSubscription(id, slot: .init(id: plain, kind: .timer(.cron("* * * * *"), message: "tick")), nextFireAt: fixedDate)
       _ = try await store.armSubscription(id, slot: .init(id: quiet, kind: .timer(.cron("* * * * *"), message: "tick"), handler: "/timer.js"), nextFireAt: fixedDate)
-      _ = try await store.armSubscription(id, slot: .init(id: removed, kind: .timer(.oneShot(fixedDate), message: "old")), nextFireAt: fixedDate)
       _ = try await store.armSubscription(id, slot: .init(id: observer, kind: .observe(sql: "SELECT 1", throttleSeconds: 30), handler: "/observe.js"))
-      try await store.cancelSubscription(.session(id), subscriptionID: removed)
       let armed = try await store.rows { try $0.armedSlots(id) }
       #expect(armed.slots == [plain: .timer(.cron("* * * * *")), quiet: .timer(.cron("* * * * *")), observer: .observe(sql: "SELECT 1")])
       #expect(armed.handlers == [quiet, observer])

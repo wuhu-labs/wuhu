@@ -77,7 +77,7 @@ import Testing
         try await untilAdvancing("slow handler started", time) { (try? await fs.stat("/slow-started.md")) != nil }
         guard case .cancelTimer = try await world.run("cancel", .object(["id": .string(timer.subscriptionID.rawValue)])) else { Issue.record("expected the cancel to succeed"); return }
         #expect(try failure(try await world.run("cancel", .object(["id": .string(timer.subscriptionID.rawValue)]))).code == "notFound")
-        #expect(try await space.query("SELECT id FROM subscriptions", as: space.principal(of: session)).rows.isEmpty)
+        try await until("its observer ended the slot") { try await space.query("SELECT id FROM subscriptions", as: space.principal(of: session)).rows.isEmpty }
         _ = try await fs.write("/release.md", Data("go".utf8), ifMatch: nil)
         try await untilAdvancing("cancelled firing ends", time) { try await outcomes(space, session) == [[.text("ok")]] }
         #expect(try await space.sessions.armedSubscriptions(session).isEmpty)

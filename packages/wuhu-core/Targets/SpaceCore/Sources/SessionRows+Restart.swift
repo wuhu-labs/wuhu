@@ -28,7 +28,7 @@ public struct GenerationState: Hashable, Sendable {
 }
 
 extension SessionRows {
-  /// Start over: a new generation with the subscriptions armed now, the session's hold and error cleared, and its queue kept.
+  /// Start over: a new generation whose head lists `armed` (without it, what the stores hold once the queue is recovered: a session whose cell has no list yet), the session's hold and error cleared, and its queue kept.
   @discardableResult
   public func restart(
     _ id: SessionID,
@@ -36,6 +36,7 @@ extension SessionRows {
     note: String?,
     modelRoute: SessionModelRoute?,
     runningWork: [String],
+    armed: [SubscriptionID: Subscription]? = nil,
     uuid: () -> UUID,
   ) throws -> SessionRestart {
     let key = id.rawValue
@@ -70,7 +71,7 @@ extension SessionRows {
     }
     let generation = runtime.generation + 1
     do {
-      head.snapshot = .init(subscriptions: try armedSlots(id).slots)
+      head.snapshot = .init(subscriptions: try armed ?? armedSlots(id).slots)
       head.settleBoundary = .init(
         queueTail: queue.tail,
         messageTail: try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(n), 0) FROM messages WHERE sender_session_id = ?", arguments: [key])!,
@@ -94,7 +95,7 @@ extension SessionRows {
 }
 
 extension SessionRows {
-  /// What the stores hold of the session's own slots, and which of them run a handler: its rows of `subscription_slots` but the children watch, the plain timers waiting on its queue and its streams.
+  /// What the stores hold of the session's own slots, and which of them run a handler: its rows of `subscription_slots` but the children watch, the plain timers waiting on its queue and its streams. Only for a session whose cell has not listed them yet.
   public func armedSlots(_ id: SessionID) throws -> (slots: [SubscriptionID: Subscription], handlers: Set<SubscriptionID>) {
     var slots: [SubscriptionID: Subscription] = [:]
     var handlers: Set<SubscriptionID> = []

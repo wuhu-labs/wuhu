@@ -61,6 +61,14 @@ public struct ObserverRows {
     )
   }
 
+  /// The slot a session armed, as its observer's row; one that stands is left as it is.
+  public func arm(_ session: SessionID, _ arming: Arming, uuid: () -> UUID) throws {
+    try store.armSubscription(
+      session.rawValue, slot: store.prepared(arming.slot, uuid: uuid), name: arming.name, nextFireAt: arming.nextFireAt, marker: arming.marker,
+      now: SQLiteDateFormat.string(from: now), in: db,
+    )
+  }
+
   /// `input` is what the next firing takes, in place of anything pending.
   public func pend(_ owner: SubscriptionOwner, _ id: SubscriptionID, _ input: JSONValue, marker: String?) throws {
     guard var row = try SubscriptionRow.find(owner, id.rawValue, in: db) else { return }
@@ -146,8 +154,8 @@ public struct ObserverRows {
     return texts.map { SystemNotification(id: uuid(), timestamp: now, kind: kind, subscriptionID: id, endsSubscription: last, content: .init(text: $0)) }
   }
 
-  /// A stream that refused to go on: the slot of a session ends, and the notice it is due is returned; a group's observer pauses with the reason.
-  public func endStream(_ owner: SubscriptionOwner, _ id: SubscriptionID, reason: String, uuid: () -> UUID) throws -> SystemNotification? {
+  /// Its source refused to go on (a stream, a query that can no longer run): the slot of a session ends, and the notice it is due is returned; a group's observer pauses with the reason.
+  public func end(_ owner: SubscriptionOwner, _ id: SubscriptionID, reason: String, uuid: () -> UUID) throws -> SystemNotification? {
     guard let row = try SubscriptionRow.find(owner, id.rawValue, in: db) else { return nil }
     switch owner {
     case .session:

@@ -1,7 +1,6 @@
 import Foundation
 import GRDB
 @testable import LoopCore
-import struct MainHub.ToolProblem
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -40,7 +39,7 @@ import WuhuAI
         case "watch":
           return try await space.arm(sid, .init(id: watch, kind: .observe(sql: "SELECT 1", throttleSeconds: 30)), answering: "watch")
         default:
-          return try await space.disarm(sid, watch, answering: "cancel")
+          return try await space.disarm(sid, watch, answering: "cancel")!
         }
       }, inference: { try await script($0) })
       try await runService(space, config) { service in
@@ -50,13 +49,14 @@ import WuhuAI
         // A call that already ran gets its answer and arms nothing; a slot that ended is as unknown as one that never was.
         #expect(try await space.arm(sid, .init(id: plain, kind: .timer(yearly, message: "again")), nextFireAt: anchor, answering: "plain") == .timer(.init(subscriptionID: plain, schedule: once, message: "ping")))
         #expect(try await space.disarm(sid, watch, answering: "cancel") == .cancelObservation(.init(subscriptionID: watch)))
-        await #expect(throws: ToolProblem.self) { try await space.disarm(sid, watch, answering: "cancel-again") }
+        #expect(try await space.disarm(sid, watch, answering: "cancel-again") == nil)
         #expect(try await armed(space) == ["timer.plain": false, "timer.quiet": true])
-        // The handler's slot ends without a step of the cell: its row stays, and the next generation's head leaves it out.
-        try await sessions.cancelSubscription(.session(sid), subscriptionID: quiet)
+        // The handler's row is its observer's: the cancel deletes the session's row and mails the observer, which deletes its own.
+        #expect(try await space.disarm(sid, quiet, answering: "cancel-quiet") == .cancelTimer(.init(subscriptionID: quiet)))
+        try await until("the observer ended its slot") { try await sessions.armedSubscriptions(sid).isEmpty }
         try await service.enqueue(item: Fix.message("fold again"), to: sid)
         try await until("it folded again") { try await sessions.settledWork(sid) && script.count == 6 }
-        #expect(try await armed(space) == ["timer.plain": false, "timer.quiet": true])
+        #expect(try await armed(space) == ["timer.plain": false])
         // The one-shot's last notice is drained with the message, whether or not its own wake came first. Time keeps moving so the worker's scan does: the jump takes the cell past its idle eviction.
         await time.advance(by: 60)
         try await service.enqueue(item: Fix.message("anything left?"), to: sid)
@@ -65,6 +65,7 @@ import WuhuAI
           guard try await sessions.settledWork(sid) else { return false }
           return try await armed(space)["timer.plain"] == nil
         }
+        #expect(try await space.disarm(sid, plain, answering: "cancel-fired") == nil)
       }
     }
   }

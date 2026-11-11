@@ -355,7 +355,7 @@ import Testing
       let gone = try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone")
       #expect(gone.0 == .ok)
       let goneID = try #require(JSONValue.parse(gone.1)?.object?["id"]?.stringValue)
-      try await t.harness.store.cancelSubscription(.session(t.parent), subscriptionID: SubscriptionID(goneID))
+      #expect(try await call(.delete, "/v1/subscription/\(goneID)", .null, toolCall: "tc-timer-gone-cancel").0 == .ok)
       #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone") == gone)
       #expect(try await t.harness.store.armedSubscriptions(t.parent).allSatisfy { $0.slot.id.rawValue != goneID })
 

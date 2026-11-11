@@ -86,7 +86,7 @@ import Testing
       _ = try await awaitItems(collected, atLeast: 3)
       try await tests.finish(space.sessions, attempt, .failed("boom"))
       _ = try await awaitItems(collected, atLeast: 4)
-      try await space.sessions.cancelSubscription(.session(id), subscriptionID: slot.slot.id)
+      try await space.sessions.writer.write { try ObserverRows(db: $0, store: space.sessions).retire(.session(id), slot.slot.id) }
       let snapshots = try await awaitItems(collected, atLeast: 5)
       try #require(snapshots.count == 5)
       #expect(snapshots.first?.rows.isEmpty == true)

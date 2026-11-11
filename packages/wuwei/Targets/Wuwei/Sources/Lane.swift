@@ -20,14 +20,19 @@ public final class Lane: SerialExecutor {
   let scheduler: any Scheduler
   private let queue = Mutex(Queue())
   private let runner = Atomic<UInt>(0)
-  private let drainHook = Mutex<(@Sendable () -> Void)?>(nil)
+  private let drainHook = Mutex<Hook?>(nil)
+
+  /// Kept in a struct: a bare function in a `Mutex` is wrapped once more every time it is read.
+  private struct Hook: Sendable {
+    let run: @Sendable () -> Void
+  }
 
   init(scheduler: any Scheduler) {
     self.scheduler = scheduler
   }
 
   func onDrain(_ hook: @escaping @Sendable () -> Void) {
-    drainHook.withLock { $0 = hook }
+    drainHook.withLock { $0 = Hook(run: hook) }
   }
 
   public func enqueue(_ job: consuming ExecutorJob) {
@@ -47,7 +52,6 @@ public final class Lane: SerialExecutor {
   /// Runs at most `limit` jobs, each one chosen by `pick` from the number waiting, and says whether the lane must be scheduled again: what a ``Scheduler`` does with a lane it was given.
   public func run(limit: Int, pick: (Int) -> Int) -> Bool {
     runner.store(currentThread(), ordering: .releasing)
-    defer { runner.store(0, ordering: .releasing) }
     for _ in 0 ..< limit {
       guard let job = queue.withLock({ $0.jobs.isEmpty ? nil : $0.jobs.remove(at: pick($0.jobs.count)) }) else { break }
       // Naming the task executor too lets an await on this lane continue inline; with only the serial executor named, a task that prefers the scheduler hops through `enqueue` at every await.
@@ -58,8 +62,10 @@ public final class Lane: SerialExecutor {
         queue.sinceDrain = 0
         return true
       }
-      if drained { drainHook.withLock { $0 }?() }
+      if drained { drainHook.withLock { $0 }?.run() }
     }
+    // Before the lane is let go: once `scheduled` is false another thread may be running it, and a clear that came after would take the lane from that thread.
+    runner.store(0, ordering: .releasing)
     return queue.withLock { queue in
       queue.scheduled = !queue.jobs.isEmpty
       return queue.scheduled

@@ -7,6 +7,7 @@ import struct MainHub.ScriptHandlerResult
 import struct MainHub.ScriptRun
 import enum MainHub.SessionError
 import struct MainHub.SubtreeArchiveBusy
+import struct MainHub.ToolProblem
 import SessionTools
 import enum SpaceContract.ScriptOutput
 import Wuwei
@@ -206,7 +207,10 @@ public struct SessionExecution: Sendable {
 
   /// Ends a slot of the session's for a call of its own; one it does not have throws a `notFound` `ToolProblem`.
   public func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: ToolCallID) async throws -> ToolResultPayload {
-    try await loops.call(SessionCell.ID(session.rawValue)) { try $0.disarm(subscription, answering: call) }
+    guard let answer = try await loops.call(SessionCell.ID(session.rawValue), { try $0.disarm(subscription, answering: call) }) else {
+      throw ToolProblem("\(subscription.rawValue) is not armed: it already ended, or you never had it", code: "notFound")
+    }
+    return answer
   }
 
   /// The session's lines as `viewer` reads them, past `after` (`TranscriptTail`); the stream ends when the cell closes the socket.
@@ -223,12 +227,15 @@ public struct SessionExecution: Sendable {
     }
   }
 
-  /// Mail to a handler slot's observer cell.
+  /// Mail to a slot's owner: a handler slot's observer cell, or the session's cell for a plain one.
   public func observe(_ owner: SubscriptionOwner, _ subscription: SubscriptionID, _ mail: ObserverMail) {
-    let cell = loops.send(ObserverCell.ID(owner, subscription))
-    switch mail {
-    case .look: cell.look()
-    case let .rows(input, marker): cell.observed(input, marker)
+    let observer = loops.send(ObserverCell.ID(owner, subscription))
+    switch (mail, owner) {
+    case (.look, _): observer.look()
+    case let (.rows(input, marker), _): observer.observed(input, marker)
+    case let (.failed(reason), _): observer.failed(reason)
+    case let (.plain(token, observed), .session(session)): cell(session).observed(subscription, token, observed)
+    case (.plain, .group): preconditionFailure("a group's slot runs a handler")
     }
   }
 

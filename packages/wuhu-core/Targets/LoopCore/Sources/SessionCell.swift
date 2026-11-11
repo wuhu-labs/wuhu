@@ -1,4 +1,5 @@
 import SessionDomain
+import enum SpaceCore.Observed
 import struct SpaceCore.SessionHydration
 import enum SpaceCore.SessionMail
 import struct SpaceCore.SessionPut
@@ -110,6 +111,7 @@ struct SessionCell {
     }
     for stream in try rows.streams(id.session) {
       unstream(stream)
+      try forget(stream)
     }
     try rows.archive(id.session, grace: grace)
     invalidateInference()
@@ -124,14 +126,30 @@ struct SessionCell {
   /// Start over. Main checked the session was settled; one that started a job since keeps it, and the restart is dropped. Queued input waits for the new generation.
   mutating func restart(_ executor: SessionExecutor?, _ route: SessionModelRoute?, _ note: String?, _ runningWork: [String]) throws {
     if let session = try? load(), working(session) != nil { return }
+    let armed = keepsArmed ? try armedSlots() : nil
     let restart = try client.dependencies.yield {
-      try rows.restart(id.session, executor: executor, note: note, modelRoute: route, runningWork: runningWork, uuid: client.uuid)
+      try rows.restart(id.session, executor: executor, note: note, modelRoute: route, runningWork: runningWork, armed: armed, uuid: client.uuid)
     }
     try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false, nags: nil, seen: true, armed: true))
     try db.execute(Seen.delete())
-    try fillArmed()
+    if armed == nil { try fillArmed() }
     invalidateInference()
     try advance()
+  }
+
+  /// What main saw of a plain slot of the session's: its query's rows changed, or the query can no longer run.
+  mutating func observed(_ subscription: SubscriptionID, _ token: UUID, _ observed: Observed) throws {
+    switch try rows.observed(id.session, subscription, token: token, observed) {
+    case .ignored: return
+    case .ended: try forget(subscription)
+    case .stands: break
+    }
+    try look()
+  }
+
+  /// A handler slot of the session's ended without its `cancel`: its observer retired it.
+  mutating func ended(_ subscription: SubscriptionID) throws {
+    try forget(subscription)
   }
 
   /// An archived session ends the stream instead of taking the event.
@@ -141,7 +159,7 @@ struct SessionCell {
       return
     }
     try rows.observed(id.session, stream: batch.subscription, url: batch.url, text: batch.text, throttle: batch.throttle, ends: batch.ending != nil, uuid: client.uuid)
-    if batch.ending == nil { ctx.send(.acked, to: batch.job) }
+    if batch.ending == nil { ctx.send(.acked, to: batch.job) } else { try forget(batch.subscription) }
     try look()
   }
 
@@ -433,15 +451,12 @@ struct SessionCell {
 
   /// A session that has no turn row yet gets one from its transcript at its next step (`check`).
   private mutating func move(wrote items: [TranscriptItem] = [], _ change: (inout SessionTurn) -> Void) throws {
+    for case let .notification(notice) in items where notice.endsSubscription { try forget(notice.subscriptionID) }
     guard var turn = db.rows(SessionTurn.all).first else { return }
     change(&turn)
     for item in items { turn.nags?.apply(item) }
     try write(turn)
     if turn.seen == true { try see(items) }
-    guard turn.armed == true else { return }
-    for case let .notification(notice) in items where notice.endsSubscription {
-      try db.execute(Armed.where { $0.subscription.eq(notice.subscriptionID.rawValue) }.delete())
-    }
   }
 
   /// A file or a folder is seen as it was last; an instruction text keeps the path it first came from.

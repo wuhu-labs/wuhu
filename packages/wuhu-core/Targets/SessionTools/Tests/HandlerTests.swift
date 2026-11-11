@@ -122,8 +122,8 @@ func withHandlerFiring(
         _ = try await world.run("timer", .object(.init(uniqueKeysWithValues: timer.sorted { $0.key < $1.key })))
         _ = try await world.run("observe", .object(.init(uniqueKeysWithValues: observe.sorted { $0.key < $1.key })))
       }
+      try await until("the observers armed theirs") { try await space.sessions.armedSubscriptions(session).count == 3 }
       _ = try await space.sessions.archive(session, grace: .seconds(100))
-      #expect(try await space.sessions.armedSubscriptions(session).count == 3)
       _ = try await space.mutateRows(watched, [.insert([.integer(1)])], in: .shared, acting: .shared)
       try await withHandlerFiring(space) { _, _ in
         await time.advance(by: 11)
@@ -255,6 +255,7 @@ func withHandlerFiring(
       try await withHandlerFiring(space) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 10, "handler": "/silent.js"]))
+        try await until("its observer armed it") { try await space.sessions.armedSubscriptions(session).count == 1 }
         let queueHead = try await space.sessions.queueHead(session)
         await time.advance(by: 11)
         try await untilAdvancing("silent timer retires", time) { try await space.sessions.armedSubscriptions(session).isEmpty }
@@ -273,6 +274,7 @@ func withHandlerFiring(
       try await withHandlerFiring(space) { worker, owner in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/tick.js"]))
+        try await until("its observer armed it") { try await space.sessions.armedSubscriptions(session).count == 1 }
         let first = try await space.sessions.armedSubscriptions(session).first?.nextFireAt
         await time.advance(by: 61)
         // The firing is over once the slot is rescheduled: one still open when the next minute comes skips it.

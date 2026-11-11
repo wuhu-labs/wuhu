@@ -426,33 +426,20 @@ struct SessionStoreTests {
       let legacy = try #require(await store.armedSubscriptions(session).first)
       #expect(legacy.slot.observationProgress == nil)
 
-      func fire(_ token: UUID, marker: String, text: String) async -> Bool {
-        let notification = SystemNotification(
-          id: token,
-          timestamp: Date(timeIntervalSince1970: 0),
-          kind: .spaceObservation,
-          subscriptionID: slot.id,
-          content: .init(text: text),
-        )
-        return (try? await store.fireSubscription(
-          session,
-          subscriptionID: slot.id,
-          notification: notification,
-          advance: .observed(marker: marker),
-        )) != nil
+      func fire(_ token: UUID, marker: String, text: String) async throws -> Bool {
+        try await store.rows { try $0.observed(session, slot.id, token: token, .change(text: text, marker: marker)) } == .stands
       }
 
       func armed() async throws -> ArmedSubscription {
         try #require(await store.armedSubscriptions(session).first)
       }
 
-      #expect(await fire(observationToken(legacy), marker: "B", text: "B"))
+      #expect(try await fire(observationToken(legacy), marker: "B", text: "B"))
       #expect(try await armed().slot.observationProgress?.deliverySequence == 1)
-      #expect(!(await fire(observationToken(try await armed()), marker: "B", text: "B")))
-      #expect(await fire(observationToken(try await armed()), marker: "A", text: "A"))
-      #expect(await fire(observationToken(try await armed()), marker: "B", text: "B again"))
+      #expect(!(try await fire(observationToken(try await armed()), marker: "B", text: "B")))
+      #expect(try await fire(observationToken(try await armed()), marker: "A", text: "A"))
+      #expect(try await fire(observationToken(try await armed()), marker: "B", text: "B again"))
 
-      try await store.deliverMail()
       let delivered = try await store.undrainedInputs(session).compactMap { entry -> SystemNotification? in
         guard case let .notification(notification) = entry.input else { return nil }
         return notification
@@ -461,11 +448,10 @@ struct SessionStoreTests {
       #expect(try await armed().slot.observationProgress?.deliverySequence == 3)
 
       let cancelled = try await armed()
-      try await store.cancelSubscription(.session(session), subscriptionID: slot.id)
-      #expect(!(await fire(observationToken(cancelled), marker: "C", text: "late")))
+      try await store.rows { try $0.retire(session, slot.id) }
+      #expect(!(try await fire(observationToken(cancelled), marker: "C", text: "late")))
       _ = try await store.armSubscription(session, slot: slot, marker: "B")
-      #expect(!(await fire(observationToken(cancelled), marker: "C", text: "old arming")))
-      try await store.deliverMail()
+      #expect(!(try await fire(observationToken(cancelled), marker: "C", text: "old arming")))
       #expect(try await store.undrainedInputs(session).count == 1)
     }
   }

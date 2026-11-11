@@ -2,6 +2,7 @@ import JSONValue
 import func MainHub.handlerInput
 import SessionDomain
 import struct SpaceContract.GroupID
+import struct SpaceCore.Arming
 import enum SpaceCore.ObserverAdvance
 import struct SpaceCore.ObserverRows
 import struct SpaceCore.ObserverSlot
@@ -14,9 +15,27 @@ import Wuwei
   import Foundation
 #endif
 
-/// A handler slot as a cell, a session's or a group's observer alike: its state is its `subscription_slots` row. What comes (rows main mails, an event from its stream job, its timer coming due) waits on the slot until a firing takes it; one handler job runs at a time, the input is taken only when a firing ends well, and a failed one is retried, backing off from 1 s to 5 min. Its key is `<owner kind>:<owner>:<subscription>`.
+/// A handler slot as a cell, a session's or a group's observer alike: its state is its `subscription_slots` row, which a session's observer writes from its arming to its end; it tells the session when the slot is gone. What comes (rows main mails, an event from its stream job, its timer coming due) waits on the slot until a firing takes it; one handler job runs at a time, the input is taken only when a firing ends well, and a failed one is retried, backing off from 1 s to 5 min. Its key is `<owner kind>:<owner>:<subscription>`.
 @Cell
 struct ObserverCell {
+  /// Its session armed it.
+  mutating func arm(_ arming: Arming) throws {
+    guard case let .session(session) = owner else { return }
+    try rows.arm(session, arming, uuid: client.uuid)
+    try look()
+  }
+
+  /// Its session's `cancel`: a firing in progress runs on.
+  mutating func cancel() throws {
+    try rows.retire(owner, subscription)
+    stopStream()
+  }
+
+  /// Its query can no longer run.
+  mutating func failed(_ reason: String) throws {
+    try end(reason)
+  }
+
   /// Main saw the slot change: armed, paused, gone, or its owner archived.
   mutating func look() throws {
     guard let slot = try rows.slot(owner, subscription), slot.subscription.status == .armed else { return stopStream() }
@@ -51,10 +70,7 @@ struct ObserverCell {
       if batch.ending == nil { ctx.send(.stop, to: batch.job) }
       return
     }
-    if let ending = batch.ending {
-      if let notice = try rows.endStream(owner, subscription, reason: ending, uuid: client.uuid) { tell([notice]) }
-      return
-    }
+    if let ending = batch.ending { return try end(ending) }
     try rows.pend(owner, subscription, batch.event!.handlerInput, marker: nil)
     try look()
   }
@@ -77,6 +93,7 @@ struct ObserverCell {
       outcome: answer.outcome, advance: advance, uuid: client.uuid,
     ))
     if case .stream? = kind, case .ok = answer.outcome, slot?.firing == answer.firing { ctx.send(.acked, to: streamJob) }
+    if slot != nil, try rows.slot(owner, subscription) == nil { ended() }
     try look()
   }
 
@@ -85,6 +102,7 @@ struct ObserverCell {
     guard slot.firing == nil, let input = input(slot), let due = due(slot), due <= client.dueNow() else { return }
     guard let group = slot.group else {
       try rows.retire(owner, subscription)
+      ended()
       return stopStream()
     }
     let firing = client.uuid()
@@ -132,6 +150,18 @@ struct ObserverCell {
     for notice in notices {
       ctx.send(SessionCell.ID(session.rawValue)).put(SessionPut(.notification(notice)))
     }
+  }
+
+  private mutating func end(_ reason: String) throws {
+    guard let notice = try rows.end(owner, subscription, reason: reason, uuid: client.uuid) else { return }
+    tell([notice])
+    ended()
+  }
+
+  /// The session lists what it armed: it hears of a slot that ended without its `cancel`.
+  private mutating func ended() {
+    guard case let .session(session) = owner else { return }
+    ctx.send(SessionCell.ID(session.rawValue)).ended(subscription)
   }
 
   private mutating func stopStream() {

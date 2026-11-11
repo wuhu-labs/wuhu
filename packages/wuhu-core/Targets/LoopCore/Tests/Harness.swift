@@ -355,7 +355,7 @@ extension Space {
   }
 
   @discardableResult
-  func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: String) async throws -> ToolResultPayload {
+  func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: String) async throws -> ToolResultPayload? {
     try await worker.call(SessionCell.ID(session.rawValue)) { try $0.disarm(subscription, answering: ToolCallID(call)) }
   }
 }

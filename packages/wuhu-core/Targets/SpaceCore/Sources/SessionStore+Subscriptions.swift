@@ -200,14 +200,6 @@ extension SessionStore {
     return refusal
   }
 
-  /// Stops a group's observer firing until it is armed again, `error` its last error.
-  public func pauseObserver(_ group: GroupID, subscriptionID: SubscriptionID, error: String) async throws {
-    try await writer.write { db in
-      guard let row = try SubscriptionRow.find(.group(group), subscriptionID.rawValue, in: db) else { return }
-      try Self.pause(row, error: error, in: db)
-    }
-  }
-
   static func pause(_ row: SubscriptionRow, error: String, in db: Database) throws {
     var row = row
     var slot = try Sessions.decode(SubscriptionSlot.self, from: row.payload)
@@ -280,31 +272,10 @@ extension SessionStore {
     try SubscriptionRow.delete(.session(SessionID(key)), subscriptionID.rawValue, in: db)
   }
 
-  public func cancelSubscription(_ owner: SubscriptionOwner, subscriptionID: SubscriptionID) async throws {
-    try await writer.write { db in try SubscriptionRow.delete(owner, subscriptionID.rawValue, in: db) }
-  }
-
-  /// Ends a slot whose owner can no longer act: an archived session, a
-  /// removed group.
-  @discardableResult
-  public func retireOrphanedSubscription(_ owner: SubscriptionOwner, subscriptionID: SubscriptionID) async throws -> Bool {
-    try await writer.write { db in
-      guard try Self.actingGroup(of: owner, in: db) == nil,
-            try SubscriptionRow.find(owner, subscriptionID.rawValue, in: db) != nil
-      else { return false }
-      try SubscriptionRow.delete(owner, subscriptionID.rawValue, in: db)
-      return true
-    }
-  }
-
   public func armedSubscriptions() async throws -> [ArmedSubscription] {
     try await writer.read { db in
       try SubscriptionRow.order { ($0.ownerKind, $0.owner, $0.subscriptionID) }.fetchAll(db).map(armedSubscription)
     }
-  }
-
-  public func armedSubscription(_ owner: SubscriptionOwner, _ subscriptionID: SubscriptionID) async throws -> ArmedSubscription? {
-    try await writer.read { db in try SubscriptionRow.find(owner, subscriptionID.rawValue, in: db).map(self.armedSubscription) }
   }
 
   // A paused observer is not registered: nothing fires it until it is armed again.
@@ -354,81 +325,6 @@ extension SessionStore {
       armedAt: try SQLiteDateFormat.date(from: row.armedAt),
     )
   }
-
-  /// The children watch saw its errored set shrink: nothing to tell, and the
-  /// next child to join is measured from here.
-  public func observedQuietly(_ id: SessionID, subscriptionID: SubscriptionID, marker: String) async throws {
-    try await writer.write { db in
-      try SubscriptionRow.of(.session(id)).where { $0.subscriptionID.eq(subscriptionID.rawValue) }.update { $0.marker = #bind(marker) }.execute(db)
-    }
-  }
-
-  public enum SubscriptionAdvance: Hashable, Sendable {
-    case retire
-    case observed(marker: String)
-  }
-
-  public func fireSubscription(
-    _ id: SessionID,
-    subscriptionID: SubscriptionID,
-    notification: SystemNotification,
-    advance: SubscriptionAdvance,
-  ) async throws {
-    let key = id.rawValue
-    let nowDate = dateGen.now
-    let now = SQLiteDateFormat.string(from: nowDate)
-    try await writer.write { db in
-      var delivered = notification
-      var advancedObservation: SubscriptionSlot?
-      var topic: String?
-      var throttled: Double?
-      if notification.kind == .spaceObservation {
-        guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
-        let current = try armedSubscription(row)
-        guard current.slot.kind.observes, notification.id == observationToken(current)
-        else { throw StaleSubscriptionCallback() }
-
-        if advance != .retire {
-          if case let .observed(marker) = advance, marker == current.marker { throw StaleSubscriptionCallback() }
-          var progress = observationProgress(current)
-          progress.deliverySequence += 1
-          var slot = current.slot
-          slot.observationProgress = progress
-          delivered.id = UUID.deterministic(
-            "observe",
-            key,
-            slot.id.rawValue,
-            progress.incarnation.uuidString.lowercased(),
-            String(progress.deliverySequence),
-          )
-          advancedObservation = slot
-          let throttle: Double? = switch slot.kind {
-          case let .observe(_, throttleSeconds) where slot.handler == nil: throttleSeconds
-          case .children: 0
-          case .observe, .stream, .timer: nil
-          }
-          if let throttle { (topic, throttled) = (subscriptionID.rawValue, throttle) }
-        } else {
-          delivered.id = UUID.deterministic("observe-error", key, subscriptionID.rawValue)
-        }
-      }
-
-      try Sessions.enqueue(key, input: .notification(delivered), topic: topic, throttle: throttled, nowDate: nowDate, in: db)
-      let slot = SubscriptionRow.of(.session(id)).where { $0.subscriptionID.eq(subscriptionID.rawValue) }
-      switch advance {
-      case .retire:
-        try Self.deleteSubscription(key, subscriptionID, in: db)
-      case let .observed(marker):
-        let payload = try advancedObservation.map { try Sessions.encode($0) }
-        try slot.update {
-          if let payload { $0.payload = #bind(payload) }
-          $0.marker = #bind(marker)
-          $0.lastFiredAt = #bind(now)
-        }.execute(db)
-      }
-    }
-    runtime.poke(id)
-  }
 }
 
 extension SubscriptionSlot.Kind {
@@ -458,14 +354,12 @@ func handlerName(_ path: String) -> String {
   return String(file[..<dot])
 }
 
-private struct StaleSubscriptionCallback: Error {}
-
 // Re-arming after cancellation changes callback identity; transcript generation changes do not.
 func observationToken(_ subscription: ArmedSubscription) -> UUID {
   observationProgress(subscription).incarnation
 }
 
-private func observationProgress(_ subscription: ArmedSubscription) -> ObservationProgress {
+func observationProgress(_ subscription: ArmedSubscription) -> ObservationProgress {
   subscription.slot.observationProgress ?? ObservationProgress(
     incarnation: UUID.deterministic(
       "observation-incarnation",

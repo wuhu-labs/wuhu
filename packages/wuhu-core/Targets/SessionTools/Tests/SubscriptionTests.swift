@@ -170,35 +170,6 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     }
   }
 
-  @Test func observationWriteFailureRetriesWithoutRetiringTheSlot() async throws {
-    try await withToolDeps { time in
-      let space = try Space.inMemory()
-      let session = try await makeSession(space)
-      try await space.sessions.armSubscription(session, slot: .init(id: .init("obs.retry"), kind: .observe(sql: "SELECT 1", throttleSeconds: 1)))
-      try await space.sessions.markInterrupted(session)
-      let remaining = Box(1)
-      try await installTransientQueueFailure(space, remaining: remaining)
-      let messages = Box<[String]>([])
-      let log = Logger(label: "test.observation-retry") { _ in FiringLogHandler(errors: messages) }
-      try await runningFiring(space, log: log) {
-        try await until("observation write failure logs the actual cause") { messages.value.count == 1 }
-        #expect(messages.value[0].contains("injected transient queue write failure"))
-        #expect(try await observationNotifications(space, session: session).isEmpty)
-        #expect(try await space.sessions.armedSubscriptions(session).count == 1)
-        try await time.wake("observation delivery retry", after: 1)
-        try await until("one observation delivery recovers") {
-          try await observationNotifications(space, session: session).count == 1
-        }
-        let notification = try #require(await observationNotifications(space, session: session).first)
-        #expect(!notification.endsSubscription)
-        #expect(try await space.sessions.armedSubscriptions(session).count == 1)
-        try await holds("retry does not duplicate the observation") {
-          try await observationNotifications(space, session: session).count == 1
-        }
-      }
-    }
-  }
-
   @Test(arguments: [false, true])
   func observationStreamEndOrOperationalFailureRetriesAfterBackoff(readFailure: Bool) async throws {
     try await withToolDeps { time in
@@ -286,16 +257,6 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       }
       #expect(try failure(try await foreign.run("cancel", .object(["id": .string(timer.subscriptionID.rawValue)]))).code == "notFound")
 
-      // Still in the transcript but no longer armed: a fired one-shot timer,
-      // or a cancel retried after it committed.
-      var stale = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
-      _ = try await stale.run("timer", .object(["message": "y", "in_seconds": 600]), id: "tc-t2")
-      await time.advance(by: 601)
-      _ = try await space.sessions.drainQueue(session)
-      let ended = try await stale.run(
-        "cancel", .object(["id": .string(SubscriptionID.timer(.init("tc-t2")).rawValue)]),
-      )
-      #expect(try failure(ended).code == "notFound")
       await worker.shutdown()
     }
   }
@@ -329,6 +290,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       _ = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "handler": "/h/nightly.js"]), id: "tc-default")
       _ = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "handler": "/h/nightly.js", "name": "evening"]), id: "tc-named")
       _ = try await world.run("observe", .object(["sql": "SELECT 1", "handler": "/h/nightly.js", "name": "rows"]), id: "tc-observed")
+      try await until("their observers armed them") { try await space.sessions.armedSubscriptions().count == 3 }
       let names = try await space.sessions.armedSubscriptions().compactMap(\.name).sorted()
       #expect(names == ["evening", "nightly", "rows"])
       let empty = try await world.run("timer", .object(["message": "x", "in_seconds": 60, "name": ""]), id: "tc-empty")
@@ -498,32 +460,5 @@ private struct FiringLogHandler: LogHandler {
   func log(event: LogEvent) {
     guard event.level >= .warning else { return }
     errors.withLock { $0.append(event.message.description) }
-  }
-}
-
-private func installTransientQueueFailure(_ space: Space, remaining: Box<Int>) async throws {
-  try await installTransientWriteFailure(space, remaining: remaining, table: "wuwei_mail", message: "injected transient queue write failure")
-}
-
-private func installTransientWriteFailure(
-  _ space: Space, remaining: Box<Int>, table: String, message: String = "injected transient write failure",
-) async throws {
-  let writer = await space.writer
-  try await writer.write { db in
-    db.add(function: DatabaseFunction("transient_queue_failure", argumentCount: 0) { _ in
-      let fail = remaining.withLock { count in
-        guard count > 0 else { return false }
-        count -= 1
-        return true
-      }
-      if fail { throw DatabaseError(resultCode: .SQLITE_BUSY, message: message) }
-      return 0
-    })
-    try db.execute(sql: """
-    CREATE TRIGGER transient_queue_write BEFORE INSERT ON \(table)
-    BEGIN
-      SELECT transient_queue_failure();
-    END;
-    """)
   }
 }

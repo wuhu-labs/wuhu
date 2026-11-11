@@ -3,14 +3,13 @@
 #else
   import Foundation
 #endif
-import struct MainHub.ToolProblem
 import SessionDomain
 import struct SpaceCore.Arming
 import StructuredQueries
 import Wuwei
 import WuweiQueries
 
-/// A timer, an observation or a stream the session armed with a tool and has not heard the end of. Written by the session's cell in the step that arms it (`arm`), deleted in the step that ends it: `disarm`, or the slot's last notice. A handler slot that ends by itself (its handler's cancel, its observer retiring) keeps its row, so the cell reads only the rows the stores still hold (`SessionCell.armed`).
+/// A timer, an observation or a stream the session armed with a tool and has not heard the end of: the session's list of its slots, whoever runs them. Written by the session's cell in the step that arms it (`arm`), deleted in the step that ends it: `disarm`, the slot's last notice, or its observer saying it is gone (`ended`).
 @Table("session_armed")
 struct Armed: Owned, Hashable, Encodable, Sendable {
   @Column("id") var subscription: String
@@ -55,12 +54,14 @@ extension SessionCell {
   mutating func arm(_ arming: Arming, answering call: ToolCallID) throws -> ToolResultPayload {
     if let recorded = try rows.receipt(id.session, call) { return recorded }
     let slot = arming.slot
-    if case let .stream(url, throttle) = slot.kind, slot.handler == nil {
+    if slot.handler != nil {
+      ctx.send(ObserverCell.ID(.session(id.session), slot.id)).arm(arming)
+    } else if case let .stream(url, throttle) = slot.kind {
       ctx.create(streamJob(slot.id), params: .init(dialer: .session(id.session), session: id.session, subscription: slot.id, url: url, throttle: throttle, owner: id.recipient.retyped()))
     } else {
       try rows.arm(id.session, arming, uuid: client.uuid)
     }
-    if keepsArmed, let subscription = slot.kind.subscription {
+    if let subscription = slot.kind.subscription {
       try db.execute(Armed.where { $0.subscription.eq(slot.id.rawValue) }.delete())
       let armed = try Armed(slot.id, subscription, handler: slot.handler != nil)
       try db.execute(Armed.insert { armed })
@@ -70,26 +71,34 @@ extension SessionCell {
     return arming.answer
   }
 
-  /// Ends a slot of the session's for a call of its own: its tool's, or a script's. Only its own slots are looked up, so another session's id is as unknown as a made-up one, and so is the children watch the server keeps for it. Nothing remembers a slot past its end: one that ended (a fired one-shot, a second cancel) reads like one that never was, and the refusal records no answer.
-  mutating func disarm(_ subscription: SubscriptionID, answering call: ToolCallID) throws -> ToolResultPayload {
+  /// Ends a slot of the session's for a call of its own: its tool's, or a script's. Only its own slots are looked up, so another session's id is as unknown as a made-up one, and so is the children watch the server keeps for it. Nothing remembers a slot past its end: one that ended (a fired one-shot, a second cancel) reads like one that never was: nil, which writes nothing and records no answer. A handler slot's firing in progress runs on.
+  mutating func disarm(_ subscription: SubscriptionID, answering call: ToolCallID) throws -> ToolResultPayload? {
     if let recorded = try rows.receipt(id.session, call) { return recorded }
+    if !keepsArmed { try fillArmed() }
+    guard let armed = db.rows(Armed.where { $0.subscription.eq(subscription.rawValue) }).first else { return nil }
     let payload: ToolResultPayload
-    switch try rows.disarm(id.session, subscription) {
-    case .timer?:
+    switch (try armed.decoded(), armed.handler) {
+    case (.timer, false):
+      try rows.clear(id.session, topic: subscription.rawValue)
       payload = .cancelTimer(.init(subscriptionID: subscription))
-    case .observe?, .stream?:
+    case (.observe, false):
+      try rows.retire(id.session, subscription)
       payload = .cancelObservation(.init(subscriptionID: subscription))
-    case nil:
-      guard try rows.streams(id.session).contains(subscription) else {
-        throw ToolProblem("\(subscription.rawValue) is not armed: it already ended, or you never had it", code: "notFound")
-      }
+    case (.stream, false):
       unstream(subscription)
       payload = .cancelObservation(.init(subscriptionID: subscription))
+    case let (slot, true):
+      ctx.send(ObserverCell.ID(.session(id.session), subscription)).cancel()
+      payload = if case .timer = slot { .cancelTimer(.init(subscriptionID: subscription)) } else { .cancelObservation(.init(subscriptionID: subscription)) }
     }
-    try db.execute(Armed.where { $0.subscription.eq(subscription.rawValue) }.delete())
+    try forget(subscription)
     try rows.record(payload, answering: call, of: id.session)
     ctx.send(id).look()
     return payload
+  }
+
+  mutating func forget(_ subscription: SubscriptionID) throws {
+    try db.execute(Armed.where { $0.subscription.eq(subscription.rawValue) }.delete())
   }
 
   mutating func unstream(_ subscription: SubscriptionID) {
@@ -102,30 +111,24 @@ extension SessionCell {
   }
 
   /// A session from before the cell kept the rows has none until its next step fills them (`check`).
-  private var keepsArmed: Bool {
+  var keepsArmed: Bool {
     db.rows(SessionTurn.all).first?.armed == true
   }
 
-  /// What the session has armed: its rows that the stores still hold.
-  func armed() throws -> [Armed] {
-    let held = try rows.armedSlots(id.session).slots
-    return db.rows(Armed.all).filter { held[$0.id] != nil }
-  }
-
   func armedSlots() throws -> [SubscriptionID: Subscription] {
-    Dictionary(uniqueKeysWithValues: try armed().map { ($0.id, try $0.decoded()) })
+    Dictionary(uniqueKeysWithValues: try db.rows(Armed.all).map { ($0.id, try $0.decoded()) })
   }
 
   /// A parked model with a plain timer armed needs no reminder: the timer wakes it.
   func armedWake() throws -> Bool {
-    try armed().contains { try $0.wakesModel }
+    try db.rows(Armed.all).contains { try $0.wakesModel }
   }
 
-  /// The rows as the stores have them: for a session from before the cell kept them, and at Start over.
+  /// Lists what the stores hold and the cell has not listed, for a session from before the cell kept the rows.
   mutating func fillArmed() throws {
     let held = try rows.armedSlots(id.session)
-    try db.execute(Armed.delete())
-    for (slot, subscription) in held.slots {
+    let listed = Set(db.rows(Armed.all).map(\.id))
+    for (slot, subscription) in held.slots where !listed.contains(slot) {
       let armed = try Armed(slot, subscription, handler: held.handlers.contains(slot))
       try db.execute(Armed.insert { armed })
     }
