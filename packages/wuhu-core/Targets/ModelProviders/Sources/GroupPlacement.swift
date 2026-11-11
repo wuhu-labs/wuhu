@@ -36,13 +36,16 @@ public struct ModelPlacementEvidence: Hashable, Sendable, Codable {
   public var score: Double?
   /// The lowest score ÷ capacity among windows shorter than the longest; below 1 the member burns ahead of its pace.
   public var shortWindowPace: Double?
+  /// Seconds its longest window's remaining quota needs to reach that window's target, over the seconds left until its reset.
+  public var urgency: Double?
 
-  public init(member: String, observedAt: Double?, windows: [ModelHeadroomWindow], score: Double?, shortWindowPace: Double? = nil) {
+  public init(member: String, observedAt: Double?, windows: [ModelHeadroomWindow], score: Double?, shortWindowPace: Double? = nil, urgency: Double? = nil) {
     self.member = member
     self.observedAt = observedAt
     self.windows = windows
     self.score = score
     self.shortWindowPace = shortWindowPace
+    self.urgency = urgency
   }
 }
 
@@ -164,9 +167,20 @@ extension ModelsDocument {
 }
 
 let heldMemberMargin = 1.1
+let defaultFiveHourShare = 0.1
+let fiveHourWindowSeconds = 5 * 3600.0
+
+private struct RankedCandidate {
+  var member: ModelsDocument.Member
+  var evidence: ModelPlacementEvidence
+  /// 3 normal, 2 behind its short window's pace, 1 over its weekly reserve, 0 unknown.
+  var rank: Int
+  /// What the rank orders by, higher first: the urgency of rank 3, the pace of rank 2, the score of rank 1.
+  var metric: Double
+}
 
 /// `held` is the member the session holds now, if any; under quota-aware placement it keeps
-/// the session while it scores above 0 at pace and no member reaches ``heldMemberMargin`` times its score.
+/// the session while it ranks normal and no other normal member is ``heldMemberMargin`` times as urgent.
 public func placeModelGroup(
   id: String,
   group: ModelsDocument.Group,
@@ -177,50 +191,69 @@ public func placeModelGroup(
   held: String? = nil,
 ) throws -> ModelPlacement {
   let group = try ModelsDocument(providers: providers, groups: [id: group]).validatedGroup(id).declaration
-  let placed = group.members.map { member -> ModelPlacementEvidence in
+  let ranked = group.members.map { member -> RankedCandidate in
     let snapshot = usage[member.provider]
     let provider = providers[member.provider]!
-    let windows = provider.models[member.model]!.bindingWindows.map { name -> (minutes: Int?, evidence: ModelHeadroomWindow) in
+    let windows = provider.models[member.model]!.bindingWindows.map { name -> (minutes: Int?, left: Double?, evidence: ModelHeadroomWindow) in
       let window = snapshot?.windows.first { $0.name == name }
       let capacity = provider.capacity?[name] ?? 1
       let used = window?.usedPercent.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
       let reset = window?.resetsAt.flatMap { $0.isFinite ? $0 : nil }
       var evidence = ModelHeadroomWindow(name: name, usedPercent: used, resetsAt: reset, capacity: capacity, remaining: nil, score: nil)
       guard let minutes = window?.windowMinutes ?? ["five_hour": 300, "seven_day": 10080][name], minutes > 0,
-            let used else { return (nil, evidence) }
+            let used else { return (nil, nil, evidence) }
       let duration = Double(minutes) * 60
       let remaining = max(0, 1 - used / 100) * capacity
       let secondsLeft = reset.map { max(60, $0 - now.timeIntervalSince1970) } ?? duration
       evidence.remaining = remaining
       evidence.score = remaining / min(1, secondsLeft / duration)
-      return (minutes, evidence)
+      return (minutes, secondsLeft, evidence)
     }
     let longest = windows.compactMap(\.minutes).max()
     let score = windows.contains { $0.evidence.remaining == 0 } ? 0
       : windows.contains { $0.evidence.score == nil } ? nil
       : windows.filter { $0.minutes == longest }.compactMap(\.evidence.score).min()
     let shortWindowPace = windows.filter { $0.minutes.map { $0 < longest! } == true }.compactMap { window in window.evidence.score.map { $0 / window.evidence.capacity } }.min()
-    return ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows.map(\.evidence), score: score, shortWindowPace: shortWindowPace)
+    let week = longest.flatMap { length -> (used: Double, left: Double)? in
+      guard let window = windows.filter({ $0.minutes == length }).max(by: { ($0.evidence.usedPercent ?? 0) < ($1.evidence.usedPercent ?? 0) }),
+            let used = window.evidence.usedPercent, let left = window.left else { return nil }
+      return (used, left)
+    }
+    let urgency = week.map { week in
+      let target: Double = week.left <= fiveHourWindowSeconds ? 100 : 80
+      return max(0, target - week.used) / 100 / (provider.fiveHourShare ?? defaultFiveHourShare) * fiveHourWindowSeconds / week.left
+    }
+    let evidence = ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows.map(\.evidence), score: score, shortWindowPace: shortWindowPace, urgency: urgency)
+    let tier: (rank: Int, metric: Double) = if let score, let urgency {
+      if let pace = shortWindowPace, pace < 1 {
+        (2, pace)
+      } else if let week, week.used >= 80, week.left > fiveHourWindowSeconds {
+        (1, score)
+      } else {
+        (3, urgency)
+      }
+    } else {
+      (0, 0)
+    }
+    return RankedCandidate(member: member, evidence: evidence, rank: tier.rank, metric: tier.metric)
   }
   let chosen: ModelsDocument.Member?
   switch group.policy {
   case let .select(member): chosen = group.members.first { $0.id == member }
   case .quotaAware:
-    let rank = { (evidence: ModelPlacementEvidence) -> (Int, Double) in
-      guard let score = evidence.score else { return (0, 0) }
-      guard let pace = evidence.shortWindowPace, pace < 1 else { return (2, score) }
-      return (1, pace)
-    }
-    let candidates = zip(group.members, placed).filter { $1.score.map { $0 > 0 } ?? true }
+    let candidates = ranked.filter { $0.evidence.score.map { $0 > 0 } ?? true }
     let best = candidates.max { lhs, rhs in
-      rank(lhs.1) != rank(rhs.1) ? rank(lhs.1) < rank(rhs.1) : lhs.0.id > rhs.0.id
+      if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+      if lhs.metric != rhs.metric { return lhs.metric < rhs.metric }
+      return lhs.member.id > rhs.member.id
     }
-    let kept = candidates.first { member, evidence in
-      guard member.id == held, rank(evidence).0 == 2, let score = evidence.score, let lead = best?.1.score else { return false }
-      return lead < score * heldMemberMargin
+    let kept = candidates.first { candidate in
+      candidate.member.id == held && candidate.rank == 3 && candidates.allSatisfy { other in
+        other.rank != 3 || other.member.id == candidate.member.id || other.metric < candidate.metric * heldMemberMargin
+      }
     }
-    chosen = (kept ?? best)?.0
+    chosen = (kept ?? best)?.member
   }
   guard let chosen else { throw CatalogError.noUsableMembers(id) }
-  return ModelPlacement(member: chosen, reason: reason, evidence: placed)
+  return ModelPlacement(member: chosen, reason: reason, evidence: ranked.map(\.evidence))
 }

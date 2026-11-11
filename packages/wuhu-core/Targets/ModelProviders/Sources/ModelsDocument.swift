@@ -60,6 +60,8 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     public var auth: Auth?
     public var usage: UsageSource?
     public var capacity: [String: Double]?
+    /// The fraction of a weekly window one full five-hour window burns; nil means ``defaultFiveHourShare``.
+    public var fiveHourShare: Double?
     public var opaqueReplay: OpaqueReplay? {
       didSet { invalidOpaqueReplay = nil }
     }
@@ -67,7 +69,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     private var invalidOpaqueReplay: JSONValue?
     public var models: [String: Model]
 
-    public init(dialect: Dialect, baseURL: URL, imageFamily: ImageFamily? = nil, originator: String? = nil, transport: Transport? = nil, auth: Auth? = nil, usage: UsageSource? = nil, capacity: [String: Double]? = nil, opaqueReplay: OpaqueReplay? = nil, models: [String: Model]) {
+    public init(dialect: Dialect, baseURL: URL, imageFamily: ImageFamily? = nil, originator: String? = nil, transport: Transport? = nil, auth: Auth? = nil, usage: UsageSource? = nil, capacity: [String: Double]? = nil, fiveHourShare: Double? = nil, opaqueReplay: OpaqueReplay? = nil, models: [String: Model]) {
       self.dialect = dialect
       self.imageFamily = imageFamily
       self.baseURL = baseURL
@@ -76,6 +78,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
       self.auth = auth
       self.usage = usage
       self.capacity = capacity
+      self.fiveHourShare = fiveHourShare
       self.opaqueReplay = opaqueReplay
       self.models = models
     }
@@ -216,6 +219,9 @@ extension ModelsDocument.Provider {
     guard usage == nil || dialect == .responses && auth != .oidc else {
       throw CatalogError.invalidUsageSource(provider: providerID)
     }
+    guard fiveHourShare.map({ $0.isFinite && $0 > 0 && $0 <= 1 }) ?? true else {
+      throw CatalogError.invalidFiveHourShare(provider: providerID)
+    }
     if let invalidOpaqueReplay {
       let value = if case let .string(value) = invalidOpaqueReplay { value } else { "non-string" }
       throw CatalogError.invalidOpaqueReplay(provider: providerID, value: value)
@@ -225,7 +231,7 @@ extension ModelsDocument.Provider {
   // Keys this version no longer reads (the retired `acceptsUnsignedThinking`) are
   // ignored on decode and dropped on encode.
   private enum CodingKeys: String, CodingKey {
-    case dialect, imageFamily, baseURL, originator, transport, auth, usage, capacity, opaqueReplay, models
+    case dialect, imageFamily, baseURL, originator, transport, auth, usage, capacity, fiveHourShare, opaqueReplay, models
   }
 
   public init(from decoder: any Decoder) throws {
@@ -238,6 +244,7 @@ extension ModelsDocument.Provider {
     auth = try container.decodeIfPresent(ModelsDocument.Auth.self, forKey: .auth)
     usage = try container.decodeIfPresent(ModelsDocument.UsageSource.self, forKey: .usage)
     capacity = try container.decodeIfPresent([String: Double].self, forKey: .capacity)
+    fiveHourShare = try container.decodeIfPresent(Double.self, forKey: .fiveHourShare)
     models = try container.decode([String: ModelsDocument.Model].self, forKey: .models)
     if let value = try container.decodeIfPresent(JSONValue.self, forKey: .opaqueReplay) {
       if case let .string(raw) = value, let setting = ModelsDocument.OpaqueReplay(rawValue: raw) {
@@ -260,6 +267,7 @@ extension ModelsDocument.Provider {
     if let invalidOpaqueReplay { try container.encode(invalidOpaqueReplay, forKey: .opaqueReplay) }
     else { try container.encodeIfPresent(opaqueReplay, forKey: .opaqueReplay) }
     try container.encodeIfPresent(capacity, forKey: .capacity)
+    try container.encodeIfPresent(fiveHourShare, forKey: .fiveHourShare)
     try container.encode(models, forKey: .models)
   }
 }

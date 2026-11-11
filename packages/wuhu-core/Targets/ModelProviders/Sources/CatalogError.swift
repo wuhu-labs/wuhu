@@ -22,6 +22,7 @@ public indirect enum CatalogError: Error, Hashable, Sendable, CustomStringConver
   case invalidCacheWarming(String)
   case invalidOIDCDialect(provider: String)
   case invalidUsageSource(provider: String)
+  case invalidFiveHourShare(provider: String)
   case invalidOpaqueReplay(provider: String, value: String)
   case sharedCredentialName(name: String, providers: [String])
   case unstorableCredentialName(provider: String, name: String)
@@ -56,6 +57,8 @@ public indirect enum CatalogError: Error, Hashable, Sendable, CustomStringConver
       "websocket transport requires a Responses or Codex provider: \(provider)"
     case let .invalidUsageSource(provider):
       "usage \"gateway\" requires a Responses provider with a stored credential, not OIDC: \(provider)"
+    case let .invalidFiveHourShare(provider):
+      "invalid fiveHourShare for provider \(provider): use a fraction above 0 and at most 1"
     case let .unknownProvider(provider):
       "unknown provider: \(provider) (edit \(ModelsDocument.spacePath) or run `wuhu models update`)"
     case let .unknownModel(provider, model):
@@ -77,7 +80,7 @@ extension CatalogError {
     case .modelRouteInvalid: "modelRouteInvalid"
     case .noUsableMembers: "modelGroupUnavailable"
     case .unsupportedTarget: "unsupportedTarget"
-    case .invalidDocument, .invalidGroupsDocument, .invalidProvider, .invalidGroup, .unknownGroup, .groupMember, .invalidCapacity: "modelGroupConfiguration"
+    case .invalidDocument, .invalidGroupsDocument, .invalidProvider, .invalidGroup, .unknownGroup, .groupMember, .invalidCapacity, .invalidFiveHourShare: "modelGroupConfiguration"
     default: "invalidArgument"
     }
   }

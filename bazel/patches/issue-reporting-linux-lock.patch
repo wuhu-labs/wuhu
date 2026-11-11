@@ -1,6 +1,7 @@
+diff --git a/Sources/IssueReporting/Internal/LockIsolated.swift b/Sources/IssueReporting/Internal/LockIsolated.swift
 --- a/Sources/IssueReporting/Internal/LockIsolated.swift
 +++ b/Sources/IssueReporting/Internal/LockIsolated.swift
-@@ -1 +1,19 @@
+@@ -1,4 +1,22 @@
 -import Foundation
 +#if canImport(Darwin)
 +  import Foundation
@@ -21,3 +22,6 @@
 +    func unlock() { pthread_mutex_unlock(self.mutex) }
 +  }
 +#endif
+ 
+ @usableFromInline
+ final class LockIsolated<Value>: @unchecked Sendable {

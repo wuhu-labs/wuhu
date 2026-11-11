@@ -153,12 +153,15 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware) throws -
     try placeModelGroup(id: "work", group: doc.groups["work"]!, providers: doc.providers, usage: snapshots, now: now, reason: reason, held: held)
   }
 
-  @Test func aHeldMemberYieldsOnlyToATenPercentLead() throws {
-    let doc = try groupDocument()
-    let fivePercent = ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 47.5)]
-    #expect(try pick(doc, fivePercent, reason: .compaction, held: "primary").member.id == "primary")
-    #expect(try pick(doc, fivePercent).member.id == "secondary", "with nothing held the best score wins by any margin")
-    #expect(try pick(doc, ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 45)], reason: .compaction, held: "primary").member.id == "secondary")
+  @Test func aHeldMemberKeepsUnlessAnotherNormalMemberIsTenPercentMoreUrgent() throws {
+    var doc = try groupDocument()
+    doc.providers["openai"]!.capacity = ["seven_day": 4]
+    let drain = { (primary: Double, secondary: Double) in
+      ["anthropic": self.usage(0, weekly: primary), "openai": self.usage(0, weekly: secondary)]
+    }
+    #expect(try pick(doc, drain(50, 47.5), reason: .compaction, held: "primary").member.id == "primary", "the secondary scores four times the held member but is only 8% more urgent")
+    #expect(try pick(doc, drain(50, 47.5)).member.id == "secondary", "with nothing held the best urgency wins by any margin")
+    #expect(try pick(doc, drain(50, 45), reason: .compaction, held: "primary").member.id == "secondary")
   }
 
   @Test func aHeldMemberMovesWhenExhaustedUnknownOrBehindItsShortWindowPace() throws {
@@ -170,26 +173,14 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware) throws -
     #expect(behind.member.id == "secondary")
   }
 
-  @Test func nearEqualScoresDoNotTradeTheSessionBackAndForth() throws {
-    var doc = try groupDocument()
-    doc.providers["anthropic"]!.capacity = ["seven_day": 4]
-    doc.providers["openai"]!.capacity = ["seven_day": 4]
-    let scored = { (primary: Double, secondary: Double) in
-      ["anthropic": usage(0, weekly: 100 - primary * 25), "openai": usage(0, weekly: 100 - secondary * 25)]
+  @Test func nearEqualUrgencyDoesNotTradeTheSessionBackAndForth() throws {
+    let doc = try groupDocument()
+    let drain = { (primary: Double, secondary: Double) in
+      ["anthropic": self.usage(0, weekly: primary), "openai": self.usage(0, weekly: secondary)]
     }
-    for (held, primary, secondary) in [("primary", 2.392, 2.404), ("secondary", 2.392, 2.290), ("secondary", 2.392, 2.404)] {
-      #expect(try pick(doc, scored(primary, secondary), reason: .compaction, held: held).member.id == held)
+    for (held, primary, secondary) in [("primary", 50.0, 50.2), ("secondary", 50.0, 49.8), ("secondary", 50.2, 50.0)] {
+      #expect(try pick(doc, drain(primary, secondary), reason: .compaction, held: held).member.id == held)
     }
-  }
-
-  @Test func relativeCapacityBeatsRawPercentAndEvidenceIsRecorded() throws {
-    var doc = try groupDocument()
-    doc.providers["openai"]!.capacity = ["seven_day": 4]
-    let placed = try pick(doc, ["anthropic": usage(0, weekly: 50), "openai": usage(0, weekly: 70)], reason: .startOver)
-    #expect(placed.member.id == "secondary")
-    #expect(placed.reason == .startOver)
-    #expect(abs(try #require(placed.evidence[1].windows[1].remaining) - 1.2) < 0.00001)
-    #expect(placed.evidence[0].score == 0.5)
   }
 
   @Test func aFreshSmallMemberBeatsALargeOneWhoseSevenDayBurnsSlower() throws {
@@ -275,7 +266,7 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware) throws -
     left.windows[left.windows.count - 1].usedPercent = 60
     left.windows[left.windows.count - 1].resetsAt = 704_800
     doc.providers["anthropic"]!.capacity = ["model_week": 4]
-    #expect(try pick(doc, ["anthropic": left, "openai": right]).member.id == "primary")
+    #expect(try pick(doc, ["anthropic": left, "openai": right]).member.id == "secondary", "one binding window places by urgency: half its week left with 40% spent is the account to start now")
   }
 
   @Test func anUnobservedBindingMakesTheWholeMemberUnknown() throws {
@@ -313,6 +304,72 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware) throws -
     #expect(try pick(doc, ["anthropic": usage(100)]).member.id == "secondary")
     doc.groups["work"]!.policy = .select(member: "primary")
     #expect(try pick(doc, ["anthropic": usage(100), "openai": usage(50)]).member.id == "primary")
+  }
+
+  @Test func urgencyStartsTheAccountThatMustDrainSoonestAndTheLastFiveHoursReleaseTheReserve() throws {
+    var doc = try groupDocument()
+    doc.groups["work"]!.members = [
+      .init(id: "gateway", provider: "anthropic", model: "claude-sonnet-5"),
+      .init(id: "axiia", provider: "openai", model: "gpt-5.4"),
+      .init(id: "old", provider: "deepseek", model: "deepseek-v4-pro"),
+    ]
+    // 2026-11-11 19:52 +08: the gateway's week is nearly empty, the pair's is filling, one is past 80%.
+    let at = Date(timeIntervalSince1970: 1_794_397_920)
+    func snapshot(_ weeklyUsed: Double, hoursLeft: Double) -> ModelUsageSnapshot {
+      ModelUsageSnapshot(observedAt: at.timeIntervalSince1970, windows: [
+        .init(name: "five_hour", usedPercent: 0, resetsAt: at.timeIntervalSince1970 + 3600),
+        .init(name: "seven_day", usedPercent: weeklyUsed, resetsAt: at.timeIntervalSince1970 + hoursLeft * 3600),
+      ])
+    }
+    var board = ["anthropic": snapshot(13, hoursLeft: 97), "openai": snapshot(71, hoursLeft: 45), "deepseek": snapshot(82, hoursLeft: 28)]
+    let placed = try placeModelGroup(id: "work", group: doc.groups["work"]!, providers: doc.providers, usage: board, now: at, reason: .create)
+    #expect(placed.member.id == "gateway")
+    #expect(abs(try #require(placed.evidence[0].urgency) - 0.35) < 0.005)
+    #expect(abs(try #require(placed.evidence[1].urgency) - 0.10) < 0.005)
+    board["deepseek"] = snapshot(82, hoursLeft: 4)
+    let released = try placeModelGroup(id: "work", group: doc.groups["work"]!, providers: doc.providers, usage: board, now: at, reason: .create)
+    #expect(released.member.id == "old")
+    #expect(abs(try #require(released.evidence[2].urgency) - 2.25) < 0.00001)
+  }
+
+  @Test func theWeeklyReserveRanksBelowABehindPaceMemberAndOrdersByScore() throws {
+    var doc = try groupDocument()
+    doc.providers["openai"]!.capacity = ["seven_day": 4]
+    let behind = try pick(doc, ["anthropic": usage(60, weekly: 85), "openai": usage(0, weekly: 85, weeklyReset: 244_000)])
+    #expect(behind.member.id == "primary", "a member behind its five-hour pace outranks a reserved week with no burn left to spend")
+    let reserved = try pick(doc, ["anthropic": usage(0, weekly: 82), "openai": usage(0, weekly: 85)])
+    #expect(reserved.member.id == "secondary", "reserved members order by score, so the larger account keeps its headroom")
+  }
+
+  @Test func theLastFiveHoursReleaseAWeeklyReserve() throws {
+    let doc = try groupDocument()
+    let room = ["openai": usage(0, weekly: 10)]
+    func at(_ hoursLeft: Double) -> [String: ModelUsageSnapshot] {
+      room.merging(["anthropic": usage(0, weekly: 82, weeklyReset: 100_000 + hoursLeft * 3600)]) { _, new in new }
+    }
+    #expect(try pick(doc, at(5)).member.id == "primary", "inside five hours the target is 100%, so the week that must be spent wins")
+    #expect(try pick(doc, at(5.5)).member.id == "secondary")
+  }
+
+  @Test func unknownAndExhaustedMembersKeepTheirPlace() throws {
+    let doc = try groupDocument()
+    #expect(try pick(doc, ["anthropic": usage(0, weekly: 85, weeklyReset: 244_000)]).member.id == "primary", "a reserved week outranks unknown telemetry")
+    #expect(throws: CatalogError.noUsableMembers("work")) { try pick(doc, ["anthropic": usage(0, weekly: 100), "openai": usage(100)]) }
+  }
+
+  @Test func fiveHourShareScalesTheDrainAndMustBeAFraction() throws {
+    var doc = try groupDocument()
+    doc.providers["anthropic"]!.fiveHourShare = 0.2
+    let decoded = try ModelsDocument(json: JSONEncoder().encode(doc), groupsJSON: JSONEncoder().encode(doc.groups))
+    #expect(decoded.providers["anthropic"]?.fiveHourShare == 0.2)
+    let placed = try placeModelGroup(id: "work", group: decoded.groups["work"]!, providers: decoded.providers, usage: ["anthropic": usage(0, weekly: 50)], now: now, reason: .create)
+    #expect(abs(try #require(placed.evidence[0].urgency) - 0.0446) < 0.0001, "a share of 0.2 halves the drain of a default 0.1")
+    for share in [0, -0.1, 1.5, .infinity] {
+      doc.providers["anthropic"]!.fiveHourShare = share
+      #expect(throws: CatalogError.invalidFiveHourShare(provider: "anthropic")) {
+        try doc.validated(provider: "anthropic", model: "claude-sonnet-5", effort: nil)
+      }
+    }
   }
 }
 
