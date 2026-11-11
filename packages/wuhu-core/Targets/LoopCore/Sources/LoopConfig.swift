@@ -7,6 +7,7 @@ import struct MainHub.EventSources
 import SessionDomain
 import struct WuhuAI.AssistantMessage
 import struct WuhuAI.AssistantMessageMetadata
+import enum WuhuAI.Tool
 import struct WuhuAI.ToolCall
 
 public enum InferenceMode: Hashable, Sendable, Codable {
@@ -51,6 +52,40 @@ public struct ToolInvocation: Sendable {
     self.call = call
     self.state = state
     self.yielded = yielded
+  }
+}
+
+/// The binary's tools differ from the list the generation was given and the generation has not been told so: the step ends without an attempt, and the session cell writes `notice` before the next one. The stored list keeps being sent.
+public struct ToolRosterChanged: Error, Equatable, Sendable {
+  public static let source = SubscriptionID("tool-roster")
+
+  public var notice: String
+
+  /// Nil when no tool was added, removed or changed, or when `transcript` already carries this very notice.
+  public init?(stored: [Tool], live: [Tool], told transcript: Transcript) {
+    func name(_ tool: Tool) -> String {
+      switch tool {
+      case let .function(name, _, _): name
+      case let .hosted(type): type
+      }
+    }
+    let before: [String: Tool] = Dictionary(stored.map { (name($0), $0) }) { first, _ in first }
+    let after: [String: Tool] = Dictionary(live.map { (name($0), $0) }) { first, _ in first }
+    let added: [String] = live.map(name).filter { before[$0] == nil }
+    let removed: [String] = stored.map(name).filter { after[$0] == nil }
+    let changed: [String] = live.filter { tool in before[name(tool)].map { $0 != tool } ?? false }.map(name)
+    let parts: [String] = [("Added", added), ("Removed", removed), ("Changed", changed)]
+      .filter { !$0.1.isEmpty }.map { "\($0.0): \($0.1.joined(separator: ", "))." }
+    guard !parts.isEmpty else { return nil }
+    let notice = "The server was upgraded and its tools differ from the list this generation was given. \(parts.joined(separator: " ")) "
+      + "Your list stays as it is until your next compaction, which brings the new one. Until then a call to a removed tool gets an error result, "
+      + "and a changed tool takes what the server accepts now: if a call is refused, the error says what it expects."
+    let told = transcript.items.contains { item in
+      guard case let .notification(notification) = item else { return false }
+      return notification.subscriptionID == Self.source && notification.content.text == notice
+    }
+    guard !told else { return nil }
+    self.notice = notice
   }
 }
 

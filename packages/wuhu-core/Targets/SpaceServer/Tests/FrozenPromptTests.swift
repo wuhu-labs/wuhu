@@ -39,8 +39,9 @@ import Testing
         let first = try await harness.createSession(title: "first", provider: "openai", model: "gpt-5.6-luna")
         let second = try await harness.createSession(title: "second", provider: "openai", model: "gpt-5.6-luna")
         try await harness.running {
-          // Every request of one turn carries the same prompt; that prompt.
-          func turn(_ id: SessionID) async throws -> String {
+          // Every request of one turn carries the same prompt; that prompt:
+          // the system text, the group's instructions, the session's own.
+          func turn(_ id: SessionID) async throws -> [String] {
             let start = tap.count
             try await harness.deliver("hello", to: id)
             try await until("\(id.rawValue) answers and settles", timeout: .seconds(60)) {
@@ -50,16 +51,18 @@ import Testing
             let prompts = tap.since(start)
             #expect(Set(prompts).count == 1, "one prompt per turn")
             let prompt = try #require(prompts.first)
-            #expect(prompt.contains("Your session id is \(id.rawValue) and"))
+            try #require(prompt.count == 3, "\(prompt.dropFirst())")
+            #expect(prompt[2].hasPrefix("<session-instructions>") && prompt[2].contains("Your session id is \(id.rawValue) and"))
             return prompt
           }
 
           let firstPrompt = try await turn(first)
           let secondPrompt = try await turn(second)
-          let shared = try sharedPart(firstPrompt)
-          #expect(shared == (try sharedPart(secondPrompt)))
-          #expect(shared.contains("root manual") && shared.hasSuffix("- review — Review things (/.agents/skills/review/SKILL.md)"))
-          #expect(!shared.contains(first.rawValue) && !shared.contains(second.rawValue))
+          #expect(firstPrompt.prefix(2) == secondPrompt.prefix(2), "the system text and the group's instructions are every session's")
+          #expect(firstPrompt[1].hasPrefix("<group-instructions>") && firstPrompt[1].contains("root manual"))
+          #expect(firstPrompt[1].hasSuffix("- review — Review things (/.agents/skills/review/SKILL.md)\n</group-instructions>"))
+          #expect(!firstPrompt[0].contains("root manual"))
+          #expect(!firstPrompt.prefix(2).contains { $0.contains(first.rawValue) || $0.contains(second.rawValue) })
 
           try await edit(space, first, "edited")
           _ = try await harness.store.setTitle(first, to: "renamed")
@@ -71,20 +74,14 @@ import Testing
             return try await harness.store.settledWork(first)
           }
           let compacted = try await turn(first)
-          #expect(compacted != firstPrompt)
-          #expect(compacted.contains("root edited") && compacted.contains("home edited"))
-          #expect(compacted.contains("your title is \"renamed\""))
+          #expect(compacted[0] == firstPrompt[0], "the system text is the binary's: a compaction renders the same")
+          #expect(compacted[1].contains("root edited") && compacted[2].contains("home edited"))
+          #expect(compacted[2].contains("your title is \"renamed\""))
           #expect(try await turn(second) == secondPrompt, "another session's compaction leaves it alone")
         }
       }
     }
   }
-}
-
-// Everything before the system SESSION.md, which opens the session's own part.
-private func sharedPart(_ prompt: String) throws -> Substring {
-  let line = try #require(prompt.range(of: "\n\nfrom wuhu://system/SESSION.md:"))
-  return prompt[..<line.lowerBound]
 }
 
 private let responsesModels = """
@@ -104,14 +101,14 @@ private let responsesModels = """
 }
 """
 
-// The provider: keeps each request's system prompt and answers every one with
-// a short final answer.
+// The provider: keeps each request's system text and the instruction messages
+// that open it, and answers every one with a short final answer.
 private final class PromptTap: Sendable {
-  private let prompts = Mutex<[String]>([])
+  private let prompts = Mutex<[[String]]>([])
 
   var count: Int { prompts.withLock { $0.count } }
 
-  func since(_ start: Int) -> [String] {
+  func since(_ start: Int) -> [[String]] {
     prompts.withLock { Array($0[start...]) }
   }
 
@@ -119,8 +116,9 @@ private final class PromptTap: Sendable {
     FetchClient { request in
       let data = try await request.body?.data() ?? Data()
       let body = JSONValue.parse(String(decoding: data, as: UTF8.self))
-      if let prompt = body?.object?["input"]?.array?.first?.object?["content"]?.stringValue {
-        self.prompts.withLock { $0.append(prompt) }
+      if let input = body?.object?["input"]?.array, let system = input.first?.object?["content"]?.stringValue {
+        let opening = input.dropFirst().prefix(2).compactMap { $0.object?["content"]?.array?.first?.object?["text"]?.stringValue }
+        self.prompts.withLock { $0.append([system] + opening.filter { $0.hasSuffix("-instructions>") }) }
       }
       return Response(status: .ok, headers: HTTPFields(), body: .bytes(Data(finalAnswer.utf8), contentType: "text/event-stream"))
     }

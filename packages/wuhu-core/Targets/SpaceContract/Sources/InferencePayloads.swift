@@ -13,13 +13,15 @@ public struct PromptSession: Codable, Equatable, Sendable {
 }
 
 // The caller's system prompt and tool list, rendered once for its generation
-// and stored as the file `/_/rendered/<rendered>`, and the session its
-// templates saw.
+// and stored as the file `/_/rendered/<rendered>`, the user-role messages
+// that open the generation after it (the group's instructions, then the
+// session's own), and the session its templates saw.
 @Contract
 public struct SessionPromptOutput: Codable, Equatable, Sendable {
   public let prompt: String
   public let tools: [JSONValue]
   public let rendered: String
+  public let opening: [String]
   public let session: PromptSession
 }
 

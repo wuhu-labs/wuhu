@@ -38,7 +38,9 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
       #expect(prompt.session == PromptSession(
         id: session.rawValue, title: "worker", kind: .agent, model: "testing/test-model", tags: [], home: "/_/sessions/\(session.rawValue)",
       ))
-      #expect(prompt.prompt.contains("from /AGENTS.md:\n\nfrozen guidance"), "\(prompt.prompt)")
+      #expect(prompt.opening.first == "<group-instructions>\nfrom /AGENTS.md:\n\nfrozen guidance\n</group-instructions>", "\(prompt.opening)")
+      #expect(prompt.opening.count == 2 && prompt.opening[1].contains("Your session id is \(session.rawValue)"))
+      #expect(!prompt.prompt.contains("frozen guidance") && !prompt.prompt.contains(session.rawValue))
       _ = try await fs.write("/AGENTS.md", Data("later edit".utf8), ifMatch: guidance)
       _ = try await harness.store.setTitle(session, to: "renamed")
       let second = try await harness.get("/v1/prompt", bearer: token)

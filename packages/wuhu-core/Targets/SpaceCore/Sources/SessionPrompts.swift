@@ -15,8 +15,9 @@ import enum WuhuAI.Tool
 // compaction and at Start over, and clears the rendering; the first inference
 // after renders the prompt at that revision and stores it, and every later
 // inference of the generation sends the same bytes: the system text and the
-// tool list, one content-addressed blob the row names by hash. A session with
-// no row predates the table: it gets one on its next activation.
+// tool list, one content-addressed blob the row names by hash, then the
+// opening, the generation's lines 1 and 2. A session with no row predates the
+// table: it gets one on its next activation.
 @Table("session_prompts")
 struct SessionPromptRow {
   @Column("session_id", primaryKey: true) var sessionID: String
@@ -26,18 +27,33 @@ struct SessionPromptRow {
   @Column("session") var session: String?
 }
 
-/// A generation's prompt as stored: the blob `/_/rendered/<rendered>` holds `preamble`, what every request of the generation sends besides its messages.
+/// A generation's prompt as stored: the blob `/_/rendered/<rendered>` holds `preamble`, what every request of the generation sends besides its messages, and `opening` is the text of its first user-role messages, ahead of the transcript's.
 public struct StoredPrompt: Equatable, Sendable {
   public let rendered: String
   public let preamble: TranscriptPreamble
+  public let opening: [String]
   public let session: PromptSession
 }
 
+/// What follows the system text, split from it by who changes it: the group's instructions, then the session's own. An empty one has no line.
+public struct PromptOpening: Equatable, Sendable {
+  public let group: String
+  public let session: String
+
+  public init(group: String, session: String) {
+    self.group = group
+    self.session = session
+  }
+}
+
 /// A prompt not rendered yet: the space's files are read at `rev`, and only
-/// a rendering for this very generation and revision is stored.
+/// a rendering for this very generation and revision is stored. `opening` is
+/// whether the generation's lines keep room for one; without it the whole
+/// prompt is the system text.
 public struct PendingPrompt: Equatable, Sendable {
   public let generation: Int
   public let rev: Int
+  public let opening: Bool
 }
 
 public enum SessionPromptState: Equatable, Sendable {
@@ -58,10 +74,11 @@ enum SessionPrompts {
 
   static func state(_ row: SessionPromptRow, in db: Database, _ blobs: BlobCache) throws -> SessionPromptState {
     guard let rendered = row.rendered, let session = row.session else {
-      return .pending(PendingPrompt(generation: Int(row.generation), rev: Int(row.rev)))
+      return .pending(PendingPrompt(generation: Int(row.generation), rev: Int(row.rev), opening: try Sessions.keepsOpening(row.sessionID, generation: row.generation, in: db)))
     }
     return .rendered(StoredPrompt(
       rendered: rendered, preamble: try JSONDecoder().decode(TranscriptPreamble.self, from: Data(try blobs.blob(of: rendered, in: db).content)),
+      opening: try Sessions.opening(row.sessionID, generation: row.generation, in: db),
       session: try JSONDecoder().decode(PromptSession.self, from: Data(session.utf8)),
     ))
   }
@@ -97,15 +114,19 @@ extension SessionStore {
     }
   }
 
-  /// Stores `prompt` and `tools` as the prompt of `pending` and returns the
-  /// generation's prompt: one already stored wins, and a rendering for a
-  /// generation or revision that has since moved is returned unstored. A
-  /// stored one is the generation's line 0, by reference.
-  public func storePrompt(_ id: SessionID, for pending: PendingPrompt, _ prompt: String, tools: [Tool], session: PromptSession) async throws -> StoredPrompt {
+  /// Stores `prompt`, `tools` and `opening` as the prompt of `pending` and
+  /// returns the generation's prompt: one already stored wins, and a
+  /// rendering for a generation or revision that has since moved is returned
+  /// unstored. A stored one is the generation's line 0, by reference, and
+  /// its opening lines 1 and 2; `opening` is given only when `pending` has room for one.
+  public func storePrompt(_ id: SessionID, for pending: PendingPrompt, _ prompt: String, opening: PromptOpening? = nil, tools: [Tool], session: PromptSession) async throws -> StoredPrompt {
+    precondition(opening == nil || pending.opening, "the generation keeps no room for an opening")
     let key = id.rawValue
     let preamble = TranscriptPreamble(system: prompt, tools: tools)
     let blob = try await blobs.stage(Array(try Sessions.encode(preamble).utf8))
-    let rendered = StoredPrompt(rendered: blob.hash, preamble: preamble, session: session)
+    let rendered = StoredPrompt(
+      rendered: blob.hash, preamble: preamble, opening: [opening?.group, opening?.session].compactMap(\.self).filter { !$0.isEmpty }, session: session,
+    )
     let encoded = String(decoding: try JSONEncoder().encode(session), as: UTF8.self)
     let now = dateGen.now
     return try await blobs.write(writer) { db, blobs in
@@ -117,7 +138,7 @@ extension SessionStore {
       try SessionPromptRow.where { $0.sessionID.eq(key) }
         .update { $0.rendered = #bind(blob.hash); $0.session = #bind(encoded) }
         .execute(db)
-      try Sessions.writePreamble(key, generation: row.generation, rendered: blob.hash, at: now, in: db)
+      try Sessions.writePreamble(key, generation: row.generation, rendered: blob.hash, opening: opening, at: now, in: db)
       return rendered
     }
   }

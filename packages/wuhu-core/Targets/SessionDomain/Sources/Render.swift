@@ -108,9 +108,9 @@ extension StateSnapshot {
 }
 
 extension GenerationHead {
-  // Role and position are contract: the snapshot is the generation's first
-  // user-role message; the summary follows it. A creation head has no summary
-  // and gets no nudge.
+  // Role and position are contract: the snapshot is the transcript's first
+  // user-role message, right after the prompt's opening; the summary follows
+  // it. A creation head has no summary and gets no nudge.
   func renderLines(session: SessionID) -> [TranscriptLine] {
     func line(_ key: String, _ text: String) -> TranscriptLine {
       TranscriptLine(at: timestamp, key: key, message: .user(.init(content: [.text(text)])))
@@ -132,8 +132,10 @@ extension Transcript {
   public func renderRequest(
     session: SessionID,
     systemPrompt: String,
+    opening: [String] = [],
     tools: [Tool]? = nil,
   ) async -> Context {
-    Context(systemPrompt: systemPrompt, messages: Self.lines(session: session, items: items).lines.map(\.message), tools: tools)
+    let opening = opening.map { Message.user(.init(content: [.text($0)])) }
+    return Context(systemPrompt: systemPrompt, messages: opening + Self.lines(session: session, items: items).lines.map(\.message), tools: tools)
   }
 }

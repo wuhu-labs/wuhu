@@ -217,6 +217,10 @@ struct SessionCell {
     case let .handoff(binding, budget):
       start(session.slot.compaction, .handoff(binding, budget))
       return
+    case let .roster(notice):
+      try append(session, [.notification(.init(
+        id: client.uuid(), timestamp: client.now(), kind: .context, subscriptionID: ToolRosterChanged.source, content: .init(text: notice),
+      ))]) { $0.input(1) }
     case let .parked(failure):
       try rows.markErrored(id.session, message: failure)
       return

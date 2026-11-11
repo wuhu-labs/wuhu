@@ -19,7 +19,7 @@ import WuhuAI
     #expect(lineDifferenceLog(environment: ["WUHU_TRANSCRIPT_DIFF_LOG": ""]) == nil)
   }
 
-  @Test func aRequestSendsTheGenerationsStoredPromptAndTools() async throws {
+  @Test func aRequestSendsTheGenerationsStoredPromptAndToolsAndTheSessionIsToldOnceOfTheBinarysOwn() async throws {
     try await withSessionDeps {
       let sent = Mutex<[JSONValue]>([])
       try await withDependencies {
@@ -41,11 +41,54 @@ import WuhuAI
         try await harness.running {
           try await harness.deliver("hello", to: id)
           try await until("the request answered") { try await harness.store.settledWork(id) && !sent.withLock { $0 }.isEmpty }
+          try await harness.deliver("again", to: id)
+          try await until("the second request answered") { try await harness.store.settledWork(id) && sent.withLock { $0 }.count == 2 }
         }
-        let request = try #require(sent.withLock { $0 }.first?.object)
-        #expect(try JSONValue.object(request).jsonString().contains("rendered by an older binary"))
-        guard case let .array(tools)? = request["tools"] else { Issue.record("the request names no tools"); return }
-        #expect(tools.map { $0.object?["name"]?.stringValue } == ["only"])
+        for body in sent.withLock({ $0 }) {
+          let request = try #require(body.object)
+          let text = try body.jsonString()
+          #expect(text.contains("rendered by an older binary"))
+          #expect(text.contains("The server was upgraded and its tools differ") && text.contains("Removed: only."), "the notice comes before the first request")
+          guard case let .array(tools)? = request["tools"] else { Issue.record("the request names no tools"); return }
+          #expect(tools.map { $0.object?["name"]?.stringValue } == ["only"])
+        }
+        let notices = try await harness.store.transcript(id).items.filter { item in
+          if case let .notification(notification) = item { notification.subscriptionID.rawValue == "tool-roster" } else { false }
+        }
+        #expect(notices.count == 1, "one notice for one binary")
+      }
+    }
+  }
+
+  @Test func aRequestOpensWithTheGroupsInstructionsThenTheSessionsOwn() async throws {
+    try await withSessionDeps {
+      let sent = Mutex<[JSONValue]>([])
+      try await withDependencies {
+        $0.fetch = FetchClient { request in
+          let body = JSONValue.parse(String(decoding: try await request.body?.data() ?? Data(), as: UTF8.self)) ?? .null
+          sent.withLock { $0.append(body) }
+          let completed = #"{"type":"response.completed","response":{"id":"r","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":2}}}"#
+          return Response(status: .ok, body: .bytes(Data("data: \(completed)\n\n".utf8), contentType: "text/event-stream"))
+        }
+      } operation: {
+        let models = testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"responses\"")
+        let harness = try await SessionHarness(
+          assembledModels: models, credentialResolver: .bound { provider in .init(credential: .apiKey("key-" + provider), identityEpoch: provider) },
+        )
+        _ = try await harness.space.fs(.shared).write("/AGENTS.md", Data("house rules".utf8), ifMatch: nil)
+        let id = try await harness.createSession()
+        try await harness.running {
+          try await harness.deliver("hello", to: id)
+          try await until("the request answered") { try await harness.store.settledWork(id) && !sent.withLock { $0 }.isEmpty }
+        }
+        guard case let .array(input)? = sent.withLock({ $0 }).first?.object?["input"] else { Issue.record("the request has no input"); return }
+        let items = try input.map { try $0.jsonString() }
+        #expect(items.count >= 4)
+        #expect(items[0].contains("Working in a Wuhu space") && !items[0].contains("house rules") && !items[0].contains(id.rawValue), "the system text is the binary's alone")
+        #expect(items[1].contains("<group-instructions>") && items[1].contains("house rules") && items[1].contains(#""role":"user""#))
+        #expect(items[2].contains("<session-instructions>") && items[2].contains("Your session id is \(id.rawValue)") && items[2].contains(#""role":"user""#))
+        #expect(!items[3...].contains { $0.contains("-instructions>") })
+        #expect(try await harness.store.lines(id, generation: 0).prefix(3).map(\.key) == ["system", "group", "session"])
       }
     }
   }

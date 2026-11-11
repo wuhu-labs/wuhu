@@ -173,9 +173,9 @@ import Testing
       }
       let upgraded = try Space(writer: try DatabaseQueue(path: database.path))
       let rendered = Substrate.blobHash(Array(literal.utf8))
-      #expect(try await upgraded.sessions.activatePrompt(lined) == .rendered(StoredPrompt(rendered: rendered, preamble: .init(system: "the prompt", tools: []), session: session)))
+      #expect(try await upgraded.sessions.activatePrompt(lined) == .rendered(StoredPrompt(rendered: rendered, preamble: .init(system: "the prompt", tools: []), opening: [], session: session)))
       #expect(try await upgraded.sessions.lines(lined, generation: 0).map(\.message) == [#"{"rendered":"\#(rendered)"}"#])
-      #expect(try await upgraded.sessions.activatePrompt(bare) == .pending(PendingPrompt(generation: 0, rev: rev)), "no line 0, no tool list: rendered again")
+      #expect(try await upgraded.sessions.activatePrompt(bare) == .pending(PendingPrompt(generation: 0, rev: rev, opening: true)), "no line 0, no tool list: rendered again")
       try await space.close()
       try await upgraded.close()
     }

@@ -32,6 +32,7 @@ public struct InferenceExecutor: Sendable {
   public var session: SessionID
   public var model: ResolvedModel
   public var systemPrompt: String
+  public var opening: [String]
   public var tools: [Tool]
   public var compactToolName: String
   public var hub: AttemptHub?
@@ -45,6 +46,7 @@ public struct InferenceExecutor: Sendable {
     session: SessionID,
     model: ResolvedModel,
     systemPrompt: String,
+    opening: [String] = [],
     tools: [Tool],
     compactToolName: String = "compact",
     hub: AttemptHub? = nil,
@@ -57,6 +59,7 @@ public struct InferenceExecutor: Sendable {
     self.session = session
     self.model = model
     self.systemPrompt = systemPrompt
+    self.opening = opening
     self.tools = tools
     self.compactToolName = compactToolName
     self.hub = hub
@@ -76,6 +79,7 @@ public struct InferenceExecutor: Sendable {
     let context = await transcript.renderRequest(
       session: session,
       systemPrompt: systemPrompt,
+      opening: opening,
       tools: tools,
     )
     var options = RequestOptions(
@@ -181,7 +185,7 @@ public struct InferenceExecutor: Sendable {
 
   public func acknowledge(entry: AssistantEntry, transcript: Transcript) async {
     guard let webSocket, model.transport == .websocket else { return }
-    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, tools: tools)
+    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, opening: opening, tools: tools)
     await webSocket.acknowledge(attemptID: entry.id.uuidString, committedMessage: .init(content: entry.content), toolCallIDs: entry.toolCallIDs.mapValues(\.rawValue), renderedContext: context)
   }
 

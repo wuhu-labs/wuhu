@@ -54,15 +54,26 @@ func sessionPrompt(space: Space, session: SessionID) async throws -> StoredPromp
   case let .pending(pending):
     let record = try await space.sessions.record(session)
     let (prompt, rendered) = try await renderPrompt(space: space, record: record, rev: pending.rev)
-    return try await space.sessions.storePrompt(session, for: pending, prompt, tools: SessionToolExecutor.kernel.tools, session: rendered)
+    let tools = SessionToolExecutor.kernel.tools
+    guard pending.opening else {
+      return try await space.sessions.storePrompt(session, for: pending, prompt.filter { !$0.isEmpty }.joined(separator: "\n\n"), tools: tools, session: rendered)
+    }
+    let opening = PromptOpening(
+      group: prompt[1].isEmpty ? "" : "<group-instructions>\n\(prompt[1])\n</group-instructions>",
+      session: "<session-instructions>\n\(prompt[2])\n</session-instructions>",
+    )
+    return try await space.sessions.storePrompt(session, for: pending, prompt[0], opening: opening, tools: tools, session: rendered)
   }
 }
 
-// One string, most shared first, so a provider's prefix cache can reuse it
-// across sessions: the system AGENTS.md and skills, the group's AGENTS.md and
-// skills, the system SESSION.md, then the home's AGENTS.md and skills. The
+// Three parts by who changes them, most shared first, so a provider's prefix
+// cache can reuse each across sessions: the system AGENTS.md and skills (the
+// binary's), the group's AGENTS.md and skills, then the system SESSION.md
+// with the home's AGENTS.md and skills. The first is the system text and the
+// other two open the generation as user-role lines; a generation opened
+// before those lines existed gets the three joined as its system text. The
 // space's files are read as the session at `rev`.
-func renderPrompt(space: Space, record: SessionRecord, rev: Int) async throws -> (prompt: String, session: PromptSession) {
+func renderPrompt(space: Space, record: SessionRecord, rev: Int) async throws -> (prompt: [String], session: PromptSession) {
   let home = try await space.sessionHome(record.id, at: rev)
   let session = PromptSession(record)
   let context = SpaceToolContext(space: space, principal: Principal(actor: .session(record.id), group: record.group))
@@ -78,9 +89,9 @@ func renderPrompt(space: Space, record: SessionRecord, rev: Int) async throws ->
   }
   let layers = [SystemFiles.instructions, home.groupLayer, SystemFiles.session, home.home]
   let headings = [SystemFiles.skillsHeading, home.groupSkillsHeading, "", "Your skills (call read on the path before using one):"]
-  var parts: [String] = []
+  var parts: [[String]] = []
   for (layer, (listing, heading)) in zip(layers, zip(InstructionScope.listings(layers, for: session), headings)) {
-    parts += await layer.rendered(listing: listing, under: heading, by: renderer)
+    parts.append(await layer.rendered(listing: listing, under: heading, by: renderer))
   }
-  return (parts.joined(separator: "\n\n"), session)
+  return ([parts[0], parts[1], parts[2] + parts[3]].map { $0.joined(separator: "\n\n") }, session)
 }

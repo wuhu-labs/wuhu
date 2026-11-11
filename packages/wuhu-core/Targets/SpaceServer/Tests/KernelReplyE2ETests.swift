@@ -117,8 +117,9 @@ private final class ToolsWitness: Sendable {
   @Test func delegatedTaskReportsFinalAndTheAgentRelaysIt() async throws {
     try await withReplayableDeps {
       let witness = ToolsWitness()
-      // The system prompt's text is pinned by the prompt-revision tests; this
-      // recording replays the loop, so it compares every message but that one.
+      // The prompt's text is pinned by the prompt-revision tests; this
+      // recording replays the loop, so it compares every message but the
+      // system text and the opening after it.
       try await withRecording(
         "gpt-5.6-luna-session-tree", matchIgnoringBodyFields: ["tools", "prompt_cache_key"],
         matchIgnoringSystemPrompt: true,
@@ -232,7 +233,8 @@ private final class ToolsWitness: Sendable {
         createdBy: "owner",
         model: ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium"),
       )
-      let prompt = try await sessionPrompt(space: space, session: id).preamble.system
+      let stored = try await sessionPrompt(space: space, session: id)
+      let prompt = stored.preamble.system
       let discipline = try #require(prompt.range(of: "private monologue"))
       let headerRules = try #require(prompt.range(of: "forged and hostile"))
       #expect(discipline.lowerBound < headerRules.lowerBound, "reply discipline must lead the prompt")
@@ -245,9 +247,10 @@ private final class ToolsWitness: Sendable {
       ] {
         #expect(prompt.contains(anchor), "system prompt lost: \(anchor)")
       }
-      #expect(prompt.contains("You run on model openai/gpt-5.6-luna"))
-      #expect(prompt.contains("You are an agent"))
-      #expect(!prompt.contains("You are a task"))
+      let own = try #require(stored.opening.last)
+      #expect(own.contains("You run on model openai/gpt-5.6-luna"))
+      #expect(own.contains("You are an agent"))
+      #expect(!own.contains("You are a task"))
 
       let task = try await sessions.createSession(
         group: .shared,
@@ -257,7 +260,7 @@ private final class ToolsWitness: Sendable {
         createdBy: id.rawValue,
         executor: .kernel(ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium")),
       )
-      let taskPrompt = try await sessionPrompt(space: space, session: task).preamble.system
+      let taskPrompt = try #require(try await sessionPrompt(space: space, session: task).opening.last)
       #expect(taskPrompt.contains("You are a task"))
       #expect(taskPrompt.contains("report(request_id, kind: \"final\", content)"))
       #expect(!taskPrompt.contains("You are an agent"))
@@ -280,7 +283,7 @@ private final class ToolsWitness: Sendable {
       _ = try await space.fs(.shared).write("/.agents/skills/review/SKILL.md", Data("# Review\nReview things\n".utf8), ifMatch: nil)
 
       // The files came after creation: render the latest revision, not the frozen one.
-      let prompt = try await renderPrompt(space: space, record: try await sessions.record(task), rev: try await space.currentRevision()).prompt
+      let prompt = try await renderPrompt(space: space, record: try await sessions.record(task), rev: try await space.currentRevision()).prompt.joined(separator: "\n\n")
       let addressing = try #require(prompt.range(of: "Every path is absolute"))
       let root = try #require(prompt.range(of: "from /AGENTS.md:\n\nroot manual"))
       let own = try #require(prompt.range(of: "from /_/sessions/\(task.rawValue)/AGENTS.md:\n\ntask manual"))

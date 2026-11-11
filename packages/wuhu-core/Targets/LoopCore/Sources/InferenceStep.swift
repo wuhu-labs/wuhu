@@ -29,6 +29,8 @@ struct StepResult: Sendable, Codable {
     case compact(CompactCause)
     case requestTooLarge(limitBytes: Int?, failure: String)
     case handoff(ReplayBinding, ContextBudget)
+    /// The binary's tools changed under the generation: the notice the session is owed before it goes on.
+    case roster(String)
     case parked(String)
   }
 
@@ -208,6 +210,7 @@ struct Step: Owned {
 
   mutating func failed(_ error: any Error, mode: InferenceMode, session: SessionID, now: Date, jitter: () -> Double) -> Next {
     if let boundary = error as? ReplayBoundaryRequired { return .end(.handoff(boundary.binding, boundary.budget)) }
+    if let changed = error as? ToolRosterChanged { return .end(.roster(changed.notice)) }
     // A compaction during a quota wait folds mechanically, so placement can
     // move the next generation to a member with room.
     if mode == .forcedCompact, waitsOnQuota(error) { return .end(.compact(.forced)) }

@@ -93,10 +93,12 @@ struct RecordingContext: Sendable {
 private actor ReplayLedger {
   private let recordDir: URL
   private let ignoredFields: Set<String>
-  /// Compare only the role of each system message: the prompt it carries is
-  /// pinned by the prompt-revision tests, not by a model recording.
+  /// Compare only the role of each system message and nothing of the prompt's
+  /// opening, the `<group-instructions>` and `<session-instructions>` messages
+  /// after it: the prompt is pinned by the prompt-revision tests, not by a
+  /// model recording.
   private let ignoringSystemPrompt: Bool
-  /// Each session's system prompt, as first seen live in this run: turns of one
+  /// Each session's prompt, as first seen live in this run: turns of one
   /// session must keep the same bytes (the cache prefix never moves).
   private var systemPrompts: [String: String] = [:]
   private var unclaimed: [(index: Int, body: JSONValue)]?
@@ -135,7 +137,7 @@ private actor ReplayLedger {
       // role-less item holding the prompt, or a role "system"/"developer".
       for key in ["messages", "input"] {
         guard case let .array(items)? = fields[key] else { continue }
-        fields[key] = .array(items.map { item in
+        fields[key] = .array(items.filter { !Self.isOpening($0) }.map { item in
           guard Self.isSystem(item), case var .object(entry) = item else { return item }
           entry["content"] = .string("<system>")
           return .object(entry)
@@ -150,27 +152,34 @@ private actor ReplayLedger {
     return role == "system" || role == "developer"
   }
 
-  /// The system prompts in `body`, keyed by the session they belong to (read
-  /// from the prompt itself; an unidentified prompt is skipped).
+  private static func isOpening(_ item: JSONValue) -> Bool {
+    guard case let .object(entry) = item, entry["role"] == .string("user"), let text = text(of: item) else { return false }
+    return text.hasPrefix("<group-instructions>") || text.hasPrefix("<session-instructions>")
+  }
+
+  private static func text(of item: JSONValue) -> String? {
+    guard case let .object(entry) = item else { return nil }
+    return switch entry["content"] {
+    case let .string(content): content
+    case let .array(parts)?: parts.compactMap { part -> String? in
+        guard case let .object(fields) = part, case let .string(text)? = fields["text"] else { return nil }
+        return text
+      }.joined()
+    default: nil
+    }
+  }
+
+  /// The prompt in `body`, system text and opening, keyed by the session it
+  /// belongs to (read from the prompt itself; an unidentified prompt is skipped).
   private static func systemPrompts(in body: JSONValue) -> [(String, String)] {
     guard case let .object(fields) = body else { return [] }
     let pattern = /session id is ([a-z0-9-]+)/
     var prompts: [(String, String)] = []
     for key in ["messages", "input"] {
       guard case let .array(items)? = fields[key] else { continue }
-      for item in items {
-        guard isSystem(item), case let .object(entry) = item else { continue }
-        let text: String? = switch entry["content"] {
-        case let .string(content): content
-        case let .array(parts)?: parts.compactMap { part -> String? in
-            guard case let .object(fields) = part, case let .string(text)? = fields["text"] else { return nil }
-            return text
-          }.joined()
-        default: nil
-        }
-        guard let text, let session = text.firstMatch(of: pattern).map({ String($0.output.1) }) else { continue }
-        prompts.append((session, text))
-      }
+      let prompt = items.filter { isSystem($0) || isOpening($0) }.compactMap(text).joined(separator: "\n")
+      guard let session = prompt.firstMatch(of: pattern).map({ String($0.output.1) }) else { continue }
+      prompts.append((session, prompt))
     }
     return prompts
   }

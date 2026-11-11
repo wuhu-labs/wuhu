@@ -10,6 +10,11 @@ private let model = ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", ef
 
 private func latest(_ space: Space, _ id: SessionID) async throws -> String {
   try await renderPrompt(space: space, record: try await space.sessions.record(id), rev: try await space.currentRevision()).prompt
+    .filter { !$0.isEmpty }.joined(separator: "\n\n")
+}
+
+private func instructions(_ text: String) -> String {
+  "<session-instructions>\nfrom wuhu://system/SESSION.md:\n\n\(text)\n</session-instructions>"
 }
 
 private func write(_ space: Space, _ path: String, _ text: String) async throws {
@@ -17,7 +22,8 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
 }
 
 // The prompt is the system AGENTS.md, the group's, the system SESSION.md and
-// the home's, each rendered as a template for the session.
+// the home's, each rendered as a template for the session: the first is the
+// system text, the group's and the session's open the generation after it.
 @Suite(.deterministicDependencies) struct PromptTemplateTests {
   @Test func theSessionPartIsPinnedForAnAgentAndATask() async throws {
     try await withSessionDeps {
@@ -26,39 +32,33 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
       let task = try await space.sessions.createSession(
         group: .shared, title: "errand", kind: .task, parent: agent, createdBy: agent.rawValue, executor: .kernel(model),
       )
-      let agentPrompt = try await sessionPrompt(space: space, session: agent).preamble.system
-      let taskPrompt = try await sessionPrompt(space: space, session: task).preamble.system
+      let (agentStored, taskStored) = (try await sessionPrompt(space: space, session: agent), try await sessionPrompt(space: space, session: task))
+      let (agentPrompt, taskPrompt) = (agentStored.preamble.system, taskStored.preamble.system)
       #expect(!agentPrompt.contains("\n\n\n"))
       #expect(!taskPrompt.contains("\n\n\n"))
       #expect(agentPrompt.contains("It is context for what they mean"))
       #expect(taskPrompt.contains("It is context for what they mean"))
-      let marker = "\n\nfrom wuhu://system/SESSION.md:\n\n"
-      let agentSplit = try #require(agentPrompt.range(of: marker))
-      let taskSplit = try #require(taskPrompt.range(of: marker))
+      #expect(!agentPrompt.contains(agent.rawValue) && !taskPrompt.contains(task.rawValue), "the system text is every session's of its kind")
       #expect(agentPrompt.hasPrefix("from wuhu://system/AGENTS.md:\n\n# Working in a Wuhu space\n\nYou are a session inside a Wuhu space"))
-      for agentOnly in ["## Messages", "## Replies", "- devices —", "manipulate_ui", "<cache-warming-notice>", "Reply discipline, before anything else:", "You are an agent: a persistent identity"] {
+      for agentOnly in ["## Messages", "## Replies", "- devices —", "manipulate_ui", "<cache-warming-notice>", "Reply discipline, before anything else:"] {
         #expect(agentPrompt.contains(agentOnly), "agent lost \(agentOnly)")
         #expect(!taskPrompt.contains(agentOnly), "task received \(agentOnly)")
-      }
-      for taskOnly in ["You are a task: one asker, one brief.", "An observation is not certain to fire"] {
-        #expect(taskPrompt.contains(taskOnly), "task lost \(taskOnly)")
-        #expect(!agentPrompt.contains(taskOnly), "agent received \(taskOnly)")
       }
       for shared in ["## Scratch files", "## Files and revisions", "## Group access", "## Skills"] {
         #expect(agentPrompt.contains(shared))
         #expect(taskPrompt.contains(shared))
       }
-      #expect(agentPrompt[..<agentSplit.lowerBound].hasSuffix("- writing-style — Shape a reply for someone reading on a phone — outcome first, each layer shorter than the last, anything over ~15 lines becomes a file with a pointer; what a finished task, a proposal, a \"which one?\" and a document hand-over look like. (wuhu://system/skills/writing-style/SKILL.md)"))
+      #expect(agentPrompt.hasSuffix("- writing-style — Shape a reply for someone reading on a phone — outcome first, each layer shorter than the last, anything over ~15 lines becomes a file with a pointer; what a finished task, a proposal, a \"which one?\" and a document hand-over look like. (wuhu://system/skills/writing-style/SKILL.md)"))
 
       let home = "Your home in the space is /_/sessions/{id}/. Keep your AGENTS.md (standing instructions) and any notes you want to survive compaction there; a skill of yours is /_/sessions/{id}/.agents/skills/<name>/SKILL.md. Instructions resolve top-down — the system, your group's root, then yours; nothing comes from the session that created you. This prompt renders the space's files and your home's as of the start of this generation, and again after each compaction or Start over: an edit in between, yours included, reaches it only then."
-      #expect(agentPrompt[agentSplit.upperBound...] == """
+      #expect(agentStored.opening == [instructions("""
       You are an agent: a persistent identity with a box. Delegate with create_session(expects_reply: true, message) — that already opens the request, so do not call request on the new task until its final report lands. The final report wakes you; never poll for it, never arm a timer to wait for it. If the child sends no progress report for 30 minutes, a reminder wakes you instead: check on it. Acknowledge the asker, then stop. If the session that created you opens a request on you, answer it with report(request_id, kind: "final", content): only that closes it.
 
       Your session id is \(agent.rawValue) and your title is "desk". You run on model openai/gpt-5.6-luna.
 
       \(home.replacing("{id}", with: agent.rawValue))
-      """)
-      #expect(taskPrompt[taskSplit.upperBound...] == """
+      """)])
+      #expect(taskStored.opening == [instructions("""
       You are a task: one asker, one brief. Your parent opened a request on you and is waiting. Answer it with report(request_id, kind: "final", content) — that is the only thing that closes it; assistant text reaches nobody, and send_message into the DM is not a report. The request id is the message-id on the request message's header. Send report(kind: "progress") whenever the shape of the work changes.
 
       You may end a run before the final report only if something is certain to wake you: a timer or an exec with a timeout. An observation is not certain to fire — if you wait on one, arm a timer too.
@@ -66,7 +66,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
       Your session id is \(task.rawValue) and your title is "errand". You run on model openai/gpt-5.6-luna.
 
       \(home.replacing("{id}", with: task.rawValue))
-      """)
+      """)])
     }
   }
 
@@ -78,7 +78,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
       #expect(prompt.contains(#"""
       ## Prompt templates
 
-      Every AGENTS.md (system, group, home, machine notes, repository) renders as a logic-less Mustache template for the session reading it, with no HTML escaping; `read` always returns the raw file. A frontmatter is dropped from the rendering. The system prompt renders once per generation, at its start and after each compaction or Start over, so a rename or a model switch shows from the next generation; a machine's or repository's renders with its notice.
+      Every AGENTS.md (system, group, home, machine notes, repository) renders as a logic-less Mustache template for the session reading it, with no HTML escaping; `read` always returns the raw file. A frontmatter is dropped from the rendering. Your instructions render once per generation, at its start and after each compaction or Start over, so a rename or a model switch shows from the next generation; a machine's or repository's renders with its notice.
 
       - `session` holds `id`, `title`, `task` and `agent` (booleans), `model`, `tags` (a map, so `{{#session.tags.review}}…{{/session.tags.review}}`) and `home`.
       - `{{> /path}}` includes a space file as the session, at the prompt's revision; `{{> path}}` resolves from the including file's folder, wherever that file lives (the space, a machine, a repository), so a repository's AGENTS.md includes its own files. Partials nest at most 8 deep; a cycle renders the error line.

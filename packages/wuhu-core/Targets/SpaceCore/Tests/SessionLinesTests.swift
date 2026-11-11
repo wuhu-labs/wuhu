@@ -20,7 +20,8 @@ import WuhuAI
 
   @discardableResult private func storePrompt(_ store: SessionStore, _ id: SessionID, _ prompt: String = "the prompt") async throws -> String {
     guard case let .pending(pending) = try await store.activatePrompt(id) else { throw LinesUnexpected() }
-    return try await store.storePrompt(id, for: pending, prompt, tools: Self.tools, session: PromptSession(try await store.record(id))).rendered
+    let opening = pending.opening ? PromptOpening(group: "the group's", session: "the session's") : nil
+    return try await store.storePrompt(id, for: pending, prompt, opening: opening, tools: Self.tools, session: PromptSession(try await store.record(id))).rendered
   }
 
   private func keys(_ store: SessionStore, _ id: SessionID, generation: Int = 0) async throws -> [String] {
@@ -48,9 +49,9 @@ import WuhuAI
       let space = try makeSpace()
       let store = space.sessions
       let id = try await created(space)
-      #expect(try await keys(store, id) == ["head"])
+      #expect(try await store.lines(id, generation: 0).map(\.position) == [3], "positions 1 and 2 wait for the prompt's opening")
       try await storePrompt(store, id)
-      #expect(try await keys(store, id) == ["system", "head"])
+      #expect(try await keys(store, id) == ["system", "group", "session", "head"])
 
       var seen = try await store.lines(id, generation: 0)
       func step(_ write: () async throws -> Void, adds expected: [String]) async throws {
@@ -101,7 +102,7 @@ import WuhuAI
       #expect(try await keys(store, id, generation: 1) == ["head", "head:summary", "head:nudge", "message:m1"])
       try await storePrompt(store, id, "the next prompt")
       try await store.append(id, items: [message("m2")], inputOrigin: true)
-      #expect(try await keys(store, id, generation: 1) == ["system", "head", "head:summary", "head:nudge", "message:m1", "message:m2"])
+      #expect(try await keys(store, id, generation: 1) == ["system", "group", "session", "head", "head:summary", "head:nudge", "message:m1", "message:m2"])
       #expect(try await clean(store, id))
       let generations = try await store.lineGenerations(id)
       #expect(generations.current == 1 && generations.withLines == [0, 1])
@@ -125,6 +126,44 @@ import WuhuAI
     }
   }
 
+  @Test func theOpeningIsStoredAsLinesOneAndTwoAndReadBack() async throws {
+    try await withSessionDeps {
+      let space = try makeSpace()
+      let store = space.sessions
+      let session = PromptSession(try await store.record(try await created(space)))
+
+      let both = try await created(space)
+      guard case let .pending(pending) = try await store.activatePrompt(both) else { throw LinesUnexpected() }
+      #expect(pending.opening)
+      let stored = try await store.storePrompt(both, for: pending, "system", opening: .init(group: "group text", session: "session text"), tools: [], session: session)
+      #expect(stored.opening == ["group text", "session text"])
+      #expect(try await store.activatePrompt(both) == .rendered(stored))
+      let lines = try await store.lines(both, generation: 0)
+      #expect(lines.map(\.position) == [0, 1, 2, 3] && lines.map(\.role) == [.system, .user, .user, .user])
+
+      let groupless = try await created(space)
+      guard case let .pending(next) = try await store.activatePrompt(groupless) else { throw LinesUnexpected() }
+      let alone = try await store.storePrompt(groupless, for: next, "system", opening: .init(group: "", session: "session text"), tools: [], session: session)
+      #expect(alone.opening == ["session text"])
+      #expect(try await store.activatePrompt(groupless) == .rendered(alone))
+      #expect(try await store.lines(groupless, generation: 0).map(\.position) == [0, 2, 3], "a group without instructions has no line 1")
+      try await store.append(groupless, items: [direct("hello")], inputOrigin: true)
+      #expect(try await clean(store, groupless))
+
+      // A generation opened before the opening had positions: its transcript starts at 1.
+      let older = try await created(space)
+      try await space.writer.write { db in
+        try db.execute(sql: #"UPDATE "session_lines" SET position = 1 WHERE session_id = ?"#, arguments: [older.rawValue])
+      }
+      guard case let .pending(whole) = try await store.activatePrompt(older) else { throw LinesUnexpected() }
+      #expect(!whole.opening)
+      #expect(try await store.storePrompt(older, for: whole, "everything", tools: [], session: session).opening.isEmpty)
+      try await store.append(older, items: [direct("hello")], inputOrigin: true)
+      #expect(try await store.lines(older, generation: 0).map(\.position) == [0, 1, 2])
+      #expect(try await clean(store, older))
+    }
+  }
+
   @Test func aDifferenceNamesTheFirstPositionThatDisagrees() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
@@ -136,17 +175,17 @@ import WuhuAI
       #expect(try await !clean(store, id, rendered: "another"))
 
       try await space.writer.write { db in
-        try db.execute(sql: #"UPDATE "session_lines" SET message = '{}' WHERE session_id = ? AND position = 3"#, arguments: [id.rawValue])
+        try db.execute(sql: #"UPDATE "session_lines" SET message = '{}' WHERE session_id = ? AND position = 5"#, arguments: [id.rawValue])
       }
       let changed = try #require(try await store.lineDifference(id, generation: 0, rendered: rendered, transcript: store.transcript(id)))
-      #expect(changed.position == 3)
+      #expect(changed.position == 5)
       #expect(changed.line != nil && changed.render != nil && changed.line != changed.render)
 
       try await space.writer.write { db in
-        try db.execute(sql: #"DELETE FROM "session_lines" WHERE session_id = ? AND position >= 2"#, arguments: [id.rawValue])
+        try db.execute(sql: #"DELETE FROM "session_lines" WHERE session_id = ? AND position >= 4"#, arguments: [id.rawValue])
       }
       let missing = try #require(try await store.lineDifference(id, generation: 0, rendered: rendered, transcript: store.transcript(id)))
-      #expect(missing.position == 2 && missing.line == nil && missing.render != nil)
+      #expect(missing.position == 4 && missing.line == nil && missing.render != nil)
     }
   }
 
@@ -165,15 +204,16 @@ import WuhuAI
       let jsonl = String(decoding: try await files.read(folder + "/current.jsonl").1, as: UTF8.self)
       #expect(try await files.read(folder + "/0.jsonl").1 == Data(jsonl.utf8))
       let records = try jsonl.split(separator: "\n").map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
-      #expect(records.map { $0.object?["position"]?.intValue } == [0, 1, 2, 3])
-      #expect(records.map { $0.object?["role"]?.stringValue } == ["system", "user", "user", "assistant"])
-      #expect(records.map { $0.object?["meta"] != nil } == [false, false, false, true], "meta beside key, only where the line has one")
-      #expect(records[3].object?["meta"]?.object?["stop_reason"]?.stringValue == "stop")
+      #expect(records.map { $0.object?["position"]?.intValue } == [0, 1, 2, 3, 4, 5])
+      #expect(records.map { $0.object?["role"]?.stringValue } == ["system", "user", "user", "user", "user", "assistant"])
+      #expect(records.map { $0.object?["meta"] != nil } == [false, false, false, false, false, true], "meta beside key, only where the line has one")
+      #expect(records[5].object?["meta"]?.object?["stop_reason"]?.stringValue == "stop")
 
       let outline = String(decoding: try await files.read(folder + "/current.outline.txt").1, as: UTF8.self).split(separator: "\n")
-      #expect(outline.count == 4)
+      #expect(outline.count == 6)
       #expect(outline[0].hasPrefix("0 ") && outline[0].hasSuffix("system system /_/rendered/\(rendered)"))
-      #expect(outline[2].contains(" user direct:") && outline[2].contains("hello there"))
+      #expect(outline[1].hasSuffix(" user group the group's") && outline[2].hasSuffix(" user session the session's"))
+      #expect(outline[4].contains(" user direct:") && outline[4].contains("hello there"))
 
       for path in [folder + "/1.jsonl", folder + "/current.md", "/_/session-transcripts/nobody/current.jsonl"] {
         await #expect(throws: SpaceError.notFound(path)) { try await files.read(path) }

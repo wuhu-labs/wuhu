@@ -124,6 +124,10 @@ A page imports `wuhu:space` for data or `wuhu:device` for device feedback; the i
   readable one; `GET /v1/templates` lists the acting group's.
 - Instructions, in prompt order: the system AGENTS.md and skills; the session's own group
   (`/AGENTS.md` and the skills under `/.agents/skills/`, hostless); the system SESSION.md; the home.
+  The first is the request's system text; the group's part and the session's (SESSION.md with the
+  home) are the generation's first two user-role messages, wrapped in `<group-instructions>` and
+  `<session-instructions>`, so the system text is the same for every session of a kind on one binary
+  (a nearer skill that hides a system skill's listing aside).
   No group's instructions reach another group's sessions. Each AGENTS.md renders as a Mustache
   template for the session; the scopes are read as of the session's prompt revision and the
   rendered prompt is stored per generation, so an edit, a rename or a model switch reaches a live

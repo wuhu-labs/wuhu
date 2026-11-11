@@ -16,6 +16,7 @@ import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
+import enum SpaceContract.SessionToolExecutor
 import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionStore
 import WuhuAI
@@ -101,6 +102,13 @@ func kernelInference(
       try await failed(error, session: request.sessionID, catalog: routingCatalog, inferenceStarted: false, span: span)
     }
     span.set(.transport, resolved.transport.rawValue)
+    // The generation's prompt as stored, tool list included: an upgrade changes neither until the next generation renders, and the session is told once what changed.
+    let prompt = try await executor.prompt(request.sessionID)
+    let tools = try prompt.tools.map { try JSONValueDecoder().decode(Tool.self, from: $0) }
+    if request.mode == .normal, let changed = ToolRosterChanged(stored: tools, live: SessionToolExecutor.kernel.tools, told: request.transcript) {
+      span.conclude(.handoff)
+      throw changed
+    }
     let lease: (session: ResponsesWebSocketSession, lease: UUID)?
     if resolved.transport == .websocket {
       lease = try await sockets.acquire(session: request.sessionID, model: resolved)
@@ -109,17 +117,14 @@ func kernelInference(
       lease = nil
     }
     do {
-      // The generation's prompt as stored, tool list included: an upgrade changes neither until the next generation renders.
-      let prompt = try await executor.prompt(request.sessionID)
-      let systemPrompt = prompt.prompt
-      let tools = try prompt.tools.map { try JSONValueDecoder().decode(Tool.self, from: $0) }
       if let log = access.lineDifferences {
         await checkLines(log, store: store, request: request, rendered: prompt.rendered, at: date.now)
       }
       let inferenceExecutor = InferenceExecutor(
         session: request.sessionID,
         model: resolved,
-        systemPrompt: systemPrompt,
+        systemPrompt: prompt.prompt,
+        opening: prompt.opening,
         tools: tools,
         compactToolName: KernelToolset.compactToolName,
         hub: attempts,

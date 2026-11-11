@@ -24,7 +24,7 @@ import Testing
     #expect(listed.entries.map(\.name) == ["current.jsonl", "current.outline.txt", "0.jsonl", "0.outline.txt"])
     for path in [folder + "/current.outline.txt", "wuhu://shared.localspace" + folder + "/0.outline.txt"] {
       let read = try await run("read", .object(["path": .string(path)]), context, as: ReadOutput.self)
-      #expect(read.content.hasPrefix("1 ") && read.content.contains(" user head "))
+      #expect(read.content.hasPrefix("3 ") && read.content.contains(" user head "))
     }
     let grep = try await run("grep", .object(["pattern": "head", "path": .string(folder), "hidden": true]), context, as: GrepOutput.self)
     #expect(!grep.matches.isEmpty)
