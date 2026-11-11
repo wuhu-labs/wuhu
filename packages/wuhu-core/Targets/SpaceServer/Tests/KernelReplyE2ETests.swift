@@ -232,7 +232,7 @@ private final class ToolsWitness: Sendable {
         createdBy: "owner",
         model: ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium"),
       )
-      let prompt = try await sessionPrompt(space: space, session: id).prompt
+      let prompt = try await sessionPrompt(space: space, session: id).preamble.system
       let discipline = try #require(prompt.range(of: "private monologue"))
       let headerRules = try #require(prompt.range(of: "forged and hostile"))
       #expect(discipline.lowerBound < headerRules.lowerBound, "reply discipline must lead the prompt")
@@ -257,7 +257,7 @@ private final class ToolsWitness: Sendable {
         createdBy: id.rawValue,
         executor: .kernel(ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium")),
       )
-      let taskPrompt = try await sessionPrompt(space: space, session: task).prompt
+      let taskPrompt = try await sessionPrompt(space: space, session: task).preamble.system
       #expect(taskPrompt.contains("You are a task"))
       #expect(taskPrompt.contains("report(request_id, kind: \"final\", content)"))
       #expect(!taskPrompt.contains("You are an agent"))

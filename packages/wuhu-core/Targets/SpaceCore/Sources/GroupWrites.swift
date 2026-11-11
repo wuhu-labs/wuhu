@@ -35,9 +35,9 @@ extension Space {
   }
 
   /// Writing a group's file takes a write role in it; the settings group takes
-  /// a space admin. The --dev seat is unrestricted; nobody writes a session transcript.
+  /// a space admin. The --dev seat is unrestricted; nobody writes a session transcript or a rendered file.
   public func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, acting: GroupID) async throws {
-    if SessionTranscripts.contains(path.rawValue) { throw SpaceError.sessionTranscriptReadOnly(path.rawValue) }
+    if SessionTranscripts.contains(path.rawValue) || RenderedFiles.contains(path.rawValue) { throw SpaceError.sentViewReadOnly(path.rawValue) }
     try await writer.read { db in try GroupWrites.refuseWrite(path, in: group, by: actor, acting: acting, in: db) }
   }
 

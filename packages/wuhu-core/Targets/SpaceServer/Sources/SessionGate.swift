@@ -344,7 +344,11 @@ private func sessionRouter(
   // The caller's prompt for its generation, rendered by the first read.
   router.get("/v1/prompt") { _, _ in
     do {
-      return try Response.json(try await sessionPrompt(space: space, session: principal().session))
+      let stored = try await sessionPrompt(space: space, session: principal().session)
+      return try Response.json(SessionPromptOutput(
+        prompt: stored.preamble.system, tools: try stored.preamble.tools.map { try JSONValueEncoder().encode($0) }, rendered: stored.rendered,
+        session: stored.session,
+      ))
     } catch {
       return sessionErrorResponse(error)
     }

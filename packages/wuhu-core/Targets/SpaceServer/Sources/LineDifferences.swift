@@ -7,7 +7,6 @@ import struct ExecutionOwner.LineDifferenceLog
 import Logging
 import struct LoopCore.InferenceRequest
 import struct LoopCore.TurnDifference
-import struct SessionDomain.TranscriptPreamble
 import struct SpaceCore.SessionStore
 import struct SpaceCore.TranscriptLineDifference
 
@@ -33,9 +32,9 @@ extension LineDifferenceLog {
 }
 
 /// Never throws: a failed check is logged and the request goes on.
-func checkLines(_ log: LineDifferenceLog, store: SessionStore, request: InferenceRequest, preamble: TranscriptPreamble, at time: Date) async {
+func checkLines(_ log: LineDifferenceLog, store: SessionStore, request: InferenceRequest, rendered: String, at time: Date) async {
   do {
-    guard let difference = try await store.lineDifference(request.sessionID, generation: request.generation, preamble: preamble, transcript: request.transcript) else { return }
+    guard let difference = try await store.lineDifference(request.sessionID, generation: request.generation, rendered: rendered, transcript: request.transcript) else { return }
     let record = LineDifferenceRecord(
       time: time.formatted(.iso8601), session: request.sessionID.rawValue, generation: request.generation, position: difference.position,
       line: difference.line.map(LineDifferenceRecord.Side.init), render: difference.render.map(LineDifferenceRecord.Side.init),

@@ -4,7 +4,6 @@ import GRDB
 import Scratch
 import SessionDomain
 import struct SpaceContract.PromptSession
-import struct SpaceContract.SessionPromptOutput
 @testable import SpaceCore
 import Testing
 
@@ -108,9 +107,9 @@ import Testing
       let id = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       guard case let .pending(pending) = try await store.activatePrompt(id) else { throw Unexpected() }
       let session = PromptSession(try await store.record(id))
-      let first = SessionPromptOutput(prompt: "first", session: session)
-      #expect(try await store.storePrompt(id, for: pending, first, tools: []) == first)
-      #expect(try await store.storePrompt(id, for: pending, SessionPromptOutput(prompt: "racing", session: session), tools: []) == first, "the first stored wins")
+      let first = try await store.storePrompt(id, for: pending, "first", tools: [], session: session)
+      #expect(first.preamble == .init(system: "first", tools: []))
+      #expect(try await store.storePrompt(id, for: pending, "racing", tools: [], session: session) == first, "the first stored wins")
       _ = try await store.setTitle(id, to: "renamed")
       #expect(try await store.activatePrompt(id) == .rendered(first))
 
@@ -119,8 +118,7 @@ import Testing
       _ = try await store.writeCompaction(id, head: head, kept: nil)
       guard case let .pending(next) = try await store.activatePrompt(id) else { throw Unexpected() }
       #expect(next.rev > pending.rev)
-      let stale = SessionPromptOutput(prompt: "stale", session: session)
-      #expect(try await store.storePrompt(id, for: pending, stale, tools: []) == stale)
+      #expect(try await store.storePrompt(id, for: pending, "stale", tools: [], session: session).preamble.system == "stale")
       #expect(try await store.activatePrompt(id) == .pending(next), "a render of an older generation is not stored")
     }
   }
@@ -133,7 +131,7 @@ import Testing
       let store = space.sessions
       let id = try await store.createSession(group: .shared, title: "old", kind: .agent, createdBy: "morgan", model: .test)
       guard case let .pending(started) = try await store.activatePrompt(id) else { throw Unexpected() }
-      let stale = SessionPromptOutput(prompt: "old title", session: PromptSession(try await store.record(id)))
+      let stale = PromptSession(try await store.record(id))
 
       _ = try await store.setTitle(id, to: "new")
       try await store.markInterrupted(id)
@@ -141,34 +139,43 @@ import Testing
       guard case let .pending(restarted) = try await store.activatePrompt(id) else { throw Unexpected() }
       #expect(restarted.rev == started.rev && restarted.generation > started.generation)
 
-      #expect(try await store.storePrompt(id, for: started, stale, tools: []) == stale)
+      #expect(try await store.storePrompt(id, for: started, "old title", tools: [], session: stale).session == stale)
       #expect(try await store.activatePrompt(id) == .pending(restarted), "the old generation's render is not stored")
     }
   }
 
-  @Test func theUpgradeKeepsEachSessionsRevision() async throws {
+  @Test func theUpgradeNamesEachStoredPreambleByHash() async throws {
     try await withSessionDeps {
       let database = try DatabaseQueue(path: "file:/prompt-upgrade-\(UUID())?vfs=memdb")
       let space = try Space(writer: database)
-      let id = try await space.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let rev = try #require(try await space.sessions.promptRevision(id))
+      let lined = try await space.sessions.createSession(group: .shared, title: "lined", kind: .agent, createdBy: "morgan", model: .test)
+      let bare = try await space.sessions.createSession(group: .shared, title: "bare", kind: .agent, createdBy: "morgan", model: .test)
+      let rev = try #require(try await space.sessions.promptRevision(lined))
+      let session = PromptSession(try await space.sessions.record(lined))
+      let literal = #"{"system":"the prompt","tools":[]}"#
       try await database.write { db in
         try db.execute(sql: """
         DROP TABLE "session_prompts";
-        CREATE TABLE "session_prompt_revisions" ("session_id" TEXT NOT NULL PRIMARY KEY, "rev" INTEGER NOT NULL);
-        DELETE FROM grdb_migrations WHERE identifier = '007';
+        CREATE TABLE "session_prompts" (
+          "session_id" TEXT NOT NULL PRIMARY KEY, "generation" INTEGER NOT NULL, "rev" INTEGER NOT NULL, "prompt" TEXT, "session" TEXT,
+          CHECK (("prompt" IS NULL) = ("session" IS NULL))
+        );
+        DELETE FROM grdb_migrations WHERE identifier = '030';
         """)
-        try db.execute(sql: #"INSERT INTO "session_prompt_revisions" VALUES (?, ?)"#, arguments: [id.rawValue, rev])
-        try db.execute(sql: #"INSERT INTO "session_prompt_revisions" VALUES ('without-runtime', ?)"#, arguments: [rev])
+        let encoded = String(decoding: try JSONEncoder().encode(session), as: UTF8.self)
+        for id in [lined, bare] {
+          try db.execute(sql: #"INSERT INTO "session_prompts" VALUES (?, 0, ?, 'the prompt', ?)"#, arguments: [id.rawValue, rev, encoded])
+        }
+        try db.execute(
+          sql: #"INSERT INTO "session_lines" (session_id, generation, position, at, role, key, message) VALUES (?, 0, 0, ?, 'system', 'system', ?)"#,
+          arguments: [lined.rawValue, SQLiteDateFormat.string(from: fixedDate), literal],
+        )
       }
       let upgraded = try Space(writer: try DatabaseQueue(path: database.path))
-      #expect(try await upgraded.sessions.activatePrompt(id) == .pending(PendingPrompt(generation: 0, rev: rev)))
-      let kept = try await database.read { db in
-        try Row.fetchOne(db, sql: #"SELECT "generation", "rev" FROM "session_prompts" WHERE session_id = 'without-runtime'"#)
-          .map { [$0["generation"], $0["rev"]] as [Int] }
-      }
-      #expect(kept == [0, rev], "a revision without a runtime row is kept at generation 0")
-      #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM sqlite_master WHERE name = 'session_prompt_revisions'") } == 0)
+      let rendered = Substrate.blobHash(Array(literal.utf8))
+      #expect(try await upgraded.sessions.activatePrompt(lined) == .rendered(StoredPrompt(rendered: rendered, preamble: .init(system: "the prompt", tools: []), session: session)))
+      #expect(try await upgraded.sessions.lines(lined, generation: 0).map(\.message) == [#"{"rendered":"\#(rendered)"}"#])
+      #expect(try await upgraded.sessions.activatePrompt(bare) == .pending(PendingPrompt(generation: 0, rev: rev)), "no line 0, no tool list: rendered again")
       try await space.close()
       try await upgraded.close()
     }

@@ -166,8 +166,8 @@ public enum Wire {
       .failed(code: .invalidArgument, message: "malformed pubkey: \(pubkey)", hint: "expected ed25519:<base64 raw key> or p256:<base64 x963 key>")
     case let .readOnlyView(path):
       .failed(code: .unsupported, message: "historical views are read-only: \(path)", hint: nil)
-    case let .sessionTranscriptReadOnly(path):
-      .failed(code: .unsupported, message: "session transcripts are read-only: \(path)", hint: "they show what the session's requests sent; nothing writes them")
+    case let .sentViewReadOnly(path):
+      .failed(code: .unsupported, message: "read-only: \(path)", hint: "it shows what a session's requests sent; nothing writes it")
     case let .systemReadOnly(path):
       .failed(
         code: .unsupported,

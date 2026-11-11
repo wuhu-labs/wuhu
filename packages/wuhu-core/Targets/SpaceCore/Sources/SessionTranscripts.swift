@@ -45,15 +45,15 @@ struct TranscriptFiles: SpaceVFS {
   }
 
   func write(_ path: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken {
-    throw SpaceError.sessionTranscriptReadOnly(path)
+    throw SpaceError.sentViewReadOnly(path)
   }
 
   func delete(_ path: String, ifMatch _: VersionToken?) async throws {
-    throw SpaceError.sessionTranscriptReadOnly(path)
+    throw SpaceError.sentViewReadOnly(path)
   }
 
   func move(_ path: String, to _: String) async throws {
-    throw SpaceError.sessionTranscriptReadOnly(path)
+    throw SpaceError.sentViewReadOnly(path)
   }
 
   func list(_ path: String) async throws -> (VersionToken, [Entry]) {
@@ -123,7 +123,7 @@ extension TranscriptFiles {
   static func outline(_ lines: [StoredTranscriptLine]) -> String {
     lines.map { line in
       let text = line.role == .system
-        ? (try? JSONDecoder().decode(TranscriptPreamble.self, from: Data(line.message.utf8)).system) ?? ""
+        ? (try? JSONDecoder().decode([String: String].self, from: Data(line.message.utf8))["rendered"]).map(RenderedFiles.path) ?? ""
         : (try? viewed(line.message)).map(summary) ?? ""
       let flat = String(text.map { $0.isNewline ? " " : $0 }.prefix(160))
       return "\(line.position) \(line.at.formatted(.iso8601)) \(line.role.rawValue) \(line.key) \(flat)\n"

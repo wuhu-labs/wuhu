@@ -6,6 +6,7 @@ import SessionTools
   import Foundation
 #endif
 import InferenceKit
+import class JSONValue.JSONValueDecoder
 import Logging
 import LoopCore
 import ModelProviders
@@ -15,8 +16,6 @@ import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
-import struct SessionDomain.TranscriptPreamble
-import enum SpaceContract.SessionToolExecutor
 import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionStore
 import WuhuAI
@@ -110,10 +109,12 @@ func kernelInference(
       lease = nil
     }
     do {
-      let systemPrompt = try await executor.prompt(request.sessionID).prompt
-      let tools = SessionToolExecutor.kernel.tools
+      // The generation's prompt as stored, tool list included: an upgrade changes neither until the next generation renders.
+      let prompt = try await executor.prompt(request.sessionID)
+      let systemPrompt = prompt.prompt
+      let tools = try prompt.tools.map { try JSONValueDecoder().decode(Tool.self, from: $0) }
       if let log = access.lineDifferences {
-        await checkLines(log, store: store, request: request, preamble: TranscriptPreamble(system: systemPrompt, tools: tools), at: date.now)
+        await checkLines(log, store: store, request: request, rendered: prompt.rendered, at: date.now)
       }
       let inferenceExecutor = InferenceExecutor(
         session: request.sessionID,

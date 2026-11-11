@@ -2,7 +2,6 @@ import DeterministicDependencies
 import Foundation
 import SessionDomain
 import struct SpaceContract.PromptSession
-import struct SpaceContract.SessionPromptOutput
 import SpaceCore
 @testable import SpaceServer
 import Testing
@@ -27,8 +26,8 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
       let task = try await space.sessions.createSession(
         group: .shared, title: "errand", kind: .task, parent: agent, createdBy: agent.rawValue, executor: .kernel(model),
       )
-      let agentPrompt = try await sessionPrompt(space: space, session: agent).prompt
-      let taskPrompt = try await sessionPrompt(space: space, session: task).prompt
+      let agentPrompt = try await sessionPrompt(space: space, session: agent).preamble.system
+      let taskPrompt = try await sessionPrompt(space: space, session: task).preamble.system
       #expect(!agentPrompt.contains("\n\n\n"))
       #expect(!taskPrompt.contains("\n\n\n"))
       #expect(agentPrompt.contains("It is context for what they mean"))
@@ -75,7 +74,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
     try await withSessionDeps {
       let space = try Space.inMemory()
       let agent = try await space.sessions.createSession(group: .shared, title: "a", kind: .agent, createdBy: "owner", model: model)
-      let prompt = try await sessionPrompt(space: space, session: agent).prompt
+      let prompt = try await sessionPrompt(space: space, session: agent).preamble.system
       #expect(prompt.contains(#"""
       ## Prompt templates
 
@@ -98,9 +97,9 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
       let space = try Space.inMemory()
       let agent = try await space.sessions.createSession(group: .shared, title: "a", kind: .agent, createdBy: "owner", model: model)
       guard case let .pending(pending) = try await space.sessions.activatePrompt(agent) else { throw Unexpected() }
-      let older = SessionPromptOutput(prompt: "rendered by an older binary", session: PromptSession(try await space.sessions.record(agent)))
-      _ = try await space.sessions.storePrompt(agent, for: pending, older, tools: [])
+      let older = try await space.sessions.storePrompt(agent, for: pending, "rendered by an older binary", tools: [], session: PromptSession(try await space.sessions.record(agent)))
       #expect(try await sessionPrompt(space: space, session: agent) == older)
+      #expect(older.preamble == .init(system: "rendered by an older binary", tools: []))
     }
   }
 

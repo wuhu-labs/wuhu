@@ -279,6 +279,12 @@ struct SpaceView: SpaceVFS {
       }
       return space.sessionTranscripts(in: group)
     }
+    if RenderedFiles.contains(path) {
+      guard rev == nil else {
+        throw ToolRunError.failed(code: .unsupported, message: "rendered files have no revisions: \(path)", hint: "read it without @rev")
+      }
+      return space.renderedFiles(in: group)
+    }
     return await space.fs(group, at: rev.map(Rev.init), acting: acting, attribution: attribution, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
   }
 

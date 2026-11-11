@@ -69,11 +69,16 @@ extension Sessions {
     }
   }
 
-  static func writePreamble(_ key: String, generation: Int64, _ preamble: TranscriptPreamble, at: Date, in db: Database) throws {
+  /// Line 0 names its preamble, the blob `/_/rendered/<rendered>`, instead of carrying it.
+  static func preambleLine(rendered: String) throws -> String {
+    try encode(["rendered": rendered])
+  }
+
+  static func writePreamble(_ key: String, generation: Int64, rendered: String, at: Date, in db: Database) throws {
     guard try lastLine(key, generation: generation, in: db) != nil else { return }
     let row = SessionLineRow(
       sessionID: key, generation: generation, position: 0, at: SQLiteDateFormat.string(from: at),
-      role: TranscriptLine.Role.system.rawValue, key: "system", message: try encode(preamble), meta: nil,
+      role: TranscriptLine.Role.system.rawValue, key: "system", message: try preambleLine(rendered: rendered), meta: nil,
     )
     try SessionLineRow.insert { row } onConflict: { ($0.sessionID, $0.generation, $0.position) }.execute(db)
   }
@@ -140,11 +145,11 @@ extension SessionStore {
   }
 
   /// Compares the generation's stored lines with what a request over `transcript` sends; lines the render has not reached yet do not count, and a generation without lines has no difference.
-  public func lineDifference(_ id: SessionID, generation: Int, preamble: TranscriptPreamble, transcript: Transcript) async throws -> TranscriptLineDifference? {
+  public func lineDifference(_ id: SessionID, generation: Int, rendered preamble: String, transcript: Transcript) async throws -> TranscriptLineDifference? {
     let stored = try await lines(id, generation: generation)
     guard !stored.isEmpty else { return nil }
     let rendered = Transcript.lines(session: id, items: transcript.items)
-    let expected = try [(TranscriptLine.Role.system, "system", Sessions.encode(preamble))]
+    let expected = try [(TranscriptLine.Role.system, "system", Sessions.preambleLine(rendered: preamble))]
       + rendered.lines[..<rendered.settled].map { ($0.role, $0.key, try Sessions.encode($0.message)) }
     let byPosition = Dictionary(uniqueKeysWithValues: stored.map { ($0.position, $0) })
     for (position, line) in expected.enumerated() {

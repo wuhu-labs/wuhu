@@ -12,11 +12,14 @@ public struct PromptSession: Codable, Equatable, Sendable {
   public let home: String
 }
 
-// The caller's system prompt, rendered once for its generation, and the
-// session its templates saw.
+// The caller's system prompt and tool list, rendered once for its generation
+// and stored as the file `/_/rendered/<rendered>`, and the session its
+// templates saw.
 @Contract
 public struct SessionPromptOutput: Codable, Equatable, Sendable {
   public let prompt: String
+  public let tools: [JSONValue]
+  public let rendered: String
   public let session: PromptSession
 }
 

@@ -7,7 +7,6 @@ import ModelProviders
 import SessionDomain
 import SessionTools
 import struct SpaceContract.PromptSession
-import struct SpaceContract.SessionPromptOutput
 import enum SpaceContract.SessionToolExecutor
 import SpaceCore
 import SpaceTools
@@ -48,13 +47,14 @@ private func contextBudget(_ specifier: ModelSpecifier, _ document: ModelsDocume
 // The session's prompt for its generation: rendered by the first inference
 // after the prompt revision moves, then the same stored bytes until it moves
 // again, so nothing within a generation (a rename, a model switch) changes it.
-func sessionPrompt(space: Space, session: SessionID) async throws -> SessionPromptOutput {
+func sessionPrompt(space: Space, session: SessionID) async throws -> StoredPrompt {
   switch try await space.sessions.activatePrompt(session) {
-  case let .rendered(output):
-    return output
+  case let .rendered(stored):
+    return stored
   case let .pending(pending):
     let record = try await space.sessions.record(session)
-    return try await space.sessions.storePrompt(session, for: pending, renderPrompt(space: space, record: record, rev: pending.rev), tools: SessionToolExecutor.kernel.tools)
+    let (prompt, rendered) = try await renderPrompt(space: space, record: record, rev: pending.rev)
+    return try await space.sessions.storePrompt(session, for: pending, prompt, tools: SessionToolExecutor.kernel.tools, session: rendered)
   }
 }
 
@@ -62,7 +62,7 @@ func sessionPrompt(space: Space, session: SessionID) async throws -> SessionProm
 // across sessions: the system AGENTS.md and skills, the group's AGENTS.md and
 // skills, the system SESSION.md, then the home's AGENTS.md and skills. The
 // space's files are read as the session at `rev`.
-func renderPrompt(space: Space, record: SessionRecord, rev: Int) async throws -> SessionPromptOutput {
+func renderPrompt(space: Space, record: SessionRecord, rev: Int) async throws -> (prompt: String, session: PromptSession) {
   let home = try await space.sessionHome(record.id, at: rev)
   let session = PromptSession(record)
   let context = SpaceToolContext(space: space, principal: Principal(actor: .session(record.id), group: record.group))
@@ -82,5 +82,5 @@ func renderPrompt(space: Space, record: SessionRecord, rev: Int) async throws ->
   for (layer, (listing, heading)) in zip(layers, zip(InstructionScope.listings(layers, for: session), headings)) {
     parts += await layer.rendered(listing: listing, under: heading, by: renderer)
   }
-  return SessionPromptOutput(prompt: parts.joined(separator: "\n\n"), session: session)
+  return (parts.joined(separator: "\n\n"), session)
 }
