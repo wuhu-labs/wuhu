@@ -138,6 +138,74 @@ private final class WorkFlips: TransactionObserver, Sendable {
     }
   }
 
+  @Test(arguments: [false, true])
+  func `a fold counts the reminders in the tail it kept and no others`(kept: Bool) async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await createRequestedTask(in: space, title: "t")
+      let script = InferenceScript([
+        Fix.replying("marking", calls: [.init(id: "c-b", name: "bookmark", arguments: .object(["name": .string("b")]))]),
+        Fix.replying("done?"),
+        Fix.replying("folding", calls: [.init(id: "c-f", name: "compact", arguments: .object(kept ? ["summary": .string("s"), "bookmark": .string("b")] : ["summary": .string("s")]))]),
+        Fix.replying("after the fold"),
+        Fix.replying("reminded again"),
+      ])
+      try await runService(space, makeConfig(inference: { try await script($0) })) { _ in
+        try await sessions.openParentRequest(on: sid)
+        let steps = kept ? 4 : 5
+        try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == steps }
+        try await holds("the next reminder waits its minute") { script.count == steps }
+      }
+      let transcript = try await sessions.hydrate(sid).transcript.kernel
+      #expect(Self.parkNotices(transcript) == 1)
+    }
+  }
+
+  private static func owedNotices(_ transcript: Transcript) -> Int {
+    transcript.items.count { if case let .notification(notification) = $0 { notification.kind == .owedReply } else { false } }
+  }
+
+  @Test func `a fold leaves the reply the agent owes owed`() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        Fix.replying("folding", calls: [.init(id: "c-f", name: "compact", arguments: .object(["summary": .string("s")]))]),
+        Fix.replying("after the fold"),
+        Fix.replying("reminded"),
+      ])
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+        try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
+        try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 3 }
+      }
+      #expect(Self.owedNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
+    }
+  }
+
+  @Test func `Start over reminds the agent again of a reply it still owes`() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        Fix.replying("thinking"),
+        Fix.replying("reminded"),
+        Fix.replying("started over"),
+        Fix.replying("reminded again"),
+      ])
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+        try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
+        try await until("the agent stops, reminded") { try await sessions.settledWork(sid) && script.count == 2 }
+        _ = try await service.restart(sid, executor: nil, note: nil)
+        try await service.enqueue(item: Fix.message("hello", conversation: "elsewhere", owesReply: false), to: sid)
+        try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 4 }
+      }
+      #expect(Self.owedNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
+    }
+  }
+
   @Test func `a task waiting on an armed timer is never nagged`() async throws {
     let wakes: [ToolResultPayload] = [
       .timer(.init(subscriptionID: .init("timer.c-1"), schedule: .oneShot(anchor.addingTimeInterval(3600)), message: "check")),

@@ -106,7 +106,8 @@ public struct SettleState: Hashable, Sendable, Codable {
 
 struct ParkReminders: Hashable, Sendable, Codable {
   var count: Int
-  var last: Date
+  /// Seconds since the reference date: a number, which a JSON column gives back as it took it.
+  var last: TimeInterval
 }
 
 enum ParkBackoff {
@@ -120,7 +121,7 @@ enum ParkBackoff {
   }
 
   static func nextFire(reminded: ParkReminders?, now: Date) -> Date {
-    let base = reminded?.last ?? now
+    let base = reminded.map { Date(timeIntervalSinceReferenceDate: $0.last) } ?? now
     let interval = delay(after: reminded?.count ?? 0).seconds
     return max(now, base.addingTimeInterval(interval))
   }

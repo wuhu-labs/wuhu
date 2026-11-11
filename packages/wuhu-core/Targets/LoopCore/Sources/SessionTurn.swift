@@ -3,7 +3,7 @@ import StructuredQueries
 import struct WuhuAI.ToolCall
 import WuweiQueries
 
-/// Where a session's turn stands, written by its cell in the step that writes the transcript: the cell's next move without reading the transcript back. The cell does not read it yet; each step checks it against the transcript's fold (`init(folding:generation:)`).
+/// Where a session's turn stands and what it owes, written by its cell in the step that writes the transcript: the cell's next move without reading the transcript back. The cell does not read it yet; each step checks it against the transcript's fold (`init(folding:generation:)`).
 @Table("session_state")
 struct SessionTurn: Owned, Equatable, Encodable, Sendable {
   var generation: Int
@@ -13,6 +13,8 @@ struct SessionTurn: Owned, Equatable, Encodable, Sendable {
   /// The reads the generation's head asks for that are not answered yet. Empty once the generation has a reply of its own.
   @Column(as: [ToolCall].JSONRepresentation.self) var reestablish: [ToolCall]
   var replied: Bool
+  /// Nil until the cell's next step takes it from the transcript: a row from before the column, or a generation Start over opened, whose head the store works out from the queue and the messages.
+  @Column(as: NagState.JSONRepresentation?.self) var nags: NagState?
 
   enum Turn: Equatable, Codable, Sendable {
     /// A generation nothing was said in: created or started over.
@@ -89,6 +91,6 @@ extension SessionTurn {
     } else {
       .inert
     }
-    self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply)
+    self.init(generation: generation, position: transcript.items.count, turn: turn, reestablish: transcript.reestablishments, replied: transcript.hasFreshReply, nags: transcript.environment.nags)
   }
 }

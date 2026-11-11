@@ -52,11 +52,12 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
     case nagged(Nag, at: Date)
   }
 
-  public private(set) var settle: SettleState = .init()
+  public private(set) var nags: NagState = .init()
   public private(set) var tools: ToolExecutionState = .init()
-  private var parkReminders: [RequestID: ParkReminders] = [:]
 
   public init() {}
+
+  public var settle: SettleState { nags.settle }
 
   // A head that recorded its settle state already holds the tail it carried
   // across, so the carried items leave it alone.
@@ -77,9 +78,9 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
         apply(item)
         continue
       }
-      let settled = settle
+      let settled = nags.settle
       apply(item)
-      settle = settled
+      nags.settle = settled
     }
     tools.handlerSubscriptions = transcript.handlerSubscriptions
     if let registered = transcript.registeredSubscriptions {
@@ -88,50 +89,22 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
   }
 
   public mutating func apply(_ event: Event) {
+    nags.apply(event)
     switch event {
-    case let .delivered(input, at):
-      if case var .delivered(delivered)? = input.settleEvent {
-        delivered.at = at
-        settle.apply(.delivered(delivered))
-      }
-      tools.apply(delivered: input)
-    case let .toolResult(payload, at):
-      tools.apply(payload)
-      switch payload {
-      case let .sendMessage(result):
-        settle.apply(.posted(.init(conversation: result.conversationID, at: at)))
-      case let .report(result):
-        settle.apply(.posted(.init(conversation: result.conversationID, at: at)))
-      default:
-        break
-      }
-    case let .nagged(.owedReply(conversations), at):
-      settle.apply(.owedReminder(conversations: conversations, at: at))
-    case let .nagged(.park(request), at):
-      parkReminders[request] = ParkReminders(count: (parkReminders[request]?.count ?? 0) + 1, last: at)
+    case let .delivered(input, _): tools.apply(delivered: input)
+    case let .toolResult(payload, _): tools.apply(payload)
+    case .nagged: break
     }
   }
 
   // A generation head resets the fold. A head that recorded no settle state
   // was written by the store, which fills it in when it hydrates a session.
   mutating func apply(_ item: TranscriptItem) {
-    switch item {
-    case .direct, .assistant, .bookmark:
-      break
-    case let .message(message):
-      apply(.delivered(.message(message), at: message.timestamp))
-    case let .notification(notification):
-      if let nag = Nag(notification) {
-        apply(.nagged(nag, at: notification.timestamp))
-      } else {
-        apply(.delivered(.notification(notification), at: notification.timestamp))
-      }
-    case let .toolResult(result):
-      apply(.toolResult(result.payload, at: result.timestamp))
-    case let .generationHead(head):
-      settle = head.settle ?? SettleState()
+    if case let .generationHead(head) = item {
+      nags = NagState(settle: head.settle ?? SettleState())
       tools = ToolExecutionState(resuming: head.snapshot)
-      parkReminders = [:]
+    } else if let event = Event(item) {
+      apply(event)
     }
   }
 
@@ -163,6 +136,62 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
   }
 
   private func nextParkReminder(_ request: OpenRequest, now: Date) -> Date {
-    ParkBackoff.nextFire(reminded: parkReminders[request.id], now: now)
+    ParkBackoff.nextFire(reminded: nags.parks[request.id], now: now)
+  }
+}
+
+extension SessionEnvironment.Event {
+  init?(_ item: TranscriptItem) {
+    switch item {
+    case .direct, .assistant, .bookmark, .generationHead:
+      return nil
+    case let .message(message):
+      self = .delivered(.message(message), at: message.timestamp)
+    case let .notification(notification):
+      self = Nag(notification).map { .nagged($0, at: notification.timestamp) } ?? .delivered(.notification(notification), at: notification.timestamp)
+    case let .toolResult(result):
+      self = .toolResult(result.payload, at: result.timestamp)
+    }
+  }
+}
+
+/// What a session's nags follow from: the replies it owes, and how often it was reminded of each request it has not reported on.
+public struct NagState: Hashable, Sendable, Codable {
+  public var settle: SettleState
+  var parks: [RequestID: ParkReminders] = [:]
+
+  public init(settle: SettleState = .init()) {
+    self.settle = settle
+  }
+
+  /// A new generation's: what is owed stays as it was, and the reminders counted are the ones in the tail it kept.
+  public init(settle: SettleState, kept: some Sequence<TranscriptItem>) {
+    self.init()
+    for item in kept { apply(item) }
+    self.settle = settle
+  }
+
+  public mutating func apply(_ item: TranscriptItem) {
+    if let event = SessionEnvironment.Event(item) { apply(event) }
+  }
+
+  mutating func apply(_ event: SessionEnvironment.Event) {
+    switch event {
+    case let .delivered(input, at):
+      if case var .delivered(delivered)? = input.settleEvent {
+        delivered.at = at
+        settle.apply(.delivered(delivered))
+      }
+    case let .toolResult(.sendMessage(result), at):
+      settle.apply(.posted(.init(conversation: result.conversationID, at: at)))
+    case let .toolResult(.report(result), at):
+      settle.apply(.posted(.init(conversation: result.conversationID, at: at)))
+    case .toolResult:
+      break
+    case let .nagged(.owedReply(conversations), at):
+      settle.apply(.owedReminder(conversations: conversations, at: at))
+    case let .nagged(.park(request), at):
+      parks[request] = ParkReminders(count: (parks[request]?.count ?? 0) + 1, last: at.timeIntervalSinceReferenceDate)
+    }
   }
 }

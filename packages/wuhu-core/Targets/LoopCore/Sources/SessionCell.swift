@@ -20,6 +20,7 @@ struct SessionCell {
   static let kind = SessionMail.kind
   static let schema = [
     "CREATE TABLE session_state (\(ownerColumn), generation INTEGER NOT NULL, position INTEGER NOT NULL, turn TEXT NOT NULL, reestablish TEXT NOT NULL, replied INTEGER NOT NULL, UNIQUE (owner))",
+    "ALTER TABLE session_state ADD COLUMN nags TEXT",
   ]
 
   /// An input for the queue. Looking at it is a step of its own, so the input stays whatever that step meets.
@@ -122,7 +123,7 @@ struct SessionCell {
     let restart = try client.dependencies.yield {
       try rows.restart(id.session, executor: executor, note: note, modelRoute: route, runningWork: runningWork, uuid: client.uuid)
     }
-    try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false))
+    try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false, nags: nil))
     invalidateInference()
     try advance()
   }
@@ -164,7 +165,7 @@ struct SessionCell {
       }
       let appended = Array(transcript.items[session.slot.position...])
       try rows.append(id.session, items: appended, inputOrigin: transcript.cacheWarmingInputOrigin, completingCompact: forced)
-      try move {
+      try move(wrote: appended) {
         $0.reply(entry.toolCalls)
         $0.input(appended.count - 1)
       }
@@ -240,13 +241,13 @@ struct SessionCell {
         session.transcript.phase == .live ? ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary))) : nil
       }
       let written = try rows.writeCompaction(id.session, closing: closing, head: head, kept: kept, completingCompact: true, transition: transition)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: head.reestablishmentCalls, replied: false))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: head.reestablishmentCalls, replied: false, nags: carried(into: written)))
       invalidateInference()
     case let .refused(call, message):
       try writeToolResult(session, .toolCall(call), .failure(.init(message: message)))
     case let .handoff(transcript):
       let written = try rows.writePortableHandoff(id.session, transcript: transcript)
-      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false))
+      try write(SessionTurn(generation: session.generation + 1, position: written.items.count, turn: .model, reestablish: written.reestablishments, replied: false, nags: carried(into: written)))
       invalidateInference()
     case let .failed(message):
       try rows.markErrored(id.session, message: message)
@@ -277,7 +278,7 @@ struct SessionCell {
     if let call = transcript.nextPendingToolCall { return try run(call, session) }
     if session.queueHead > session.queueTail {
       let drained = try rows.drainQueue(id.session)
-      try move { $0.input(drained.items.count) }
+      try move(wrote: drained.items) { $0.input(drained.items.count) }
       return true
     }
     if let written = try rows.materializeCompactRequest(id.session, uuid: client.uuid) {
@@ -419,14 +420,20 @@ struct SessionCell {
     var transcript = session.transcript
     for item in items { transcript.append(item) }
     try rows.append(id.session, items: items, inputOrigin: transcript.cacheWarmingInputOrigin)
-    try move(change)
+    try move(wrote: items, change)
   }
 
   /// A session that has no turn row yet gets one from its transcript at its next step (`check`).
-  private mutating func move(_ change: (inout SessionTurn) -> Void) throws {
+  private mutating func move(wrote items: [TranscriptItem] = [], _ change: (inout SessionTurn) -> Void) throws {
     guard var turn = db.rows(SessionTurn.all).first else { return }
     change(&turn)
+    for item in items { turn.nags?.apply(item) }
     try write(turn)
+  }
+
+  /// A fold leaves what the session owes as it is.
+  private func carried(into generation: Transcript) -> NagState? {
+    db.rows(SessionTurn.all).first?.nags.map { NagState(settle: $0.settle, kept: generation.items) }
   }
 
   private mutating func write(_ turn: SessionTurn) throws {
@@ -437,10 +444,12 @@ struct SessionCell {
   /// A turn row that is not what the transcript folds to is reported and replaced, so each divergence is reported once.
   private mutating func check(_ session: SessionState) throws {
     let folded = SessionTurn(folding: session.transcript, generation: session.generation)
-    let stored = db.rows(SessionTurn.all).first
-    guard stored != folded else { return }
+    let row = db.rows(SessionTurn.all).first
+    guard row != folded else { return }
     try write(folded)
-    guard let stored, let report = client.config.turnDifference else { return }
+    var stored = row
+    if stored?.nags == nil { stored?.nags = folded.nags }
+    guard let stored, stored != folded, let report = client.config.turnDifference else { return }
     let difference = TurnDifference(time: client.now().formatted(.iso8601), session: id.key, stored: stored, folded: folded)
     ctx.emit { await report(difference) }
   }
