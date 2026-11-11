@@ -1,3 +1,9 @@
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+
 import JSONValue
 import struct SpaceContract.ConversationPostOutput
 
@@ -20,6 +26,13 @@ extension Executor {
       let _: JSONValue = try await client.api(.post, "/v1/channel/\(id)/rename", body: JSONValue.object([
         "title": title.map(JSONValue.string) ?? .null,
       ]))
+    case let .post(id, text):
+      let output: ConversationPostOutput = try await client.api(.post, "/v1/conversation/message", body: JSONValue.object([
+        "message": .string(text),
+        "conversation": .string(id),
+        "timezone": .string(TimeZone.current.identifier),
+      ]))
+      await self.runner.stdout(output.messageId + "\n")
     }
   }
 }

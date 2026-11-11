@@ -59,7 +59,7 @@ extension Command {
       default: throw UsageError(message: "machine-v2: use install, upgrade, rollback, or uninstall")
       }
     case "channel":
-      let operation = try parser.required("create|add|remove|rename", verb: verb)
+      let operation = try parser.required("create|add|remove|rename|post", verb: verb)
       switch operation {
       case "create":
         let title = try parser.option("--title", verb: verb)
@@ -86,7 +86,12 @@ extension Command {
         let title = clear ? nil : try parser.required("title", verb: verb)
         try parser.finish(verb: verb)
         return .channel(.rename(id: id, title: title))
-      default: throw UsageError(message: "channel: use create, add, remove, or rename")
+      case "post":
+        let id = try parser.required("channel-id", verb: verb)
+        let text = try parser.required("message", verb: verb)
+        try parser.finish(verb: verb)
+        return .channel(.post(id: id, text: text))
+      default: throw UsageError(message: "channel: use create, add, remove, rename, or post")
       }
     case "identity":
       switch parser.pop() {
@@ -1056,7 +1061,7 @@ extension Command {
     skill     install the bundled agent skills into coding agent homes
     models    sync the space models document from the published basis
     usage     print each provider's plan usage windows (codex)
-    channel      create or manage a human-only channel
+    channel      create, manage or post to a human-only channel
     identity     inspect issuer URLs or set default/audience issuer choices (admin)
     tool-roster  print the tools a kernel session is given
     auth      manage the space's provider credentials (api keys, chatgpt login)
@@ -1951,14 +1956,16 @@ extension Command {
     \(exitCodes)
     """,
     "channel": """
-    usage: wuhu channel <create|add|remove|rename>
+    usage: wuhu channel <create|add|remove|rename|post>
 
       create [--title T] [person...]   create in the acting group; a person creator joins
       add <id> <person...>            add people (sessions are refused)
       remove <id> <person...>         remove people
       rename <id> <title>             rename
       rename <id> --clear             show members' names instead
+      post <id> <message>             post and print the message id
 
+    post speaks as the caller: the wallet's persona, or the session when run from a session's exec.
     Sessions in groups reading the channel can read, post and manage it without joining.
     People must be members to read, post or manage it. Plain posts wake no session;
     mentions, reply targets and the existing attention window still apply.

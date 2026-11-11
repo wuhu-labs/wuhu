@@ -45,7 +45,7 @@ Table create/alter responses carry rev/token, both printed and recorded. Table m
 
 ## Channels
 
-`wuhu channel create [--title T] [person...]`, `add <id> <person...>`, `remove <id> <person...>`, and `rename <id> <title>` manage human-only channels through the HTTP channel contract. `rename <id> --clear` removes a title. Creation prints the channel id; mutations emit no output on success. A person creator joins; a session creator does not. Typed refusals preserve server error codes.
+`wuhu channel create [--title T] [person...]`, `add <id> <person...>`, `remove <id> <person...>`, and `rename <id> <title>` manage human-only channels through the HTTP channel contract. `rename <id> --clear` removes a title. `post <id> <message>` posts as the caller: the wallet's persona, or the session when run from a session's exec, through `POST /v1/conversation/message` and prints the new message id. Creation prints the channel id; other mutations emit no output on success. A person creator joins; a session creator does not. Typed refusals preserve server error codes.
 
 ## Live people management
 

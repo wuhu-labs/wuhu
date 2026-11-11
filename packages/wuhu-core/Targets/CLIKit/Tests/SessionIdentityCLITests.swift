@@ -376,6 +376,20 @@ final class IdentityHarness: Sendable {
     }
   }
 
+  @Test func channelPostFromASessionExecSpeaksAsTheSession() async throws {
+    try await withIdentityDeps {
+      let h = try await IdentityHarness()
+      let created = await h.asSession(["channel", "create", "--title", "Releases"])
+      #expect(created.code == 0, "\(created.stderr)")
+      let channel = ConversationID(created.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+      let posted = await h.asSession(["channel", "post", channel.rawValue, "shipped"])
+      #expect(posted.code == 0, "\(posted.stderr)")
+      let message = try #require(try await h.store.messages(conversation: channel).last)
+      #expect(posted.stdout == message.id.rawValue + "\n")
+      #expect(message.sender.id == h.parent.rawValue)
+    }
+  }
+
   @Test func aSessionCreatesAChildTaskOpensARequestAndSendsAsItself() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness()

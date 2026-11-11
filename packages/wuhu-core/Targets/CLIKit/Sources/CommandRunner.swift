@@ -254,6 +254,7 @@ enum ChannelCommand: Equatable {
   case create(title: String?, people: [String])
   case members(id: String, people: [String], add: Bool)
   case rename(id: String, title: String?)
+  case post(id: String, text: String)
 }
 
 enum Command: Equatable {

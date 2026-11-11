@@ -1149,4 +1149,18 @@ extension RequestMappingTests {
       #expect(body == ["title": .null])
     }
   }
+
+  @Test func channelPostPostsIntoTheConversationAndPrintsTheMessageID() async throws {
+    let harness = try Harness(response: ["messageId": "m1", "conversationId": "team", "n": 1, "delivered": []])
+    #expect(await harness.runner.run(arguments: ["channel", "post", "team", "shipped"]) == 0)
+    let request = try #require(await harness.recorder.requests.first)
+    #expect(request.method == .post && request.url.path == "/v1/conversation/message")
+    let body = try await request.json(JSONValue.self)
+    #expect(body.object?["conversation"] == "team" && body.object?["message"] == "shipped")
+    #expect(body.object?.keys.sorted() == ["conversation", "message", "timezone"])
+    #expect(await harness.stdout.text == "m1\n")
+    let refused = try Harness(response: try Response.json(JSONValue.object(["code": "notFound", "message": "no conversation team"]), status: .init(code: 404)))
+    #expect(await refused.runner.run(arguments: ["channel", "post", "team", "shipped"]) == 1)
+    #expect(await refused.stderr.text == "notFound: no conversation team\n")
+  }
 }

@@ -10,6 +10,9 @@ import Testing
     #expect(try Command.parse(["channel", "remove", "team", "carol"]) == .channel(.members(id: "team", people: ["carol"], add: false)))
     #expect(try Command.parse(["channel", "rename", "team", "New"]) == .channel(.rename(id: "team", title: "New")))
     #expect(try Command.parse(["channel", "rename", "team", "--clear"]) == .channel(.rename(id: "team", title: nil)))
+    #expect(try Command.parse(["channel", "post", "team", "shipped"]) == .channel(.post(id: "team", text: "shipped")))
+    #expect(throws: (any Error).self) { try Command.parse(["channel", "post", "team"]) }
+    #expect(throws: (any Error).self) { try Command.parse(["channel", "post", "team", "shipped", "extra"]) }
     #expect(throws: (any Error).self) { try Command.parse(["channel", "add", "team"]) }
     #expect(throws: (any Error).self) { try Command.parse(["channel", "create", "--bogus"]) }
     #expect(throws: (any Error).self) { try Command.parse(["channel", "rename", "team"]) }
