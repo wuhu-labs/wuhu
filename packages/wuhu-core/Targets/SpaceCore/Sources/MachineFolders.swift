@@ -1,17 +1,18 @@
-import struct Foundation.Data
-import struct Foundation.Date
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct SpaceContract.GroupID
 import SpaceFS
-import StructuredQueries
-import StructuredQueriesSQLite
+import Wuwei
 
 // Machine notes are stored under /_/machines/<machine id>/ and presented under
 // the machine's current name, the id also accepted, so a rename moves nothing.
 // A group's tree lists the machines of that group, the ones whose notes it holds.
 struct MachineFolders: SpaceVFS {
   let base: any SpaceVFS
-  let writer: any DatabaseWriter
+  let runtime: SpaceRuntime
   let group: GroupID
   var listingLimit: Int?
   var listingByteLimit: Int?
@@ -48,18 +49,7 @@ struct MachineFolders: SpaceVFS {
       return try await base.list(path)
     }
     if p.components == Self.root {
-      let group = group.rawValue
-      let machines = try await writer.read { db in
-        let query = MachineRow.where { $0.grp.eq(group) }.order { $0.name }.limit(listingLimit ?? Int.max)
-        let cursor = try QueryValueCursor<MachineRow>(db: db, query: query.query)
-        var budget = ListingBudget(limit: listingByteLimit)
-        var machines: [MachineRow] = []
-        while let machine = try cursor.next() {
-          try budget.consume(machine.name ?? machine.id)
-          machines.append(machine)
-        }
-        return machines
-      }
+      let machines = try runtime.worker().cell(SpaceCell.ID("space")).machineFolders(group: group, limit: listingLimit, byteLimit: listingByteLimit)
       var entries: [Entry] = []
       for machine in machines {
         entries.append(try await folder(machine.id, named: machine.name ?? machine.id))
@@ -88,36 +78,23 @@ struct MachineFolders: SpaceVFS {
     return try await folder(SpacePath(validating: stored(path)).components[2], named: name)
   }
 
-  static func stored(_ path: SpacePath, mutating: Bool, in db: Database) throws -> SpacePath {
+  static func stored(_ path: SpacePath, mutating: Bool, in runtime: SpaceRuntime) async throws -> SpacePath {
     guard path.components.count >= 3, path.components.starts(with: root) else { return path }
-    let reference = path.components[2].lowercased().replacingOccurrences(of: "-", with: "_")
-    let alias = try Aliases.target(reference, kind: .machine, in: db)
-    let machine = try MachineRow.where { $0.id.eq(reference) }.fetchOne(db)
-      ?? alias.flatMap { id in try MachineRow.where { $0.id.eq(id) }.fetchOne(db) }
-    guard let machine else {
+    guard let machine = runtime.worker().cell(SpaceCell.ID("space")).machineFolder(path.components[2]) else {
       throw mutating ? SpaceError.alreadyExists(path.rawValue) : SpaceError.notFound(path.rawValue)
     }
-    return try SpacePath(components: root + [machine.id] + path.components.dropFirst(3))
+    return try SpacePath(components: root + [machine] + path.components.dropFirst(3))
   }
 
-  static func requireStored(_ path: SpacePath, in db: Database) throws {
-    guard try stored(path, mutating: true, in: db) == path else { throw SpaceError.alreadyExists(path.rawValue) }
-  }
+  static let root = ["_", "machines"]
 
-  static func stored(_ path: SpacePath, mutating: Bool, in writer: any DatabaseWriter) async throws -> SpacePath {
-    guard path.components.count >= 3, path.components.starts(with: root) else { return path }
-    return try await writer.read { db in try stored(path, mutating: mutating, in: db) }
-  }
-
-  private static let root = ["_", "machines"]
-
-  static func stored(_ path: String, mutating: Bool, in writer: any DatabaseWriter) async throws -> String {
+  static func stored(_ path: String, mutating: Bool, in runtime: SpaceRuntime) async throws -> String {
     guard let p = try? SpacePath(validating: path) else { return path }
-    return try await stored(p, mutating: mutating, in: writer).rawValue
+    return try await stored(p, mutating: mutating, in: runtime).rawValue
   }
 
   private func stored(_ path: String, mutating: Bool = false) async throws -> String {
-    try await Self.stored(path, mutating: mutating, in: writer)
+    try await Self.stored(path, mutating: mutating, in: runtime)
   }
 
   private func storedRoot() async throws -> (token: VersionToken, entries: [Entry]) {

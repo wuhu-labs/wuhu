@@ -223,7 +223,7 @@ import Wuwei
         DELETE FROM grdb_migrations WHERE identifier = '040';
         """)
         #expect(try db.columns(in: "wuwei_job").allSatisfy { $0.name != "creator" })
-        #expect(try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier DESC LIMIT 1") == "039")
+        #expect(try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier DESC LIMIT 1") == "043")
         return address
       }
       try await old.close()

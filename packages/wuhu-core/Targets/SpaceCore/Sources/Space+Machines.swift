@@ -156,30 +156,20 @@ extension Space {
   }
 
   public func machine(_ id: MachineID) async throws -> MachineRecord? {
-    try await writer.read { db in
-      try MachineRow.where { $0.id.eq(id.rawValue) }.fetchOne(db).map(Self.machineRecord(from:))
-    }
+    worker.cell(MachineCell.ID(id.rawValue)).record()
   }
 
   /// The group whose tree holds the machine's notes.
   public func machineGroup(_ id: MachineID) async throws -> GroupID {
-    try await writer.read { db in
-      try MachineRow.where { $0.id.eq(id.rawValue) }.fetchOne(db).map { GroupID(rawValue: $0.grp) } ?? .shared
-    }
+    worker.cell(MachineCell.ID(id.rawValue)).record()?.group ?? .shared
   }
 
   public func machine(account: AccountID) async throws -> MachineRecord? {
-    try await writer.read { db in
-      try MachineRow.where { $0.accountID.eq(account.rawValue) }.fetchOne(db).map(Self.machineRecord(from:))
-    }
+    cell.machine(account: account)
   }
 
   public func machine(named name: String) async throws -> MachineRecord? {
-    let lowered = name.lowercased().replacingOccurrences(of: "-", with: "_")
-    return try await writer.read { db in
-      guard let id = try Aliases.target(lowered, kind: .machine, in: db) else { return nil }
-      return try MachineRow.where { $0.id.eq(id) }.fetchOne(db).map(Self.machineRecord(from:))
-    }
+    cell.machine(named: name)
   }
 
   public func resolveMachine(_ reference: String) async throws -> MachineRecord? {
@@ -195,17 +185,13 @@ extension Space {
   }
 
   public func machines() async throws -> [MachineRecord] {
-    try await writer.read { db in
-      try MachineRow.order { $0.id }.fetchAll(db).map(Self.machineRecord(from:))
-    }
+    cell.machines()
   }
 
   /// The machines `group` may use, by the same switch that admits a single
   /// one: the list shows only what it can exec on.
   public func machines(usableFrom group: GroupID) async throws -> [MachineRecord] {
-    let snapshot = try await writer.read { db in try GroupAccess.Snapshot(db) }
-    let all = try await machines()
-    return try all.filter { try Self.canUse($0, from: group, snapshot: snapshot) }
+    cell.machines(usableFrom: group)
   }
 
   /// A machine `group` may not use resolves as no machine at all.
@@ -218,19 +204,7 @@ extension Space {
   /// Whether `group` may use `record`: `owner` is its own group alone;
   /// `reachable` is every group with write in its owner group.
   public func canUse(_ record: MachineRecord, from group: GroupID) async throws -> Bool {
-    let snapshot = try await writer.read { db in try GroupAccess.Snapshot(db) }
-    return try Self.canUse(record, from: group, snapshot: snapshot)
-  }
-
-  private nonisolated static func canUse(
-    _ record: MachineRecord, from group: GroupID, snapshot: GroupAccess.Snapshot,
-  ) throws -> Bool {
-    switch record.scope {
-    case .owner:
-      return group == record.group
-    case .reachable:
-      return try (snapshot.role(from: group.rawValue, in: record.group.rawValue) ?? .read) >= .write
-    }
+    cell.canUse(record, from: group)
   }
 
   /// Switches who may use a machine: its own group, or every group that can
@@ -254,8 +228,8 @@ extension Space {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     var tries = 0
     while true {
-      if let current = try await writer.read({ db in try MachineRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)?.grp }) {
-        try await documents.checkpoint(under: notes, in: GroupID(rawValue: current))
+      if let current = worker.cell(MachineCell.ID(id.rawValue)).record()?.group {
+        try await documents.checkpoint(under: notes, in: current)
       }
       do {
         return try await blobs.write(

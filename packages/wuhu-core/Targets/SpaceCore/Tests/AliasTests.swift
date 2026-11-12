@@ -66,11 +66,7 @@ import Testing
     _ = try await space.addMachine(name: "work_box")
     await #expect(throws: AliasError.taken("work_box")) { try await space.createGroup(alias: "work_box", owner: owner.id) }
     await #expect(throws: AliasError.invalid("with-hyphens")) { try await space.createGroup(alias: "with-hyphens", owner: owner.id) }
-    await #expect(throws: (any Error).self) {
-      try await space.writer.write { db in
-        try db.execute(sql: "UPDATE groups SET alias = 'reader' WHERE id = ?", arguments: [group.rawValue])
-      }
-    }
+    await #expect(throws: AliasError.taken("reader")) { try await space.renameGroup(group, alias: "reader", by: principal) }
     #expect(try await space.group(group)?.alias == "science")
   }
 

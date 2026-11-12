@@ -5405,6 +5405,16 @@ export async function assertNoManualDependencies(root = '.'): Promise<void> {
   assertManualBoundaries(packages)
 }
 
+async function assertSwiftOrDeno(packageDirs: string[]): Promise<void> {
+  for (const packageDir of packageDirs) {
+    if (await exists(join(packageDir, 'deno.json'))) {
+      throw new Error(
+        `${packageDir} has both package.yml and deno.json; each generates ${packageDir}/BUILD.bazel, so a package declares exactly one.`,
+      )
+    }
+  }
+}
+
 export async function main(rawArgs: string[] = Deno.args): Promise<void> {
   if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
     console.log(manifestUsage())
@@ -5427,6 +5437,7 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
     ? []
     : ['packages/wuhu-core']
   const packageDirs = [...new Set([...requested, ...swiftPMPackages])]
+  await assertSwiftOrDeno(packageDirs)
 
   const floorDeclarations: FloorDeclaration[] = []
   const floorEdges: FloorEdge[] = []

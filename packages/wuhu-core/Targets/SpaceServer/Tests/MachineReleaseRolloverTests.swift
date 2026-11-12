@@ -16,7 +16,7 @@ import Wuwei
       let first = ReleaseHost(["1.2.3": both], mode: .hold)
       try install(old, first)
       old.worker.start()
-      try await outboxEventually("both old sidecars start") { first.count == 2 }
+      await first.lookedUp(2)
       try await assertRow(old, requested: true, lookedUp: false)
 
       let second = ReleaseHost(["1.2.3": both])

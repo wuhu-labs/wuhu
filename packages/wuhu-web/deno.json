@@ -18,6 +18,9 @@
       "tags": [
         "recommended",
         "react"
+      ],
+      "include": [
+        "no-sparse-arrays"
       ]
     }
   }

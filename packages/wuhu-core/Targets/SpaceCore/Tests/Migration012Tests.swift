@@ -12,7 +12,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct MachineProtocolMigrationTests {
   @Test func upgradeDeletesOnlyMachinesWithoutMembershipAndRunsOnce() async throws {
-    let database = try DatabaseQueue()
+    let database = try DatabaseQueue(path: "file:/migration-012-\(UUID())?vfs=memdb")
     let original = try Space(writer: database)
     try await database.write { db in
       try db.execute(sql: """

@@ -4,8 +4,18 @@
     "singleQuote": true,
     "proseWrap": "preserve"
   },
+  "lint": {
+    "rules": {
+      "include": [
+        "no-sparse-arrays"
+      ]
+    }
+  },
   "tasks": {
-    "generate-manifests": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com --allow-run=git,tar,which,xcodegen tools/manifest-gen/generate.ts --apply --all --umbrella --module --public-tree"
+    "generate-manifests": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com --allow-run=git,tar,which,xcodegen tools/manifest-gen/generate.ts --apply --all --umbrella --module --public-tree",
+    "fmt-test": "deno fmt --check --ignore=tools/iconamoon/svg tools",
+    "lint-test": "deno lint tools",
+    "contract-ts-emit-test": "deno test --allow-read tools/contract-ts/emit_test.ts"
   },
   "imports": {
     "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
@@ -14,5 +24,402 @@
     "@std/yaml": "jsr:@std/yaml@1.0.5",
     "jose": "npm:jose@6.1.0",
     "marked": "npm:marked@17.0.6"
+  },
+  "tests": {
+    "fmt-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/**"
+      ]
+    },
+    "lint-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/**"
+      ]
+    },
+    "release-tooling-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/release/**/*.ts",
+        "tools/release/testdata/**",
+        "tools/signing/**/*.ts",
+        "tools/lib/**/*.ts",
+        "tools/manifest-gen/**/*.ts",
+        "packages/alignment/package.yml",
+        "packages/arcroom/package.yml",
+        "packages/canopy-kit/package.yml",
+        "packages/gika/package.yml",
+        "packages/hmr/package.yml",
+        "packages/keel/package.yml",
+        "packages/nobuy-club/package.yml",
+        "packages/preview-kit/package.yml",
+        "packages/qr-code/package.yml",
+        "packages/quickjs-kit/package.yml",
+        "packages/view-pilot/package.yml",
+        "packages/wuhu-ai/package.yml",
+        "packages/wuhu-app/package.yml",
+        "packages/wuhu-contract/package.yml",
+        "packages/wuhu-core/package.yml",
+        "packages/wuhu-fetch/package.yml",
+        "packages/wuhu-json/package.yml",
+        "packages/wuhu-serve/package.yml",
+        "packages/wuhu-test-support/package.yml",
+        "packages/arcroom/Apps/arcroom-preview/app.yml",
+        "packages/arcroom/Apps/arcroom/app.yml",
+        "packages/canopy-kit/Apps/editor-lab-mac/app.yml",
+        "packages/canopy-kit/Apps/scroll-lab/app.yml",
+        "packages/canopy-kit/Apps/text-lab/app.yml",
+        "packages/gika/Apps/gika-preview/app.yml",
+        "packages/gika/Apps/gika/app.yml",
+        "packages/hmr/Apps/injection-next-lab/app.yml",
+        "packages/nobuy-club/Apps/nobuy-preview/app.yml",
+        "packages/nobuy-club/Apps/nobuy/app.yml",
+        "packages/preview-kit/Apps/preview-remote/app.yml",
+        "packages/preview-kit/Apps/test-host/app.yml",
+        "packages/wuhu-app/Apps/wuhu-preview/app.yml",
+        "packages/wuhu-app/Apps/wuhu/app.yml",
+        "packages/wuhu-core/Targets/wuhu/target.yml",
+        "tools/signing/signing.yml",
+        "tools/sim/*.ts",
+        ".agents/skills/mac-worker-setup/pin.env",
+        "packages/wuhu-desktop/.gitignore",
+        "packages/wuhu-desktop/MODULE.fragment.bazel",
+        "packages/wuhu-desktop/SPEC.md",
+        "packages/wuhu-desktop/deno.json",
+        "packages/wuhu-desktop/deno.lock",
+        "packages/wuhu-desktop/resources/**",
+        "packages/wuhu-desktop/src/**",
+        "packages/wuhu-desktop/test/**",
+        "packages/wuhu-desktop/tools/**",
+        "packages/wuhu-site/README.md",
+        "packages/wuhu-site/deno.json",
+        "packages/wuhu-site/deno.lock",
+        "packages/wuhu-site/docs/**",
+        "packages/wuhu-site/download.html",
+        "packages/wuhu-site/guide.css",
+        "packages/wuhu-site/guide.js",
+        "packages/wuhu-site/guide.ts",
+        "packages/wuhu-site/icon/**",
+        "packages/wuhu-site/index.html",
+        "packages/wuhu-site/install.sh",
+        "packages/wuhu-site/preview.ts",
+        "packages/wuhu-site/privacy.html",
+        "packages/wuhu-site/support.html",
+        "packages/wuhu-site/terms.html",
+        "packages/wuhu-site/test/**"
+      ]
+    },
+    "skill-bench-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/skill-bench/*.ts",
+        "tools/skill-bench/box/*.sh"
+      ]
+    },
+    "ci-prune-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/ci/*.ts"
+      ]
+    },
+    "ci-lanes-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/ci/lanes*.ts",
+        "tools/lib/**/*.ts",
+        "tools/manifest-gen/**/*.ts",
+        "tools/public/*.ts",
+        "tools/BUILD.bazel",
+        ".forgejo/workflows/ci.yml"
+      ]
+    },
+    "module-profile-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/check/*.ts",
+        "tools/lib/*.ts",
+        "tools/manifest-gen/**/*.ts",
+        "tools/module-profile/*.ts",
+        "tools/otel/*.ts",
+        "tools/sim/*.ts",
+        ".agents/skills/mac-worker-setup/pin.env",
+        "packages/build-pool/SPEC.md",
+        "packages/build-pool/bench/**",
+        "packages/build-pool/bridge.sh",
+        "packages/build-pool/contract/**",
+        "packages/build-pool/deno.json",
+        "packages/build-pool/deno.lock",
+        "packages/build-pool/ops/**",
+        "packages/build-pool/presets.json",
+        "packages/build-pool/src/**",
+        "packages/build-pool/tests/**",
+        "packages/space-oidc/SPEC.md",
+        "packages/space-oidc/deno.json",
+        "packages/space-oidc/src/**",
+        "packages/space-oidc/tests/**"
+      ]
+    },
+    "ci-failure-labels-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/ci/failure-labels.ts",
+        "tools/ci/failure-labels_test.ts",
+        "tools/ci/known-failures.json",
+        ".forgejo/workflows/ci.yml",
+        "tools/ci/testdata/failure-labels/*.log"
+      ]
+    },
+    "check-tooling-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/check/**/*.ts",
+        "tools/hmr/**/*.ts",
+        "tools/infra/linux-pool/*.ts",
+        "tools/infra/linux-pool/*.sh",
+        "tools/infra/obs/ci-poller/*.ts",
+        "tools/lib/**/*.ts",
+        "tools/licenses/*.ts",
+        "tools/manifest-gen/**/*.ts",
+        "tools/otel/**/*.ts",
+        "tools/pilot/**/*.ts",
+        "tools/preview/**/*.ts",
+        "tools/public/**/*.ts",
+        "tools/sim/**/*.ts",
+        "tools/test/**/*.ts",
+        "tools/stress/**",
+        "packages/alignment/package.yml",
+        "packages/arcroom/package.yml",
+        "packages/canopy-kit/package.yml",
+        "packages/gika/package.yml",
+        "packages/hmr/package.yml",
+        "packages/keel/package.yml",
+        "packages/nobuy-club/package.yml",
+        "packages/preview-kit/package.yml",
+        "packages/qr-code/package.yml",
+        "packages/quickjs-kit/package.yml",
+        "packages/view-pilot/package.yml",
+        "packages/wuhu-ai/package.yml",
+        "packages/wuhu-app/package.yml",
+        "packages/wuhu-contract/package.yml",
+        "packages/wuhu-core/package.yml",
+        "packages/wuhu-fetch/package.yml",
+        "packages/wuhu-json/package.yml",
+        "packages/wuhu-serve/package.yml",
+        "packages/wuhu-test-support/package.yml",
+        "packages/arcroom/Apps/arcroom-preview/app.yml",
+        "packages/arcroom/Apps/arcroom/app.yml",
+        "packages/canopy-kit/Apps/editor-lab-mac/app.yml",
+        "packages/canopy-kit/Apps/scroll-lab/app.yml",
+        "packages/canopy-kit/Apps/text-lab/app.yml",
+        "packages/gika/Apps/gika-preview/app.yml",
+        "packages/gika/Apps/gika/app.yml",
+        "packages/hmr/Apps/injection-next-lab/app.yml",
+        "packages/nobuy-club/Apps/nobuy-preview/app.yml",
+        "packages/nobuy-club/Apps/nobuy/app.yml",
+        "packages/preview-kit/Apps/preview-remote/app.yml",
+        "packages/preview-kit/Apps/test-host/app.yml",
+        "packages/wuhu-app/Apps/wuhu-preview/app.yml",
+        "packages/wuhu-app/Apps/wuhu/app.yml",
+        "packages/wuhu-core/Targets/wuhu/target.yml",
+        "bazel/rules/mac_runner_template.ts",
+        ".agents/skills/mac-worker-setup/pin.env",
+        "packages/build-pool/SPEC.md",
+        "packages/build-pool/bench/**",
+        "packages/build-pool/bridge.sh",
+        "packages/build-pool/contract/**",
+        "packages/build-pool/deno.json",
+        "packages/build-pool/deno.lock",
+        "packages/build-pool/ops/**",
+        "packages/build-pool/presets.json",
+        "packages/build-pool/src/**",
+        "packages/build-pool/tests/**",
+        "packages/space-oidc/SPEC.md",
+        "packages/space-oidc/deno.json",
+        "packages/space-oidc/src/**",
+        "packages/space-oidc/tests/**",
+        "packages/hmr-sidecar/README.md",
+        "packages/hmr-sidecar/SPEC.md",
+        "packages/hmr-sidecar/deno.json",
+        "packages/hmr-sidecar/deno.lock",
+        "packages/hmr-sidecar/deploy/**",
+        "packages/hmr-sidecar/src/**",
+        "packages/hmr-sidecar/tests/**",
+        "packages/wuhu-app/MODULE.fragment.bazel",
+        ".forgejo/workflows/ci.yml",
+        ".githooks/pre-commit",
+        "tools/bazel",
+        "tools/public/publish.sh",
+        "tools/workspace-status.sh",
+        "tools/workspace-status_test.ts",
+        "MODULE.bazel.template",
+        "bazel/patches/rules-apple-*.patch",
+        ".bazelrc",
+        "ci/images/bazel-linux/Dockerfile"
+      ]
+    },
+    "signing-tooling-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/signing/**",
+        "tools/lib/**/*.ts",
+        "tools/manifest-gen/**/*.ts",
+        "packages/alignment/package.yml",
+        "packages/arcroom/package.yml",
+        "packages/canopy-kit/package.yml",
+        "packages/gika/package.yml",
+        "packages/hmr/package.yml",
+        "packages/keel/package.yml",
+        "packages/nobuy-club/package.yml",
+        "packages/preview-kit/package.yml",
+        "packages/qr-code/package.yml",
+        "packages/quickjs-kit/package.yml",
+        "packages/view-pilot/package.yml",
+        "packages/wuhu-ai/package.yml",
+        "packages/wuhu-app/package.yml",
+        "packages/wuhu-contract/package.yml",
+        "packages/wuhu-core/package.yml",
+        "packages/wuhu-fetch/package.yml",
+        "packages/wuhu-json/package.yml",
+        "packages/wuhu-serve/package.yml",
+        "packages/wuhu-test-support/package.yml",
+        "packages/arcroom/Apps/arcroom-preview/app.yml",
+        "packages/arcroom/Apps/arcroom/app.yml",
+        "packages/canopy-kit/Apps/editor-lab-mac/app.yml",
+        "packages/canopy-kit/Apps/scroll-lab/app.yml",
+        "packages/canopy-kit/Apps/text-lab/app.yml",
+        "packages/gika/Apps/gika-preview/app.yml",
+        "packages/gika/Apps/gika/app.yml",
+        "packages/hmr/Apps/injection-next-lab/app.yml",
+        "packages/nobuy-club/Apps/nobuy-preview/app.yml",
+        "packages/nobuy-club/Apps/nobuy/app.yml",
+        "packages/preview-kit/Apps/preview-remote/app.yml",
+        "packages/preview-kit/Apps/test-host/app.yml",
+        "packages/wuhu-app/Apps/wuhu-preview/app.yml",
+        "packages/wuhu-app/Apps/wuhu/app.yml",
+        "packages/wuhu-core/Targets/wuhu/target.yml",
+        "tools/sim/*.ts",
+        ".agents/skills/mac-worker-setup/pin.env"
+      ]
+    },
+    "public-links-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/public/*.ts",
+        "packages/wuhu-core/AGENTS.md",
+        "packages/wuhu-core/MODULE.fragment.bazel",
+        "packages/wuhu-core/README.md",
+        "packages/wuhu-core/Targets/**",
+        "packages/wuhu-core/package.yml",
+        "products/wuhu/public/**"
+      ]
+    },
+    "mac-worker-xcode-pin-test": {
+      "platforms": [
+        "linux"
+      ],
+      "inputs": [
+        "tools/check/mac-worker-xcode-pin_test.ts",
+        ".agents/skills/mac-worker-setup/pool-runtime.py",
+        ".agents/skills/mac-worker-setup/pool-runtime-test.py"
+      ]
+    },
+    "machine-v2-driver-smoke-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/infra/wuhu-machine-v2/canary.py",
+        "tools/infra/wuhu-machine-v2/record-runs.py",
+        "tools/infra/wuhu-machine-v2/record-runs-test.py",
+        "tools/infra/wuhu-machine-v2/driver-smoke_test.ts"
+      ]
+    },
+    "contract-ts-emit-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/contract-ts/emit.ts",
+        "tools/contract-ts/emit_test.ts"
+      ]
+    },
+    "integration-blackbox": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/check/integration-test-blackbox.ts",
+        "packages/**/IntegrationTests/**/*.swift"
+      ]
+    },
+    "contract-registry": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/check/contract-registry.ts",
+        "packages/*/Targets/*/Tests/contract/**",
+        "packages/*/Targets/*/Sources/*.swift"
+      ]
+    },
+    "deno-fmt-config": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/check/deno-fmt-config.ts",
+        "packages/*/deno.json"
+      ]
+    },
+    "deno-versions": {
+      "platforms": [
+        "linux",
+        "mac"
+      ],
+      "inputs": [
+        "tools/check/deno-versions.ts",
+        "ci/images/bazel-linux/Dockerfile",
+        "MODULE.bazel.template"
+      ]
+    }
   }
 }

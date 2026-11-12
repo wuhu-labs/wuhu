@@ -134,7 +134,7 @@ public actor Space {
       live(group, acting: acting ?? group, attribution: attribution, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     }
     return AttachmentFolders(
-      base: MachineFolders(base: base, writer: writer, group: group, listingLimit: listingLimit, listingByteLimit: listingByteLimit),
+      base: MachineFolders(base: base, runtime: runtime, group: group, listingLimit: listingLimit, listingByteLimit: listingByteLimit),
       runtime: runtime, writer: writer, blobs: blobs, group: group,
     )
   }

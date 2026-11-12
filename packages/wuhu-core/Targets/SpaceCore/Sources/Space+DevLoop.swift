@@ -19,7 +19,7 @@ extension Space {
     acting: GroupID, attribution: RevisionAttribution? = nil,
   ) async throws -> SpacePath {
     let group = destination == nil ? templateGroup : destinationGroup
-    let templatePath = try await MachineFolders.stored(templatePath, mutating: false, in: writer)
+    let templatePath = try await MachineFolders.stored(templatePath, mutating: false, in: runtime)
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let now = dateGen.now
     let text = try await blobs.read(writer) { db, cache in

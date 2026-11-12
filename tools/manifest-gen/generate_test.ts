@@ -91,6 +91,40 @@ Deno.test('an unknown manifest option points at --help', async () => {
   await assertRejects(() => main(['--apps']), Error, '(see --help)')
 })
 
+Deno.test('a package with both package.yml and deno.json fails before writing either BUILD.bazel', async () => {
+  const root = await Deno.makeTempDir()
+  const cwd = Deno.cwd()
+  const dir = join(root, 'packages/p')
+  await Deno.mkdir(join(dir, 'Targets'), { recursive: true })
+  await Deno.writeTextFile(
+    join(dir, 'package.yml'),
+    'packageName: p\nowner: shared\n',
+  )
+  await Deno.writeTextFile(
+    join(dir, 'deno.json'),
+    JSON.stringify({ owner: 'shared', tasks: { build: 'true' } }),
+  )
+  const existing = '# hand-placed, must survive\n'
+  await Deno.writeTextFile(join(dir, 'BUILD.bazel'), existing)
+  Deno.chdir(root)
+  try {
+    await assertRejects(
+      () => main(['--apply', '--all']),
+      Error,
+      'packages/p has both package.yml and deno.json',
+    )
+  } finally {
+    Deno.chdir(cwd)
+  }
+  assertEquals(await Deno.readTextFile(join(dir, 'BUILD.bazel')), existing)
+  assertEquals(
+    (await Array.fromAsync(Deno.readDir(dir))).map((entry) => entry.name)
+      .sort(),
+    ['BUILD.bazel', 'Targets', 'deno.json', 'package.yml'],
+  )
+  await Deno.remove(root, { recursive: true })
+})
+
 Deno.test('ViewPilot defaults on, opt-out is honored, and previews cannot opt out', () => {
   const target: AppManifest['targets'][number] = {
     name: 'Example',

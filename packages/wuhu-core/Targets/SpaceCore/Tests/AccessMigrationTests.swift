@@ -9,7 +9,7 @@ import Testing
 // closure, the admin rows and personal groups become one access table.
 @Suite(.deterministicDependencies) struct AccessMigrationTests {
   func migrated() throws -> DatabaseQueue {
-    let database = try DatabaseQueue()
+    let database = try DatabaseQueue(path: "file:/access-migration-\(UUID())?vfs=memdb")
     try database.write { db in
       try Migration001.apply(db)
       try db.execute(sql: """

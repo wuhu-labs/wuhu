@@ -12,7 +12,7 @@ import Testing
 // edge justifies.
 @Suite(.deterministicDependencies) struct SettingsMigrationTests {
   @Test func upgradeCopiesCatalogsAndKeepsLegacyAuthorityOutOfPersonalGroups() async throws {
-    let database = try DatabaseQueue()
+    let database = try DatabaseQueue(path: "file:/settings-migration-\(UUID())?vfs=memdb")
     try await database.write { db in
       try Migration001.apply(db)
       try db.execute(sql: """

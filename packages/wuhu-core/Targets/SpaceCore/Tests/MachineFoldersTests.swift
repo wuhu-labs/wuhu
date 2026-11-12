@@ -1,5 +1,9 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
@@ -15,10 +19,8 @@ struct MachineFoldersTests {
   // new group's tree, where they are listed and delivered, and out of the old.
   @Test func aMovedMachineTakesItsNotesIntoItsNewGroup() async throws {
     let space = try makeSpace()
-    let alice = GroupID(rawValue: "alice")
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
-    }
+    let owner = try await space.addAccount(kind: .human, name: "Alice")
+    let alice = try await space.createGroup(alias: "alice", owner: owner.id)
     let machine = try await space.addMachine(name: "studio", group: alice)
     let id = machine.id.rawValue
     let hers = await space.fs(alice)

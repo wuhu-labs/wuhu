@@ -23,15 +23,15 @@ extension Space {
     attribution: RevisionAttribution? = nil,
   ) async throws {
     try await live(group, acting: acting, attribution: attribution).move(
-      MachineFolders.stored(path, mutating: true, in: writer),
-      to: MachineFolders.stored(destination, mutating: true, in: writer),
+      MachineFolders.stored(path, mutating: true, in: runtime),
+      to: MachineFolders.stored(destination, mutating: true, in: runtime),
       in: destinationGroup,
       replacing: replacing,
     )
   }
 
   public func writeFile(_ path: SpacePath, data: Data, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, ifMatch: VersionToken?, createOnly: Bool) async throws -> VersionToken {
-    try await live(group, acting: acting, attribution: attribution).write(MachineFolders.stored(path, mutating: true, in: writer).rawValue, data, ifMatch: ifMatch, createOnly: createOnly)
+    try await live(group, acting: acting, attribution: attribution).write(MachineFolders.stored(path, mutating: true, in: runtime).rawValue, data, ifMatch: ifMatch, createOnly: createOnly)
   }
 
   public func removeEmptyDirectory(_ path: SpacePath, in group: GroupID, acting: GroupID) async throws -> Bool {
@@ -53,8 +53,8 @@ extension Space {
   }
 
   public func history(_ path: SpacePath, in group: GroupID, after: Int? = nil, limit: Int? = nil) async throws -> [(Rev, Date, Change)] {
-    try await writer.read { db in
-      let path = try MachineFolders.stored(path, mutating: false, in: db)
+    let path = try await MachineFolders.stored(path, mutating: false, in: runtime)
+    return try await writer.read { db in
       let rows = try FSVersionRow
         .where { $0.grp.eq(group.rawValue) && $0.path.eq(path.rawValue) && $0.rev.gt(Int64(after ?? 0)) }
         .order { $0.rev }
@@ -93,7 +93,7 @@ extension Space {
   }
 
   public func checkout(_ path: SpacePath, rev target: Rev, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, ifMatch: VersionToken? = nil, createOnly: Bool = false) async throws -> (Rev, VersionToken) {
-    let path = try await MachineFolders.stored(path, mutating: true, in: writer)
+    let path = try await MachineFolders.stored(path, mutating: true, in: runtime)
     guard !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
     if path.isLive, let restored = try await restoredLive(path, rev: target, in: group) {
       if let ifMatch, ifMatch.rev == nil { throw SpaceError.versionMismatch(path.rawValue) }

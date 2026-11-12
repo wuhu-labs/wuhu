@@ -1,77 +1,50 @@
-import Dependencies
 import Foundation
-import GRDB
+import StructuredQueries
+import Wuwei
 
-public enum AllocationKind: String, Sendable {
-  case persona
-  case session
-  case device
-  case group
+@Table("allocations")
+struct AllocationRow {
+  @Column(primaryKey: true) var id: Int64
+  var kind: String
+  @Column("created_by") var createdBy: String
+  @Column("created_at") var createdAt: String
 }
 
-public struct Allocation: Equatable, Sendable {
-  public let id: Int64
-  public let name: String
-  public let kind: AllocationKind
-  public let createdBy: String
-  public let createdAt: Date
+@Table("allocation_freeze")
+struct AllocationFreezeRow {
+  @Column(primaryKey: true) var id: Int64
+  @Column("vocab_sha256") var vocabSHA256: String
+  var secret: [UInt8]
 }
 
-enum Allocations {
-  static func draw(
-    _ kind: AllocationKind,
-    createdBy: String,
-    created: String,
-    minted: [UInt8],
-    in db: Database,
+extension SpaceCell {
+  /// Draws the next name of `kind` for `createdBy`, freezing the space's vocabulary with `candidate` on the first draw.
+  mutating func draw(
+    _ kind: AllocationKind, createdBy: String, created: String, candidate: [UInt8],
   ) throws -> (id: Int64, name: String) {
-    let secret = try frozenSecret(db, minting: minted)
-    try db.execute(
-      sql: "INSERT INTO allocations (kind, created_by, created_at) VALUES (?, ?, ?)",
-      arguments: [kind.rawValue, createdBy, created],
-    )
-    let id = db.lastInsertedRowID
-    return (id, AllocationNames.name(for: id, words: AllocationVocabulary.words, secret: secret))
-  }
-
-  static func name(of id: Int64, in db: Database) throws -> String? {
-    guard let secret = try Data.fetchOne(db, sql: "SELECT secret FROM allocation_freeze WHERE id = 1") else { return nil }
-    return AllocationNames.name(for: id, words: AllocationVocabulary.words, secret: Array(secret))
-  }
-
-  // A candidate is only consumed by the first draw of a space, so later draws leave the generator alone.
-  static func mintSecretCandidateIfUnfrozen(_ rng: WithRandomNumberGenerator, in db: Database) throws -> [UInt8] {
-    try Row.fetchOne(db, sql: "SELECT 1 FROM allocation_freeze WHERE id = 1") == nil ? mintSecretCandidate(rng) : []
-  }
-
-  static func mintSecretCandidate(_ rng: WithRandomNumberGenerator) -> [UInt8] {
-    rng { generator in (0 ..< 32).map { _ in UInt8.random(in: .min ... .max, using: &generator) } }
-  }
-
-  private static func frozenSecret(_ db: Database, minting secret: [UInt8]) throws -> [UInt8] {
-    if let row = try Row.fetchOne(db, sql: "SELECT vocab_sha256, secret FROM allocation_freeze WHERE id = 1") {
-      let frozen: String = row["vocab_sha256"]
-      guard frozen == AllocationVocabulary.digest else {
-        throw SpaceError.vocabularyFrozen(frozen)
-      }
-      return Array(row["secret"] as Data)
+    let secret: [UInt8]
+    if let frozen = db.rows(AllocationFreezeRow.all).first {
+      guard frozen.vocabSHA256 == AllocationVocabulary.digest else { throw SpaceError.vocabularyFrozen(frozen.vocabSHA256) }
+      secret = frozen.secret
+    } else {
+      try db.execute(AllocationFreezeRow.insert { AllocationFreezeRow(id: 1, vocabSHA256: AllocationVocabulary.digest, secret: candidate) })
+      secret = candidate
     }
-    try db.execute(
-      sql: "INSERT INTO allocation_freeze (id, vocab_sha256, secret) VALUES (1, ?, ?)",
-      arguments: [AllocationVocabulary.digest, Data(secret)],
-    )
-    return secret
+    try db.execute(AllocationRow.insert { AllocationRow.Draft(kind: kind.rawValue, createdBy: createdBy, createdAt: created) })
+    let id = db.one("SELECT last_insert_rowid()")!.integer!
+    return (id, AllocationNames.name(for: id, words: AllocationVocabulary.words, secret: secret))
   }
 }
 
 extension Space {
+  @discardableResult
   public func allocate(_ kind: AllocationKind, createdBy: String) async throws -> Allocation {
     let createdAt = dateGen.now
     let created = SQLiteDateFormat.string(from: createdAt)
-    let minted = Allocations.mintSecretCandidate(rng)
-    let (id, name) = try await writer.write { db in
-      try Allocations.draw(kind, createdBy: createdBy, created: created, minted: minted, in: db)
+    let candidate = Allocations.mintSecretCandidate(rng)
+    let drawn = try await worker.call(SpaceCell.ID("space")) {
+      try $0.draw(kind, createdBy: createdBy, created: created, candidate: candidate)
     }
-    return Allocation(id: id, name: name, kind: kind, createdBy: createdBy, createdAt: createdAt)
+    return Allocation(id: drawn.id, name: drawn.name, kind: kind, createdBy: createdBy, createdAt: createdAt)
   }
 }

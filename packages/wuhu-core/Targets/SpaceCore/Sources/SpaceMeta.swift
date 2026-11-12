@@ -6,6 +6,7 @@
 import Dependencies
 import GRDB
 import Logging
+import StructuredQueries
 
 public struct SpaceIdentity: Hashable, Sendable {
   static let prefix: String = "spc_"
@@ -64,8 +65,8 @@ enum SpaceMeta {
   }
 }
 
-public struct DeploymentRecord: Hashable, Sendable {
-  public enum Certificate: Hashable, Sendable {
+public struct DeploymentRecord: Hashable, Codable, Sendable {
+  public enum Certificate: Hashable, Codable, Sendable {
     /// The one serve generated into `<folder>/tls`.
     case generated
     /// `--cert`/`--key`, self-signed or not.
@@ -90,48 +91,57 @@ public struct DeploymentRecord: Hashable, Sendable {
   }
 }
 
+@Table("space_deployment")
+struct DeploymentRow {
+  @Column(primaryKey: true) var id: Int64
+  var origin: String?
+  @Column("tls_fingerprint") var tlsFingerprint: String
+}
+
+@Table("space_deployment_certificate")
+struct DeploymentCertificateRow {
+  @Column(primaryKey: true) var id: Int64
+  @Column("tls_fingerprint") var tlsFingerprint: String
+  var generated: Bool
+}
+
+extension SpaceCell {
+  /// Serve writes this at boot (origin exactly as passed via `--origin`, NULL when absent — the record never lies); offline verbs read it.
+  ///
+  /// The certificate kind lives in its own row, keyed by the fingerprint it describes: a server that predates it rewrites
+  /// `space_deployment` alone, and the stale row then no longer matches, so the record reads as unknown.
+  mutating func recordDeployment(_ record: DeploymentRecord) throws {
+    try db.execute(DeploymentRow.insert {
+      DeploymentRow(id: 1, origin: record.origin, tlsFingerprint: record.tlsFingerprint)
+    } onConflict: {
+      ($0.id)
+    } doUpdate: {
+      $0.origin = $1.origin
+      $0.tlsFingerprint = $1.tlsFingerprint
+    })
+    try db.execute(DeploymentCertificateRow.delete())
+    guard let certificate = record.certificate else { return }
+    try db.execute(DeploymentCertificateRow.insert {
+      DeploymentCertificateRow(id: 1, tlsFingerprint: record.tlsFingerprint, generated: certificate == .generated)
+    })
+  }
+
+  func deployment() -> DeploymentRecord? {
+    guard let row = db.rows(DeploymentRow.all).first else { return nil }
+    let certificate = db.rows(DeploymentCertificateRow.where { $0.tlsFingerprint.eq(row.tlsFingerprint) }).first
+    return DeploymentRecord(
+      origin: row.origin, tlsFingerprint: row.tlsFingerprint, certificate: certificate.map { $0.generated ? .generated : .provided },
+    )
+  }
+}
+
 extension Space {
-  // Ownership rule: serve writes this at boot (origin exactly as passed via
-  // --origin, NULL when absent — the record never lies); offline verbs read
-  // it; live clients read GET /v1/server; nobody else writes. argv stays
-  // authoritative at runtime.
-  //
-  // The certificate kind lives in its own row, keyed by the fingerprint it
-  // describes: a server that predates it rewrites space_deployment alone, and
-  // the stale row then no longer matches, so the record reads as unknown.
   public func recordDeployment(_ record: DeploymentRecord) async throws {
-    try await writer.write { db in
-      try db.execute(
-        sql: "INSERT OR REPLACE INTO space_deployment (id, origin, tls_fingerprint) VALUES (1, ?, ?)",
-        arguments: [record.origin, record.tlsFingerprint],
-      )
-      if let certificate = record.certificate {
-        try db.execute(
-          sql: "INSERT OR REPLACE INTO space_deployment_certificate (id, tls_fingerprint, generated) VALUES (1, ?, ?)",
-          arguments: [record.tlsFingerprint, certificate == .generated],
-        )
-      } else {
-        try db.execute(sql: "DELETE FROM space_deployment_certificate")
-      }
-    }
+    try await worker.call(SpaceCell.ID("space")) { try $0.recordDeployment(record) }
   }
 
   public func deployment() async throws -> DeploymentRecord? {
-    try await writer.read { db in
-      guard let row = try Row.fetchOne(db, sql: """
-      SELECT d.origin, d.tls_fingerprint, c.generated FROM space_deployment d
-      LEFT JOIN space_deployment_certificate c ON c.tls_fingerprint = d.tls_fingerprint
-      WHERE d.id = 1
-      """) else {
-        return nil
-      }
-      let generated: Bool? = row["generated"]
-      return DeploymentRecord(
-        origin: row["origin"],
-        tlsFingerprint: row["tls_fingerprint"],
-        certificate: generated.map { $0 ? .generated : .provided },
-      )
-    }
+    cell.deployment()
   }
 
   public func identity() async throws -> SpaceIdentity {

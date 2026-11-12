@@ -1,30 +1,12 @@
-#if canImport(FoundationEssentials)
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
-
-import GRDB
 import struct SpaceContract.GroupID
 import struct SpaceFS.SpacePath
 
-/// What writing a group's files takes: its instructions (its `/AGENTS.md` and
-/// `/.agents/skills/**`) follow the same rule as every other file, and the
-/// settings group takes only a space admin.
 enum GroupWrites {
   static func isInstructions(_ path: SpacePath) -> Bool {
     let components = path.components
     if components == ["AGENTS.md"] { return true }
     if components.first == ".agents", components.count == 1 || components[1] == "skills" { return true }
     return false
-  }
-
-  static func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, acting: GroupID, in db: Database) throws {
-    if case .anonymous = actor { return }
-    guard let held = try GroupAccess.role(of: actor, in: group, acting: acting, in: db) else {
-      throw SpaceError.notFound(path.rawValue)
-    }
-    guard held >= .write else { throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue) }
   }
 }
 
@@ -38,7 +20,7 @@ extension Space {
   /// a space admin. The --dev seat is unrestricted; nobody writes a session transcript or a rendered file.
   public func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, acting: GroupID) async throws {
     if SessionTranscripts.contains(path.rawValue) || RenderedFiles.contains(path.rawValue) { throw SpaceError.sentViewReadOnly(path.rawValue) }
-    try await writer.read { db in try GroupWrites.refuseWrite(path, in: group, by: actor, acting: acting, in: db) }
+    try cell(of: group).refusesWrite(path, by: actor, acting: acting)
   }
 
   /// The group a new top-level agent lands in: `requested`, else the

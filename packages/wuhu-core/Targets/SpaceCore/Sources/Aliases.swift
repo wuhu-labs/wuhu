@@ -15,6 +15,8 @@ struct AliasRow {
   @Column(primaryKey: true) var name: String
   var kind: AliasKind
   var target: String
+  /// Whether this spelling is its record's current name. Only groups keep that here: a person's is its handle, a machine's its name.
+  var current: Bool = false
 }
 
 public enum AliasError: Error, Equatable, Sendable {
@@ -58,64 +60,29 @@ enum Aliases {
 extension Space {
   /// All group spellings enter here; access checks and persistence use only ids.
   public func resolveGroup(_ spelling: String) async throws -> GroupID? {
-    try await writer.read { db in
-      if let row = try GroupRow.where({ $0.id.eq(spelling) }).fetchOne(db), row.removedAt == nil {
-        return GroupID(rawValue: row.id)
-      }
-      guard let alias = try AliasRow.where({ $0.name.eq(spelling.lowercased()) }).fetchOne(db) else { return nil }
-      switch alias.kind {
-      case .group:
-        guard let row = try GroupRow.where({ $0.id.eq(alias.target) }).fetchOne(db), row.removedAt == nil else { return nil }
-        return GroupID(rawValue: row.id)
-      case .person:
-        guard let account = try PersonaRow.find(alias.target).select(\.accountID).fetchOne(db) else { return nil }
-        return try Groups.personalGroup(of: AccountID(rawValue: account), in: db)
-      case .machine: return nil
-      }
-    }
+    cell.resolve(spelling)
   }
 
   public func createGroup(alias raw: String, name: String? = nil, owner: AccountID) async throws -> GroupID {
     guard let alias = normalizedLabel(raw, allowing: ["_"], length: 1 ... 63) else { throw AliasError.invalid(raw) }
     let name = try name.map(GroupName.checked) ?? alias
-    let created = SQLiteDateFormat.string(from: dateGen.now)
-    let rng = rng
-    return try await writer.write { db in
-      guard let account = try GroupAccess.accountRow(owner, in: db), account.removedAt == nil, account.kind == "human", !account.guest else {
-        throw AliasError.memberRequired
-      }
-      try Aliases.requireFree(alias, kind: .group, target: nil, in: db)
-      let minted = try Allocations.mintSecretCandidateIfUnfrozen(rng, in: db)
-      let allocation = try Allocations.draw(.group, createdBy: owner.rawValue, created: created, minted: minted, in: db)
-      let group = GroupID(rawValue: allocation.name)
-      try GroupRow.insert {
-        GroupRow(id: group.rawValue, createdAt: created, visibility: "open", secretsScope: "owner", alias: alias, name: name)
-      }.execute(db)
-      try Groups.grant(.admin, in: group, to: owner, created: created, in: db)
-      return group
-    }
+    guard cell.canOwnGroup(owner) else { throw AliasError.memberRequired }
+    let claim = GroupClaim(alias: alias, name: name, owner: owner, created: SQLiteDateFormat.string(from: dateGen.now))
+    let candidate = Allocations.mintSecretCandidate(rng)
+    let group = try await worker.call(SpaceCell.ID("space")) { try $0.claim(claim, candidate: candidate) }
+    try await worker.call(GroupCell.ID(group.rawValue)) { try $0.create(claim) }
+    return group
   }
 
   public func renameGroup(_ group: GroupID, alias raw: String, by principal: Principal) async throws {
     guard let alias = normalizedLabel(raw, allowing: ["_"], length: 1 ... 63) else { throw AliasError.invalid(raw) }
-    try await writer.write { db in
-      try GroupAccess.requireAdmin(principal.actor, of: group, acting: principal.group, in: db)
-      guard let row = try GroupRow.where({ $0.id.eq(group.rawValue) }).fetchOne(db), row.personalAccount == nil, row.removedAt == nil else {
-        throw SpaceError.groupForbidden(group.rawValue)
-      }
-      try Aliases.requireFree(alias, kind: .group, target: group.rawValue, in: db)
-      try GroupRow.where { $0.id.eq(group.rawValue) }.update { $0.alias = #bind(alias) }.execute(db)
-    }
+    try requireAdmin(principal.actor, of: group, acting: principal.group)
+    try await worker.call(SpaceCell.ID("space")) { try $0.rename(group, alias: alias) }
   }
 
   public func nameGroup(_ group: GroupID, name raw: String, by principal: Principal) async throws {
     let name = try GroupName.checked(raw)
-    try await writer.write { db in
-      try GroupAccess.requireAdmin(principal.actor, of: group, acting: principal.group, in: db)
-      guard let row = try GroupRow.where({ $0.id.eq(group.rawValue) }).fetchOne(db), row.personalAccount == nil, row.removedAt == nil else {
-        throw SpaceError.groupForbidden(group.rawValue)
-      }
-      try GroupRow.where { $0.id.eq(group.rawValue) }.update { $0.name = #bind(name) }.execute(db)
-    }
+    try requireAdmin(principal.actor, of: group, acting: principal.group)
+    try await worker.call(GroupCell.ID(group.rawValue)) { try $0.name(name) }
   }
 }

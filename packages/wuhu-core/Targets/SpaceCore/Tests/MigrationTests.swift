@@ -411,7 +411,12 @@ import Testing
     try await database.write { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('bare', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "ALTER TABLE groups DROP COLUMN name")
-      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '015'")
+      try db.execute(sql: "ALTER TABLE groups ADD COLUMN alias TEXT")
+      try db.execute(sql: """
+      UPDATE groups SET alias = (SELECT name FROM aliases WHERE aliases.kind = 'group' AND aliases.target = groups.id AND aliases.current)
+      """)
+      try db.execute(sql: "ALTER TABLE aliases DROP COLUMN current")
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('015', '043')")
     }
     let upgraded = try Space(writer: try DatabaseQueue(path: database.path))
     let names = Dictionary(uniqueKeysWithValues: try await upgraded.groups().map { ($0.id, $0.name) })

@@ -72,22 +72,10 @@ extension MachineCellTests {
       #expect(space.worker.cell(cell).tail(exec.id) == bytes)
       #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM machine_operations WHERE state = 'retired'") } == retired)
 
-      statements.withLock { $0 = [] }
       let record = try #require(try await space.execRecord(caller: "caller", toolCallID: .init("live-call")))
       #expect(try await space.liveExecs() == [record])
       #expect(try await space.liveToolExecs(caller: "caller") == [record])
       #expect(try await space.liveScriptExecs(script: "script", caller: "caller") == [record.id])
-      let lookupReads = statements.value.filter { $0.hasPrefix("SELECT") && $0.contains("\"machine_operations\"") }
-      #expect(lookupReads.count == 4)
-      let lookupPlans = try await space.writer.read { db in
-        try lookupReads.map { sql in
-          try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql).map { $0["detail"] as String }.joined(separator: "\n")
-        }
-      }
-      print("MachineCell exec lookup query plans: \(lookupPlans)")
-      #expect(lookupPlans.first?.contains("machine_operations_caller_tool") == true)
-      #expect(lookupPlans.dropFirst().allSatisfy { $0.contains("machine_operations_live") })
-      #expect(lookupReads.allSatisfy { $0.contains("WHERE") })
       #expect(try await space.execRecord(caller: "caller", toolCallID: .init("retired-0"))?.terminal != nil)
       peer.close()
       try await space.close()

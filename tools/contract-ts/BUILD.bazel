@@ -180,3 +180,13 @@ deno_command_test(
     tags = ["requires-network"],
     target_compatible_with = wuhu_platforms(["linux", "mac"]),
 )
+
+# Every file here, for //tools:fmt-test and :lint-test, which cover all of tools/.
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        ["**"],
+        exclude = ["BUILD.bazel", "**/.DS_Store"],
+    ),
+    visibility = ["//tools:__pkg__"],
+)

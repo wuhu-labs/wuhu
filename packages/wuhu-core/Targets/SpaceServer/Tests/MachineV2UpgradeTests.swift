@@ -25,6 +25,7 @@ final class ReleaseHost: Sendable {
   let published: Mutex<[String: Set<String>]>
   let mode: Mutex<Mode>
   let lookups = Mutex<[String]>([])
+  private let seen = AsyncStream<Void>.makeStream()
   let clock = VirtualClock()
   let held = Gate()
 
@@ -37,6 +38,7 @@ final class ReleaseHost: Sendable {
     FetchClient { request in
       let name = request.url.lastPathComponent
       self.lookups.withLock { $0.append(name) }
+      self.seen.continuation.yield()
       switch self.mode.withLock({ $0 }) {
       case .fail: throw URLError(.cannotConnectToHost)
       case .hang:
@@ -62,6 +64,12 @@ final class ReleaseHost: Sendable {
   }
 
   var count: Int { lookups.withLock { $0.count } }
+
+  /// Returns once `count` lookups have reached the host. One caller at a time.
+  func lookedUp(_ count: Int) async {
+    if self.count >= count { return }
+    for await _ in seen.stream where self.count >= count { return }
+  }
 }
 
 private struct Fixture {
@@ -265,9 +273,7 @@ let both: Set<String> = ["linux-amd64", "macos-arm64"]
   @Test func hangingReleaseHostTimesOut() async throws {
     let host = ReleaseHost(mode: .hang)
     let f = try await Fixture(host: host, warm: false)
-    try await outboxEventually("both lookup deadlines are armed") { host.clock.pendingSleeps().filter { $0 == .seconds(5) }.count == 2 }
-    await host.clock.advance(by: .seconds(5))
-    try await releaseSettled(f.space, "0.1.0-dev.122")
+    try await host.clock.run(through: VirtualClock.at(.seconds(3599))) { try await releaseSettled(f.space, "0.1.0-dev.122") }
     #expect(try await f.hello().status == .unreachable)
     try await f.space.close()
   }
@@ -277,7 +283,7 @@ let both: Set<String> = ["linux-amd64", "macos-arm64"]
     let f = try await Fixture(host: host, warm: false, boot: false)
     #expect(host.count == 0)
     #expect(try await f.hello().status == .unreachable)
-    try await outboxEventually("both sidecars start") { host.count == 2 }
+    await host.lookedUp(2)
     #expect(try await f.hello().status == .unreachable)
     try await f.space.close()
   }
@@ -286,7 +292,7 @@ let both: Set<String> = ["linux-amd64", "macos-arm64"]
     let host = ReleaseHost(["0.1.0-dev.122": both], mode: .hold)
     let f = try await Fixture(host: host, warm: false, boot: false)
     #expect(try await f.hello().status == .unreachable)
-    try await outboxEventually("both sidecars start") { host.count == 2 }
+    await host.lookedUp(2)
     #expect(try await f.hello().status == .unreachable)
     host.held.open()
     try await releaseSettled(f.space, "0.1.0-dev.122")

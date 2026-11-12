@@ -131,3 +131,13 @@ deno_command_test(
     command = ["run", "--allow-read", "--allow-net=127.0.0.1", "--allow-import=127.0.0.1", "--import-map=tools/quickjs-wasm/imports.json", "tools/quickjs-wasm/smoke.ts"],
     target_compatible_with = wuhu_platforms(["linux", "mac"]),
 )
+
+# Every file here, for //tools:fmt-test and :lint-test, which cover all of tools/.
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        ["**"],
+        exclude = ["BUILD.bazel", "**/.DS_Store"],
+    ),
+    visibility = ["//tools:__pkg__"],
+)

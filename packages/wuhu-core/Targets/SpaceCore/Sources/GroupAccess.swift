@@ -3,7 +3,7 @@ import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 
 /// What a role lets its holder do, in order: an admin writes and reads.
-public enum GroupRole: String, Hashable, Sendable, CaseIterable, Comparable {
+public enum GroupRole: String, Hashable, Codable, Sendable, CaseIterable, Comparable {
   case read
   case write
   case admin
@@ -20,20 +20,20 @@ public enum GroupRole: String, Hashable, Sendable, CaseIterable, Comparable {
 }
 
 /// Whether a group takes everyone in, or only the entries its list names.
-public enum GroupVisibility: String, Hashable, Sendable {
+public enum GroupVisibility: String, Hashable, Codable, Sendable {
   case open
   case `private`
 }
 
 /// A switch between the owner group alone and everyone who can reach it.
-public enum ReachScope: String, Hashable, Sendable {
+public enum ReachScope: String, Hashable, Codable, Sendable {
   case owner
   case reachable
 }
 
 /// One entry of a group's list: an account or another group, held at a role.
 public struct GroupGrant: Hashable, Sendable {
-  public enum Subject: String, Hashable, Sendable {
+  public enum Subject: String, Hashable, Codable, Sendable {
     case account
     case group
   }
@@ -277,30 +277,13 @@ enum GroupAccess {
     try Snapshot(db).role(of: actor, in: group, acting: acting, rows: actorRows(in: db))
   }
 
-  static func reach(of group: GroupID, in db: Database) throws -> Set<GroupID> {
-    try Snapshot(db).reach(of: group)
-  }
-
   static func readable(by actor: Actor, acting: GroupID, in db: Database) throws -> Set<GroupID> {
     try Snapshot(db).readable(by: actor, acting: acting, rows: actorRows(in: db))
-  }
-
-  static func isHumanAdmin(_ account: AccountID, of group: GroupID, in db: Database) throws -> Bool {
-    guard let row = try accountRow(account, in: db) else { return false }
-    return try Snapshot(db).isHumanAdmin(row, of: group.rawValue)
-  }
-
-  static func writes(_ group: GroupID, in target: GroupID, in db: Database) throws -> Bool {
-    try (Snapshot(db).role(from: group.rawValue, in: target.rawValue) ?? .read) >= .write
   }
 
   static func isLiveHuman(_ account: AccountID, in db: Database) throws -> Bool {
     guard let row = try accountRow(account, in: db) else { return false }
     return row.kind == "human" && row.removedAt == nil
-  }
-
-  static func isGuest(_ account: AccountID, in db: Database) throws -> Bool {
-    try accountRow(account, in: db)?.guest ?? false
   }
 
   /// The admin rows that make `account` a space admin: the settings group's.
@@ -321,12 +304,5 @@ enum GroupAccess {
     return try Bool.fetchOne(
       db, sql: "SELECT EXISTS (\(spaceAdminSQL(account: "?")))", arguments: [account.rawValue],
     ) ?? false
-  }
-
-  static func requireAdmin(_ actor: Actor, of group: GroupID, acting: GroupID, in db: Database) throws {
-    if case .anonymous = actor { return }
-    guard try role(of: actor, in: group, acting: acting, in: db) == .admin else {
-      throw SpaceError.groupForbidden(group.rawValue)
-    }
   }
 }

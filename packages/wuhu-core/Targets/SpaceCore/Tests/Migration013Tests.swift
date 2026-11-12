@@ -13,7 +13,7 @@ import Testing
   private static let retired = ["machine_v2_trace", "machine_v2_incidents", "machine_v2_problem_index"]
 
   @Test func freshSpaceHasNoTraceOrProblemTables() async throws {
-    let database = try DatabaseQueue()
+    let database = try DatabaseQueue(path: "file:/machine-trace-migration-\(UUID())?vfs=memdb")
     let space = try Space(writer: database)
     #expect(try await database.read { db in try Self.retired.filter { try db.tableExists($0) } } == [])
     try await space.close()

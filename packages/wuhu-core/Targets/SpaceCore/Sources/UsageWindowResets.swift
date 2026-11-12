@@ -1,5 +1,6 @@
 import StructuredQueries
 import StructuredQueriesSQLite
+import Wuwei
 
 @Table("usage_window_resets")
 struct UsageWindowResetRow {
@@ -9,7 +10,7 @@ struct UsageWindowResetRow {
 }
 
 /// One plan window of one provider.
-public struct UsageWindowKey: Hashable, Sendable {
+public struct UsageWindowKey: Hashable, Codable, Sendable {
   public let provider: String
   public let window: String
 
@@ -19,25 +20,19 @@ public struct UsageWindowKey: Hashable, Sendable {
   }
 }
 
-extension Space {
+extension SpaceCell {
   /// The last reset seen of each fixed plan window, kept across restarts.
+  func usageWindowResets() -> [UsageWindowKey: Double] {
+    Dictionary(uniqueKeysWithValues: db.rows(UsageWindowResetRow.all).map { (UsageWindowKey(provider: $0.provider, window: $0.window), $0.resetsAt) })
+  }
+}
+
+extension Space {
   public func usageWindowResets() async throws -> [UsageWindowKey: Double] {
-    try await writer.read { db in
-      Dictionary(uniqueKeysWithValues: try UsageWindowResetRow.all.fetchAll(db).map { (UsageWindowKey(provider: $0.provider, window: $0.window), $0.resetsAt) })
-    }
+    cell.usageWindowResets()
   }
 
   public func saveUsageWindowResets(_ resets: [UsageWindowKey: Double]) async throws {
-    try await writer.write { db in
-      for (key, resetsAt) in resets {
-        try UsageWindowResetRow.insert {
-          UsageWindowResetRow(provider: key.provider, window: key.window, resetsAt: resetsAt)
-        } onConflict: {
-          ($0.provider, $0.window)
-        } doUpdate: {
-          $0.resetsAt = $1.resetsAt
-        }.execute(db)
-      }
-    }
+    try await worker.call(SpaceCell.ID("space")) { try $0.saveWindowResets(resets) }
   }
 }

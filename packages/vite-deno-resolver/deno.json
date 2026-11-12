@@ -6,6 +6,11 @@
     "semiColons": false,
     "singleQuote": true
   },
+  "lint": {
+    "rules": {
+      "include": ["no-sparse-arrays"]
+    }
+  },
   "exports": {
     ".": "./src/mod.ts"
   },

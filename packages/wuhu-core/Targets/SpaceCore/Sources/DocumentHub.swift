@@ -105,7 +105,7 @@ extension Space {
   ) async -> AsyncStream<LiveOutbound> {
     guard path.isLive else { return Self.refused(.notLive, "\(path.rawValue) is no live document: those end in .wmd or .canvas") }
     let stored: SpacePath
-    do { stored = try await MachineFolders.stored(path, mutating: false, in: writer) } catch {
+    do { stored = try await MachineFolders.stored(path, mutating: false, in: runtime) } catch {
       return Self.refused(.notFound, "\(path.rawValue) does not exist")
     }
     guard !stored.isReserved else { return Self.refused(.forbidden, "\(path.rawValue) is the space's own") }

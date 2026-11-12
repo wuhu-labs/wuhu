@@ -69,60 +69,41 @@ public struct GroupRecord: Hashable, Sendable {
 
 extension Space {
   public func groups() async throws -> [GroupRecord] {
-    try await writer.read { db in
-      try GroupRow.order { ($0.createdAt, $0.id) }.fetchAll(db).map(GroupRecord.init(row:))
-    }
+    cell.groups()
   }
 
   public func group(_ id: GroupID) async throws -> GroupRecord? {
-    try await writer.read { db in
-      guard let row = try GroupRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db), row.removedAt == nil else { return nil }
-      return GroupRecord(row: row)
-    }
+    cell(of: id).record()
   }
 
   /// The groups sessions acting in `group` read.
   public func reads(_ group: GroupID) async throws -> Set<GroupID> {
-    try await writer.read { db in try GroupAccess.reach(of: group, in: db) }
+    cell.reach(of: group)
   }
 
   /// The groups `principal` reads.
   public func reads(for principal: Principal) async throws -> Set<GroupID> {
-    try await writer.read { db in
-      try GroupAccess.readable(by: principal.actor, acting: principal.group, in: db)
-    }
+    cell.readable(by: principal)
   }
 
   /// A live group: one that exists and was not removed.
   public func groupExists(_ group: GroupID) async throws -> Bool {
-    try await writer.read { db in
-      guard let row = try GroupRow.where({ $0.id.eq(group.rawValue) }).fetchOne(db) else { return false }
-      return row.removedAt == nil
-    }
+    cell(of: group).record() != nil
   }
 
   /// The groups an account is listed in, by any role.
   public func memberGroups(of account: AccountID) async throws -> Set<GroupID> {
-    try await writer.read { db in
-      Set(try String.fetchAll(
-        db,
-        sql: """
-        SELECT r.grp FROM group_roles r JOIN groups g ON g.id = r.grp
-        WHERE r.account_id = ? AND g.removed_at IS NULL
-        """,
-        arguments: [account.rawValue],
-      ).map(GroupID.init(rawValue:)))
-    }
+    cell.memberGroups(of: account)
   }
 
   /// A session acts in its own group.
   public func principal(of session: SessionID) async throws -> Principal {
-    try await writer.read { db in Principal(actor: .session(session), group: try Sessions.group(of: session.rawValue, in: db)) }
+    Principal(actor: .session(session), group: cell.group(of: session))
   }
 
   /// What `actor` may do in `group` acting out of `acting`.
   public func role(of actor: Actor, in group: GroupID, acting: GroupID) async throws -> GroupRole? {
-    try await writer.read { db in try GroupAccess.role(of: actor, in: group, acting: acting, in: db) }
+    cell(of: group).role(of: actor, acting: acting)
   }
 
   public func role(of principal: Principal, in group: GroupID) async throws -> GroupRole? {
@@ -132,7 +113,7 @@ extension Space {
   /// Whether `group` may write `target`: the same role a machine's or a
   /// secret's switch reads.
   public func writes(_ group: GroupID, in target: GroupID) async throws -> Bool {
-    try await writer.read { db in try GroupAccess.writes(group, in: target, in: db) }
+    cell(of: target).writes(from: group)
   }
 
   public func isAdmin(_ actor: Actor, of group: GroupID, acting: GroupID) async throws -> Bool {
@@ -141,18 +122,15 @@ extension Space {
 
   /// A live person holding `admin` in `group`, directly or as a space admin.
   public func isHumanAdmin(_ account: AccountID, of group: GroupID) async throws -> Bool {
-    try await writer.read { db in
-      guard let row = try GroupAccess.accountRow(account, in: db) else { return false }
-      return try GroupAccess.Snapshot(db).isHumanAdmin(row, of: group.rawValue)
-    }
+    cell(of: group).isHumanAdmin(account)
   }
 
   public func isGuest(_ account: AccountID) async throws -> Bool {
-    try await writer.read { db in try GroupAccess.isGuest(account, in: db) }
+    cell.isGuest(account)
   }
 
   public func personalGroup(of account: AccountID) async throws -> GroupID? {
-    try await writer.read { db in try Groups.personalGroup(of: account, in: db) }
+    cell.personalGroup(of: account)
   }
 
   @discardableResult
@@ -167,91 +145,41 @@ extension Space {
   public func setGrant(
     _ subject: GroupGrant.Subject, _ id: String, role: GroupRole, in group: GroupID, by actor: Actor, acting: GroupID,
   ) async throws {
+    try requireAdmin(actor, of: group, acting: acting)
     let created = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      // A settings admin row is the account admin verb's to set: it guards the
-      // last admin, which a list edit would bypass.
-      guard group != .settings else { throw SpaceError.settingsGroupAccess }
-      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
-      let snapshot = try GroupAccess.Snapshot(db)
-      guard let target = snapshot.live(group.rawValue) else { throw SpaceError.groupForbidden(group.rawValue) }
-      guard target.personalAccount == nil else { throw SpaceError.personalGroupPrivate(group.rawValue) }
-      try Self.requireGrantSubject(subject, id, role: role, in: group, in: db)
-      try db.execute(sql: "DELETE FROM group_roles WHERE grp = ? AND \(Self.grantSubjectColumn(subject)) = ?", arguments: [group.rawValue, id])
-      try db.execute(
-        sql: """
-        INSERT INTO group_roles (\(Self.grantSubjectColumn(subject)), grp, role, created_at) VALUES (?, ?, ?, ?)
-        """,
-        arguments: [id, group.rawValue, role.rawValue, created],
-      )
-    }
+    try await worker.call(GroupCell.ID(group.rawValue)) { try $0.setGrant(subject, id, role: role, created: created) }
   }
 
   public func removeGrant(_ subject: GroupGrant.Subject, _ id: String, in group: GroupID, by actor: Actor, acting: GroupID) async throws {
-    try await writer.write { db in
-      guard group != .settings else { throw SpaceError.settingsGroupAccess }
-      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
-      let snapshot = try GroupAccess.Snapshot(db)
-      guard let target = snapshot.live(group.rawValue) else { throw SpaceError.groupForbidden(group.rawValue) }
-      guard target.personalAccount == nil else { throw SpaceError.personalGroupPrivate(group.rawValue) }
-      try db.execute(sql: "DELETE FROM group_roles WHERE grp = ? AND \(Self.grantSubjectColumn(subject)) = ?", arguments: [group.rawValue, id])
-      guard db.changesCount > 0 else { throw SpaceError.notFound(id) }
-    }
-  }
-
-  /// No group is listed in itself, and a guest is no admin.
-  private static func requireGrantSubject(
-    _ subject: GroupGrant.Subject, _ id: String, role: GroupRole, in group: GroupID, in db: Database,
-  ) throws {
-    switch subject {
-    case .account:
-      guard let account = try GroupAccess.accountRow(AccountID(rawValue: id), in: db), account.removedAt == nil else {
-        throw SpaceError.notFound(id)
-      }
-      guard !(role == .admin && account.guest) else { throw SpaceError.groupForbidden(group.rawValue) }
-    case .group:
-      guard id != group.rawValue else { throw SpaceError.groupForbidden(group.rawValue) }
-      guard let target = try GroupRow.where({ $0.id.eq(id) }).fetchOne(db), target.removedAt == nil else {
-        throw SpaceError.notFound(id)
-      }
-    }
-  }
-
-  private static func grantSubjectColumn(_ subject: GroupGrant.Subject) -> String {
-    subject == .account ? "account_id" : "source_group"
+    try requireAdmin(actor, of: group, acting: acting)
+    try await worker.call(GroupCell.ID(group.rawValue)) { try $0.removeGrant(subject, id) }
   }
 
   /// Opens a group to every member, or closes it back to its list.
   public func setVisibility(_ visibility: GroupVisibility, of group: GroupID, by actor: Actor, acting: GroupID) async throws {
-    try await writer.write { db in
-      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
-      guard let target = try GroupRow.where({ $0.id.eq(group.rawValue) }).fetchOne(db), target.removedAt == nil else {
-        throw SpaceError.groupForbidden(group.rawValue)
-      }
-      guard target.personalAccount == nil, group != .settings else { throw SpaceError.groupForbidden(group.rawValue) }
-      try db.execute(
-        sql: "UPDATE groups SET visibility = ? WHERE id = ?", arguments: [visibility.rawValue, group.rawValue],
-      )
-    }
+    try requireAdmin(actor, of: group, acting: acting)
+    try await worker.call(GroupCell.ID(group.rawValue)) { try $0.setVisibility(visibility) }
   }
 
   /// Whether a group's secrets open to its owner group alone or to everyone who
   /// can reach it.
   public func setSecretsScope(_ scope: ReachScope, of group: GroupID, by actor: Actor, acting: GroupID) async throws {
-    try await writer.write { db in
-      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
-      try db.execute(
-        sql: "UPDATE groups SET secrets_scope = ? WHERE id = ?", arguments: [scope.rawValue, group.rawValue],
-      )
-    }
+    try requireAdmin(actor, of: group, acting: acting)
+    try await worker.call(GroupCell.ID(group.rawValue)) { try $0.setSecretsScope(scope) }
+  }
+
+  /// The --dev seat is the caller's to admit, as it always was.
+  func requireAdmin(_ actor: Actor, of group: GroupID, acting: GroupID) throws {
+    if case .anonymous = actor { return }
+    guard cell(of: group).role(of: actor, acting: acting) == .admin else { throw SpaceError.groupForbidden(group.rawValue) }
   }
 }
 
 extension GroupRecord {
-  init(row: GroupRow) {
+  init(row: GroupRow, alias: String?) {
     self.init(
       id: GroupID(rawValue: row.id),
-      alias: row.alias,
+      alias: alias,
       name: row.name,
       createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
       personalAccount: row.personalAccount.map(AccountID.init(rawValue:)),

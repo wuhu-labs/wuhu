@@ -13,3 +13,13 @@ genrule(
     cmd = "$(location //bazel/rules:deno) run --allow-read --allow-write $(location sprite.ts) $$(dirname $(location svg/3d.svg)) $(location aliases.json) $(location iconamoon.svg) $(location names.json)",
     visibility = ["//visibility:public"],
 )
+
+# Every file here, for //tools:fmt-test and :lint-test, which cover all of tools/.
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        ["**"],
+        exclude = ["BUILD.bazel", "**/.DS_Store"],
+    ),
+    visibility = ["//tools:__pkg__"],
+)

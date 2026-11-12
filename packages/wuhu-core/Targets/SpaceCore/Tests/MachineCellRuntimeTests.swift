@@ -149,8 +149,7 @@ import Wuwei
     }
     #expect(space.worker.cell(id).presence.state == "lost")
     #expect(try await space.space.machineDescription(.init(rawValue: machine)) == nil)
-    let retained = try await space.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM machine_descriptions WHERE owner = ?", arguments: [machine]) }
-    #expect(retained == 1)
+    #expect(space.worker.cell(id).machineDescription?.instance == description.instance)
     box.peer.close()
     try await space.close()
   }

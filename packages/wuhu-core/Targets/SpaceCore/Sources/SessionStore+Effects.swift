@@ -49,11 +49,11 @@ extension SessionStore {
   ) async throws -> RecordedWrite {
     let key = id.rawValue
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let p = try await LiveFS.validatedFileTarget(MachineFolders.stored(path, mutating: true, in: writer))
+    let p = try await LiveFS.validatedFileTarget(MachineFolders.stored(path, mutating: true, in: runtime))
     guard !p.isLive else { throw SpaceError.liveSyntax(path: p.rawValue, line: nil, reason: "a .\(p.liveKind!.rawValue) file is written through its live document") }
     let home = try await writer.read { db in try Sessions.group(of: key, in: db) }
     try SessionHome.refuseForeignWrite(to: p, in: group, by: id, home: home)
-    try await writer.read { db in try GroupWrites.refuseWrite(p, in: group, by: .session(id), acting: home, in: db) }
+    try runtime.worker().cell(GroupCell.ID(group.rawValue)).refusesWrite(p, by: .session(id), acting: home)
     let blob = try await blobs.stage(Array(content))
     let result: RecordedWrite = try await writer.write { db in
       if let toolCallID, let recorded = try Sessions.receipt(key, toolCallID: toolCallID.rawValue, in: db) {

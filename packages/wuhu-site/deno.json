@@ -12,6 +12,11 @@
       "test"
     ]
   },
+  "lint": {
+    "rules": {
+      "include": ["no-sparse-arrays"]
+    }
+  },
   "tasks": {
     "fmt": "deno fmt --check",
     "lint": "deno lint guide.ts guide.js preview.ts test",
