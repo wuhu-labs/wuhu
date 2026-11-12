@@ -132,7 +132,7 @@ public final class Worker: Sendable {
   /// Writes the mail row at once; the outer store refusing it is a broken disk, so it traps.
   func post(_ envelope: Envelope) {
     do {
-      try store.write { try $0.execute("INSERT INTO wuwei_mail (recipient, payload) VALUES (?, ?)", .text(envelope.recipient), .blob(envelope.payload)) }
+      try store.write { try $0.execute("INSERT INTO wuwei_mail (recipient, payload, lifecycle) VALUES (?, ?, ?)", .text(envelope.recipient), .blob(envelope.payload), envelope.lifecycle.map { .text($0.rawValue) } ?? .null) }
     } catch {
       preconditionFailure("could not send to \(envelope.recipient): \(error)")
     }
@@ -340,8 +340,8 @@ public final class Worker: Sendable {
 
   func mail(for address: String) -> [Mail] {
     do {
-      return try store.read { try $0.rows("SELECT id, payload FROM wuwei_mail WHERE recipient = ? ORDER BY id", .text(address)) }
-        .map { Mail(id: $0["id"].integer!, payload: $0["payload"].blob!) }
+      return try store.read { try $0.rows("SELECT id, payload, lifecycle FROM wuwei_mail WHERE recipient = ? ORDER BY id", .text(address)) }
+        .map { Mail(id: $0["id"].integer!, payload: $0["payload"].blob!, lifecycle: $0["lifecycle"].text) }
     } catch {
       log.error("could not read the mail of \(address): \(error)")
       return []
@@ -359,12 +359,12 @@ public final class Worker: Sendable {
     return try store.write { db in
       var job: JobRow?
       if isJob {
-        guard let row = try db.rows("SELECT phase, params FROM wuwei_job WHERE address = ?", .text(address)).first else { return nil }
+        guard let row = try db.rows("SELECT phase, params, creator FROM wuwei_job WHERE address = ?", .text(address)).first else { return nil }
         guard row["phase"].text != "done" else {
           try db.execute("DELETE FROM wuwei_mail WHERE recipient = ?", .text(address))
           return nil
         }
-        job = JobRow(phase: row["phase"].text!, params: row["params"].blob!)
+        job = JobRow(phase: row["phase"].text!, params: row["params"].blob!, creator: row["creator"].text)
       }
       let claimed = try db.rows(
         """

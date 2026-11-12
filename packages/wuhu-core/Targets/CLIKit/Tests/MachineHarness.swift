@@ -201,13 +201,10 @@ extension MachineCLIHarness {
 
 func machineListenerRoutes(
   space: Space, hub: MachineHub, version: String = SpaceServer.unstampedVersion,
-  releases: MachineV2Releases? = nil, fingerprint: String? = nil,
+  fingerprint: String? = nil,
 ) -> Router {
-  @Dependency(\.fetch) var fetch
-  @Dependency(\.continuousClock) var clock
   @Dependency(\.date) var date
-  let releases = releases ?? MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: clock)
-  let upgrades = MachineV2Upgrades(space: space, serverVersion: version, releases: releases)
+  let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
   var router = Router()
   addMachineV2Routes(&router, space: space, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
     return try await requestPrincipal(request, space: space, date: date)

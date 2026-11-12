@@ -1,16 +1,15 @@
-import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import Fetch
 import JSONValue
 import Logging
 import MachineContract
 import OrderedCollections
 import SpaceCore
 import Synchronization
+import Wuwei
 
 /// The admin's hold on machine agent upgrades: `/machine-v2-upgrade.json` in
 /// the settings group. A per-machine field overrides the global one.
@@ -81,142 +80,16 @@ enum MachineV2ReleaseVersion {
   }
 }
 
-/// Resolves a release version to its published archives by reading each
-/// platform's immutable `.sha256` sidecar. A complete answer is cached for the
-/// life of the process; anything short of it is retried after `retryAfter`.
-actor MachineV2Releases {
-  enum Resolution: Equatable, Sendable {
-    case published([MachineV2Artifact])
-    case unpublished
-    case unreachable
-  }
-
-  struct Platform: Sendable {
-    let key: String
-    let archiveExtension: String
-  }
-
-  static let platforms = [
-    Platform(key: "macos-arm64", archiveExtension: "zip"),
-    Platform(key: "linux-amd64", archiveExtension: "tar.gz"),
-  ]
-
-  private let taskScope = TaskScope()
-  private let base: URL
-  private let fetch: FetchClient
-  private let clock: any Clock<Duration>
-  private let timeout: Duration
-  private let retryAfter: Duration
-  private var settled: [String: [MachineV2Artifact]] = [:]
-  private var recent: [String: (resolution: Resolution, at: ContinuousClock.Instant)] = [:]
-  private var inFlight: [String: Task<Resolution, Never>] = [:]
-
-  init(base: URL, fetch: FetchClient, clock: any Clock<Duration>, timeout: Duration = .seconds(5), retryAfter: Duration = .seconds(60)) {
-    self.base = base
-    self.fetch = fetch
-    self.clock = clock
-    self.timeout = timeout
-    self.retryAfter = retryAfter
-  }
-
-  func close() async { await taskScope.close() }
-
-  func resolve(_ version: String) async -> Resolution {
-    if let artifacts = settled[version] { return .published(artifacts) }
-    if let recent = recent[version], ContinuousClock.now - recent.at < retryAfter { return recent.resolution }
-    if let task = inFlight[version] { return await task.value }
-    let task = try? taskScope.run("machine-release-lookup") { [base, fetch, clock, timeout] in
-      await Self.lookup(version, base: base, fetch: fetch, clock: clock, timeout: timeout)
-    }
-    inFlight[version] = task
-    let resolution = await task?.value ?? .unreachable
-    inFlight[version] = nil
-    if case let .published(artifacts) = resolution, artifacts.count == Self.platforms.count {
-      settled[version] = artifacts
-    } else {
-      recent[version] = (resolution, ContinuousClock.now)
-    }
-    return resolution
-  }
-
-  private enum Sidecar { case found(MachineV2Artifact), absent, unreachable }
-
-  private static func lookup(_ version: String, base: URL, fetch: FetchClient, clock: any Clock<Duration>, timeout: Duration) async -> Resolution {
-    let sidecars = await withTaskGroup(of: Sidecar.self) { group in
-      for platform in platforms {
-        group.addTask { await sidecar(version, platform: platform, base: base, fetch: fetch, clock: clock, timeout: timeout) }
-      }
-      return await group.reduce(into: [Sidecar]()) { $0.append($1) }
-    }
-    var artifacts: [MachineV2Artifact] = []
-    for sidecar in sidecars {
-      switch sidecar {
-      case .unreachable: return .unreachable
-      case .absent: continue
-      case let .found(artifact): artifacts.append(artifact)
-      }
-    }
-    guard !artifacts.isEmpty else { return .unpublished }
-    return .published(artifacts.sorted { $0.platform < $1.platform })
-  }
-
-  private static func sidecar(_ version: String, platform: Platform, base: URL, fetch: FetchClient, clock: any Clock<Duration>, timeout: Duration) async -> Sidecar {
-    let name = "wuhu-\(version)-\(platform.key).\(platform.archiveExtension)"
-    let archive = base.appendingPathComponent("releases").appendingPathComponent(name)
-    let request = Request(url: archive.deletingLastPathComponent().appendingPathComponent(name + ".sha256"))
-    do {
-      let text: String? = try await withThrowingTaskGroup(of: String?.self) { group in
-        group.addTask {
-          let response = try await fetch(request)
-          switch response.status.code {
-          case 200: return try await response.body.text(upTo: 4096)
-          case 403, 404: return nil
-          default: throw MachineV2ReleaseLookupFailed()
-          }
-        }
-        group.addTask {
-          try await clock.sleep(for: timeout)
-          throw MachineV2ReleaseLookupFailed()
-        }
-        defer { group.cancelAll() }
-        return try await group.next()!
-      }
-      guard let text else { return .absent }
-      guard let digest = digest(text, archive: name) else {
-        Logger(label: "wuhu.machine-v2.upgrade").warning("malformed release sidecar", metadata: ["archive": "\(name)"])
-        return .unreachable
-      }
-      return .found(MachineV2Artifact(platform: platform.key, url: archive.absoluteString, sha256: digest))
-    } catch {
-      return .unreachable
-    }
-  }
-
-  /// `shasum -a 256` output: `<64 hex>  <archive name>`.
-  static func digest(_ text: String, archive: String) -> String? {
-    let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    let fields = line.split(separator: " ", omittingEmptySubsequences: true)
-    guard fields.count == 2, fields[1] == archive || fields[1] == "*" + archive else { return nil }
-    let hex = fields[0].lowercased()
-    guard hex.utf8.count == 64, hex.utf8.allSatisfy({ (0x30 ... 0x39).contains($0) || (0x61 ... 0x66).contains($0) }) else { return nil }
-    return hex
-  }
-}
-
-private struct MachineV2ReleaseLookupFailed: Error {}
-
 /// What a machine is told to run. Read on every hello, so a pin or pause
 /// takes effect at the next one without a restart.
 final class MachineV2Upgrades: Sendable {
   let space: Space
   let serverVersion: String
-  let releases: MachineV2Releases
   private let lastIgnored = Mutex<String?>(nil)
 
-  init(space: Space, serverVersion: String, releases: MachineV2Releases) {
+  init(space: Space, serverVersion: String) {
     self.space = space
     self.serverVersion = serverVersion
-    self.releases = releases
   }
 
   func announcement(for machine: MachineID) async -> MachineV2Upgrade {
@@ -229,7 +102,9 @@ final class MachineV2Upgrades: Sendable {
     if rule.pause == true {
       return MachineV2Upgrade(version: target, pinned: pinned, status: .paused, artifacts: [])
     }
-    switch await releases.resolve(target) {
+    let resolution = space.worker.job(MachineReleaseJob.singleton).resolution(for: target)
+    if resolution?.isFinal != true { space.worker.send(.resolve(target), to: MachineReleaseJob.singleton) }
+    switch resolution ?? .unreachable {
     case let .published(artifacts): return MachineV2Upgrade(version: target, pinned: pinned, status: .ready, artifacts: artifacts)
     case .unpublished: return MachineV2Upgrade(version: target, pinned: pinned, status: .unpublished, artifacts: [])
     case .unreachable: return MachineV2Upgrade(version: target, pinned: pinned, status: .unreachable, artifacts: [])

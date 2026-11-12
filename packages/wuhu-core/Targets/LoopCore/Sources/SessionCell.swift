@@ -130,6 +130,13 @@ struct SessionCell {
     try rows.retag(id.session, tags)
   }
 
+  mutating func lost(_ job: String) throws {
+    let session = try load()
+    guard !session.stopped, case let .step(step) = working(session), step.description == job else { return }
+    try interrupt()
+    try resume()
+  }
+
   mutating func interrupt() throws {
     let session = try load()
     guard !session.stopped else { return }

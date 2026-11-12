@@ -55,6 +55,13 @@ public final class FileDatabase: SharedDatabase {
     for statement in Self.schema {
       try writer.execute(statement)
     }
+    try writer.transaction {
+      for (table, column) in [("wuwei_job", "creator"), ("wuwei_mail", "lifecycle")] {
+        if try !writer.rows("PRAGMA table_info(\(table))").contains(where: { $0["name"].text == column }) {
+          try writer.execute("ALTER TABLE \(table) ADD COLUMN \(column) TEXT")
+        }
+      }
+    }
     let reader = try Connection(path: path, flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_URI)
     try reader.execute("PRAGMA busy_timeout = 5000")
     try Connection.prepare(writer.handle)

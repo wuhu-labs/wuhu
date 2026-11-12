@@ -191,6 +191,106 @@ import Wuwei
     }
   }
 
+  @Test(arguments: [false, true])
+  func `a turn resumes from the inference params persisted by dev 38`(held: Bool) async throws {
+    try await withKernelDeps { time in
+      let folder = try ScratchFolder("rollover-pre040")
+      let file = folder.url.appending(path: "space.sqlite")
+      let old = try Space.open(file: file)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        { _ in
+          await Latch().wait(unless: { Task.isCancelled })
+          throw CancellationError()
+        },
+        Fix.replying("done"),
+      ])
+      let config = makeConfig(inference: { try await script($0) })
+      let first = SessionExecution(space: old, loopConfig: config)
+      first.start()
+      try await first.enqueue(item: Fix.message("hello"), to: sid)
+      try await until("the old worker's inference starts") { script.count == 1 }
+      await first.shutdown()
+
+      let address = try await old.writer.write { db in
+        let stored = try String.fetchOne(db, sql: "SELECT address FROM wuwei_job WHERE address LIKE ? AND phase = 'live'", arguments: ["InferenceJob/\(sid.rawValue):%"])
+        let address = try #require(stored)
+        try db.execute(sql: "UPDATE wuwei_job SET params = CAST(json_remove(CAST(params AS TEXT), '$.ping') AS BLOB) WHERE address = ?", arguments: [address])
+        if held { try db.execute(sql: "UPDATE sessions SET hold = 'interrupted' WHERE id = ?", arguments: [sid.rawValue]) }
+        try db.execute(sql: """
+        ALTER TABLE wuwei_job DROP COLUMN creator;
+        ALTER TABLE wuwei_mail DROP COLUMN lifecycle;
+        DELETE FROM grdb_migrations WHERE identifier = '040';
+        """)
+        #expect(try db.columns(in: "wuwei_job").allSatisfy { $0.name != "creator" })
+        #expect(try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier DESC LIMIT 1") == "039")
+        return address
+      }
+      try await old.close()
+      let new = try Space.open(file: file)
+      #expect(try await new.writer.read { db in
+        try String.fetchOne(db, sql: "SELECT creator FROM wuwei_job WHERE address = ?", arguments: [address]) == SessionCell.ID(sid.rawValue).description
+      })
+      let second = SessionExecution(space: new, loopConfig: config)
+      second.start()
+      await time.advance(by: 12)
+      try await until("the new worker tries to host the persisted inference") {
+        try await new.writer.read { db in
+          try Int.fetchOne(db, sql: "SELECT fence FROM wuwei_addressable WHERE address = ?", arguments: [address])! > 1
+        }
+      }
+      if held {
+        try await until("the held turn's lost job ends and its mail is consumed") {
+          try await new.writer.read { db in
+            try String.fetchOne(db, sql: "SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) == "done"
+              && Int.fetchOne(db, sql: "SELECT count(*) FROM wuwei_mail WHERE recipient = ? AND lifecycle = 'lost'", arguments: [SessionCell.ID(sid.rawValue).description]) == 0
+          }
+        }
+        #expect(try await new.sessions.record(sid).hold == .interrupted)
+        #expect(script.count == 1)
+        try await second.resume(sid)
+      }
+      try await until("the persisted turn settles", timeout: .seconds(1)) {
+        try await new.sessions.settledWork(sid)
+      }
+      #expect(script.count == 2)
+      #expect(try await new.sessions.lines(sid).assistantLines.map(\.text) == ["done"])
+      #expect(try await new.writer.read { db in
+        try Int.fetchOne(db, sql: "SELECT step_try FROM session_runtime WHERE session_id = ?", arguments: [sid.rawValue]) == 1
+      })
+      #expect(try await new.writer.read { db in
+        try String.fetchOne(db, sql: "SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) == "done"
+      })
+      await second.shutdown()
+      try await new.close()
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func `stale and unrelated lost jobs do not interrupt the current inference`(stale: Bool) async throws {
+    try await rolling { space, _, _ in
+      let sid = try await space.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        { _ in
+          await Latch().wait(unless: { Task.isCancelled })
+          throw CancellationError()
+        },
+      ])
+      let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      execution.start()
+      try await execution.enqueue(item: Fix.message("hello"), to: sid)
+      try await until("the current inference starts") { script.count == 1 }
+      let job = stale ? "InferenceJob/\(sid.rawValue):0:0:99" : "ToolCallJob/\(sid.rawValue):0:0"
+      try await space.worker.call(SessionCell.ID(sid.rawValue)) { try $0.lost(job) }
+      #expect(try await space.writer.read { db in
+        try Int.fetchOne(db, sql: "SELECT step_try FROM session_runtime WHERE session_id = ?", arguments: [sid.rawValue]) == 0
+      })
+      #expect(try await space.sessions.record(sid).hold == .normal)
+      #expect(script.count == 1)
+      await execution.shutdown()
+    }
+  }
+
   @Test func `a tool call cancelled at the quiesce answers the restart failure and the turn goes on`() async throws {
     try await rolling { old, new, time in
       let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)

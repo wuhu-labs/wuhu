@@ -7,7 +7,7 @@ import WuweiMacros
 struct CellMacroTests {
   private let macros: [String: any Macro.Type] = ["Cell": CellMacro.self, "Job": JobMacro.self]
 
-  @Test func testMutatingMethodsBecomeMessagesButWakeAndAround() {
+  @Test func testMutatingMethodsBecomeMessagesButLifecycleAndAround() {
     assertMacroExpansion(
       """
       @Cell
@@ -18,6 +18,7 @@ struct CellMacroTests {
         mutating func withdraw(_ amount: Int64) throws -> Int64 { amount }
         private mutating func audit() {}
         mutating func wake() throws {}
+        mutating func lost(_ job: String) throws {}
         mutating func around(_ call: (inout Account) throws -> Void) throws { try call(&self) }
       }
       """,
@@ -29,6 +30,7 @@ struct CellMacroTests {
         mutating func withdraw(_ amount: Int64) throws -> Int64 { amount }
         private mutating func audit() {}
         mutating func wake() throws {}
+        mutating func lost(_ job: String) throws {}
         mutating func around(_ call: (inout Account) throws -> Void) throws { try call(&self) }
 
         var _context: CellContext<Account>

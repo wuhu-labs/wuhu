@@ -3,7 +3,7 @@ import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
-/// `@Cell`: every mutating method that is not private and returns nothing is a message, `wake()` aside. It becomes a case of `Message`, a branch of `receive` and a method of `Sender`, which posts that case. A method taking a `SocketHandle` is a socket handler instead, dispatched by a generated `_socket`.
+/// `@Cell`: every mutating method that is not private and returns nothing is a message, except `wake`, `lost` and `around`. It becomes a case of `Message`, a branch of `receive` and a method of `Sender`, which posts that case. A method taking a `SocketHandle` is a socket handler instead, dispatched by a generated `_socket`.
 public struct CellMacro: MemberMacro, ExtensionMacro {
   public static func expansion(
     of _: AttributeSyntax,
@@ -147,6 +147,7 @@ private struct Message {
   static func isMessage(_ method: FunctionDeclSyntax) -> Bool {
     let modifiers = method.modifiers.map(\.name.tokenKind)
     if method.name.text == "wake", method.signature.parameterClause.parameters.isEmpty { return false }
+    if method.name.text == "lost", method.signature.parameterClause.parameters.count == 1 { return false }
     if method.name.text == "around", method.signature.parameterClause.parameters.count == 1 { return false }
     if method.signature.returnClause != nil { return false }
     return modifiers.contains(.keyword(.mutating)) && !modifiers.contains(.keyword(.private)) && !modifiers.contains(.keyword(.fileprivate))

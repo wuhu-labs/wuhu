@@ -122,9 +122,9 @@ public actor SpaceHost {
       let keyStreams = KeyStreams()
       @Dependency(\.continuousClock) var releaseClock
       @Dependency(\.date) var date
-      let releases = MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: releaseClock)
+      try registerMachineReleases(space: space, version: version, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: releaseClock))
       var listenerRoutes = Router()
-      let upgrades = MachineV2Upgrades(space: space, serverVersion: version, releases: releases)
+      let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
       addMachineV2Routes(&listenerRoutes, space: space, hub: hub, upgrades: upgrades, fingerprint: deployment.pin) { request in
         return try await requestPrincipal(request, space: space, date: date)
       }
@@ -158,7 +158,6 @@ public actor SpaceHost {
         await sessions.run()
       }, shutdownBody: {
         await keyStreams.close()
-        await releases.close()
         await hub.callerScope.close()
         await sessions.execution.quiesce()
         await metricsWriter.close()

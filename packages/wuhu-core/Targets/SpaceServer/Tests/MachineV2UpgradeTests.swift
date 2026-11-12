@@ -1,25 +1,32 @@
+import Clocks
+import ControlledTime
 import Crypto
+import Dependencies
 import DeterministicDependencies
 import Fetch
 import Foundation
+import GRDB
 import MachineContract
 import OperationProtocol
 import Serve
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
+import Wuwei
 
-private let linuxDigest = String(repeating: "a", count: 64)
-private let macDigest = String(repeating: "b", count: 64)
+let linuxDigest = String(repeating: "a", count: 64)
+let macDigest = String(repeating: "b", count: 64)
 
 /// A wuhu.ai stand-in: serves the `.sha256` sidecars of `published` versions and counts every lookup.
-private final class ReleaseHost: Sendable {
-  enum Mode { case serve, fail, hang }
+final class ReleaseHost: Sendable {
+  enum Mode { case serve, fail, hang, hold }
   let published: Mutex<[String: Set<String>]>
   let mode: Mutex<Mode>
   let lookups = Mutex<[String]>([])
+  let clock = VirtualClock()
+  let held = Gate()
 
   init(_ published: [String: Set<String>] = [:], mode: Mode = .serve) {
     self.published = Mutex(published)
@@ -33,8 +40,11 @@ private final class ReleaseHost: Sendable {
       switch self.mode.withLock({ $0 }) {
       case .fail: throw URLError(.cannotConnectToHost)
       case .hang:
-        try await Task.sleep(for: .seconds(3600))
+        try await self.clock.sleep(for: .seconds(3600))
         throw CancellationError()
+      case .hold:
+        await self.held.wait()
+        try Task.checkCancellation()
       case .serve: break
       }
       #expect(request.url.host == "wuhu.ai")
@@ -61,16 +71,18 @@ private struct Fixture {
   let other: MachineRecord
   let key: Curve25519.Signing.PrivateKey
 
-  init(version: String = "0.1.0-dev.122", host: ReleaseHost, dev: Bool = true, timeout: Duration = .seconds(5)) async throws {
+  init(version: String = "0.1.0-dev.122", host: ReleaseHost, dev: Bool = true, warm: Bool = true, boot: Bool = true) async throws {
     space = try Space.inMemory()
     let hub = MachineHub(space: space)
-    let releases = MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: ContinuousClock(), timeout: timeout)
-    let enrolling = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, version: version, releases: releases))
+    try registerMachineReleases(space: space, version: boot ? version : SpaceServer.unstampedVersion, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: host.clock))
+    space.worker.start()
+    if warm, boot, MachineV2ReleaseVersion.isValid(version) { try await releaseSettled(space, version) }
+    let enrolling = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, version: version))
     let key = Curve25519.Signing.PrivateKey()
     self.key = key
     machine = try await Self.enroll(space, enrolling, "laptop", key)
     other = try await Self.enroll(space, enrolling, "desktop", .init())
-    handler = dev ? enrolling : SpaceServer.configuredHandler(space: space, hub: hub, dev: false, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, version: version, releases: releases))
+    handler = dev ? enrolling : SpaceServer.configuredHandler(space: space, hub: hub, dev: false, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, version: version))
   }
 
   static func enroll(_ space: Space, _ handler: UpgradingHandler, _ name: String, _ key: Curve25519.Signing.PrivateKey) async throws -> MachineRecord {
@@ -86,6 +98,10 @@ private struct Fixture {
     if let text {
       let current = try? await fs.read(MachineV2UpgradeSetting.path).0
       _ = try await fs.write(MachineV2UpgradeSetting.path, Data(text.utf8), ifMatch: current)
+      if let rule = MachineV2UpgradeSetting.parse(Data(text.utf8))?.effective(for: machine.id.rawValue), let pin = rule.pin, rule.pause != true {
+        _ = await MachineV2Upgrades(space: space, serverVersion: "0.1.0-dev.122").announcement(for: machine.id)
+        try await releaseSettled(space, pin)
+      }
     } else {
       try await fs.delete(MachineV2UpgradeSetting.path, ifMatch: nil)
     }
@@ -128,23 +144,24 @@ private struct Hello: Decodable {
   let upgrade: MachineV2Upgrade?
 }
 
-private func ready(_ version: String, pinned: Bool = false) -> MachineV2Upgrade {
+func ready(_ version: String, pinned: Bool = false) -> MachineV2Upgrade {
   MachineV2Upgrade(version: version, pinned: pinned, status: .ready, artifacts: [
     .init(platform: "linux-amd64", url: "https://wuhu.ai/releases/wuhu-\(version)-linux-amd64.tar.gz", sha256: linuxDigest),
     .init(platform: "macos-arm64", url: "https://wuhu.ai/releases/wuhu-\(version)-macos-arm64.zip", sha256: macDigest),
   ])
 }
 
-private let both: Set<String> = ["linux-amd64", "macos-arm64"]
+let both: Set<String> = ["linux-amd64", "macos-arm64"]
 
 @Suite(.deterministicDependencies) struct MachineV2UpgradeTests {
-  @Test func helloAnnouncesTheServerVersionAndCachesAPublishedRelease() async throws {
+  @Test func lookupMakesTheNextHelloReadyAndCompleteAnswersAreFinal() async throws {
     let host = ReleaseHost(["0.1.0-dev.122": both])
     let f = try await Fixture(host: host)
     #expect(try await f.hello() == ready("0.1.0-dev.122"))
     #expect(try await f.announcement() == ready("0.1.0-dev.122"))
     #expect(host.count == 2)
     #expect(Set(host.lookups.withLock { $0 }) == ["wuhu-0.1.0-dev.122-linux-amd64.tar.gz.sha256", "wuhu-0.1.0-dev.122-macos-arm64.zip.sha256"])
+    try await f.space.close()
   }
 
   @Test func personReadsOfTheMachineCarryNoAnnouncement() async throws {
@@ -154,6 +171,7 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     #expect(try await response.body.json(Hello.self).upgrade == nil)
     let unsigned = try await f.response(Request(url: URL(string: "https://space.test/v1/machine-v2/\(f.machine.id.rawValue)/upgrade")!))
     #expect(unsigned.status == .unauthorized)
+    try await f.space.close()
   }
 
   @Test func pinAndPauseApplyGloballyAndPerMachineOverrides() async throws {
@@ -171,6 +189,7 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     #expect(try await f.hello() == ready("0.1.0-dev.122"))
     try await f.setting(#"{"pin":"0.1.0-dev.120","machines":{"\#(f.machine.id.rawValue)":{"pause":true}}}"#)
     #expect(try await f.hello() == MachineV2Upgrade(version: "0.1.0-dev.120", pinned: true, status: .paused, artifacts: []))
+    try await f.space.close()
   }
 
   @Test(arguments: [
@@ -181,6 +200,7 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     let f = try await Fixture(host: ReleaseHost(["0.1.0-dev.122": both]))
     try await f.setting(text)
     #expect(try await f.hello() == ready("0.1.0-dev.122"))
+    try await f.space.close()
   }
 
   @Test func missingSettingFollowsTheServerAndDeletionUnpins() async throws {
@@ -189,6 +209,7 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     #expect(try await f.hello() == ready("0.1.0-dev.120", pinned: true))
     try await f.setting(nil)
     #expect(try await f.hello() == ready("0.1.0-dev.122"))
+    try await f.space.close()
   }
 
   @Test func settingParsesTheDocumentedShape() throws {
@@ -204,12 +225,12 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
 
   @Test func sidecarDigestIsStrict() {
     let archive = "wuhu-0.1.0-linux-amd64.tar.gz"
-    #expect(MachineV2Releases.digest("\(linuxDigest)  \(archive)\n", archive: archive) == linuxDigest)
-    #expect(MachineV2Releases.digest("\(linuxDigest.uppercased()) *\(archive)", archive: archive) == linuxDigest)
-    #expect(MachineV2Releases.digest("\(linuxDigest)  wuhu-0.1.0-macos-arm64.zip", archive: archive) == nil)
-    #expect(MachineV2Releases.digest(String(linuxDigest.dropLast()) + "  " + archive, archive: archive) == nil)
-    #expect(MachineV2Releases.digest(String(repeating: "g", count: 64) + "  " + archive, archive: archive) == nil)
-    #expect(MachineV2Releases.digest(linuxDigest, archive: archive) == nil)
+    #expect(MachineReleaseClient.digest("\(linuxDigest)  \(archive)\n", archive: archive) == linuxDigest)
+    #expect(MachineReleaseClient.digest("\(linuxDigest.uppercased()) *\(archive)", archive: archive) == linuxDigest)
+    #expect(MachineReleaseClient.digest("\(linuxDigest)  wuhu-0.1.0-macos-arm64.zip", archive: archive) == nil)
+    #expect(MachineReleaseClient.digest(String(linuxDigest.dropLast()) + "  " + archive, archive: archive) == nil)
+    #expect(MachineReleaseClient.digest(String(repeating: "g", count: 64) + "  " + archive, archive: archive) == nil)
+    #expect(MachineReleaseClient.digest(linuxDigest, archive: archive) == nil)
   }
 
   @Test func unstampedServerAnnouncesNothingUnlessPinned() async throws {
@@ -219,6 +240,7 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     #expect(host.count == 0)
     try await f.setting(#"{"pin":"0.1.0-dev.120"}"#)
     #expect(try await f.hello() == ready("0.1.0-dev.120", pinned: true))
+    try await f.space.close()
   }
 
   @Test func unpublishedPinIsTypedAndBackedOff() async throws {
@@ -228,7 +250,8 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     let unpublished = MachineV2Upgrade(version: "0.1.0-dev.999", pinned: true, status: .unpublished, artifacts: [])
     #expect(try await f.hello() == unpublished)
     #expect(try await f.announcement() == unpublished)
-    #expect(host.count == 2)
+    #expect(host.count == 4)
+    try await f.space.close()
   }
 
   @Test func onePublishedPlatformIsReadyWithOnlyThatArtifact() async throws {
@@ -236,21 +259,48 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     #expect(try await f.hello() == MachineV2Upgrade(version: "0.1.0-dev.122", pinned: false, status: .ready, artifacts: [
       .init(platform: "macos-arm64", url: "https://wuhu.ai/releases/wuhu-0.1.0-dev.122-macos-arm64.zip", sha256: macDigest),
     ]))
-  }
-
-  @Test func unreachableReleaseHostIsTypedAndRecovers() async throws {
-    let host = ReleaseHost(["0.1.0-dev.122": both], mode: .fail)
-    let f = try await Fixture(host: host)
-    #expect(try await f.hello() == MachineV2Upgrade(version: "0.1.0-dev.122", pinned: false, status: .unreachable, artifacts: []))
-    let releases = MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: ContinuousClock(), retryAfter: .zero)
-    #expect(await releases.resolve("0.1.0-dev.122") == .unreachable)
-    host.mode.withLock { $0 = .serve }
-    #expect(await releases.resolve("0.1.0-dev.122") == .published(ready("0.1.0-dev.122").artifacts))
+    try await f.space.close()
   }
 
   @Test func hangingReleaseHostTimesOut() async throws {
-    let f = try await Fixture(host: ReleaseHost(["0.1.0-dev.122": both], mode: .hang), timeout: .milliseconds(50))
-    #expect(try await f.hello() == MachineV2Upgrade(version: "0.1.0-dev.122", pinned: false, status: .unreachable, artifacts: []))
+    let host = ReleaseHost(mode: .hang)
+    let f = try await Fixture(host: host, warm: false)
+    try await outboxEventually("both lookup deadlines are armed") { host.clock.pendingSleeps().filter { $0 == .seconds(5) }.count == 2 }
+    await host.clock.advance(by: .seconds(5))
+    try await releaseSettled(f.space, "0.1.0-dev.122")
+    #expect(try await f.hello().status == .unreachable)
+    try await f.space.close()
+  }
+
+  @Test func missingReleaseReturnsUnreachableAndRequestsLookup() async throws {
+    let host = ReleaseHost(mode: .hang)
+    let f = try await Fixture(host: host, warm: false, boot: false)
+    #expect(host.count == 0)
+    #expect(try await f.hello().status == .unreachable)
+    try await outboxEventually("both sidecars start") { host.count == 2 }
+    #expect(try await f.hello().status == .unreachable)
+    try await f.space.close()
+  }
+
+  @Test func twoHellosCoalesceOneVersionLookup() async throws {
+    let host = ReleaseHost(["0.1.0-dev.122": both], mode: .hold)
+    let f = try await Fixture(host: host, warm: false, boot: false)
+    #expect(try await f.hello().status == .unreachable)
+    try await outboxEventually("both sidecars start") { host.count == 2 }
+    #expect(try await f.hello().status == .unreachable)
+    host.held.open()
+    try await releaseSettled(f.space, "0.1.0-dev.122")
+    #expect(try await f.hello() == ready("0.1.0-dev.122"))
+    #expect(host.count == 2)
+    try await f.space.close()
+  }
+
+  @Test func bootRequestsTheStampedServerRelease() async throws {
+    let host = ReleaseHost(["0.1.0-dev.122": both])
+    let f = try await Fixture(host: host)
+    #expect(host.count == 2)
+    #expect(f.space.worker.job(MachineReleaseJob.singleton).resolution(for: "0.1.0-dev.122") == .published(ready("0.1.0-dev.122").artifacts))
+    try await f.space.close()
   }
 
   @Test func productionWallAdmitsTheSignedAnnouncementOnly() async throws {
@@ -263,5 +313,15 @@ private let both: Set<String> = ["linux-amd64", "macos-arm64"]
     #expect(foreign.status == .unauthorized)
     let mismatched = try await f.response(try await f.signed("/v1/machine-v2/\(f.other.id.rawValue)/upgrade"))
     #expect(mismatched.status == .unauthorized)
+    try await f.space.close()
+  }
+}
+
+func releaseSettled(_ space: Space, _ version: String) async throws {
+  try await outboxEventually("release lookup commits") {
+    let settled = try await space.writer.read { db in
+      try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM machine_release_resolutions WHERE version = ? AND looked_up_at IS NOT NULL AND requested = 0)", arguments: [version])!
+    }
+    return settled && !space.worker.hasMail(for: MachineReleaseJob.singleton.recipient)
   }
 }

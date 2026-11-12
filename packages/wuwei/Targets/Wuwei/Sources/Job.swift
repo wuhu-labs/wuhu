@@ -9,6 +9,7 @@ public protocol Job: Addressable {
   associatedtype State = Void
   init(_context: JobContext<Self>)
   var _context: JobContext<Self> { get set }
+  func lost(_ job: String) throws
   static func create(ctx: inout JobContext<Self>) throws
   static func hydrate(ctx: inout JobContext<Self>) throws -> State
   nonisolated(nonsending) mutating func start() async throws -> Outcome
@@ -19,6 +20,10 @@ public protocol Job: Addressable {
 }
 
 extension Job {
+  public func lost(_ job: String) throws {
+    _context.unhandledLost(job)
+  }
+
   public static func create(ctx _: inout JobContext<Self>) throws {}
 
   public func _attached(_: SocketEvent) {}
@@ -78,6 +83,10 @@ public struct JobContext<Target: Job> {
   public var state: Target.State {
     get { running.state! }
     nonmutating set { running.state = newValue }
+  }
+
+  func unhandledLost(_ job: String) {
+    reach.worker.log.error("\(id) ignored lost job \(job)")
   }
 
   public var now: Instant {
@@ -221,6 +230,15 @@ final class Live<Target: Job> {
     Reach(worker: incarnation.worker, writer: .incarnation(incarnation))
   }
 
+  func takeLifecycle(_ mail: Mail) -> Bool {
+    guard mail.lifecycle != nil else { return false }
+    incarnation.record(.consume(mail: mail.id))
+    incarnation.atomically {
+      try mail.deliverLifecycle { try Target(_context: context).lost($0) }
+    }
+    return true
+  }
+
   func greet(_ attachment: Attachment) {
     guard greeted.insert(attachment.id).inserted else { return }
     Target(_context: context)._attached(SocketEvent(kind: .attached, attachment: attachment, reach: reach))
@@ -262,6 +280,7 @@ public struct Effects: Sendable {
 struct JobRow: Sendable {
   let phase: String
   let params: [UInt8]
+  let creator: String?
 }
 
 extension Lifecycle {
@@ -269,6 +288,7 @@ extension Lifecycle {
     Lifecycle(boot: { incarnation in
       incarnation.startTask = incarnation.hop { await $0.runJob(J.self, row) }
     }, deliver: { incarnation, mail in
+      if let live = incarnation.liveJob as? Live<J>, live.takeLifecycle(mail) { return }
       incarnation.inbox.append(mail)
       incarnation.wakeForMail()
     }, socket: { incarnation, attachment, inbound in
@@ -283,11 +303,34 @@ extension Lifecycle {
 }
 
 extension Incarnation {
+  private func lostBoot(_ error: DecodingError, creator: String?) {
+    worker.log.error("\(address) failed to boot: \(error)")
+    guard !dead else { return }
+    if let creator {
+      finishJob(Envelope(recipient: creator, payload: encode(address), lifecycle: .lost))
+    } else {
+      retire(.released)
+    }
+  }
+
+  private func finishJob(_ last: Envelope?) {
+    if let last { record(.send(last)) }
+    retire(.finished)
+    for attachment in worker.attachments(at: address) {
+      output(.close(attachment))
+    }
+  }
+
   fileprivate func runJob<J: Job>(_: J.Type, _ row: JobRow) async {
     var job: J
     let live: Live<J>
     do {
-      live = try Live(incarnation: self, params: decode(J.Params.self, from: row.params))
+      do {
+        live = try Live(incarnation: self, params: decode(J.Params.self, from: row.params))
+      } catch let error as DecodingError {
+        lostBoot(error, creator: row.creator)
+        return
+      }
       var ctx = live.context
       if row.phase == "new" {
         try step {
@@ -295,7 +338,12 @@ extension Incarnation {
           record(.created)
         }
       }
-      live.state = try step { try J.hydrate(ctx: &ctx) }
+      do {
+        live.state = try step { try J.hydrate(ctx: &ctx) }
+      } catch let error as DecodingError {
+        lostBoot(error, creator: row.creator)
+        return
+      }
       job = J(_context: ctx)
     } catch {
       worker.log.error("\(address) failed to boot: \(error)")
@@ -303,6 +351,7 @@ extension Incarnation {
       return
     }
     liveJob = live
+    inbox.removeAll { live.takeLifecycle($0) }
     for attachment in worker.attachments(at: address) {
       live.greet(attachment)
     }
@@ -322,11 +371,7 @@ extension Incarnation {
       guard !dead else { return }
       switch outcome.kind {
       case let .done(last):
-        if let last { record(.send(last)) }
-        retire(.finished)
-        for attachment in worker.attachments(at: address) {
-          output(.close(attachment))
-        }
+        finishJob(last)
       case let .hibernate(until):
         retire(.hibernated(until: until))
       case .notDone:

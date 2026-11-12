@@ -81,11 +81,11 @@ final class OuterStore: Sendable {
     for write in epoch.writes {
       switch write {
       case let .send(envelope):
-        try db.execute("INSERT INTO wuwei_mail (recipient, payload) VALUES (?, ?)", .text(envelope.recipient), .blob(envelope.payload))
+        try db.execute("INSERT INTO wuwei_mail (recipient, payload, lifecycle) VALUES (?, ?, ?)", .text(envelope.recipient), .blob(envelope.payload), envelope.lifecycle.map { .text($0.rawValue) } ?? .null)
       case let .consume(mail):
         try db.execute("DELETE FROM wuwei_mail WHERE id = ?", .integer(mail))
       case let .create(job, params):
-        try db.execute("INSERT INTO wuwei_job (address, params) VALUES (?, ?) ON CONFLICT DO NOTHING", .text(job), .blob(params))
+        try db.execute("INSERT INTO wuwei_job (address, params, creator) VALUES (?, ?, ?) ON CONFLICT DO NOTHING", .text(job), .blob(params), .text(epoch.address))
       case .created:
         try db.execute("UPDATE wuwei_job SET phase = 'live' WHERE address = ?", .text(epoch.address))
       case .finished:
@@ -163,14 +163,32 @@ struct Lease: Hashable, Sendable {
   let fence: Int64
 }
 
+enum MailLifecycle: String, Sendable {
+  case lost
+}
+
 struct Envelope: Hashable, Sendable {
   let recipient: String
   let payload: [UInt8]
+  var lifecycle: MailLifecycle? = nil
 }
 
 struct Mail: Sendable {
   let id: Int64
   let payload: [UInt8]
+  var lifecycle: String? = nil
+
+  func deliverLifecycle(to lost: (String) throws -> Void) throws {
+    guard let lifecycle else { preconditionFailure("application mail has no lifecycle") }
+    switch MailLifecycle(rawValue: lifecycle) {
+    case .lost: try lost(decode(String.self, from: payload))
+    case nil: throw MailError.unknownLifecycle(lifecycle)
+    }
+  }
+}
+
+enum MailError: Error {
+  case unknownLifecycle(String)
 }
 
 /// An outer write that commits with an epoch.

@@ -1,4 +1,4 @@
-/// Makes a struct a ``Cell``: every mutating method that is not private and returns nothing becomes a message, and the macro adds a private `ctx`, with `db` and `id` over it, `kind` (the type's name unless declared), `Message` (`Never` for a cell that only reads), `receive` and the `Sender` behind `ctx.send(id)`. A message method is synchronous; it may throw.
+/// Makes a struct a ``Cell``: every mutating method that is not private and returns nothing, except `wake`, `lost` and `around`, becomes a message, and the macro adds a private `ctx`, with `db` and `id` over it, `kind` (the type's name unless declared), `Message` (`Never` for a cell that only reads), `receive` and the `Sender` behind `ctx.send(id)`. A message method is synchronous; it may throw.
 @attached(member, names: named(_context), named(ctx), named(db), named(id), named(init), named(kind), named(Message), named(receive), named(Sender), named(sender), named(_socket))
 @attached(extension, conformances: Addressable, Cell)
 public macro Cell() = #externalMacro(module: "WuweiMacros", type: "CellMacro")
@@ -8,6 +8,7 @@ public protocol Cell: Addressable {
   associatedtype Sender
   init(_context: CellContext<Self>)
   var _context: CellContext<Self> { get set }
+  mutating func lost(_ job: String) throws
   mutating func receive(_ message: Message) throws
   static func sender(_ outbox: Outbox<Message>) -> Sender
   mutating func _socket(_ event: SocketEvent) throws
@@ -20,6 +21,10 @@ public protocol Cell: Addressable {
 }
 
 extension Cell {
+  public mutating func lost(_ job: String) throws {
+    _context.unhandledLost(job)
+  }
+
   public mutating func _socket(_ event: SocketEvent) throws {
     event.unhandled()
   }
@@ -45,6 +50,10 @@ public struct CellContext<Target: Cell> {
     self.id = id
     self.db = db
     self.reach = reach
+  }
+
+  func unhandledLost(_ job: String) {
+    reach.worker.log.error("\(id) ignored lost job \(job)")
   }
 
   public var now: Instant {
@@ -153,7 +162,13 @@ extension Lifecycle {
       incarnation.armWake(C.self, at: incarnation.wakeAt)
     }, deliver: { incarnation, mail in
       incarnation.record(.consume(mail: mail.id))
-      incarnation.call(C.self) { cell, _ in try cell.receive(decode(C.Message.self, from: mail.payload)) }
+      incarnation.call(C.self) { cell, _ in
+        if mail.lifecycle != nil {
+          try mail.deliverLifecycle { try cell.lost($0) }
+        } else {
+          try cell.receive(decode(C.Message.self, from: mail.payload))
+        }
+      }
     }, socket: { incarnation, attachment, inbound in
       if case .attached = inbound { attachment.greet() }
       incarnation.call(C.self) { cell, reach in
