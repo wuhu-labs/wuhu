@@ -7,6 +7,7 @@ import Foundation
 import MachineContract
 import Scratch
 import Serve
+import ServeRouting
 import ServeTesting
 import SpaceCore
 @testable import SpaceServer
@@ -22,6 +23,11 @@ final class MachineCLIHarness: Sendable {
   let cwd: URL
   let secrets: SpaceSecrets
   let scratch: ScratchFolder
+  private let longFetches = LongFetches()
+
+  var longRunningRequests: Int {
+    get async { await longFetches.count }
+  }
 
   init() throws {
     scratch = try ScratchFolder("m6")
@@ -45,7 +51,7 @@ final class MachineCLIHarness: Sendable {
     let hub = MachineHub(space: space, tokens: nil, secrets: stores)
     self.space = space
     self.hub = hub
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, fingerprint: Self.serverFingerprint, dev: true, secrets: stores, machineV2Hub: MachineV2Hub(space: space))
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, fingerprint: Self.serverFingerprint, dev: true, secrets: stores, listenerRoutes: machineListenerRoutes(space: space, hub: hub, fingerprint: Self.serverFingerprint))
   }
 
   func runScenario(_ body: @escaping @Sendable (MachineCLIHarness) async throws -> Void) async throws {
@@ -60,9 +66,13 @@ final class MachineCLIHarness: Sendable {
 
   func run(_ arguments: [String], io: CLIIO = CLIIO()) async -> Int32 {
     let client = fetchClient()
+    let longFetches = longFetches
     let runner = CommandRunner(
       fetch: client,
-      observeFetch: client,
+      observeFetch: FetchClient { request in
+        await longFetches.bump()
+        return try await client(request)
+      },
       stdin: { io.stdinText },
       stdout: { text in await io.appendOut(Array(text.utf8)) },
       stderr: { text in await io.appendErr(Array(text.utf8)) },
@@ -158,6 +168,11 @@ struct SeededRNG: RandomNumberGenerator, Sendable {
   }
 }
 
+private actor LongFetches {
+  var count = 0
+  func bump() { count += 1 }
+}
+
 struct RegisteredMachine {
   let id: String
   let token: String
@@ -182,4 +197,20 @@ extension MachineCLIHarness {
     #expect(await run(["machine", "list"], io: io) == 0)
     return await io.stdoutText()
   }
+}
+
+func machineListenerRoutes(
+  space: Space, hub: MachineHub, version: String = SpaceServer.unstampedVersion,
+  releases: MachineV2Releases? = nil, fingerprint: String? = nil,
+) -> Router {
+  @Dependency(\.fetch) var fetch
+  @Dependency(\.continuousClock) var clock
+  @Dependency(\.date) var date
+  let releases = releases ?? MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: clock)
+  let upgrades = MachineV2Upgrades(space: space, serverVersion: version, releases: releases)
+  var router = Router()
+  addMachineV2Routes(&router, space: space, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
+    return try await requestPrincipal(request, space: space, date: date)
+  }
+  return router
 }

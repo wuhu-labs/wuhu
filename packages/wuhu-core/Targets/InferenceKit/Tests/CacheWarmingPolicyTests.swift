@@ -14,7 +14,14 @@ import Testing
     #expect(try ModelsDocument(json: JSONEncoder().encode(document)) == document)
   }
 
-  @Test(arguments: ["true", "null", "[]", "0", "{\"intervalSeconds\":0}", "{\"maxPings\":-1}", "{\"floorTokens\":0}", "{\"compactionThresholdTokens\":100000}", "{\"compactionGrowthTokens\":50000}", "{\"minimumRemainingPercent\":101}", "{\"maxPings\":1.5}", "{\"maxPings\":null}", "{\"typo\":20}"])
+  @Test func lifetimeDecodesAndMustExceedTheInterval() throws {
+    var json = String(decoding: fixtureJSON, as: UTF8.self)
+    json = json.replacingOccurrences(of: "\"maxInput\": 200000", with: "\"cacheWarming\": {\"lifetimeSeconds\": 7200}, \"maxInput\": 200000")
+    #expect(try ModelsDocument(json: Data(json.utf8)).providers["anthropic"]?.models["claude-sonnet-5"]?.cacheWarming?.lifetimeSeconds == 7200)
+    #expect(CacheWarmingPolicy().lifetimeSeconds > CacheWarmingPolicy().intervalSeconds)
+  }
+
+  @Test(arguments: ["true", "null", "[]", "0", "{\"intervalSeconds\":0}", "{\"lifetimeSeconds\":3000}", "{\"intervalSeconds\":3600,\"lifetimeSeconds\":3600}", "{\"maxPings\":-1}", "{\"floorTokens\":0}", "{\"compactionThresholdTokens\":100000}", "{\"compactionGrowthTokens\":50000}", "{\"minimumRemainingPercent\":101}", "{\"maxPings\":1.5}", "{\"maxPings\":null}", "{\"typo\":20}"])
   func malformedPolicyIsTypedConfigError(_ value: String) throws {
     let json = String(decoding: fixtureJSON, as: UTF8.self).replacingOccurrences(of: "\"maxInput\": 200000", with: "\"cacheWarming\": \(value), \"maxInput\": 200000")
     do {

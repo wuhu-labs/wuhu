@@ -13,7 +13,6 @@ dependencies:
   - DocIndex
   - Instructions
   - MachineContract
-  - OperationClient
   - OperationProtocol
   - SessionDomain
   - SpaceContract
@@ -50,6 +49,7 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - Wuwei
     - Fetch
     - OperationRuntime
     - DeterministicDependencies
@@ -61,9 +61,7 @@ tests:
     - KeelObjectStore
     - DocIndex
     - MachineContract
-    - OperationClient
     - OperationProtocol
-    - OperationClientTestSupport
     - Crypto
     - SessionDomain
     - ModelProviders
@@ -72,6 +70,7 @@ tests:
     - WmdDocument
     - CanvasDocument
     - LiveDocument
+    - Loro
     - WuhuAI
     - JSONValue
     - GRDB

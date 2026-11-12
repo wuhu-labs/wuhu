@@ -1,6 +1,15 @@
 import Dependencies
+#if canImport(Darwin)
+  import Darwin
+#else
+  import Glibc
+#endif
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import InferenceKit
 @testable import LoopCore
 import ModelProviders
@@ -29,8 +38,8 @@ import WuhuAI
       // already drew the 32 freeze-secret candidate bytes from it.
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< 3).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< 3).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in
@@ -59,14 +68,11 @@ import WuhuAI
         #expect(abs(offset - expectedOffset) < 0.001)
       }
 
-      // Discarded attempts never touched the transcript: every retry rendered
-      // the same item count, and only the successful id was committed.
       #expect(Set(attempts.map(\.itemCount)).count == 1)
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      let entries = transcript.assistantEntries
+      let entries = try await sessions.lines(sid).assistantLines
       #expect(entries.count == 1)
-      #expect(entries[0].id == attempts[3].id)
-      #expect(!attempts[0 ..< 3].map(\.id).contains(entries[0].id))
+      #expect(entries[0].key == "attempt:\(attempts[3].id.uuidString.lowercased())")
+      #expect(!attempts[0 ..< 3].map { "attempt:\($0.id.uuidString.lowercased())" }.contains(entries[0].key))
     }
   }
 
@@ -113,7 +119,7 @@ import WuhuAI
       let jitters = (0 ..< 3).map { _ in Double.random(in: 0 ... 1, using: &rng) }
       // Attempts 1 and 2 fail: raws 1s then 2s. The success resets the count,
       // so the second work item's single failure backs off at 1s again.
-      let delays = [1 * jitters[0], 2 * jitters[1], 1 * jitters[2]]
+      let delays: [Double] = [1 * jitters[0], 2 * jitters[1], 1 * jitters[2]]
 
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("one"), to: sid)
@@ -153,8 +159,8 @@ import WuhuAI
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< 2).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< 2).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in
@@ -190,8 +196,8 @@ import WuhuAI
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< 3).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< 3).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in
@@ -228,8 +234,8 @@ import WuhuAI
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< 2).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< 2).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in
@@ -262,8 +268,8 @@ import WuhuAI
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< 3).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< 3).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in
@@ -293,8 +299,8 @@ import WuhuAI
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< boundedFailureLimit - 1).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< boundedFailureLimit - 1).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in
@@ -331,8 +337,8 @@ import WuhuAI
 
         var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
         mirrorAllocationDraws(&rng)
-        let delays = (0 ..< rounds).map { attempt in
-          min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+        let delays: [Double] = (0 ..< rounds).map { attempt in
+          min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
         }
 
         try await runService(space, config) { service in
@@ -365,15 +371,15 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
-        let result = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
-        return InferenceReply(message: result.message, metadata: result.metadata, committed: { _, _ in })
+        let result = try await executor.run(attemptID: request.attemptID, lines: request.lines)
+        return InferenceReply(message: result.message, metadata: result.metadata, committed: { _ in })
       }
       let script = InferenceScript(Array(repeating: step, count: rounds + 1))
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< rounds).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< rounds).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await withDependencies { $0.fetch = gateway } operation: {
@@ -389,7 +395,7 @@ import WuhuAI
       }
 
       #expect(try await sessions.record(sid).work != .errored)
-      #expect(try await sessions.hydrate(sid).transcript.kernel.assistantEntries.map(\.content) == [[.text(TextContent(text: "back online"))]])
+      #expect(try await sessions.lines(sid).assistantLines.map(\.text) == ["back online"])
     }
   }
 
@@ -410,8 +416,9 @@ import WuhuAI
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< (2 * boundedFailureLimit - 1)).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let retries = 2 * boundedFailureLimit - 1
+      let delays: [Double] = (0 ..< retries).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in

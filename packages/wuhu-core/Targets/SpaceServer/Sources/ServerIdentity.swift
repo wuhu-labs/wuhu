@@ -55,15 +55,17 @@ struct ServerIdentity: Sendable {
     ])])])
   }
 
-  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil, exec: ExecClaims? = nil, directoryIssuer: String? = nil) throws -> String {
+  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID?, lifetime: Int = 300, page: String? = nil, viewer: String? = nil, exec: ExecClaims? = nil, directoryIssuer: String? = nil, purpose: String? = nil) throws -> String {
     let issuer = try directoryIssuer ?? Self.issuer(issuer)
-    let audience = try Self.audience(audience)
+    let audience = try purpose == nil ? Self.audience(audience) : audience.absoluteString
     let issued = Int(now.timeIntervalSince1970)
     var claims: OrderedDictionary<String, JSONValue> = [
       "iss": .string(issuer), "aud": .string(audience), "iat": .integer(issued), "exp": .integer(issued + lifetime),
-      "jti": .string(id.uuidString.lowercased()), "space": .string(space), "group": .string(group),
+      "space": .string(space), "group": .string(group),
       "sub": .string(session.map { "\(group)/\($0)" } ?? group),
     ]
+    if let id { claims["jti"] = .string(id.uuidString.lowercased()) }
+    if let purpose { claims["credential"] = .string(purpose) }
     if let session { claims["session"] = .string(session) }
     if let page { claims["path"] = .string(page) }
     if let viewer { claims["viewer"] = .string(viewer) }
@@ -78,6 +80,11 @@ struct ServerIdentity: Sendable {
     } catch { throw IdentityError.signingFailed }
   }
 
+  func verifies(_ input: Data, signature: Data) -> Bool {
+    guard let signature = try? P256.Signing.ECDSASignature(rawRepresentation: signature) else { return false }
+    return key.publicKey.isValidSignature(signature, for: input)
+  }
+
   func tokenForInference(issuer: String?, audience: URL, space: String, group: String, session: String, now: Date, id: UUID) throws(InferenceError) -> String {
     do {
       return try token(issuer: issuer, audience: audience, space: space, group: group, session: session, now: now, id: id)
@@ -90,7 +97,7 @@ struct ServerIdentity: Sendable {
 
   static func audience(_ audience: URL) throws -> String {
     guard var origin = URLComponents(url: audience, resolvingAgainstBaseURL: false),
-          origin.scheme != nil, let host = origin.host, !host.isEmpty, origin.user == nil, origin.password == nil
+          ["http", "https"].contains(origin.scheme?.lowercased() ?? ""), let host = origin.host, !host.isEmpty, origin.user == nil, origin.password == nil
     else { throw IdentityError.invalidAudience }
     origin.scheme = origin.scheme?.lowercased()
     origin.host = host.lowercased()
@@ -122,8 +129,8 @@ struct ServerIdentity: Sendable {
   }
 }
 
-enum IdentityError: Error, Equatable, CustomStringConvertible {
-  case invalidIssuer, invalidAudience, keyUnavailable, signingFailed, directoryUnavailable, unknownId, unlistedKey, mutationInProgress, directoryNotSelected
+enum IdentityError: String, Error, Codable, Sendable, Equatable, CustomStringConvertible {
+  case invalidIssuer, invalidAudience, keyUnavailable, signingFailed, directoryUnavailable, unknownId, unlistedKey, busy, directoryNotSelected
 
   var directoryCode: String? {
     switch self {
@@ -134,12 +141,20 @@ enum IdentityError: Error, Equatable, CustomStringConvertible {
     }
   }
 
+  var workCode: String {
+    switch self {
+    case .directoryUnavailable, .unknownId, .unlistedKey: directoryCode!
+    case .keyUnavailable: "keyUnavailable"
+    default: preconditionFailure("not an identity work failure")
+    }
+  }
+
   var inferenceError: InferenceError {
     let hint: String = switch self {
     case .unknownId: "OIDC unknownId: the directory no longer knows this issuer; an admin can use wuhu identity register-new, then migrate verifiers to the new issuer."
     case .unlistedKey: "OIDC unlistedKey: the directory does not list this server key; restore the server state backup or have an admin use wuhu identity register-new and migrate verifiers."
     case .directoryUnavailable: "OIDC directoryUnavailable: the key directory has not confirmed this server key; retry publication with wuhu identity set."
-    case .mutationInProgress, .directoryNotSelected: preconditionFailure("identity mutations are not part of token minting")
+    case .busy, .directoryNotSelected: preconditionFailure("identity mutations are not part of token minting")
     case .invalidAudience: "OIDC token audience is invalid; check the provider baseURL."
     case .invalidIssuer: "OIDC token issuer is invalid; check HTTPS --origin."
     case .keyUnavailable: "OIDC identity key is unavailable; check the server identity key configuration."
@@ -153,7 +168,7 @@ enum IdentityError: Error, Equatable, CustomStringConvertible {
     case .unknownId: "The directory no longer knows this id. An admin can run wuhu identity register-new; verifiers must migrate to the new issuer."
     case .unlistedKey: "The directory does not list this key. Restore server state, or run wuhu identity register-new as an admin and migrate verifiers to the new issuer."
     case .directoryUnavailable: "The key directory has not confirmed this server key; no directory token can be minted."
-    case .mutationInProgress: "An identity mutation is already in progress."
+    case .busy: "An identity rotation or publication is already pending."
     case .directoryNotSelected: "Select a directory issuer before registering a new id."
     case .invalidIssuer: "OIDC requires a configured HTTPS --origin."
     case .invalidAudience: "OIDC provider baseURL must have a scheme and host, without user information."

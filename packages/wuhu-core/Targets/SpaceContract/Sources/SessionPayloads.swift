@@ -470,27 +470,6 @@ public struct ConversationHistoryOutput: Codable, Equatable, Sendable {
   public let headPosition: Int?
 }
 
-// ref is an opaque, short-lived per-item handle minted by the server; it dies
-// with the next compaction.
-@Contract
-public struct SessionLogItem: Codable, Equatable, Sendable {
-  public let ref: String
-  public let receivedAt: Double?
-  public let emittedAt: Double?
-  public let item: JSONValue
-}
-
-@Contract
-public struct SessionLogOutput: Codable, Equatable, Sendable {
-  public let context: SessionContext?
-  public let items: [SessionLogItem]
-}
-
-@Contract
-public struct SessionEntryOutput: Codable, Equatable, Sendable {
-  public let item: SessionLogItem
-}
-
 @Contract(fallback: "unknown")
 public enum SessionLineRole: String, Codable, Equatable, Sendable {
   case system

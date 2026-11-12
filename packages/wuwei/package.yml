@@ -29,7 +29,7 @@ externalPackages:
   swift-syntax:
     url: https://github.com/swiftlang/swift-syntax
     exact: "604.0.0"
-    products: [SwiftSyntax, SwiftSyntaxMacros, SwiftSyntaxBuilder, SwiftCompilerPlugin, SwiftSyntaxMacrosTestSupport]
+    products: [SwiftSyntax, SwiftSyntaxMacros, SwiftSyntaxBuilder, SwiftCompilerPlugin, SwiftSyntaxMacroExpansion, SwiftSyntaxMacrosGenericTestSupport]
   swift-structured-queries:
     url: https://github.com/wuhu-labs/swift-structured-queries
     revision: 4f6be045f379601ef88924a3fa934555eca58327

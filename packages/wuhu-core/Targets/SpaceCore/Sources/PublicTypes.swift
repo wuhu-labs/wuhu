@@ -122,7 +122,7 @@ public struct RevisionAttribution: Equatable, Sendable {
   static func firingVia(_ firing: String) -> String { "firing:\(firing)" }
 }
 
-public enum Cell: Equatable, Sendable {
+public enum Cell: Equatable, Sendable, Codable {
   case null
   case integer(Int64)
   case real(Double)
@@ -139,7 +139,7 @@ public enum Cell: Equatable, Sendable {
   }
 }
 
-public struct Rows: Equatable, Sendable {
+public struct Rows: Equatable, Sendable, Codable {
   public var columns: [String]
   public var decltypes: [String?]
   public var rows: [[Cell]]
@@ -209,6 +209,8 @@ public enum SpaceError: Error, Equatable, Sendable {
   case settingsGroupAccess
   /// Text a live node (`.wmd`, `.canvas`) cannot hold: `line` is nil when the whole text is refused.
   case liveSyntax(path: String, line: Int?, reason: String)
+  /// A move whose source document holds edits its file lacks, after the host tried to commit them.
+  case liveBusy(String)
 }
 
 extension VersionToken {

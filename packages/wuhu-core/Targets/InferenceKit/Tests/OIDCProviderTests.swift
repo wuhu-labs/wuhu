@@ -94,7 +94,7 @@ import WuhuAI
     let model = try await catalog.resolve(.init(provider: "anthropic", model: "claude-sonnet-5", effort: "high"), session: .init("s"))
     let executor = InferenceExecutor(session: .init("s"), model: model, systemPrompt: "offline", tools: [], trace: AttemptLogConfig(directory: directory).traceClient)
     await withDependencies { $0.fetch = FetchClient { _ in Response(status: .unauthorized, body: .string("offline rejection")) } } operation: {
-      do { _ = try await executor.run(attemptID: UUID(0), transcript: .init()) }
+      do { _ = try await executor.run(attemptID: UUID(0), lines: []) }
       catch {}
     }
     let log = try String(contentsOf: directory.appendingPathComponent("\(UUID(0).uuidString.lowercased()).log"), encoding: .utf8)

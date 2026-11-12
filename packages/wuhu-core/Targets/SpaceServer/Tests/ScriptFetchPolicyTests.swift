@@ -27,7 +27,7 @@ import Testing
       headers[try #require(HTTPField.Name(jwt))] = "echo"
       return Response(status: .ok, headers: headers)
     }
-    try await withIdentityScript(identity: try testIdentity().controller, hop: hop, fetch: plain) { rig in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: hop, fetch: plain) { rig in
       let output = try await rig.evaluate(#"""
       import { writeText } from "wuhu:space"
       await fetch("http://backend.test", { identity: true })
@@ -53,7 +53,7 @@ import Testing
       headers[.location] = "/final"
       return Response(status: Status(code: status), headers: headers)
     }
-    try await withIdentityScript(identity: try testIdentity().controller, hop: hop) { rig in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: hop) { rig in
       let bodyless = method == "HEAD" || method == "GET"
       let body = bodyless ? "" : ", body: 'payload'"
       let output = try await rig.evaluate("result(await (await fetch('http://backend.test/start', { identity: true, method: '\(method)', headers: { 'Content-Type': 'text/plain', 'Content-Length': '\(bodyless ? 0 : 7)' }\(body) })).text())")
@@ -78,7 +78,7 @@ import Testing
       headers[.location] = location
       return Response(status: .temporaryRedirect, headers: headers)
     }
-    try await withIdentityScript(identity: try testIdentity().controller, hop: hop) { rig in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: hop) { rig in
       let output = try await rig.evaluate(#"try { await fetch('http://backend.test/start', { identity: true }); result('unexpected') } catch (e) { result({ name: e.name, code: e.code ?? null, message: e.message }) }"#)
       #expect(output == .object(["name": "TypeError", "code": .null, "message": "fetch failed: invalidRedirect"]))
       #expect(calls.withLock { $0 } == (location == "/cycle" ? 21 : 1))
@@ -100,7 +100,7 @@ import Testing
       throw failure
     }
     let plain = FetchClient { _ in plainCalls.withLock { $0 += 1 }; throw failure }
-    try await withIdentityScript(identity: try testIdentity().controller, hop: hop, fetch: plain) { rig in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: hop, fetch: plain) { rig in
       let output = try await rig.evaluate(#"""
       const errors = []
       for (const init of [{ identity: true }, {}]) {

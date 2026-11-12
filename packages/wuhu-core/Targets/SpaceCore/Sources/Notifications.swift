@@ -23,17 +23,6 @@ public struct NotificationRecord: Hashable, Sendable {
   /// session's. A person reads one inbox across every group.
   public var group: GroupID
 
-  /// Reads a row that selected the notification's columns, as the push outboxes do.
-  init(row: GRDB.Row) throws {
-    self.n = row["n"]
-    self.recipient = row["recipient"]
-    self.source = row["source"]
-    self.kind = NotificationKind(rawValue: row["kind"])!
-    self.payload = row["payload"]
-    self.createdAt = try SQLiteDateFormat.date(from: row["created_at"])
-    self.group = GroupID(rawValue: row["grp"])
-  }
-
   init(row: NotificationRow) {
     n = row.n
     recipient = row.recipient
@@ -87,29 +76,15 @@ enum Notifications {
   // wire).
   static let ownerRecipient = "owner"
 
-  static func fireErrored(_ key: String, error: String, transcript: Transcript, now: String, in db: GRDB.Database) throws {
+  static func fireErrored(_ key: String, error: String, said: String?, now: String, in db: GRDB.Database) throws {
     let payload = try Sessions.encode(ErroredPayload(
       sessionID: key,
       error: error,
-      message: transcript.finalAssistantText,
+      message: said,
     ))
     try notify(
       ownerRecipient, PersonNote(source: key, group: Sessions.group(of: key, in: db), kind: .sessionErrored, payload: payload, createdAt: now), in: db,
     )
-  }
-}
-
-extension Transcript {
-  var finalAssistantText: String? {
-    for item in items.reversed() {
-      guard case let .assistant(entry) = item else { continue }
-      let texts = entry.content.compactMap { block -> String? in
-        guard case let .text(text) = block else { return nil }
-        return text.text
-      }
-      return texts.joined(separator: "\n")
-    }
-    return nil
   }
 }
 

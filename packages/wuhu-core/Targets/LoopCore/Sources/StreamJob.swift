@@ -22,6 +22,7 @@ struct StreamJob {
     CREATE TABLE streams (\(ownerColumn), session_id TEXT, subscription_id TEXT NOT NULL, url TEXT NOT NULL,
       armed_at TEXT NOT NULL, last_event_id TEXT NOT NULL DEFAULT '', UNIQUE (owner))
     """,
+    "ALTER TABLE streams ADD COLUMN pending_event_id TEXT",
   ]
 
   struct Params: Codable {
@@ -47,8 +48,11 @@ struct StreamJob {
 
   mutating func start() async throws -> Outcome {
     guard let row = db.rows(StreamRow.all).first else { return .done }
+    if row.pendingEventID != nil {
+      guard try await acked() else { return try stop() }
+    }
     let params = ctx.params
-    let reader = EventReader(url: params.url, dialer: params.dialer, after: row.lastEventID, sources: ctx.dependency(LoopClient.self).config.sources)
+    let reader = EventReader(url: params.url, dialer: params.dialer, after: row.pendingEventID ?? row.lastEventID, sources: ctx.dependency(LoopClient.self).config.sources)
     var backoff = 0
     while true {
       var retryAfter = Duration.zero
@@ -61,10 +65,10 @@ struct StreamJob {
             break reading
           case let .finished(event?):
             backoff = 0
+            let eventID = event.id ?? ""
             ctx.send(.streamed(batch(event: StreamedEvent(event))), to: params.owner)
+            try db.execute(StreamRow.update { $0.pendingEventID = #bind(eventID) })
             guard try await acked() else { return try stop() }
-            let id = event.id ?? ""
-            try db.execute(StreamRow.update { $0.lastEventID = #bind(id) })
           }
         }
       } catch let StreamFailure.refused(reason) {
@@ -83,10 +87,16 @@ struct StreamJob {
   }
 
   /// Whether the owner took the event: false when it said `stop` instead.
-  private func acked() async throws -> Bool {
+  private mutating func acked() async throws -> Bool {
     while true {
       switch try await ctx.receive(within: .seconds(3600)) {
-      case .acked?: return true
+      case .acked?:
+        let eventID = db.rows(StreamRow.all).first!.pendingEventID!
+        try db.execute(StreamRow.update {
+          $0.lastEventID = #bind(eventID)
+          $0.pendingEventID = #bind(Optional<String>.none)
+        })
+        return true
       case .stop?: return false
       case nil: continue
       }
@@ -191,4 +201,5 @@ struct StreamRow: Owned {
   let url: String
   @Column("armed_at") let armedAt: String
   @Column("last_event_id") var lastEventID = ""
+  @Column("pending_event_id") var pendingEventID: String?
 }

@@ -1,3 +1,4 @@
+import ControlledTime
 import struct Credentials.CredentialResolver
 import Crypto
 import DeterministicDependencies
@@ -105,19 +106,46 @@ import Testing
     }
   }
 
-  @Test func identityIsReadOnlyAndResolvesCanonicalOrigins() async throws {
+  @Test(.deterministicDependencies(clock: VirtualClock())) func identityIsReadOnlyAndResolvesCanonicalOrigins() async throws {
     let id = String(repeating: "o", count: 32)
-    let controller = try IdentityController(
-      identity: try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation), origin: "https://space.test",
-      settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id),
-      store: .init(load: { nil }, save: { _ in }), fetch: FetchClient { _ in Response(status: .forbidden) },
-    )
+    let key = try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation)
+    let controller = IdentityController.configure(space: try Space.inMemory(), origin: "https://space.test", keys: .init(load: { _ in key }, store: { _ in }), fetch: FetchClient { _ in Response(status: .forbidden) })
+    try await controller.initialize(identity: key, settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id))
     try await withRig(identity: controller) { rig in
       let resolved = try await rig.evaluate("import {identity} from 'wuhu:space'; const i=await identity(); result([i.defaultIssuer,i.issuerFor('https://LAB.test:443'),i.issuerFor('https://cloud.test')])")
       #expect(resolved == [.string("https://id.wuhu.ai/" + id), "https://space.test", .string("https://id.wuhu.ai/" + id)])
       let refused = try await rig.evaluate("import {identity} from 'wuhu:space'; const i=await identity(); try {i.issuerFor('https://user:pass@lab.test')} catch(e) {result(e.name)}")
       #expect(refused == "TypeError")
     }
+    try await controller.space.close()
+  }
+
+  @Test(.deterministicDependencies(clock: VirtualClock()), arguments: [false, true])
+  func pendingDirectoryIssuerNeverFallsThroughToSelf(asDefault: Bool) async throws {
+    let key = try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation)
+    let blocked = AsyncStream<Void>.makeStream()
+    let controller = IdentityController.configure(space: try Space.inMemory(), origin: "https://space.test", keys: .init(load: { _ in key }, store: { _ in }), fetch: FetchClient { _ in
+      for await _ in blocked.stream {}
+      try Task.checkCancellation()
+      return Response(status: .forbidden)
+    })
+    try await controller.initialize(identity: key)
+    if asDefault { _ = try await controller.set(defaultIssuer: .directory) }
+    else { _ = try await controller.set(audience: "https://pending.test", choice: .directory) }
+    try await withRig(identity: controller) { rig in
+      let output = try await rig.evaluate("""
+      import {identity} from 'wuhu:space'
+      const i = await identity()
+      let refusal
+      try { i.issuerFor('https://pending.test') } catch(e) { refusal = [e.name, e.message] }
+      result([i.state, i.publicationFailure, refusal])
+      """)
+      #expect(output == ["publishing", .null, ["Error", "The issuer for https://pending.test is still being published; retry."]])
+      if !asDefault {
+        #expect(try await rig.evaluate("import {identity} from 'wuhu:space'; result((await identity()).issuerFor('https://other.test'))") == "https://space.test")
+      }
+    }
+    try await controller.space.close()
   }
 
   @Test func rosterIsTheServerDeclaration() async throws {

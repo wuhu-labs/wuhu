@@ -8,6 +8,7 @@ import DeterministicDependencies
 import InMemoryTracing
 import JSONValue
 import ServerTelemetry
+import SessionDomain
 import SpaceCore
 import Testing
 import Tracing
@@ -21,13 +22,16 @@ import Tracing
       let space = try Space.inMemory()
       let session = try await makeSession(space)
       _ = try await space.fs(.shared).write("/tick.js", Data("export default async ({ wake }) => { wake('secret wake') }".utf8), ifMatch: nil)
+      var noticed: [SystemNotification] = []
       try await withHandlerFiring(space) { worker, _ in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "secret tick", "in_seconds": 1, "handler": "/tick.js"]))
         await time.advance(by: 2)
         try await untilAdvancing("the wake lands", time) { try await !handlerNotifications(space, session).isEmpty }
+        // Read while the worker still takes mail: the firing group quiesces it on the way out, and no cell takes mail then.
+        noticed = try await handlerNotifications(space, session)
       }
-      let notice = try #require(try await handlerNotifications(space, session).first)
+      let notice = try #require(noticed.first)
       let firing = try #require(tracer.finishedSpans.first { $0.operationName == "handler.firing" })
       #expect(firing.parentSpanID == nil)
       #expect(firing.attributes.get("wuhu.session.id") == .string(session.rawValue))

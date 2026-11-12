@@ -174,21 +174,6 @@ extension MessageHeader {
   }
 }
 
-extension DirectMessage {
-  public var header: MessageHeader {
-    .init(
-      sender: sender.id,
-      senderHandle: sender.handle,
-      deviceName: sender.deviceName,
-      timestamp: timestamp,
-      timeZone: sender.timeZone,
-      source: .direct,
-      kind: .directMessage,
-      device: sender.device,
-    )
-  }
-}
-
 extension ConversationMessage {
   public var header: MessageHeader {
     let headerKind: MessageHeader.Kind = switch kind {

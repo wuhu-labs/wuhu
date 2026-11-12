@@ -1,7 +1,11 @@
 import ControlledTime
 import Dependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 @testable import LoopCore
 import MainHub
@@ -11,7 +15,7 @@ import Synchronization
 import Testing
 
 /// An event stream behind a fetch client. Each dial is recorded and answered by `answer`; nil opens a stream the test writes to.
-private final class EventServer: Sendable {
+final class EventServer: Sendable {
   struct Dial: Sendable {
     let lastEventID: String?
     let stream: AsyncThrowingStream<Data, any Error>.Continuation
@@ -77,11 +81,8 @@ private func streaming(
   }
 }
 
-private func observed(_ space: Space, _ session: SessionID) async throws -> [SystemNotification] {
-  try await space.sessions.hydrate(session).transcript.kernel.items.compactMap { item in
-    guard case let .notification(notice) = item, notice.kind == .spaceObservation else { return nil }
-    return notice
-  }
+private func observed(_ space: Space, _ session: SessionID) async throws -> [TranscriptLine] {
+  try await space.sessions.lines(session).filter { $0.key == "subscription:\(observation.rawValue)" }
 }
 
 private func cursor(_ space: Space) async throws -> String? {
@@ -101,19 +102,22 @@ private func cursor(_ space: Space) async throws -> String? {
       events.send("id: 2\nevent: build\ndata: two\n\nid: 3\ndata: three\ndata: lines\n\n", on: 0)
       try await until("both taken") { try await cursor(space) == "3" }
       #expect(try await observed(space, session).count == 1)
-      try await until("second wake") {
-        await time.advance(by: 30)
-        return try await observed(space, session).count == 2
-      }
-      #expect(try await observed(space, session).map(\.content.text) == [
+      // The second notice is a queued input due one throttle (30 s) after it was put, and the cell drains it at the wake that comes
+      // next: bounded ticks past the throttle, never one per poll (see `until`), with one worker here so no lease lapses.
+      try await untilAdvancing("second wake", time, attempts: 40) { try await observed(space, session).count == 2 }
+      let notices = try await observed(space, session)
+      let expected = [
         "observed events from \(url):\nid: 1\ndata: one\n\n",
         "observed events from \(url):\nid: 2\nevent: build\ndata: two\n\nid: 3\ndata: three\ndata: lines\n\n",
-      ])
-      events.dials[0].stream.finish()
-      try await until("second dial") {
-        await time.advance(by: 1)
-        return events.dials.count == 2
+      ]
+      #expect(notices.count == expected.count)
+      for (notice, text) in zip(notices, expected) {
+        #expect(notice.text.hasSuffix("\n\n" + text))
       }
+      events.dials[0].stream.finish()
+      // The job backs off a second of the injected clock before it dials again, and that backoff is armed only once it notices the
+      // stream ended: bounded ticks, never one per poll (see `until`), with one worker here so no lease lapses.
+      try await untilAdvancing("second dial", time, attempts: 25) { events.dials.count == 2 }
       #expect(events.dials.map(\.lastEventID) == [nil, "3"])
     }
   }
@@ -124,8 +128,8 @@ private func cursor(_ space: Space) async throws -> String? {
       _ = try await execution.arm(session, Arming(.init(id: observation, kind: .stream(url: url, throttleSeconds: 0))), answering: ToolCallID("arm"))
       try await until("the ending wakes the session") { try await observed(space, session).count == 1 }
       let ending = try await observed(space, session)[0]
-      #expect(ending.content.text == "observation \(observation.rawValue) of \(url) failed and was cancelled: \(url) answered HTTP 404")
-      #expect(ending.endsSubscription)
+      #expect(ending.text.hasSuffix("\n\nobservation \(observation.rawValue) of \(url) failed and was cancelled: \(url) answered HTTP 404"))
+      #expect(try await space.query("SELECT id FROM subscriptions", as: space.principal(of: session)).rows.isEmpty)
       #expect(try await cursor(space) == nil)
       #expect(events.dials.count == 1)
     }

@@ -213,10 +213,14 @@ private func occurrenceLines(in content: String, of needle: String) -> [Int] {
   func scan(_ haystack: String, _ needle: String) -> [Int] {
     guard !needle.isEmpty else { return [] }
     var lines: [Int] = []
-    var from = haystack.startIndex
-    while let range = haystack.range(of: needle, range: from ..< haystack.endIndex) {
-      lines.append(haystack[..<range.lowerBound].count(where: { $0 == "\n" }) + 1)
-      from = haystack.index(after: range.lowerBound)
+    var searchFrom = haystack.startIndex
+    var countedTo = haystack.startIndex
+    var line = 1
+    while let range = haystack.range(of: needle, range: searchFrom ..< haystack.endIndex) {
+      line += haystack[countedTo ..< range.lowerBound].count(where: { $0 == "\n" })
+      lines.append(line)
+      countedTo = range.lowerBound
+      searchFrom = haystack.index(after: range.lowerBound)
     }
     return lines
   }

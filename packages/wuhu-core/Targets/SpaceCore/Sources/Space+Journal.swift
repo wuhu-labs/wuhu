@@ -37,15 +37,13 @@ extension Space {
   public func removeEmptyDirectory(_ path: SpacePath, in group: GroupID, acting: GroupID) async throws -> Bool {
     guard !path.isRoot, !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let broadcast = broadcast
-    return try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+    return try await writer.write { db in
       try MachineFolders.requireStored(path, in: db)
       guard let head = try Substrate.head(path, group: group, in: db) else { throw SpaceError.notFound(path.rawValue) }
       guard head.kind == "directory" else { throw SpaceError.notADirectory(path.rawValue) }
       guard try FSHeadRow.where({ $0.grp.eq(group.rawValue) && $0.parentPath.eq(path.rawValue) }).fetchCount(db) == 0 else { return false }
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
       try LiveFS.tombstone(path: path.rawValue, group: group, rev: rev, op: .delete, in: db)
-      pending.append(MutationEvent(group: group, path: path.rawValue, rev: Int(rev), kind: .delete, entry: nil))
       return true
     }
   }
@@ -99,17 +97,15 @@ extension Space {
     guard !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
     if path.isLive, let restored = try await restoredLive(path, rev: target, in: group) {
       if let ifMatch, ifMatch.rev == nil { throw SpaceError.versionMismatch(path.rawValue) }
-      let base = ifMatch.map { LiveBase.current(Int64($0.rev!)) } ?? .latest
-      let rev = try await live.with(group, path) {
-        try await $0.write(
-          restored, base: base, createOnly: createOnly, acting: acting, attribution: attribution, checkout: Int64(target.value),
-        )
-      }
+      let base = ifMatch.map { DocumentBase.current(Int64($0.rev!)) } ?? .latest
+      let rev = try await documents.write(
+        group, path, restored, base: base, createOnly: createOnly, acting: acting, attribution: attribution,
+        checkout: Int64(target.value),
+      )
       return (Rev(Int(rev)), VersionToken(rev: Int(rev)))
     }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let broadcast = broadcast
-    let (rev, token): (Rev, VersionToken) = try await blobs.write(writer, emittingTo: broadcast) { db, cache, pending in
+    return try await blobs.write(writer) { db, cache in
       let ceiling = Int64(target.value)
       guard try Substrate.revisionExists(ceiling, in: db) else { throw SpaceError.invalidRevision(target.value) }
       let resolved = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: ceiling, in: db)
@@ -119,6 +115,7 @@ extension Space {
       try LiveFS.checkIfMatch(ifMatch, head: liveHead, path: path)
       guard resolved != nil || liveHead != nil else { throw SpaceError.notFound(path.rawValue) }
       if let resolved, resolved.kind == "file", let liveHead, liveHead.kind == "file", resolved.blobHash == liveHead.blobHash {
+        try self.documents.removed(under: path, in: group, rev: liveHead.rev, on: db)
         return (Rev(Int(liveHead.rev)), VersionToken(rev: Int(liveHead.rev)))
       }
       let newRev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
@@ -132,21 +129,15 @@ extension Space {
           path, group: group, blob: try cache.blob(of: hash, in: db),
           rev: newRev, mtime: mtime, op: .checkout, aux: fromRev, in: db,
         )
-        pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(newRev), kind: .write, entry: .file)]
-        return (Rev(Int(newRev)), token)
       case "table":
         if liveHead?.kind == "file" { try Induction.remove(path: path, group: group, in: db) }
         try Tables.restore(path, group: group, ceiling: ceiling, rev: newRev, mtime: mtime, in: db)
-        pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(newRev), kind: .write, entry: .table)]
-        return (Rev(Int(newRev)), token)
       default:
         try LiveFS.remove(liveHead!, group: group, rev: newRev, op: .checkout, aux: fromRev, in: db)
-        pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(newRev), kind: .delete, entry: nil)]
-        return (Rev(Int(newRev)), token)
       }
+      try self.documents.removed(under: path, in: group, rev: newRev, on: db)
+      return (Rev(Int(newRev)), token)
     }
-    await live.drop(under: path, in: group, rev: Int64(rev.value))
-    return (rev, token)
   }
 
   /// The text a live file had at `rev`, which its live node merges in; nil when it had none.

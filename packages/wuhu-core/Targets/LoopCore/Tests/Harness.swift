@@ -41,6 +41,8 @@ struct UnexpectedCall: Error {
   init(_ what: String) { self.what = what }
 }
 
+/// Polls `condition` in real time. Drive the injected clock once, outside the poll, never inside: a poll every 2 ms lapses it
+/// far past the workers' 10 s leases while their scans keep up only in real time, and the other worker then claims the session.
 func until(
   _ description: String,
   timeout: Duration = .seconds(10),
@@ -56,9 +58,27 @@ func until(
   throw TimeoutError()
 }
 
-func holds(
+/// Polls `condition` while moving the injected clock between polls, for an effect only a wake the clock owes can start (a queued
+/// input's due time). `attempts` bounds the clock, so it stays inside the workers' 10 s leases; it is not a poll count to raise.
+func untilAdvancing(
   _ description: String,
-  for window: Duration = .milliseconds(80),
+  _ time: TimeControl,
+  step: Double = 1,
+  attempts: Int = 8,
+  _ condition: () async throws -> Bool,
+) async throws {
+  let clock = ContinuousClock()
+  for _ in 0 ..< attempts {
+    if try await condition() { return }
+    await time.advance(by: step)
+    try? await clock.sleep(for: .milliseconds(2))
+  }
+  Issue.record("timed out waiting for \(description)")
+  throw TimeoutError()
+}
+
+func holds(
+  _ description: String, for window: Duration = .milliseconds(80),
   _ condition: () async throws -> Bool,
 ) async throws {
   let clock = ContinuousClock()
@@ -131,11 +151,7 @@ func runService(
   _ config: LoopConfig,
   body: (SessionExecution) async throws -> Void,
 ) async throws {
-  var config = config
-  let differences = Box<[TurnDifference]>([])
-  config.turnDifference = { difference in differences.withLock { $0.append(difference) } }
   try await runService(SessionExecution(space: space, loopConfig: config), body: body)
-  #expect(differences.value.isEmpty, "turn rows that differed from their transcripts: \(differences.value)")
 }
 
 func runService(
@@ -177,6 +193,7 @@ final class InferenceScript: Sendable {
     var at: Date
     var itemCount: Int
     var idleTimeout: Duration
+    var ping: Bool
   }
 
   private let steps: Box<[Step]>
@@ -192,8 +209,9 @@ final class InferenceScript: Sendable {
       $0.append(Attempt(
         id: request.attemptID,
         at: date.now,
-        itemCount: request.transcript.items.count,
+        itemCount: request.lines.count,
         idleTimeout: request.idleTimeout,
+        ping: request.ping,
       ))
     }
     let step = steps.withLock { steps -> Step? in
@@ -253,18 +271,19 @@ enum Fix {
     ))
   }
 
-  static func reply(_ text: String, calls: [ToolCall] = [], tokens: Int = 100) -> InferenceReply {
+  static func reply(_ text: String, calls: [ToolCall] = [], tokens: Int = 100, warming: WarmingSchedule? = nil) -> InferenceReply {
     .init(
       message: .init(content: [.text(text)] + calls.map { ContentBlock.toolCall($0) }),
       metadata: .init(
         stopReason: .stop,
         usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: tokens),
       ),
+      warming: warming,
     )
   }
 
-  static func replying(_ text: String, calls: [ToolCall] = [], tokens: Int = 100) -> InferenceScript.Step {
-    let reply = reply(text, calls: calls, tokens: tokens)
+  static func replying(_ text: String, calls: [ToolCall] = [], tokens: Int = 100, warming: WarmingSchedule? = nil) -> InferenceScript.Step {
+    let reply = reply(text, calls: calls, tokens: tokens, warming: warming)
     return { _ in reply }
   }
 
@@ -295,21 +314,15 @@ extension SessionStore {
   }
 }
 
-extension Transcript {
-  var assistantEntries: [AssistantEntry] {
-    items.compactMap { item in
-      guard case let .assistant(entry) = item else { return nil }
-      return entry
-    }
+extension SessionStore {
+  func lines(_ id: SessionID) async throws -> [TranscriptLine] {
+    try await transcriptLines(id).map { try $0.line() }
   }
+}
 
-  var owedReplyReminders: [SystemNotification] {
-    items.compactMap { item in
-      guard case let .notification(notification) = item, notification.kind == .owedReply
-      else { return nil }
-      return notification
-    }
-  }
+extension [TranscriptLine] {
+  var assistantLines: [TranscriptLine] { filter { $0.role == .assistant } }
+  var owedReplyReminders: [TranscriptLine] { filter { $0.key == "subscription:owed.reply" } }
 }
 
 extension ModelSpecifier {
@@ -337,5 +350,18 @@ extension Space {
   @discardableResult
   func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: String) async throws -> ToolResultPayload? {
     try await worker.call(SessionCell.ID(session.rawValue)) { try $0.disarm(subscription, answering: ToolCallID(call)) }
+  }
+}
+
+extension TranscriptLine {
+  var text: String {
+    let content = switch message {
+    case let .user(value): value.content
+    case let .assistant(value): value.content
+    case let .toolResult(value): value.content
+    }
+    return content.compactMap { block in
+      if case let .text(text) = block { text.text } else { nil }
+    }.joined(separator: "\n")
   }
 }

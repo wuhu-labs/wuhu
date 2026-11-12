@@ -2,7 +2,6 @@ import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
 import struct Credentials.SpaceSecretStores
 import Dependencies
-import struct ExecutionOwner.LineDifferenceLog
 import Fetch
 import Foundation
 import InferenceKit
@@ -10,6 +9,7 @@ import JSONValue
 import LoopCore
 import class MainHub.Hub
 import Serve
+import ServeRouting
 import ServeTesting
 import SessionDomain
 import SessionTools
@@ -74,10 +74,9 @@ struct SessionHarness {
     origin: String? = nil,
     fingerprint: String? = nil,
     credentials: CredentialResolver = .unavailable,
-    execTokens: ExecTokens? = nil,
+    spaceURL: String = "http://space",
     identityController: IdentityController? = nil,
     secrets: SpaceSecretStores? = nil,
-    cacheWarmingUsage: UsageBoard? = nil,
     metrics: InferenceMetricsSink = .noop,
     machineV2: Bool = true,
     inference: @escaping @Sendable (LoopCore.InferenceRequest) async throws -> LoopCore.InferenceReply = { _ in
@@ -91,10 +90,10 @@ struct SessionHarness {
     if models {
       _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
-    let tokens = execTokens ?? ExecTokens(spaceURL: "http://space")
+    let tokens = try await testTokens(space: space, spaceURL: spaceURL)
     let hub = MachineHub(space: space, tokens: tokens)
     self.hub = hub
-    let cacheUsage = cacheWarmingUsage ?? UsageBoard()
+    let usage = UsageBoard()
     let config = LoopConfig(
       executeTool: { _ in ToolOutcome(payload: .failure(.init(message: "no tools in this harness"))) },
       inference: { request in try await inference(request) },
@@ -107,15 +106,15 @@ struct SessionHarness {
       machines: machineSeam(hub: hub),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
-      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: cacheUsage),
+      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
     )
     let connection = MainConnection()
-    let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, access: access, space: space) { _ in config }
+    let worker = SessionExecution(connection: connection, credential: { try await tokens.sessionToken($0) }, access: access, space: space) { _ in config }
     runtime = SessionRuntime(execution: worker, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
       credentials: credentials, secrets: secrets, execTokens: tokens,
-      identityController: identityController, machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil, keyStreams: keyStreams,
+      identityController: identityController, listenerRoutes: machineV2 ? machineListenerRoutes(space: space, hub: hub, fingerprint: fingerprint) : Router(), keyStreams: keyStreams,
     )
     api = ServeTesting.client(upgrading: handler)
     worker.start()
@@ -174,7 +173,7 @@ struct SessionHarness {
     return try await space.mintPersona(key: key).name
   }
 
-  init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil, metrics: InferenceMetricsSink = .noop, lineDifferences: LineDifferenceLog? = nil) async throws {
+  init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil, metrics: InferenceMetricsSink = .noop) async throws {
     credentials = credentialResolver ?? .bound { providerID in
       CredentialBinding(credential: .apiKey(CredentialResolver.environmentAPIKey(providerID) ?? ""), identityEpoch: "assembled-fixture-credential")
     }
@@ -192,8 +191,8 @@ struct SessionHarness {
       credentials: credentials,
       secrets: nil,
       usage: UsageBoard(),
+      tokens: try await testTokens(space: space),
       oidcToken: oidcToken,
-      lineDifferences: lineDifferences,
     )
     handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     api = ServeTesting.client(upgrading: handler)

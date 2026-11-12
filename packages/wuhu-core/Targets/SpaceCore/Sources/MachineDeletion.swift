@@ -14,7 +14,7 @@ extension Space {
   public func deleteMachine(_ id: MachineID, by principal: Principal) async throws {
     let notes = try SpacePath(validating: "/_/machines/\(id.rawValue)")
     let stamp = SQLiteDateFormat.string(from: dateGen.now)
-    let (group, rev) = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+    try await writer.write { db in
       guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db),
             try MachineV2MemberRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) != nil
       else {
@@ -31,16 +31,9 @@ extension Space {
       let rev = try Substrate.mintRevision(mtime: stamp, group: group, in: db)
       for node in try Substrate.descendantHeads(of: notes, group: group, in: db) {
         try LiveFS.remove(node, group: group, rev: rev, op: .delete, in: db)
-        pending.append(MutationEvent(group: group, path: node.path, rev: Int(rev), kind: .delete, entry: nil))
       }
-      let operations = MachineV2OperationRow.where { $0.machineID.eq(id.rawValue) }.select(\.id)
-      try MachineV2RetentionRow.where { $0.id.in(operations) }.delete().execute(db)
-      try MachineV2OperationRow.where { $0.machineID.eq(id.rawValue) }.delete().execute(db)
-      try MachineV2PresenceRow.where { $0.machineID.eq(id.rawValue) }.delete().execute(db)
       try MachineV2MemberRow.where { $0.machineID.eq(id.rawValue) }.delete().execute(db)
       try DeviceRow.where { $0.machineID.eq(id.rawValue) }.update { $0.machineID = #bind(nil) }.execute(db)
-      try MachineExecTerminalRow.where { $0.machineID.eq(id.rawValue) && $0.terminalState.is(nil) }
-        .update { $0.terminalState = #bind(ExecTerminalState.machineLost.stored) }.execute(db)
       _ = try Self.purgeCredentials(account: AccountID(rawValue: row.accountID), in: db)
       try GroupRoleRow.where { $0.accountID.eq(row.accountID) }.delete().execute(db)
       try PersonaRow.where { $0.accountID.eq(row.accountID) }.delete().execute(db)
@@ -53,15 +46,10 @@ extension Space {
       try AliasRow.where { $0.kind.eq(AliasKind.machine) && $0.target.eq(id.rawValue) }.delete().execute(db)
       try MachineRow.where { $0.id.eq(id.rawValue) }.delete().execute(db)
       try GroupAccountRow.where { $0.id.eq(row.accountID) }.delete().execute(db)
-      return (group, rev)
+      let recipient = MachineCell.ID(id.rawValue).recipient
+      try recipient.post(.delete, on: db.sqliteConnection!)
+      db.afterNextTransaction { _ in self.runtime.poke(recipient) }
+      try documents.removed(under: notes, in: group, rev: rev, on: db)
     }
-    await live.drop(under: notes, in: group, rev: rev)
   }
-}
-
-@Table("machine_execs")
-private struct MachineExecTerminalRow {
-  @Column(primaryKey: true) var id: String
-  @Column("machine_id") var machineID: String
-  @Column("terminal_state") var terminalState: String?
 }

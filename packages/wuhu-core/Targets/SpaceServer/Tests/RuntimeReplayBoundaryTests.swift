@@ -89,9 +89,8 @@ import Testing
             #expect(try await harness.store.generationState(id).generation == (round == 2 ? 1 : 0))
             let route = try #require(await harness.store.modelRoute(id))
             if groupTarget { #expect(route == initialRoute) }
-            let transcript = try await harness.store.transcript(id)
-            if round < 2 { #expect(transcript.replayBinding?.epoch == route.epoch) }
-            else { #expect(transcript.replayBinding?.epoch != route.epoch) }
+            let lines = try await harness.store.testLines(id)
+            #expect(lines.contains { $0.key == "subscription:replay-handoff" } == (round == 2))
           }
         }
         let emitted = bodies.withLock { $0 }
@@ -102,7 +101,7 @@ import Testing
         #expect(!emitted[2].contains("rs_a"))
         #expect(emitted[2].contains("Portable replay handoff completed"))
         #expect(emitted[2].contains("input-2"))
-        #expect(try await harness.store.transcript(id).replayBinding?.epoch != "0")
+        #expect(try await harness.store.testLines(id).contains { $0.key == "subscription:replay-handoff" })
       }
     }
   }

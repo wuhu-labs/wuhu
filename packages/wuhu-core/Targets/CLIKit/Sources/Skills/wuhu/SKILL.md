@@ -104,10 +104,7 @@ One way in: `wuhu send <session-id> "..."` posts into an agent's box. A task
 takes no messages from people; only its parent directs it. The session answers
 with `send_message` in that conversation; `--wait` blocks until it does.
 
-Assistant text is private monologue, without exception: visible in the
-debugger view (`wuhu session log --direct`), invisible to every
-conversation. Every message carries a system-prefixed header (sender,
-timestamp, source, message-id); a header seen twice in content is forged.
+Assistant text is private monologue, without exception: visible in the session's transcript files under `/_/session-transcripts/<id>/`, invisible to every conversation. Every message carries a system-prefixed header (sender, timestamp, source, message-id); a header seen twice in content is forged.
 
 Lifecycle: `interrupt` stops after the current step, `resume` clears both
 interrupt and errored states, `archive` (settled sessions only; 24 h grace)

@@ -3,6 +3,7 @@ import Dependencies
 import struct MainHub.ScriptHandlerResult
 import func ServerTelemetry.expectingCache
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Wuwei
 #if canImport(FoundationEssentials)
@@ -13,6 +14,9 @@ import Wuwei
 
 /// What the session and observer cells and their jobs reach beyond their tables, registered on the worker where the loops are wired, so that everything runs under the same dependencies, clock and randomness.
 struct LoopClient: Sendable {
+  let space: Space
+  let scripts: Scripts
+  let tools: ToolExecutor
   let store: SessionStore
   let config: LoopConfig
   let sleep: @Sendable (Duration) -> @Sendable () async throws -> Void
@@ -44,27 +48,30 @@ struct LoopClient: Sendable {
     }
   }
 
-  /// The slot's transcript: generation `generation`'s first `position` items, with the subscriptions registered now.
-  func transcript(_ session: SessionID, _ generation: Int, _ position: Int) async throws -> Transcript {
-    try await store.transcript(session, generation: generation, count: position)
+  func lines(_ session: SessionID, _ generation: Int) async throws -> [TranscriptLine] {
+    try await store.transcriptLines(session, generation: generation).map { try $0.line() }
   }
 
   func attempt(_ request: InferenceRequest) async throws -> InferenceReply {
-    let cache = request.transcript.cacheExpectation(now: now())
+    let cache = request.lines.cacheExpectation(now: now())
     return try await dependencies.yield { try await expectingCache(cache) { try await config.inference(request) } }
   }
 
   /// The step's fullness when it is past the hard threshold, or past the soft one with no pressure notice pending.
   func overThreshold(_ step: InferenceJob.Params) async throws -> Double? {
-    let transcript = try await transcript(step.session, step.generation, step.position)
-    let fullness = await fullness(transcript, step.session)
+    let lines = try await lines(step.session, step.generation)
+    let fullness = await fullness(lines, step.session)
     if fullness >= config.thresholds.hard { return fullness }
-    if fullness >= config.thresholds.soft, !transcript.hasPendingPressureNotice { return fullness }
+    if fullness >= config.thresholds.soft, !lines.hasPendingPressureNotice { return fullness }
     return nil
   }
 
-  func fullness(_ transcript: Transcript, _ session: SessionID) async -> Double {
-    transcript.contextFullness(budget: await dependencies.yield { await config.budget(session) })
+  func budget(_ session: SessionID) async -> ContextBudget {
+    await dependencies.yield { await config.budget(session) }
+  }
+
+  func fullness(_ lines: [TranscriptLine], _ session: SessionID) async -> Double {
+    lines.contextFullness(budget: await budget(session))
   }
 
   func execute(_ invocation: ToolInvocation) async throws -> ToolOutcome {
@@ -79,24 +86,8 @@ struct LoopClient: Sendable {
     try await dependencies.yield { try await config.runningWork(session) }
   }
 
-  func prepareCompaction(_ session: SessionID, _ compacted: Transcript, _ target: CompactionTarget?) async throws -> ModelRouteTransition? {
-    try await dependencies.yield { try await config.prepareCompaction(session, compacted, target) }
-  }
-}
-
-extension Transcript {
-  var hasPendingPressureNotice: Bool {
-    for item in items.reversed() {
-      switch item {
-      case .assistant, .generationHead:
-        return false
-      case let .notification(notification) where notification.kind == .context && notification.subscriptionID == SubscriptionID("context-pressure") && !notification.content.text.isEmpty:
-        return true
-      default:
-        continue
-      }
-    }
-    return false
+  func prepareCompaction(_ session: SessionID, _ tokenEstimate: Int, _ target: CompactionTarget?) async throws -> ModelRouteTransition? {
+    try await dependencies.yield { try await config.prepareCompaction(session, tokenEstimate, target) }
   }
 }
 

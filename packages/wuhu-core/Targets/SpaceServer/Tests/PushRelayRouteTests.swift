@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
+import Logging
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -62,7 +63,7 @@ import Testing
     let afterRepublish = try #require(try await harness.space.duePushRelayDeliveries(at: fixedDate).only)
     #expect(afterRepublish.notification.n == pending.notification.n)
 
-    try await harness.space.markPushRelayAccepted(grant.grant, notification: pending.notification.n)
+    try await PushRelayJobTest(space: harness.space, logger: Logger(label: "relay-route"), client: PushRelayClient { _ in }).drain()
     #expect(try await harness.space.duePushRelayDeliveries(at: fixedDate).isEmpty)
     #expect(try await request("/v1/push-relay/grant", method: .put, body: grant).status == .noContent)
     #expect(try await harness.space.duePushRelayDeliveries(at: fixedDate).isEmpty)
@@ -75,9 +76,9 @@ import Testing
     #expect(try await request("/v1/push-relay/grant", method: .put, body: grant).status == .noContent)
     try await notifyPersona()
     let first = try #require(try await harness.space.duePushRelayDeliveries(at: fixedDate).only)
-    try await harness.space.markPushRelayAccepted(grant.grant, notification: first.notification.n)
-
-    try await harness.space.removePushRelayGrant(grant.grant)
+    try await PushRelayJobTest(space: harness.space, logger: Logger(label: "relay-route"), client: PushRelayClient { _ in
+      throw PushRelayTransportError(status: 410, retryAfter: nil, underlying: "gone")
+    }).drain()
     #expect(try await harness.space.pushRelayGrants(recipient: try #require(await persona())).isEmpty)
 
     #expect(try await request("/v1/push-relay/grant", method: .put, body: grant).status == .noContent)
@@ -94,7 +95,9 @@ import Testing
     #expect(try await request("/v1/push-relay/grant", method: .put, body: grant).status == .noContent)
     try await notifyPersona()
     let pending = try #require(try await harness.space.duePushRelayDeliveries(at: fixedDate).only)
-    try await harness.space.deferPushRelayDelivery(grant.grant, until: fixedDate.addingTimeInterval(3600))
+    try await PushRelayJobTest(space: harness.space, logger: Logger(label: "relay-route"), client: PushRelayClient { _ in
+      throw PushRelayTransportError(status: 503, retryAfter: "3600", underlying: "busy")
+    }).drain()
     #expect(try await harness.space.duePushRelayDeliveries(at: fixedDate).isEmpty)
 
     #expect(try await request("/v1/push-relay/grant", method: .put, body: grant).status == .noContent)

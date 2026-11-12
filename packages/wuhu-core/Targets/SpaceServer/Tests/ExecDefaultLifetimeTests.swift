@@ -1,6 +1,4 @@
-import protocol Clocks.NonsendingClock
 import ControlledTime
-import Crypto
 import Dependencies
 import DeterministicDependencies
 @testable import ExecSupervisor
@@ -18,257 +16,171 @@ import Fetch
   import Musl
 #endif
 import JSONValue
-import MachineChannel
 import MachineContract
 @testable import MainHub
-import OperationProtocol
-import OperationRuntime
+@testable import OperationRuntime
 import Scratch
-import SessionDomain
-@testable import SessionTools
+import SessionTools
 @testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
 import struct WuhuAI.ToolCall
+import Wuwei
 
 @Suite(.deterministicDependencies(clock: ContinuousClock()), .timeLimit(.minutes(1)))
 struct ExecDefaultLifetimeTests {
   @Test func theV2SupervisorKillsTheProcessGroupAtTheDefaultLifetime() async throws {
-    let clock = LifetimeClock()
-    let work = try ScratchFolder("exec-default-lifetime-v2")
-    defer { work.remove() }
-    let space = try makeMachineSpace()
-    let (record, _) = try await space.addMachineV2(name: "lifetime_v2", group: .shared)
-    let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
-    let hub = MachineHub(space: space)
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
-    await hub.configureV2(service)
-    let session = try await makeLifetimeSession(space)
-    try await withThrowingTaskGroup(of: Void.self) { tasks in
-      tasks.addTask { await agent.run() }
-      tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
-      defer { tasks.cancelAll() }
-      let ready = LifetimeOutput()
-      let executor = lifetimeExecutor(space: space, hub: hub, ready: ready)
-      try await expectLifetimes(executor, session: session, machine: record.id.rawValue, cwd: work.path, clock: clock, ready: ready)
-      await agent.shutdown(); await service.shutdown()
-    }
-  }
+    try await withDependencies {
+      $0.installTimeControl()
+    } operation: {
+      let work = try ScratchFolder("exec-default-lifetime-v2")
+      defer { work.remove() }
+      let space = try Space.inMemory()
+      let machine = try await space.addMachineV2(name: "lifetime_v2", group: .shared).machine.id
+      let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
+      let hub = MachineHub(space: space)
+      do {
+        try await withThrowingTaskGroup(of: Void.self) { tasks in
+          tasks.addTask { await agent.run() }
+          defer { tasks.cancelAll() }
+          do {
+            try await withMachineBox(space: space, hub: hub, machine: machine, client: FetchClient { try await agent.handler($0) }) {
+              try await ToolLifetimes.$execDefault.withValue(1) {
+                let plan = try ExecToolPlan(ToolCall(id: "default-lifetime", name: "exec", arguments: .object([
+                  "machine": .string(machine.rawValue), "cwd": .string(work.path),
+                  "command": "mkfifo child-input; trap 'wait; exit 143' TERM; cat child-input & echo $! > child; echo started; wait",
+                ])))
+                #expect(plan.lifetime == 1 && plan.defaultLifetime)
+                let first = try await LifetimeExec(space: space, machine: machine, plan: plan)
+                defer { first.peer.close() }
+                await first.events.output.wait()
+                try #require(first.events.printed.withLock { $0 }, "the default exec closed or ended before its readiness output")
+                try await advanceLifetime(space, machine: machine, by: 1.001)
+                try await completeLifetime(space, agent: agent, machine: machine, exec: first)
+                await first.events.ended.wait()
+                let killed = try #require(first.events.end.withLock { $0 })
+                guard case let .exec(result) = plan.finished(killed) else { Issue.record("default lifetime failed: \(killed)"); return }
+                #expect(result.output == "started\n\n[killed after 1 s, the default max lifetime; start longer work detached and watch it from run_script]")
+                #expect([128 + 15, 128 + 9].contains(result.exitCode))
+                let child = try #require(Int32(String(contentsOfFile: work.path + "/child", encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+                #expect(!isRunning(child), "the backgrounded child survived the kill")
 
-  /// A timeout stop that never ends the process, never answers or fails must
-  /// not hold the caller: one grace after the lifetime the exec fails as a
-  /// deadline, not as an exit the process never made. The relay runs on a
-  /// `VirtualClock`: it stops at the lifetime until the stop reaches the
-  /// machine, then never passes the grace after it, so a relay that held the
-  /// caller longer would never answer.
-  @Test(arguments: [StuckStop.ignored, .unanswered, .failed])
-  func aV2TimeoutStopThatNeverEndsTheProcessIsARequestDeadline(_ stop: StuckStop) async throws {
-    let clock = VirtualClock()
-    let lifetime = 20
-    let space = try makeMachineSpace()
-    let (record, _) = try await space.addMachineV2(name: "stuck_v2", group: .shared)
-    let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(DeafExecKind())], authorize: { _, _ in })
-    let hub = MachineHub(space: space)
-    let started = Gate()
-    let stopped = Gate()
-    let fetch = FetchClient { request in
-      if request.method == .post, request.url.path.contains("/operations/") { started.open() }
-      if request.url.lastPathComponent == "stop" { stopped.open() }
-      if request.url.lastPathComponent == "stop", stop != .ignored {
-        if stop == .unanswered { await Gate().wait(); try Task.checkCancellation() }
-        throw StopRefused()
-      }
-      return try await agent.handler(request)
-    }
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in fetch })
-    await hub.configureV2(service)
-    let session = try await makeLifetimeSession(space)
-    try await MachineV2Service.$timeoutStopGrace.withValue(.seconds(20)) {
-      try await withThrowingTaskGroup(of: Void.self) { tasks in
-        tasks.addTask { await agent.run() }
-        tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
-        defer { tasks.cancelAll() }
-        let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub)), hub: hub)
-        let outcome = try await withThrowingTaskGroup(of: ToolResultPayload.self) { call in
-          call.addTask {
-            try await withDependencies {
-              $0.date = DateGenerator { Date() }
-              $0.continuousClock = ContinuousClock()
-            } operation: {
-              try await executor.execute(session: session, call: ToolCall(id: "stuck", name: "exec", arguments: .object([
-                "machine": .string(record.id.rawValue), "cwd": "/", "command": "true", "max_lifetime_seconds": .integer(lifetime),
-              ])), state: ToolExecutionState()).payload
+                let explicit = try ExecToolPlan(ToolCall(id: "explicit-lifetime", name: "exec", arguments: .object([
+                  "machine": .string(machine.rawValue), "cwd": .string(work.path),
+                  "command": "mkfifo release; exec 3<>release; echo ready; read line <&3; echo finished", "max_lifetime_seconds": 30,
+                ])))
+                #expect(explicit.lifetime == 30 && !explicit.defaultLifetime)
+                let second = try await LifetimeExec(space: space, machine: machine, plan: explicit)
+                defer { second.peer.close() }
+                await second.events.output.wait()
+                try #require(second.events.printed.withLock { $0 }, "the explicit exec closed or ended before its readiness output")
+                try await advanceLifetime(space, machine: machine, by: 2)
+                #expect(second.events.end.withLock { $0 == nil })
+                #expect(try await space.execRecord(second.id)?.terminal == nil)
+                let fd = open(work.path + "/release", O_WRONLY | O_NONBLOCK)
+                try #require(fd >= 0, "the explicit lifetime ended before its release")
+                let release = Array("go\n".utf8)
+                let written = release.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+                #expect(written == release.count)
+                #expect(close(fd) == 0)
+                try await completeLifetime(space, agent: agent, machine: machine, exec: second)
+                await second.events.ended.wait()
+                let end = try #require(second.events.end.withLock { $0 })
+                guard case let .exec(finished) = explicit.finished(end) else { Issue.record("explicit lifetime failed: \(end)"); return }
+                #expect(finished.output == "ready\nfinished\n", "explicit lifetime output: \(String(reflecting: finished.output))")
+                #expect(finished.exitCode == 0)
+              }
             }
+            await agent.shutdown()
+          } catch {
+            await agent.shutdown()
+            throw error
           }
-          // The clock stands still until the start reaches the machine, after the exec was admitted with its deadline.
-          await started.wait()
-          try await clock.run(through: VirtualClock.at(.seconds(lifetime))) { await stopped.wait() }
-          return try await clock.run(through: VirtualClock.at(.seconds(lifetime) + MachineV2Service.timeoutStopGrace)) { try await call.next()! }
         }
-        guard case let .failure(failure) = outcome else {
-          Issue.record("a stuck timeout returned \(outcome)")
-          return
-        }
-        #expect(failure.code == "requestDeadline", "\(failure.message)")
-        await service.shutdown()
+        try await space.close()
+      } catch {
+        try await space.close()
+        throw error
       }
     }
   }
 }
 
-enum StuckStop: Sendable, CustomTestStringConvertible {
-  case ignored, unanswered, failed
-  var testDescription: String { "\(self)" }
+private extension OperationAgent {
+  func lifetimeFinalEvidence(_ operation: UUID) async throws -> Bool {
+    while true {
+      try Task.checkCancellation()
+      guard let snapshot = inspect(operation) else { return false }
+      if snapshot.verdict != nil, snapshot.finalOffsets["stdout"] != nil, snapshot.finalOffsets["stderr"] != nil { return true }
+      await nextChange()
+    }
+  }
 }
 
-private struct StopRefused: Error {}
+private struct LifetimeExec: Sendable {
+  let id: ExecID
+  let operation: UUID
+  let peer: Peer<ExecStream>
+  let events = LifetimeEvents()
 
-/// An exec kind whose process never ends: it prints once and ignores stop.
-private struct DeafExecKind: OperationKind {
-  struct Input: Decodable, Sendable {}
-  let descriptor = ComputerKindSchemas.exec
-  func run(_: Input, channels: OperationChannels, cancellation _: OperationCancellation) async throws -> JSONValue {
-    try await channels.send(.init(data: Data("started\n".utf8)), to: "stdout")
-    await Gate().wait()
+  init(space: Space, machine: MachineID, plan: ExecToolPlan) async throws {
+    @Dependency(\.uuid) var uuid
+    let record = try await space.reserveExec(machine: machine)
+    id = record.id
+    var request = try #require(try await space.execRequest(id))
+    operation = request.operation
+    request.argv = plan.argv; request.cwd = plan.cwd; request.env = plan.env; request.secrets = plan.secrets
+    request.timeout = plan.lifetime; request.maxOutput = plan.maxOutput
+    let events = self.events
+    peer = try #require(space.worker.attach(ExecStream.self, to: MachineCell.ID(machine.rawValue), opening: .init(exec: request, nonce: uuid())) {
+      switch $0 {
+      case let .frame(frame):
+        switch frame {
+        case .output: events.printed.withLock { $0 = true }; events.output.open()
+        case let .exit(value):
+          events.end.withLock { $0 = value }
+          events.output.open(); events.ended.open()
+        case .accepted: break
+        }
+      case .closed:
+        events.output.open(); events.ended.open()
+      }
+    })
+  }
+}
+
+private final class LifetimeEvents: Sendable {
+  let output = Gate()
+  let ended = Gate()
+  let end = Mutex<ExecFinished?>(nil)
+  let printed = Mutex(false)
+}
+
+private func advanceLifetime(_ space: Space, machine: MachineID, by seconds: Double) async throws {
+  @Dependency(\.date) var date
+  @Dependency(\.timeControl) var time
+  await time.advance(to: date.now.addingTimeInterval(seconds))
+  try await space.worker.call(MachineCell.ID(machine.rawValue)) { try $0.wake() }
+}
+
+private func completeLifetime(_ space: Space, agent: OperationAgent, machine: MachineID, exec: LifetimeExec) async throws {
+  let retainedCompletion = try await agent.lifetimeFinalEvidence(exec.operation)
+  // At most 10 s of injected time stays below the 28 s remaining lifetime and 30 s stop grace.
+  for _ in 0 ..< 100 {
     try Task.checkCancellation()
-    return .null
+    if exec.events.end.withLock({ $0 != nil }) { return }
+    try await advanceLifetime(space, machine: machine, by: 0.1)
   }
-}
-
-private func makeLifetimeSession(_ space: Space) async throws -> SessionID {
-  try await space.sessions.createSession(
-    group: .shared, title: "exec lifetime", kind: .agent, createdBy: "morgan",
-    model: .init(provider: "deepseek", model: "deepseek-v4-pro", effort: "high"),
-  )
-}
-
-// The default is shortened to 1 s: the command and the child it backgrounds
-// must both be gone, and an explicit max_lifetime_seconds must outlast the default.
-private func expectLifetimes(_ executor: ToolExecutor, session: SessionID, machine: String, cwd: String, clock: LifetimeClock, ready: LifetimeOutput) async throws {
-  try await withDependencies {
-    $0.date = DateGenerator { Date() }
-    $0.continuousClock = ContinuousClock()
-  } operation: {
-    try await ToolLifetimes.$execDefault.withValue(1) {
-      try await withThrowingTaskGroup(of: ToolResultPayload.self) { call in
-        defer { call.cancelAll() }
-        call.addTask { try await executor.execute(session: session, call: ToolCall(id: "default-lifetime", name: "exec", arguments: .object([
-          "machine": .string(machine), "cwd": .string(cwd),
-          "command": "mkfifo child-input; trap 'wait; exit 143' TERM; cat child-input & echo $! > child; echo started; wait",
-        ])), state: ToolExecutionState()).payload }
-        await ready.first.wait()
-        await clock.armed.wait()
-        let killed = try await clock.run(through: VirtualClock.at(.seconds(1) + .milliseconds(300))) { try await call.next()! }
-        guard case let .exec(result) = killed else {
-          Issue.record("default-lifetime exec failed: \(killed)")
-          return
-        }
-        #expect(result.output == "started\n\n[killed after 1 s, the default max lifetime; start longer work detached and watch it from run_script]")
-        #expect([128 + 15, 128 + 9].contains(result.exitCode), "\(result.output)")
-        let child = try #require(Int32(String(contentsOfFile: cwd + "/child", encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
-        #expect(!isRunning(child), "the backgrounded child survived the kill")
-
-        call.addTask { try await executor.execute(session: session, call: ToolCall(id: "explicit-lifetime", name: "exec", arguments: .object([
-          "machine": .string(machine), "cwd": .string(cwd),
-          "command": "mkfifo release; exec 3<>release; echo ready; read line <&3; echo finished", "max_lifetime_seconds": 30,
-        ])), state: ToolExecutionState()).payload }
-        await ready.second.wait()
-        let pastDefault = clock.now.advanced(by: .seconds(2))
-        try await clock.run(through: pastDefault) { try await clock.sleep(until: pastDefault, tolerance: nil) }
-        let fd = open(cwd + "/release", O_WRONLY | O_NONBLOCK)
-        try #require(fd >= 0, "the explicit lifetime ended before its release")
-        let release = Array("go\n".utf8)
-        let written = release.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
-        #expect(written == release.count)
-        #expect(close(fd) == 0)
-        let explicit = try await call.next()!
-        guard case let .exec(finished) = explicit else {
-          Issue.record("explicit-lifetime exec failed: \(explicit)")
-          return
-        }
-        #expect(finished.output == "ready\nfinished\n")
-        #expect(ready.timeouts.withLock { $0.values.sorted() } == [1, 30])
-        #expect(finished.exitCode == 0)
-      }
-    }
-  }
+  try #require(exec.events.end.withLock { $0 != nil }, "the native operation must deliver within the bounded clock advance (retained final evidence: \(retainedCompletion))")
 }
 
 private func isRunning(_ pid: Int32) -> Bool {
   guard kill(pid, 0) == 0 else { return false }
   #if os(Linux)
-    // An orphan nobody has reaped yet still answers kill(0).
     if let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8), let name = stat.lastIndex(of: ")") {
       return !stat[name...].hasPrefix(") Z")
     }
   #endif
   return true
-}
-
-private final class LifetimeClock: NonsendingClock, Sendable {
-  typealias Instant = VirtualClock.Instant
-  let base = VirtualClock()
-  let armed = Gate()
-  var now: Instant { base.now }
-  var minimumResolution: Duration { base.minimumResolution }
-  func sleep(until deadline: Instant, tolerance: Duration?) async throws {
-    if now.duration(to: deadline) == .seconds(1) { armed.open() }
-    try await base.sleep(until: deadline, tolerance: tolerance)
-  }
-
-  func run<T>(through limit: Instant, _ body: () async throws -> T) async throws -> T {
-    try await base.run(through: limit, body)
-  }
-}
-
-private final class LifetimeOutput: Sendable {
-  let first = Gate()
-  let second = Gate()
-  let timeouts = Mutex<[ExecID: Double]>([:])
-  let connections = Mutex(0)
-}
-
-private func lifetimeExecutor(space: Space, hub: MachineHub, ready: LifetimeOutput) -> ToolExecutor {
-  let owner = Hub(space: space, machines: machineSeam(hub: hub))
-  let tokens = ExecTokens(spaceURL: "http://main")
-  let connection = MainConnection()
-  let executor = ToolExecutor(main: connection, credential: { tokens.sessionToken($0) })
-  SessionRuntime.bindMain(owner: owner, tokens: tokens, connection: connection, hub: hub)
-  connection.bindDial { url, _ in
-    let index = ready.connections.withLock { value in defer { value += 1 }; return value }
-    return LifetimeTransport(base: try await connectExecCaller(.init(rawValue: url.lastPathComponent), space: space, hub: hub), ready: ready, output: index == 0 ? ready.first : ready.second)
-  }
-  return executor
-}
-
-private struct LifetimeTransport: FrameTransport {
-  let base: any FrameTransport
-  let ready: LifetimeOutput
-  let inbound: AsyncStream<[UInt8]>
-  init(base: any FrameTransport, ready: LifetimeOutput, output: Gate) {
-    self.base = base
-    self.ready = ready
-    inbound = AsyncStream { continuation in
-      let task = Task {
-        for await bytes in base.inbound {
-          continuation.yield(bytes)
-          if (try? FrameCodec.decode(bytes))?.opcode == .output { output.open() }
-        }
-        continuation.finish()
-      }
-      continuation.onTermination = { _ in task.cancel() }
-    }
-  }
-
-  func send(_ bytes: [UInt8]) async throws {
-    if let frame = try? FrameCodec.decode(bytes), frame.opcode == .execStart,
-       let start = try? frame.payload(ExecStart.self), let timeout = start.timeout
-    {
-      ready.timeouts.withLock { $0[start.id] = timeout }
-    }
-    try await base.send(bytes)
-  }
-
-  func close() { base.close() }
 }

@@ -35,7 +35,7 @@ struct SessionObserveTests {
       let store = space.sessions
 
       let results = Collector<Rows>()
-      let stream = await space.observeQuery("SELECT work FROM sessions ORDER BY id", throttle: .zero)
+      let stream = try space.observeRows("SELECT work FROM sessions ORDER BY id", throttle: .zero)
       let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
       defer { consumer.cancel() }
 

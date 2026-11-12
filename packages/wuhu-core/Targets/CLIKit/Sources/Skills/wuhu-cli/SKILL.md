@@ -48,7 +48,7 @@ An exec a session runs (its `exec` tool, or a `run_script` spawn) carries `WUHU_
 
 Set `WUHU_IDENTITY=wallet` in exec's `env` to use the wallet found from cwd up, as its owner on its pinned space, ignoring the session token and URL. Use it for another space, or for verbs only the wallet's owner has when that person asked for it. The CLI prints `acting as <persona> (wallet)` on stderr (`anonymous` for a request without wallet credentials, `the local user` for local-only commands). Wallet mode honors the normal group selection: `--group` beats `WUHU_GROUP`, which beats the wallet's configured group. The announcement uses the command's actual target, not an old pin; repinning to a new space does not look up the old space's persona. Wallet or identity errors fail, never fall back to the session.
 
-`wuhu id-token --audience <origin> [--json]` prints a 60-second OIDC token for this exec (claims `space`, `group`, `session`, `machine`, `exec`; `sub` is `<group>/<session>`) for a service that trusts this space's issuer, such as the build pool. It presents only the exec's `WUHU_ID_TOKEN_REQUEST` at `WUHU_ID_TOKEN_URL`, both set by the server, and fails outside a session's exec.
+`wuhu id-token --audience <origin> [--json]` prints a 60-second OIDC token for this exec (claims `space`, `group`, `session`, `machine`, `exec`; `sub` is `<group>/<session>`) for a service that trusts this space's issuer, such as the build pool. It presents the exec's signed `WUHU_TOKEN` at `<WUHU_SPACE_URL>/v1/id-token`, for an external HTTP(S) audience, and fails outside a session's exec.
 
 `wuhu script <file> [args…]` runs a local file as a space script on the server, as this session: the same runtime and API as `run_script`, with the arguments after the file in `import.meta.args`. Its `result` and then each `update` print to stdout as they come; it exits 0 only when the script called `result()` and ended without failing, otherwise 1 with the reason on stderr (a connection that drops before the run ends is a failure too). A first line `#!/usr/bin/env -S wuhu script` makes the file a space script that also runs straight from the shell (`./tool.js a b`); the run's span records the source's sha256. From a person's terminal it runs as that signed-in person in the group they act in (`--group`), its inferences attributed to their personal group; it has what an observer's handler has, not a session's verbs.
 
@@ -302,9 +302,7 @@ wuhu session restart --model-group work <session-id>  # Start over with fresh gr
 wuhu session inspect <session-id>   # requested target, active route, placement reason/evidence (JSON)
 wuhu session request [--stall SECS] [--schema JSON] [--fields JSON] <child-id> "message"   # a session's exec only
 wuhu send <session-id> "message" [--wait [--timeout SECS]] [--viewing PATH]
-wuhu session log <session-id>       # channel view (default, every executor)
-wuhu session log --direct|-v|-vv [--limit N] [--before REF] <session-id>
-wuhu session entry <session-id> <ref>
+wuhu read /_/session-transcripts/<session-id>/current.outline.txt
 wuhu session list
 wuhu session rename <session-id> "New title"
 wuhu session tags <session-id> [tag]...   # replace the whole tag list; none clears it
@@ -339,18 +337,6 @@ wuhu inbox
   `wuhu://<group>.localspace/<path>`); the server refuses a path you cannot
   read now with `400 invalidArgument`, and the session sees it as a
   `<viewing>` header line. Run by a session, `--viewing` is refused.
-- `session log` default = the session's channel (threads, senders, replies;
-  every executor). `--direct` is the deep per-session log of a kernel session; old Claude Code turns are no longer translated. Levels
-  select kinds: `--direct` = narrative (inputs,
-  reminders, assistant text, replies, compaction markers); `-v` adds tool
-  calls, reasoning summaries, and cumulative context usage; `-vv` adds tool
-  results. Every item carries a
-  `[ref]` header; `session entry <session-id> <ref>` prints that one item
-  unclipped. Both views serve the tail — last 50 by default, `--limit N` to
-  cap, `--before` for older pages (the `[n]` cursor in the channel view, a
-  `[ref]` in the direct view). Refs are short-lived — compaction invalidates
-  them (typed `unknownRef`/`trimmedRef` errors); re-read the log for fresh
-  ones.
 - `session rename` sets a session's title and prints the stored value; a
   session can do the same to itself with the `set_title` tool. One non-empty
   line, at most 200 characters.
@@ -393,7 +379,7 @@ pi). Idempotent; prints every path it writes; skips files it does not own.
 
 `wuhu identity` prints resolved default and per-audience issuer URLs. `wuhu identity issuer-for <origin>` prints one issuer. A human space admin chooses `wuhu identity set default self|directory` or `wuhu identity set <origin> self|directory`; `wuhu identity set <origin> inherit` removes an override. Origins are exact canonical HTTP(S) origins. Configure a verifier to trust both issuer URLs before changing its setting; there is no automatic fallback when the directory is unavailable.
 
-`wuhu identity rotate` starts the issuer-preserving key overlap immediately. `wuhu identity register-new` recovers a stale/lost directory registration by creating a new issuer; verifiers must migrate. Both are human space-admin-only and unavailable to session execs.
+`wuhu identity rotate` starts the issuer-preserving key overlap immediately. `wuhu identity register-new` recovers a stale/lost directory registration by creating a new issuer; verifiers must migrate. Set, rotate and register-new return an accepted state snapshot, not a completed-publication acknowledgement; `wuhu identity` shows publishing/confirmed/failed status. Both are human space-admin-only and unavailable to session execs.
 
 ## Human-only channels
 

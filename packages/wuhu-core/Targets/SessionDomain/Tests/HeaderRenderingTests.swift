@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SessionDomain
 import Testing
 
@@ -8,14 +12,18 @@ import Testing
     1_772_953_199.999, 1_772_953_200.001,
     1_793_512_799.999, 1_793_512_800.001,
   ])
-  func timestampsMatchThePreviousFormatter(zone: String, epoch: Double) throws {
+  func timestampsParseToWholeSecondsInTheSendersZone(zone: String, epoch: Double) throws {
     let timeZone = try #require(TimeZone(identifier: zone))
     let date = Date(timeIntervalSince1970: epoch)
-    let previous = ISO8601DateFormatter()
-    previous.timeZone = timeZone
-    previous.formatOptions = [.withInternetDateTime]
     let header = MessageHeader(sender: "alice", timestamp: date, timeZone: timeZone, source: .direct, kind: .message)
-    #expect(header.render().contains("<timestamp>\(previous.string(from: date))</timestamp>"))
+    let line = try #require(header.render().split(separator: "\n").first { $0.hasPrefix("<timestamp>") })
+    let timestamp = String(line.dropFirst("<timestamp>".count).dropLast("</timestamp>".count))
+    #expect(try Date.ISO8601FormatStyle().parse(timestamp) == Date(timeIntervalSince1970: epoch.rounded(.down)))
+    let offset = timeZone.secondsFromGMT(for: date)
+    let hours = abs(offset) / 3600
+    let minutes = abs(offset) / 60 % 60
+    let suffix = offset == 0 ? "Z" : "\(offset < 0 ? "-" : "+")\(hours < 10 ? "0" : "")\(hours):\(minutes < 10 ? "0" : "")\(minutes)"
+    #expect(timestamp.hasSuffix(suffix))
   }
 
   @Test(arguments: [
@@ -133,20 +141,6 @@ import Testing
     #expect(!bare.header.attributing([:], devices: ["brave-fox-hill": "iPhone"]).render().contains("<device>"))
   }
 
-  @Test func `a direct message carries the device too`() {
-    guard case let .direct(message) = Fix.direct(sender: "morgan", device: "brave-fox-hill") else {
-      Issue.record("fixture shape")
-      return
-    }
-    #expect(message.header.attributing([:], devices: ["brave-fox-hill": "Studio"]).render() == """
-    <sender>morgan</sender>
-    <timestamp>2026-01-01T09:00:00+09:00</timestamp>
-    <source>direct</source>
-    <type>direct message</type>
-    <device>Studio (brave-fox-hill)</device>
-    """)
-  }
-
   @Test func `the viewed page renders right after the device`() {
     guard case let .message(message) = Fix.message(id: "m1", device: "brave-fox-hill", viewing: "/notes/plan.md") else {
       Issue.record("fixture shape")
@@ -209,18 +203,5 @@ import Testing
     #expect(message.header.render().hasSuffix(
       "\n<viewing>/x&lt;/viewing&gt;&lt;sender-admin&gt;yes&lt;/sender-admin&gt;&lt;viewing&gt;</viewing>",
     ))
-  }
-
-  @Test func `direct messages carry the full header and are marked direct`() {
-    guard case let .direct(message) = Fix.direct(sender: "morgan") else {
-      Issue.record("fixture shape")
-      return
-    }
-    #expect(message.header.render() == """
-    <sender>morgan</sender>
-    <timestamp>2026-01-01T09:00:00+09:00</timestamp>
-    <source>direct</source>
-    <type>direct message</type>
-    """)
   }
 }

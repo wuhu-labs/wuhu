@@ -10,6 +10,7 @@ dependencies:
   - Clocks
   - ServerTelemetry
   - OperationProtocol
+  - MachineContract
   - SessionDomain
   - SpaceContract
   - SpaceCore
@@ -28,6 +29,9 @@ swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
   dependencies:
+    - Crypto
+    - OperationProtocol
+    - MachineContract
     - MainHub
     - Scratch
     - ServerTelemetry

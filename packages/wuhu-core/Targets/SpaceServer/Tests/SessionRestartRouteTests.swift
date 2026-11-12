@@ -26,13 +26,9 @@ import enum WuhuAI.InferenceError
       #expect(out.queued == nil)
 
       try await until("restarted") { try await harness.store.generationState(id).generation == 1 }
-      let transcript = try await harness.store.transcript(id)
-      #expect(transcript.items.count == 1, "the head is the whole of a restarted generation")
-      guard case let .generationHead(head) = transcript.items[0] else {
-        Issue.record("expected the head, got \(transcript.items[0])")
-        return
-      }
-      let note = try #require(head.note)
+      let lines = try await harness.store.testLines(id)
+      #expect(lines.map(\.key) == [LineKey.head, "head:note"], "a restarted generation holds only its head and note")
+      let note = try #require(lines.first { $0.key == "head:note" }?.text)
       #expect(note.hasPrefix("Started over on kernel testing/test-model"))
       #expect(note.contains("Catch up from your box before acting"))
       #expect(note.contains("read-box skill"))
@@ -82,9 +78,7 @@ import enum WuhuAI.InferenceError
       #expect(out.queued == 1)
       try await until("the fresh generation takes the opening message") {
         guard try await harness.store.generationState(id).generation == 1 else { return false }
-        return try await harness.store.transcript(id).items.contains {
-          if case let .message(message) = $0 { message.content.text == "start here" } else { false }
-        }
+        return try await harness.store.testLines(id).contains { $0.key.hasPrefix("message:") && $0.text.hasSuffix("\n\nstart here") }
       }
     }
   }
@@ -157,7 +151,7 @@ import enum WuhuAI.InferenceError
       let attempted = attempts.withLock { $0 }
       #expect(attempted.isEmpty, "a restarted session must not spend a turn on its own note")
       #expect(try await harness.store.record(id).errorMessage == nil)
-      #expect(try await !harness.store.transcript(id).hasWork)
+      #expect(try await harness.store.settledWork(id))
     }
   }
 }

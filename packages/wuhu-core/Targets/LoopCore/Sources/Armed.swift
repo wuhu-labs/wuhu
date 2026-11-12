@@ -5,6 +5,7 @@
 #endif
 import SessionDomain
 import struct SpaceCore.Arming
+import enum SpaceCore.ObservationMail
 import StructuredQueries
 import Wuwei
 import WuweiQueries
@@ -40,15 +41,6 @@ extension Armed {
   }
 }
 
-extension Transcript {
-  /// A generation's head says what the session has armed as it opens: the `<session-state>` the model reads.
-  mutating func open(armed: [SubscriptionID: Subscription]) {
-    guard case var .generationHead(head)? = items.first else { return }
-    head.snapshot.subscriptions = armed
-    items[0] = .generationHead(head)
-  }
-}
-
 extension SessionCell {
   /// Arms a slot for a tool call of the session's. The call's answer is recorded in the step that arms, so a call that already ran, or runs twice at once, arms once and gets the one answer, whether the slot still stands or has since ended.
   mutating func arm(_ arming: Arming, answering call: ToolCallID) throws -> ToolResultPayload {
@@ -60,6 +52,10 @@ extension SessionCell {
       ctx.create(streamJob(slot.id), params: .init(dialer: .session(id.session), session: id.session, subscription: slot.id, url: url, throttle: throttle, owner: id.recipient.retyped()))
     } else {
       try rows.arm(id.session, arming, uuid: client.uuid)
+      if case .observe = slot.kind {
+        let watched = try rows.observation(id.session, slot.id)!
+        ctx.send(.watch(watched.watch(recipient: id.recipient.retyped())), to: ObservationMail.recipient)
+      }
     }
     if let subscription = slot.kind.subscription {
       try db.execute(Armed.where { $0.subscription.eq(slot.id.rawValue) }.delete())
@@ -82,6 +78,7 @@ extension SessionCell {
       try rows.clear(id.session, topic: subscription.rawValue)
       payload = .cancelTimer(.init(subscriptionID: subscription))
     case (.observe, false):
+      if let watched = try rows.observation(id.session, subscription) { ctx.send(.unwatch(watched.observationSlot), to: ObservationMail.recipient) }
       try rows.retire(id.session, subscription)
       payload = .cancelObservation(.init(subscriptionID: subscription))
     case (.stream, false):
@@ -110,7 +107,6 @@ extension SessionCell {
     .init("\(id.session.rawValue):\(subscription.rawValue)")
   }
 
-  /// A session from before the cell kept the rows has none until its next step fills them (`check`).
   var keepsArmed: Bool {
     db.rows(SessionTurn.all).first?.armed == true
   }

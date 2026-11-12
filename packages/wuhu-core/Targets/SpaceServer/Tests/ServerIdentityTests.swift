@@ -35,11 +35,14 @@ import enum WuhuAI.InferenceError
     let point = Data([4]) + (try decode(#require(jwk["x"]?.stringValue))) + (try decode(#require(jwk["y"]?.stringValue)))
     let key = try P256.Signing.PublicKey(x963Representation: point)
     #expect(try key.isValidSignature(P256.Signing.ECDSASignature(rawRepresentation: decode(parts[2])), for: Data((parts[0] + "." + parts[1]).utf8)))
-    let groupJWT = try first.token(issuer: "https://tenant.wuhu.space", audience: URL(string: "custom://service/route")!, space: "space-id", group: "main", now: fixedDate, id: UUID(1))
+    let groupJWT = try first.token(issuer: "https://tenant.wuhu.space", audience: URL(string: "https://service.test/route")!, space: "space-id", group: "main", now: fixedDate, id: UUID(1))
     let groupClaims = try #require(JSONValue.parse(String(decoding: decode(String(groupJWT.split(separator: ".")[1])), as: UTF8.self))?.object)
     #expect(groupClaims["sub"] == .string("main"))
     #expect(groupClaims["session"] == nil)
-    #expect(groupClaims["aud"] == .string("custom://service"))
+    #expect(groupClaims["aud"] == .string("https://service.test"))
+    #expect(throws: IdentityError.invalidAudience) {
+      try first.token(issuer: "https://tenant.wuhu.space", audience: URL(string: "custom://service/route")!, space: "space-id", group: "main", now: fixedDate, id: UUID(1))
+    }
   }
 
   @Test func inferenceSigningConfigurationErrorsNameTheCorrectKnob() throws {
@@ -106,9 +109,9 @@ import enum WuhuAI.InferenceError
     let fs = MemoryFiles()
     let identity = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     let space = try makeMachineSpace()
-    let handler = withDependencies { $0.continuousClock = ContinuousClock() } operation: {
-      SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, dev: false, identityJWKS: identity.jwks)
-    }
+    let controller = IdentityController.configure(space: space, origin: origin, keys: fs.identityKeys, fetch: FetchClient { _ in Response(status: .forbidden) })
+    try await controller.initialize(identity: identity)
+    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, dev: false, identityController: controller)
     let client = ServeTesting.client(upgrading: handler)
     let discovery = try await client(Request(url: URL(string: origin + "/.well-known/openid-configuration")!))
     #expect(discovery.status == .ok)

@@ -6,8 +6,8 @@
 import struct SpaceContract.GroupID
 import WuhuAI
 
-public enum TranscriptItem: Hashable, Sendable, Codable {
-  case direct(DirectMessage)
+/// What one write of a session's cell adds to its transcript, while the cell holds it: its lines are what is stored (`lines(session:)`).
+public enum TranscriptItem: Hashable, Sendable {
   case message(ConversationMessage)
   case notification(SystemNotification)
   case assistant(AssistantEntry)
@@ -21,22 +21,8 @@ public enum TranscriptItem: Hashable, Sendable, Codable {
       guard case let .toolCall(callID) = result.provenance else { return nil }
       return callID
     case let .bookmark(marker): return marker.toolCallID
-    case .direct, .message, .notification, .assistant, .generationHead: return nil
+    case .message, .notification, .assistant, .generationHead: return nil
     }
-  }
-}
-
-public struct DirectMessage: Hashable, Sendable, Codable {
-  public var id: UUID
-  public var sender: Sender
-  public var timestamp: Date
-  public var content: MessageContent
-
-  public init(id: UUID, sender: Sender, timestamp: Date, content: MessageContent) {
-    self.id = id
-    self.sender = sender
-    self.timestamp = timestamp
-    self.content = content
   }
 }
 
@@ -185,15 +171,32 @@ public struct AssistantEntry: Hashable, Sendable, Codable {
       return call
     }
   }
+
+  /// A reply as the transcript takes it: each of its calls gets a kernel id from `mint`, which is what its line and every later request show.
+  public init(_ message: AssistantMessage, id: UUID, at timestamp: Date, metadata: AssistantMessageMetadata, replayBinding: ReplayBinding?, mint: () -> ToolCallID) {
+    guard let usage = metadata.usage else {
+      preconditionFailure("assistant message committed without a usage block")
+    }
+    var toolCallIDs: [String: ToolCallID] = [:]
+    let content = message.content.map { block -> ContentBlock in
+      guard case var .toolCall(call) = block else { return block }
+      precondition(toolCallIDs[call.id] == nil, "duplicate provider tool call id \(call.id)")
+      let kernelID = mint()
+      toolCallIDs[call.id] = kernelID
+      call.id = kernelID.rawValue
+      return .toolCall(call)
+    }
+    self.init(id: id, timestamp: timestamp, content: content, stopReason: metadata.stopReason, usage: usage, toolCallIDs: toolCallIDs, replayBinding: replayBinding)
+  }
 }
 
 public struct BookmarkMarker: Hashable, Sendable, Codable {
   public var id: UUID
   public var timestamp: Date
   public var name: String?
-  public var toolCallID: ToolCallID?
+  public var toolCallID: ToolCallID
 
-  public init(id: UUID, timestamp: Date, name: String? = nil, toolCallID: ToolCallID? = nil) {
+  public init(id: UUID, timestamp: Date, name: String? = nil, toolCallID: ToolCallID) {
     self.id = id
     self.timestamp = timestamp
     self.name = name
@@ -204,41 +207,24 @@ public struct BookmarkMarker: Hashable, Sendable, Codable {
 // `summary` is what a compaction folded; `note` is a line addressed to the
 // session about the generation itself. A note is context, never a prompt: it
 // renders at the head of the next real turn and never makes a generation work.
-// `settle` is the settle state of the whole generation a compaction closed,
-// the carried tail included; only a compaction records it, because only the
-// transcript knows which nags were shown.
 public struct GenerationHead: Hashable, Sendable, Codable {
-  public struct SettleBoundary: Hashable, Sendable, Codable {
-    public var queueTail: Int64
-    public var messageTail: Int64
-
-    public init(queueTail: Int64, messageTail: Int64) {
-      self.queueTail = queueTail
-      self.messageTail = messageTail
-    }
-  }
-
   public var id: UUID
   public var timestamp: Date
   public var summary: String
   public var snapshot: StateSnapshot
-  public var settle: SettleState?
-  public var settleBoundary: SettleBoundary?
   public var note: String?
   public var replayBinding: ReplayBinding?
   public var runningWork: [String]?
   public var awaiting: [AwaitedRequest]?
 
   public init(
-    id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil,
+    id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, note: String? = nil,
     replayBinding: ReplayBinding? = nil, runningWork: [String], awaiting: [AwaitedRequest] = [],
   ) {
     self.id = id
     self.timestamp = timestamp
     self.summary = summary
     self.snapshot = snapshot
-    self.settle = settle
-    self.settleBoundary = settleBoundary
     self.note = note
     self.replayBinding = replayBinding
     self.runningWork = runningWork.isEmpty ? nil : runningWork.sorted()

@@ -125,7 +125,18 @@ func removeMachineDirectory(operationsDirectory: String) {
   let directory = Rendezvous.machineDirectory(operationsDirectory: operationsDirectory)
   var state = stat()
   guard directory != "/", lstat(directory, &state) == 0, state.st_mode & S_IFMT == S_IFDIR, state.st_uid == getuid(), state.st_mode & 0o077 == 0 else { return }
-  try? FileManager.default.removeItem(atPath: directory)
+  for attempt in 0 ..< 3 {
+    do { try FileManager.default.removeItem(atPath: directory); return }
+    catch {
+      let cocoa = error as? CocoaError
+      let posix = (error as? POSIXError) ?? (cocoa?.userInfo["NSUnderlyingError"] as? POSIXError)
+      let rootError: Int32? = lstat(directory, &state) == 0 ? nil : errno
+      if rootError == ENOENT { return }
+      if rootError == nil, posix?.code == .ENOENT, let failedPath = cocoa?.filePath, failedPath.hasPrefix(directory + "/"), attempt < 2 { continue }
+      Logger(label: "machine-v2").warning("Revoked machine directory removal failed", metadata: ["path": "\(directory)", "errno": "\((rootError ?? posix?.code.rawValue).map(String.init) ?? "unavailable")", "error": "\(error)"])
+      return
+    }
+  }
 }
 
 func boxAgentDisclaimsResponsibility(

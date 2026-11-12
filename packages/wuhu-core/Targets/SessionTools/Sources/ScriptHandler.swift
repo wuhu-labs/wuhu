@@ -79,7 +79,7 @@ extension Scripts {
     let context = ScriptHandlerContext(input: input)
     let module = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
     let quoted = JSONValue.string(module).jsonString()
-    let client = try await tools.client(actor)
+    let client = tools.client(actor)
     let execution = ScriptExecution(
       id: handlerScriptID(id),
       actor: actor,
@@ -91,7 +91,7 @@ extension Scripts {
       kind: .handler(context),
       limits: limits,
     )
-    await execution.run(sessions: sessions)
+    await execution.run()
     let result = try execution.handlerResult()
     return result
   }

@@ -1,6 +1,5 @@
 import Fetch
 import Foundation
-import JSONValue
 import Logging
 import Serve
 import ServeSSE
@@ -48,11 +47,4 @@ func conversationStreamResponse(
       }
     }
   }
-}
-
-func itemJSON(_ item: TranscriptItem) -> JSONValue {
-  guard let data = try? JSONEncoder().encode(item),
-        let value = JSONValue.parse(String(decoding: data, as: UTF8.self))
-  else { return .null }
-  return value
 }

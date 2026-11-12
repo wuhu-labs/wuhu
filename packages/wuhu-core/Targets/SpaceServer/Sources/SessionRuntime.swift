@@ -5,7 +5,6 @@ import ExecutionOwner
 import struct FileSearch.SearchError
 import struct MainHub.EventSources
 import class MainHub.Hub
-import struct MainHub.SubscriptionFiring
 import TaskLifetime
 import enum Wuwei.Storage
 #if canImport(FoundationEssentials)
@@ -41,7 +40,6 @@ public struct SessionRuntime: Sendable {
   let tokens: ExecTokens
   let connection: MainConnection
   let store: SessionStore
-  var firing: SubscriptionFiring
   let sockets: ResponsesSocketRegistry?
   let owner: Hub
   /// Where an inference a session reports lands: `POST /v1/inferences`.
@@ -49,7 +47,6 @@ public struct SessionRuntime: Sendable {
   private let startup: (@Sendable () async -> Void)?
   let usage: UsageBoard
   let refresher: UsageRefresher?
-  let warmer: CacheWarmer
   let resolveModelExecutor: @Sendable (String, String, String?) async throws -> SessionExecutor
   let resolveModelGroup: @Sendable (String, String?) async throws -> SessionExecutor
   let prepareModelRoute: @Sendable (SessionExecutor, ModelPlacementReason, SessionModelRoute?) async throws -> SessionModelRoute?
@@ -88,13 +85,11 @@ public struct SessionRuntime: Sendable {
     self.usage = usage
     self.sockets = sockets
     self.refresher = refresher
-    warmer = CacheWarmer(space: space, usage: usage)
     self.owner = owner
     resolveModelExecutor = modelExecutorResolver(space: space)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePlacer(catalog: catalog, usage: usage)
     budget = budgetResolver(space: space)
-    firing = SubscriptionFiring(space: space) { execution.observe($0, $1, $2) }
   }
 
   /// Starts the sessions, once main's API is bound to their tools, and runs until cancelled.
@@ -106,10 +101,8 @@ public struct SessionRuntime: Sendable {
         let (parking, continuation) = AsyncStream<Void>.makeStream()
         for await _ in parking {}
         continuation.finish()
-        await execution.shutdown()
+        await execution.quiesce()
       }
-      group.addTask { await firing.run() }
-      group.addTask { await warmer.run() }
       if let sockets { group.addTask { await sockets.run() } }
       if let refresher {
         group.addTask { await refresher.run() }
@@ -121,17 +114,18 @@ public struct SessionRuntime: Sendable {
 }
 
 extension SessionRuntime {
-  public static func assemble(
+  static func assemble(
     space: Space,
     hub: MachineHub,
     attemptLog: AttemptLogConfig? = nil,
     metrics: InferenceMetricsSink = .noop,
     credentials: CredentialResolver = .environmentOnly,
     secrets: SpaceSecretStores? = nil,
+    tokens: ExecTokens,
   ) async -> SessionRuntime {
     await assemble(
       space: space, hub: hub, attemptLog: attemptLog, metrics: metrics, credentials: credentials,
-      secrets: secrets, usage: UsageBoard(),
+      secrets: secrets, usage: UsageBoard(), tokens: tokens,
     )
   }
 
@@ -143,20 +137,18 @@ extension SessionRuntime {
     credentials: CredentialResolver,
     secrets: SpaceSecretStores?,
     usage: UsageBoard,
-    tokens: ExecTokens? = nil,
+    tokens: ExecTokens,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     eventSources: EventSources? = nil,
-    lineDifferences: LineDifferenceLog? = nil,
   ) async -> SessionRuntime {
-    let tokens = tokens ?? ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
     // What this process brings to the inferences it runs; the catalog is data
     // in the space (`wuhu models update`), re-read per use, never cached at boot.
     let access = InferenceAccess(
       credentials: credentials, oidcToken: oidcToken, oidcReadiness: oidcReadiness, oidcBindingIdentity: oidcBindingIdentity,
-      trace: attemptLog?.traceClient, lineDifferences: lineDifferences,
+      trace: attemptLog?.traceClient,
     )
     let catalog = groupCatalog(space: space, access: access)
     let toolOwner = Hub(
@@ -176,7 +168,6 @@ extension SessionRuntime {
       usage: usage,
       sockets: worker.sockets,
       refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
-      startup: { await toolOwner.announceScriptRestart() },
       owner: toolOwner, metrics: metrics, catalog: catalog,
       tokens: tokens, connection: connection,
     )
@@ -208,21 +199,20 @@ extension SessionRuntime {
   /// The tool executor as the kernel wires it, main's API bound in process and reached as the session with the session's token, without the loops.
   static func toolExecutor(
     owner: Hub,
+    tokens: ExecTokens,
     hub: MachineHub? = nil,
-    scripts: Scripts? = nil,
     access: InferenceAccess = InferenceAccess(),
     origin: String? = nil,
     contentHostPattern: String? = nil,
     secrets: SpaceSecretStores? = nil,
     identity: IdentityController? = nil,
   ) -> ToolExecutor {
-    let tokens = ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
     bindMain(
       owner: owner, tokens: tokens, connection: connection, hub: hub,
       origin: origin, contentHostPattern: contentHostPattern, credentials: access.credentials, secrets: secrets, identity: identity,
     )
-    return ToolExecutor(main: connection, credential: { tokens.sessionToken($0) }, access: access, scripts: scripts)
+    return ToolExecutor(main: connection, credential: { try await tokens.sessionToken($0) }, access: access)
   }
 }
 
@@ -244,12 +234,14 @@ func machineSeam(hub: MachineHub) -> MachineSeam {
     vfs: { machine, op in
       do { return try await hub.vfs(machine: machine, op: op, caller: MachineSeam.caller) }
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
-      catch let error as OperationError { throw machineOperationFailure(error) }
+      catch let error as OperationError { throw Wire.failure(MachineFileFailure.operation(error)) }
+      catch let error as MachineFileFailure { throw Wire.failure(error) }
     },
     search: { machine, query in
       do { return try await hub.search(machine: machine, query: query, caller: MachineSeam.caller) }
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
-      catch let error as OperationError { throw machineOperationFailure(error) }
+      catch let error as OperationError { throw Wire.failure(MachineFileFailure.operation(error)) }
+      catch let error as MachineFileFailure { throw Wire.failure(error) }
       catch let error as SearchError { throw searchFailure(error) }
     },
     copy: { source, target in
@@ -257,21 +249,8 @@ func machineSeam(hub: MachineHub) -> MachineSeam {
       catch let error as MachineHubError {
         guard case let .machineUnattached(machine) = error else { throw error }
         throw toolFailure(error, machine: machine)
-      } catch let error as OperationError { throw machineOperationFailure(error) }
+      } catch let error as OperationError { throw Wire.failure(MachineFileFailure.operation(error)) }
     },
     attached: { await hub.attachedMachines() },
   )
-}
-
-private func machineOperationFailure(_ error: OperationError) -> ToolRunError {
-  let code: ErrorCode = switch error.code {
-  case .unknownKind: .unknownKind
-  case .invalidInput, .invalidOffset, .inputTooLarge: .invalidArgument
-  case .unsupportedProtocol: .unsupported
-  case .machineNotAuthorized, .credentialExpired: .unauthorized
-  case .fileChanged, .operationExists, .invocationConflict: .conflict
-  case .unknownMachine: .notFound
-  default: .unavailable
-  }
-  return .failed(code: code, message: "\(error.code.rawValue): \(error.message)", hint: nil)
 }

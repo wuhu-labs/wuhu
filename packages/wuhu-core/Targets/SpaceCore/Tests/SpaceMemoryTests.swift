@@ -24,6 +24,19 @@ import Testing
     try await space.close()
   }
 
+  @Test(.timeLimit(.minutes(1))) func parallelMemorySpacesCopyTheTemplateOneAtATime() async throws {
+    // The schema template is one in-memory database: SQLite's backup reads its connection, and two copies at once meet its lock.
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      for _ in 0 ..< 24 {
+        group.addTask {
+          let space = try Space.inMemory()
+          _ = try await space.query("SELECT path FROM docs", as: .shared(.anonymous))
+        }
+      }
+      try await group.waitForAll()
+    }
+  }
+
   @Test func independentDatabasesShareNeitherIdentityNorSchemaNorRows() async throws {
     let first = try Space.inMemory(), second = try Space.inMemory()
     #expect(try await first.identity() != (try await second.identity()))

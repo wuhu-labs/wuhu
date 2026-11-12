@@ -134,6 +134,15 @@ struct ClientServerFaithfulnessTests {
     #expect(await harness.stderr.text.contains("wuhu put /other.md"))
   }
 
+  @Test func putMovesFileBytesOnTheUntimedClient() async throws {
+    let harness = try ServerHarness()
+    let timed = await harness.timedRequests
+    #expect(await harness.run(["put", "--force", "/blob.bin"], stdin: [1, 2]) == 0)
+    #expect(await harness.untimedRequests == 1)
+    #expect(await harness.timedRequests == timed)
+    #expect(try await harness.space.fs(.shared).read("/blob.bin").1 == Data([1, 2]))
+  }
+
   @Test func observeQueryOncePersistsBySpaceAndSkipsEqualSnapshots() async throws {
     let harness = try ServerHarness(space: "space-a")
     let other = try ServerHarness(space: "space-b")
@@ -173,6 +182,15 @@ private struct ServerHarness {
   let stdout: ServerSink
   let stderr: ServerSink
   let bytes = ServerByteSink()
+  private let fetches = FetchCounts()
+
+  var timedRequests: Int {
+    get async { await fetches.timed }
+  }
+
+  var untimedRequests: Int {
+    get async { await fetches.untimed }
+  }
 
   init(space: String = "space", onObservationResponse: @escaping @Sendable () -> Void = {}) throws {
     self.temp = try ServerTemp(space: space)
@@ -190,9 +208,14 @@ private struct ServerHarness {
     let stderr = ServerSink()
     self.stdout = stdout
     self.stderr = stderr
+    let fetches = self.fetches
     self.runner = CommandRunner(
-      fetch: client,
+      fetch: FetchClient { request in
+        await fetches.bumpTimed()
+        return try await client(request)
+      },
       observeFetch: FetchClient { request in
+        await fetches.bumpUntimed()
         let response = try await client(request)
         onObservationResponse()
         return response
@@ -220,6 +243,13 @@ private struct ServerHarness {
     )
     return await runner.run(arguments: arguments)
   }
+}
+
+private actor FetchCounts {
+  var timed = 0
+  var untimed = 0
+  func bumpTimed() { timed += 1 }
+  func bumpUntimed() { untimed += 1 }
 }
 
 private actor ServerSink {

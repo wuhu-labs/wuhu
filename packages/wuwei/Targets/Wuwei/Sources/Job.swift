@@ -1,5 +1,5 @@
-/// Makes a struct a ``Job``: the macro adds a private `ctx`, with `db` and `id` over it, `kind` (the type's name unless declared), when the job declares a `State` a private `state` over `ctx.state`, and `_attached` from its nonmutating `attached(_ socket: SocketHandle<S>)` methods.
-@attached(member, names: named(_context), named(ctx), named(db), named(id), named(state), named(init), named(kind), named(_attached))
+/// Makes a struct a ``Job``: the macro adds a private `ctx`, with `db` and `id` over it, `kind` (the type's name unless declared), when the job declares a `State` a private `state` over `ctx.state`, and `_attached` and `_closed` from its nonmutating `attached(_ socket: SocketHandle<S>)` and `closed(_ socket: SocketHandle<S>)` methods.
+@attached(member, names: named(_context), named(ctx), named(db), named(id), named(state), named(init), named(kind), named(_attached), named(_closed))
 @attached(extension, conformances: Addressable, Job)
 public macro Job() = #externalMacro(module: "WuweiMacros", type: "JobMacro")
 
@@ -14,12 +14,16 @@ public protocol Job: Addressable {
   nonisolated(nonsending) mutating func start() async throws -> Outcome
   /// Greets a socket: once as it attaches, and once per incarnation, after `hydrate`, for every socket attached by then. It runs beside `start`, between its awaits, and sees `state`.
   func _attached(_ event: SocketEvent)
+  /// Says goodbye to a socket it greeted and that then closed, once, while this incarnation lives. It runs beside `start`, between its awaits, and sees `state`.
+  func _closed(_ event: SocketEvent)
 }
 
 extension Job {
   public static func create(ctx _: inout JobContext<Self>) throws {}
 
   public func _attached(_: SocketEvent) {}
+
+  public func _closed(_: SocketEvent) {}
 }
 
 extension Job where State == Void {
@@ -135,26 +139,27 @@ public struct JobContext<Target: Job> {
     return try take()
   }
 
-  /// Runs `body` as an effect in a child task, unless a message for which `stop` holds comes first: then `body` is cancelled and awaited, and that message is taken as `receive` takes it. Messages for which `stop` does not hold are taken and handed to `body` in `messages`.
+  /// Runs `body` as an effect in a child task, unless a message for which `stop` holds comes first: then `body` is cancelled and awaited, and that message is taken as `receive` takes it. Messages for which `stop` does not hold are taken and handed to `body` in `messages`. A cancelled `start` ends the wait for a message and takes no mail, not `race`: cancellation is not a message, so `race` then awaits `body` and returns what it gives, and what is queued stays for the start that runs next.
   public func race<Value: Sendable>(_ body: @escaping @Sendable (Effects, AsyncStream<Target.Message>) async throws -> Value, until stop: (Target.Message) -> Bool, isolation: isolated (any Actor)? = #isolation) async throws -> Raced<Value, Target.Message> where Target.Message: Sendable {
     let (messages, others) = AsyncStream<Target.Message>.makeStream()
     defer { others.finish() }
-    if let message = try take(until: stop, others: others) { return .message(message) }
+    if !Task.isCancelled, let message = try take(until: stop, others: others) { return .message(message) }
     let effects = effects
     return try await withThrowingTaskGroup(of: Value?.self) { group in
       // Without this capture the group's body, which takes mail, runs off the lane: swift#87503.
       _ = isolation
       group.addTask { try await effects.effect { try await body(effects, messages) } }
       group.addTask {
-        try await effects.host.mail()
+        try await effects.waitForMail()
         return nil
       }
       defer { group.cancelAll() }
       while true {
         if let finished = try await group.next()! { return .finished(finished) }
+        guard !Task.isCancelled else { continue }
         if let message = try take(until: stop, others: others) { return .message(message) }
         group.addTask {
-          try await effects.host.mail()
+          try await effects.waitForMail()
           return nil
         }
       }
@@ -220,6 +225,11 @@ final class Live<Target: Job> {
     guard greeted.insert(attachment.id).inserted else { return }
     Target(_context: context)._attached(SocketEvent(kind: .attached, attachment: attachment, reach: reach))
   }
+
+  func close(_ attachment: Attachment) {
+    guard greeted.remove(attachment.id) != nil else { return }
+    Target(_context: context)._closed(SocketEvent(kind: .closed, attachment: attachment, reach: reach))
+  }
 }
 
 /// The part of a job that a child task of its `start` may hold. Every effect waits until everything the job wrote before it is durable, and traps when used from a task the runtime did not start or after the `start` it came from returned.
@@ -227,6 +237,11 @@ public struct Effects: Sendable {
   let host: Host
   let run: UInt64
   let worker: Worker
+
+  /// Waits for the job's next mail; cancellation ends the wait and is no outcome of its own.
+  fileprivate func waitForMail() async throws {
+    do { try await host.mail() } catch is CancellationError {}
+  }
 
   public var now: Instant {
     worker.scheduler.now
@@ -257,8 +272,12 @@ extension Lifecycle {
       incarnation.inbox.append(mail)
       incarnation.wakeForMail()
     }, socket: { incarnation, attachment, inbound in
-      guard case .attached = inbound, let live = incarnation.liveJob as? Live<J> else { return }
-      live.greet(attachment)
+      guard let live = incarnation.liveJob as? Live<J> else { return }
+      switch inbound {
+      case .attached: live.greet(attachment)
+      case .closed: live.close(attachment)
+      case .frame: preconditionFailure("a job's socket takes no frames")
+      }
     })
   }
 }
@@ -280,7 +299,8 @@ extension Incarnation {
       job = J(_context: ctx)
     } catch {
       worker.log.error("\(address) failed to boot: \(error)")
-      return retire(.released)
+      if !dead { retire(.released) }
+      return
     }
     liveJob = live
     for attachment in worker.attachments(at: address) {
@@ -299,7 +319,7 @@ extension Incarnation {
         outcome = .notDone
       }
       running = nil
-      guard !dead, !Task.isCancelled else { return }
+      guard !dead else { return }
       switch outcome.kind {
       case let .done(last):
         if let last { record(.send(last)) }
@@ -310,6 +330,7 @@ extension Incarnation {
       case let .hibernate(until):
         retire(.hibernated(until: until))
       case .notDone:
+        guard !Task.isCancelled else { return }
         try? await job._context.sleep(for: worker.options.retryDelay)
       }
     }

@@ -33,7 +33,7 @@ struct MessagingTests {
   @Test func sendMessageWithNoTargetPostsIntoTheOwnBox() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space, name: "a"))
 
       let sent = try await world.run("send_message", .object(["message": .string("a note")]))
       guard case let .sendMessage(outcome) = sent else {
@@ -49,7 +49,7 @@ struct MessagingTests {
   @Test func sendMessageToAnotherSessionIsAlwaysADM() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
       let a = try await makeSession(space, name: "a")
       let b = try await makeSession(space, name: "b")
       let task = try await makeTask(space, parent: a)
@@ -86,7 +86,7 @@ struct MessagingTests {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let a = try await makeSession(space, name: "a")
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: a)
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: a)
 
       let both = try await world.run("send_message", .object([
         "message": .string("x"), "session": .string(key(a)), "conversation": .string(key(a)),
@@ -107,7 +107,7 @@ struct MessagingTests {
       machineFS.put("/clips/demo.mp4", "not really a video", mtime: 1)
       let png: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
       _ = try await space.fs(.shared).write("/shots/shot.png", Data(png), ifMatch: nil)
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
 
       let sent = try await world.run("send_message", .object([
         "message": .string("look"),
@@ -131,7 +131,7 @@ struct MessagingTests {
   @Test func sendMessageCopiesASystemFileIntoTheConversation() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space, name: "a"))
       let skill = try await SystemFiles.vfs.read("/skills/monitor/SKILL.md").1
 
       let sent = try await world.run("send_message", .object([
@@ -160,7 +160,7 @@ struct MessagingTests {
       let frame = VFSDefaults.maxReadBytes
       let clip = (0 ..< 2 * frame + 3).map { UInt8(truncatingIfNeeded: $0) }
       machineFS.put("/clips/long.mp4", bytes: clip, mtime: 1)
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
 
       let sent = try await world.run("send_message", .object([
         "message": .string("the long take"),
@@ -188,7 +188,7 @@ struct MessagingTests {
       let machineFS = FakeMachineFS(ranges: false)
       machineFS.put("/clips/long.mp4", bytes: Array(repeating: 1, count: VFSDefaults.maxReadBytes + 1), mtime: 1)
       machineFS.put("/clips/short.mp4", bytes: Array(repeating: 2, count: VFSDefaults.maxReadBytes), mtime: 1)
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
 
       let long = try await world.run("send_message", .object([
         "message": .string("x"), "attachments": .array([.string("machines://\(machineA.rawValue)/clips/long.mp4")]),
@@ -212,7 +212,7 @@ struct MessagingTests {
       let machineFS = FakeMachineFS()
       machineFS.put("/clips/a.bin", bytes: Array(repeating: 1, count: 10), mtime: 1)
       machineFS.replacedAfterStat.withLock { $0["/clips/a.bin"] = .init(mtime: 1, content: Array(repeating: 2, count: 20)) }
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
 
       let refused = try await world.run("send_message", .object([
         "message": .string("x"), "attachments": .array([.string("machines://\(machineA.rawValue)/clips/a.bin")]),
@@ -232,7 +232,7 @@ struct MessagingTests {
       let delivery = try await space.sessions.post(.conversation(source), messageID: MessageID("source"), sender: Sender(id: "alice", timeZone: .gmt), content: .init(text: "secret"), uploads: [AttachmentUpload(name: "secret.txt", bytes: Array("secret".utf8))])
       let path = try #require(delivery.message.content.attachments.first?.path)
       let reference = "wuhu://\(foreign.rawValue).localspace" + path
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       let arguments: ToolArguments = .object(["message": "copy", "attachments": .array([.string(reference)])])
       let denied = try await world.run("send_message", arguments)
       #expect(try failureMessage(denied).contains("not found"))
@@ -252,7 +252,7 @@ struct MessagingTests {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/a.txt", Data("a".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space, name: "a"))
 
       let nine = try await world.run("send_message", .object([
         "message": .string("x"), "attachments": .array(Array(repeating: "/a.txt", count: 9)),
@@ -270,7 +270,7 @@ struct MessagingTests {
   @Test func aDuplicateSendIsAbsorbedByItsReceipt() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
       let a = try await makeSession(space, name: "a")
       let b = try await makeSession(space, name: "b")
       var world = ToolWorld(executor: executor, session: b)
@@ -295,7 +295,7 @@ struct MessagingTests {
       machineFS.put("/clips/a.mp4", bytes: [1, 2, 3], mtime: 1)
       let a = try await makeSession(space, name: "a")
       let b = try await makeSession(space, name: "b")
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: b)
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: b)
 
       let arguments: ToolArguments = .object([
         "message": .string("the clip"), "session": .string(key(a)),
@@ -317,7 +317,7 @@ struct MessagingTests {
   @Test func replyTargetMustNameAMessageInTheSameConversation() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
       let a = try await makeSession(space, name: "a")
       let b = try await makeSession(space, name: "b")
       var world = ToolWorld(executor: executor, session: a)
@@ -341,7 +341,7 @@ struct MessagingTests {
   @Test func requestOpensOneDutyAndRefusesASecond() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
       let parent = try await makeSession(space, name: "parent")
       let task = try await makeTask(space, parent: parent)
       var world = ToolWorld(executor: executor, session: parent)
@@ -365,7 +365,7 @@ struct MessagingTests {
   @Test func requestKeepsItsStallSecondsUnlessTurnedOff() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
         .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
       }))
       let parent = try await makeSession(space, name: "parent")
@@ -405,7 +405,7 @@ struct MessagingTests {
   @Test func onlyTheCreatorMayRequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
       let parent = try await makeSession(space, name: "parent")
       let stranger = try await makeSession(space, name: "stranger")
       let task = try await makeTask(space, parent: parent)
@@ -421,7 +421,7 @@ struct MessagingTests {
   @Test func reportProgressKeepsTheRequestOpenAndFinalClosesIt() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
       let parent = try await makeSession(space, name: "parent")
       let task = try await makeTask(space, parent: parent)
       var parentWorld = ToolWorld(executor: executor, session: parent)
@@ -463,7 +463,7 @@ struct MessagingTests {
   @Test func reportValidatesItsKindAndRequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
       let parent = try await makeSession(space, name: "parent")
       let task = try await makeTask(space, parent: parent)
       var world = ToolWorld(executor: executor, session: task)
@@ -483,7 +483,7 @@ struct MessagingTests {
   @Test func createSessionMintsATaskAndExpectsReplyOpensARequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
         .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
       }))
       let parent = try await makeSession(space, name: "parent")
@@ -527,7 +527,7 @@ struct MessagingTests {
   @Test func createSessionDefaultsToTheCallersModelAndExplicitFieldsWin() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
         .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "medium"))
       }))
       let parent = try await makeSession(space, name: "parent")

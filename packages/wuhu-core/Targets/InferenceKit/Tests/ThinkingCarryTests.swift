@@ -15,8 +15,6 @@ import Synchronization
 import Testing
 import WuhuAI
 
-// Doctrine (WuhuAI SPEC): thinking is carried, never policed. These run the real
-// catalog, executor and Anthropic wire builder against recorded-shape streams.
 @Suite(.deterministicDependencies) struct ThinkingCarryTests {
   @Test(arguments: [false, true])
   func miMoUnsignedThinkingIsSentThroughEveryToolStep(oidc: Bool) async throws {
@@ -47,7 +45,7 @@ import WuhuAI
 
   @Test func crossScopeClaudeSignaturesAreStrippedAndTheRequestIsStillSent() async throws {
     let loop = try await toolLoop(.claude)
-    let body = try await sendOnce(loop.transcript, provider: .claude, account: "other-account")
+    let body = try await sendOnce(loop.lines, provider: .claude, account: "other-account")
     #expect(body.object?["thinking"]?.object?["type"] == .string("adaptive"), "Not carried across a boundary: nothing to downgrade, nothing refused")
     #expect(!body.jsonString().contains("fixture-signature"))
     for content in try assistantMessages(body) {
@@ -58,7 +56,7 @@ import WuhuAI
 
   @Test func crossScopeMiMoThinkingTravelsAsPlainThinking() async throws {
     let loop = try await toolLoop(.mimo)
-    let body = try await sendOnce(loop.transcript, provider: .mimo, account: "other-account")
+    let body = try await sendOnce(loop.lines, provider: .mimo, account: "other-account")
     #expect(body.object?["thinking"]?.object?["type"] == .string("adaptive"))
     for content in try assistantMessages(body) {
       #expect(content.first?.object?["type"] == .string("thinking"))
@@ -99,11 +97,9 @@ import WuhuAI
     #expect(ModelSpecifier.isClaudeModel(model) == claude)
   }
 
-  // MARK: - Harness
-
   private struct Loop {
     var bodies: [JSONValue]
-    var transcript: Transcript
+    var lines: [TranscriptLine]
   }
 
   private func assistantMessages(_ body: JSONValue?) throws -> [[JSONValue]] {
@@ -114,16 +110,13 @@ import WuhuAI
     }
   }
 
-  /// Four tool steps (two parallel calls each) and a final continuation, with
-  /// context notices after both results, between parallel results, and before
-  /// any result.
   private func toolLoop(_ provider: ProviderCatalogFixture.Provider, oidc: Bool = false) async throws -> Loop {
     var document = ProviderCatalogFixture.document(provider)
     document.providers[provider.id]?.auth = oidc ? .oidc : nil
     let model = try await ProviderCatalogFixture.catalog(document).resolve(.init(provider: provider.id, model: provider.model, effort: "medium"), session: .init("fixture"))
     #expect(model.isClaude == (provider == .claude))
     let bodies = Mutex<[JSONValue]>([])
-    var transcript = Transcript(items: [.direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: .init(text: "Inspect using tools")))])
+    var lines = [TranscriptLine(at: Date(), key: "message:inspect", message: .user(.init(content: [.text("Inspect using tools")])))]
     let executor = InferenceExecutor(session: .init("fixture"), model: model, systemPrompt: "test", tools: [.function(name: "read", description: "Inspect", parameters: .object([:]))])
     try await withDependencies {
       $0.continuousClock = ContinuousClock()
@@ -142,31 +135,25 @@ import WuhuAI
       }
     } operation: {
       for step in 1 ... 5 {
-        let completed = try await executor.run(attemptID: UUID(), transcript: transcript)
+        let completed = try await executor.run(attemptID: UUID(), lines: lines)
         if step == 5 { break }
         guard case let .reasoning(.encrypted(thinking))? = completed.message.content.first else {
           Issue.record("Missing recorded-shape thinking"); return
         }
         #expect(thinking.opaque == (provider == .claude ? "fixture-signature" : ""))
         #expect(thinking.replayScope == model.replayScope)
-        let calls = completed.message.content.compactMap { block -> ToolCall? in
-          guard case let .toolCall(call) = block else { return nil }
-          return call
+        let entry = AssistantEntry(completed.message, id: UUID(), at: Date(), metadata: completed.metadata, replayBinding: .init(identity: model.bindingIdentity, epoch: "route"), mint: { ToolCallID(UUID().uuidString) })
+        lines += TranscriptItem.assistant(entry).lines(session: executor.session)
+        for call in entry.toolCalls {
+          lines += TranscriptItem.toolResult(.init(id: UUID(), timestamp: Date(), provenance: .toolCall(.init(call.id)), payload: .failure(.init(message: "fixture receipt")))).lines(session: executor.session)
         }
-        transcript.append(.assistant(.init(id: UUID(), timestamp: Date(), content: completed.message.content, stopReason: .stop, usage: completed.metadata.usage ?? .init(inputTokens: 0, outputTokens: 0, totalTokens: 0), toolCallIDs: Dictionary(uniqueKeysWithValues: calls.map { ($0.id, .init($0.id)) }), replayBinding: .init(identity: model.bindingIdentity, epoch: "route"))))
-        if step == 3 { transcript.append(notice("before results")) }
-        for (index, call) in calls.enumerated() {
-          transcript.append(.toolResult(.init(id: UUID(), timestamp: Date(), provenance: .toolCall(.init(call.id)), payload: .failure(.init(message: "fixture receipt")))))
-          if (step == 1 && index == 1) || (step == 2 && index == 0) {
-            transcript.append(notice("step \(step)"))
-          }
-        }
+        lines += notice("step \(step)").lines(session: executor.session)
       }
     }
-    return Loop(bodies: bodies.withLock { $0 }, transcript: transcript)
+    return Loop(bodies: bodies.withLock { $0 }, lines: lines)
   }
 
-  private func sendOnce(_ transcript: Transcript, provider: ProviderCatalogFixture.Provider, account: String) async throws -> JSONValue {
+  private func sendOnce(_ lines: [TranscriptLine], provider: ProviderCatalogFixture.Provider, account: String) async throws -> JSONValue {
     let model = try await ProviderCatalogFixture.catalog(ProviderCatalogFixture.document(provider), account: account).resolve(.init(provider: provider.id, model: provider.model, effort: "medium"), session: .init("fixture"))
     let executor = InferenceExecutor(session: .init("fixture"), model: model, systemPrompt: "test", tools: [.function(name: "read", description: "Inspect", parameters: .object([:]))])
     let captured = Mutex<JSONValue?>(nil)
@@ -179,7 +166,7 @@ import WuhuAI
         return Response(status: .ok, body: .string(toolStepResponse(step: 9, signed: provider == .claude, model: provider.model)))
       }
     } operation: {
-      _ = try await executor.run(attemptID: UUID(), transcript: transcript)
+      _ = try await executor.run(attemptID: UUID(), lines: lines)
     }
     return try #require(captured.withLock { $0 })
   }

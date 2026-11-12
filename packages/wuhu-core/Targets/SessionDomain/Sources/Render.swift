@@ -111,11 +111,11 @@ extension GenerationHead {
   // Role and position are contract: the snapshot is the transcript's first
   // user-role message, right after the prompt's opening; the summary follows
   // it. A creation head has no summary and gets no nudge.
-  func renderLines(session: SessionID) -> [TranscriptLine] {
+  public func lines(session: SessionID) -> [TranscriptLine] {
     func line(_ key: String, _ text: String) -> TranscriptLine {
       TranscriptLine(at: timestamp, key: key, message: .user(.init(content: [.text(text)])))
     }
-    var lines = [line("head", snapshot.rendered(running: runningWork ?? [], awaiting: awaiting ?? []))]
+    var lines = [line(LineKey.head, snapshot.rendered(running: runningWork ?? [], awaiting: awaiting ?? []))]
     if let note, !note.isEmpty {
       lines.append(line("head:note", note))
     }
@@ -124,18 +124,5 @@ extension GenerationHead {
       lines.append(line("head:nudge", SessionPrompt.compactionNudge(session: session)))
     }
     return lines
-  }
-}
-
-extension Transcript {
-  @concurrent
-  public func renderRequest(
-    session: SessionID,
-    systemPrompt: String,
-    opening: [String] = [],
-    tools: [Tool]? = nil,
-  ) async -> Context {
-    let opening = opening.map { Message.user(.init(content: [.text($0)])) }
-    return Context(systemPrompt: systemPrompt, messages: opening + Self.lines(session: session, items: items).lines.map(\.message), tools: tools)
   }
 }

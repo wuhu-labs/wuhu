@@ -28,8 +28,8 @@ import Testing
   }
 
   func tree(dev: Bool = true, timeout: Double? = nil, credentials: CredentialResolver = .unavailable) async throws -> Tree {
-    let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-    let harness = try await SessionHarness(dev: dev, credentials: credentials, execTokens: tokens)
+    let harness = try await SessionHarness(dev: dev, credentials: credentials, spaceURL: "https://space.test:5530")
+    let tokens = harness.runtime.tokens
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let parent = try await harness.store.createSession(group: .shared, title: "orchestrator", kind: .agent, createdBy: "owner", executor: model)
     let child = try await harness.store.createSession(
@@ -38,8 +38,8 @@ import Testing
     )
     let stranger = try await harness.store.createSession(group: .shared, title: "stranger", kind: .agent, createdBy: "owner", executor: model)
     let machine = (try await harness.space.addMachineV2(name: "box")).machine
-    let exec = try await harness.space.mintExec(machine: machine.id, caller: parent.rawValue)
-    let token = tokens.credential(session: parent, exec: exec.id, timeout: timeout, now: Date()).token
+    let exec = try await harness.space.reserveExec(machine: machine.id, caller: parent.rawValue)
+    let token = try await tokens.credential(session: parent, exec: exec.id, timeout: timeout, now: Date()).token
     return Tree(harness: harness, tokens: tokens, parent: parent, child: child, stranger: stranger, exec: exec.id, token: token)
   }
 
@@ -49,8 +49,8 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: .shared))
-      let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
-      let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
+      let childExec = try await t.harness.space.reserveExec(machine: machine.id, caller: t.child.rawValue)
+      let childToken = try await t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
       let refused = try await t.harness.post("/v1/session/\(t.stranger.rawValue)/archive", .null, bearer: childToken)
       #expect(refused.status == .forbidden)
       #expect(try await refused.text().contains(
@@ -106,8 +106,8 @@ import Testing
       let reader = try await t.harness.store.createSession(group: group, title: "reader", kind: .agent, createdBy: "reader", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
       let readerBox = (try await t.harness.space.addMachineV2(name: "reader_box", group: group)).machine
       let machine = try #require(try await t.harness.space.resolveMachine(readerBox.id.rawValue, usableFrom: group))
-      let exec = try await t.harness.space.mintExec(machine: machine.id, caller: reader.rawValue)
-      let token = t.tokens.credential(session: reader, exec: exec.id, timeout: nil, now: Date()).token
+      let exec = try await t.harness.space.reserveExec(machine: machine.id, caller: reader.rawValue)
+      let token = try await t.tokens.credential(session: reader, exec: exec.id, timeout: nil, now: Date()).token
       let path = "wuhu://owner.localspace/.agents/skills/test/data.table"
       let header: JSONValue = ["columns": [["name": "s", "type": "string"]]]
       let ownerSeat = SpaceToolContext(space: t.harness.space, principal: Principal(actor: .anonymous, group: owner))
@@ -226,8 +226,8 @@ import Testing
       #expect(topLevel.kind == .agent)
 
       let machine = (try await t.harness.space.addMachineV2(name: "box2")).machine
-      let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
-      let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
+      let childExec = try await t.harness.space.reserveExec(machine: machine.id, caller: t.child.rawValue)
+      let childToken = try await t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
       let refused = try await t.harness.post("/v1/session", .object(["title": "x", "kind": "agent", "topLevel": true]), bearer: childToken)
       #expect(refused.status == .unprocessableContent)
     }
@@ -265,8 +265,8 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: .shared))
-      let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
-      let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
+      let childExec = try await t.harness.space.reserveExec(machine: machine.id, caller: t.child.rawValue)
+      let childToken = try await t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
       _ = try await t.harness.store.openRequest(on: t.child, from: .session(t.parent), messageID: .init("ask-1"), text: "work")
       // The request is open on the child once it has taken the message.
       _ = try await t.harness.store.drainQueue(t.child)
@@ -418,8 +418,8 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: .shared))
-      let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
-      let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
+      let childExec = try await t.harness.space.reserveExec(machine: machine.id, caller: t.child.rawValue)
+      let childToken = try await t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
 
       let ask: JSONValue = .object(["message": "do it", "stallSeconds": 30])
       let opened = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session/\(t.child.rawValue)/request", ask, toolCall: "tc-ask")
@@ -470,7 +470,7 @@ import Testing
       let t = try await tree()
       let machine = try #require(try await t.harness.space.machine(named: "box"))
       try await withExecDescription(space: t.harness.space, hub: t.harness.hub, machine: machine.id) {
-        let others = try await t.harness.space.mintExec(machine: machine.id)
+        let others = try await t.harness.space.reserveExec(machine: machine.id)
         let minted = try await t.harness.call(
           "/v1/exec", .object(["machine": .string(machine.id.rawValue)]), as: ExecMintOutput.self, bearer: t.token,
         )
@@ -487,28 +487,17 @@ import Testing
     }
   }
 
-  @Test func execClaimsRejoinAndExposeTheToolCall() async throws {
+  @Test func toolExecStatusAndListExposeTheToolCall() async throws {
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.machine(named: "box"))
-      try await withExecDescription(space: t.harness.space, hub: t.harness.hub, machine: machine.id) {
-        let spec: JSONValue = .object(["lifetime": .number(60)])
-        let body: JSONValue = .object(["machine": .string(machine.id.rawValue), "spec": spec])
-        let first = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
-        let retry = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
-        #expect(first.0 == .ok, "\(first.1)")
-        #expect(retry.0 == .ok, "\(retry.1)")
-        #expect(first.1 == retry.1)
-        let minted = try JSONValueDecoder().decode(ExecMintOutput.self, from: #require(JSONValue.parse(first.1)))
-        let record = try #require(try await t.harness.space.execRecord(minted.id))
-        #expect(try JSONValue.parse(#require(record.toolSpec)) == spec)
-        let response = try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token)
-        let status = try JSONValueDecoder().decode(ExecStatus.self, from: #require(JSONValue.parse(try await response.text())))
-        #expect(status.toolCallID == "claim")
-        let listed = try await t.harness.get("/v1/exec", bearer: t.token)
-        let statuses = try JSONValueDecoder().decode([ExecStatus].self, from: #require(JSONValue.parse(try await listed.text())))
-        #expect(statuses.filter { $0.toolCallID == "claim" }.map(\.id) == [minted.id])
-      }
+      let first = try await t.harness.space.reserveExec(machine: machine.id, caller: t.parent.rawValue, group: .shared, toolCall: ToolCallID(rawValue: "claim"))
+      let response = try await t.harness.get("/v1/exec/\(first.id.rawValue)", bearer: t.token)
+      let status = try JSONValueDecoder().decode(ExecStatus.self, from: #require(JSONValue.parse(try await response.text())))
+      #expect(status.toolCallID == "claim")
+      let listed = try await t.harness.get("/v1/exec", bearer: t.token)
+      let statuses = try JSONValueDecoder().decode([ExecStatus].self, from: #require(JSONValue.parse(try await listed.text())))
+      #expect(statuses.filter { $0.toolCallID == "claim" }.map(\.id) == [first.id])
     }
   }
 
@@ -516,8 +505,8 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let machine = try #require(try await t.harness.space.machine(named: "box"))
-      let ended = try await t.harness.space.mintExec(machine: machine.id, caller: t.parent.rawValue)
-      try await t.harness.space.finishExec(ended.id, .exited(code: 0))
+      let ended = try await t.harness.space.reserveExec(machine: machine.id, caller: t.parent.rawValue)
+      try await setExecTerminalFixture(space: t.harness.space, exec: ended.id, terminal: .exited(code: 0))
       let response = try await t.harness.post("/v1/exec/\(ended.id.rawValue)/kill", .null, bearer: t.token)
       #expect(response.status == .unprocessableContent)
       let body = try await response.text()
@@ -532,7 +521,7 @@ import Testing
       let t = try await tree()
       let machine = try #require(try await t.harness.space.machine(named: "box"))
       try await withExecDescription(space: t.harness.space, hub: t.harness.hub, machine: machine.id) {
-        let others = try await t.harness.space.mintExec(machine: machine.id)
+        let others = try await t.harness.space.reserveExec(machine: machine.id)
 
         func dial(_ path: String) async throws -> Status? {
           var headers = RequestHeaders()
@@ -563,33 +552,19 @@ import Testing
 
       let unknown = try await t.harness.get("/v1/server", bearer: ExecTokens.prefix + String(repeating: "0", count: 64))
       #expect(unknown.status == .unauthorized)
-      #expect(try await unknown.text().contains("server restarted"))
 
-      #expect(t.tokens.holder(ofBearer: t.token, now: Date().addingTimeInterval(61)) == nil)
-      #expect(t.tokens.holder(ofBearer: t.token, now: Date()) != nil)
-
-      try await t.harness.space.finishExec(t.exec, .exited(code: 0))
+      try await setExecTerminalFixture(space: t.harness.space, exec: t.exec, terminal: .exited(code: 0))
       let ended = try await t.harness.get("/v1/server", bearer: t.token)
       #expect(ended.status == .unauthorized)
-      #expect(try await ended.text().contains("has ended"))
-      #expect(t.tokens.holder(ofBearer: t.token, now: Date()) == nil)
+      #expect(try await ended.text().contains("ended"))
     }
   }
 
-  @Test func aMachineDropDoesNotEndTheToken() async throws {
+  @Test func machineLossEndsTheToken() async throws {
     try await withSessionDeps {
       let t = try await tree(timeout: 60)
-      try await t.harness.space.finishExec(t.exec, .machineLost)
-      #expect(try await t.harness.get("/v1/server", bearer: t.token).status == .ok)
-      #expect(t.tokens.holder(ofBearer: t.token, now: Date()) != nil)
-
-      // The machine came back and the exec ran on; its real exit settles the
-      // row, and only that ends the token.
-      #expect(try await t.harness.get("/v1/server", bearer: t.token).status == .ok)
-      try await t.harness.space.finishExec(t.exec, .exited(code: 0))
-      let ended = try await t.harness.get("/v1/server", bearer: t.token)
-      #expect(ended.status == .unauthorized)
-      #expect(t.tokens.holder(ofBearer: t.token, now: Date()) == nil)
+      try await setExecTerminalFixture(space: t.harness.space, exec: t.exec, terminal: .machineLost)
+      #expect(try await t.harness.get("/v1/server", bearer: t.token).status == .unauthorized)
     }
   }
 
@@ -597,23 +572,10 @@ import Testing
     try await withSessionDeps {
       for state in [ExecTerminalState.cancelled, .reaped] {
         let t = try await tree(timeout: 60)
-        try await t.harness.space.finishExec(t.exec, state)
+        try await setExecTerminalFixture(space: t.harness.space, exec: t.exec, terminal: state)
         #expect(try await t.harness.get("/v1/server", bearer: t.token).status == .unauthorized)
-        #expect(t.tokens.holder(ofBearer: t.token, now: Date()) == nil)
       }
     }
-  }
-
-  @Test func theLifeIsTheTimeoutCappedAtADay() {
-    let tokens = ExecTokens(spaceURL: "https://space.test")
-    let session = SessionID("s")
-    let now = Date()
-    let long = tokens.credential(session: session, exec: ExecID(rawValue: "ex_aaaaaaaa"), timeout: 7 * 86400, now: now)
-    #expect(tokens.holder(ofBearer: long.token, now: now.addingTimeInterval(86399)) != nil)
-    #expect(tokens.holder(ofBearer: long.token, now: now.addingTimeInterval(86401)) == nil)
-    let again = tokens.credential(session: session, exec: ExecID(rawValue: "ex_bbbbbbbb"), timeout: nil, now: now)
-    #expect(tokens.credential(session: session, exec: ExecID(rawValue: "ex_bbbbbbbb"), timeout: nil, now: now) == again)
-    #expect(again.token.hasPrefix(ExecTokens.prefix) && again.token.count == 68)
   }
 
   @Test func anArchivedSessionsTokenIsRefused() async throws {
@@ -682,104 +644,41 @@ extension SessionGateTests {
   }
 }
 
-import Crypto
-import OperationClient
-import OperationProtocol
-import Synchronization
-
 extension SessionGateTests {
-  @Test func v2CredentialsKeepSessionAuthorityAndExpireWithoutRenewal() async throws {
+  @Test func signedCredentialsKeepSessionAuthorityAndExpire() async throws {
     try await withSessionDeps {
       let t = try await tree(dev: false)
       let now = Date()
-      let active = Mutex(true)
-      let credential = try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(60), now: now, active: { active.withLock { $0 } })
-      let token = try #require(credential.object?["token"]?.stringValue)
-      #expect(token.hasPrefix(ExecTokens.prefix) && token.count == 68)
-      #expect(try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(300), now: now.addingTimeInterval(1), active: { false }) == credential)
+      let token = try await t.tokens.credential(session: t.parent, exec: t.exec, timeout: 60, now: now).token
+      #expect(token.hasPrefix(ExecTokens.prefix))
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .ok)
-      #expect(try await t.harness.post("/v1/session/\(t.child.rawValue)/tags", ["tags": ["v2"]], bearer: token).status == .ok)
+      #expect(try await t.harness.post("/v1/session/\(t.child.rawValue)/tags", ["tags": ["signed"]], bearer: token).status == .ok)
       #expect(try await t.harness.get("/v1/users", bearer: token).status == .forbidden)
       #expect(try await t.harness.get("/v1/server?group=another", bearer: token).status == .forbidden)
       let expired = await sessionVerdict(token, tokens: t.tokens, space: t.harness.space, now: now.addingTimeInterval(61))
       guard case let .refused(response) = expired else { Issue.record("expired credential acted"); return }
       #expect(response.status == .unauthorized)
       #expect(try await response.body.text().contains("credentialExpired"))
-      #expect(throws: OperationError.self) { try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(300), now: now.addingTimeInterval(61), active: { true }) }
-      active.withLock { $0 = false }
-      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      active.withLock { $0 = true }
       _ = try await t.harness.store.archive(t.parent, grace: .seconds(3600))
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .forbidden)
-      #expect(throws: OperationError.self) {
-        try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(300), now: now.addingTimeInterval(ExecTokens.longestLife + 61), previouslyIssued: true, active: { true })
-      }
-      let restarted = ExecTokens(spaceURL: t.tokens.spaceURL)
-      guard case .refused = await sessionVerdict(token, tokens: restarted, space: t.harness.space, now: now) else { Issue.record("forgotten token fell back"); return }
     }
   }
 
-  @Test func v2CredentialLifecycleChecksDurableOperationAndOriginGroup() async throws {
+  @Test func signedCredentialLifecycleChecksDurableExecAndOriginGroup() async throws {
     try await withSessionDeps {
       let t = try await tree()
-      let key = SymmetricKey(size: .bits256)
-      let store = try await t.harness.space.machineV2Store(group: .shared, key: key)
-      let service = MachineV2Service(space: t.harness.space, hub: MachineV2Hub(space: t.harness.space), key: key, failure: nil, fetch: { _ in .init { _ in throw OperationError(.transport) } })
-      let owner = OperationOwner(scope: "script", key: "exec")
-      let credential = try await service.credential(tokens: t.tokens, session: t.parent, group: .shared, owner: owner, timeout: .seconds(60))
-      let token = try #require(credential.object?["token"]?.stringValue)
-      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      var record = ClientRecord(id: UUID(), correlation: UUID(), machine: try await t.harness.space.addMachineV2(name: "disk").machine.id.rawValue, start: .init(kind: "exec.v1", input: ["sessionCredential": credential]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))
-      _ = try await store.claim(owner, record: record)
+      let record = try #require(try await t.harness.space.execRecord(t.exec))
+      let missing = try await t.tokens.credential(session: t.parent, group: .shared, machine: record.machine, exec: ExecID(rawValue: "ex_00000000"), timeout: .seconds(60), issuedAt: Date())
+      #expect(try await t.harness.get("/v1/server", bearer: try #require(missing.object?["token"]?.stringValue)).status == .unauthorized)
+      let token = try await t.tokens.credential(session: t.parent, exec: t.exec, timeout: 60, now: Date()).token
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .ok)
-      record.stopReason = "scriptEnded"; try await store.save(record, appending: nil)
-      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      record.stopReason = nil; record.diagnostic = OperationError(.unknownOperation); try await store.save(record, appending: nil)
-      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      record.diagnostic = nil; record.snapshot = .init(operation: record.id, verdict: .init(.completed, result: [:]), terminalToken: UUID(), finalOffsets: [:], outputConsumed: true); try await store.save(record, appending: nil)
-      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      let mismatch = try t.tokens.credential(session: t.parent, group: .init(rawValue: "another"), scope: "script", key: "other", timeout: .seconds(60), now: Date(), active: { true })
+      let mismatch = try await t.tokens.credential(session: t.parent, group: .init(rawValue: "another"), machine: record.machine, exec: t.exec, timeout: .seconds(60), issuedAt: Date())
       #expect(try await t.harness.get("/v1/server", bearer: try #require(mismatch.object?["token"]?.stringValue)).status == .forbidden)
-      await service.shutdown()
+      for terminal in [ExecTerminalState.cancelled, .machineLost, .exited(code: 0)] {
+        try await setExecTerminalFixture(space: t.harness.space, exec: t.exec, terminal: terminal)
+        #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
+      }
     }
-  }
-}
-
-extension SessionGateTests {
-  @Test func failedUnclaimedExecAttemptsCannotExhaustIssuerAndClaimedTombstonesRemain() throws {
-    let tokens = ExecTokens(spaceURL: "https://test.invalid")
-    let session = SessionID(rawValue: "test-session")
-    let now = Date()
-    for lifetime in [Duration.zero, .seconds(-1), .init(secondsComponent: 0, attosecondsComponent: 1)] {
-      do {
-        _ = try tokens.credential(session: session, group: .shared, scope: "invalid", key: String(describing: lifetime), timeout: lifetime, now: now, reserveAttempt: true, active: { false })
-        Issue.record("invalid expiry reserved a credential")
-      } catch let error as OperationError { #expect(error.code == .invalidInput) }
-    }
-    for index in 0 ... 65536 {
-      let key = String(index)
-      _ = try tokens.credential(session: session, group: .shared, scope: "failed", key: key, timeout: .seconds(60), now: now, reserveAttempt: true, active: { false })
-      tokens.finishCredentialAttempt(session: session, group: .shared, scope: "failed", key: key, claimed: false)
-    }
-    let other = SessionID(rawValue: "unrelated-session")
-    let credential = try tokens.credential(session: other, group: .shared, scope: "new", key: "exec", timeout: .seconds(60), now: now, reserveAttempt: true, active: { true })
-    tokens.finishCredentialAttempt(session: other, group: .shared, scope: "new", key: "exec", claimed: true)
-    #expect(tokens.v2Holder(ofBearer: credential.object!["token"]!.stringValue!) != nil)
-    #expect(throws: OperationError.self) {
-      try tokens.credential(session: other, group: .shared, scope: "new", key: "exec", timeout: .seconds(60), now: now.addingTimeInterval(61), active: { true })
-    }
-  }
-
-  @Test func oneFailedAttemptCannotDiscardAConcurrentAttemptCredential() throws {
-    let tokens = ExecTokens(spaceURL: "https://test.invalid")
-    let session = SessionID(rawValue: "test-session")
-    let now = Date()
-    let credential = try tokens.credential(session: session, group: .shared, scope: "parallel", key: "exec", timeout: .seconds(60), now: now, reserveAttempt: true, active: { true })
-    _ = try tokens.credential(session: session, group: .shared, scope: "parallel", key: "exec", timeout: .seconds(60), now: now, reserveAttempt: true, active: { true })
-    tokens.finishCredentialAttempt(session: session, group: .shared, scope: "parallel", key: "exec", claimed: false)
-    #expect(tokens.v2Holder(ofBearer: credential.object!["token"]!.stringValue!) != nil)
-    tokens.finishCredentialAttempt(session: session, group: .shared, scope: "parallel", key: "exec", claimed: true)
-    #expect(tokens.v2Holder(ofBearer: credential.object!["token"]!.stringValue!) != nil)
   }
 }
 

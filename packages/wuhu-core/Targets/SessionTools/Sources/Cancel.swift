@@ -26,7 +26,6 @@ extension ToolExecutor {
   }
 
   func stopScript(_ session: SessionID, _ script: String) async throws -> ToolResultPayload {
-    guard let scripts else { throw ToolProblem("cancel: scripts are not available here") }
-    return try await scripts.stop(script, session: session)
+    try await cancelScript(session, script)
   }
 }

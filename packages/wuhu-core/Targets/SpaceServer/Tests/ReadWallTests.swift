@@ -120,7 +120,8 @@ import Testing
       "pubkey": "k", "challenge": "slc_bogus", "signature": "sig",
     ]))
     #expect((try await json(shareLogin)).code == "keyInvalid")
-    let handler = SpaceServer.configuredHandler(space: harness.space, hub: MachineHub(space: harness.space), dev: false, machineV2Hub: MachineV2Hub(space: harness.space))
+    let hub = MachineHub(space: harness.space)
+    let handler = SpaceServer.configuredHandler(space: harness.space, hub: hub, dev: false, listenerRoutes: machineListenerRoutes(space: harness.space, hub: hub))
     var headers = RequestHeaders()
     headers.set("connection", "Upgrade")
     headers.set("upgrade", "websocket")

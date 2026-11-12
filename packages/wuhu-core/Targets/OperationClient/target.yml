@@ -8,20 +8,15 @@ dependencies:
   - TaskLifetime
   - Tracing
   - OperationProtocol
-  - JSONValue
   - Fetch
-  - MachineContract
-  - Crypto
-  - FileSearch
   - Clocks
 tests:
   dependencies:
+    - TaskLifetime
     - InMemoryTracing
     - Tracing
-    - OperationClientTestSupport
     - OperationRuntime
     - Clocks
     - OperationProtocol
     - JSONValue
     - Fetch
-    - FileSearch

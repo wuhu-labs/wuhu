@@ -31,7 +31,7 @@ import Testing
   }
 
   func rig(proxy: PageFetch, publicRead: Bool = false) async throws -> Rig {
-    let h = try Harness(dev: false, publicRead: publicRead, origin: "https://space.test", pageFetch: proxy.response, identityJWKS: proxy.initialJWKS)
+    let h = try Harness(dev: false, publicRead: publicRead, origin: "https://space.test", pageFetch: proxy.response, identityController: proxy.controller)
     let account = try await h.space.addAccount(kind: .human, name: "alice", admin: true).id
     let persona = try await h.space.persona(account: account)?.name ?? account.rawValue
     let token = try await h.space.createReadSession(account: account, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))
@@ -39,6 +39,12 @@ import Testing
   }
 
   func identity() throws -> ServerIdentity { try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation) }
+
+  func controller(identity: ServerIdentity) async throws -> IdentityController {
+    let controller = IdentityController.configure(space: try Space.inMemory(), origin: "https://space.test", keys: MemoryFiles().identityKeys, fetch: FetchClient { _ in Response(status: .forbidden) })
+    try await controller.initialize(identity: identity)
+    return controller
+  }
 
   func list(_ rig: Rig, _ content: String) async throws {
     let token = try? await rig.h.direct("read", ["path": "/fetch.json"]).object?["token"]
@@ -60,7 +66,7 @@ import Testing
 
   @Test func refusalsAreTypedAndListEditsAreImmediate() async throws {
     let calls = Mutex(0)
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in
       calls.withLock { $0 += 1 }
       return Response.text("ok")
     })
@@ -90,7 +96,7 @@ import Testing
 
   @Test func redirectsRequireListedOriginAndMintNewAudience() async throws {
     let seen = Mutex<[Request]>([])
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { request, _ in
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { request, _ in
       seen.withLock { $0.append(request) }
       if request.url.host == "backend.test" {
         var fields = Headers()
@@ -143,7 +149,7 @@ import Testing
       let port = try #require(server.localAddress?.port)
       let origin = "http://dashboard.invalid:\(port)"
       let resolutions = Mutex(0)
-      let proxy = PageFetch(identity: identity, issuer: "https://space.test", hop: { request, deadline in
+      let proxy = PageFetch(controller: try await controller(identity: identity), hop: { request, deadline in
         try await pinnedPageFetch(request, deadline: deadline, resolve: { host, port in
           #expect(host == "dashboard.invalid")
           resolutions.withLock { $0 += 1 }
@@ -190,7 +196,7 @@ import Testing
 
   @Test func directoryPageAndTrailingSlashOriginAreAcceptedAndViewerIsTrusted() async throws {
     let seen = Mutex<[Request]>([])
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { request, _ in
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { request, _ in
       seen.withLock { $0.append(request) }
       var fields = Headers()
       fields[.init("Wuhu-Viewer")!] = "another-account"
@@ -207,7 +213,7 @@ import Testing
 
   @Test func redirect303BecomesGetAndRedirectLoopStopsAfterTwentyHops() async throws {
     let seen = Mutex<[Request]>([])
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { request, _ in
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { request, _ in
       seen.withLock { $0.append(request) }
       if request.url.path == "/q" {
         var fields = Headers()
@@ -224,7 +230,7 @@ import Testing
     #expect(redirected.body == nil)
     #expect(redirected.headers[.contentType] == nil)
     let count = Mutex(0)
-    let looping = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in
+    let looping = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in
       count.withLock { $0 += 1 }
       var fields = Headers()
       fields[.location] = "/q"
@@ -240,7 +246,7 @@ import Testing
 
   @Test func upstreamTimeoutAndIdentityFailuresKeepTheirTypedClassification() async throws {
     for timeout in [true, false] {
-      let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in
+      let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in
         if timeout { throw PageFetchError.timeout }
         throw FetchTestFailure.unavailable
       })
@@ -250,7 +256,7 @@ import Testing
       #expect(denied.status == (timeout ? .gatewayTimeout : .badGateway))
       #expect(try await json(denied).object?["code"] == .string(timeout ? "fetchTimeout" : "fetchUpstreamUnavailable"))
     }
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in Issue.record("identity failure must not connect"); return Response.text("bad") })
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in Issue.record("identity failure must not connect"); return Response.text("bad") })
     let r = try await rig(proxy: proxy)
     try await list(r, #"{"allow":["http://backend.test"]}"#)
     var fields = Headers()
@@ -271,7 +277,7 @@ import Testing
   }
 
   @Test func anotherGroupsAllowListAndExecBearerCannotAdmitFetch() async throws {
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in Issue.record("must not connect"); return Response.text("bad") })
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in Issue.record("must not connect"); return Response.text("bad") })
     let r = try await rig(proxy: proxy)
     try await list(r, #"{"allow":["http://backend.test"]}"#)
     let account = try await r.h.space.addAccount(kind: .human, name: "bob").id
@@ -297,7 +303,7 @@ import Testing
   }
 
   @Test func tricklingInboundUploadTimesOutAndClosesWithoutKeepAliveDrain() async throws {
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in
       Issue.record("an incomplete upload must not reach the backend")
       return Response.text("bad")
     })
@@ -362,7 +368,7 @@ import Testing
   }
 
   @Test func requestLimitAndInvalidListAreTyped() async throws {
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in Issue.record("must not connect"); return Response.text("bad") })
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in Issue.record("must not connect"); return Response.text("bad") })
     let r = try await rig(proxy: proxy)
     for entry in ["https://*.test", "https://backend.test/path", "https://user:pass@backend.test", "ftp://backend.test"] {
       try await list(r, #"{"allow":["\#(entry)"]}"#)
@@ -375,7 +381,7 @@ import Testing
 
   @Test func aWidgetFetchesAsTheSigningPersonWithItsFileAsThePage() async throws {
     let seen = Mutex<[Request]>([])
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { request, _ in
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { request, _ in
       seen.withLock { $0.append(request) }
       return Response.text("pool ok")
     })
@@ -419,7 +425,7 @@ import Testing
   }
 
   @Test func aSessionCannotFetchAsAWidget() async throws {
-    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in Issue.record("must not connect"); return Response.text("bad") })
+    let proxy = PageFetch(controller: try await controller(identity: identity()), hop: { _, _ in Issue.record("must not connect"); return Response.text("bad") })
     let r = try await rig(proxy: proxy)
     try await list(r, #"{"allow":["http://backend.test"]}"#)
     _ = try await r.h.direct("write", ["path": "/.widgets/pool.widget.jsx", "content": "export default () => null"])

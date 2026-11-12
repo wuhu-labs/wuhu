@@ -1,5 +1,3 @@
-import struct OperationProtocol.ErrorEnvelope
-import struct OperationProtocol.OperationError
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -89,10 +87,8 @@ public enum SpaceServer {
     credentials: CredentialResolver = .environmentOnly,
     secrets: SpaceSecretStores? = nil,
     execTokens: ExecTokens? = nil,
-    identityJWKS: JSONValue? = nil,
     identityController: IdentityController? = nil,
-    machineV2Hub: MachineV2Hub? = nil,
-    machineV2Releases: MachineV2Releases? = nil,
+    listenerRoutes: Router = Router(),
     keyStreams: KeyStreams = KeyStreams(),
     pageFetch: (@Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response)? = nil,
     machines: MachineSeam? = nil,
@@ -114,10 +110,12 @@ public enum SpaceServer {
       case let .refused(response): .refused(response)
       }
     }
-    var router = Router()
+    var router = listenerRoutes
     for path in ["/.well-known/openid-configuration", "/.well-known/jwks.json"] {
       router.get(path) { _, _ in
-        let keys = await identityController?.jwks ?? identityJWKS
+        let keys: JSONValue?
+        do { keys = try await identityController?.jwks }
+        catch { return errorResponse(.unprocessableContent, code: "oidcConfiguration", message: "The server identity key is unavailable.") }
         guard let issuer = try? ServerIdentity.issuer(origin), let keys else {
           return errorResponse(.unprocessableContent, code: "oidcConfiguration", message: "OIDC requires a server identity key and a configured HTTPS --origin.")
         }
@@ -198,25 +196,14 @@ public enum SpaceServer {
     let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
     addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
     addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
-    addIDTokenRoute(&router, space: space, tokens: execTokens, identity: identityController)
+    addIDTokenRoute(&router, space: space, tokens: execTokens ?? sessions?.tokens, identity: identityController)
     addGroupRoutes(&router, space: space, dev: dev) { request in
       try await requestPrincipal(request, space: space, date: clock)
     }
     addMachineRoutes(
-      &router, space: space, hub: hub, machineV2Hub: machineV2Hub, fingerprint: fingerprint,
+      &router, space: space, hub: hub, fingerprint: fingerprint,
     ) { request in
       try await requestPrincipal(request, space: space, date: clock)
-    }
-    if let machineV2Hub {
-      let releases = machineV2Releases ?? {
-        @Dependency(\.fetch) var fetch
-        @Dependency(\.continuousClock) var continuousClock
-        return MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: continuousClock)
-      }()
-      let upgrades = MachineV2Upgrades(space: space, serverVersion: version, releases: releases)
-      addMachineV2Routes(&router, space: space, hub: machineV2Hub, upgrades: upgrades, fingerprint: fingerprint) { request in
-        try await requestPrincipal(request, space: space, date: clock)
-      }
     }
     addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, dev: dev, keyStreams: keyStreams)
     addAccountRoutes(&router, space: space, dev: dev, keyStreams: keyStreams)
@@ -239,9 +226,6 @@ public enum SpaceServer {
       addSessionRoutes(&router, space: space, hub: hub, runtime: sessions, dev: dev) { request in
         try await requestPrincipal(request, space: space, date: clock)
       }
-      addSessionLogRoutes(&router, space: space, runtime: sessions) { request in
-        try await requestPrincipal(request, space: space, date: clock)
-      }
       addSessionLineRoutes(&router, space: space, runtime: sessions) { request in
         try await requestPrincipal(request, space: space, date: clock)
       }
@@ -254,14 +238,7 @@ public enum SpaceServer {
         webAppResponse(webApp, request: request, contentHostPattern: contentHost.pattern)
       }
     }
-    let routes = router.upgradingHandler
-    let routed: UpgradingHandler = { request in
-      if let machineV2Hub, request.url.path == "/v1/machine-v2" || request.url.path.hasPrefix("/v1/machine-v2/") {
-        do { try await machineV2Hub.checkAvailable() }
-        catch let error as OperationError { return .response(try Response.json(ErrorEnvelope(error), status: .serviceUnavailable)) }
-      }
-      return try await routes(request)
-    }
+    let routed = router.upgradingHandler
     // A session's exec token is its own credential, in dev as behind the wall:
     // the session gate takes every request carrying one and passes the rest on.
     let gated: (@escaping UpgradingHandler) -> UpgradingHandler = { walled in
@@ -300,7 +277,6 @@ public enum SpaceServer {
       "/v1/enroll/share-login", "/v1/enroll/share-login/challenge",
       "/v1/server",
       "/.well-known/openid-configuration", "/.well-known/jwks.json",
-      // A running exec's WUHU_ID_TOKEN_REQUEST capability (IDTokenRoute.swift).
       "/v1/id-token",
     ]
     return { request in

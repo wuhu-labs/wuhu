@@ -27,7 +27,7 @@ extension ToolExecutor {
     if case .system = address {} else if ImageMedia.mimeType(ofPath: address.rendered) != nil, arguments.lines != nil {
       throw ToolProblem("lines applies to text files; \(address.rendered) is an image")
     }
-    let main = try await client(session)
+    let main = client(session)
     let output: ReadOutput = try await main.tool("read", .object(["path": .string(address.rendered), "image": .bool(true)]))
     let revision = try revision(output.token, at: address)
     // Main checked an image's bytes and stored them; the transcript keeps the hash.
@@ -51,7 +51,7 @@ extension ToolExecutor {
     // Without a read there is no version to match: the write may only create.
     let guarded: (field: String, value: JSONValue) = logged.map { ("ifMatch", .string(token($0))) } ?? ("createOnly", .bool(true))
     let input: JSONValue = .object(["path": .string(address.rendered), "content": .string(arguments.content), guarded.field: guarded.value])
-    let main = try await client(session, toolCall: call)
+    let main = client(session, toolCall: call)
     let output: WriteOutput = try await versioned(address, logged: logged) { try await main.tool("write", input) }
     return .write(.init(path: address.rendered, revision: try revision(output.token, at: address)))
   }
@@ -68,7 +68,7 @@ extension ToolExecutor {
       "edits": .array(arguments.edits.map { .object(["old": .string($0.old), "new": .string($0.new)]) }),
       "ifMatch": .string(token(logged)),
     ])
-    let main = try await client(session, toolCall: call)
+    let main = client(session, toolCall: call)
     let output: EditOutput = try await versioned(address, logged: logged) { try await main.tool("edit", input) }
     return .edit(.init(path: address.rendered, revision: try revision(output.token, at: address)))
   }

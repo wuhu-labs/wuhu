@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 @testable import LoopCore
 import class MainHub.Hub
@@ -31,8 +35,8 @@ private final class WorkFlips: TransactionObserver, Sendable {
     ToolCall(id: id, name: name, arguments: .object([:]))
   }
 
-  private static func parkNotices(_ transcript: Transcript) -> Int {
-    transcript.items.count { if case let .notification(notification) = $0 { notification.kind == .parkReminder } else { false } }
+  private static func parkNotices(_ lines: [TranscriptLine]) -> Int {
+    lines.count { $0.key.hasPrefix("subscription:park.") }
   }
 
   @Test func `the nag rides the write of the message that tried to finish, so the work never reads settled`() async throws {
@@ -43,14 +47,17 @@ private final class WorkFlips: TransactionObserver, Sendable {
       let flips = WorkFlips(sid)
       sessions.writer.add(transactionObserver: flips)
 
-      let tail = Box<[TranscriptItem]>([])
+      let tail = Box<[TranscriptLine]>([])
       let stored = Box<SessionHydration?>(nil)
+      let storedTail = Box<TranscriptLine?>(nil)
       let script = InferenceScript([
         Fix.replying("thinking out loud"),
         { request in
-          tail.withLock { $0 = Array(request.transcript.items.suffix(2)) }
+          tail.withLock { $0 = Array(request.lines.suffix(2)) }
           let hydration = try await sessions.hydrate(sid)
           stored.withLock { $0 = hydration }
+          let last = try await sessions.lines(sid).last
+          storedTail.withLock { $0 = last }
           return Fix.reply("answering", calls: [Self.call("send_message", "c-1")])
         },
         Fix.replying("all done"),
@@ -65,42 +72,16 @@ private final class WorkFlips: TransactionObserver, Sendable {
         try await holds("the wrap-up to be the last word") { script.count == 3 }
       }
 
-      guard case .assistant = tail.value.first, case let .notification(nag) = tail.value.last else {
-        Issue.record("the nag follows the message that tried to finish: \(tail.value)")
-        return
-      }
-      #expect(nag.kind == .owedReply && nag.conversations == [.init(sid.rawValue)])
+      #expect(tail.value.first?.role == .assistant)
+      #expect(tail.value.first?.meta != nil)
+      let nag = try #require(tail.value.last)
+      #expect(nag.key == "subscription:owed.reply")
+      #expect(nag.role == .user)
+      #expect(nag.text.hasSuffix("\n\n" + SessionPrompt.owedReply(conversations: [sid.rawValue])))
       #expect(stored.value?.record.work == .hasWork)
-      #expect(stored.value?.transcript.kernel.items.last?.id == nag.id, "stored with the message, before the next inference")
+      #expect(storedTail.value == nag, "stored with the message, before the next inference")
       #expect(stored.value?.queueTail == 1, "the nag was never a queue row")
       #expect(Array(flips.flips.withLock { $0 }.drop { $0 == SessionWork.noWork.rawValue }) == [SessionWork.hasWork.rawValue, SessionWork.noWork.rawValue])
-    }
-  }
-
-  @Test func `a stop the loop never judged is judged when the session resumes`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await sessions.put(sid, input: Fix.message("please review", conversation: sid.rawValue, owesReply: true))
-      _ = try await sessions.drainQueue(sid)
-      try await sessions.markInterrupted(sid)
-      _ = try await sessions.appendAssistant(sid, attemptID: UUID(), message: .init(content: [.text("stopped")]), metadata: Fix.reply("").metadata)
-
-      let seen = Box<SystemNotification?>(nil)
-      let script = InferenceScript([
-        { request in
-          if case let .notification(notification)? = request.transcript.items.last { seen.withLock { $0 = notification } }
-          return Fix.reply("noted")
-        },
-      ])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
-        try await service.resume(sid)
-        try await until("the nag is answered") { try await sessions.settledWork(sid) && script.count == 1 }
-        try await holds("once") { script.count == 1 }
-      }
-      #expect(seen.value?.kind == .owedReply)
-      #expect(seen.value?.conversations == [.init(sid.rawValue)])
     }
   }
 
@@ -131,15 +112,15 @@ private final class WorkFlips: TransactionObserver, Sendable {
         await time.advance(by: 3600)
         try await holds("a reported task is never reminded again") { script.count == 4 }
       }
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(Self.parkNotices(transcript) == 2)
+      let lines = try await sessions.lines(sid)
+      #expect(Self.parkNotices(lines) == 2)
       #expect(script.attempts.value[1].at == anchor)
       #expect(abs(script.attempts.value[2].at.timeIntervalSince(anchor) - 60) < 0.001)
     }
   }
 
   @Test(arguments: [false, true])
-  func `a fold counts the reminders in the tail it kept and no others`(kept: Bool) async throws {
+  func `a fold carries the reminder backoff whether or not its line was kept`(kept: Bool) async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -149,21 +130,20 @@ private final class WorkFlips: TransactionObserver, Sendable {
         Fix.replying("done?"),
         Fix.replying("folding", calls: [.init(id: "c-f", name: "compact", arguments: .object(kept ? ["summary": .string("s"), "bookmark": .string("b")] : ["summary": .string("s")]))]),
         Fix.replying("after the fold"),
-        Fix.replying("reminded again"),
       ])
       try await runService(space, makeConfig(inference: { try await script($0) })) { _ in
         try await sessions.openParentRequest(on: sid)
-        let steps = kept ? 4 : 5
+        let steps = 4
         try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == steps }
         try await holds("the next reminder waits its minute") { script.count == steps }
       }
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(Self.parkNotices(transcript) == 1)
+      let lines = try await sessions.lines(sid)
+      #expect(Self.parkNotices(lines) == (kept ? 1 : 0))
     }
   }
 
-  private static func owedNotices(_ transcript: Transcript) -> Int {
-    transcript.items.count { if case let .notification(notification) = $0 { notification.kind == .owedReply } else { false } }
+  private static func owedNotices(_ lines: [TranscriptLine]) -> Int {
+    lines.owedReplyReminders.count
   }
 
   @Test func `a fold leaves the reply the agent owes owed`() async throws {
@@ -180,11 +160,11 @@ private final class WorkFlips: TransactionObserver, Sendable {
         try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
         try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 3 }
       }
-      #expect(Self.owedNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
+      #expect(Self.owedNotices(try await sessions.lines(sid)) == 1)
     }
   }
 
-  @Test func `Start over reminds the agent again of a reply it still owes`() async throws {
+  @Test func `Start over retains the owed reply reminder state without nagging again`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -193,16 +173,18 @@ private final class WorkFlips: TransactionObserver, Sendable {
         Fix.replying("thinking"),
         Fix.replying("reminded"),
         Fix.replying("started over"),
-        Fix.replying("reminded again"),
       ])
       try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
         try await until("the agent stops, reminded") { try await sessions.settledWork(sid) && script.count == 2 }
+        let nags = try #require(space.worker.cell(SessionCell.ID(sid.rawValue)).turn()?.nags)
         _ = try await service.restart(sid, executor: nil, note: nil)
         try await service.enqueue(item: Fix.message("hello", conversation: "elsewhere", owesReply: false), to: sid)
-        try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 4 }
+        try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 3 }
+        try await holds("Start over does not re-nag an already reminded conversation") { script.count == 3 }
+        #expect(space.worker.cell(SessionCell.ID(sid.rawValue)).turn()?.nags == nags)
       }
-      #expect(Self.owedNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
+      #expect(Self.owedNotices(try await sessions.lines(sid)) == 0)
     }
   }
 
@@ -231,7 +213,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
           await time.advance(by: 900)
           try await holds("no reminder while \(wake) is armed") { script.count == 2 }
         }
-        #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 0)
+        #expect(Self.parkNotices(try await sessions.lines(sid)) == 0)
       }
     }
   }
@@ -247,7 +229,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
         Fix.replying("arming", calls: [Self.call("wake", "quiet")]),
         Fix.replying("waiting"),
         { request in
-          #expect(Self.parkNotices(request.transcript) == 1)
+          #expect(Self.parkNotices(request.lines) == 1)
           return Fix.reply("park reminder received")
         },
       ])
@@ -261,7 +243,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
           return try await sessions.settledWork(sid)
         }
         #expect(try await sessions.armedSubscriptions(sid).count == 1)
-        #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
+        #expect(Self.parkNotices(try await sessions.lines(sid)) == 1)
       }
     }
   }
@@ -274,9 +256,9 @@ private final class WorkFlips: TransactionObserver, Sendable {
       let started = Box(false)
       let afterExec = Box<Int?>(nil)
       let script = InferenceScript([
-        Fix.replying("building", calls: [Self.call("exec", "c-1")]),
+        Fix.replying("building", calls: [Self.call("test_tool", "c-1")]),
         { request in
-          afterExec.withLock { $0 = Self.parkNotices(request.transcript) }
+          afterExec.withLock { $0 = Self.parkNotices(request.lines) }
           return Fix.reply("built")
         },
         Fix.replying("reminded"),
@@ -300,7 +282,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
         try await until("the stop is reminded") { try await sessions.settledWork(sid) && script.count == 3 }
       }
       #expect(afterExec.value == 0)
-      #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
+      #expect(Self.parkNotices(try await sessions.lines(sid)) == 1)
     }
   }
 
@@ -322,7 +304,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
         try await time.asleep("the restarted worker's scan, which finds the recorded wake", dueIn: 1)
         await time.advance(by: 60)
         try await until("reconstructed reminder fires") { try await sessions.settledWork(sid) && second.count == 1 }
-        #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
+        #expect(Self.parkNotices(try await sessions.lines(sid)) == 2)
         #expect(abs(try #require(second.attempts.value.first).at.timeIntervalSince(anchor) - 60) < 0.001)
       }
     }
@@ -334,11 +316,16 @@ private final class WorkFlips: TransactionObserver, Sendable {
       let sessions = space.sessions
       let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it")
-      try await sessions.deliverMail()
-      _ = try await sessions.drainQueue(sid)
-      _ = try await sessions.appendAssistant(sid, attemptID: UUID(), message: .init(content: [.text("stopped")]), metadata: Fix.reply("").metadata)
-      try await sessions.restart(sid)
+      let first = InferenceScript([Fix.replying("stopped"), Fix.replying("waiting")])
+      try await runService(space, makeConfig(inference: { try await first($0) })) { service in
+        _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it")
+        try await until("the task stops, reminded") { try await sessions.settledWork(sid) && first.count == 2 }
+        _ = try await service.restart(sid, executor: nil, note: nil)
+        try await until("Start over is inert") {
+          guard try await sessions.generationState(sid).generation == 1 else { return false }
+          return try await sessions.settledWork(sid)
+        }
+      }
 
       let script = InferenceScript([])
       try await runService(space, makeConfig(inference: { try await script($0) })) { _ in

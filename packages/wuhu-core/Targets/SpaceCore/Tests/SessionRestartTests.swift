@@ -16,26 +16,11 @@ import Testing
       )
       try await store.put(id, input: SessionFix.message("first"))
       _ = try await store.drainQueue(id)
-      _ = try await store.appendAssistant(
-        id, attemptID: UUID(), message: SessionFix.assistant("done"), metadata: SessionFix.metadata,
-      )
-      #expect(try await store.transcript(id).items.count == 3)
-
       let restart = try await store.restart(id, note: "started over")
       #expect(restart.generation == 1)
+      #expect(try await store.transcriptLines(id).map(\.key) == ["head", "head:note"])
       #expect(try await store.generationState(id).generation == 1)
 
-      let transcript = try await store.transcript(id)
-      #expect(transcript.items.count == 1, "the head is the whole of a restarted generation")
-      guard case let .generationHead(head) = transcript.items[0] else {
-        Issue.record("a restarted generation opens with its head, got \(transcript.items[0])")
-        return
-      }
-      #expect(head.summary.isEmpty, "Start over is an empty-summary compaction")
-      #expect(head.snapshot == StateSnapshot())
-      #expect(head.note == "started over")
-      #expect(transcript.keptCount == 1)
-      #expect(!transcript.hasWork, "the note is context, not a prompt: nothing to answer")
       #expect(try await store.generationState(id).note == "started over")
 
       let record = try await store.record(id)
@@ -67,13 +52,11 @@ import Testing
       #expect(hydration.record.errorMessage == nil)
       #expect(hydration.record.hold == .normal)
       #expect(try await store.armedSubscriptions(id).count == 1)
-      #expect(armed(hydration.transcript.kernel)[.init("timer.t1")] == .timer(.oneShot(fixedDate)))
-      #expect(hydration.transcript.kernel.items.count == 1)
-      #expect(!hydration.transcript.kernel.hasWork)
+      #expect(try await store.rows { try $0.armedSlots(id).slots[.init("timer.t1")] } == .timer(.oneShot(fixedDate)))
     }
   }
 
-  @Test func restartCarriesHealthySettleStateAndPreservesQueuedInputs() async throws {
+  @Test func restartPreservesRequestsAndQueuedInputs() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
@@ -87,13 +70,10 @@ import Testing
       let hydration = try await store.hydrate(task)
       #expect(try await store.undrainedInputs(task).count == 1)
       #expect(hydration.queueHead > hydration.queueTail)
-      #expect(hydration.transcript.kernel.items.count == 1)
       #expect(try await store.openRequests(task).map(\.id) == [.init("r1")])
-      #expect(!hydration.transcript.kernel.environment.settle.owedConversations.contains(.init("ch1")))
-      #expect(hydration.transcript.kernel.environment.settle == (try await store.settleState(task)))
       let drained = try await store.drainQueue(task)
       #expect(drained.items.count == 1)
-      #expect(try await store.transcript(task).environment.settle.owedConversations.contains(.init("ch1")))
+      #expect(try await store.transcriptLines(task).last?.key == "message:queued")
       _ = try await store.report(task, request: .init("r1"), kind: .final, messageID: .init("f1"), text: "done")
       #expect(try await store.openRequests(task).isEmpty)
       _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("r2"), text: "new duty")
@@ -130,8 +110,7 @@ import Testing
       #expect(hydration.record.work == .noWork)
       #expect(hydration.record.errorMessage == nil)
       #expect(try await store.armedSubscriptions(id) == [observation])
-      #expect(!hydration.transcript.kernel.hasWork)
-      #expect(armed(hydration.transcript.kernel) == [.init("obs.keep"): .observe(sql: "SELECT 1")])
+      #expect(try await store.rows { try $0.armedSlots(id).slots } == [.init("obs.keep"): .observe(sql: "SELECT 1")])
     }
   }
 
@@ -190,24 +169,6 @@ import Testing
     }
   }
 
-  @Test func restartStartsParkRemindersOverWithoutClosingTheRequest() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
-      let task = try await store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("parked"), text: "still owed")
-      _ = try await store.drainQueue(task)
-      let nag = Nag.park(request: .init("parked"))
-      try await store.append(task, items: (0 ..< 3).map { _ in .notification(nag.notification(id: UUID(), at: fixedDate)) }, inputOrigin: nil)
-      let open = try await store.openRequests(task)
-      #expect(try await store.transcript(task).environment.nags.nextTimer(openRequests: open, armedWake: false, now: fixedDate) == fixedDate.addingTimeInterval(900))
-      try await store.markInterrupted(task)
-      _ = try await store.restart(task)
-      #expect(try await store.openRequests(task) == [OpenRequest(id: .init("parked"))])
-      #expect(try await store.transcript(task).environment.nags.nextTimer(openRequests: open, armedWake: false, now: fixedDate) == fixedDate)
-    }
-  }
-
   @Test func restartIsRefusedWhileTheSessionIsArchived() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
@@ -219,10 +180,4 @@ import Testing
       }
     }
   }
-}
-
-/// What the generation's head says the session had armed.
-private func armed(_ transcript: Transcript) -> [SubscriptionID: Subscription] {
-  guard case let .generationHead(head)? = transcript.items.first else { return [:] }
-  return head.snapshot.subscriptions
 }

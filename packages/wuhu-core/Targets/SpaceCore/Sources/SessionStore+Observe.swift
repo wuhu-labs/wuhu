@@ -19,16 +19,6 @@ public struct TranscriptCursor: Hashable, Sendable {
 }
 
 extension SessionStore {
-  public func transcriptSnapshot(_ id: SessionID) async throws -> (generation: Int, items: [TranscriptItem]) {
-    let key = id.rawValue
-    return try await writer.read { db in
-      let runtime = try Sessions.runtime(key, in: db)
-      let generation = Int(runtime.generation)
-      if try Sessions.record(key, in: db).executor.isRetired { return (generation, []) }
-      return (generation, try Sessions.transcript(key, in: db).items)
-    }
-  }
-
   public func observeConversation(
     _ conversation: ConversationID,
     after n: Int64 = 0,

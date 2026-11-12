@@ -10,6 +10,7 @@ import JSONValue
 import SessionDomain
 @testable import SpaceServer
 import Testing
+import WuhuAI
 
 @Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct ResponsesRuntimeTests {
   @Test func assembledRuntimeReleasesSuccessfulLeasesAcknowledgesActualCommitsAndRoutesQuota() async throws {
@@ -37,12 +38,15 @@ import Testing
           #expect(input[0].object?["type"]?.stringValue == "function_call_output")
           #expect(input[0].object?["call_id"]?.stringValue == "provider_call")
           #expect(await peer.dials == 1)
-          guard case .kernel(let transcript) = try await harness.store.hydrate(sid).transcript else { Issue.record("expected kernel transcript"); return }
-          let entries = transcript.items.compactMap { item -> AssistantEntry? in if case .assistant(let entry) = item { return entry }; return nil }
-          #expect(entries.count == 2)
-          let committedID = try #require(entries.first?.toolCallIDs["provider_call"])
-          #expect(committedID.rawValue != "provider_call")
-          #expect(transcript.items.contains { item in if case .toolResult(let result) = item, case .toolCall(let id) = result.provenance { return id == committedID }; return false })
+          let lines = try await harness.store.testLines(sid)
+          let replies = lines.filter { $0.role == .assistant }
+          #expect(replies.count == 2)
+          let call = try #require(replies.first.flatMap { line -> ToolCall? in
+            guard case let .assistant(reply) = line.message else { return nil }
+            return reply.content.compactMap { if case let .toolCall(call) = $0 { call } else { nil } }.first
+          })
+          #expect(call.id != "provider_call")
+          #expect(lines.contains { $0.key == "call:\(call.id)" && $0.role == .toolResult })
         }
       }
     }

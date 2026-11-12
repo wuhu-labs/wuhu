@@ -1,6 +1,8 @@
 import Dependencies
 import DeterministicDependencies
 import class MainHub.Hub
+import struct MainHub.ScriptRun
+import Synchronization
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -87,8 +89,8 @@ import struct WuhuAI.ToolCall
       let person = try await t.harness.mintPersona()
       // The identity hop lands on the harness as the parent's own bearer.
       let owner = Hub(space: t.harness.space)
-      let scripts = Scripts(sessions: owner.space.sessions)
-      let executor = SessionRuntime.toolExecutor(owner: owner, scripts: scripts, identity: try testIdentity().controller)
+      let scripts = Scripts()
+      let executor = try await SessionRuntime.toolExecutor(owner: owner, identity: try await testIdentity().controller)
       try await withDependencies {
         $0.scriptHop = FetchClient { request in
           #expect(request.headers[.authorization]?.hasPrefix("Bearer ") == true)
@@ -108,16 +110,12 @@ import struct WuhuAI.ToolCall
             });
             result({ status: response.status, body: await response.json() });
             """
-            let payload = try await executor.execute(
-              session: t.parent,
-              call: ToolCall(id: "script-post-\(user)", name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 10])),
-              state: ToolExecutionState(),
-            ).payload
-            guard case let .script(result) = payload else {
-              Issue.record("unexpected script result: \(payload)")
-              return
+            let result = Mutex<String?>(nil)
+            try await scripts.run(.init(runner: .session(t.parent, group: .shared), source: source, arguments: []), tools: executor) { output in
+              if case let .result(text) = output { result.withLock { $0 = text } }
+              if case let .failure(message) = output { Issue.record("\(message)") }
             }
-            #expect(JSONValue.parse(String(result.output.prefix { $0 != "\n" })) == .object([
+            #expect(JSONValue.parse(try #require(result.withLock { $0 })) == .object([
               "status": 422, "body": .object(["code": "refused", "message": .string(refusal)]),
             ]))
           }
@@ -149,7 +147,9 @@ import struct WuhuAI.ToolCall
   private func legacyDM(_ harness: SessionHarness, session: SessionID, person: String) async throws -> ConversationID {
     let dm = try await harness.store.createConversation(members: [person], in: .shared)
     // Old data, written on a connection of its own: the space's writer guards the rows a conversation's cell owns.
-    try await DatabaseQueue(path: harness.space.writer.path).write { db in
+    var connection = Configuration()
+    connection.busyMode = .timeout(5)
+    try await DatabaseQueue(path: harness.space.writer.path, configuration: connection).write { db in
       try db.execute(sql: "UPDATE conversations SET kind = 'dm_user' WHERE id = ?", arguments: [dm.rawValue])
       try db.execute(sql: "INSERT INTO conversation_members (conversation_id, member, member_kind, joined_at) VALUES (?, ?, 'session', '2026-01-01T00:00:00.000Z')", arguments: [dm.rawValue, session.rawValue])
     }

@@ -12,10 +12,13 @@ import LoopCore
 import ModelProviders
 import enum ProviderCapabilities.PlanUsage
 import ServerTelemetry
+import struct SessionDomain.ImageLimits
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
+import struct SessionDomain.TranscriptLine
+import struct SessionDomain.WarmingSchedule
 import enum SpaceContract.SessionToolExecutor
 import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionStore
@@ -27,10 +30,14 @@ func kernelInference(
   access: InferenceAccess,
   sockets: ResponsesSocketRegistry,
   usage: UsageBoard,
-  committedWarming: @escaping @Sendable (SessionID, CacheWarmingPolicy) async -> Void = { _, _ in },
 ) -> @Sendable (InferenceRequest) async throws -> InferenceReply {
   @Dependency(\.date) var date
-  @Sendable func failed(_ error: any Error, session: SessionID, catalog: ProviderCatalog?, inferenceStarted: Bool, span: TelemetrySpan<ModelAttemptOutcome>) async throws -> Never {
+  @Sendable func failed(
+    _ error: any Error, session: SessionID, catalog: ProviderCatalog?, inferenceStarted: Bool, ping: Bool, span: TelemetrySpan<ModelAttemptOutcome>,
+  ) async throws -> Never {
+    if ping {
+      throw error
+    }
     if error is ReplayBoundaryRequired {
       span.conclude(.handoff)
     } else if let catalog, let failure = try await recordRouteFailure(error, session: session, store: store, catalog: catalog, usage: usage, inferenceStarted: inferenceStarted), failure.reason == .upstreamOutage, let retry = failure.retryAt {
@@ -91,20 +98,20 @@ func kernelInference(
         preconditionFailure("kernel inference for \(record.executor.kind) session \(request.sessionID.rawValue)")
       }
       span.set(.modelGroup, route.group)
-      resolved = try await selectedCatalog.resolve(model, session: request.sessionID, routeEpoch: request.transcript.replayBinding?.epoch ?? route.epoch)
+      resolved = try await selectedCatalog.resolve(model, session: request.sessionID, routeEpoch: request.binding?.epoch ?? route.epoch)
       warmingPolicy = selectedCatalog.document.providers[model.provider]?.models[model.model]?.cacheWarming
-      if request.transcript.requiresReplayHandoff(to: resolved.bindingIdentity) {
-        throw ReplayBoundaryRequired(binding: ReplayBinding(identity: resolved.bindingIdentity, epoch: uuid().uuidString.lowercased()), budget: resolved.budget)
+      if request.binding.map({ $0.identity != resolved.bindingIdentity }) == true {
+        throw ReplayBoundaryRequired(binding: ReplayBinding(identity: resolved.bindingIdentity, epoch: uuid().uuidString.lowercased()))
       }
     } catch {
       await sockets.invalidate(request.sessionID)
-      try await failed(error, session: request.sessionID, catalog: routingCatalog, inferenceStarted: false, span: span)
+      try await failed(error, session: request.sessionID, catalog: routingCatalog, inferenceStarted: false, ping: request.ping, span: span)
     }
     span.set(.transport, resolved.transport.rawValue)
     // The generation's prompt as stored, tool list included: an upgrade changes neither until the next generation renders, and the session is told once what changed.
     let prompt = try await executor.prompt(request.sessionID)
     let tools = try prompt.tools.map { try JSONValueDecoder().decode(Tool.self, from: $0) }
-    if let changed = ToolRosterChanged(stored: tools, live: SessionToolExecutor.kernel.tools, told: request.transcript) {
+    if let changed = ToolRosterChanged(stored: tools, live: SessionToolExecutor.kernel.tools, told: request.lines) {
       span.conclude(.handoff)
       throw changed
     }
@@ -116,9 +123,6 @@ func kernelInference(
       lease = nil
     }
     do {
-      if let log = access.lineDifferences {
-        await checkLines(log, store: store, request: request, rendered: prompt.rendered, at: date.now)
-      }
       let inferenceExecutor = InferenceExecutor(
         session: request.sessionID,
         model: resolved,
@@ -138,7 +142,7 @@ func kernelInference(
       )
       let completed = try await inferenceExecutor.run(
         attemptID: request.attemptID,
-        transcript: request.transcript,
+        lines: request.lines,
         idleTimeout: request.idleTimeout,
       )
       span.set(.finishReason, completed.metadata.stopReason.rawValue)
@@ -146,15 +150,30 @@ func kernelInference(
         try await store.updateModelRouteFailure(request.sessionID, expectedEpoch: held.epoch, failure: nil)
       }
       if let lease { await sockets.release(session: request.sessionID, lease: lease.lease) }
-      return InferenceReply(message: completed.message, metadata: completed.metadata, replayBinding: ReplayBinding(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), committed: { entry, transcript in
-        if record.kind == .agent, let warmingPolicy { await committedWarming(request.sessionID, warmingPolicy) }
-        await inferenceExecutor.acknowledge(entry: entry, transcript: transcript)
-      })
+      let warming = warmingSchedule(
+        record: record, policy: warmingPolicy, lines: request.lines, images: resolved.budget.images,
+        provider: resolved.specifier.provider, usage: usage, at: date.now,
+      )
+      return InferenceReply(message: completed.message, metadata: completed.metadata, replayBinding: ReplayBinding(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), committed: { entry in
+        await inferenceExecutor.acknowledge(entry: entry, context: completed.context)
+      }, warming: warming)
     } catch {
       if let lease { await sockets.invalidate(request.sessionID, lease: lease.lease) }
       if error is InferenceCancelled { throw InferenceError.cancelled }
-      try await failed(error, session: request.sessionID, catalog: routingCatalog, inferenceStarted: true, span: span)
+      try await failed(error, session: request.sessionID, catalog: routingCatalog, inferenceStarted: true, ping: request.ping, span: span)
     }
   }
   return { request in try await traced(.attempt) { span in try await attempt(request, span) } }
+}
+
+/// What a reply leaves its session to warm with: an agent's policy, once the request it answered reaches the floor and the provider's five-hour window has quota left. Judged here, once; the cell judges only its own rows.
+func warmingSchedule(
+  record: SessionRecord, policy: CacheWarmingPolicy?, lines: [TranscriptLine], images: ImageLimits,
+  provider: String, usage: UsageBoard, at now: Date,
+) -> WarmingSchedule? {
+  guard record.kind == .agent, let policy, lines.reachesCacheWarmingFloor(policy.floorTokens, images: images) else { return nil }
+  if let used = usage.usage(provider, at: now)?.windows.first(where: { $0.name == "five_hour" })?.usedPercent, used.isFinite,
+     100 - used <= policy.minimumRemainingPercent
+  { return nil }
+  return WarmingSchedule(intervalSeconds: policy.intervalSeconds, lifetimeSeconds: policy.lifetimeSeconds, maxPings: policy.maxPings)
 }

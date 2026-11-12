@@ -9,12 +9,14 @@ import Fetch
 import Foundation
 import GRDB
 import JSONValue
+@testable import LoopCore
 import MachineChannel
 import struct MachineContract.MachineID
 import class MainHub.Hub
 import func MainHub.resolveScriptModule
 import struct MainHub.ScriptError
 import struct MainHub.ScriptRun
+import struct MainHub.ToolProblem
 import enum ModelProviders.ModelPlacementReason
 import OrderedCollections
 import Scratch
@@ -26,6 +28,7 @@ import enum SpaceContract.ScriptOutput
 import struct SpaceFS.SpacePath
 @testable import SpaceServer
 import struct SpaceTools.MachineSeam
+import StructuredQueries
 import Testing
 import struct WuhuAI.ToolArguments
 import struct WuhuAI.ToolCall
@@ -66,13 +69,33 @@ import struct WuhuAI.ToolCall
 
       try await until("the watch list is read") { watchQueries.value > 0 }
       try await rig.apply("sample-done.sql")
-      try await rig.time.wake("the watch's poll", after: 60)
+      try await rig.time.wake("the watch's poll", after: 61.234)
       try await rig.messages(1)
       try await rig.apply("sample-failed.sql")
-      try await rig.time.wake("the watch's next poll", after: 60)
+      try await rig.time.wake("the watch's next poll", after: 61.234)
       try await rig.messages(3)
       try await rig.released()
       try rig.expect("sample")
+    }
+  }
+
+  @Test func resultConversionCannotPostASecondResult() async throws {
+    try await withRig { rig in
+      let outputs = Box<[ScriptOutput]>([])
+      let source = "result({ toJSON() { result('inner'); return 'outer' } })"
+      try await rig.command(source) { output in
+        outputs.withLock { $0.append(output) }
+      }
+      let results = outputs.value.compactMap { if case let .result(text) = $0 { text } else { nil } }
+      #expect(results == ["inner"])
+      let failures = outputs.value.compactMap { if case let .failure(text) = $0 { text } else { nil } }
+      #expect(failures.count == 1)
+      #expect(failures.first?.contains("result() can be called only once") == true)
+      #expect(try await rig.evaluate(source) == .string("inner"))
+      try await rig.released()
+      let notices = try await rig.delivered()
+      #expect(notices.count == 1)
+      #expect(notices.first?.contains("result() can be called only once") == true)
     }
   }
 
@@ -138,22 +161,22 @@ import struct WuhuAI.ToolCall
   @Test func stopScript() async throws {
     try await withRig { rig in
       try await rig.run("stop")
-      rig.probe("running: \(rig.scripts.running(of: rig.session))")
-      try await rig.cancel("script.\(scriptID)", as: makeSession(rig.space, name: "stranger"))
-      try await rig.stop(scriptID)
+      rig.probe("running: \(rig.running())")
+      try await rig.cancel("script.\(rig.scriptID)", as: makeSession(rig.space, name: "stranger"))
+      try await rig.stop(rig.scriptID)
       try await rig.messages(1)
       try await rig.released()
-      rig.probe("running: \(rig.scripts.running(of: rig.session))")
-      try await rig.cancel("script.\(scriptID)")
+      rig.probe("running: \(rig.running())")
+      try await rig.cancel("script.\(rig.scriptID)")
       try await rig.cancel("script.ffffffff")
-      try await rig.cancel(scriptID)
+      try await rig.cancel(rig.scriptID)
       try rig.expect("stop")
     }
   }
 
   @Test func sessionModuleCancels() async throws {
     try await withRig { rig in
-      let worker = await firingWorker(Hub(space: rig.space))
+      let worker = try await firingWorker(Hub(space: rig.space))
       _ = try await rig.payload(["message": "x", "in_seconds": 600], tool: "timer")
       try await rig.run("session-cancel")
       try await rig.released()
@@ -166,7 +189,7 @@ import struct WuhuAI.ToolCall
   @Test func stopScriptKillsAScriptThatIgnoresIt() async throws {
     try await withRig { rig in
       try await rig.run("stop-ignored")
-      async let stop: Void = rig.stop(scriptID)
+      async let stop: Void = rig.stop(rig.scriptID)
       try await rig.time.wake("the stop grace", after: 5)
       try await stop
       try await rig.released()
@@ -445,10 +468,12 @@ import struct WuhuAI.ToolCall
   // under .326; a truncating format would print .325 and the cursor would
   // repeat the message.
   @Test func createdAtIsTheCursorThatExcludesItsMessage() async throws {
-    try await withRig { rig in
+    let instant = try Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse("2026-09-26T04:28:16.326Z")
+    try await withRig(prepare: { _, _ in
+      @Dependency(\.timeControl) var time
+      await time.advance(to: instant.addingTimeInterval(0.0002))
+    }) { rig in
       let sender = Sender(id: "u_morgan", timeZone: TimeZone(identifier: "UTC")!)
-      let instant = try Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse("2026-09-26T04:28:16.326Z")
-      await rig.time.advance(to: instant.addingTimeInterval(0.0002))
       _ = try await rig.space.sessions.post(.box(rig.session), messageID: MessageID("m1"), sender: sender, content: .init(text: "one"))
       try await rig.run("conversation-created-at")
       try rig.expect("conversation-created-at")
@@ -520,9 +545,19 @@ import struct WuhuAI.ToolCall
       _ = try await rig.space.addMachine(name: "away")
       try await rig.run("machine-refusals")
       try await rig.released()
-      rig.probe("killed when the script ended: \(world.execs.kills.value.count) of \(world.execs.scriptMints.value)")
-      rig.probe("owner rows left: \(try await rig.scriptExecRows())")
       try rig.expect("machine-refusals")
+    }
+  }
+
+  @Test func completedUnreadProcessesReturnTheirBufferBudget() async throws {
+    let world = MachineWorld()
+    var limits = ScriptLimits.standard
+    limits.bufferBytes = 2 * scriptProcessWindow
+    try await withRig(world: world, limits: limits) { rig in
+      try await world.attach("box", in: rig.space)
+      try await rig.run("machine-buffer-reuse")
+      try await rig.released()
+      try rig.expect("machine-buffer-reuse")
     }
   }
 
@@ -542,7 +577,6 @@ import struct WuhuAI.ToolCall
       try await world.attach("box", in: rig.space)
       try await rig.run("machine-lost")
       try await rig.released()
-      rig.probe("killed when the script ended: \(world.execs.kills.value.count) of \(world.execs.scriptMints.value)")
       try rig.expect("machine-lost")
     }
   }
@@ -610,18 +644,6 @@ import struct WuhuAI.ToolCall
     }
   }
 
-  @Test func aProcessDiesWithTheScriptThatStartedIt() async throws {
-    let world = MachineWorld()
-    try await withRig(world: world) { rig in
-      try await world.attach("box", in: rig.space)
-      try await rig.run("machine-orphan")
-      try await rig.released()
-      rig.probe("killed: \(world.execs.kills.value.map(\.rawValue))")
-      rig.probe("owner rows left: \(try await rig.scriptExecRows())")
-      try rig.expect("machine-orphan")
-    }
-  }
-
   @Test func aCommandWhoseCallerLeavesKillsItsProcessAndReleasesItsRows() async throws {
     let world = MachineWorld()
     try await withRig(world: world) { rig in
@@ -631,7 +653,8 @@ import struct WuhuAI.ToolCall
         group.addTask {
           try? await rig.command("""
           import { machine } from "wuhu:machine"
-          const sleeper = await machine("box").spawn("sleep")
+          const sleeper = await machine("box").spawn("sleep-ready")
+          for await (const line of sleeper.lines()) break
           result(`spawned ${sleeper.id}`)
           await sleeper.wait()
           """) { say.yield($0) }
@@ -642,7 +665,7 @@ import struct WuhuAI.ToolCall
         group.cancelAll()
       }
       #expect(world.execs.kills.value.count == 1)
-      #expect(try await rig.scriptExecRows() == 0)
+      try await until("the closed caller retires its exec") { try await rig.scriptExecRows() == 0 }
     }
   }
 
@@ -656,25 +679,9 @@ import struct WuhuAI.ToolCall
         for await output in said {
           if case .result = output { break }
         }
-        await rig.scripts.close()
+        await rig.worker.quiesce()
         try await group.waitForAll()
       }
-    }
-  }
-
-  @Test func aRestartTellsEachOwnerItsScriptIsGone() async throws {
-    try await withRig(prepare: { space, session in
-      let box = try await space.addMachine(name: "box").id
-      let other = try await makeSession(space, name: "other")
-      _ = try await space.mintScriptExec(machine: box, caller: session.rawValue, script: "0badf00d")
-      let done = try await space.mintScriptExec(machine: box, caller: session.rawValue, script: "0badf00d")
-      try await space.finishExec(done.id, .exited(code: 0))
-      _ = try await space.mintScriptExec(machine: box, caller: session.rawValue, script: "cafe0000")
-      _ = try await space.mintScriptExec(machine: box, caller: other.rawValue, script: "feed0000")
-    }) { rig in
-      try await rig.messages(2)
-      rig.probe("owner rows left: \(try await rig.scriptExecRows())")
-      try rig.expect("restart-notice")
     }
   }
 
@@ -689,8 +696,6 @@ import struct WuhuAI.ToolCall
   }
 }
 
-let scriptID = "00000000"
-
 private let fixtures = URL(fileURLWithPath: #filePath)
   .deletingLastPathComponent().appendingPathComponent("Fixtures/Scripts")
 
@@ -701,6 +706,7 @@ private func fixture(_ name: String) throws -> String {
 final class ScriptRig: Sendable {
   let space: Space
   let scripts: Scripts
+  let worker: SessionExecution
   let main: Hub
   /// The rig session's own group's secrets.
   let secrets: SpaceSecrets
@@ -711,10 +717,12 @@ final class ScriptRig: Sendable {
   private let entries = Box<[String]>([])
   private let seen = Box(0)
   private let calls = Box(0)
+  private let lastScript = Box<String?>(nil)
+  var scriptID: String { lastScript.value! }
 
   init(
     space: Space, main: Hub, scripts: Scripts, stores: SpaceSecretStores, group: GroupID, session: SessionID, time: TimeControl,
-    executor: ToolExecutor,
+    executor: ToolExecutor, worker: SessionExecution,
   ) throws {
     self.space = space
     self.main = main
@@ -724,6 +732,7 @@ final class ScriptRig: Sendable {
     self.session = session
     self.time = time
     self.executor = executor
+    self.worker = worker
   }
 
   func record(_ label: String, _ text: String) {
@@ -780,11 +789,36 @@ final class ScriptRig: Sendable {
       $0 += 1
       return "tc-\($0)"
     }
-    return try await executor.execute(
-      session: session,
-      call: ToolCall(id: id, name: name, arguments: .object(arguments)),
-      state: ToolExecutionState(),
-    ).payload
+    let call = ToolCall(id: id, name: name, arguments: .object(arguments))
+    guard name == "run_script" else {
+      return try await executor.execute(session: session, call: call, state: ToolExecutionState()).payload
+    }
+    do { _ = try ScriptPlan(call) }
+    catch let error as ToolProblem { return .failure(.init(message: error.message, code: error.code)) }
+    let handle = try await space.worker.call(SessionCell.ID(session.rawValue)) { cell in
+      let hydration = try cell.rows.hydrate(self.session)
+      var turn = cell.turn() ?? SessionTurn(generation: hydration.generation, position: 1)
+      turn.position += 1
+      turn.turn = .tools(calls: [call])
+      turn.replied = true
+      turn.armed = true
+      try cell.db.execute(SessionTurn.delete())
+      try cell.db.execute(SessionTurn.insert { turn })
+      let slot = Slot(session: self.session, generation: turn.generation, position: turn.position, stepTry: 0)
+      try cell.startScript(slot.call, call, ScriptPlan(call))
+      return String(cell.scriptAt(slot.call.key)!.key.split(separator: ":").last!.dropFirst("script.".count))
+    }
+    lastScript.withLock { $0 = handle }
+    var answer: ToolResultPayload?
+    try await until("the script tool answers") {
+      for stored in try await self.space.sessions.transcriptLines(self.session) where stored.key == "call:\(id)" {
+        guard case let .toolResult(result) = try stored.line().message else { continue }
+        let text = result.content.compactMap { if case let .text(text) = $0 { text.text } else { nil } }.joined()
+        answer = result.isError ? .failure(.init(message: text)) : .script(.init(output: text))
+      }
+      return answer != nil
+    }
+    return answer!
   }
 
   private func call(_ name: String, _ arguments: OrderedDictionary<String, JSONValue>) async throws -> String {
@@ -825,11 +859,13 @@ final class ScriptRig: Sendable {
   }
 
   func scriptExecRows() async throws -> Int {
-    try await space.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM script_execs") ?? 0 }
+    try await space.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM machine_operations WHERE delivered = 0 AND json_extract(request, '$.script') IS NOT NULL") ?? 0 }
   }
 
+  func running() -> [String] { space.worker.cell(SessionCell.ID(session.rawValue)).runningScripts() }
+
   func released() async throws {
-    try await until("the execution is released") { scripts.running(of: session).isEmpty }
+    try await until("the execution is released") { running().isEmpty }
   }
 
   func children(of parent: SessionID, _ specs: [(title: String, model: String)]) async throws {
@@ -854,7 +890,7 @@ final class ScriptRig: Sendable {
   func expect(_ name: String) throws {
     let actual = (entries.value.joined(separator: "\n") + "\n").replacingOccurrences(of: session.rawValue, with: "<me>")
     let expected = try fixture(name + ".expected")
-    #expect(actual == expected, "\(name).expected differs; actual transcript:\n\(actual)")
+    #expect(normalizingExecIDs(actual) == normalizingExecIDs(expected), "\(name).expected differs; actual transcript:\n\(actual)")
   }
 }
 
@@ -922,7 +958,8 @@ private let playbook: @Sendable (IncomingExec, ScriptedExecMachine) async -> Voi
     _ = try? await input.next()
     await machine.lose(exec.start.id)
     for await _ in exec.kills {}
-  case "sleep":
+  case "sleep", "sleep-ready":
+    if exec.start.command.last == "sleep-ready" { try? await exec.send(.stdout, Array("ready\n".utf8)) }
     for await _ in exec.kills {
       await exec.exit(.signaled(signal: 15))
       return
@@ -973,27 +1010,35 @@ func withRig(
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
       let main = Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute)
-      let scripts = Scripts(sessions: space.sessions, limits: limits)
+      let scripts = Scripts(limits: limits)
       let origin = contentHost.map { _ in "https://space.test" }
       // With a machine world, the executor's main answers `/v1/exec*` from the scripted machine.
       let executor = if let world {
-        world.execs.executor(
-          owner: main, scripts: scripts, access: .init(credentials: credentials),
+        try await world.execs.executor(
+          owner: main, access: .init(credentials: credentials),
           origin: origin, contentHostPattern: contentHost, secrets: stores, identity: identity,
         )
       } else {
-        SessionRuntime.toolExecutor(
-          owner: main, hub: machineHub, scripts: scripts, access: .init(credentials: credentials),
+        try await SessionRuntime.toolExecutor(
+          owner: main, hub: machineHub, access: .init(credentials: credentials),
           origin: origin, contentHostPattern: contentHost, secrets: stores, identity: identity,
         )
       }
+      let worker = SessionExecution(connection: executor.main, credential: executor.credential, access: executor.access, space: space, scripts: scripts) { tools in
+        LoopConfig(
+          executeTool: { try await tools.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
+          inference: { _ in throw Mismatch("the script rig session must stay held") },
+          budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
+        )
+      }
+      worker.start()
+      try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.interrupt() }
       let rig = try ScriptRig(
-        space: space, main: main, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,
+        space: space, main: main, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: worker.tools, worker: worker,
       )
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
-          await main.announceScriptRestart()
-          await whenCancelled { await scripts.close() }
+          await whenCancelled { await worker.shutdown() }
         }
         if let world {
           group.addTask { await world.execs.pump() }
@@ -1018,4 +1063,20 @@ private let githubStub = FetchClient { request in
 
 private func tracedSpace(_ executed: @escaping @Sendable (String) -> Void) throws -> Space {
   try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), trace: executed)
+}
+
+private func normalizingExecIDs(_ text: String) -> String {
+  let text = text.replacingOccurrences(of: #"script\.(?!ffffffff)[a-f0-9]{8}"#, with: "script.00000000", options: .regularExpression)
+  let tokens = text.split { !$0.isLetter && !$0.isNumber && $0 != "_" }
+  var aliases: [String: String] = [:]
+  var normalized = text
+  for token in tokens where token.hasPrefix("ex_") && token.count == 11 {
+    let id = String(token)
+    if aliases[id] == nil {
+      let alias = "<exec-\(aliases.count + 1)>"
+      aliases[id] = alias
+      normalized = normalized.replacingOccurrences(of: id, with: alias)
+    }
+  }
+  return normalized
 }

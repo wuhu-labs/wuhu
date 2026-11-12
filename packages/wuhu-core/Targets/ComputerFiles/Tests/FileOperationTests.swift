@@ -9,7 +9,6 @@ import Dispatch
 import Fetch
 import FileSearch
 import enum JSONValue.JSONValue
-import OperationClient
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -20,13 +19,13 @@ import Testing
   /// Runs one operation of `kind` to its end and returns its output on its one output channel.
   func run(_ input: JSONValue, kind: String, channel _: String, files: ComputerFileSystem) async throws -> (Data, [JSONValue], Ending) {
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
-    let operations = try machineOperations(agent.handler)
+    let operations = AgentWire(agent.handler)
     return try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
       defer { group.cancelAll() }
-      let operation = try await operations.open(.init(scope: "test", key: UUID().uuidString), machine: "disk", start: .init(kind: kind, input: input))
+      let operation = try await operations.start(.init(kind: kind, input: input))
       let result = try await operation.drain()
-      await operations.shutdown(); await agent.shutdown()
+      await agent.shutdown()
       return result
     }
   }
@@ -56,34 +55,26 @@ import Testing
   @Test func fullReadWindowSuspendsEffectsAndControlStopStillAnswers() async throws {
     let files = FakeFiles(data: Data(repeating: 42, count: 1024 * 1024))
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
-    let operations = try machineOperations(agent.handler)
+    let operations = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      // Nobody reads the output: the machine's window and the server's retained window fill, then reads stop.
-      let operation = try await operations.open(.init(scope: "full", key: "one"), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/file"]))
-      let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(10))
-      // The server's window is full once it has no room for another poll; the machine's then fills, and reads hold still.
-      func serverFull() async -> Bool {
-        let record = await operation.record
-        guard let window = record.outputChannels.first?.windowBytes else { return false }
-        return record.retainedBytes("data") + min(record.description.limits.pollBytes, window) > window
+      let operation = try await operations.start(.init(kind: "read.v1", input: ["path": "/file"]))
+      let description = try await operations.describe()
+      let channel = try #require(description.kinds.first { $0.name == "read.v1" }?.outputChannels.first)
+      let expectedReads = channel.windowBytes / 65536 + 1
+      for _ in 0 ..< 10000 {
+        if await files.reads == expectedReads { break }
+        await Task.yield()
       }
-      while await !serverFull(), clock.now < deadline { try await clock.sleep(for: .milliseconds(10)) }
-      #expect(await serverFull())
-      var reads = -1; var steady = 0
-      while steady < 3, clock.now < deadline {
-        let now = await files.reads
-        steady = now == reads ? steady + 1 : 0
-        reads = now
-        try await clock.sleep(for: .milliseconds(50))
-      }
-      #expect(reads >= 5)
-      try await clock.sleep(for: .milliseconds(25))
-      #expect(await files.reads == reads)
-      #expect(await operation.record.snapshot?.verdict == nil)
+      #expect(await files.reads == expectedReads)
+      let snapshot = try await operation.poll([.init(name: "channel", value: "data"), .init(name: "after", value: "0")])
+      #expect(snapshot.verdict == nil)
+      #expect(snapshot.payload?.data?.count == min(description.limits.pollBytes, channel.windowBytes))
+      for _ in 0 ..< 100 { await Task.yield() }
+      #expect(await files.reads == expectedReads)
       try await operation.stop("testStop")
       #expect(try await operation.verdict().tag == .stopped)
-      await operations.shutdown(); await agent.shutdown()
+      await agent.shutdown()
     }
   }
 
@@ -117,7 +108,8 @@ extension FileOperationTests {
     #expect(found.cursor == nil)
     let grepped = try await page(.init(mode: .grep, pattern: "needle", root: root, scope: "test", limit: 1))
     #expect(grepped.hits == [.init(path: root + "/a.txt", line: 2, text: "needle")])
-    let rest = try await page(.init(mode: .grep, pattern: "needle", root: root, scope: "test", limit: 1, step: try #require(grepped.cursor)))
+    let step = try #require(grepped.cursor)
+    let rest = try await page(.init(mode: .grep, pattern: "needle", root: root, scope: "test", limit: 1, step: step))
     #expect(rest.hits == [.init(path: root + "/sub/b.txt", line: 1, text: "needle")])
     #expect(rest.cursor == nil)
   }
@@ -274,16 +266,16 @@ extension FileOperationTests {
     defer { disk.release() }
     let time = FileLocalTime()
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: disk.files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
-    let operations = try machineOperations(agent.handler)
+    let operations = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      let operation = try await operations.open(.init(scope: "stall", key: action), machine: "disk", start: .init(kind: "search.v1", input: json(SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test"))))
+      let operation = try await operations.start(.init(kind: "search.v1", input: json(SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test"))))
       for await _ in disk.entered {}
       if action == "stop" { try await operation.stop("testStop") } else { time.advance(.seconds(61)) }
       let end = try await operation.verdict()
       #expect(end.tag == .stopped)
       #expect(end.reason == (action == "stop" ? "testStop" : "leaseExpired"))
-      await agent.shutdown(); await operations.shutdown()
+      await agent.shutdown()
     }
   }
 
@@ -295,16 +287,16 @@ extension FileOperationTests {
     let files = ComputerFileSystem(status: { _ in throw OperationError(.fileUnavailable) }, read: { _, _, _ in throw OperationError(.fileUnavailable) }, search: { _ in source })
     let time = FileLocalTime()
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
-    let operations = try machineOperations(agent.handler)
+    let operations = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      let operation = try await operations.open(.init(scope: "regex-stop", key: action), machine: "disk", start: .init(kind: "search.v1", input: json(SearchQuery(mode: .grep, pattern: "(a+)+$", root: PathologicalLine.path, scope: "test"))))
+      let operation = try await operations.start(.init(kind: "search.v1", input: json(SearchQuery(mode: .grep, pattern: "(a+)+$", root: PathologicalLine.path, scope: "test"))))
       await source.reading.wait()
       if action == "stop" { try await operation.stop("callerDeadline") } else { time.advance(.seconds(61)) }
       let end = try await operation.verdict()
       #expect(end.tag == .stopped)
       #expect(end.reason == (action == "stop" ? "callerDeadline" : "leaseExpired"))
-      await agent.shutdown(); await operations.shutdown()
+      await agent.shutdown()
     }
   }
 }

@@ -69,34 +69,7 @@ public enum Wire {
     ]
   }
 
-  // Rehydration by declared column type (SPEC.md): a json column's stored
-  // canonical JSON parses back to its value, a boolean column's 0/1 becomes
-  // true/false. Expression columns carry no decltype and keep storage class.
-  static func cell(_ cell: Cell, decltype: String?) -> JSONValue {
-    switch (decltype, cell) {
-    case let ("JSON_TEXT", .text(stored)):
-      guard let value = JSONValue.parse(stored) else {
-        return .string(stored)
-      }
-      return value
-    case let ("BOOLEAN", .integer(flag)):
-      return .bool(flag != 0)
-    case (_, .null): return .null
-    case let (_, .integer(value)): return .integer(Int(value))
-    case let (_, .real(value)): return .number(value)
-    case let (_, .text(value)): return .string(value)
-    case let (_, .blob(bytes)): return .string(Data(bytes).base64EncodedString())
-    }
-  }
-
-  public static func queryOutput(_ rows: Rows) -> JSONValue {
-    object([
-      ("columns", .array(rows.columns.map(JSONValue.string))),
-      ("rows", .array(rows.rows.map { row in
-        .array(zip(row, rows.decltypes).map { cell($0, decltype: $1) })
-      })),
-    ])
-  }
+  public static func queryOutput(_ rows: Rows) -> JSONValue { rows.json }
 
   // The typed rule: a json column's value arrives as {"json": v} so a
   // stored JSON string never reads as text, a blob as {"blob": base64}, a
@@ -127,6 +100,25 @@ public enum Wire {
   public static func failure(_ error: any Error) -> ToolRunError {
     if let error = error as? ToolRunError { return error }
     if let error = error as? SpaceError { return failure(error) }
+    if let error = error as? MachineFileFailure {
+      switch error {
+      case let .operation(error):
+        let code: ErrorCode = switch error.code {
+        case .unknownKind: .unknownKind
+        case .invalidInput, .invalidOffset, .inputTooLarge: .invalidArgument
+        case .unsupportedProtocol: .unsupported
+        case .machineNotAuthorized, .credentialExpired: .unauthorized
+        case .fileChanged, .operationExists, .invocationConflict: .conflict
+        case .unknownMachine: .notFound
+        default: .unavailable
+        }
+        return .failed(code: code, message: "\(error.code.rawValue): \(error.message)", hint: nil)
+      case let .rangeLost(offset):
+        return .failed(code: .unavailable, message: "rangeLost: Machine file range lost at offset \(offset)", hint: nil)
+      case .outcomeUnknown:
+        return .failed(code: .unavailable, message: "outcomeUnknown: Machine file mutation ended without its result and was not repeated: read the path to see whether it applied before retrying", hint: nil)
+      }
+    }
     if let error = error as? FrontmatterError {
       return switch error {
       case let .malformed(detail): .failed(code: .invalidArgument, message: "malformed frontmatter: \(detail)", hint: nil)
@@ -224,6 +216,8 @@ public enum Wire {
       .failed(code: .unauthorized, message: "groupForbidden: group \(group) is not readable from here", hint: nil)
     case let .liveSyntax(path, line, reason):
       .failed(code: .invalidArgument, message: "\(path)\(line.map { ":\($0)" } ?? ""): \(reason)", hint: nil)
+    case let .liveBusy(path):
+      .failed(code: .conflict, message: "\(path) is being edited; try again", hint: nil)
     case let .invalidCellValue(message):
       .failed(code: .invalidArgument, message: message, hint: nil)
     case let .forbiddenWrite(path, group):

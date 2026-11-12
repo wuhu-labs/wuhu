@@ -1,5 +1,4 @@
 import Foundation
-import struct SpaceContract.PixelSize
 import WuhuAI
 
 public struct ContextBudget: Hashable, Sendable, Codable {
@@ -34,23 +33,12 @@ public func estimateTokens(_ text: String) -> Int {
   Int((Double(text.utf8.count) / 4.0).rounded(.up))
 }
 
-extension Transcript {
-  // Usage totals report context size at inference time. Carried items
-  // (index < keptCount) were inferred against the pre-compaction context, so
-  // trusting their usage would re-trigger compaction off its own kept tail
-  // forever. Trust only the last fresh usage; estimate everything after it.
+extension [TranscriptLine] {
+  /// Usage totals report the context at inference time, and only a reply made in this generation has one (`TranscriptLine.Meta`): the last is trusted, everything after it estimated.
   public func estimatedContextTokens(images: ImageLimits) -> Int {
-    var lastKnownTokens = 0
-    var lastUsageIndex = keptCount - 1
-    for index in keptCount ..< items.count {
-      guard case let .assistant(entry) = items[index] else { continue }
-      lastKnownTokens = entry.usage.totalTokens
-      lastUsageIndex = index
-    }
-    let estimated = items[(lastUsageIndex + 1)...]
-      .map { $0.estimatedTokens(images) }
-      .reduce(0, +)
-    return lastKnownTokens + estimated
+    let last = lastIndex { $0.meta != nil }
+    let known = last.map { self[$0].meta!.usage.totalTokens } ?? 0
+    return self[(last.map { $0 + 1 } ?? 0)...].reduce(known) { $0 + $1.message.estimatedTokens(images) }
   }
 
   public func contextFullness(budget: ContextBudget) -> Double {
@@ -58,45 +46,14 @@ extension Transcript {
   }
 }
 
-extension TranscriptItem {
-  // Bytes say nothing about an image's token cost; its pixel size, as the
-  // model will receive it, does.
-  func estimatedTokens(_ images: ImageLimits) -> Int {
-    switch self {
-    case let .assistant(entry):
-      entry.content.map { $0.estimatedTokens(images) }.reduce(0, +)
-    default:
-      estimateTokens(estimationText) + imageSizes.map(images.tokens).reduce(0, +)
+extension Message {
+  public func estimatedTokens(_ images: ImageLimits) -> Int {
+    let content = switch self {
+    case let .user(message): message.content
+    case let .assistant(message): message.content
+    case let .toolResult(message): message.content
     }
-  }
-
-  var imageSizes: [PixelSize?] {
-    switch self {
-    case let .toolResult(result): result.payload.imageSizes
-    case let .direct(message): message.content.modelImages.map(\.pixels)
-    case let .message(message): message.content.modelImages.map(\.pixels)
-    case let .notification(notification): notification.content.modelImages.map(\.pixels)
-    default: []
-    }
-  }
-
-  var estimationText: String {
-    switch self {
-    case let .direct(message):
-      message.header.render() + "\n\n" + message.content.renderedText
-    case let .message(message):
-      message.header.render() + "\n\n" + message.content.renderedText
-    case let .notification(notification):
-      notification.header.render() + "\n\n" + notification.content.renderedText
-    case let .assistant(entry):
-      entry.content.map(\.estimationText).joined(separator: "\n")
-    case let .toolResult(result):
-      result.payload.renderedText
-    case let .bookmark(marker):
-      marker.name ?? "bookmark"
-    case let .generationHead(head):
-      head.snapshot.rendered(running: []) + "\n" + head.summary + "\n" + (head.note ?? "")
-    }
+    return content.reduce(0) { $0 + $1.estimatedTokens(images) }
   }
 }
 
@@ -130,11 +87,6 @@ extension ContentBlock {
 }
 
 extension ToolResultPayload {
-  var imageSizes: [PixelSize?] {
-    guard case let .read(result) = self, let image = result.image else { return [] }
-    return [image.pixels]
-  }
-
   var isFailure: Bool {
     switch self {
     case .failure: true

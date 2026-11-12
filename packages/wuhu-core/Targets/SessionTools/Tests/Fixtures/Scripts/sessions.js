@@ -26,7 +26,7 @@ out.helper = { ...(await shape(helper.id)), requestId: typeof helper.requestId }
 const twins = [await createSession({ title: "twin" }), await createSession({ title: "twin" })]
 out.twins = twins[0].id !== twins[1].id
 
-const infra = await createSession({ title: "Wuhu Infra", topLevel: true, message: "your brief" })
+const infra = await createSession({ title: "Wuhu Infra", topLevel: true })
 names.set(infra.id, "<infra>")
 out.infra = { ...(await shape(infra.id)), requestId: infra.requestId ?? null }
 out.archiveInfra = await settle(archive(infra.id))
@@ -45,7 +45,7 @@ out.request = typeof (await request(worker.id, "do it", { stallSeconds: 600 })).
 out.verbs = [
   await settle(interrupt(worker.id)),
   await settle(resume(worker.id)),
-  await settle(archive(worker.id)),
+  await settle(archive(worker.id, { force: true })),
   await settle(unarchive(worker.id)),
   await settle(setTags(me, ["self"])),
 ]

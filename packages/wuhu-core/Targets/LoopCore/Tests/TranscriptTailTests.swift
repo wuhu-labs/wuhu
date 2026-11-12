@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -50,7 +54,7 @@ import struct WuhuAI.ToolCall
       var config = makeConfig(inference: { try await script($0) })
       config.executeTool = { invocation in
         let payload = ToolResultPayload.read(.init(path: repo, revision: .journal(1), content: invocation.call.id))
-        guard invocation.call.id == "call_0" else { return ToolOutcome(payload: payload) }
+        guard invocation.call.arguments == .object(["path": .string(repo + "/a")]) else { return ToolOutcome(payload: payload) }
         return ToolOutcome(payload: payload, context: ScopeContext(folders: [repo: repo], deliveredContext: nil, text: "repo manual"))
       }
 
@@ -60,7 +64,7 @@ import struct WuhuAI.ToolCall
         #expect(frame == .reset(0, []))
         try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("second assistant reply") {
-          try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 2
+          try await sessions.lines(sid).assistantLines.count == 2
         }
         let stored = try await sessions.lines(sid, generation: 0)
         var heard: [StoredTranscriptLine] = []
@@ -72,7 +76,7 @@ import struct WuhuAI.ToolCall
           heard += lines
         }
         #expect(heard == stored)
-        #expect(heard.map { $0.key.prefix { $0 != ":" } } == ["message", "attempt", "call", "call", "attempt"])
+        #expect(heard.map { $0.key.prefix { $0 != ":" } } == ["message", "attempt", "call", "call", "subscription", "attempt"])
       }
     }
   }

@@ -35,9 +35,8 @@ import Testing
         try await harness.deliver("start-the-script", to: session)
         #expect(try await realPollUntil {
           await clock.advance(by: .seconds(1))
-          guard try await harness.store.record(session).hold == .interrupted,
-                case let .kernel(transcript) = try await harness.store.hydrate(session).transcript else { return false }
-          return transcript.items.contains { if case .toolResult = $0 { true } else { false } }
+          guard try await harness.store.record(session).hold == .interrupted else { return false }
+          return try await harness.store.testLines(session).contains { $0.role == .toolResult }
         }, "the interrupt returned")
         try await harness.deliver("sent-after-the-interrupt", to: session)
         try await harness.runtime.execution.resume(session)

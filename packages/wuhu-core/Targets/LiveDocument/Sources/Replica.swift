@@ -76,6 +76,7 @@ public final class LiveReplica {
     } catch {
       throw .invalidUpdate(String(describing: error))
     }
+    precondition(!self.doc.isShallow(), "a retained document must have complete history")
   }
 
   /// The agent view.
@@ -98,6 +99,15 @@ public final class LiveReplica {
     do { theirs = try VersionVector.decode(bytes: versionVector) } catch { throw .invalidVersion }
     guard !theirs.includesVv(other: self.doc.oplogVv()) else { return nil }
     do { return try self.doc.export(mode: .updates(from: theirs)) } catch { throw .invalidUpdate(String(describing: error)) }
+  }
+
+  /// Client frames must leave complete history. A failed import may mutate the replica; the caller must discard it.
+  public func importClientUpdate(_ bytes: Data) throws(LiveError) -> Bool {
+    let changed = try importUpdate(bytes)
+    guard !self.doc.isShallow() else {
+      throw .invalidUpdate("a client update cannot install a shallow history")
+    }
+    return changed
   }
 
   /// Returns whether the update added anything.

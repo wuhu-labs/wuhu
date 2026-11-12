@@ -1,3 +1,4 @@
+import Synchronization
 import Testing
 import Wuwei
 
@@ -86,6 +87,107 @@ struct Racer {
   }
 }
 
+@Job
+struct CancellationAnswer {
+  static let schema = ["CREATE TABLE answer (value TEXT NOT NULL)"]
+  typealias Message = Never
+
+  struct Params: Codable {
+    let effect: Bool
+    let replyTo: Recipient<Sink.Message>
+  }
+
+  mutating func start() async throws -> Outcome {
+    try db.execute("INSERT INTO answer VALUES ('started')")
+    do {
+      if ctx.params.effect {
+        let valve = ctx.dependency(Valve.self)
+        try await ctx.effect { try await valve.wait("answer") }
+      } else {
+        _ = try await ctx.receive(within: .seconds(60))
+      }
+    } catch is CancellationError {
+      try db.execute("INSERT INTO answer VALUES ('cancelled')")
+      return .done(sending: .total(1), to: ctx.params.replyTo)
+    }
+    return .notDone
+  }
+
+  func answers() -> [String] {
+    db.rows("SELECT value FROM answer").map { $0[0].text! }
+  }
+}
+
+/// Races a valve for a message: the body finishes under cancellation when `finishes`, and is ended by it otherwise.
+@Job
+struct CancelledRace {
+  static let schema = ["CREATE TABLE answer (value TEXT NOT NULL)"]
+
+  struct Params: Codable {
+    let finishes: Bool
+  }
+
+  enum Message: Codable, Equatable {
+    case stop
+  }
+
+  mutating func start() async throws -> Outcome {
+    let valve = ctx.dependency(Valve.self)
+    let finishes = ctx.params.finishes
+    do {
+      switch try await ctx.race({ _, _ in
+        if finishes { await valve.pass("work") } else { try await valve.wait("work") }
+        return 42
+      }, until: { $0 == .stop }) {
+      case let .finished(value): try db.execute("INSERT INTO answer VALUES (?)", .text("finished \(value)"))
+      case .message: try db.execute("INSERT INTO answer VALUES ('stopped')")
+      }
+    } catch is CancellationError {
+      try db.execute("INSERT INTO answer VALUES ('cancelled')")
+    }
+    return .done
+  }
+
+  func answers() -> [String] {
+    db.rows("SELECT value FROM answer").map { $0[0].text! }
+  }
+}
+
+/// Holds before its race and inside the raced body: what the mail a quiesce leaves behind is about.
+@Job
+struct BufferedMailRace {
+  static let schema = ["CREATE TABLE log (text TEXT NOT NULL)"]
+
+  struct Params: Codable {
+    let enter: String
+    let work: String
+  }
+
+  enum Message: Codable, Equatable, Sendable {
+    case stop
+    case noise
+  }
+
+  mutating func start() async throws -> Outcome {
+    let valve = ctx.dependency(Valve.self)
+    let enter = ctx.params.enter
+    let work = ctx.params.work
+    try await ctx.effect { await valve.pass(enter) }
+    switch try await ctx.race({ _, _ in
+      await valve.pass(work)
+      return 42
+    }, until: { $0 == .stop }) {
+    case .finished: try db.execute("INSERT INTO log VALUES ('finished')")
+    case .message: try db.execute("INSERT INTO log VALUES ('stopped')")
+    }
+    return .notDone
+  }
+
+  func log() -> [String] {
+    db.rows("SELECT text FROM log").map { $0[0].text! }
+  }
+}
+
 @Suite struct JobTests {
   let world = World()
   let tally = Tally.ID("t")
@@ -97,6 +199,106 @@ struct Racer {
 
   func boots(_ worker: Worker) -> [String] {
     worker.job(tally).boots()
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func aCancelledStartCommitsItsLastWriteAndAnswer(shared: Bool, effect: Bool) throws {
+    let world = World(shared: shared)
+    let valve = Valve()
+    var dependencies = Dependencies()
+    dependencies.register(valve)
+    let a = try world.node("a", [.job(CancellationAnswer.self)], dependencies: dependencies)
+    let job = CancellationAnswer.ID("answer")
+    try a.worker.create(job, params: .init(effect: effect, replyTo: sink.recipient))
+    world.run(for: .seconds(1))
+    #expect(a.worker.job(job).answers() == ["started"])
+    if effect { #expect(valve.waitingLabels == ["answer"]) }
+
+    let quiesced = Mutex(false)
+    Task(executorPreference: a.process) {
+      await a.worker.quiesce()
+      #expect(a.worker.job(job).answers() == ["started", "cancelled"])
+      #expect(a.worker.hasMail(for: sink.recipient))
+      quiesced.withLock { $0 = true }
+    }
+    world.run(for: .seconds(1))
+    #expect(quiesced.withLock { $0 })
+    #expect(valve.waitingLabels.isEmpty)
+    let b = try world.node("b", [.job(CancellationAnswer.self), .cell(Sink.self)], starts: false)
+    #expect(b.worker.job(job).answers() == ["started", "cancelled"])
+    #expect(b.worker.hasMail(for: sink.recipient))
+    a.worker.release()
+    b.worker.start()
+    world.run(for: .seconds(15))
+    #expect(b.worker.cell(sink).totals() == [1])
+    #expect(b.worker.job(job).answers() == ["started", "cancelled"])
+    #expect(!b.worker.hasMail(for: sink.recipient))
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func aRaceUnderCancellationEndsWithTheBody(shared: Bool, finishes: Bool) throws {
+    let world = World(shared: shared)
+    let valve = Valve()
+    var dependencies = Dependencies()
+    dependencies.register(valve)
+    let a = try world.node("a", [.job(CancelledRace.self)], dependencies: dependencies)
+    let job = CancelledRace.ID("race")
+    try a.worker.create(job, params: .init(finishes: finishes))
+    world.run(for: .seconds(1))
+    #expect(valve.waitingLabels == ["work"])
+
+    let quiesced = Mutex(false)
+    Task(executorPreference: a.process) {
+      await a.worker.quiesce()
+      quiesced.withLock { $0 = true }
+    }
+    world.run(for: .milliseconds(100))
+    valve.open("work")
+    world.run(for: .seconds(1))
+    #expect(quiesced.withLock { $0 })
+    #expect(a.worker.job(job).answers() == [finishes ? "finished 42" : "cancelled"])
+  }
+
+  @Test(arguments: [BufferedMailRace.Message.stop, .noise])
+  func aCancelledRaceLeavesBufferedMailForTheNextStart(message: BufferedMailRace.Message) throws {
+    let world = World()
+    let valve = Valve()
+    var dependencies = Dependencies()
+    dependencies.register(valve)
+    let a = try world.node("a", [.job(BufferedMailRace.self)], dependencies: dependencies)
+    let job = BufferedMailRace.ID("mail")
+    try a.worker.create(job, params: .init(enter: "enter", work: "work"))
+    world.run(for: .seconds(1))
+    #expect(valve.waitingLabels == ["enter"])
+
+    a.worker.send(message, to: job)
+    world.run(for: .milliseconds(10))
+
+    let quiesced = Mutex(false)
+    Task(executorPreference: a.process) {
+      await a.worker.quiesce()
+      quiesced.withLock { $0 = true }
+    }
+    world.run(for: .milliseconds(100))
+    valve.open("enter")
+    world.run(for: .milliseconds(100))
+    valve.open("work")
+    world.run(for: .seconds(1))
+    #expect(quiesced.withLock { $0 })
+    #expect(a.worker.job(job).log() == ["finished"])
+    #expect(a.worker.hasMail(for: job.recipient))
+
+    a.worker.release()
+    let b = try world.node("b", [.job(BufferedMailRace.self)], dependencies: dependencies, starts: false)
+    #expect(b.worker.hasMail(for: job.recipient))
+    b.worker.start()
+    world.run(for: .seconds(1))
+    valve.open("enter")
+    world.run(for: .milliseconds(100))
+    valve.open("work")
+    world.run(for: .seconds(15))
+    #expect(!b.worker.hasMail(for: job.recipient))
+    #expect(b.worker.job(job).log() == ["finished", message == .stop ? "stopped" : "finished"])
   }
 
   @Test func aJobRepliesAndIsDoneForGood() throws {

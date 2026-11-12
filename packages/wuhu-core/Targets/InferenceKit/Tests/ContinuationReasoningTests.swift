@@ -1,7 +1,11 @@
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import InferenceKit
 import JSONValue
 import ModelProviders
@@ -28,34 +32,30 @@ import WuhuAI
     #expect(!body.jsonString().contains("signed-thinking"))
   }
 
-  @Test(arguments: [nil, "replay-handoff", "model-route", "legacy-handoff"] as [String?], [false, true])
+  @Test(arguments: [nil, "replay-handoff", "model-route"] as [String?], [false, true])
   func miMoAcrossPortableBoundaryKeepsConfiguredEffort(source: String?, signed: Bool) async throws {
-    var transcript = history(signed: signed, carried: true, scope: "previous-account")
-    if let source { transcript.append(boundaryNotice(source)) }
-    let body = try await emittedRequest(transcript, claude: false)
+    var lines = history(signed: signed, carried: true, scope: "previous-account")
+    if let source { lines += boundaryNotice(source) }
+    let body = try await emittedRequest(lines, claude: false)
     #expect(body.object?["thinking"]?.object?["type"]?.stringValue == "adaptive")
   }
 
-  /// A non-Claude model on an Anthropic-dialect host is not under Claude's
-  /// rule: the dialect never decides it.
   @Test(arguments: [nil, "replay-handoff", "model-route"] as [String?])
   func nonClaudeModelOnAnthropicHostKeepsConfiguredEffort(source: String?) async throws {
-    var transcript = history(signed: true, carried: true, scope: "previous-account")
-    if let source { transcript.append(boundaryNotice(source)) }
+    var lines = history(signed: true, carried: true, scope: "previous-account")
+    if let source { lines += boundaryNotice(source) }
     let resolved = try await catalogModel(dialect: "anthropic", baseURL: "https://claude-format.invalid/v1", model: "glm-5.1")
     #expect(!resolved.isClaude)
-    let body = try await emittedRequest(transcript, resolved: resolved)
+    let body = try await emittedRequest(lines, resolved: resolved)
     #expect(body.object?["thinking"]?.object?["type"]?.stringValue == "adaptive")
   }
 
-  /// Claude served by a proxy host is still under Claude's rule: the host
-  /// never decides it.
   @Test func claudeModelBehindProxyHostDowngradesAfterMidTurnSwitch() async throws {
-    var transcript = history(signed: true, carried: true, scope: "previous-account")
-    transcript.append(boundaryNotice("replay-handoff"))
+    var lines = history(signed: true, carried: true, scope: "previous-account")
+    lines += boundaryNotice("replay-handoff")
     let resolved = try await catalogModel(dialect: "anthropic", baseURL: "https://egress.invalid/anthropic", model: "claude-sonnet-4-6")
     #expect(resolved.isClaude)
-    let body = try await emittedRequest(transcript, resolved: resolved)
+    let body = try await emittedRequest(lines, resolved: resolved)
     #expect(body.object?["thinking"] == nil)
     #expect(!body.jsonString().contains("signed-thinking"))
   }
@@ -74,32 +74,31 @@ import WuhuAI
 
   @Test(arguments: [SystemNotification.Kind.timer, .spaceObservation, .context])
   func notificationStartsFreshReasoningTurn(kind: SystemNotification.Kind) async throws {
-    var transcript = history(signed: false, carried: true)
-    transcript.append(.notification(.init(id: UUID(), timestamp: Date(), kind: kind, subscriptionID: .init(kind == .context ? "cache-warming" : "trigger"), content: .init(text: "fresh input"))))
-    let body = try await emittedRequest(transcript)
+    var lines = history(signed: false, carried: true)
+    lines += TranscriptItem.notification(.init(id: UUID(), timestamp: Date(), kind: kind, subscriptionID: .init(kind == .context ? "cache-warming" : "trigger"), content: .init(text: "fresh input"))).lines(session: .init("continuation-test"))
+    let body = try await emittedRequest(lines)
     #expect(body.object?["thinking"]?.object?["type"]?.stringValue == "adaptive")
   }
 
-  @Test(arguments: ["replay-handoff", "model-route", "legacy-handoff", "legacy-route", "empty-context"])
+  @Test(arguments: ["replay-handoff", "model-route"])
   func onlySyntheticBoundaryNoticesPreserveSuppression(source: String) async throws {
-    var transcript = history(signed: false, carried: true)
-    transcript.append(boundaryNotice(source))
-    let body = try await emittedRequest(transcript)
+    var lines = history(signed: false, carried: true)
+    lines += boundaryNotice(source)
+    let body = try await emittedRequest(lines)
     #expect(body.object?["thinking"] == nil)
   }
 
-  private func boundaryNotice(_ source: String) -> TranscriptItem {
-    let text: String
-    switch source {
-    case "legacy-handoff": text = "Portable replay handoff completed. Earlier tool calls have their committed receipts; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the full carried input; re-read files/history as needed."
-    case "legacy-route": text = "Model group work moved a → b (quota). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."
-    case "empty-context": text = ""
-    default: text = "boundary continuation"
-    }
-    return .notification(.init(id: UUID(), timestamp: Date(), kind: .context, subscriptionID: .init(source.hasPrefix("legacy-") || source == "empty-context" ? "context" : source), content: .init(text: text)))
+  @Test func conversationMessageStartsAFreshReasoningTurn() async throws {
+    let lines = history(signed: false, carried: true) + [TranscriptLine(at: Date(), key: "message:fresh", message: .user(.init(content: [.text("continue")])))]
+    let body = try await emittedRequest(lines)
+    #expect(body.object?["thinking"]?.object?["type"]?.stringValue == "adaptive")
   }
 
-  private func emittedRequest(_ transcript: Transcript, scope: String? = "scope", claude: Bool = true, resolved: ResolvedModel? = nil) async throws -> JSONValue {
+  private func boundaryNotice(_ source: String) -> [TranscriptLine] {
+    TranscriptItem.notification(.init(id: UUID(), timestamp: Date(), kind: .context, subscriptionID: .init(source), content: .init(text: "boundary continuation"))).lines(session: .init("continuation-test"))
+  }
+
+  private func emittedRequest(_ lines: [TranscriptLine], scope: String? = "scope", claude: Bool = true, resolved: ResolvedModel? = nil) async throws -> JSONValue {
     let bodies = Mutex<[JSONValue]>([])
     try await withDependencies {
       $0.continuousClock = ContinuousClock()
@@ -132,19 +131,16 @@ import WuhuAI
       }
     } operation: {
       let model = resolved ?? self.model(scope: scope, claude: claude)
-      _ = try await InferenceExecutor(session: .init("continuation-test"), model: model, systemPrompt: "test", tools: []).run(attemptID: UUID(), transcript: transcript)
+      _ = try await InferenceExecutor(session: .init("continuation-test"), model: model, systemPrompt: "test", tools: []).run(attemptID: UUID(), lines: lines)
     }
     return try #require(bodies.withLock { $0.first })
   }
 
-  /// `claude` picks a Claude model id; otherwise the same Anthropic-dialect
-  /// endpoint at the same host serves a MiMo model.
   private func model(scope: String?, claude: Bool) -> ResolvedModel {
     let name = claude ? "claude-test" : "mimo-v2.6-pro"
     return .init(specifier: .init(provider: "testing", model: name, effort: "high"), endpoint: AnthropicEndpoint(model: name, replayScope: scope, baseURL: URL(string: "http://localhost:1")!, apiKey: "fake"), budget: .init(maxInput: 10000, maxOutput: 1000), replayScope: scope)
   }
 
-  /// A model resolved from a one-provider catalog, as a session would get it.
   private func catalogModel(dialect: String, baseURL: String, model: String) async throws -> ResolvedModel {
     let document = try ModelsDocument(json: Data("""
     {"p":{"dialect":"\(dialect)","baseURL":"\(baseURL)","opaqueReplay":"affine","models":{"\(model)":{"maxInput":10000,"maxOutput":1000,"efforts":["high"],"defaultEffort":"high"}}}}
@@ -156,13 +152,14 @@ import WuhuAI
     return resolved
   }
 
-  private func history(signed: Bool, carried: Bool, scope: String = "scope") -> Transcript {
+  private func history(signed: Bool, carried: Bool, scope: String = "scope") -> [TranscriptLine] {
     let call = ToolCall(id: "call", name: "read", arguments: .object([:]))
+    let user = TranscriptLine(at: Date(), key: "message:initial", message: .user(.init(content: [.text("test")])))
     let items: [TranscriptItem] = [
-      .direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: .init(text: "test"))),
       .assistant(.init(id: UUID(), timestamp: Date(), content: (signed ? [.reasoning(.encrypted(.init(providerID: "anthropic", model: "m", summary: "reason", opaque: "signed-thinking", replayScope: scope)))] : []) + [.toolCall(call)], stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 2), toolCallIDs: ["call": .init("call")], replayBinding: .init(identity: "scope", epoch: "route"))),
       .toolResult(.init(id: UUID(), timestamp: Date(), provenance: .toolCall(.init("call")), payload: .failure(.init(message: "receipt")))),
     ]
-    return Transcript(items: items, keptCount: carried ? items.count : 0)
+    let lines = [user] + items.flatMap { $0.lines(session: .init("continuation-test")) }
+    return carried ? lines.compactMap { $0.carried(portable: false) } : lines
   }
 }

@@ -1,4 +1,3 @@
-import Foundation
 import SessionDomain
 import struct SpaceContract.SessionContext
 import SpaceCore
@@ -7,12 +6,12 @@ func sessionContext(
   _ record: SessionRecord,
   store: SessionStore,
   budget: @Sendable (SessionID) async -> ContextBudget,
-) async -> SessionContext? {
+) async throws -> SessionContext? {
   guard !record.executor.isRetired else { return nil }
-  guard let transcript = try? await store.transcript(record.id) else { return nil }
+  let lines = try await store.transcriptLines(record.id).map { try $0.line() }
   let budget = await budget(record.id)
   let maxTokens = budget.usableTokens
-  let used = transcript.estimatedContextTokens(images: budget.images)
+  let used = lines.estimatedContextTokens(images: budget.images)
   return SessionContext(
     usedTokens: used,
     maxTokens: maxTokens,

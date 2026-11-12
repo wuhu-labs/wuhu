@@ -15,7 +15,7 @@ import Testing
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
         session: try await makeSession(space),
       )
 
@@ -32,7 +32,7 @@ import Testing
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
         session: try await makeSession(space),
       )
 
@@ -53,7 +53,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: try await makeSession(space),
       )
 
@@ -71,7 +71,7 @@ import Testing
       let mini = try await space.addMachine(name: "mac_mini")
       let anonymous = try await space.addMachine(name: nil)
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: try await makeSession(space),
       )
 

@@ -22,10 +22,8 @@ extension Conversations {
     let shown = try Bool.fetchOne(
       db,
       sql: """
-      SELECT EXISTS (SELECT 1 FROM session_pointers p
-        JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
-        WHERE p.session_id = ? AND p.generation = ? AND c.payload LIKE '{"message":%'
-          AND json_extract(c.payload, '$.message._0.conversationID') = ?)
+      SELECT EXISTS (SELECT 1 FROM session_lines l JOIN messages m ON l.key = 'message:' || m.id
+        WHERE l.session_id = ? AND l.generation = ? AND m.conversation_id = ?)
       """,
       arguments: [key, generation, conversation.rawValue],
     ) ?? false
@@ -41,16 +39,7 @@ extension Sessions {
   /// creation without a head began with the session, so nothing it posted
   /// predates it.
   static func generationStart(_ key: String, generation: Int64, in db: Database) throws -> Date? {
-    guard let payload = try String.fetchOne(
-      db,
-      sql: """
-      SELECT c.payload FROM session_pointers p
-      JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
-      WHERE p.session_id = ? AND p.generation = ? AND p.position = 0
-      """,
-      arguments: [key, generation],
-    ), case let .generationHead(head) = try decode(TranscriptItem.self, from: payload) else { return nil }
-    return head.timestamp
+    try lineText(key, generation: generation, lineKey: LineKey.head, in: db)?.at
   }
 
   /// The sender as the recipient is shown it, named by today's handle and device name.

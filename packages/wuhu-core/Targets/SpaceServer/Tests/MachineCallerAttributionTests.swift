@@ -1,4 +1,5 @@
 import ControlledTime
+import Dependencies
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -43,34 +44,33 @@ private struct SilentExec: OperationKind {
     let seen = Mutex<[AdmittedStart]>([])
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { start in seen.withLock { $0.append(start) } })
     let hub = MachineHub(space: space)
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
-    await hub.configureV2(service)
     let expected = StartRequest.Caller(session: session.rawValue, title: "Backend coder", group: "shared")
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
-      tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      let seam = machineSeam(hub: hub)
-      // A tool call (the executor sets the task-local) and a script (an attributed seam) both name the session.
-      _ = try await MachineSeam.$caller.withValue(session) { try await seam.vfs(record.id, .read(path: file.path)) }
-      _ = try await seam.attributed(to: session).search(record.id, SearchQuery(mode: .grep, pattern: "needle", root: file.path, scope: "test"))
-      // No session: no caller, and a session that can't be read doesn't fail the start.
-      _ = try await seam.vfs(record.id, .stat(path: file.path))
-      _ = try await seam.attributed(to: SessionID(rawValue: "gone-gone-gone")).vfs(record.id, .stat(path: file.path))
-      #expect(seen.withLock { $0.map(\.kind) } == ["read.v1", "search.v1", "stat.v1", "stat.v1"])
-      #expect(seen.withLock { $0.map(\.caller) } == [expected, expected, nil, nil])
+      try await withMachineBox(space: space, hub: hub, machine: record.id, client: FetchClient { try await agent.handler($0) }) {
+        let seam = machineSeam(hub: hub)
+        // A tool call (the executor sets the task-local) and a script (an attributed seam) both name the session.
+        _ = try await MachineSeam.$caller.withValue(session) { try await seam.vfs(record.id, .read(path: file.path)) }
+        _ = try await seam.attributed(to: session).search(record.id, SearchQuery(mode: .grep, pattern: "needle", root: file.path, scope: "test"))
+        // No session: no caller, and a session that can't be read doesn't fail the start.
+        _ = try await seam.vfs(record.id, .stat(path: file.path))
+        _ = try await seam.attributed(to: SessionID(rawValue: "gone-gone-gone")).vfs(record.id, .stat(path: file.path))
+        #expect(seen.withLock { $0.map(\.kind) } == ["read.v1", "search.v1", "stat.v1", "stat.v1"])
+        #expect(seen.withLock { $0.map(\.caller) } == [expected, expected, nil, nil])
 
-      // Exec: the relay attributes the exec record's caller.
-      let minted = try await space.mintExec(machine: record.id, caller: session.rawValue, group: .shared)
-      let endpoint = ChannelEndpoint()
-      let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["true"]))
-      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
-      tasks.addTask { await endpoint.run(transport) }
-      await outgoing.closeStdin()
-      for try await event in outgoing.events { if case .exit = event { break } }
-      let exec = try #require(seen.withLock { $0.last })
-      #expect(exec.kind == "exec.v1"); #expect(exec.caller == expected)
-      await agent.shutdown(); await service.shutdown()
+        // Exec: the relay attributes the exec record's caller.
+        let minted = try await space.reserveExec(machine: record.id, caller: session.rawValue, group: .shared)
+        let endpoint = ChannelEndpoint()
+        let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["true"]))
+        let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
+        tasks.addTask { await endpoint.run(transport) }
+        await outgoing.closeStdin()
+        for try await event in outgoing.events { if case .exit = event { break } }
+        let exec = try #require(seen.withLock { $0.last })
+        #expect(exec.kind == "exec.v1"); #expect(exec.caller == expected)
+      }
+      await agent.shutdown()
     }
   }
 
@@ -79,33 +79,33 @@ private struct SilentExec: OperationKind {
     let folder = try ScratchFolder("v2-byte-lane")
     let file = folder.url.appending(path: "notes.txt")
     try Data("needle".utf8).write(to: file)
-    let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-    let harness = try await SessionHarness(execTokens: tokens)
+    let harness = try await SessionHarness(spaceURL: "https://space.test:5530")
+    let tokens = harness.runtime.tokens
     let space = harness.space
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
     let (record, _) = try await space.addMachineV2(name: "lane_v2", group: .shared)
     let seen = Starts()
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
-    await harness.hub.configureV2(service)
-    let exec = try await space.mintExec(machine: record.id, caller: session.rawValue, group: .shared)
-    let bearer = tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
+    let exec = try await space.reserveExec(machine: record.id, caller: session.rawValue, group: .shared)
+    @Dependency(\.date) var date
+    let bearer = try await tokens.credential(session: session, exec: exec.id, timeout: nil, now: date.now).token
     let expected = StartRequest.Caller(session: session.rawValue, title: "Backend coder", group: "shared")
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
-      tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      let lane = "/v1/f\(file.path)?machine=\(record.id.rawValue)"
-      var get = Request(url: URL(string: "http://space" + lane)!)
-      get.headers[.authorization] = "Bearer " + bearer
-      let got = try await harness.api(get)
-      #expect(got.status == .ok)
-      let put = try await harness.put(lane, .string("x"), bearer: bearer)
-      #expect(put.status == .ok)
-      let kinds = seen.all.map(\.kind)
-      #expect(kinds.contains("read.v1")); #expect(kinds.contains("write.v1"))
-      #expect(seen.all.map(\.caller) == Array(repeating: expected, count: kinds.count))
-      await agent.shutdown(); await service.shutdown()
+      try await withMachineBox(space: space, hub: harness.hub, machine: record.id, client: FetchClient { try await agent.handler($0) }) {
+        let lane = "/v1/f\(file.path)?machine=\(record.id.rawValue)"
+        var get = Request(url: URL(string: "http://space" + lane)!)
+        get.headers[.authorization] = "Bearer " + bearer
+        let got = try await harness.api(get)
+        #expect(got.status == .ok)
+        let put = try await harness.put(lane, .string("x"), bearer: bearer)
+        #expect(put.status == .ok)
+        let kinds = seen.all.map(\.kind)
+        #expect(kinds == ["read.v1", "mkdir.v1", "write.v1"])
+        #expect(seen.all.map(\.caller) == Array(repeating: expected, count: kinds.count))
+      }
+      await agent.shutdown()
     }
   }
 
@@ -147,9 +147,7 @@ private struct SilentExec: OperationKind {
     }
   }
 
-  // Once a session's exec is running, a person can't attach to it at all (no stdin, no output under the session's credential);
-  // the session itself reconnects and finishes it.
-  @Test func aSessionOwnedExecRefusesAPersonAndTakesTheSessionsReconnect() async throws {
+  @Test func aSessionOwnedExecRefusesAPersonWhileItIsRunning() async throws {
     try await withExecFixture { space, hub, session, minted, seen in
       let caller = ChannelEndpoint()
       let exec = await caller.startExec(.init(id: minted.id, cwd: "/tmp", command: ["session"]))
@@ -169,15 +167,34 @@ private struct SilentExec: OperationKind {
       var personInbound = personClient.inbound.makeAsyncIterator()
       #expect(await personInbound.next() == nil)
 
-      firstClient.close(); firstRun.cancel(); _ = await (firstLeg.value, firstRun.value)
-      #expect(await hub.admitsCaller(minted, leg: .session(session)))
-      let (secondServer, secondClient) = WebSocket.pair()
-      let secondLeg = Task { await hub.runCallerSession(minted, socket: secondServer, leg: .session(session)) }
-      let secondRun = Task { await caller.run(WebSocketTransport(secondClient)) }
       await exec.closeStdin()
       for try await event in exec.events { if case .exit = event { break } }
       #expect(seen.all.count == 1)
-      secondClient.close(); secondRun.cancel(); _ = await (secondLeg.value, secondRun.value)
+      #expect(await hub.admitsCaller(minted, leg: .session(session)) == false)
+      firstClient.close(); firstRun.cancel(); _ = await (firstLeg.value, firstRun.value)
+    }
+  }
+
+  @Test(arguments: [0.0, -1.0]) func aNonPositiveCallerTimeoutIsRefusedBeforeAdmission(timeout: Double) async throws {
+    try await withExecFixture { space, hub, _, minted, seen in
+      let endpoint = ChannelEndpoint()
+      let exec = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["true"], timeout: timeout))
+      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
+      let caller = Task { await endpoint.run(transport) }
+      defer { transport.close(); caller.cancel() }
+      var stderr = ""
+      var status: MachineContract.ExitStatus?
+      for try await event in exec.events {
+        if case let .output(.stderr, _, bytes) = event { stderr += String(decoding: bytes.bytes, as: UTF8.self) }
+        if case let .exit(value) = event { status = value; break }
+      }
+      #expect(stderr == "invalidInput: Exec timeout must be positive and finite\n")
+      #expect(status == .exited(code: 1))
+      #expect(try await space.execRecord(minted.id)?.terminal == .reaped)
+      let row = try #require(space.worker.cell(MachineCell.ID(minted.machine.rawValue)).operation(minted.id.rawValue))
+      #expect(row.diagnostic?.code == .invalidInput)
+      #expect(row.snapshot?.verdict?.result == nil)
+      #expect(seen.all.isEmpty)
     }
   }
 
@@ -187,16 +204,15 @@ private struct SilentExec: OperationKind {
     let (record, _) = try await space.addMachineV2(name: "forge_v2", group: .shared)
     let seen = Starts()
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
-    let hub = MachineHub(space: space, tokens: ExecTokens(spaceURL: "https://test.invalid"))
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
-    await hub.configureV2(service)
-    let minted = try await space.mintExec(machine: record.id, caller: caller ? session.rawValue : nil, group: .shared)
+    let hub = MachineHub(space: space, tokens: try await testTokens(space: space, spaceURL: "https://test.invalid"))
+    let minted = try await space.reserveExec(machine: record.id, caller: caller ? session.rawValue : nil, group: .shared)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
-      tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      try await body(space, hub, session, minted, seen)
-      await agent.shutdown(); await service.shutdown()
+      try await withMachineBox(space: space, hub: hub, machine: record.id, client: FetchClient { try await agent.handler($0) }) {
+        try await body(space, hub, session, minted, seen)
+      }
+      await agent.shutdown()
     }
   }
 }

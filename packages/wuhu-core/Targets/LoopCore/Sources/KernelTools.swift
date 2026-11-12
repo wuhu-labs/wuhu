@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import SessionDomain
 import enum WuhuAI.Tool
@@ -134,56 +138,6 @@ func decodeArguments<T: Decodable>(_ type: T.Type, from call: ToolCall) throws -
 
 struct BookmarkNotFound: Error {
   var name: String
-}
-
-extension Transcript {
-  func compactCallIndex(_ callID: ToolCallID) -> Int {
-    let index = items.firstIndex { item in
-      guard case let .assistant(entry) = item else { return false }
-      return entry.toolCalls.contains { $0.id == callID.rawValue }
-    }
-    guard let index else {
-      preconditionFailure("compact tool call \(callID.rawValue) is not in the transcript")
-    }
-    return index
-  }
-
-  func compactCall(_ callID: ToolCallID) -> ToolCall {
-    guard case let .assistant(entry) = items[compactCallIndex(callID)], let call = entry.toolCalls.first(where: { $0.id == callID.rawValue }) else {
-      preconditionFailure("compact tool call \(callID.rawValue) is not in the transcript")
-    }
-    return call
-  }
-
-  // Fold everything before the named bookmark; keep from the bookmark's region
-  // up to (excluding) the compact call's assistant entry. The marker itself and
-  // any tool results right after it are skipped: their paired calls get
-  // summarized away and an orphaned tool result is a provider error.
-  func compactKeptRange(callID: ToolCallID, bookmark name: String?) throws -> Range<Int>? {
-    let end = compactCallIndex(callID)
-    guard let name else { return nil }
-    let markerIndex = items[..<end].lastIndex { item in
-      guard case let .bookmark(marker) = item else { return false }
-      return marker.name == name
-    }
-    guard let markerIndex else { throw BookmarkNotFound(name: name) }
-    var start = markerIndex + 1
-    while start < end, isPairedToEarlierCall(items[start]) {
-      start += 1
-    }
-    return start < end ? start ..< end : nil
-  }
-}
-
-private func isPairedToEarlierCall(_ item: TranscriptItem) -> Bool {
-  switch item {
-  case .toolResult, .bookmark:
-    true
-  case let .notification(notification):
-    notification.kind == .context
-  case .direct, .message, .assistant, .generationHead:
-    false
-  }
 }
 
 extension GenerationHead {

@@ -1,7 +1,16 @@
 import Credentials
 import Dependencies
+#if canImport(Darwin)
+  import Darwin
+#else
+  import Glibc
+#endif
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import InferenceKit
 @testable import LoopCore
 import ModelProviders
@@ -86,8 +95,8 @@ import WuhuAI
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
-      let delays = (0 ..< rounds).map { attempt in
-        min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
+      let delays: [Double] = (0 ..< rounds).map { attempt in
+        min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
       try await runService(space, config) { service in
@@ -200,7 +209,7 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(textSSE.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
+        let completed = try await executor.run(attemptID: request.attemptID, lines: request.lines)
         return InferenceReply(message: completed.message, metadata: completed.metadata)
       }
       let script = InferenceScript([step, step])
@@ -219,7 +228,7 @@ import WuhuAI
       }
 
       #expect(calls.value == 2)
-      let entries = try await sessions.hydrate(sid).transcript.kernel.assistantEntries
+      let entries = try await sessions.lines(sid).assistantLines
       #expect(entries.count == 1)
       #expect(abs(script.attempts.value[1].at.timeIntervalSince(anchor) - 1800) < 0.001)
     }

@@ -2,7 +2,6 @@ import enum MachineContract.ExecEvent
 import struct MachineContract.ExecID
 import enum MachineContract.ExecOutputStream
 import enum MachineContract.ExitStatus
-import struct MachineContract.MachineID
 import struct MainHub.ScriptError
 import struct SecretMasking.SecretMasker
 import SessionDomain
@@ -15,15 +14,10 @@ import Synchronization
 let scriptProcessWindow = 1 << 20
 let scriptProcessLimit = 8
 
-// The processes one run_script execution started. They live exactly as long as
-// the execution: `shutdown` kills every exec the script minted, then the
-// drivers stop.
 final class ScriptProcesses: Sendable {
   fileprivate struct State {
     var processes: [ExecID: ScriptProcess] = [:]
     var starting = 0
-    var minted: [ExecID] = []
-    var closed = false
   }
 
   private let state = Mutex(State())
@@ -64,16 +58,6 @@ final class ScriptProcesses: Sendable {
     if let process { launch.yield(process) }
   }
 
-  // Records an exec the script minted; false once the script has shut down,
-  // when the caller must kill it itself.
-  func minted(_ id: ExecID) -> Bool {
-    state.withLock { state in
-      guard !state.closed else { return false }
-      state.minted.append(id)
-      return true
-    }
-  }
-
   func process(_ id: String) throws -> ScriptProcess {
     guard let process = state.withLock({ $0.processes[ExecID(rawValue: id)] }) else {
       throw ScriptError("no process \(id) in this script")
@@ -81,17 +65,9 @@ final class ScriptProcesses: Sendable {
     return process
   }
 
-  func shutdown(kill: @Sendable (ExecID) async throws -> Void) async -> [ExecID] {
-    let minted = state.withLock { state in
-      state.closed = true
-      state.processes = [:]
-      return state.minted
-    }
-    for id in minted {
-      try? await kill(id)
-    }
+  func shutdown() {
+    state.withLock { $0.processes = [:] }
     launch.finish()
-    return minted
   }
 }
 
@@ -145,7 +121,6 @@ final class ScriptProcess: Sendable {
   }
 
   let id: ExecID
-  let machine: MachineID
   let acceptsStdin: Bool
   private let exec: ExecSession
   private let giveBack: @Sendable (Int) -> Void
@@ -153,13 +128,11 @@ final class ScriptProcess: Sendable {
 
   init(
     id: ExecID,
-    machine: MachineID,
     acceptsStdin: Bool,
     exec: ExecSession,
     giveBack: @escaping @Sendable (Int) -> Void,
   ) {
     self.id = id
-    self.machine = machine
     self.acceptsStdin = acceptsStdin
     self.exec = exec
     self.giveBack = giveBack

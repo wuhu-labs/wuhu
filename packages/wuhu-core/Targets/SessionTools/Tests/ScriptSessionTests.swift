@@ -92,8 +92,11 @@ struct ScriptSessionTests {
       },
       prepare: { space, session in _ = try await space.sessions.archive(session, grace: .seconds(3600)) },
     ) { rig in
-      try await rig.run("sessions-archived")
-      try rig.expect("sessions-archived")
+      let failure = Box<String?>(nil)
+      try await rig.command("result(1)") {
+        if case let .failure(text) = $0 { failure.withLock { $0 = text } }
+      }
+      #expect(failure.value?.contains("is archived and may no longer act") == true)
     }
   }
 

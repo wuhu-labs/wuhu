@@ -10,7 +10,8 @@ import SessionDomain
 import struct SpaceContract.ObserverInput
 import struct SpaceContract.ObserverTimerInput
 import struct SpaceContract.SubscriptionObserveInput
-@_spi(SessionObservation) import SpaceCore
+import SpaceCore
+import SpaceFS
 import Testing
 
 // A group's observer through the real firing loop and main's API: it acts as
@@ -124,14 +125,13 @@ import Testing
     try await withToolDeps { time in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/watch.js", Data("export default () => {};".utf8), ifMatch: nil)
-      try await withHandlerFiring(space, configure: { firing in
-        firing.observationStream = { _, _, _ in
-          AsyncThrowingStream { $0.finish(throwing: SpaceError.unknownRelation("/gone.table")) }
-        }
-      }) { _, owner in
+      let gone = try SpacePath(validating: "/gone.table")
+      _ = try await space.createTable(gone, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
+      try await withHandlerFiring(space) { _, owner in
         _ = try await owner.armObserver(.shared, ObserverInput(
-          name: "watch", handler: "/watch.js", observe: SubscriptionObserveInput(sql: "SELECT 1", throttleSeconds: nil), timer: nil, sessionsPerHour: nil,
+          name: "watch", handler: "/watch.js", observe: SubscriptionObserveInput(sql: "SELECT * FROM \"/gone.table\"", throttleSeconds: nil), timer: nil, sessionsPerHour: nil,
         ))
+        try await space.fs(.shared).delete("/gone.table", ifMatch: nil)
         try await untilAdvancing("the observer pauses", time) {
           try await space.sessions.observers(.shared).first?.status == .paused
         }

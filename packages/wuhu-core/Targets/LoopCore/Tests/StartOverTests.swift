@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 @testable import LoopCore
 import SessionDomain
@@ -19,25 +23,29 @@ import Testing
         try db.execute(sql: "UPDATE session_queue SET payload = '{}' WHERE session_id = ? AND id = 2", arguments: [id.rawValue])
       }
       try await sessions.markErrored(id, message: "bad queue")
-      let seen = Box<[Transcript]>([])
+      let seen = Box<[[TranscriptLine]]>([])
       let committed = AsyncStream<Void>.makeStream()
       defer { committed.continuation.finish() }
       try await runService(space, makeConfig(inference: { request in
-        seen.withLock { $0.append(request.transcript) }
+        seen.withLock { $0.append(request.lines) }
         var reply = Fix.reply("recovered")
-        reply.committed = { _, _ in committed.continuation.yield(()) }
+        reply.committed = { _ in committed.continuation.yield(()) }
         return reply
       })) { service in
         _ = try await service.restart(id, executor: nil, note: "Started over.")
         for await _ in committed.stream { break }
         #expect(seen.value.count == 1)
-        let transcript = try #require(seen.value.first)
-        let messages = transcript.items.compactMap { item -> String? in
-          if case let .message(message) = item { return message.content.text }; return nil
-        }
-        #expect(messages == ["first", "last"])
+        let lines = try #require(seen.value.first)
+        let messages = lines.filter { $0.key.hasPrefix("message:") }
+        #expect(messages.map(\.key) == ["message:first", "message:last"])
+        #expect(messages.allSatisfy { $0.role == .user })
+        try #require(messages.count == 2)
+        #expect(messages[0].text.hasSuffix("\n\nfirst"))
+        #expect(messages[1].text.hasSuffix("\n\nlast"))
         #expect(try await sessions.record(id).errorMessage == nil)
         #expect(try await sessions.generationState(id).note?.contains("Dropped 1 queued input(s)") == true)
+        // The commit hook fires as the reply is written; wait for the turn to settle before archiving, whose busy check reads it.
+        try await until("the turn settles") { try await sessions.settledWork(id) }
         try await service.archive(id)
       }
     }
@@ -53,25 +61,22 @@ import Testing
       _ = try await sessions.armSubscription(id, slot: .init(id: .init("timer.keep"), kind: .timer(.cron("* * * * *"), message: "later")), nextFireAt: anchor.addingTimeInterval(60))
       try await sessions.markInterrupted(id)
       try await sessions.enqueue(id, input: Fix.message("waiting before restart"))
-      let seen = Box<[Transcript]>([])
+      let seen = Box<[[TranscriptLine]]>([])
       let committed = AsyncStream<Void>.makeStream()
       defer { committed.continuation.finish() }
       let config = makeConfig(inference: { request in
-        seen.withLock { $0.append(request.transcript) }
+        seen.withLock { $0.append(request.lines) }
         var reply = Fix.reply("done")
-        reply.committed = { _, _ in committed.continuation.yield(()) }
+        reply.committed = { _ in committed.continuation.yield(()) }
         return reply
       })
       try await runService(space, config) { service in
         _ = try await service.restart(id, executor: nil, note: "Started over. Catch up before acting.")
         for await _ in committed.stream { break }
-        let transcript = try #require(seen.value.first)
+        let lines = try #require(seen.value.first)
         #expect(seen.value.count == 1)
-        #expect(transcript.items.contains { if case let .message(message) = $0 { return message.content.text == "waiting before restart" }; return false })
-        let rendered = await transcript.renderRequest(session: id, systemPrompt: "test")
-        let text = rendered.messages.compactMap(\.user).flatMap(\.content).compactMap { block -> String? in
-          if case let .text(text) = block { return text.text }; return nil
-        }.joined(separator: "\n")
+        #expect(lines.contains { $0.key.hasPrefix("message:") && $0.text.hasSuffix("\n\nwaiting before restart") })
+        let text = lines.filter { $0.role == .user }.map(\.text).joined(separator: "\n")
         #expect(text.contains("active subscriptions: timer.keep"))
         #expect(text.contains("Started over. Catch up before acting."))
         #expect(try await sessions.record(id).errorMessage == nil)

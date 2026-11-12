@@ -31,8 +31,8 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
       #expect(try await sessions.generationState(sid).generation == 1)
       #expect(script.count == 2)
       #expect(try await sessions.record(sid).errorMessage == String(describing: compactedPayloadError))
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(transcript.assistantEntries.isEmpty)
+      let lines = try await sessions.lines(sid)
+      #expect(lines.assistantLines.isEmpty)
     }
   }
 
@@ -95,7 +95,7 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
         let context = Context(systemPrompt: request.generation == 0 ? "original" : "compacted", messages: [.user(.init(content: [.text("retained")]))])
         let inference = endpoint.withWebSocket(session: socket, attemptID: request.attemptID.uuidString).inference(context: context)
         let message = try await inference.collect()
-        return InferenceReply(message: message, metadata: Fix.reply("usage").metadata, committed: { _, _ in commits.withLock { $0 += 1 } })
+        return InferenceReply(message: message, metadata: Fix.reply("usage").metadata, committed: { _ in commits.withLock { $0 += 1 } })
       })
       config.invalidateInference = { _ in
         invalidations.withLock { $0 += 1 }
@@ -116,7 +116,7 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
       #expect(commits.value == 1)
       #expect(bodies.value.count == 2)
       #expect(bodies.value.allSatisfy { $0.object?["previous_response_id"] == nil })
-      #expect(try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 1)
+      #expect(try await sessions.lines(sid).assistantLines.count == 1)
     }
   }
 }

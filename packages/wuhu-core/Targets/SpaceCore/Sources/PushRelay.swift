@@ -1,5 +1,11 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
+import StructuredQueries
+import StructuredQueriesSQLite
 
 public struct PushRelayGrant: Hashable, Sendable {
   public var grant: String
@@ -47,84 +53,41 @@ extension Space {
   public func registerPushRelayGrant(_ grant: PushRelayGrant) async throws {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
-      let newest = try Int64.fetchOne(db, sql: "SELECT MAX(n) FROM notifications") ?? 0
-      let existing = try Row.fetchOne(
-        db,
-        sql: """
-        SELECT recipient, device_pubkey, notification_cursor, created_at
-        FROM push_relay_grants WHERE grant_id = ?
-        """,
-        arguments: [grant.grant],
-      )
-      if let existing, existing["device_pubkey"] as String != grant.devicePublicKey {
+      let newest = (try NotificationRow.select { $0.n.max() }.fetchOne(db))! ?? 0
+      let existing = try PushRelayGrantRow.where { $0.grantID.eq(grant.grant) }.fetchOne(db)
+      if let existing, existing.devicePublicKey != grant.devicePublicKey {
         throw PushRelayGrantOwnedElsewhere(grant: grant.grant)
       }
-      let cursor: Int64
-      let createdAt: String
-      if let existing, existing["recipient"] == grant.recipient {
-        cursor = existing["notification_cursor"]
-        createdAt = existing["created_at"]
-      } else {
-        cursor = newest
-        createdAt = now
-      }
-      try db.execute(
-        sql: """
-        INSERT INTO push_relay_grants (
-          grant_id, endpoint, token, platform, recipient, device_pubkey,
-          notification_cursor, consecutive_failures, retry_at, created_at, updated_at
-        ) VALUES (?, ?, ?, 'ios', ?, ?, ?, 0, NULL, ?, ?)
-        ON CONFLICT (grant_id) DO UPDATE SET
-          endpoint = excluded.endpoint,
-          token = excluded.token,
-          recipient = excluded.recipient,
-          device_pubkey = excluded.device_pubkey,
-          notification_cursor = excluded.notification_cursor,
-          consecutive_failures = 0,
-          retry_at = NULL,
-          created_at = excluded.created_at,
-          updated_at = excluded.updated_at
-        """,
-        arguments: [
-          grant.grant, grant.endpoint, grant.token, grant.recipient,
-          grant.devicePublicKey, cursor, createdAt, now,
-        ],
+      let sameRecipient = existing?.recipient == grant.recipient
+      let row = PushRelayGrantRow(
+        grantID: grant.grant, endpoint: grant.endpoint, token: grant.token, platform: "ios", recipient: grant.recipient,
+        devicePublicKey: grant.devicePublicKey, notificationCursor: sameRecipient ? existing!.notificationCursor : newest,
+        consecutiveFailures: 0, retryAt: nil, createdAt: sameRecipient ? existing!.createdAt : now, updatedAt: now,
       )
+      try PushRelayGrantRow.insert { row } onConflict: { $0.grantID } doUpdate: {
+        $0.endpoint = $1.endpoint
+        $0.token = $1.token
+        $0.recipient = $1.recipient
+        $0.devicePublicKey = $1.devicePublicKey
+        $0.notificationCursor = $1.notificationCursor
+        $0.consecutiveFailures = $1.consecutiveFailures
+        $0.retryAt = $1.retryAt
+        $0.createdAt = $1.createdAt
+        $0.updatedAt = $1.updatedAt
+      }.execute(db)
     }
   }
 
   public func removePushRelayGrant(_ grant: String, devicePublicKey: String) async throws {
     try await writer.write { db in
-      try db.execute(
-        sql: "DELETE FROM push_relay_grants WHERE grant_id = ? AND device_pubkey = ?",
-        arguments: [grant, devicePublicKey],
-      )
-    }
-  }
-
-  public func removePushRelayGrant(_ grant: String) async throws {
-    try await writer.write { db in
-      try db.execute(sql: "DELETE FROM push_relay_grants WHERE grant_id = ?", arguments: [grant])
+      try PushRelayGrantRow.where { $0.grantID.eq(grant) && $0.devicePublicKey.eq(devicePublicKey) }.delete().execute(db)
     }
   }
 
   public func pushRelayGrants(recipient: String) async throws -> [PushRelayGrant] {
     try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: """
-        SELECT grant_id, endpoint, token, recipient, device_pubkey
-        FROM push_relay_grants WHERE recipient = ? ORDER BY grant_id
-        """,
-        arguments: [recipient],
-      ).map { row in
-        PushRelayGrant(
-          grant: row["grant_id"],
-          endpoint: row["endpoint"],
-          token: row["token"],
-          recipient: row["recipient"],
-          devicePublicKey: row["device_pubkey"],
-        )
+      try PushRelayGrantRow.where { $0.recipient.eq(recipient) }.order { $0.grantID }.fetchAll(db).map { row in
+        PushRelayGrant(grant: row.grantID, endpoint: row.endpoint, token: row.token, recipient: row.recipient, devicePublicKey: row.devicePublicKey)
       }
     }
   }
@@ -132,75 +95,38 @@ extension Space {
   public func duePushRelayDeliveries(at date: Date, limit: Int = 64) async throws -> [PushRelayDelivery] {
     let now = SQLiteDateFormat.string(from: date)
     return try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: """
-        SELECT
-          g.grant_id, g.endpoint, g.token, g.consecutive_failures,
-          n.n, n.recipient, n.source, n.kind, n.payload, n.created_at, n.grp,
-          c.owner_session,
-          (
-            SELECT COUNT(DISTINCT u.source) FROM notifications u
-            JOIN sessions s ON s.id = u.source AND s.kind = 'agent' AND s.lifecycle != 'archived'
-            WHERE u.recipient = g.recipient AND u.kind = 'conversation_message'
-              AND u.n > COALESCE(
-                (SELECT w.last_read_n FROM watermarks w WHERE w.identity = u.recipient AND w.source = u.source), 0
-              )
-          ) AS unread_conversations
-        FROM push_relay_grants g
-        JOIN notifications n ON n.n = (
-          SELECT MIN(candidate.n) FROM notifications candidate
-          WHERE candidate.recipient = g.recipient AND candidate.n > g.notification_cursor
-        )
-        LEFT JOIN conversations c ON c.id = n.source
-        WHERE g.retry_at IS NULL OR g.retry_at <= ?
-        ORDER BY n.n, g.grant_id
-        LIMIT ?
-        """,
-        arguments: [now, limit],
-      ).map { row in
-        PushRelayDelivery(
-          grant: row["grant_id"],
-          endpoint: row["endpoint"],
-          token: row["token"],
-          consecutiveFailures: row["consecutive_failures"],
-          notification: try NotificationRecord(row: row),
-          ownerSession: row["owner_session"],
-          unreadConversations: row["unread_conversations"],
-        )
-      }
+      try PushRelayGrantRow.where { $0.retryAt.is(nil) || $0.retryAt.lte(Optional(now)) }
+        .join(NotificationRow.all) { grant, notification in
+          notification.n.eq(#sql("(SELECT MIN(candidate.n) FROM notifications candidate WHERE candidate.recipient = \(grant.recipient) AND candidate.n > \(grant.notificationCursor))", as: Int64.self))
+        }
+        .order { ($1.n, $0.grantID) }.limit(limit)
+        .select { grant, notification in
+          PushRelayPending.Columns(
+            grant: grant, notification: notification,
+            ownerSession: #sql("(SELECT owner_session FROM conversations WHERE id = \(notification.source))", as: String?.self),
+            unreadConversations: #sql("""
+            (SELECT COUNT(DISTINCT u.source) FROM notifications u
+             JOIN sessions s ON s.id = u.source AND s.kind = 'agent' AND s.lifecycle != 'archived'
+             WHERE u.recipient = \(grant.recipient) AND u.kind = 'conversation_message'
+               AND u.n > COALESCE((SELECT w.last_read_n FROM watermarks w WHERE w.identity = u.recipient AND w.source = u.source), 0))
+            """, as: Int.self),
+          )
+        }
+        .fetchAll(db).map { row in
+          PushRelayDelivery(
+            grant: row.grant.grantID, endpoint: row.grant.endpoint, token: row.grant.token,
+            consecutiveFailures: row.grant.consecutiveFailures, notification: NotificationRecord(row: row.notification),
+            ownerSession: row.ownerSession, unreadConversations: row.unreadConversations,
+          )
+        }
     }
   }
+}
 
-  public func markPushRelayAccepted(_ grant: String, notification: Int64) async throws {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      try db.execute(
-        sql: """
-        UPDATE push_relay_grants
-        SET notification_cursor = ?, consecutive_failures = 0, retry_at = NULL, updated_at = ?
-        WHERE grant_id = ? AND notification_cursor < ?
-        """,
-        arguments: [notification, now, grant, notification],
-      )
-    }
-  }
-
-  public func deferPushRelayDelivery(_ grant: String, until retryAt: Date) async throws {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      try db.execute(
-        sql: """
-        UPDATE push_relay_grants
-        SET consecutive_failures = consecutive_failures + 1, retry_at = ?, updated_at = ?
-        WHERE grant_id = ?
-        """,
-        arguments: [SQLiteDateFormat.string(from: retryAt), now, grant],
-      )
-    }
-  }
-
-  public nonisolated func observePushRelayChanges() -> AsyncStream<Void> {
-    regionWakes([Table("notifications"), Table("push_relay_grants")], in: writer)
-  }
+@Selection
+private struct PushRelayPending {
+  var grant: PushRelayGrantRow
+  var notification: NotificationRow
+  var ownerSession: String?
+  var unreadConversations: Int
 }

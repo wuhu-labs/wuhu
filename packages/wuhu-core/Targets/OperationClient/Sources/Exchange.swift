@@ -8,7 +8,6 @@ import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
 import enum OperationProtocol.OperationPreparation
-import Synchronization
 import TaskLifetime
 import Tracing
 
@@ -161,35 +160,4 @@ public struct MachineLink: Sendable {
 
 private extension Duration {
   var milliseconds: Int { Int(components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000) }
-}
-
-final class LocalWorkClock: Sendable {
-  private struct State {
-    var active = 0
-    var began = Duration.zero
-    var excluded = Duration.zero
-  }
-
-  private let state = Mutex(State())
-  private let clock: OperationClock
-  init(_ clock: OperationClock) { self.clock = clock }
-  func work(_ active: Bool) {
-    state.withLock { state in
-      let now = clock.now()
-      if active {
-        if state.active == 0 { state.began = now }
-        state.active += 1
-      } else {
-        state.active -= 1
-        if state.active == 0 { state.excluded += now - state.began }
-      }
-    }
-  }
-
-  func now() -> Duration {
-    state.withLock { state in
-      let now = clock.now()
-      return now - state.excluded - (state.active > 0 ? now - state.began : .zero)
-    }
-  }
 }

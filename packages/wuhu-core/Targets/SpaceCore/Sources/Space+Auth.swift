@@ -1,8 +1,14 @@
 import enum Assertion.VerifyingKey
 import Crypto
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import struct SpaceContract.GroupID
+import StructuredQueries
+import StructuredQueriesSQLite
 
 extension Space {
   public func addAccount(kind: AccountKind, name: String?, admin: Bool = false, guest: Bool = false) async throws -> AccountRecord {
@@ -272,7 +278,13 @@ extension Space {
   public func resetCredentials(account: AccountID) async throws -> (keys: Int, readSessions: Int) {
     try await writer.write { db in
       try Self.requireAccount(account, in: db)
-      return try Self.purgeCredentials(account: account, in: db)
+      let purged = try Self.purgeCredentials(account: account, in: db)
+      for machine in try MachineRow.where({ $0.accountID.eq(account.rawValue) }).fetchAll(db) {
+        let recipient = MachineCell.ID(machine.id).recipient
+        try recipient.post(.closeBoxes, on: db.sqliteConnection!)
+        db.afterNextTransaction { _ in self.runtime.poke(recipient) }
+      }
+      return purged
     }
   }
 

@@ -1,4 +1,5 @@
 import ControlledTime
+import Dependencies
 import Fetch
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -16,7 +17,7 @@ import SpaceContract
 import Testing
 import WmdDocument
 
-@Suite
+@Suite(.deterministicDependencies)
 struct LiveRouteTests {
   @Test func aSocketSyncsTheDocumentAfterItsHello() async throws {
     let harness = try Harness()
@@ -163,17 +164,23 @@ struct LiveRouteTests {
     headers.set("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
     headers.set("sec-websocket-version", "13")
     let request = Request(url: URL(string: "http://space" + prefix + path)!, headers: headers)
-    guard case let .webSocket(socket, serve) = try await ServeTesting.upgrade(harness.handler, request) else {
-      Issue.record("\(path) did not upgrade"); return
-    }
-    try await withThrowingDiscardingTaskGroup { tasks in
-      tasks.addTask { await serve() }
-      if hello {
-        let frame = LiveClientControl.hello(authorization: nil, group: group, peer: "7", create: create ? true : nil)
-        try await socket.send(.text(try JSONValueEncoder().encode(frame).jsonString()))
+    // A live connection is the first thing that makes the space's worker, which reads the injected date
+    // as it is made: this scope keeps it on the test's date.
+    try await withDependencies {
+      $0.date = .constant(fixedDate)
+    } operation: {
+      guard case let .webSocket(socket, serve) = try await ServeTesting.upgrade(harness.handler, request) else {
+        Issue.record("\(path) did not upgrade"); return
       }
-      try await body(socket)
-      socket.close()
+      try await withThrowingDiscardingTaskGroup { tasks in
+        tasks.addTask { await serve() }
+        if hello {
+          let frame = LiveClientControl.hello(authorization: nil, group: group, peer: "7", create: create ? true : nil)
+          try await socket.send(.text(try JSONValueEncoder().encode(frame).jsonString()))
+        }
+        try await body(socket)
+        socket.close()
+      }
     }
   }
 

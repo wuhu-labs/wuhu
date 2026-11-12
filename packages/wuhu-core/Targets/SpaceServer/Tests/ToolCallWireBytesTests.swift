@@ -80,11 +80,8 @@ private func renderedRequestBody(_ store: SessionStore, _ session: SessionID) as
     bodies.withLock { $0.append(body) }
     throw RequestInterrupted()
   })
-  let transcript = try await store.transcript(session)
-  let context = await transcript.renderRequest(
-    session: session,
-    systemPrompt: "sys",
-  )
+  let lines = try await store.testLines(session)
+  let context = Context(systemPrompt: "sys", messages: lines.map(\.message))
   _ = try? await capturing.inference(context: context).collect()
   return try #require(bodies.withLock { $0.first })
 }
@@ -100,7 +97,7 @@ private func renderedRequestBody(_ store: SessionStore, _ session: SessionID) as
       createdBy: "owner",
       model: ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium"),
     )
-    _ = try await space.sessions.appendAssistant(
+    _ = try await space.sessions.appendReply(
       session,
       attemptID: UUID(),
       message: message,

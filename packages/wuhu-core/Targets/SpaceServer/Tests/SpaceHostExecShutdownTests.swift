@@ -17,7 +17,7 @@ import Scratch
 import Serve
 import ServeTesting
 import SessionDomain
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
@@ -26,16 +26,18 @@ import struct WuhuAI.ToolCall
 @Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct SpaceHostExecShutdownTests {
   @Test func archiveKillsAWorkerExec() async throws {
     try await withSessionDeps {
-      let space = try makeMachineSpace()
-      _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
-      let server = TestServer(space: space, clock: ContinuousClock())
-      let (machine, _) = try await addMachine(server)
-      let side = ShutdownProcessSide()
-      defer { side.release.open() }
-      let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ShutdownProcess(side: side))], authorize: { _, _ in })
-      let counts = Mutex((stops: 0, acknowledgements: 0))
-      let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in
-        FetchClient { request in
+      try await withDependencies {
+        $0.fetch = shutdownExecInference()
+      } operation: {
+        let space = try makeMachineSpace()
+        _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
+        let server = TestServer(space: space, clock: ContinuousClock())
+        let (machine, _) = try await addMachine(server)
+        let side = ShutdownProcessSide()
+        defer { side.release.open() }
+        let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ShutdownProcess(side: side))], authorize: { _, _ in })
+        let counts = Mutex((stops: 0, acknowledgements: 0))
+        let client = FetchClient { request in
           if request.method == .put, request.url.path.hasSuffix("/stop") { counts.withLock { $0.stops += 1 } }
           let response = try await agent.handler(request)
           if request.url.query?.contains("terminalAck=") == true, response.status == .ok {
@@ -43,43 +45,61 @@ import struct WuhuAI.ToolCall
           }
           return response
         }
-      })
-      await server.hub.configureV2(service)
-      let runtime = await SessionRuntime.assemble(space: space, hub: server.hub, credentials: .unavailable)
-      _ = SpaceServer.handler(space: space, hub: server.hub, sessions: runtime, dev: true)
-      runtime.execution.start()
-      let session = try await space.sessions.createSession(
-        group: .shared, title: "owed end", kind: .agent, createdBy: "owner",
-        model: .init(provider: "testing", model: "test-model", effort: "high"),
-      )
-      try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await agent.run() }
-        group.addTask { try await service.run() }
-        defer { group.cancelAll(); side.release.open() }
-        let outcome = try await runtime.execution.tools.execute(session: session, call: ToolCall(
-          id: "archive-live", name: "exec", arguments: .object([
-            "machine": .string(machine.rawValue), "cwd": .string("/"), "command": .string("wait"), "wait_seconds": .number(0.01),
-          ]),
-        ), state: .init(folderRoots: ["machines://\(machine.rawValue)/": nil]))
-        guard case .exec = outcome.payload else { Issue.record("expected a running exec"); return }
-        await side.started.wait()
-        let token = runtime.tokens.sessionToken(session)
-        try await runtime.execution.archive(session)
-        try await until("archived") { try await space.sessions.record(session).lifecycle != .live }
-        #expect(runtime.tokens.session(ofBearer: token) == nil)
-        await side.stopped.wait()
-        #expect(side.reason.withLock { $0 } == "callerCancelled")
-        #expect(counts.withLock { $0.stops == 1 && $0.acknowledgements == 0 })
-        side.release.open()
-        try await until("the archived exec is killed and terminally acknowledged") {
-          counts.withLock { $0.stops == 1 && $0.acknowledgements > 0 }
+        let runtime = await SessionRuntime.assemble(space: space, hub: server.hub, credentials: .init { _ in .apiKey("test-key") }, tokens: try await testTokens(space: space))
+        _ = SpaceServer.handler(space: space, hub: server.hub, sessions: runtime, dev: true)
+        runtime.execution.start()
+        let session = try await space.sessions.createSession(
+          group: .shared, title: "owed end", kind: .agent, createdBy: "owner",
+          model: .init(provider: "testing", model: "test-model", effort: "high"),
+        )
+        try await withThrowingTaskGroup(of: Void.self) { group in
+          group.addTask { await agent.run() }
+          defer { group.cancelAll(); side.release.open() }
+          do {
+            try await withMachineBox(space: space, hub: server.hub, machine: machine, client: client) {
+              try await space.sessions.enqueue(session, input: .notification(.init(id: UUID(), timestamp: Date(), kind: .timer, subscriptionID: .init("exec-wake"), content: .init(text: "run wait"))))
+              try await until("the kernel starts its exec operation") { side.startedFlag.withLock { $0 } }
+              let record = try #require(try await space.liveToolExecs(caller: session.rawValue).first)
+              let calls = try await space.sessions.testLines(session).flatMap { line -> [ToolCall] in
+                guard case let .assistant(reply) = line.message else { return [] }
+                return reply.content.compactMap { block in
+                  guard case let .toolCall(call) = block, call.name == "exec" else { return nil }
+                  return call
+                }
+              }
+              #expect(calls.map { ToolCallID($0.id) } == [try #require(record.toolCallID)])
+              let token = try await runtime.tokens.sessionToken(session)
+              @Dependency(\.date) var date
+              guard case .session = await sessionVerdict(token, tokens: runtime.tokens, space: space, now: date.now) else {
+                Issue.record("the live session's signed credential must act before archive")
+                return
+              }
+              try await runtime.execution.archive(session, force: true)
+              try await until("archived") { try await space.sessions.record(session).lifecycle != .live }
+              if case let .refused(response) = await sessionVerdict(token, tokens: runtime.tokens, space: space, now: date.now) {
+                #expect(response.status == .forbidden)
+              } else { Issue.record("archived token retained authority") }
+              try await until("the archived exec receives its stop") { side.stopped.isOpen }
+              #expect(side.reason.withLock { $0 } == "callerCancelled")
+              #expect(counts.withLock { $0.stops == 1 && $0.acknowledgements == 0 })
+              side.release.open()
+              try await until("the archived exec is killed and terminally acknowledged") {
+                counts.withLock { $0.stops == 1 && $0.acknowledgements > 0 }
+              }
+              try await until("the archived operation is settled") {
+                space.worker.cell(MachineCell.ID(machine.rawValue)).operation(record.id.rawValue)?.terminal == true
+              }
+              #expect(counts.withLock { $0.stops == 1 })
+            }
+            await runtime.execution.shutdown()
+            await agent.shutdown()
+          } catch {
+            await runtime.execution.shutdown()
+            await agent.shutdown()
+            throw error
+          }
         }
-        let operations = try await service.operations(group: .shared)
-        try await until("the archived operation is settled") { await operations.running == 0 }
-        #expect(counts.withLock { $0.stops == 1 })
-        await runtime.execution.shutdown()
-        await service.shutdown()
-        await agent.shutdown()
+        try await space.close()
       }
     }
   }
@@ -87,17 +107,8 @@ import struct WuhuAI.ToolCall
   @Test func shutdownDrainsLiveInProcessExecCaller() async throws {
     try await withSessionDeps {
       try await withDependencies {
-        $0.fetch = FetchClient { _ in
-          let events = [
-            ("message_start", #"{"message":{"usage":{"input_tokens":10}}}"#),
-            ("content_block_start", #"{"index":0,"content_block":{"type":"tool_use","id":"exec-call","name":"exec","input":{"machine":"box","cwd":"/","command":"wait","wait_seconds":90}}}"#),
-            ("content_block_stop", #"{"index":0}"#),
-            ("message_delta", #"{"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}"#),
-            ("message_stop", "{}"),
-          ]
-          let sse = events.map { "event: \($0.0)\ndata: \($0.1)\n\n" }.joined(separator: "")
-          return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
-        }
+        $0.fetch = shutdownExecInference()
+        $0.date = DateGenerator { Date() }
       } operation: {
         let folder = try scratchURL("host-live-exec")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -166,6 +177,20 @@ import struct WuhuAI.ToolCall
         try await host.shutdown()
       }
     }
+  }
+}
+
+private func shutdownExecInference() -> FetchClient {
+  FetchClient { _ in
+    let events = [
+      ("message_start", #"{"message":{"usage":{"input_tokens":10}}}"#),
+      ("content_block_start", #"{"index":0,"content_block":{"type":"tool_use","id":"exec-call","name":"exec","input":{"machine":"box","cwd":"/","command":"wait","wait_seconds":90}}}"#),
+      ("content_block_stop", #"{"index":0}"#),
+      ("message_delta", #"{"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}"#),
+      ("message_stop", "{}"),
+    ]
+    let sse = events.map { "event: \($0.0)\ndata: \($0.1)\n\n" }.joined(separator: "")
+    return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
   }
 }
 

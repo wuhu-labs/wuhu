@@ -18,7 +18,7 @@ import Testing
       try await space.writer.write { db in
         try db.execute(sql: "CREATE TRIGGER fail_receipt BEFORE INSERT ON session_receipts BEGIN SELECT RAISE(\(action), 'receipt failure'); END")
       }
-      let stream = await space.observeFS(glob: "**", group: .shared)
+      let stream = try await space.observeFS(glob: "**", group: .shared)
       let commits = Collector<FSCommit>()
       let consumer = Task { for await commit in stream { await commits.append(commit) } }
       defer { consumer.cancel() }
@@ -50,7 +50,7 @@ import Testing
     let original = String(repeating: "x", count: BlobStore.inlineThreshold + 1)
     _ = try await space.writeText("/external.md", original)
     _ = try await space.writeText("/external.md", "newer")
-    let stream = await space.observeFS(glob: "**", group: .shared)
+    let stream = try await space.observeFS(glob: "**", group: .shared)
     let commits = Collector<FSCommit>()
     let consumer = Task { for await commit in stream { await commits.append(commit) } }
     defer { consumer.cancel() }

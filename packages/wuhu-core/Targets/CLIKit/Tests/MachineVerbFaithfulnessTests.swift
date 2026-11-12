@@ -6,6 +6,19 @@ import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct MachineVerbFaithfulnessTests {
+  @Test func aMachineCopyWaitsOnTheUntimedClient() async throws {
+    let harness = try MachineCLIHarness()
+    try await harness.runScenario { h in
+      let machine = try await h.addMachine()
+      let before = await h.longRunningRequests
+      let io = CLIIO()
+      let code = await h.run(["cp", "machines://\(machine.id)/tmp/a", "/b.md"], io: io)
+      #expect(await h.longRunningRequests == before + 1)
+      #expect(code == 1)
+      #expect(await io.stderrText().contains("machineUnavailable"))
+    }
+  }
+
   @Test func machineAddPrintsTheTokenOnceWithJoinGuidance() async throws {
     let harness = try MachineCLIHarness()
     try await harness.runScenario { h in

@@ -8,6 +8,7 @@ import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import StructuredQueries
+import struct Wuwei.Recipient
 
 struct ObservationProgress: Hashable, Sendable, Codable {
   var incarnation: UUID
@@ -152,6 +153,7 @@ extension SessionStore {
       if let standing = try SubscriptionRow.of(owner).where({ $0.name.eq(terms.name) }).fetchOne(db) {
         guard standing.status == SubscriptionStatus.paused.rawValue else { throw ObserverRefusal.nameTaken(terms.name) }
         try SubscriptionRow.delete(owner, standing.subscriptionID, in: db)
+        try owner.look(SubscriptionID(standing.subscriptionID), runtime: self.runtime, in: db)
       }
       let row = SubscriptionRow(
         ownerKind: owner.kind, owner: owner.key, subscriptionID: prepared.id.rawValue, name: terms.name,
@@ -159,6 +161,7 @@ extension SessionStore {
         nextFireAt: nextFireAt.map(SQLiteDateFormat.string(from:)), marker: marker, lastFiredAt: nil, armedAt: now,
       )
       try SubscriptionRow.insert { row }.execute(db)
+      try owner.look(prepared.id, runtime: self.runtime, in: db)
       return try self.armedSubscription(row)
     }
   }
@@ -172,6 +175,7 @@ extension SessionStore {
         throw ObserverRefusal.unknownObserver(name)
       }
       try SubscriptionRow.delete(owner, row.subscriptionID, in: db)
+      try owner.look(SubscriptionID(row.subscriptionID), runtime: self.runtime, in: db)
       return try self.armedSubscription(row)
     }
   }
@@ -185,7 +189,7 @@ extension SessionStore {
   // Whether an observer's firing may create one more session, in the write
   // that creates it. At its hourly cap the observer pauses, the refusal its
   // last error; the refusal is returned so the pause commits.
-  static func admit(_ observer: Observer, now: Date, in db: Database) throws -> ObserverRefusal? {
+  static func admit(_ observer: Observer, now: Date, runtime: SpaceRuntime, in db: Database) throws -> ObserverRefusal? {
     guard let row = try SubscriptionRow.of(.group(observer.group)).where({ $0.name.eq(observer.name) }).fetchOne(db),
           let cap = row.sessionsPerHour
     else { return .unknownObserver(observer.name) }
@@ -197,6 +201,7 @@ extension SessionStore {
     guard made >= cap else { return nil }
     let refusal = ObserverRefusal.atCap(name: observer.name, sessionsPerHour: cap)
     try pause(row, error: refusal.description, in: db)
+    try row.subscriptionOwner.look(SubscriptionID(row.subscriptionID), runtime: runtime, in: db)
     return refusal
   }
 
@@ -251,7 +256,7 @@ extension SessionStore {
 
   /// Arms `parent`'s children slot unless it stands; a new incarnation each
   /// time, so a firing of an earlier one cannot deliver into it.
-  static func watchChildren(_ parent: SessionID, now: String, in db: Database) throws {
+  static func watchChildren(_ parent: SessionID, now: String, runtime: SpaceRuntime, in db: Database) throws {
     var slot = SubscriptionSlot(id: SubscriptionSlot.childrenID, kind: .children)
     slot.observationProgress = ObservationProgress(incarnation: UUID.deterministic("children", parent.rawValue, now), deliverySequence: 0)
     let row = SubscriptionRow(
@@ -259,16 +264,30 @@ extension SessionStore {
       name: nil, payload: try Sessions.encode(slot), nextFireAt: nil, marker: nil, lastFiredAt: nil, armedAt: now,
     )
     try SubscriptionRow.insert { row } onConflict: { ($0.ownerKind, $0.owner, $0.subscriptionID) }.execute(db)
+    let armed = try storelessArmedChildren(parent, in: db)
+    try ObservationMail.recipient.post(.watch(armed.watch(recipient: Recipient<ObservationReply>(kind: "SessionCell", key: parent.rawValue))), on: db.sqliteConnection!)
+    db.afterNextTransaction { _ in runtime.poke(ObservationMail.recipient) }
+  }
+
+  private static func storelessArmedChildren(_ parent: SessionID, in db: Database) throws -> ArmedSubscription {
+    let row = try SubscriptionRow.find(parent.rawValue, SubscriptionSlot.childrenID.rawValue, in: db)!
+    return ArmedSubscription(owner: .session(parent), status: .armed, slot: try Sessions.decode(SubscriptionSlot.self, from: row.payload), marker: row.marker, armedAt: try SQLiteDateFormat.date(from: row.armedAt))
   }
 
   /// Ends `parent`'s children slot once no live child is left.
-  static func unwatchChildren(_ parent: SessionID, in db: Database) throws {
+  static func unwatchChildren(_ parent: SessionID, runtime: SpaceRuntime, in db: Database) throws {
     let live = try Int.fetchOne(db, sql: "SELECT count(*) FROM sessions WHERE parent = ? AND lifecycle = 'live'", arguments: [parent.rawValue]) ?? 0
     guard live == 0 else { return }
     try deleteSubscription(parent.rawValue, SubscriptionSlot.childrenID, in: db)
+    db.afterNextTransaction { _ in runtime.poke(ObservationMail.recipient) }
   }
 
   static func deleteSubscription(_ key: String, _ subscriptionID: SubscriptionID, in db: Database) throws {
+    if subscriptionID == SubscriptionSlot.childrenID, let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) {
+      let slot = try Sessions.decode(SubscriptionSlot.self, from: row.payload)
+      let watched = ObservationSlot(owner: .session(SessionID(key)), subscription: subscriptionID, incarnation: slot.observationProgress!.incarnation)
+      try ObservationMail.recipient.post(.unwatch(watched), on: db.sqliteConnection!)
+    }
     try SubscriptionRow.delete(.session(SessionID(key)), subscriptionID.rawValue, in: db)
   }
 
@@ -276,31 +295,6 @@ extension SessionStore {
     try await writer.read { db in
       try SubscriptionRow.order { ($0.ownerKind, $0.owner, $0.subscriptionID) }.fetchAll(db).map(armedSubscription)
     }
-  }
-
-  // A paused observer is not registered: nothing fires it until it is armed again.
-  @_spi(SessionObservation)
-  public func subscriptionRegistrations() async throws -> [(subscription: ArmedSubscription, callbackID: UUID?, orphaned: Bool)] {
-    try await writer.read { db in try subscriptionRegistrations(in: db) }
-  }
-
-  @_spi(SessionObservation)
-  public func observeArmedSubscriptions()
-    -> some AsyncSequence<[(subscription: ArmedSubscription, callbackID: UUID?, orphaned: Bool)], any Error> & Sendable
-  {
-    ValueObservation
-      .tracking { db in try subscriptionRegistrations(in: db) }
-      .values(in: writer, bufferingPolicy: .bufferingNewest(1))
-  }
-
-  private func subscriptionRegistrations(in db: Database) throws -> [(subscription: ArmedSubscription, callbackID: UUID?, orphaned: Bool)] {
-    try SubscriptionRow.where { $0.status.eq(SubscriptionStatus.armed.rawValue) }
-      .order { ($0.ownerKind, $0.owner, $0.subscriptionID) }.fetchAll(db).map { row in
-        let subscription = try armedSubscription(row)
-        let orphaned = try Self.actingGroup(of: subscription.owner, in: db) == nil
-        guard subscription.slot.kind.observes else { return (subscription, nil, orphaned) }
-        return (subscription, observationToken(subscription), orphaned)
-      }
   }
 
   /// What the session armed itself; its children watch is not listed.

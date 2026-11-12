@@ -1,8 +1,9 @@
 import Crypto
 import DeterministicDependencies
+import GRDB
 import JSONValue
 @testable import SessionTools
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import SpaceTools
 import Testing
@@ -18,19 +19,25 @@ import Testing
   @Test func ownedExecOnAnAbsentMachineIsCancelledThroughTheRoute() async throws {
     let space = try Space.inMemory()
     let hub = MachineHub(space: space)
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil)
-    await hub.configureV2(service)
     do {
       try await withRig(space: { space }, machineHub: hub) { rig in
         let machine = try await rig.space.addMachineV2(name: "unavailable").machine.id
-        let own = try await rig.space.mintExec(machine: machine, caller: rig.session.rawValue)
+        let own = try await rig.space.reserveExec(machine: machine, caller: rig.session.rawValue)
         let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec(\(JSONValue.string(own.id.rawValue).jsonString()));result('allowed')}catch(e){result(e.code)}")
         #expect(result == "allowed")
+        let ownID = own.id.rawValue
+        let writer = await rig.space.writer
+        let states = ValueObservation.tracking { db in
+          try String.fetchOne(db, sql: "SELECT state FROM machine_operations WHERE id = ?", arguments: [ownID])
+        }.values(in: writer, bufferingPolicy: .bufferingNewest(1))
+        for try await state in states {
+          if state == "retired" { break }
+        }
         #expect(try await rig.space.execRecord(own.id)?.terminal == .cancelled)
       }
-      await hub.callerScope.close(); await service.shutdown()
+      await hub.callerScope.close()
     } catch {
-      await hub.callerScope.close(); await service.shutdown()
+      await hub.callerScope.close()
       throw error
     }
   }
@@ -40,8 +47,8 @@ import Testing
     try await withRig(world: world) { rig in
       try await world.attach("box", in: rig.space)
       let machine = try #require(try await rig.space.machines().first)
-      let foreign = try await rig.space.mintExec(machine: machine.id, caller: "stranger")
-      let own = try await rig.space.mintExec(machine: machine.id, caller: rig.session.rawValue)
+      let foreign = try await rig.space.reserveExec(machine: machine.id, caller: "stranger", group: .shared)
+      let own = try await rig.space.reserveExec(machine: machine.id, caller: rig.session.rawValue)
       let context = SpaceToolContext(space: rig.space, principal: try await rig.space.principal(of: rig.session))
       #expect(try await context.ownExecs().map(\.id) == [own.id])
       do { _ = try await context.ownExecStatus(foreign.id.rawValue); Issue.record("foreign exec status allowed") }

@@ -43,7 +43,7 @@ import Testing
       #expect(try await store.promptRevision(id) == created)
 
       let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: .init(), runningWork: [])
-      _ = try await store.writeCompaction(id, head: head, kept: nil)
+      _ = try await store.rows { try $0.writeGeneration(id, head: head) }
       let compacted = try await prompt(space, id)
       #expect(compacted.contains("root two") && compacted.contains("home two") && compacted.contains("the two skill"))
       #expect(compacted.contains("the one skill"))
@@ -115,7 +115,7 @@ import Testing
 
       try await edit(space, id, "one")
       let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: .init(), runningWork: [])
-      _ = try await store.writeCompaction(id, head: head, kept: nil)
+      _ = try await store.rows { try $0.writeGeneration(id, head: head) }
       guard case let .pending(next) = try await store.activatePrompt(id) else { throw Unexpected() }
       #expect(next.rev > pending.rev)
       #expect(try await store.storePrompt(id, for: pending, "stale", tools: [], session: session).preamble.system == "stale")

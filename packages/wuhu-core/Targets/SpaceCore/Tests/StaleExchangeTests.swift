@@ -6,7 +6,6 @@ import SessionDomain
 @testable import SpaceCore
 import Synchronization
 import Testing
-import struct WuhuAI.Context
 
 // A message from a conversation the session last posted in before its
 // generation began arrives with that exchange ahead of its body.
@@ -39,18 +38,11 @@ import struct WuhuAI.Context
 
     func compacts(keeping kept: Range<Int>? = nil) async throws {
       let head = GenerationHead(id: UUID(), timestamp: ticker.tick(), summary: "folded", snapshot: .init(), runningWork: [])
-      _ = try await store.writeCompaction(agent, head: head, kept: kept)
+      _ = try await store.rows { try $0.writeGeneration(agent, head: head, kept: kept) }
     }
 
-    func settles() async throws {
-      try await store.appendAssistant(
-        agent, attemptID: UUID(), message: .init(content: []),
-        metadata: .init(stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 0, totalTokens: 1)),
-      )
-    }
-
-    func rendered() async throws -> Context {
-      try await store.transcript(agent).renderRequest(session: agent, systemPrompt: "p")
+    func stored() async throws -> [StoredTranscriptLine] {
+      try await store.transcriptLines(agent)
     }
 
     func drained() async throws -> [String] {
@@ -175,18 +167,18 @@ import struct WuhuAI.Context
     let rig = try Rig(space: opened(ticker) { try Space.open(file: file) }, agent: first.agent, ticker: ticker)
     let shown = try await rig.drained()
     #expect(shown.map { $0.hasPrefix("<earlier-in-conversation>\n<message id=\"m1\" sender=\"minsheng\"") } == [true])
-    let before = try await rig.rendered()
+    let before = try await rig.stored()
     _ = try await rig.space.setUserProfile(principal: "minsheng", handle: "ms", displayName: nil)
     try await rig.replies("m4", to: "m3", "reading it")
     try await rig.says("m5", "and?")
     #expect(try await rig.drained() == ["and?"])
-    let blocks = try await rig.store.transcript(rig.agent).items.filter {
-      if case let .message(message) = $0 { message.content.text.contains("<earlier-in-conversation>") } else { false }
+    let blocks = try await rig.stored().filter { line in
+      try line.key.hasPrefix("message:") && line.line().message.text.contains("<earlier-in-conversation>")
     }
     #expect(blocks.count == 1)
-    let after = try await rig.rendered()
-    #expect(Array(after.messages.prefix(before.messages.count)) == before.messages)
-    #expect(try await rig.rendered() == after)
+    let after = try await rig.stored()
+    #expect(Array(after.prefix(before.count)) == before)
+    #expect(try await rig.stored() == after)
     try await rig.space.close()
   }
 
@@ -195,7 +187,6 @@ import struct WuhuAI.Context
     try await rig.says("m1", "count the bench")
     _ = try await rig.drained()
     try await rig.replies("m2", to: "m1", "42")
-    try await rig.settles()
     try await rig.store.restart(rig.agent)
     try await rig.says("m3", "and the trace?")
     let a = rig.agent.rawValue
@@ -220,11 +211,10 @@ import struct WuhuAI.Context
     try await rig.says("m1", "count the bench")
     _ = try await rig.drained()
     try await rig.replies("m2", to: "m1", "42")
-    let items = try await rig.store.transcript(rig.agent).items
-    let kept = try #require(items.firstIndex {
-      if case let .message(message) = $0 { message.messageID == MessageID("m1") } else { false }
-    })
-    try await rig.compacts(keeping: kept ..< items.count)
+    let lines = try await rig.stored()
+    let kept = try #require(lines.first { $0.key == "message:m1" }).position
+    let end = try #require(lines.last).position + 1
+    try await rig.compacts(keeping: kept ..< end)
     try await rig.says("m3", "and the trace?")
     #expect(try await rig.drained() == ["and the trace?"])
   }

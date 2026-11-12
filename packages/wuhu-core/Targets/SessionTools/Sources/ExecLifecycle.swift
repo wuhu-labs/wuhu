@@ -25,8 +25,8 @@ extension ToolExecutor {
 
   /// Kills the exec an interrupted call started, if it still runs.
   public func killInterrupted(session: SessionID, callID: ToolCallID) async {
-    guard let client = try? await client(session),
-          let records: [ExecStatus] = try? await client.api(.get, "/v1/exec"),
+    let client = client(session)
+    guard let records: [ExecStatus] = try? await client.api(.get, "/v1/exec"),
           let record = records.first(where: { $0.toolCallID == callID.rawValue && $0.state == .live }) else { return }
     try? await killExec(record.id, client: client)
   }

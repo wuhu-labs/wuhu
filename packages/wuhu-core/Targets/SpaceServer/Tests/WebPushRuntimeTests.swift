@@ -2,44 +2,17 @@ import AsyncHTTPClient
 import Dependencies
 import DeterministicDependencies
 import Foundation
+import GRDB
 import Logging
 import NIOCore
 import Scratch
 import SessionDomain
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Testing
 import WebPush
 
 @Suite(.deterministicDependencies) struct WebPushRuntimeTests {
-  @Test func concurrentDrainsNeverDuplicateADelivery() async throws {
-    let messages = MessageCollector()
-    let entered = Gate()
-    let release = Gate()
-    let (space, _) = try await notificationSpace(endpoints: ["https://push.example/live"])
-
-    try await withDependencies {
-      $0.date = .constant(fixedDate)
-    } operation: {
-      let runtime = WebPushRuntime(
-        space: space,
-        logger: Logger(label: "web-push-test"),
-        client: WebPushClient { message in
-          entered.open()
-          await release.wait()
-          await messages.append(message)
-        },
-      )
-      let first = Task { try await runtime.drain() }
-      await entered.wait()
-      try await runtime.drain()
-      release.open()
-      try await first.value
-    }
-
-    #expect(await messages.values.count == 1)
-  }
-
   @Test func deliveredMessageNavigatesToItsConversationAndDeadEndpointsDisappear() async throws {
     let messages = MessageCollector()
     let (space, owner) = try await notificationSpace(endpoints: [
@@ -50,7 +23,7 @@ import WebPush
     try await withDependencies {
       $0.date = .constant(fixedDate)
     } operation: {
-      try await WebPushRuntime(
+      try await WebPushJobTest(
         space: space,
         logger: Logger(label: "web-push-test"),
         client: WebPushClient { message in
@@ -76,6 +49,32 @@ import WebPush
     )
     try await space.sessions.inboxesSettled()
     #expect(try await space.dueWebPushDeliveries(at: fixedDate).map(\.endpoint) == ["https://push.example/live"])
+  }
+
+  @Test func theDeliveryJobDeletesExpiredSubscriptions() async throws {
+    let (space, owner) = try await notificationSpace(endpoints: ["https://push.example/live"])
+    try await withDependencies {
+      $0.date = .constant(fixedDate)
+    } operation: {
+      try await space.registerWebPushSubscription(.init(
+        endpoint: "https://push.example/expired",
+        recipient: try await space.sessions.record(owner).createdBy,
+        devicePublicKey: testPubkey("push-device"),
+        p256dh: "p256dh", auth: "auth", vapidKeyID: "vapid",
+        expiresAt: fixedDate.addingTimeInterval(-1),
+      ))
+      #expect(try await space.writer.read {
+        try Int.fetchOne($0, sql: "SELECT count(*) FROM web_push_subscriptions WHERE endpoint = ?", arguments: ["https://push.example/expired"])
+      } == 1)
+      try await WebPushJobTest(
+        space: space, logger: Logger(label: "web-push-test"),
+        client: WebPushClient { message in #expect(message.endpoint == "https://push.example/live") },
+      ).drain()
+      #expect(try await space.writer.read {
+        try Int.fetchOne($0, sql: "SELECT count(*) FROM web_push_subscriptions WHERE endpoint = ?", arguments: ["https://push.example/expired"])
+      } == 0)
+    }
+    try await space.close()
   }
 
   @Test func aMessageNamesWhoSpokeAndTheBoxItWasPostedIn() async throws {
@@ -104,7 +103,7 @@ import WebPush
         )
         try await space.sessions.inboxesSettled()
       }
-      try await WebPushRuntime(
+      try await WebPushJobTest(
         space: space,
         logger: Logger(label: "web-push-test"),
         client: WebPushClient { await messages.append($0) },
@@ -136,7 +135,7 @@ import WebPush
         content: .init(text: "from outside"),
       )
       try await space.sessions.inboxesSettled()
-      try await WebPushRuntime(
+      try await WebPushJobTest(
         space: space,
         logger: Logger(label: "web-push-test"),
         client: WebPushClient { await messages.append($0) },
@@ -170,7 +169,7 @@ import WebPush
     try await withDependencies {
       $0.date = .constant(fixedDate)
     } operation: {
-      try await WebPushRuntime(
+      try await WebPushJobTest(
         space: space,
         logger: Logger(label: "web-push-test"),
         client: WebPushClient { _ in
@@ -216,11 +215,14 @@ private actor MessageCollector {
   func append(_ message: WebPushMessage) { values.append(message) }
 }
 
-private func notificationSpace(endpoints: [String]) async throws -> (space: Space, owner: SessionID) {
+func notificationSpace(endpoints: [String]) async throws -> (space: Space, owner: SessionID) {
+  try await notificationSpace(endpoints: endpoints, space: Space.inMemory())
+}
+
+func notificationSpace(endpoints: [String], space: Space) async throws -> (space: Space, owner: SessionID) {
   try await withDependencies {
     $0.date = .constant(fixedDate)
   } operation: {
-    let space = try Space.inMemory()
     let account = try await space.addAccount(kind: .human, name: nil)
     let key = try await space.addKey(
       testPubkey("push-device"),

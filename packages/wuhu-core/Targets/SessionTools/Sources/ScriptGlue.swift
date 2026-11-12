@@ -91,7 +91,9 @@ export async function identity() {
   return { ...snapshot, issuerFor(origin) {
     const canonical = identityOrigin(origin)
     if (canonical === null) throw new TypeError("issuerFor takes an exact HTTP(S) audience origin")
-    return snapshot.overrides[canonical] ?? snapshot.defaultIssuer
+    const issuer = Object.hasOwn(snapshot.overrides, canonical) ? snapshot.overrides[canonical] : snapshot.defaultIssuer
+    if (issuer === null) throw new Error(`The issuer for ${canonical} is still being published; retry.`)
+    return issuer
   } }
 }
 
@@ -196,16 +198,8 @@ let scriptPrelude = """
   }
 
   const outcome = (value) => (typeof value === "string" ? value : (JSON.stringify(value) ?? "null"))
-  let resulted = false
-  const result = (value) => {
-    if (resulted) throw new Error("result() can be called only once")
-    host.result(outcome(value))
-    resulted = true
-  }
-  const update = (value) => {
-    if (!resulted) throw new Error("update() needs result() first")
-    host.update(outcome(value))
-  }
+  const result = (value) => host.result(outcome(value))
+  const update = (value) => host.update(outcome(value))
 
   const { guarded, signal, bytesOf, base64Of } = web
   for (const [name, link] of Object.entries(host)) {

@@ -16,7 +16,6 @@ dependencies:
   - Clocks
 tests:
   dependencies:
-    - OperationClient
     - OperationProtocol
     - OperationRuntime
     - JSONValue

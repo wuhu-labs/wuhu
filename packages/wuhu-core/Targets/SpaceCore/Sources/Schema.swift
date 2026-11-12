@@ -99,11 +99,3 @@ struct MachineRow {
   @Column("grp") var grp: String
   @Column("scope") var scope: String
 }
-
-@Table("script_execs")
-struct ScriptExecRow {
-  @Column("exec_id", primaryKey: true) var execID: String
-  @Column("script_id") var scriptID: String
-  @Column("session_id") var sessionID: String
-  @Column("grp") var grp: String
-}

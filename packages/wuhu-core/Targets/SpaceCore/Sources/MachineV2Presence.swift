@@ -33,43 +33,14 @@ extension Space {
     try await writer.read { db in try MachineV2MemberRow.where { $0.grp.eq(group.rawValue) }.fetchAll(db).map(\.machineID) }
   }
 
-  public func machineV2DetachedMembers(group: GroupID) async throws -> Set<String> {
-    try await writer.read { db in
-      Set(try MachineV2PresenceRow.where { $0.grp.eq(group.rawValue) && $0.state.eq("detached") }.fetchAll(db).map(\.machineID))
-    }
-  }
-
   public func machineV2PresenceEvidence(_ machine: String, group: GroupID) async throws -> MachineV2PresenceEvidence? {
     try await writer.read { db in
-      let state: MachineV2Presence
-      let stamp: String
-      let reason: String?
-      if let row = try MachineV2PresenceRow.where({ $0.machineID.eq(machine) && $0.grp.eq(group.rawValue) }).fetchOne(db) {
-        guard let stored = MachineV2Presence(rawValue: row.state) else { throw OperationError(.storeUnavailable, message: "Machine v2 presence evidence is invalid") }
-        state = stored; stamp = row.observedAt; reason = row.reason
-      } else if let member = try MachineV2MemberRow.where({ $0.machineID.eq(machine) && $0.grp.eq(group.rawValue) }).fetchOne(db) {
-        state = .lost; stamp = member.createdAt; reason = "neverAttached"
-      } else { return nil }
-      let observedAt: Date
-      do { observedAt = try SQLiteDateFormat.date(from: stamp) }
-      catch { throw OperationError(.storeUnavailable, message: "Machine v2 presence evidence is invalid") }
-      return .init(state: state, observedAt: observedAt, reason: reason)
-    }
-  }
-
-  /// A connection alone is not evidence; the coordinator supplies this only after describe, settled leave, or local lease expiry.
-  public func recordMachineV2Presence(_ machine: String, group: GroupID, state: MachineV2Presence, description: MachineDescription? = nil, reason: String? = nil) async throws {
-    guard state != .attached || description != nil else { throw OperationError(.invalidInput) }
-    let stamp = SQLiteDateFormat.string(from: dateGen.now)
-    let json = try description.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
-    try await writer.write { db in
-      guard let member = try MachineV2MemberRow.where({ $0.machineID.eq(machine) && $0.grp.eq(group.rawValue) }).fetchOne(db) else { throw OperationError(.unknownMachine) }
-      let prior = try MachineV2PresenceRow.where { $0.machineID.eq(machine) && $0.grp.eq(group.rawValue) }.fetchOne(db)
-      let observedAt: String
-      if state == .lost { observedAt = prior?.observedAt ?? member.createdAt }
-      else { observedAt = stamp }
-      let row = MachineV2PresenceRow(machineID: machine, grp: group.rawValue, state: state.rawValue, description: json, observedAt: observedAt, reason: reason)
-      try MachineV2PresenceRow.upsert { row }.execute(db)
+      guard let member = try MachineV2MemberRow.where({ $0.machineID.eq(machine) && $0.grp.eq(group.rawValue) }).fetchOne(db) else { return nil }
+      guard let row = try MachinePresence.unscoped.where({ _ in #sql("owner", as: String.self).eq(machine) }).fetchOne(db), row.observed > 0 else {
+        return .init(state: .lost, observedAt: try SQLiteDateFormat.date(from: member.createdAt), reason: "neverAttached")
+      }
+      let state = MachineV2Presence(rawValue: row.state) ?? .lost
+      return .init(state: state, observedAt: Date(timeIntervalSince1970: Double(row.observed) / 1000), reason: state == .lost ? "leaseSilence" : nil)
     }
   }
 }

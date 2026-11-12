@@ -293,6 +293,8 @@ materializes the session actor.
   or line role it does not know, so a newer server never stalls an older
   client's tail.
 
+Session transcript contents are exposed as lines and generation files, not serialized typed items.
+
 ## Space URLs
 
 `SpaceURL` is the one URL grammar for pointing at something in a space. The TypeScript twin is `packages/wuhu-web/app/app/lib/space-url.ts`; both are pinned by the same vectors.

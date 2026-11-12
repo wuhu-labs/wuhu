@@ -2,7 +2,6 @@
 maxOutput 10: {"code":0,"signal":null,"stdout":"maxOutput ","stderr":"","truncated":true}
 maxOutput 1e20: {"code":0,"signal":null,"stdout":"maxOutput 4194304\n................","stderr":"","truncated":false}
 timeout 1e300: timeout 3600.0
-spawned and waited unread: 80
 flood, first piece: 1048576
 flood after the break: {"code":0,"signal":null}
 

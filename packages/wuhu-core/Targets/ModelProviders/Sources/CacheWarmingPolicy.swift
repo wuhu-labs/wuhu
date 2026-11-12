@@ -6,20 +6,23 @@
 
 public struct CacheWarmingPolicy: Hashable, Sendable, Codable {
   public var intervalSeconds: Int
+  /// Warming ends at the last reply plus this, however many pings came between.
+  public var lifetimeSeconds: Int
   public var maxPings: Int
   public var minimumRemainingPercent: Double
   /// An idle agent is warmed only while its context is at least this large, and every notice it gets offers compaction.
   public var floorTokens: Int
 
-  public init(intervalSeconds: Int = 3300, maxPings: Int = 20, minimumRemainingPercent: Double = 10, floorTokens: Int = 50000) {
+  public init(intervalSeconds: Int = 3300, lifetimeSeconds: Int = 3600, maxPings: Int = 20, minimumRemainingPercent: Double = 10, floorTokens: Int = 50000) {
     self.intervalSeconds = intervalSeconds
+    self.lifetimeSeconds = lifetimeSeconds
     self.maxPings = maxPings
     self.minimumRemainingPercent = minimumRemainingPercent
     self.floorTokens = floorTokens
   }
 
   enum CodingKeys: String, CodingKey, CaseIterable {
-    case intervalSeconds, maxPings, minimumRemainingPercent, floorTokens
+    case intervalSeconds, lifetimeSeconds, maxPings, minimumRemainingPercent, floorTokens
   }
 
   public init(from decoder: any Decoder) throws {
@@ -32,14 +35,15 @@ public struct CacheWarmingPolicy: Hashable, Sendable, Codable {
       }
       self.init(
         intervalSeconds: try integer(.intervalSeconds, default: 3300),
+        lifetimeSeconds: try integer(.lifetimeSeconds, default: 3600),
         maxPings: try integer(.maxPings, default: 20),
         minimumRemainingPercent: container.contains(.minimumRemainingPercent) ? try container.decode(Double.self, forKey: .minimumRemainingPercent) : 10,
         floorTokens: try integer(.floorTokens, default: 50000),
       )
-      guard intervalSeconds > 0, maxPings > 0, floorTokens > 0,
+      guard intervalSeconds > 0, lifetimeSeconds > intervalSeconds, maxPings > 0, floorTokens > 0,
             minimumRemainingPercent.isFinite, (0 ... 100).contains(minimumRemainingPercent)
       else {
-        throw CatalogError.invalidCacheWarming("interval, count and floor must be positive; remaining percent must be 0...100")
+        throw CatalogError.invalidCacheWarming("interval, count and floor must be positive and the lifetime must exceed the interval; remaining percent must be 0...100")
       }
     } catch let error as CatalogError { throw error }
     catch { throw CatalogError.invalidCacheWarming(String(describing: error)) }

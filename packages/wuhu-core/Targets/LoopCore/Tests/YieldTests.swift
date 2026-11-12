@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -14,7 +18,7 @@ import WuhuAI
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
-        Fix.replying("on it", calls: [ToolCall(id: "call_0", name: "exec", arguments: .object(["command": .string("make")]))]),
+        Fix.replying("on it", calls: [ToolCall(id: "call_0", name: "test_tool", arguments: .object(["command": .string("make")]))]),
         Fix.replying("done"),
       ])
       let started = Latch()
@@ -28,20 +32,24 @@ import WuhuAI
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("build"), to: sid)
         await started.wait()
+        let turn = try #require(space.worker.cell(SessionCell.ID(sid.rawValue)).turn())
+        let call = Slot(session: sid, generation: turn.generation, position: turn.position, stepTry: 0).call
         try await service.enqueue(item: Fix.message("still there?", message: "m2"), to: sid)
         try await time.wake("the other input's grace", after: 90)
+        try await until("the yielded tool answer is durable") {
+          guard case let .result(.exec(result), _)? = space.worker.job(call).db.rows(CallRow.all).first?.answer else { return false }
+          return result.output == "yielded"
+        }
+        try await time.wake("the scan after the session's idle eviction", after: 1)
         try await until("second assistant reply") {
-          try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 2
+          try await sessions.lines(sid).assistantLines.count == 2
         }
       }
 
-      let items = try await sessions.hydrate(sid).transcript.kernel.items
-      let results = items.compactMap { item -> String? in
-        guard case let .toolResult(result) = item, case let .exec(exec) = result.payload else { return nil }
-        return exec.output
-      }
-      #expect(results == ["yielded"])
-      #expect(script.attempts.value.last?.itemCount == items.count - 1)
+      let lines = try await sessions.lines(sid)
+      let results = lines.filter { $0.role == .toolResult }
+      #expect(results.map(\.text) == ["yielded"])
+      #expect(script.attempts.value.last?.itemCount == lines.count - 1)
     }
   }
 }

@@ -24,7 +24,7 @@ import WuhuAI
     let model = ResolvedModel(specifier: .init(provider: "offline", model: "test", effort: "low"), endpoint: OpenAIGPTEndpoint(model: "test", apiKey: "do-not-log-credential"), budget: .init(maxInput: 10000, maxOutput: 100), transport: .websocket)
     let executor = InferenceExecutor(session: .init("one"), model: model, systemPrompt: "offline", tools: [], trace: AttemptLogConfig(directory: directory).traceClient, webSocket: socket)
     try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
-      _ = try await executor.run(attemptID: UUID(1), transcript: .init())
+      _ = try await executor.run(attemptID: UUID(1), lines: [])
       let firstURL = directory.appendingPathComponent("\(UUID(1).uuidString.lowercased()).log")
       let first = try Data(contentsOf: firstURL)
       let firstText = String(decoding: first, as: UTF8.self)
@@ -34,7 +34,7 @@ import WuhuAI
       #expect(firstText.contains("resp_2"))
       #expect(!firstText.contains("do-not-log-credential"))
       #expect(!firstText.contains("authorization"))
-      _ = try await executor.run(attemptID: UUID(2), transcript: .init())
+      _ = try await executor.run(attemptID: UUID(2), lines: [])
       #expect(try Data(contentsOf: firstURL) == first)
       let second = try String(contentsOf: directory.appendingPathComponent("\(UUID(2).uuidString.lowercased()).log"), encoding: .utf8)
       #expect(second.contains("resp_3"))

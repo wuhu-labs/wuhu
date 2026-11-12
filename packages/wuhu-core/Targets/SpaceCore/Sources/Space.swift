@@ -17,11 +17,11 @@ public actor Space {
   let writer: any DatabaseWriter
   let reads: ReadPool
   let blobs: BlobStore
-  let broadcast: FSBroadcast
+  let observations: ObservationSources
   let runtime: SpaceRuntime
   let dateGen: DateGenerator
   let clock: any Clock<Duration>
-  let live: LiveHub
+  let documents: DocumentHub
   let rng: WithRandomNumberGenerator
   let log: Logger
   var identityCache: SpaceIdentity?
@@ -34,6 +34,7 @@ public actor Space {
     log: Logger = Logger(label: "wuhu.space"),
     catalog: ViewCatalog = .groups,
     trace: (@Sendable (String) -> Void)? = nil,
+    regions: (@Sendable (any DatabaseWriter) -> RegionSource)? = nil,
   ) throws {
     @Dependency(\.date) var date
     try SpaceMeta.prepare(writer, identity: identity, log: log, date: date)
@@ -44,28 +45,36 @@ public actor Space {
     self.writer = writer
     self.reads = ReadPool(path: writer.path, catalog: catalog, trace: trace)
     let blobs = BlobStore(objects: objects)
-    let broadcast = FSBroadcast()
     self.blobs = blobs
-    self.broadcast = broadcast
     self.dateGen = date
     self.clock = clock
-    self.runtime = SpaceRuntime(writer: writer)
-    let peers = rng
-    self.live = LiveHub(
-      store: LiveStore(writer: writer, blobs: blobs, broadcast: broadcast, dateGen: date), clock: clock, scope: taskScope,
-      newPeer: { peers { UInt64.random(in: 1 ... UInt64(Int64.max), using: &$0) } },
+    self.observations = ObservationSources(
+      writer: writer, reads: reads, clock: clock, regions: regions.map { $0(writer) } ?? ObservationSources.live(writer: writer),
     )
+    let replicas = DocumentReplicas()
+    let peers = rng
+    let peer: @Sendable () -> UInt64 = { peers { UInt64.random(in: 1 ... UInt64(Int64.max), using: &$0) } }
+    let runtime = SpaceRuntime(
+      writer: writer, observations: observations,
+      documents: Documents(
+        replicas: replicas,
+        peer: peer,
+        mtime: { SQLiteDateFormat.string(from: date.now) },
+      ),
+    )
+    self.runtime = runtime
+    self.documents = DocumentHub(runtime: runtime, rows: DocumentRows(writer: writer, blobs: blobs), peer: peer)
     self.rng = rng
     self.log = log
   }
 
   public func close() async throws {
-    await runtime.stop()
-    await checkpointLiveDocuments()
-    broadcast.close()
+    runtime.beginClosing()
+    await runtime.quiesce()
     await taskScope.close()
     var failure: (any Error)?
     do { try await reads.close() } catch { failure = error }
+    await runtime.stop()
     do { try runtime.close() } catch { if failure == nil { failure = error } }
     do { try writer.close() } catch { if failure == nil { failure = error } }
     if let failure { throw failure }
@@ -81,9 +90,7 @@ public actor Space {
     configuration.prepareDatabase { try $0.execute(sql: PageCache.pragmas(cacheKiB: PageCache.writerKiB)) }
     let queue = try DatabaseQueue(path: file.path, configuration: configuration)
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
-    let space = try Space(writer: queue, identity: identity, objects: store, log: log)
-    _ = try? space.taskScope.run("wmd-recover") { await space.recoverLiveDocuments() }
-    return space
+    return try Space(writer: queue, identity: identity, objects: store, log: log)
   }
 
   public static func inMemory(objects: (any ObjectStore)? = nil) throws -> Space {
@@ -96,10 +103,11 @@ public actor Space {
     log: Logger = Logger(label: "wuhu.space"),
     catalog: ViewCatalog = .groups,
     trace: (@Sendable (String) -> Void)? = nil,
+    regions: (@Sendable (any DatabaseWriter) -> RegionSource)? = nil,
   ) throws -> Space {
     let queue = try DatabaseQueue(path: "file:/space-\(UUID())?vfs=memdb", configuration: configuration)
     try SpaceMeta.memorySchema.get().backup(to: queue)
-    return try Space(writer: queue, objects: objects, log: log, catalog: catalog, trace: trace)
+    return try Space(writer: queue, objects: objects, log: log, catalog: catalog, trace: trace, regions: regions)
   }
 
   static func makeConfiguration(journalMode: Configuration.JournalModeConfiguration = .wal) -> Configuration {
@@ -133,7 +141,7 @@ public actor Space {
 
   func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) -> LiveFS {
     LiveFS(
-      group: group, acting: acting, writer: writer, blobs: blobs, broadcast: broadcast, dateGen: dateGen, live: live, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
+      group: group, acting: acting, writer: writer, blobs: blobs, dateGen: dateGen, documents: documents, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
     )
   }
 }

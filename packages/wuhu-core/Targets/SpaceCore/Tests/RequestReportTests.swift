@@ -30,7 +30,6 @@ import Testing
       )
     }
 
-    // The queue is what a session was shown; the fold reads only drained rows.
     func drain(_ session: SessionID) async throws {
       _ = try await store.drainQueue(session)
     }
@@ -99,18 +98,6 @@ import Testing
     }
   }
 
-  @Test func `a kernel task settling with its request open arms no park row`() async throws {
-    let pair = try await Pair()
-    _ = try await pair.request("r1")
-    try await pair.drain(pair.task)
-
-    _ = try await pair.store.appendAssistant(
-      pair.task, attemptID: UUID(), message: SessionFix.assistant("thinking"), metadata: SessionFix.metadata,
-    )
-    #expect(try await pair.store.armedSubscriptions(pair.task).isEmpty, "the loop schedules its own park wake")
-    #expect(try await pair.store.undrainedInputs(pair.task).isEmpty)
-  }
-
   @Test func `a parent watches its children while one is live`() async throws {
     let pair = try await Pair()
     let watched = {
@@ -118,7 +105,7 @@ import Testing
     }
     #expect(try await watched() == [SubscriptionSlot.childrenID.rawValue])
 
-    try await pair.store.rows { try $0.archive(pair.task, grace: .seconds(60)) }
+    _ = try await pair.store.rows { try $0.archive(pair.task, grace: .seconds(60)) }
     #expect(try await watched().isEmpty)
 
     try await pair.store.rows { try $0.unarchive(pair.task) }

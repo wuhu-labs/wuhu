@@ -85,7 +85,7 @@ private func hang() async throws -> Response {
       try await rig.write("/models.json", models)
       try await rig.run("ai-stop")
       try await until("four requests in flight") { provider.started.value.count == 4 }
-      try await rig.stop(scriptID)
+      try await rig.stop(rig.scriptID)
       try await rig.messages(1)
       try await rig.released()
       rig.probe("started: \(provider.started.value.count), cancelled: \(provider.cancelled.value)")

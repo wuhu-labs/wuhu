@@ -4,7 +4,11 @@ import ControlledTime
 import Crypto
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import MachineChannel
 import MachineContract
@@ -178,55 +182,49 @@ import Testing
     let (record, _) = try await space.addMachineV2(name: "parity_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
     let hub = MachineHub(space: space)
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
-    await hub.configureV2(service)
     let context = SpaceToolContext(space: space, machines: machineSeam(hub: hub), principal: .shared(.anonymous))
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
-      tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      for (path, content) in fixture {
-        _ = try await run(context, "write", ["path": .string(path), "content": .string(content)])
-        _ = try await run(context, "write", ["path": .string("machines://\(record.id.rawValue)\(root)\(path)"), "content": .string(content)])
-      }
-      let machineRoot = "machines://\(record.id.rawValue)\(root)"
+      try await withMachineBox(space: space, hub: hub, machine: record.id, client: FetchClient { try await agent.handler($0) }) {
+        for (path, content) in fixture {
+          _ = try await run(context, "write", ["path": .string(path), "content": .string(content)])
+          _ = try await run(context, "write", ["path": .string("machines://\(record.id.rawValue)\(root)\(path)"), "content": .string(content)])
+        }
+        let machineRoot = "machines://\(record.id.rawValue)\(root)"
 
-      for limit in [nil, 1, 2] as [Int?] {
-        let spacePages = try await pages(context, "grep", ["pattern": "foo \\w+", "path": "/"], limit: limit, strip: [])
-        let machinePages = try await pages(context, "grep", ["pattern": "foo \\w+", "path": .string(machineRoot)], limit: limit, strip: [machineRoot])
-        #expect(spacePages == machinePages, "grep \(String(describing: limit))")
-        #expect(spacePages.flatMap(\.items) == [
-          "/docs/a.txt:1:foo one",
-          "/docs/a.txt:3:foo two",
-          "/docs/c.txt:1:foo three",
-          "/readme.md:1:foo four",
-          "/src/deep/nested.txt:1:foo five",
-          "/src/deep/nested.txt:2:foo six",
-        ])
+        for limit in [nil, 1, 2] as [Int?] {
+          let spacePages = try await pages(context, "grep", ["pattern": "foo \\w+", "path": "/"], limit: limit, strip: [])
+          let machinePages = try await pages(context, "grep", ["pattern": "foo \\w+", "path": .string(machineRoot)], limit: limit, strip: [machineRoot])
+          #expect(spacePages == machinePages, "grep \(String(describing: limit))")
+          #expect(spacePages.flatMap(\.items) == [
+            "/docs/a.txt:1:foo one",
+            "/docs/a.txt:3:foo two",
+            "/docs/c.txt:1:foo three",
+            "/readme.md:1:foo four",
+            "/src/deep/nested.txt:1:foo five",
+            "/src/deep/nested.txt:2:foo six",
+          ])
 
-        let spaceFind = try await pages(context, "find", ["glob": "**/*.txt", "path": "/"], limit: limit, strip: [])
-        let machineFind = try await pages(context, "find", ["glob": "**/*.txt", "path": .string(machineRoot)], limit: limit, strip: [machineRoot])
-        #expect(spaceFind == machineFind, "find \(String(describing: limit))")
-        #expect(spaceFind.flatMap(\.items) == ["/docs/a.txt", "/docs/b.txt", "/docs/c.txt", "/src/deep/nested.txt"])
+          let spaceFind = try await pages(context, "find", ["glob": "**/*.txt", "path": "/"], limit: limit, strip: [])
+          let machineFind = try await pages(context, "find", ["glob": "**/*.txt", "path": .string(machineRoot)], limit: limit, strip: [machineRoot])
+          #expect(spaceFind == machineFind, "find \(String(describing: limit))")
+          #expect(spaceFind.flatMap(\.items) == ["/docs/a.txt", "/docs/b.txt", "/docs/c.txt", "/src/deep/nested.txt"])
+        }
       }
       await agent.shutdown()
     }
-    await service.shutdown()
   }
 }
 
 private func withFileAgent(_ server: TestServer, machine: MachineID, _ body: () async throws -> Void) async throws {
   let agent = try OperationAgent(machine: machine.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
-  let service = MachineV2Service(space: server.space, hub: MachineV2Hub(space: server.space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
-  await server.hub.configureV2(service)
   try await withThrowingTaskGroup(of: Void.self) { tasks in
     tasks.addTask { await agent.run() }
-    tasks.addTask { try await service.run() }
     defer { tasks.cancelAll() }
-    try await body()
+    try await withMachineBox(space: server.space, hub: server.hub, machine: machine, client: FetchClient { try await agent.handler($0) }, body)
     await agent.shutdown()
   }
-  await service.shutdown()
 }
 
 private func run(_ context: SpaceToolContext, _ tool: String, _ input: JSONValue) async throws -> JSONValue {

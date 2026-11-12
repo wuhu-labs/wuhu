@@ -14,21 +14,28 @@ public struct InferenceRequest: Sendable {
   public var sessionID: SessionID
   public var attemptID: UUID
   public var generation: Int
-  public var transcript: Transcript
+  public var lines: [TranscriptLine]
+  public var binding: ReplayBinding?
   public var idleTimeout: Duration
+  /// A cache-warming ping: one attempt, and no say in the session's model route.
+  public var ping: Bool
 
   public init(
     sessionID: SessionID,
     attemptID: UUID,
     generation: Int,
-    transcript: Transcript,
+    lines: [TranscriptLine],
+    binding: ReplayBinding? = nil,
     idleTimeout: Duration = .seconds(120),
+    ping: Bool = false,
   ) {
     self.sessionID = sessionID
     self.attemptID = attemptID
     self.generation = generation
-    self.transcript = transcript
+    self.lines = lines
+    self.binding = binding
     self.idleTimeout = idleTimeout
+    self.ping = ping
   }
 }
 
@@ -53,8 +60,7 @@ public struct ToolRosterChanged: Error, Equatable, Sendable {
 
   public var notice: String
 
-  /// Nil when no tool was added, removed or changed, or when `transcript` already carries this very notice.
-  public init?(stored: [Tool], live: [Tool], told transcript: Transcript) {
+  public init?(stored: [Tool], live: [Tool], told lines: [TranscriptLine]) {
     func name(_ tool: Tool) -> String {
       switch tool {
       case let .function(name, _, _): name
@@ -72,9 +78,12 @@ public struct ToolRosterChanged: Error, Equatable, Sendable {
     let notice = "The server was upgraded and its tools differ from the list this generation was given. \(parts.joined(separator: " ")) "
       + "Your list stays as it is until your next compaction, which brings the new one. Until then a call to a removed tool gets an error result, "
       + "and a changed tool takes what the server accepts now: if a call is refused, the error says what it expects."
-    let told = transcript.items.contains { item in
-      guard case let .notification(notification) = item else { return false }
-      return notification.subscriptionID == Self.source && notification.content.text == notice
+    let told = lines.contains { line in
+      guard line.key == LineKey.toolRoster, case let .user(message) = line.message else { return false }
+      return message.content.contains { block in
+        guard case let .text(text) = block else { return false }
+        return text.text.hasSuffix("\n\n" + notice)
+      }
     }
     guard !told else { return nil }
     self.notice = notice
@@ -83,11 +92,8 @@ public struct ToolRosterChanged: Error, Equatable, Sendable {
 
 public struct ReplayBoundaryRequired: Error, Sendable {
   public var binding: ReplayBinding
-  public var budget: ContextBudget
-
-  public init(binding: ReplayBinding, budget: ContextBudget) {
+  public init(binding: ReplayBinding) {
     self.binding = binding
-    self.budget = budget
   }
 }
 
@@ -100,23 +106,26 @@ public struct InferenceReply: Sendable {
   public var message: AssistantMessage
   public var metadata: AssistantMessageMetadata
   public var replayBinding: ReplayBinding?
-  /// The attempt's follow-up once it is the step's reply, with the transcript it ends.
-  public var committed: @Sendable (AssistantEntry, Transcript) async -> Void
+  public var committed: @Sendable (AssistantEntry) async -> Void
+  /// The model's warming policy as of this reply, or nil when there is none to keep.
+  public var warming: WarmingSchedule?
 
-  public init(message: AssistantMessage, metadata: AssistantMessageMetadata, replayBinding: ReplayBinding? = nil, committed: @escaping @Sendable (AssistantEntry, Transcript) async -> Void = { _, _ in }) {
+  public init(
+    message: AssistantMessage, metadata: AssistantMessageMetadata, replayBinding: ReplayBinding? = nil,
+    committed: @escaping @Sendable (AssistantEntry) async -> Void = { _ in }, warming: WarmingSchedule? = nil,
+  ) {
     self.message = message
     self.metadata = metadata
     self.replayBinding = replayBinding
     self.committed = committed
+    self.warming = warming
   }
 }
 
 public struct LoopConfig: Sendable {
   public var executeTool: @Sendable (ToolInvocation) async throws -> ToolOutcome
   public var inference: @Sendable (InferenceRequest) async throws -> InferenceReply
-  // The compacted transcript and the target a compact call named, if any. A
-  // throw with a target is the model's refusal: nothing folds.
-  public var prepareCompaction: @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition?
+  public var prepareCompaction: @Sendable (SessionID, Int, CompactionTarget?) async throws -> ModelRouteTransition?
   public var budget: @Sendable (SessionID) async -> ContextBudget
   // Fired when an interrupt cancels a mid-flight tool: the composition root
   // propagates the kill to the effector.
@@ -128,20 +137,17 @@ public struct LoopConfig: Sendable {
   public var thresholds: CompactionThresholds
   /// Where a session's plain stream observations dial.
   public var sources: EventSources
-  /// Takes each turn row a session's cell found different from its transcript.
-  public var turnDifference: (@Sendable (TurnDifference) async -> Void)?
 
   public init(
     executeTool: @escaping @Sendable (ToolInvocation) async throws -> ToolOutcome,
     inference: @escaping @Sendable (InferenceRequest) async throws -> InferenceReply,
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
-    prepareCompaction: @escaping @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? = { _, _, _ in nil },
+    prepareCompaction: @escaping @Sendable (SessionID, Int, CompactionTarget?) async throws -> ModelRouteTransition? = { _, _, _ in nil },
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] },
     thresholds: CompactionThresholds = .init(),
     sources: EventSources = .unavailable,
-    turnDifference: (@Sendable (TurnDifference) async -> Void)? = nil,
   ) {
     self.prepareCompaction = prepareCompaction
     self.executeTool = executeTool
@@ -152,6 +158,5 @@ public struct LoopConfig: Sendable {
     self.runningWork = runningWork
     self.thresholds = thresholds
     self.sources = sources
-    self.turnDifference = turnDifference
   }
 }

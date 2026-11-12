@@ -27,13 +27,14 @@ import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
 import class MainHub.Hub
+import OperationProtocol
 import Serve
 import struct ServerTelemetry.TraceParent
 import SessionDomain
 @testable import SessionTools
 import struct SpaceClient.SpaceClient
 import struct SpaceContract.GroupID
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import SpaceTools
 import Synchronization
@@ -407,6 +408,7 @@ final class ScriptedExecMachine: Sendable {
   let tracedDials = Box<[Bool]>([])
 
   private let endpoints = Mutex<[ExecID: ChannelEndpoint]>([:])
+  private let owners = Mutex<[ExecID: MachineID]>([:])
   private let links = Mutex<[ExecID: InMemoryTransport]>([:])
   private let space = Mutex<Space?>(nil)
   private let transports: AsyncStream<(ChannelEndpoint, InMemoryTransport)>
@@ -426,20 +428,29 @@ final class ScriptedExecMachine: Sendable {
     let (caller, machineSide) = InMemoryTransport.pair()
     links.withLock { $0[id] = machineSide }
     transportsContinuation.yield((endpoint(for: id), machineSide))
-    return TerminalAckTransport(base: caller, observe: onTerminalAck)
+    return TerminalAckTransport(base: caller, observe: onTerminalAck, closed: { [self] in
+      let store = self.space.withLock { $0 }!
+      let cell = MachineCell.ID(owners.withLock { $0[id]! }.rawValue)
+      let row = store.worker.cell(cell).operation(id.rawValue)
+      if let row, !row.terminal {
+        kills.withLock { if !$0.contains(id) { $0.append(id) } }
+        store.worker.send(cell).stop(id.rawValue, reason: "callerGone")
+        killGate(id).open()
+      }
+    })
   }
 
   func executor(
     owner: MainHub.Hub, reachable: Bool = true, scripts: Scripts? = nil,
     access: InferenceAccess = InferenceAccess(), origin: String? = nil, contentHostPattern: String? = nil,
     secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
-  ) -> ToolExecutor {
-    let tokens = ExecTokens(spaceURL: "http://main")
+  ) async throws -> ToolExecutor {
+    let tokens = try await testTokens(space: owner.space, spaceURL: "http://main")
     let connection = MainConnection()
     let executor = ToolExecutor(main: connection, credential: {
       guard reachable else { throw MainUnavailable() }
-      return tokens.sessionToken($0)
-    }, access: access, scripts: scripts)
+      return try await tokens.sessionToken($0)
+    }, access: access)
     bind(
       connection, owner: owner, tokens: tokens, reachable: reachable, access: access,
       origin: origin, contentHostPattern: contentHostPattern, secrets: secrets, identity: identity,
@@ -460,18 +471,21 @@ final class ScriptedExecMachine: Sendable {
     connection.bind(FetchClient { [self] request in
       guard request.url.path == "/v1/exec" || request.url.path.hasPrefix("/v1/exec/") else { return try await fallback(request) }
       let bearer = String((request.headers["authorization"] ?? "").dropFirst(7))
-      guard let session = tokens.session(ofBearer: bearer) else { return Response(status: .unauthorized) }
+      @Dependency(\.date) var date
+      let session: SessionID
+      switch await sessionVerdict(bearer, tokens: tokens, space: space, now: date.now) {
+      case let .refused(response): return response
+      case let .session(holder): session = holder.session
+      case .script: preconditionFailure("a session exec tool cannot present a sessionless bearer")
+      }
       if request.url.path == "/v1/exec" {
         if request.method == .post {
           let input = try await request.json(ExecMintInput.self)
-          if let script = input.script {
-            let record = try await space.mintScriptExec(machine: input.machine, caller: session.rawValue, script: script)
-            scriptMints.withLock { $0 += 1 }
-            return try Response.json(ExecMintOutput(id: record.id))
-          }
-          let callID = try #require(request.headers["wuhu-tool-call"])
-          let claim = try await space.claimExec(machine: input.machine, caller: session.rawValue, toolCallID: .init(callID), spec: input.spec?.jsonString())
-          return try Response.json(ExecMintOutput(id: claim.record.id))
+          let script = try #require(input.script)
+          let record = try await space.reserveExec(machine: input.machine, caller: session.rawValue, script: script)
+          owners.withLock { $0[record.id] = input.machine }
+          scriptMints.withLock { $0 += 1 }
+          return try Response.json(ExecMintOutput(id: record.id))
         }
         return try Response.json(try await space.liveExecs().filter { $0.caller == session.rawValue }.map { execStatus(of: $0) })
       }
@@ -486,7 +500,7 @@ final class ScriptedExecMachine: Sendable {
         }
         kills.withLock { $0.append(id) }
         killGate(id).open()
-        try await space.finishExec(id, .cancelled)
+        try await space.worker.call(MachineCell.ID(record.machine.rawValue)) { try $0.stop(id.rawValue) }
         return try Response.json(["ok": true])
       }
       return try Response.json(execStatus(of: record))
@@ -522,10 +536,17 @@ final class ScriptedExecMachine: Sendable {
     return endpoint
   }
 
-  // The machine drops away as the hub sees it once the grace runs out: the
-  // exec turns machine-lost and its caller leg is cut.
   func lose(_ id: ExecID) async {
-    try? await space.withLock { $0 }?.finishExec(id, .machineLost)
+    do {
+      let store = try #require(space.withLock { $0 })
+      let record = try #require(try await store.execRecord(id))
+      try await store.worker.call(MachineCell.ID(record.machine.rawValue)) { cell in
+        var row = cell.operation(id.rawValue)!
+        row.opened = true
+        try cell.finish(&row, error: OperationError(.unknownOperation))
+        try cell.save(row)
+      }
+    } catch { Issue.record(error) }
     links.withLock { $0[id] }?.sever()
   }
 
@@ -577,8 +598,9 @@ struct Gate: Sendable {
 private struct TerminalAckTransport: FrameTransport {
   let base: InMemoryTransport
   let observe: @Sendable (Ack) async throws -> Void
+  let closed: @Sendable () -> Void
   var inbound: AsyncStream<[UInt8]> { base.inbound }
-  func close() { base.close() }
+  func close() { base.close(); closed() }
   func send(_ bytes: [UInt8]) async throws {
     let frame = try FrameCodec.decode(bytes)
     if frame.opcode == .ack, let ack = try? frame.payload(Ack.self), ack.terminal == true {
@@ -598,9 +620,17 @@ private struct ExecRecordingTransport: FrameTransport {
     if frame.opcode == .execExit, let exit = try? frame.payload(ExecExit.self),
        try await space.execRecord(exit.id)?.terminal == nil
     {
-      switch exit.status {
-      case let .exited(code): try await space.finishExec(exit.id, .exited(code: code))
-      case let .signaled(signal): try await space.finishExec(exit.id, .signaled(signal: signal))
+      let record = try #require(try await space.execRecord(exit.id))
+      try await space.worker.call(MachineCell.ID(record.machine.rawValue)) { cell in
+        var row = cell.operation(exit.id.rawValue)!
+        let termination: JSONValue = switch exit.status {
+        case let .exited(code): ["tag": "exit", "code": .number(Double(code))]
+        case let .signaled(signal): ["tag": "signal", "signal": .number(Double(signal))]
+        }
+        row.snapshot = OperationSnapshot(operation: row.request.operation, verdict: .init(.completed, result: ["termination": termination]), terminalToken: UUID(), finalOffsets: [:], outputConsumed: true)
+        row.state = "retired"
+        try cell.deliver(&row)
+        try cell.save(row)
       }
     }
     try await base.send(bytes)

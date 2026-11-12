@@ -685,31 +685,6 @@ extension Command {
       let id = try parser.required("session-id", verb: "session \(subcommand)")
       try parser.finish(verb: "session \(subcommand)")
       return .sessionAction(SessionActionVerb(rawValue: subcommand)!, id: id, force: force)
-    case "log":
-      let direct = parser.flag("--direct")
-      let verbose = parser.flag("-v")
-      let veryVerbose = parser.flag("-vv")
-      let limit = try parser.intOption("--limit", verb: "session log")
-      let before = try parser.option("--before", verb: "session log")
-      let id = try parser.required("session-id", verb: "session log")
-      try parser.finish(verb: "session log")
-      guard direct || verbose || veryVerbose else {
-        var conversationBefore: Int?
-        if let before {
-          guard let n = Int(before), n >= 0 else {
-            throw UsageError(message: "session log: the conversation view pages by the [n] cursor; --before wants an integer (switch to --direct for refs)")
-          }
-          conversationBefore = n
-        }
-        return .sessionLog(id: id, view: .conversation(limit: limit, before: conversationBefore))
-      }
-      let level = veryVerbose ? 3 : verbose ? 2 : 1
-      return .sessionLog(id: id, view: .direct(level: level, limit: limit, before: before))
-    case "entry":
-      let session = try parser.required("session-id", verb: "session entry")
-      let ref = try parser.required("ref", verb: "session entry")
-      try parser.finish(verb: "session entry")
-      return .sessionEntry(session: session, ref: ref)
     case "inspect":
       let id = try parser.required("session-id", verb: "session inspect")
       try parser.finish(verb: "session inspect")
@@ -1162,13 +1137,12 @@ extension Command {
     usage: wuhu id-token --audience <origin> [--json]
 
     inside a session's exec, prints a 60-second OIDC token (ES256, this
-    space's issuer) whose aud is <origin> (scheme://host[:port]) and whose
+    space's issuer) whose aud is <origin> (http(s)://host[:port]) and whose
     claims name the space, group, session (sub <group>/<session>), machine
     and exec. a service that trusts the issuer, such as the build pool, takes
     it as the caller's credential. it presents only the exec's
-    WUHU_ID_TOKEN_REQUEST capability at WUHU_ID_TOKEN_URL, which the server
-    sets for execs a session starts; the capability ends with the exec, its
-    session's archiving or a server restart. --json prints
+    signed WUHU_TOKEN at WUHU_SPACE_URL/v1/id-token. Its authority ends
+    with the exec, its timeout or its session's archiving. --json prints
     {"token": "...", "expiresAt": <unix seconds>}.
     \(exitCodes)
     """,
@@ -1852,7 +1826,9 @@ extension Command {
            wuhu identity set <origin> <self|directory|inherit>
 
     Prints resolved issuer URLs; set accepts choices, not URLs. inherit removes an override.
-    set, rotate and register-new require a human space admin. rotate preserves the issuer.
+    set, rotate and register-new require a human space admin. They return an accepted state
+    snapshot without waiting for publication; inspect identity for confirmed/failed status.
+    rotate preserves the issuer.
     register-new starts a fresh directory issuer. Changing issuer breaks verifier trust;
     configure the verifier to trust both URLs before switching.
     """,
@@ -1988,9 +1964,7 @@ extension Command {
                                sessions and closes all open requests in
                                the subtree
       unarchive <session-id>   restore within the grace window
-      log [--direct|-v|-vv] [--limit N] [--before REF] <session-id>  read the session log
       inspect <session-id>            requested target and active route, with placement evidence (JSON)
-      entry <session-id> <ref> fetch one log item in full
       list                     list sessions (sugar over query)
     \(exitCodes)
     """,
@@ -2055,34 +2029,6 @@ extension Command {
     back only this way, with --provider and --model.
 
     --message posts an opening message so the fresh session starts working.
-    \(exitCodes)
-    """,
-    "session log": """
-    usage: wuhu session log [--direct|-v|-vv] [--limit N] [--before REF] <session-id>
-
-    default: the session's channel — threads, senders, replies (every
-    executor; the primary view).
-
-    --direct switches to the deep per-session log; levels select kinds:
-      --direct  narrative: inputs, reminders, assistant text, replies,
-                compaction markers
-      -v        plus tool calls, reasoning summaries, cumulative context usage
-      -vv       plus tool results
-
-    every direct-view item carries a [ref]; `wuhu session entry` fetches one
-    in full. both views serve the tail (last 50 by default); --limit N caps
-    the page and --before pages older items — the [n] cursor in the channel
-    view, a [ref] in the direct view. refs are short-lived — compaction
-    invalidates them. old Claude Code turns are no longer shown; their raw
-    stored rows and external logs remain.
-    \(exitCodes)
-    """,
-    "session entry": """
-    usage: wuhu session entry <session-id> <ref>
-
-    prints one session log item in full, unclipped. take REF from a
-    `wuhu session log --direct` header. refs are short-lived handles;
-    a compacted or trimmed ref answers with a typed error — re-read the log.
     \(exitCodes)
     """,
     "models update": """

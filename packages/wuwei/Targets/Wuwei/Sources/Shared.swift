@@ -1,3 +1,4 @@
+import Dispatch
 import GRDBSQLite
 import Synchronization
 
@@ -5,10 +6,18 @@ import Synchronization
 public protocol SharedDatabase: Sendable {
   /// One write transaction on the writer: committed if `body` returns, rolled back if it throws. `host` is the host program's own object for this connection, which a cell takes as ``Database/host`` to write the host's tables through the host's code.
   func write(_ body: (_ handle: OpaquePointer, _ host: AnyObject?) throws -> Void) throws
+  func begin() throws -> any SharedTransaction
   /// One read transaction, never on the writer: a read may run while a write is open.
   func read(_ body: (OpaquePointer) throws -> Void) throws
-  /// One write statement of a cell or a job, inside the transaction `write` opened with `host`. A host program whose driver must see every write to its tables, to track changes, runs the statement itself and returns true; false leaves it to the runtime. A statement SQLite refuses throws ``SQLiteError``.
+  /// One write statement of a cell or a job, inside the transaction `write` or `begin` opened with `host`. A host program whose driver must see every write to its tables, to track changes, runs the statement itself and returns true; false leaves it to the runtime. A statement SQLite refuses throws ``SQLiteError``.
   func execute(_ sql: String, _ arguments: [Value], on host: AnyObject?) throws -> Bool
+}
+
+/// A writer held until commit or rollback. Access is synchronous, on the host's writer; only the command and its Sendable result cross that boundary, never a borrowed connection. Either terminal operation releases the writer, including a failed commit; access throws only for that command and leaves the transaction open.
+public protocol SharedTransaction {
+  func access<T: Sendable>(_ body: @Sendable (OpaquePointer, AnyObject?) throws -> T) throws -> T
+  func commit() throws
+  func rollback()
 }
 
 extension SharedDatabase {
@@ -32,6 +41,7 @@ public enum Storage: Sendable {
 public final class FileDatabase: SharedDatabase {
   let path: String
   private let writer: Mutex<Connection>
+  private let available = DispatchSemaphore(value: 1)
   private let reader: Mutex<Connection>
 
   /// `path` may be a `file:` URI. `synchronous` is off only in tests: the file then never fsyncs, which still survives a simulated crash.
@@ -68,6 +78,8 @@ public final class FileDatabase: SharedDatabase {
   ]
 
   public func write(_ body: (OpaquePointer, AnyObject?) throws -> Void) throws {
+    available.wait()
+    defer { available.signal() }
     try writer.withLock { db in
       try db.execute("BEGIN IMMEDIATE")
       do {
@@ -80,6 +92,21 @@ public final class FileDatabase: SharedDatabase {
     }
   }
 
+  public func begin() throws -> any SharedTransaction {
+    available.wait()
+    do { try accessWriter { try Connection(borrowing: $0).execute("BEGIN IMMEDIATE") } }
+    catch { available.signal(); throw error }
+    return FileTransaction(database: self)
+  }
+
+  fileprivate func accessWriter<T: Sendable>(_ body: @Sendable (OpaquePointer) throws -> T) rethrows -> T {
+    try writer.withLock { try body($0.handle) }
+  }
+
+  fileprivate func finishWriter() {
+    available.signal()
+  }
+
   public func read(_ body: (OpaquePointer) throws -> Void) throws {
     try reader.withLock { db in
       try db.execute("BEGIN")
@@ -87,4 +114,36 @@ public final class FileDatabase: SharedDatabase {
       try body(db.handle)
     }
   }
+}
+
+private final class FileTransaction: SharedTransaction {
+  private var finished = false
+  private let database: FileDatabase
+
+  init(database: FileDatabase) { self.database = database }
+
+  func access<T: Sendable>(_ body: @Sendable (OpaquePointer, AnyObject?) throws -> T) throws -> T {
+    precondition(!finished)
+    return try database.accessWriter { try body($0, nil) }
+  }
+
+  func commit() throws {
+    precondition(!finished)
+    finished = true
+    defer { database.finishWriter() }
+    try database.accessWriter { handle in
+      let db = Connection(borrowing: handle)
+      do { try db.execute("COMMIT") }
+      catch { try? db.execute("ROLLBACK"); throw error }
+    }
+  }
+
+  func rollback() {
+    precondition(!finished)
+    finished = true
+    try? database.accessWriter { try Connection(borrowing: $0).execute("ROLLBACK") }
+    database.finishWriter()
+  }
+
+  deinit { precondition(finished, "a held transaction must finish") }
 }

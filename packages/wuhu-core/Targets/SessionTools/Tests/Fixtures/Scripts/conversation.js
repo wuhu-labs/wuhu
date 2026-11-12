@@ -8,7 +8,7 @@ const attempt = async (label, call) => {
   try {
     lines.push(`${label}: ${ids(await call())}`)
   } catch (error) {
-    lines.push(`${label}: ${error.message}`)
+    lines.push(`${label}: ${error.message.replaceAll(theirs, "<theirs>")}`)
   }
 }
 

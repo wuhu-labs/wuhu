@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import SessionDomain
 import enum SpaceContract.ImageMedia
@@ -135,11 +139,11 @@ import WuhuAI
     #expect(ImageMedia.mimeType(ofBytes: []) == nil)
   }
 
-  @Test func `a message with an attachment renders text plus a reference to the file`() async {
-    let transcript = Transcript(items: [Fix.message(text: "what does this say?", attachments: [attachment])])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
+  @Test func `a message with an attachment renders text plus a reference to the file`() {
+    let items: [TranscriptItem] = [Fix.message(text: "what does this say?", attachments: [attachment])]
+    let messages = items.flatMap { $0.lines(session: Fix.session) }.map(\.message)
 
-    let content = context.messages[0].user?.content
+    let content = messages[0].user?.content
     #expect(content?.count == 2)
     guard case let .text(text) = content?.first else {
       Issue.record("the header and body render first")
@@ -155,13 +159,13 @@ import WuhuAI
     #expect(MediaReference(media.url) == .spaceFile("/sessions/s-1/attachments/a.png"))
   }
 
-  @Test func `what the model cannot take as an image arrives as one line with its type and size`() async {
+  @Test func `what the model cannot take as an image arrives as one line with its type and size`() {
     let clip = Attachment.file(path: "/c/clip.mp4", mimeType: "video/mp4", size: 41_943_040)
     let big = Attachment.image(path: "/c/big.png", mimeType: "image/png", size: ImageMedia.maxBytes + 1)
-    let transcript = Transcript(items: [Fix.message(text: "see", attachments: [attachment, clip, big])])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
+    let items: [TranscriptItem] = [Fix.message(text: "see", attachments: [attachment, clip, big])]
+    let messages = items.flatMap { $0.lines(session: Fix.session) }.map(\.message)
 
-    let content = context.messages[0].user?.content ?? []
+    let content = messages[0].user?.content ?? []
     guard case let .text(text) = content.first else {
       Issue.record("the header and body render first")
       return
@@ -180,17 +184,17 @@ import WuhuAI
     #expect(media == [.spaceFile("/sessions/s-1/attachments/a.png")])
   }
 
-  @Test func `a stored file and a stored 50 MiB image each reach the model as their line`() async throws {
+  @Test func `a stored file and a stored 50 MiB image each reach the model as their line`() throws {
     let stored = #"""
     {"text":"see","attachments":[\#
     {"kind":"file","path":"/c/report.pdf","mimeType":"application/pdf","size":598},\#
     {"kind":"image","path":"/c/huge.png","mimeType":"image/png","size":52428800}]}
     """#
     let content = try JSONDecoder().decode(MessageContent.self, from: Data(stored.utf8))
-    let transcript = Transcript(items: [Fix.message(text: content.text, attachments: content.attachments)])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
+    let items: [TranscriptItem] = [Fix.message(text: content.text, attachments: content.attachments)]
+    let messages = items.flatMap { $0.lines(session: Fix.session) }.map(\.message)
 
-    let blocks = context.messages[0].user?.content ?? []
+    let blocks = messages[0].user?.content ?? []
     #expect(blocks.count == 1)
     guard case let .text(text) = blocks.first else {
       Issue.record("the header and body render first")
@@ -205,19 +209,19 @@ import WuhuAI
   }
 
   @Test func `an attachment costs an image estimate, not its path length`() {
-    let plain = Transcript(items: [Fix.message(text: "look")])
-    let carrying = Transcript(items: [Fix.message(text: "look", attachments: [attachment])])
+    let plain = Fix.message(text: "look").lines(session: Fix.session)
+    let carrying = Fix.message(text: "look", attachments: [attachment]).lines(session: Fix.session)
     #expect(carrying.estimatedContextTokens(images: .claude) - plain.estimatedContextTokens(images: .claude) > 1500)
   }
 
-  @Test func `every attachment in the transcript renders its own reference`() async {
-    let transcript = Transcript(items: [
+  @Test func `every message attachment renders its own reference`() {
+    let items: [TranscriptItem] = [
       Fix.message(text: "a", attachments: [attachment]),
-      Fix.direct(),
+      Fix.message(text: "interlude"),
       Fix.message(conversation: "ch2", text: "b", attachments: [attachment]),
-    ])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
-    let references = context.messages.flatMap { message in
+    ]
+    let messages = items.flatMap { $0.lines(session: Fix.session) }.map(\.message)
+    let references = messages.flatMap { message in
       (message.user?.content ?? []).compactMap { block -> MediaReference? in
         guard case let .media(media) = block else { return nil }
         return MediaReference(media.url)

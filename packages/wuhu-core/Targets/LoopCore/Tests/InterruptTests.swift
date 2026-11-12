@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -42,8 +46,7 @@ import WuhuAI
         try await until("settled") { try await sessions.settledWork(sid) }
       }
 
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(transcript.assistantEntries.count == 1)
+      #expect(try await sessions.lines(sid).assistantLines.count == 1)
     }
   }
 
@@ -54,7 +57,7 @@ import WuhuAI
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
-        Fix.replying("running exec", calls: [.init(id: "call_0", name: "exec", arguments: .object([:]))]),
+        Fix.replying("running exec", calls: [.init(id: "call_0", name: "test_tool", arguments: .object([:]))]),
         Fix.replying("recovered"),
       ])
       let exec = ExecScript { _ in
@@ -70,30 +73,24 @@ import WuhuAI
 
         try await service.interrupt(sid)
         try await until("interrupted marker") {
-          if case .toolResult? = try await sessions.hydrate(sid).transcript.kernel.items.last { true } else { false }
+          try await sessions.lines(sid).last?.role == .toolResult
         }
         #expect(try await sessions.record(sid).hold == .interrupted)
 
-        let held = try await sessions.hydrate(sid).transcript.kernel
-        guard case let .toolResult(marker) = held.items.last else {
-          Issue.record("expected an interrupted-tool marker")
-          return
-        }
-        guard case let .failure(failure) = marker.payload else {
-          Issue.record("expected a failure payload on the marker")
-          return
-        }
-        #expect(failure.message.contains("interrupted"))
-        #expect(held.pendingToolCallIDs.isEmpty)
+        let held = try await sessions.lines(sid)
+        let marker = try #require(held.last?.message.toolResult)
+        #expect(marker.isError)
+        #expect(marker.content == [.text(interruptedToolMessage)])
+        #expect(marker.toolCallId == exec.calls.value.first?.id)
+        #expect(space.worker.cell(SessionCell.ID(sid.rawValue)).turn()?.call == nil)
 
         try await service.resume(sid)
         try await until("settled") { try await sessions.settledWork(sid) }
       }
 
       // The marker satisfied the call: the executor never ran a second time.
-      #expect(exec.calls.value.map(\.name) == ["exec"])
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(transcript.assistantEntries.count == 2)
+      #expect(exec.calls.value.map(\.name) == ["test_tool"])
+      #expect(try await sessions.lines(sid).assistantLines.count == 2)
     }
   }
 
@@ -115,8 +112,7 @@ import WuhuAI
 
         try await service.interrupt(sid)
         try await until("interrupted") { try await sessions.record(sid).hold == .interrupted }
-        let held = try await sessions.hydrate(sid).transcript.kernel
-        #expect(held.assistantEntries.isEmpty)
+        #expect(try await sessions.lines(sid).assistantLines.isEmpty)
 
         try await service.resume(sid)
         try await until("settled") { try await sessions.settledWork(sid) }
@@ -125,8 +121,8 @@ import WuhuAI
       let attempts = script.attempts.value
       #expect(attempts.count == 2)
       #expect(attempts[0].id != attempts[1].id)
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(transcript.assistantEntries.map(\.id) == [attempts[1].id])
+      let lines = try await sessions.lines(sid)
+      #expect(lines.assistantLines.map(\.key) == ["attempt:\(attempts[1].id.uuidString.lowercased())"])
     }
   }
 }

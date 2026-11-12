@@ -11,7 +11,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space, name: "Before")
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       let message = try failureMessage(try await world.run("set_title", ToolArguments(emitted: #"{"title":"Nightly"#)))
 

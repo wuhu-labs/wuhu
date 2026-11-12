@@ -13,7 +13,7 @@ public struct ClientMediaResolver: MediaResolver {
 
   public func resolve(_ media: MediaContent) async throws -> ResolvedMedia? {
     guard MediaReference(media.url) != nil else { return nil }
-    let client = try await tools.client(session)
+    let client = tools.client(session)
     let data = try await client.media(media.url)
     return switch ImageFitting.fit(data, mimeType: media.mimeType) {
     case let .image(fitted, mimeType): .data(fitted, mimeType: mimeType)

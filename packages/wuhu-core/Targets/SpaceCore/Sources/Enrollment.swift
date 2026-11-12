@@ -135,6 +135,9 @@ extension Space {
             let key = try? Self.keyRecord(from: stored), Self.isLive(key.expiresAt, at: now), key.capabilities.contains(.execMachine)
       else { return false }
       _ = try Self.purgeCredentials(account: key.account, in: db)
+      let recipient = MachineCell.ID(machine.rawValue).recipient
+      try recipient.post(.closeBoxes, on: db.sqliteConnection!)
+      db.afterNextTransaction { _ in self.runtime.poke(recipient) }
       return true
     }
   }

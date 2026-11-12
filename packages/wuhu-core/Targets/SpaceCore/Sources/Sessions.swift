@@ -93,72 +93,8 @@ enum Sessions {
     )
   }
 
-  static func transcript(_ key: String, in db: Database) throws -> Transcript {
-    try transcript(key, generation: try runtime(key, in: db).generation, count: nil, in: db)
-  }
-
-  static func transcript(_ key: String, generation: Int64, count: Int?, in db: Database) throws -> Transcript {
-    guard let keptCount = try Int.fetchOne(
-      db,
-      sql: "SELECT kept_count FROM session_generations WHERE session_id = ? AND generation = ?",
-      arguments: [key, generation],
-    ) else { throw SessionStoreError.unknownSession(key) }
-    let payloads = try String.fetchAll(
-      db,
-      sql: """
-      SELECT c.payload FROM session_pointers p
-      JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
-      WHERE p.session_id = ? AND p.generation = ?
-      ORDER BY p.position
-      LIMIT ?
-      """,
-      arguments: [key, generation, count ?? -1],
-    )
-    let items = try payloads.map { try decode(TranscriptItem.self, from: $0) }
-    return Transcript(items: items, keptCount: keptCount)
-  }
-
-  // The next position comes from the pointer table, never from a caller's
-  // count: an in-memory transcript that has drifted must not be able to
-  // overwrite a row.
-  static func nextPosition(_ key: String, generation: Int64, in db: Database) throws -> Int {
-    try Int.fetchOne(
-      db,
-      sql: "SELECT COALESCE(MAX(position) + 1, 0) FROM session_pointers WHERE session_id = ? AND generation = ?",
-      arguments: [key, generation],
-    ) ?? 0
-  }
-
-  static func append(
-    _ key: String,
-    generation: Int64,
-    items: some Collection<TranscriptItem>,
-    in db: Database,
-  ) throws {
-    let startPosition = try nextPosition(key, generation: generation, in: db)
-    for (offset, item) in items.enumerated() {
-      let contentID = item.id.uuidString.lowercased()
-      try db.execute(
-        sql: "INSERT INTO session_contents (session_id, id, payload) VALUES (?, ?, ?)",
-        arguments: [key, contentID, try encode(item)],
-      )
-      try db.execute(
-        sql: "INSERT INTO session_pointers (session_id, generation, position, content_id) VALUES (?, ?, ?, ?)",
-        arguments: [key, generation, startPosition + offset, contentID],
-      )
-    }
-    try writeLines(key, generation: generation, appending: items, after: startPosition, in: db)
-  }
-
-  static func openGeneration(_ key: String, generation: Int64, keptCount: Int, in db: Database) throws {
-    try db.execute(
-      sql: "INSERT INTO session_generations (session_id, generation, kept_count) VALUES (?, ?, ?)",
-      arguments: [key, generation, keptCount],
-    )
-    try db.execute(
-      sql: "UPDATE session_runtime SET generation = ? WHERE session_id = ?",
-      arguments: [generation, key],
-    )
+  static func openGeneration(_ key: String, generation: Int64, in db: Database) throws {
+    try db.execute(sql: "UPDATE session_runtime SET generation = ? WHERE session_id = ?", arguments: [generation, key])
   }
 
   /// An input is due once its `due_at` is not after the time bound to `?`; one without is due at once. Each decision binds one time to every query it makes, so they agree on what is due.

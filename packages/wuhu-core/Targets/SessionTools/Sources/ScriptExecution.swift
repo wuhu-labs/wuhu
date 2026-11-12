@@ -1,11 +1,9 @@
 import Dependencies
 import enum JSONValue.JSONValue
-import Logging
 import struct MainHub.ScriptError
 import func MainHub.scriptHandle
 import struct MainHub.ScriptHandlerResult
 import func MainHub.seconds
-import enum MainHub.WaitCut
 import OrderedCollections
 import QuickJSKit
 import enum ScriptWebPlatform.ScriptWebPlatform
@@ -15,11 +13,8 @@ import struct SpaceClient.SpaceClient
 import enum SpaceContract.ScriptOutput
 import SpaceCore
 import Synchronization
-import TaskLifetime
 
 let scriptStopGrace: Duration = .seconds(5)
-// How long a cancelled run_script call waits for its script to end.
-let scriptWindDown: Duration = .seconds(10)
 // The longest wait a script can ask for, in seconds: wait_seconds,
 // sleep(), an AbortSignal timeout. Longer than any script runs, and far inside what
 // Duration and a clock's sleep can hold; past those, the server trapped.
@@ -56,9 +51,7 @@ enum ScriptEnding: Sendable, Equatable {
 }
 
 enum ScriptKind: Sendable {
-  /// run_script: the call takes the answer until it detaches, the session's
-  /// inbox the rest.
-  case call
+  case job(@Sendable (ScriptRuntime.Event) -> Void)
   /// `wuhu script`: everything goes to its caller.
   case command(@Sendable (ScriptPost) -> Void)
   case handler(ScriptHandlerContext)
@@ -79,45 +72,19 @@ enum ScriptPost: Sendable {
   }
 }
 
-enum ScriptAnswer: Sendable, Equatable {
-  case result(String)
-  case failure(String)
-  case detached(WaitCut)
-}
-
 final class ScriptExecution: Sendable {
   private enum Control {
     case abort(ScriptStop)
     case kill(ScriptStop)
   }
 
-  private enum Waiter {
-    case pending(AsyncStream<ScriptAnswer>.Continuation?)
-    case detached
-    case taken
-  }
-
-  private enum Delivery {
-    case answer(AsyncStream<ScriptAnswer>.Continuation, ScriptAnswer)
-    case post(ScriptPost)
-    case ended([AsyncStream<ScriptEnding>.Continuation], ScriptEnding)
-    case finishPost
-  }
-
   private struct State {
-    var waiter: Waiter
-    var answer: ScriptAnswer?
     var resulted = false
     var stop: ScriptStop?
     var killed: ScriptStop?
     var ending: ScriptEnding?
-    var endWaiters: [AsyncStream<ScriptEnding>.Continuation] = []
-    var started = false
     var killRequested: ScriptStop?
-    var windDowns: [WindDown] = []
     var console = ScriptConsole()
-    var deliveries: [Delivery] = []
-    var delivering = false
     var completing = 0
     var credit: Duration = .zero
     var updates = 0
@@ -156,7 +123,7 @@ final class ScriptExecution: Sendable {
     client: SpaceClient,
     secrets: ScriptSecrets,
     tools: ToolExecutor,
-    kind: ScriptKind = .call,
+    kind: ScriptKind,
     arguments: [String] = [],
     limits: ScriptLimits = .standard,
     trace: TraceParent = .current,
@@ -173,11 +140,7 @@ final class ScriptExecution: Sendable {
     self.limits = limits
     buffers = Mutex(ScriptBuffers(budget: limits.bufferBytes))
     self.trace = trace
-    if case .command = kind {
-      state = Mutex(State(waiter: .detached))
-    } else {
-      state = Mutex(State(waiter: .pending(nil)))
-    }
+    state = Mutex(State())
     (controls, control) = AsyncStream.makeStream()
     (aborts, abort) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     (outbox, post) = AsyncStream.makeStream()
@@ -188,105 +151,16 @@ final class ScriptExecution: Sendable {
     if case let .handler(context) = kind { context } else { nil }
   }
 
-  // MARK: The caller's side
-
-  // Once `cut` returns, the call returns and the script runs on; its result
-  // arrives as a message.
-  func answer(until cut: @escaping @Sendable () async -> WaitCut?) async throws -> ScriptAnswer {
-    let (events, sink) = AsyncStream<ScriptAnswer>.makeStream()
-    state.withLock {
-      $0.waiter = .pending(sink)
-      if let answer = $0.answer { $0.deliveries.append(.answer(sink, answer)) }
-    }
-    drain()
-    return try await withThrowingTaskGroup(of: Void.self) { group in
-      defer { group.cancelAll() }
-      group.addTask {
-        guard let cut = await cut() else { return }
-        sink.yield(.detached(cut))
-      }
-      for await event in events {
-        guard case let .detached(cut) = event else {
-          state.withLock { $0.waiter = .taken }
-          return event
-        }
-        return state.withLock { state -> ScriptAnswer in
-          if let answer = state.answer {
-            state.waiter = .taken
-            return answer
-          }
-          state.waiter = .detached
-          return .detached(cut)
-        }
-      }
-      kill(.cancelled)
-      await windDown()
-      throw CancellationError()
-    }
-  }
-
-  // Waits, cancelled or not, until the script has ended and its machine
-  // processes are killed, or `scriptWindDown` has passed: a host call that
-  // takes no cancellation holds the script, and one that waits on this very
-  // call (a script interrupting its own session) would hold it for good. A
-  // script that never started has nothing to wait for.
-  private func windDown() async {
-    @Dependency(\.continuousClock) var continuousClock
-    let clock = continuousClock
-    let scope = TaskScope()
-    let timer = Mutex<Task<Void, Never>?>(nil)
-    let ended = await withCheckedContinuation { (waiter: CheckedContinuation<Bool, Never>) in
-      let windDown = WindDown(waiter)
-      let pending = state.withLock { state -> Bool in
-        guard state.started, state.ending == nil else { return false }
-        state.windDowns.append(windDown)
-        return true
-      }
-      guard pending else { return windDown.resume(ended: true) }
-      timer.withLock {
-        $0 = try? scope.run("script-wind-down") {
-          guard (try? await clock.sleep(for: scriptWindDown)) != nil else { return }
-          windDown.resume(ended: false)
-        }
-      }
-    }
-    timer.withLock { $0 }?.cancel()
-    await scope.close()
-    if !ended {
-      Logger(label: "wuhu.run-script").error(
-        "\(scriptHandle(id)) did not end within \(seconds(scriptWindDown)) s of its call's cancellation; the call returns without it",
-      )
-    }
-  }
-
-  func stop() async -> ScriptEnding {
-    let (ended, sink) = AsyncStream<ScriptEnding>.makeStream()
-    let ending = state.withLock { state -> ScriptEnding? in
-      if let ending = state.ending { return ending }
-      state.endWaiters.append(sink)
-      if state.stop == nil { state.stop = .requested }
-      return nil
-    }
-    if let ending { return ending }
-    control.yield(.abort(.requested))
-    for await ending in ended {
-      return ending
-    }
-    return .killed(.cancelled)
-  }
-
   /// The end of its console so far, for the `running` return.
   var consoleTail: String {
     ToolOutput.tail(state.withLock { $0.console.text }, maxLines: 40, maxBytes: 4096).text
   }
 
-  func requestStop() {
-    let ended = state.withLock { state -> Bool in
-      if state.ending != nil { return true }
-      if state.stop == nil { state.stop = .requested }
-      return false
-    }
-    if !ended { control.yield(.abort(.requested)) }
+  func killForJob() {
+    let reason = state.withLock { $0.stop ?? .cancelled }
+    kill(reason)
+    state.withLock { $0.killed = reason }
+    interrupter.interrupt()
   }
 
   func killForCancellation() {
@@ -307,17 +181,17 @@ final class ScriptExecution: Sendable {
 
   /// Cancelling the task that runs it kills it: a busy script never reaches
   /// a suspension point, so only the interrupter ends it.
-  func run(sessions: SessionStore) async {
+  func run() async {
     await withTaskCancellationHandler {
-      await traced(sessions: sessions)
+      await traced()
     } onCancel: {
       killForCancellation()
     }
   }
 
-  private func traced(sessions: SessionStore) async {
+  private func traced() async {
     await ServerTelemetry.traced(.script, under: trace) { span in
-      await runBody(sessions: sessions)
+      await runBody()
       span.set(.scriptKind, kind.span)
       span.set(.sourceSHA256, sha256Hex(source))
       let (ending, updates) = state.withLock { ($0.ending, $0.updates) }
@@ -326,17 +200,14 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func runBody(sessions: SessionStore) async {
-    let killed = state.withLock { state -> ScriptStop? in
-      state.started = true
-      return state.killRequested
-    }
+  private func runBody() async {
+    let killed = state.withLock { $0.killRequested }
     if let killed { return finish(.killed(killed)) }
     await withTaskGroup(of: Void.self) { group in
-      group.addTask { await self.deliver(to: sessions) }
+      group.addTask { await self.deliver() }
       group.addTask { await self.processes.run() }
       let ending = await withTaskGroup(of: ScriptEnding?.self) { race in
-        race.addTask { await self.evaluate(sessions: sessions) }
+        race.addTask { await self.evaluate() }
         race.addTask { await self.supervise() }
         let first = await race.next() ?? nil
         race.cancelAll()
@@ -345,30 +216,19 @@ final class ScriptExecution: Sendable {
         if let killed = self.state.withLock({ $0.killed }) { return ScriptEnding.killed(killed) }
         return first ?? .killed(.cancelled)
       }
-      // A process lives only as long as its script.
-      let minted = await processes.shutdown { [client] exec in try await killScriptExec(exec, via: client) }
-      if !minted.isEmpty {
-        do {
-          let _: JSONValue = try await client.api(.delete, "/v1/script-execs/\(pathSegment(id))")
-        } catch is CancellationError {
-          // The server is shutting down: the rows stay, and the next boot
-          // reaps the processes and tells the owner.
-        } catch {
-          Logger(label: "wuhu.run-script").warning("script \(id) could not release its machine processes: \(error)")
-        }
-      }
+      processes.shutdown()
       finish(ending)
     }
   }
 
-  private func evaluate(sessions: SessionStore) async -> ScriptEnding {
+  private func evaluate() async -> ScriptEnding {
     let streams = ScriptStreams()
-    let ending = await evaluate(sessions: sessions, streams: streams)
+    let ending = await evaluate(streams: streams)
     await streams.shutdown()
     return ending
   }
 
-  private func evaluate(sessions: SessionStore, streams: ScriptStreams) async -> ScriptEnding {
+  private func evaluate(streams: ScriptStreams) async -> ScriptEnding {
     let engine = JSEngine(limits: .init(memoryBytes: scriptEngineMemoryBytes), interrupter: interrupter)
     ScriptBindings(execution: self, client: client, secrets: secrets).install(in: engine)
     ScriptFiles(client: client, execution: self).install(in: engine)
@@ -403,22 +263,25 @@ final class ScriptExecution: Sendable {
     @Dependency(\.continuousClock) var continuousClock
     let clock = continuousClock
     let control = control
+    let jobClock = if case .job = kind { true } else { false }
     return await withTaskGroup(of: Void.self) { timers in
       defer { timers.cancelAll() }
-      timers.addTask { [lifetime, credits] in
-        var deadline = lifetime
-        var slept = Duration.zero
-        var credit = credits.makeAsyncIterator()
-        while true {
-          guard (try? await clock.sleep(for: deadline - slept)) != nil else { return }
-          slept = deadline
-          let (earned, completing) = self.state.withLock { ($0.credit, $0.completing) }
-          if lifetime + earned > slept { deadline = lifetime + earned; continue }
-          guard completing > 0 else { break }
-          guard await credit.next() != nil else { return }
+      if !jobClock {
+        timers.addTask { [lifetime, credits] in
+          var deadline = lifetime
+          var slept = Duration.zero
+          var credit = credits.makeAsyncIterator()
+          while true {
+            guard (try? await clock.sleep(for: deadline - slept)) != nil else { return }
+            slept = deadline
+            let (earned, completing) = self.state.withLock { ($0.credit, $0.completing) }
+            if lifetime + earned > slept { deadline = lifetime + earned; continue }
+            guard completing > 0 else { break }
+            guard await credit.next() != nil else { return }
+          }
+          self.state.withLock { if $0.stop == nil { $0.stop = .lifetime(lifetime) } }
+          control.yield(self.handler == nil ? .abort(.lifetime(lifetime)) : .kill(.lifetime(lifetime)))
         }
-        self.state.withLock { if $0.stop == nil { $0.stop = .lifetime(lifetime) } }
-        control.yield(self.handler == nil ? .abort(.lifetime(lifetime)) : .kill(.lifetime(lifetime)))
       }
       var aborted = false
       for await event in controls {
@@ -427,9 +290,11 @@ final class ScriptExecution: Sendable {
           guard !aborted else { continue }
           aborted = true
           abort.yield(stop.abortMessage)
-          timers.addTask {
-            guard (try? await clock.sleep(for: scriptStopGrace)) != nil else { return }
-            control.yield(.kill(stop))
+          if !jobClock {
+            timers.addTask {
+              guard (try? await clock.sleep(for: scriptStopGrace)) != nil else { return }
+              control.yield(.kill(stop))
+            }
           }
         case let .kill(stop):
           state.withLock { $0.killed = stop }
@@ -441,20 +306,18 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func deliver(to sessions: SessionStore) async {
+  private func deliver() async {
     for await output in outbox {
-      if case let .command(say) = kind {
-        say(output)
-        continue
+      switch kind {
+      case let .command(say): say(output)
+      case let .job(say):
+        switch output {
+        case let .result(text): say(.result(text))
+        case let .update(text): say(.update(text))
+        case .failure: preconditionFailure("job endings are delivered separately")
+        }
+      case .handler: preconditionFailure("handlers do not post output")
       }
-      let text: String
-      switch output {
-      case let .update(update), let .failure(update): text = update
-      case let .result(result): text = "result of \(scriptHandle(id)):\n" + result
-      }
-      // A handler answers with its result, never a message.
-      guard let session = actor.session else { preconditionFailure("an observer's handler posted script output") }
-      await notify(sessions, session, script: id, text)
     }
   }
 
@@ -494,107 +357,51 @@ final class ScriptExecution: Sendable {
 
   func recordResult(_ text: String) throws {
     guard handler == nil else { throw ScriptError("handlers return state; result() is only for run_script") }
-    state.withLock { state in
+    try state.withLock { state in
+      guard !state.resulted else { throw ScriptError("result() can be called only once") }
       state.resulted = true
-      produce(.result(text), in: &state)
+      post.yield(.result(text))
     }
-    drain()
   }
 
   func recordUpdate(_ text: String) throws {
     guard handler == nil else { throw ScriptError("handlers use wake(text); update() is only for run_script") }
-    state.withLock {
-      $0.updates += 1
-      $0.deliveries.append(.post(.update(text)))
+    try state.withLock { state in
+      guard state.resulted else { throw ScriptError("update() needs result() first") }
+      state.updates += 1
+      post.yield(.update(text))
     }
-    drain()
   }
 
   func log(_ level: String, _ text: String) {
     state.withLock { $0.console.append(level, text) }
   }
 
-  private func produce(_ answer: ScriptAnswer, in state: inout State) {
-    switch state.waiter {
-    case let .pending(sink):
-      state.answer = answer
-      if let sink { state.deliveries.append(.answer(sink, answer)) }
-    case .detached:
-      state.waiter = .taken
-      switch answer {
-      case let .result(text):
-        state.deliveries.append(.post(.result(text)))
-      case let .failure(message):
-        state.deliveries.append(.post(.failure(message)))
-      case .detached:
-        break
-      }
-    case .taken:
-      break
-    }
+  func abortForJob(lifetime: Bool) {
+    let stop: ScriptStop = lifetime ? .lifetime(self.lifetime) : .requested
+    state.withLock { if $0.stop == nil { $0.stop = stop } }
+    control.yield(.abort(stop))
   }
 
   private func finish(_ ending: ScriptEnding) {
-    let windDowns = state.withLock { state -> [WindDown] in
+    let (resulted, stopped, tail) = state.withLock { state in
       state.ending = ending
-      let tail = state.console.rendered
-      let stopped = state.stop == .requested
-      if handler != nil {
-        // Handler failures belong to the durable slot, not run_script delivery.
-      } else if !state.resulted {
-        let awaited = if case .pending = state.waiter { true } else { false }
-        if awaited || !stopped {
-          produce(.failure("\(scriptHandle(id)) " + ending.withoutResult + tail), in: &state)
-        }
-      } else if ending != .released, !stopped {
-        state.deliveries.append(.post(.failure("\(scriptHandle(id)) failed after its result: " + ending.afterResult + tail)))
-      }
-      state.deliveries.append(.ended(state.endWaiters, ending))
-      state.endWaiters = []
-      state.deliveries.append(.finishPost)
-      let windDowns = state.windDowns
-      state.windDowns = []
-      return windDowns
+      return (state.resulted, state.stop == .requested, state.console.rendered)
     }
-    drain()
-    for windDown in windDowns {
-      windDown.resume(ended: true)
+    if case .command = kind {
+      if !resulted { post.yield(.failure("\(scriptHandle(id)) " + ending.withoutResult + tail)) }
+      else if ending != .released, !stopped { post.yield(.failure("\(scriptHandle(id)) failed after its result: " + ending.afterResult + tail)) }
     }
+    post.finish()
   }
 
-  // Claim one drainer so concurrent state transitions cannot overtake a result or finish.
-  private func drain() {
-    let claimed = state.withLock { state in
-      guard !state.delivering else { return false }
-      state.delivering = true
-      return true
-    }
-    guard claimed else { return }
-    while true {
-      let deliveries = state.withLock { state -> [Delivery] in
-        guard !state.deliveries.isEmpty else {
-          state.delivering = false
-          return []
-        }
-        defer { state.deliveries.removeAll(keepingCapacity: true) }
-        return state.deliveries
-      }
-      guard !deliveries.isEmpty else { return }
-      for delivery in deliveries {
-        switch delivery {
-        case let .answer(sink, answer):
-          sink.yield(answer)
-        case let .post(text):
-          post.yield(text)
-        case let .ended(waiters, ending):
-          for waiter in waiters {
-            waiter.yield(ending)
-            waiter.finish()
-          }
-        case .finishPost:
-          post.finish()
-        }
-      }
+  var termination: ScriptRuntime.End {
+    state.withLock { state in
+      let ending = state.ending!
+      return .init(
+        beforeResult: "\(scriptHandle(id)) " + ending.withoutResult + state.console.rendered,
+        afterResult: ending == .released ? nil : "\(scriptHandle(id)) failed after its result: " + ending.afterResult + state.console.rendered,
+      )
     }
   }
 }
@@ -637,47 +444,10 @@ struct ScriptConsole {
   var text: String { lines.joined(separator: "\n") }
 }
 
-// Wakes `session` with a message from script `script`.
-func notify(_ sessions: SessionStore, _ session: SessionID, script: String, _ text: String) async {
-  @Dependency(\.date) var date
-  @Dependency(\.uuid) var uuid
-  let notification = SystemNotification(
-    id: uuid(),
-    timestamp: date.now,
-    kind: .script,
-    subscriptionID: .script(script),
-    content: .init(text: text),
-  )
-  do {
-    try await sessions.enqueue(session, input: .notification(notification))
-  } catch {
-    Logger(label: "wuhu.run-script").warning("script \(script) could not reach \(session.rawValue): \(error)")
-  }
-}
-
-// One wait for a script's end, answered by the end or by the time limit,
-// whichever comes first.
-private final class WindDown: Sendable {
-  private let waiter: Mutex<CheckedContinuation<Bool, Never>?>
-
-  init(_ waiter: CheckedContinuation<Bool, Never>) {
-    self.waiter = Mutex(waiter)
-  }
-
-  func resume(ended: Bool) {
-    let taken = waiter.withLock { waiter in
-      let taken = waiter
-      waiter = nil
-      return taken
-    }
-    taken?.resume(returning: ended)
-  }
-}
-
 extension ScriptKind {
   fileprivate var span: ScriptSpanKind {
     switch self {
-    case .call: .call
+    case .job: .call
     case .command: .command
     case .handler: .handler
     }

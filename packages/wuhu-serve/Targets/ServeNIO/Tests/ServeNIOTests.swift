@@ -393,10 +393,16 @@ struct ServeNIOTests {
   }
 
   @Test func unixDomainSocketLifecycleWorks() async throws {
-    let socketPath = FileManager.default.temporaryDirectory
+    #if os(macOS)
+      let temporary = "/private/tmp"
+    #else
+      let temporary = "/tmp"
+    #endif
+    let socketPath = URL(fileURLWithPath: temporary)
       .appendingPathComponent(UUID().uuidString)
       .appendingPathExtension("sock")
       .path
+    defer { try? FileManager.default.removeItem(atPath: socketPath) }
 
     let recorder = HookRecorder()
 

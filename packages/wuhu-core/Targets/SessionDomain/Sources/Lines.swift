@@ -6,7 +6,7 @@
 import WuhuAI
 
 /// One message of a request as sent, with what produced it beside it.
-public struct TranscriptLine: Hashable, Sendable {
+public struct TranscriptLine: Hashable, Sendable, Codable {
   public enum Role: String, Hashable, Sendable, Codable {
     case system
     case user
@@ -14,6 +14,7 @@ public struct TranscriptLine: Hashable, Sendable {
     case toolResult = "tool_result"
   }
 
+  /// What a reply's line keeps of its inference. Only a reply made in the generation has one: a line a new generation carries was said in another context.
   public struct Meta: Hashable, Sendable, Codable {
     public var stopReason: StopReason
     public var usage: Usage
@@ -48,6 +49,16 @@ public struct TranscriptLine: Hashable, Sendable {
     case .toolResult: .toolResult
     }
   }
+
+  /// The line as a new generation carries it. `portable` leaves out what only the account that made it can replay; nil when nothing is left.
+  public func carried(portable: Bool) -> TranscriptLine? {
+    var line = self
+    line.meta = nil
+    guard portable else { return line }
+    line.message = message.portable
+    if case let .assistant(reply) = line.message, reply.content.isEmpty { return nil }
+    return line
+  }
 }
 
 /// Position 0 of a generation: what a request sends besides its messages.
@@ -61,70 +72,71 @@ public struct TranscriptPreamble: Hashable, Sendable, Codable {
   }
 }
 
-extension Transcript {
-  /// The request's messages as lines. Lines past `settled` are context notices
-  /// still held behind a turn's tool results: the next item may land before them.
-  public static func lines(session: SessionID, items: some Sequence<TranscriptItem>) -> (lines: [TranscriptLine], settled: Int) {
-    var lines: [TranscriptLine] = []
-    // Dialects that want a turn's tool results back to back get its context
-    // notices after the last of them.
-    var held: [TranscriptLine] = []
-    for item in items {
-      if !item.holdsNotices {
-        lines += held
-        held = []
-      }
-      switch item {
-      case let .generationHead(head):
-        lines += head.renderLines(session: session)
-      case let .direct(message):
-        lines.append(.init(at: message.timestamp, key: "direct:\(message.id.uuidString.lowercased())", message: .user(.init(content: message.content.blocks(header: message.header)))))
-      case let .message(message):
-        lines.append(.init(at: message.timestamp, key: "message:\(message.messageID.rawValue)", message: .user(.init(content: message.content.blocks(header: message.header)))))
-      case let .notification(notification) where notification.kind == .context:
-        guard !notification.content.text.isEmpty else { continue }
-        held.append(notification.line)
-      case let .notification(notification):
-        lines.append(notification.line)
-      case let .assistant(entry):
-        lines.append(.init(
-          at: entry.timestamp, key: "attempt:\(entry.id.uuidString.lowercased())", message: .assistant(.init(content: entry.content)),
-          meta: .init(stopReason: entry.stopReason, usage: entry.usage),
-        ))
-      case let .toolResult(result):
-        let (context, key) = switch result.provenance {
-        case let .toolCall(callID): (RenderContext.toolResult(callID), "call:\(callID.rawValue)")
-        case .compactionReestablishment: (RenderContext.autoCalledByCompaction, "reestablish")
-        }
-        for (index, message) in result.render(for: context).enumerated() {
-          lines.append(.init(at: result.timestamp, key: index == 0 ? key : "\(key):image", message: message))
-        }
-      case let .bookmark(marker):
-        if let callID = marker.toolCallID {
-          lines.append(.init(at: marker.timestamp, key: "call:\(callID.rawValue)", message: .toolResult(.init(
-            toolCallId: callID.rawValue,
-            content: [.text("bookmark recorded" + (marker.name.map { ": \($0)" } ?? ""))],
-          ))))
-        }
-      }
-    }
-    return (lines + held, lines.count)
-  }
-}
-
-extension SystemNotification {
-  fileprivate var line: TranscriptLine {
-    .init(at: timestamp, key: "subscription:\(subscriptionID.rawValue)", message: .user(.init(content: content.blocks(header: header))))
-  }
+public enum LineKey {
+  public static let head = "head"
+  public static let pressure = "subscription:context-pressure"
+  /// A notice of the instructions a tool call's scope brought, which waits behind the turn's last answer.
+  public static let scope = "subscription:\(SubscriptionID.context.rawValue)"
+  public static let cacheWarming = "subscription:cache-warming"
+  public static let toolRoster = "subscription:tool-roster"
 }
 
 extension TranscriptItem {
-  /// Whether a context notice before this item stays held behind it.
-  public var holdsNotices: Bool {
+  /// The item's messages as a request sends them, rendered once: the lines are what is stored. A context notice without text is none.
+  public func lines(session: SessionID) -> [TranscriptLine] {
     switch self {
-    case .toolResult, .bookmark: true
-    case let .notification(notification): notification.kind == .context
-    case .direct, .message, .assistant, .generationHead: false
+    case let .generationHead(head):
+      return head.lines(session: session)
+    case let .message(message):
+      return [.init(at: message.timestamp, key: "message:\(message.messageID.rawValue)", message: .user(.init(content: message.content.blocks(header: message.header))))]
+    case let .notification(notification):
+      if notification.kind == .context, notification.content.text.isEmpty { return [] }
+      return [.init(at: notification.timestamp, key: "subscription:\(notification.subscriptionID.rawValue)", message: .user(.init(content: notification.content.blocks(header: notification.header))))]
+    case let .assistant(entry):
+      return [.init(
+        at: entry.timestamp, key: "attempt:\(entry.id.uuidString.lowercased())", message: .assistant(.init(content: entry.content)),
+        meta: .init(stopReason: entry.stopReason, usage: entry.usage),
+      )]
+    case let .toolResult(result):
+      let (context, key) = switch result.provenance {
+      case let .toolCall(callID): (RenderContext.toolResult(callID), "call:\(callID.rawValue)")
+      case .compactionReestablishment: (RenderContext.autoCalledByCompaction, "reestablish")
+      }
+      return result.render(for: context).enumerated().map { index, message in
+        .init(at: result.timestamp, key: index == 0 ? key : "\(key):image", message: message)
+      }
+    case let .bookmark(marker):
+      return [.init(at: marker.timestamp, key: "call:\(marker.toolCallID.rawValue)", message: .toolResult(.init(
+        toolCallId: marker.toolCallID.rawValue,
+        content: [.text("bookmark recorded" + (marker.name.map { ": \($0)" } ?? ""))],
+      )))]
     }
+  }
+}
+
+extension [TranscriptLine] {
+  /// The call a reply of these lines made.
+  public func toolCall(_ id: ToolCallID) -> (index: Int, call: ToolCall)? {
+    for (index, line) in enumerated() {
+      guard case let .assistant(reply) = line.message else { continue }
+      for case let .toolCall(call) in reply.content where call.id == id.rawValue { return (index, call) }
+    }
+    return nil
+  }
+
+  /// A pressure notice the model has not answered yet.
+  public var hasPendingPressureNotice: Bool {
+    for line in reversed() {
+      if line.role == .assistant || line.key == LineKey.head { return false }
+      if line.key == LineKey.pressure { return true }
+    }
+    return false
+  }
+
+  /// What a fold keeps: from after the line at `bookmark` up to the reply that made the compact call at `end`. The answers and notices right after the bookmark are left out: their calls are folded away, and an answer without its call is a provider error.
+  public func keptRange(after bookmark: Int, upTo end: Int) -> Range<Int>? {
+    var start = bookmark + 1
+    while start < end, self[start].role == .toolResult || self[start].key.hasSuffix(":image") || self[start].key == LineKey.scope { start += 1 }
+    return start < end ? start ..< end : nil
   }
 }

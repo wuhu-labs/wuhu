@@ -343,8 +343,6 @@ enum Command: Equatable {
   case sessionRename(id: String, title: String)
   case sessionTags(id: String, tags: [String])
   case sessionRestart(SessionRestartCommand)
-  case sessionLog(id: String, view: SessionLogView)
-  case sessionEntry(session: String, ref: String)
   case sessionInspect(id: String)
   case sessionList
   case groupList
@@ -410,11 +408,6 @@ enum SessionActionVerb: String, Equatable {
   case resume
   case archive
   case unarchive
-}
-
-enum SessionLogView: Equatable {
-  case conversation(limit: Int?, before: Int?)
-  case direct(level: Int, limit: Int?, before: String?)
 }
 
 struct ExecCommand: Equatable {

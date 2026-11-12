@@ -166,6 +166,11 @@ public struct ConstraintViolation: Error {
   public let message: String
 }
 
+struct TransactionEnded: Error, CustomStringConvertible {
+  let cause: any Error
+  var description: String { "a failed statement ended its transaction: \(cause)" }
+}
+
 enum WriteFailure: Error {
   case constraint(ConstraintViolation)
   case storage(any Error)
@@ -178,15 +183,20 @@ extension Connection {
 
   /// A statement that cannot run is a bug and traps here; what remains is the data's fault or the disk's.
   func write(_ sql: String, _ arguments: [Value]) -> Result<Void, WriteFailure> {
+    let wasInTransaction = inTransaction
     do {
       if try hostWrite?(sql, arguments) != true { _ = try rows(sql, arguments) }
       return .success(())
-    } catch let error as SQLiteError where error.primary == SQLITE_CONSTRAINT {
-      return .failure(.constraint(ConstraintViolation(message: error.message)))
-    } catch let error as SQLiteError where [SQLITE_IOERR, SQLITE_FULL, SQLITE_NOMEM, SQLITE_CORRUPT, SQLITE_NOTADB].contains(error.primary) {
+    } catch let error as TransactionEnded {
       return .failure(.storage(error))
     } catch {
-      preconditionFailure("\(sql): \(error)")
+      if wasInTransaction, !inTransaction { return .failure(.storage(TransactionEnded(cause: error))) }
+      guard let error = error as? SQLiteError else { preconditionFailure("\(sql): \(error)") }
+      switch error.primary {
+      case SQLITE_CONSTRAINT: return .failure(.constraint(ConstraintViolation(message: error.message)))
+      case SQLITE_IOERR, SQLITE_FULL, SQLITE_NOMEM, SQLITE_CORRUPT, SQLITE_NOTADB: return .failure(.storage(error))
+      default: preconditionFailure("\(sql): \(error)")
+      }
     }
   }
 }
@@ -233,6 +243,8 @@ final class Connection {
     guard code == SQLITE_OK else { throw SQLiteError(code: code, message: String(cString: sqlite3_errmsg(handle))) }
   }
 
+  var inTransaction: Bool { sqlite3_get_autocommit(handle) == 0 }
+
   /// What `cell()` returns on this connection.
   var owner: String? {
     get { slot.key }
@@ -260,6 +272,7 @@ final class Connection {
       try execute("RELEASE body")
       return result
     } catch {
+      guard inTransaction else { throw TransactionEnded(cause: error) }
       try execute("ROLLBACK TO body")
       try execute("RELEASE body")
       throw error
@@ -267,6 +280,15 @@ final class Connection {
   }
 
   func rows(_ sql: String, _ arguments: [Value], readOnly: Bool = false) throws -> [Row] {
+    let wasInTransaction = inTransaction
+    do { return try statement(sql, arguments, readOnly: readOnly) }
+    catch {
+      if wasInTransaction, !inTransaction { throw TransactionEnded(cause: error) }
+      throw error
+    }
+  }
+
+  private func statement(_ sql: String, _ arguments: [Value], readOnly: Bool) throws -> [Row] {
     var statement: OpaquePointer?
     defer { sqlite3_finalize(statement) }
     let rest = try sql.withCString { text in

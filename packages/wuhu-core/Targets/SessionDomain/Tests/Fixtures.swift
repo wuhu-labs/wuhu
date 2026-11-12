@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SessionDomain
 import WuhuAI
 
@@ -7,15 +11,6 @@ enum Fix {
   static let tokyo = TimeZone(secondsFromGMT: 9 * 3600)!
   static let instant = Date(timeIntervalSince1970: 1_767_225_600)
   static let session = SessionID("s-1")
-
-  static func direct(sender: String = "morgan", text: String = "hi", device: String? = nil) -> TranscriptItem {
-    .direct(.init(
-      id: UUID(),
-      sender: .init(id: sender, timeZone: tokyo, device: device),
-      timestamp: instant,
-      content: .init(text: text),
-    ))
-  }
 
   static func message(
     id: String? = nil,
@@ -88,17 +83,5 @@ enum Fix {
       usage: .init(inputTokens: 0, outputTokens: 0, totalTokens: totalTokens),
       toolCallIDs: [:],
     ))
-  }
-
-  static func post(id: String = "p1", conversation: String = "ch1") -> TranscriptItem {
-    result(.sendMessage(.init(messageID: .init(id), conversationID: .init(conversation), n: 1)))
-  }
-
-  static func delivered(conversation: String = "ch1", owesReply: Bool = true, at: Date = instant) -> SettleEvent {
-    .delivered(.init(conversation: .init(conversation), owesReply: owesReply, at: at))
-  }
-
-  static func posted(conversation: String = "ch1", at: Date = instant) -> SettleEvent {
-    .posted(.init(conversation: .init(conversation), at: at))
   }
 }

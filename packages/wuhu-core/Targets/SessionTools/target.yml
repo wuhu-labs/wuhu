@@ -15,7 +15,6 @@ dependencies:
   - ServerTelemetry
   - Credentials
   - Crypto
-  - ExecutionOwner
   - FileSearch
   - InferenceKit
   - ModelProviders
@@ -63,7 +62,6 @@ tests:
     - InferenceKit
     - ModelProviders
     - Credentials
-    - ExecutionOwner
     - Fetch
     - SessionDomain
     - SpaceContract
@@ -74,7 +72,6 @@ tests:
     - SystemFiles
     - MachineContract
     - Crypto
-    - OperationClient
     - OperationProtocol
     - OperationRuntime
     - ComputerFiles

@@ -20,8 +20,8 @@ import enum WuhuAI.InferenceError
 /// How an inference step ended, as the session cell handles it, and what it took.
 struct StepResult: Sendable, Codable {
   enum Ending: Sendable, Codable {
-    /// `fullness` is the transcript's with the reply.
-    case reply(AssistantEntry, fullness: Double)
+    /// `fullness` is the transcript's with the reply; `warming` is what the reply leaves the session to warm with.
+    case reply(AssistantEntry, fullness: Double, warming: WarmingSchedule?)
     /// Interrupted, or yielded to waiting input while it waited.
     case cancelled
     /// The transcript is past a compaction threshold: no attempt was made.
@@ -29,10 +29,12 @@ struct StepResult: Sendable, Codable {
     /// The provider refused the request as past its context window.
     case contextTooLong
     case requestTooLarge(limitBytes: Int?, failure: String)
-    case handoff(ReplayBinding, ContextBudget)
+    case handoff(ReplayBinding)
     /// The binary's tools changed under the generation: the notice the session is owed before it goes on.
     case roster(String)
     case parked(String)
+    /// A cache-warming ping's only attempt failed: warming ends and the session waits for real input.
+    case pingFailed
   }
 
   var ending: Ending
@@ -46,7 +48,7 @@ struct AttemptRow: Owned {
   var failure: String?
 }
 
-/// One step as a job: it owns its attempts, each with a fresh id that the wire shows, the waits between them and their records, and keeps its outcome, so a restart never pays for a reply twice. It reads the transcript its id names (generation, first `position` items) before every attempt, and answers its session cell. It first checks the compaction thresholds. `interrupt` ends it at once; a wait between attempts ends at the earliest `yield(by:)` it was mailed, an attempt never.
+/// One step owns its attempts, waits and outcome. It reads the generation's lines before every attempt and answers its session cell. `interrupt` ends it at once; a wait between attempts ends at the earliest `yield(by:)` it was mailed, an attempt never.
 @Job
 struct InferenceJob {
   static let schema = [
@@ -61,6 +63,7 @@ struct InferenceJob {
     let session: SessionID
     let generation: Int
     let position: Int
+    let ping: Bool
   }
 
   enum Message: Codable, Equatable {
@@ -77,10 +80,13 @@ struct InferenceJob {
   }
 
   mutating func start() async throws -> Outcome {
-    guard var retry = db.rows(Step.all).first else { return .done }
-    if let outcome = retry.outcome { return answer(outcome) }
     let client = ctx.dependency(LoopClient.self)
     let params = ctx.params
+    if try await ctx.effect({ try await client.store.isLegacy(params.session, generation: params.generation) }) {
+      return .done(sending: .look, to: SessionCell.ID(params.session.rawValue).recipient)
+    }
+    guard var retry = db.rows(Step.all).first else { return .done }
+    if let outcome = retry.outcome { return answer(outcome) }
     if retry.attempts == 0, let fullness = try await ctx.effect({ try await client.overThreshold(params) }) {
       return try finish(.full(fullness), retry)
     }
@@ -99,7 +105,10 @@ struct InferenceJob {
                 }
                 group.addTask { await deadline.passed(client) }
                 defer { group.cancelAll() }
-                return try await group.next()!
+                let passed = try await group.next()!
+                // A step being drained has not passed its delay: only a throw leaves `race`, so `retryAt` stays.
+                try Task.checkCancellation()
+                return passed
               }
             }
           }, until: { $0 == .interrupt })
@@ -108,11 +117,12 @@ struct InferenceJob {
         retry.retryAt = nil
         try save(retry)
       }
-      let transcript = try await ctx.effect { try await client.transcript(params.session, params.generation, params.position) }
+      let binding = ctx.cell(SessionCell.ID(params.session.rawValue)).turn()?.binding
+      let lines = try await ctx.effect { try await client.lines(params.session, params.generation) }
       let attemptID = client.uuid()
       retry.attempts += 1
       try save(retry)
-      let request = InferenceRequest(sessionID: params.session, attemptID: attemptID, generation: params.generation, transcript: transcript, idleTimeout: retry.idleTimeout)
+      let request = InferenceRequest(sessionID: params.session, attemptID: attemptID, generation: params.generation, lines: lines, binding: binding, idleTimeout: retry.idleTimeout, ping: params.ping)
       let raced = try await ctx.race({ _, messages in
         try await deadline.collecting(messages, { $0.yieldBy }) {
           do { return Result<InferenceReply, any Error>.success(try await client.attempt(request)) }
@@ -123,21 +133,24 @@ struct InferenceJob {
       switch result {
       case let .success(reply):
         try db.execute(AttemptRow.insert { AttemptRow(id: attemptID.uuidString.lowercased(), failure: nil) })
-        // Told before its session cell writes the reply.
-        let (replied, entry) = client.dependencies.yield {
-          var replied = transcript
-          let entry = replied.appendAssistant(reply.message, id: attemptID, metadata: reply.metadata, replayBinding: reply.replayBinding)
-          return (replied, entry)
-        }
+        let entry = AssistantEntry(
+          reply.message, id: attemptID, at: client.now(), metadata: reply.metadata, replayBinding: reply.replayBinding,
+          mint: { ToolCallID(client.uuid().uuidString.lowercased()) },
+        )
         let fullness = try await ctx.effect {
-          await reply.committed(entry, replied)
-          return await client.fullness(replied, params.session)
+          await reply.committed(entry)
+          let budget = await client.budget(params.session)
+          return Double(entry.usage.totalTokens) / Double(budget.usableTokens)
         }
-        return try finish(.reply(entry, fullness: fullness), retry)
+        return try finish(.reply(entry, fullness: fullness, warming: reply.warming), retry)
       case let .failure(error):
         // A draining worker cancels its jobs: that is no outcome, the step goes on where it is hosted next.
         try Task.checkCancellation()
         try db.execute(AttemptRow.insert { AttemptRow(id: attemptID.uuidString.lowercased(), failure: String(describing: error)) })
+        if params.ping {
+          Logger(label: "wuhu.loop").notice("cache-warming ping failed", metadata: ["session": "\(params.session.rawValue)", "error": "\(error)"])
+          return try finish(.pingFailed, retry)
+        }
         switch retry.failed(error, session: params.session, now: client.now(), jitter: client.jitter) {
         case let .end(ending):
           return try finish(ending, retry)
@@ -204,7 +217,7 @@ struct Step: Owned {
   }
 
   mutating func failed(_ error: any Error, session: SessionID, now: Date, jitter: () -> Double) -> Next {
-    if let boundary = error as? ReplayBoundaryRequired { return .end(.handoff(boundary.binding, boundary.budget)) }
+    if let boundary = error as? ReplayBoundaryRequired { return .end(.handoff(boundary.binding)) }
     if let changed = error as? ToolRosterChanged { return .end(.roster(changed.notice)) }
     if let waiting = error as? ModelRouteWaiting { return .wait(seconds: delay(attempt: 1, until: waiting.retryAt, now: now, jitter: jitter)) }
     switch classify(error) {
@@ -241,8 +254,8 @@ struct Step: Owned {
   }
 
   private func delay(attempt: Int, until retryAt: Date? = nil, now: Date, jitter: () -> Double) -> Double {
-    if let wait = retryAt.map({ $0.timeIntervalSince(now) }), wait > 0 { return min(retryAtCeiling, wait) }
-    return min(backoffCeiling, pow(2.0, Double(attempt - 1))) * jitter()
+    if let wait = retryAt.map({ $0.timeIntervalSince(now) }), wait > 0 { return Swift.min(retryAtCeiling, wait) }
+    return Swift.min(backoffCeiling, pow(2.0, Double(attempt - 1))) * jitter()
   }
 }
 
@@ -297,13 +310,9 @@ func classify(_ error: any Error) -> FailureClass {
   }
 }
 
-extension Transcript {
-  /// What this generation's last reply predicts for the next prompt's cache: its whole prompt, idle since it came.
+extension [TranscriptLine] {
   func cacheExpectation(now: Date) -> CacheExpectation? {
-    for item in items[keptCount...].reversed() {
-      guard case let .assistant(entry) = item else { continue }
-      return CacheExpectation(tokens: entry.usage.inputTokens, idleMs: max(0, Int((now.timeIntervalSince(entry.timestamp) * 1000).rounded())))
-    }
-    return nil
+    guard let line = last(where: { $0.meta != nil }) else { return nil }
+    return CacheExpectation(tokens: line.meta!.usage.inputTokens, idleMs: Swift.max(0, Int((now.timeIntervalSince(line.at) * 1000).rounded())))
   }
 }

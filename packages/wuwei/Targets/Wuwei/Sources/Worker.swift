@@ -48,10 +48,13 @@ public final class Worker: Sendable {
     public init() {}
   }
 
-  private struct Hosts {
+  private struct Hosts: Sendable {
     var live: [String: Host] = [:]
     var claiming = true
     var started = false
+    var scanning = false
+    var quiescence: Task<Void, Never>?
+    var quiesced = false
   }
 
   private struct Sockets {
@@ -67,8 +70,9 @@ public final class Worker: Sendable {
   let log = Logger(label: "wuwei")
   private let registrations = Mutex<[String: Registration]>([:])
   private let dependencies: Mutex<Dependencies>
-  private let hosts = Mutex(Hosts())
+  private let hosts = WriterWaitingLock(Hosts())
   private let sockets = Mutex(Sockets())
+  private let maintaining = WriterWaitingLock(true)
 
   public init(id: String, storage: Storage, scheduler: any Scheduler, registrations: [Registration] = [], dependencies: Dependencies = Dependencies(), options: Options = Options()) {
     self.id = id
@@ -109,8 +113,9 @@ public final class Worker: Sendable {
   /// Begins the scan. Until then a worker hosts only what it is called, attached or poked for: mail nobody poked it for waits in the store, and so does a job or a wake that is due.
   public func start() {
     let starts = hosts.withLock { hosts in
-      defer { hosts.started = true }
-      return !hosts.started
+      hosts.started = true
+      defer { hosts.scanning = true }
+      return !hosts.scanning
     }
     if starts { scan() }
   }
@@ -179,7 +184,7 @@ public final class Worker: Sendable {
   /// Layered, an addressable's durable database at one snapshot, its schema applied to this copy alone, so an addressable that never booted reads as a fresh one.
   private func reading<Target: Addressable>(_ address: Address<Target>, within incarnation: Incarnation?) -> Access {
     guard let file = store.file else {
-      store.prepare(kind: Target.kind, schema: Target.schema, owned: Target.owned)
+      store.prepare(kind: Target.kind, schema: Target.schema, owned: Target.owned, within: incarnation)
       return .shared(store, owner: address.key, within: incarnation)
     }
     do {
@@ -257,22 +262,44 @@ public final class Worker: Sendable {
     attachment.end()
   }
 
-  /// Stops claiming, ends every job's `start`, waits for what the hosts wrote, gives up every lease so another worker can take over at once, and ends every socket.
-  public func drain() async {
-    let live = hosts.withLock { hosts in
+  public func quiesce() async {
+    let task = hosts.withLock { hosts in
+      if let task = hosts.quiescence { return task }
+      store.holdLeases()
       hosts.claiming = false
-      return Array(hosts.live.values)
+      let startsMaintenance = !hosts.scanning
+      hosts.scanning = true
+      let live = Array(hosts.live.values)
+      let task = self.task { [self] in
+        if startsMaintenance { scan() }
+        for host in live {
+          await host.quiesce()
+        }
+        for attachment in sockets.withLock({ $0.attached.values.flatMap(\.self) }) {
+          attachment.end()
+        }
+        self.hosts.withLock { $0.quiesced = true }
+      }
+      hosts.quiescence = task
+      return task
     }
-    for host in live {
-      await host.drain()
-    }
-    do {
-      try store.write { try $0.execute("UPDATE wuwei_addressable SET expires_at = 0 WHERE holder = ?", .text(id)) }
-    } catch {
-      log.error("drain could not release the leases of \(id): \(error)")
-    }
-    for attachment in sockets.withLock({ $0.attached.values.flatMap(\.self) }) {
-      attachment.end()
+    await task.value
+  }
+
+  var isQuiescing: Bool {
+    hosts.withLock { !$0.claiming }
+  }
+
+  public func release() {
+    precondition(hosts.withLock { $0.quiesced }, "a worker releases its leases only after quiescing")
+    maintaining.withLock { maintaining in
+      if !maintaining { return }
+      do {
+        try store.write { try $0.execute("UPDATE wuwei_addressable SET expires_at = 0 WHERE holder = ?", .text(id)) }
+      } catch {
+        preconditionFailure("could not release the leases of \(id): \(error)")
+      }
+      maintaining = false
     }
   }
 
@@ -290,8 +317,8 @@ public final class Worker: Sendable {
   private func host(_ address: String) -> Host? {
     guard let slash = address.firstIndex(of: "/"), let registration = registrations.withLock({ $0[String(address[..<slash])] }) else { return nil }
     return hosts.withLock { hosts in
-      if let live = hosts.live[address] { return live }
       guard hosts.claiming else { return nil }
+      if let live = hosts.live[address] { return live }
       do {
         guard let claim = try claim(address, key: String(address[address.index(after: slash)...]), isJob: registration.isJob) else { return nil }
         let host = try registration.host(self, claim)
@@ -358,34 +385,49 @@ public final class Worker: Sendable {
 
   /// The backstop behind every poke: renews this worker's leases, then pokes every recipient with mail, every job nobody holds or whose wake time has come, and every cell whose wake time has come and that nobody else holds.
   private func scan() {
-    guard hosts.withLock({ $0.claiming && $0.started }) else { return }
     let now = scheduler.now
-    do {
-      try store.write {
-        try $0.execute(
-          "UPDATE wuwei_addressable SET expires_at = ? WHERE holder = ? AND expires_at > ?",
-          .integer((now + options.leaseDuration).milliseconds), .text(id), .integer(now.milliseconds),
-        )
+    let again = maintaining.withLock { maintaining in
+      guard maintaining else { return false }
+      do {
+        try store.write {
+          try $0.execute(
+            "UPDATE wuwei_addressable SET expires_at = ? WHERE holder = ? AND expires_at > ?",
+            .integer((now + options.leaseDuration).milliseconds), .text(id), .integer(now.milliseconds),
+          )
+        }
+        guard hosts.withLock({ $0.claiming && $0.started }) else { return true }
+        let due = try store.read { db in
+          try db.rows("SELECT DISTINCT recipient AS address FROM wuwei_mail") + db.rows(
+            """
+            SELECT job.address FROM wuwei_job AS job LEFT JOIN wuwei_addressable AS lease ON lease.address = job.address
+            WHERE job.phase != 'done'
+              AND (lease.id IS NULL OR lease.expires_at <= ? OR (lease.holder = ? AND job.wake_at <= ?))
+            """,
+            .integer(now.milliseconds), .text(id), .integer(now.milliseconds),
+          ) + db.rows(
+            "SELECT address FROM wuwei_addressable WHERE wake_at <= ? AND (expires_at <= ? OR holder = ?)",
+            .integer(now.milliseconds), .integer(now.milliseconds), .text(id),
+          )
+        }
+        for row in due {
+          poke(row["address"].text!)
+        }
+      } catch {
+        log.error("scan failed: \(error)")
       }
-      let due = try store.read { db in
-        try db.rows("SELECT DISTINCT recipient AS address FROM wuwei_mail") + db.rows(
-          """
-          SELECT job.address FROM wuwei_job AS job LEFT JOIN wuwei_addressable AS lease ON lease.address = job.address
-          WHERE job.phase != 'done'
-            AND (lease.id IS NULL OR lease.expires_at <= ? OR (lease.holder = ? AND job.wake_at <= ?))
-          """,
-          .integer(now.milliseconds), .text(id), .integer(now.milliseconds),
-        ) + db.rows(
-          "SELECT address FROM wuwei_addressable WHERE wake_at <= ? AND (expires_at <= ? OR holder = ?)",
-          .integer(now.milliseconds), .integer(now.milliseconds), .text(id),
-        )
-      }
-      for row in due {
-        poke(row["address"].text!)
-      }
-    } catch {
-      log.error("scan failed: \(error)")
+      return true
     }
-    scheduler.at(now + options.scanInterval) { [self] in scan() }
+    if again { scheduler.at(now + options.scanInterval) { [self] in scan() } }
+  }
+}
+
+private final class WriterWaitingLock<State: Sendable>: Sendable {
+  private let state: Mutex<State>
+
+  init(_ state: State) { self.state = Mutex(state) }
+
+  func withLock<Result: Sendable>(_ body: (inout State) throws -> Result) rethrows -> Result {
+    Lane.preconditionNoWriter()
+    return try state.withLock { try body(&$0) }
   }
 }

@@ -1,4 +1,6 @@
 import SessionDomain
+import SessionTools
+import SpaceCore
 import StructuredQueries
 import struct WuhuAI.ToolCall
 import Wuwei
@@ -9,11 +11,12 @@ import WuweiQueries
   import Foundation
 #endif
 
-/// One tool call as a job: the call at `position` of generation `generation`, run once, its answer sent to its session cell. It reads the transcript its id names for the tool state. A start that finds the call already started answers `interrupted`: a call never runs twice. `interrupt` kills it; an exec or a script answers `running` once the deadline of its `yield(by:)` mail, or of its params, has passed.
+/// Exec resumes its committed wait; repeatable file calls discard uncommitted output and restart their whole effect.
 @Job
 struct ToolCallJob {
   static let schema = [
     "CREATE TABLE tool_calls (\(ownerColumn), started INTEGER NOT NULL, answer TEXT, UNIQUE (owner))",
+    "ALTER TABLE tool_calls ADD COLUMN exec TEXT",
   ]
 
   struct Params: Codable {
@@ -25,7 +28,8 @@ struct ToolCallJob {
     let yieldBy: Date?
   }
 
-  enum Message: Codable, Equatable {
+  enum Message: Codable {
+    case finished(ExecFinished)
     case interrupt
     case yield(by: Date)
   }
@@ -37,31 +41,56 @@ struct ToolCallJob {
   mutating func start() async throws -> Outcome {
     guard let row = db.rows(CallRow.all).first else { return .done }
     if let answer = row.answer { return send(answer) }
-    if row.started { return try answer(.interrupted) }
-    try db.execute(CallRow.update { $0.started = true })
     let client = ctx.dependency(LoopClient.self)
     let params = ctx.params
+    if params.call.name == "exec" {
+      let state = try ctx.cell(SessionCell.ID(params.session.rawValue)).shown()
+      return try await exec(state: state, saved: row.exec)
+    }
+    let repeatable = switch params.call.name {
+    case "read", "find", "grep": true
+    default: false
+    }
+    let mutation = switch params.call.name {
+    case "write", "edit": true
+    default: false
+    }
+    let lost: ToolCallAnswer = mutation ? .result(.failure(.init(
+      message: "outcomeUnknown: \(params.call.name) ended without its result and was not repeated: read the path to see whether it applied before retrying",
+      code: "unavailable",
+    )), context: nil) : .serverRestarted
+    if row.started, !repeatable { return try answer(lost) }
+    try db.execute(CallRow.update { $0.started = true })
     let state = try ctx.cell(SessionCell.ID(params.session.rawValue)).shown()
     let deadline = YieldDeadline(params.yieldBy)
-    let raced = try await ctx.race({ _, messages in
-      let invocation = ToolInvocation(sessionID: params.session, call: params.call, state: state, yielded: { await deadline.passed(client) })
-      return try await deadline.collecting(messages, { $0.yieldBy }) {
-        do { return try await client.execute(invocation) }
-        catch is CancellationError { throw CancellationError() }
-        catch { return ToolOutcome(payload: .failure(.init(message: String(describing: error)))) }
+    do {
+      let raced = try await ctx.race({ _, messages in
+        let invocation = ToolInvocation(sessionID: params.session, call: params.call, state: state, yielded: { await deadline.passed(client) })
+        return try await deadline.collecting(messages, { $0.yieldBy }) {
+          do { return try await client.execute(invocation) }
+          catch is CancellationError { throw CancellationError() }
+          catch { return ToolOutcome(payload: .failure(.init(message: String(describing: error)))) }
+        }
+      }, until: { if case .interrupt = $0 { true } else { false } })
+      switch raced {
+      case let .finished(outcome):
+        if repeatable || mutation, Task.isCancelled {
+          if !mutation { return .notDone }
+          if case .failure = outcome.payload { return .notDone }
+        }
+        return try answer(.result(outcome.payload, context: outcome.context))
+      case .message:
+        let invocation = ToolInvocation(sessionID: params.session, call: params.call, state: state)
+        try await ctx.effect { await client.kill(invocation) }
+        return try answer(.interrupted)
       }
-    }, until: { $0 == .interrupt })
-    switch raced {
-    case let .finished(outcome):
-      return try answer(.result(outcome.payload, context: outcome.context))
-    case .message:
-      let invocation = ToolInvocation(sessionID: params.session, call: params.call, state: state)
-      try await ctx.effect { await client.kill(invocation) }
-      return try answer(.interrupted)
+    } catch is CancellationError {
+      if repeatable || mutation, Task.isCancelled { return .notDone }
+      return try answer(lost)
     }
   }
 
-  private mutating func answer(_ answer: ToolCallAnswer) throws -> Outcome {
+  mutating func answer(_ answer: ToolCallAnswer) throws -> Outcome {
     try db.execute(CallRow.update { $0.answer = #bind(answer) })
     return send(answer)
   }
@@ -81,10 +110,12 @@ extension ToolCallJob.Message {
 enum ToolCallAnswer: Sendable, Codable {
   case result(ToolResultPayload, context: ScopeContext?)
   case interrupted
+  case serverRestarted
 }
 
 @Table("tool_calls")
 struct CallRow: Owned {
   var started = false
   @Column(as: ToolCallAnswer?.JSONRepresentation.self) var answer: ToolCallAnswer?
+  @Column(as: ToolExecTarget?.JSONRepresentation.self) var exec: ToolExecTarget?
 }

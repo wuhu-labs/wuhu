@@ -138,6 +138,8 @@ struct MachineAddress: Equatable {
   var path: String
 }
 
+func isMachinePath(_ raw: String) -> Bool { raw.hasPrefix("machines://") }
+
 func parseMachineAddress(_ raw: String) -> MachineAddress? {
   guard raw.hasPrefix("machines://") else { return nil }
   let rest = raw.dropFirst("machines://".count)

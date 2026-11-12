@@ -85,5 +85,6 @@ for await shown in replies where shown.call == call {
   break
 }
 
-await worker.drain()
+await worker.quiesce()
+worker.release()
 exit(status)

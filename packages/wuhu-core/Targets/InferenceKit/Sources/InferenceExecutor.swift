@@ -14,10 +14,12 @@ import WuhuAI
 public struct CompletedInference: Sendable {
   public var message: AssistantMessage
   public var metadata: AssistantMessageMetadata
+  public var context: Context
 
-  public init(message: AssistantMessage, metadata: AssistantMessageMetadata) {
+  public init(message: AssistantMessage, metadata: AssistantMessageMetadata, context: Context) {
     self.message = message
     self.metadata = metadata
+    self.context = context
   }
 }
 
@@ -61,18 +63,13 @@ public struct InferenceExecutor: Sendable {
 
   public func run(
     attemptID: UUID,
-    transcript: Transcript,
+    lines: [TranscriptLine],
     idleTimeout: Duration? = nil,
   ) async throws -> CompletedInference {
-    let context = await transcript.renderRequest(
-      session: session,
-      systemPrompt: systemPrompt,
-      opening: opening,
-      tools: tools,
-    )
+    let context = Context(systemPrompt: systemPrompt, messages: opening.map { .user(.init(content: [.text($0)])) } + lines.map(\.message), tools: tools)
     let options = RequestOptions(
       maxTokens: model.budget.maxOutput,
-      reasoning: reasoning(for: transcript),
+      reasoning: reasoning(for: lines),
       idleTimeout: idleTimeout,
     )
 
@@ -114,7 +111,7 @@ public struct InferenceExecutor: Sendable {
           servedModel = reportedModel
         }
         if case let .done(message, metadata) = event {
-          completed = CompletedInference(message: message, metadata: metadata)
+          completed = CompletedInference(message: message, metadata: metadata, context: context)
         }
       case let .failure(error):
         failure = error
@@ -160,9 +157,10 @@ public struct InferenceExecutor: Sendable {
     return completed
   }
 
-  public func acknowledge(entry: AssistantEntry, transcript: Transcript) async {
+  public func acknowledge(entry: AssistantEntry, context: Context) async {
     guard let webSocket, model.transport == .websocket else { return }
-    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, opening: opening, tools: tools)
+    var context = context
+    context.messages.append(.assistant(.init(content: entry.content)))
     await webSocket.acknowledge(attemptID: entry.id.uuidString, committedMessage: .init(content: entry.content), toolCallIDs: entry.toolCallIDs.mapValues(\.rawValue), renderedContext: context)
   }
 

@@ -9,7 +9,7 @@ import Testing
     let space = try makeSpace()
     for name in ["a", "b", "c"] { _ = try await space.writeText("/dir/\(name).md", name) }
     let start = try await space.currentRevision()
-    let stream = await space.observeFS(glob: "/dir/**", group: .shared)
+    let stream = try await space.observeFS(glob: "/dir/**", group: .shared)
     try await space.fs(.shared).delete("/dir", ifMatch: nil)
     var live = stream.makeAsyncIterator()
     let commit = try #require(await live.next())
@@ -18,7 +18,7 @@ import Testing
     #expect(commit.events.count == 3)
     #expect(Set(commit.events.map(\.path)) == ["/dir/a.md", "/dir/b.md", "/dir/c.md"])
     #expect(commit.events.allSatisfy { $0.kind == .delete && $0.rev == commit.rev })
-    let replay = await space.observeFS(glob: "/dir/**", from: Rev(start), group: .shared)
+    let replay = try await space.observeFS(glob: "/dir/**", from: Rev(start), group: .shared)
     var iterator = replay.makeAsyncIterator()
     let replayed = try #require(await iterator.next())
     #expect(replayed.rev == commit.rev)
@@ -28,7 +28,7 @@ import Testing
 
   @Test(.timeLimit(.minutes(1))) func stalledSubscriberDoesNotBlockTheWriterOrDropBufferedCommits() async throws {
     let space = try makeSpace()
-    let stalled = await space.observeFS(glob: "**", group: .shared)
+    let stalled = try await space.observeFS(glob: "**", group: .shared)
     for index in 1 ... 200 {
       _ = try await space.writeText("/file\(index)", "content")
     }
@@ -43,7 +43,7 @@ import Testing
 
   @Test func unmatchedCommitYieldsNothingAndMatchingCommitKeepsOnlyMatchingEvents() async throws {
     let space = try makeSpace()
-    let stream = await space.observeFS(glob: "/dir/a*", group: .shared)
+    let stream = try await space.observeFS(glob: "/dir/a*", group: .shared)
     _ = try await space.writeText("/elsewhere", "x")
     _ = try await space.writeText("/dir/b.md", "b")
     _ = try await space.writeText("/dir/a.md", "a")
@@ -63,7 +63,7 @@ import Testing
       for name in ["a", "b", "c"] { _ = try await space.writeText("/dir\(race)/\(name)", name) }
     }
     let start = try await space.currentRevision()
-    let stream = await space.observeFS(glob: "**", group: .shared)
+    let stream = try await space.observeFS(glob: "**", group: .shared)
     let commits = Collector<FSCommit>()
     let consumer = Task { for await commit in stream { await commits.append(commit) } }
     defer { consumer.cancel() }
@@ -93,7 +93,7 @@ import Testing
     let writes = Task {
       for race in 0 ..< 100 { try await space.fs(.shared).delete("/dir\(race)", ifMatch: nil) }
     }
-    let stream = await space.observeFS(glob: "**", from: Rev(start), group: .shared)
+    let stream = try await space.observeFS(glob: "**", from: Rev(start), group: .shared)
     let commits = Collector<FSCommit>()
     let consumer = Task { for await commit in stream { await commits.append(commit) } }
     defer { consumer.cancel() }

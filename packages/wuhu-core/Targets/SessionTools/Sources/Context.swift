@@ -73,7 +73,8 @@ extension ToolExecutor {
   }
 
   func deliverContext(_ session: SessionID, touching address: Address?, state: ToolExecutionState) async -> ScopeContext? {
-    guard case let .machine(machine, folder)? = address, let main = try? await client(session),
+    let main = client(session)
+    guard case let .machine(machine, folder)? = address,
           let promptSession = try? await prompt(session).session
     else { return nil }
     let files = ContextFiles(main: main)

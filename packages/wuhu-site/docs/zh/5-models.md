@@ -63,4 +63,4 @@ agent 的脚本和命令也能用密钥，比如某个 web 服务的 token。这
 
 令牌的 audience 是提供商 `baseURL` 的 origin，也可使用内部 HTTP 地址；issuer 是服务器配置的 HTTPS `--origin`，托管租户使用自己的主机地址。无需额外配置 issuer 或 audience 字段。配置缺失或签名失败会返回有类型的错误，绝不回退到已存储的密钥或其他提供商。
 
-空间主机公开无需认证的 `GET /.well-known/openid-configuration`（`issuer`、`jwks_uri`、支持的 `ES256` 算法）和 `GET /.well-known/jwks.json`（P-256 公钥及其 `kid`）。未配置 HTTPS `--origin` 时，两者均返回 HTTP 422，错误码为 `oidcConfiguration`。令牌包含空间、组及执行会话的 id，不包含姓名或邮箱。私钥存储在空间文档之外的 `<server-state>/identity/identity.p256`，重启和升级后保持不变；请保留该状态目录。
+空间主机公开无需认证的 `GET /.well-known/openid-configuration`（`issuer`、`jwks_uri`、支持的 `ES256` 算法）和 `GET /.well-known/jwks.json`（P-256 公钥及其 `kid`）。未配置 HTTPS `--origin` 时，两者均返回 HTTP 422，错误码为 `oidcConfiguration`。令牌包含空间、组及执行会话的 id，不包含姓名或邮箱。签名私钥按密钥分别存储在空间文档之外的 `<server-state>/identity/<kid>.p256` 文件中，重启和升级后保持不变。SQLite 只保存密钥 id，不保存私钥；请备份整个 `identity` 目录及数据库。

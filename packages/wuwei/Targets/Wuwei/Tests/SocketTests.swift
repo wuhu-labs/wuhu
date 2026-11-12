@@ -1,6 +1,6 @@
 import Synchronization
 import Testing
-import Wuwei
+@testable import Wuwei
 
 enum Chat: Socket {
   enum Incoming: Sendable {
@@ -79,6 +79,135 @@ struct Ticker {
 
   func ticks() -> [Int64] {
     db.rows("SELECT n FROM tick").map { $0[0].integer! }
+  }
+}
+
+enum Wire: Socket {
+  enum Incoming: Sendable {
+    case hit(Int)
+  }
+
+  typealias Outgoing = Int
+}
+
+/// Writes every frame down before it answers it, and closes the socket on the first.
+@Cell
+struct ShortLived {
+  static let schema = ["CREATE TABLE seen (n INTEGER NOT NULL)"]
+
+  func seen() -> [Int] {
+    db.rows("SELECT n FROM seen ORDER BY rowid").map { Int($0[0].integer!) }
+  }
+
+  mutating func receive(_ frame: Wire.Incoming, from socket: SocketHandle<Wire>) throws {
+    guard case let .hit(n) = frame else { return }
+    try db.execute("INSERT INTO seen VALUES (?)", .integer(Int64(n)))
+    if n == 1 { socket.close() }
+  }
+
+  mutating func closed(_ socket: SocketHandle<Wire>) throws {
+    try db.execute("INSERT INTO seen VALUES (-1)")
+  }
+}
+
+/// Writes every frame it hears down, and closes its sockets on demand.
+@Cell
+struct Closer {
+  static let schema = ["CREATE TABLE seen (n INTEGER NOT NULL)"]
+
+  func seen() -> [Int] {
+    db.rows("SELECT n FROM seen ORDER BY rowid").map { Int($0[0].integer!) }
+  }
+
+  mutating func receive(_ frame: Wire.Incoming, from socket: SocketHandle<Wire>) throws {
+    guard case let .hit(n) = frame else { return }
+    try db.execute("INSERT INTO seen VALUES (?)", .integer(Int64(n)))
+  }
+
+  mutating func close(_ id: Int) {
+    for socket in ctx.sockets(of: Wire.self) where socket.id == id { socket.close() }
+  }
+
+  mutating func closed(_ socket: SocketHandle<Wire>) throws {
+    try db.execute("INSERT INTO seen VALUES (-1)")
+  }
+}
+
+/// What a job heard on its sockets, which it may not write down itself.
+final class Recorder: Sendable {
+  private let heard = Mutex<[String]>([])
+
+  func heard(_ event: String) {
+    heard.withLock { $0.append(event) }
+  }
+
+  var events: [String] {
+    heard.withLock { $0 }
+  }
+}
+
+/// Says what it hears on its sockets to the recorder it was given; it never finishes.
+@Job
+struct Listener {
+  typealias Params = Int64
+  typealias Message = Never
+
+  func attached(_ socket: SocketHandle<Feed>) {
+    ctx.dependency(Recorder.self).heard("attached \(socket.id)")
+  }
+
+  func closed(_ socket: SocketHandle<Feed>) {
+    ctx.dependency(Recorder.self).heard("closed \(socket.id)")
+  }
+
+  mutating func start() async throws -> Outcome {
+    while true {
+      try await ctx.sleep(for: .seconds(1))
+    }
+  }
+}
+
+/// Closes every socket of its own a second in; it never finishes.
+@Job
+struct Dropper {
+  typealias Params = Int64
+  typealias Message = Never
+
+  func attached(_ socket: SocketHandle<Feed>) {
+    ctx.dependency(Recorder.self).heard("attached \(socket.id)")
+  }
+
+  func closed(_ socket: SocketHandle<Feed>) {
+    ctx.dependency(Recorder.self).heard("closed \(socket.id)")
+  }
+
+  mutating func start() async throws -> Outcome {
+    while true {
+      try await ctx.sleep(for: .seconds(1))
+      for socket in ctx.sockets(of: Feed.self) {
+        socket.close()
+      }
+    }
+  }
+}
+
+/// Publishes nothing and finishes a second in.
+@Job
+struct Once {
+  typealias Params = Int64
+  typealias Message = Never
+
+  func attached(_ socket: SocketHandle<Feed>) {
+    ctx.dependency(Recorder.self).heard("attached \(socket.id)")
+  }
+
+  func closed(_ socket: SocketHandle<Feed>) {
+    ctx.dependency(Recorder.self).heard("closed \(socket.id)")
+  }
+
+  mutating func start() async throws -> Outcome {
+    try await ctx.sleep(for: .seconds(1))
+    return .done
   }
 }
 
@@ -210,7 +339,7 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(aliceHears.heard == [.frame(.history([]))])
     #expect(bobHears.heard == [.frame(.history([])), .frame(.said("bye")), .closed])
     #expect(carolHears.heard == [.frame(.history([])), .frame(.said("hello"))])
-    #expect(a.worker.cell(room).lines() == ["1 left", "hello"])
+    #expect(a.worker.cell(room).lines() == ["1 left", "2 left", "hello"])
   }
 
   @Test func aFailedEpochDropsItsFramesAndClosesTheSocket() throws {
@@ -246,6 +375,94 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     world.run(for: .seconds(5))
     #expect(client.heard == [.frame(1), .frame(2), .frame(3), .closed])
     #expect(client.durable.prefix(3) == [["1"], ["1", "2"], ["1", "2", "3"]])
+  }
+
+  func recorded(_ recorder: Recorder, _ id: String, in world: World? = nil) throws -> Node {
+    var dependencies = Dependencies()
+    dependencies.register(recorder)
+    return try (world ?? self.world).node(id, [.job(Listener.self), .job(Dropper.self), .job(Once.self)], dependencies: dependencies)
+  }
+
+  @Test(arguments: 1 ... 20 as ClosedRange<UInt64>)
+  func aFrameQueuedBehindTheSocketsOwnCloseIsNotDelivered(seed: UInt64) throws {
+    let world = World(seed: seed)
+    let a = try world.node("a", [.cell(ShortLived.self)])
+    let short = ShortLived.ID("s")
+    let client = Client<Wire>()
+    let peer = try #require(a.worker.attach(Wire.self, to: short) { client.hear($0, durable: []) })
+    peer.send(.hit(1))
+    peer.send(.hit(2))
+    world.run(for: .seconds(2))
+    #expect(a.worker.cell(short).seen() == [1, -1])
+    #expect(client.heard == [.closed])
+  }
+
+  /// A frame handed to the host before another call closed the socket reaches nothing: eligibility is the attachment's, read on the lane.
+  @Test func aFrameHandedToTheHostBeforeTheCloseIsNotDelivered() throws {
+    let world = World()
+    let a = try world.node("a", [.cell(Closer.self)])
+    let closer = Closer.ID("c")
+    _ = try #require(a.worker.attach(Wire.self, to: closer) { _ in })
+    world.run(for: .seconds(1))
+    let attachment = try #require(a.worker.attachments(at: closer.description).first)
+    attachment.discardFrames()
+    a.worker.task { await a.worker.deliver(.frame(Wire.Incoming.hit(9)), from: attachment) }
+    world.run(for: .seconds(1))
+    #expect(a.worker.cell(closer).seen() == [])
+  }
+
+  @Test func aJobHearsAClosedSocketOnceAfterItsAttached() throws {
+    let recorder = Recorder()
+    let a = try recorded(recorder, "a")
+    let listener = Listener.ID("l")
+    try a.worker.create(listener, params: 0)
+    let peer = try #require(a.worker.attach(Feed.self, to: listener, opening: 0) { _ in })
+    world.run(for: .seconds(2))
+    #expect(recorder.events == ["attached 1"])
+    peer.close()
+    world.run(for: .seconds(5))
+    #expect(recorder.events == ["attached 1", "closed 1"])
+  }
+
+  @Test func aJobHearsASocketItClosesItself() throws {
+    let recorder = Recorder()
+    let a = try recorded(recorder, "a")
+    let dropper = Dropper.ID("d")
+    try a.worker.create(dropper, params: 0)
+    let client = Client<Feed>()
+    _ = try #require(a.worker.attach(Feed.self, to: dropper, opening: 0) { client.hear($0, durable: []) })
+    world.run(for: .seconds(5))
+    #expect(recorder.events == ["attached 1", "closed 1"])
+    #expect(client.heard == [.closed])
+  }
+
+  @Test func aJobHearsNoClosedWhenItIsDone() throws {
+    let world = World()
+    let recorder = Recorder()
+    let a = try recorded(recorder, "a", in: world)
+    let once = Once.ID("o")
+    try a.worker.create(once, params: 0)
+    let client = Client<Feed>()
+    _ = try #require(a.worker.attach(Feed.self, to: once, opening: 0) { client.hear($0, durable: []) })
+    world.run(for: .seconds(3))
+    #expect(recorder.events == ["attached 1"])
+    #expect(client.heard == [.closed])
+  }
+
+  @Test func aSocketClosedBetweenIncarnationsIsNotGreetedOrClosed() throws {
+    let recorder = Recorder()
+    let a = try recorded(recorder, "a")
+    let listener = Listener.ID("l")
+    try a.worker.create(listener, params: 0)
+    let peer = try #require(a.worker.attach(Feed.self, to: listener, opening: 0) { _ in })
+    world.run(for: .seconds(2))
+    #expect(recorder.events == ["attached 1"])
+
+    world.simulation.kill(a.process)
+    peer.close()
+    _ = try recorded(recorder, "b")
+    world.run(for: .seconds(20))
+    #expect(recorder.events == ["attached 1"])
   }
 
   @Test func aSocketCarriesWhatItOpenedWith() throws {

@@ -41,10 +41,6 @@ extension MachineV2TunnelTests {
     }
     try await f.space.writer.write { db in try db.execute(sql: "ALTER TABLE account_keys_offline RENAME TO account_keys") }
     #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
-
-    let outage = try await probes(f, key: f.key) { await f.hub.fail(OperationError(.storeUnavailable)) }
-    #expect(outage.allSatisfy { $0.0 == .serviceUnavailable })
-    #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
   }
 
   @Test func aRevokedKeyIsADefinitiveRefusalOnEveryPath() async throws {

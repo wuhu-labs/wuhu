@@ -49,8 +49,8 @@ import WuhuAI
       }
       let config = makeConfig(inference: { request in
         let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [], mediaResolver: ReplayImageResolver())
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
-        return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { _, _ in commits.withLock { $0 += 1 } })
+        let completed = try await executor.run(attemptID: request.attemptID, lines: request.lines)
+        return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { _ in commits.withLock { $0 += 1 } })
       })
       try await withDependencies { $0.fetch = fetch } operation: {
         try await runService(space, config) { service in
@@ -108,14 +108,14 @@ import WuhuAI
       }
       var config = makeConfig(executeTool: { _ in .failure(.init(message: "lookup complete")) }, inference: { request in
         // The real notification is already durable before anything reaches the provider.
-        #expect(try await sessions.hydrate(sid).transcript.kernel == request.transcript)
+        #expect(try await sessions.lines(sid) == request.lines)
         let lease = try await registry.acquire(session: sid, model: model)
         let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object")]))], webSocket: lease.session, mediaResolver: ReplayImageResolver())
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
+        let completed = try await executor.run(attemptID: request.attemptID, lines: request.lines)
         await registry.release(session: sid, lease: lease.lease)
-        return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in
+        return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry in
           let count = commits.withLock { $0.append(entry); return $0.count }
-          await executor.acknowledge(entry: entry, transcript: transcript)
+          await executor.acknowledge(entry: entry, context: completed.context)
           if count == 3 { await registry.invalidate(sid) }
         })
       })
@@ -158,11 +158,11 @@ import WuhuAI
       #expect(replay.prefix(consumed.count).map { $0.jsonString() } == consumed.map { $0.jsonString() })
       #expect(replay.last?.jsonString().contains("73% full") == true)
       if image { #expect(consumed.first { $0.jsonString().contains("data:image/png;base64,AQID") } != nil) }
-      let persisted = try await sessions.hydrate(sid).transcript.kernel
-      let decoded = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(persisted))
-      let restored = await decoded.renderRequest(session: sid, systemPrompt: "offline")
-      let original = await persisted.renderRequest(session: sid, systemPrompt: "offline")
-      #expect(restored == original)
+      let persisted = try await sessions.lines(sid)
+      let decoded = try JSONDecoder().decode([TranscriptLine].self, from: JSONEncoder().encode(persisted))
+      #expect(decoded == persisted)
+      #expect(decoded.filter { $0.key == LineKey.pressure }.allSatisfy { $0.role == .user })
+      #expect(decoded.assistantLines.allSatisfy { $0.meta != nil })
     }
   }
 }

@@ -83,7 +83,7 @@ public struct SessionQueueEntry: Hashable, Sendable, Codable {
   }
 }
 
-public struct QueueDrain: Hashable, Sendable, Codable {
+public struct QueueDrain: Hashable, Sendable {
   public var items: [TranscriptItem]
   public var queueTail: Int
   /// The group-observer firings that posted the drained messages or opened their requests.
@@ -96,14 +96,11 @@ public struct QueueDrain: Hashable, Sendable, Codable {
   }
 }
 
-public enum SessionTranscript: Hashable, Sendable, Codable {
-  case kernel(Transcript)
-}
-
 public struct SessionHydration: Hashable, Sendable, Codable {
   public var generation: Int
   public var record: SessionRecord
-  public var transcript: SessionTranscript
+  /// The generation's transcript is an older build's typed items, which nothing reads: the session's cell opens a new generation before anything else.
+  public var legacy: Bool
   public var queueHead: Int
   public var queueTail: Int
   /// Times the session was resumed: each asks its interrupted or failed step again.
@@ -112,14 +109,14 @@ public struct SessionHydration: Hashable, Sendable, Codable {
   public init(
     generation: Int,
     record: SessionRecord,
-    transcript: SessionTranscript,
+    legacy: Bool = false,
     queueHead: Int,
     queueTail: Int,
     stepTry: Int = 0,
   ) {
     self.generation = generation
     self.record = record
-    self.transcript = transcript
+    self.legacy = legacy
     self.queueHead = queueHead
     self.queueTail = queueTail
     self.stepTry = stepTry
@@ -171,14 +168,13 @@ public struct SessionStore: Sendable {
   let writer: any DatabaseWriter
   let blobs: BlobStore
   let dateGen: DateGenerator
-  let broadcast: FSBroadcast
   let runtime: SpaceRuntime
   let rng: WithRandomNumberGenerator
 }
 
 extension Space {
   public nonisolated var sessions: SessionStore {
-    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, runtime: runtime, rng: rng)
+    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, runtime: runtime, rng: rng)
   }
 }
 
@@ -190,28 +186,9 @@ extension SessionStore {
     }
   }
 
-  public func transcript(_ id: SessionID) async throws -> Transcript {
-    let key = id.rawValue
-    return try await writer.read { db in
-      switch try Sessions.record(key, in: db).executor {
-      case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
-      case .retired: Transcript()
-      }
-    }
-  }
-
   public func hydrate(_ id: SessionID) async throws -> SessionHydration {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.read { db in try Sessions.hydrate(id.rawValue, at: now, in: db) }
-  }
-
-  /// What an inference step sends: the first `count` items of `generation`, as the loop hydrates them, with the subscriptions registered now.
-  public func transcript(_ id: SessionID, generation: Int, count: Int) async throws -> Transcript {
-    try await writer.read { db in
-      let transcript = try Sessions.kernelTranscript(id.rawValue, generation: Int64(generation), count: count, in: db)
-      precondition(transcript.items.count == count, "\(id.rawValue) has no slot \(generation):\(count)")
-      return transcript
-    }
   }
 
   public func undrainedInputs(_ id: SessionID) async throws -> [SessionQueueEntry] {
@@ -313,14 +290,10 @@ extension Sessions {
   static func hydrate(_ key: String, at now: String, in db: Database) throws -> SessionHydration {
     let record = try Sessions.record(key, in: db)
     let runtime = try Sessions.runtime(key, in: db)
-    let transcript: SessionTranscript = switch record.executor {
-    case .kernel, .modelGroup: .kernel(try Sessions.kernelTranscript(key, in: db))
-    case .retired: .kernel(Transcript())
-    }
     return SessionHydration(
       generation: Int(runtime.generation),
       record: record,
-      transcript: transcript,
+      legacy: try !record.executor.isRetired && Sessions.isLegacy(key, generation: runtime.generation, in: db),
       queueHead: Int(try Sessions.queueHead(key, tail: runtime.queueTail, at: now, in: db)),
       queueTail: Int(runtime.queueTail),
       stepTry: Int(runtime.stepTry),

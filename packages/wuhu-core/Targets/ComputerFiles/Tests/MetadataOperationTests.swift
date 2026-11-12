@@ -9,7 +9,6 @@ import Dispatch
 import Fetch
 import enum JSONValue.JSONValue
 import MachineContract
-@testable import OperationClient
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -17,20 +16,18 @@ import Synchronization
 import Testing
 
 @Suite(.timeLimit(.minutes(2))) struct MetadataOperationTests {
-  func withClient<T: Sendable>(files: ComputerFileSystem = .local, fetch: (@Sendable (Request, @escaping @Sendable (Request) async throws -> Response) async throws -> Response)? = nil, body: (MachineOperations) async throws -> T) async throws -> T {
+  func withClient<T: Sendable>(files: ComputerFileSystem = .local, fetch: (@Sendable (Request, @escaping @Sendable (Request) async throws -> Response) async throws -> Response)? = nil, body: (AgentWire) async throws -> T) async throws -> T {
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
-    let client = try machineOperations { request in
+    let client = AgentWire { request in
       if let fetch { return try await fetch(request, agent.handler) }
       return try await agent.handler(request)
     }
     return try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      do { _ = try await client.describe("disk"); let result = try await body(client); await client.shutdown(); await agent.shutdown(); return result }
-      catch { await client.shutdown(); await agent.shutdown(); throw error }
+      do { _ = try await client.describe(); let result = try await body(client); await agent.shutdown(); return result }
+      catch { await agent.shutdown(); throw error }
     }
   }
-
-  func owner(_ key: String = UUID().uuidString) -> OperationOwner { .init(scope: "files", key: key) }
 
   @Test func allKindsRoundTripWithLargeStreamedWriteAndReadToken() async throws {
     let folder = try ScratchFolder("metadata-kinds")
@@ -39,36 +36,53 @@ import Testing
     let moved = directory + "/moved"
     let bytes = Data((0 ..< 400_000).map { UInt8($0 % 251) })
     try await withClient { client in
-      try await client.mkdir(machine: "disk", path: directory, owner: owner())
-      let token = try await client.writeFile(machine: "disk", path: path, data: bytes, owner: owner())
-      let entry = try await client.stat(machine: "disk", path: path, owner: owner())
+      _ = try await client.call(.init(kind: "mkdir.v1", input: ["path": .string(directory)]))
+      let token = try await client.write(path: path, data: bytes)
+      let entry = try decodeEntry(await client.call(.init(kind: "stat.v1", input: ["path": .string(path)])))
       #expect(entry.kind == .file); #expect(entry.size == bytes.count); #expect(entry.token == token); #expect(entry.mtime > 0)
-      #expect(try await client.list(machine: "disk", path: directory, owner: owner()) == [entry])
-      let read = try await client.vfs(machine: "disk", op: .read(path: path), owner: owner())
-      #expect(read == .file(token: token, data: .init([UInt8](bytes))))
-      let next = try await client.writeFile(machine: "disk", path: path, data: Data("replaced".utf8), ifMatch: token, owner: owner())
+      var entries: [MachineEntry] = []
+      _ = try await client.call(.init(kind: "list.v1", input: ["path": .string(directory)])) { payload in
+        try entries.append(contentsOf: payload.records!.map(decodeEntry))
+      }
+      #expect(entries == [entry])
+      var collected = Data()
+      let read = try await client.call(.init(kind: "read.v1", input: ["path": .string(path)])) { collected.append($0.data!) }
+      #expect(read.object?["version"] == .string(token))
+      #expect(collected == bytes)
+      let next = try await client.write(path: path, data: Data("replaced".utf8), ifMatch: token)
       #expect(next != token)
-      let conflict = try await client.vfs(machine: "disk", op: .write(path: path, data: .init([1]), ifMatch: token), owner: owner())
-      guard case let .error(error) = conflict else { Issue.record("expected conflict"); return }
-      #expect(error.code == .conflict)
-      try await client.move(machine: "disk", from: path, to: moved, owner: owner())
-      try await client.remove(machine: "disk", path: folder.url.appending(path: "nested").path, owner: owner())
+      let conflict = await #expect(throws: OperationError.self) {
+        try await client.write(path: path, data: Data([1]), ifMatch: token)
+      }
+      #expect(conflict?.code == .fileChanged)
+      _ = try await client.call(.init(kind: "move.v1", input: ["from": .string(path), "to": .string(moved)]))
+      _ = try await client.call(.init(kind: "remove.v1", input: ["path": .string(folder.url.appending(path: "nested").path)]))
       #expect(!FileManager.default.fileExists(atPath: moved))
     }
   }
 
-  @Test func filesystemFailuresPreserveV1Categories() async throws {
+  @Test func filesystemFailuresKeepTheirWireCodesAndLookupMarkers() async throws {
     let folder = try ScratchFolder("metadata-errors")
     let a = folder.url.appending(path: "a").path; let b = folder.url.appending(path: "b").path
     try Data([1]).write(to: URL(fileURLWithPath: a)); try Data([2]).write(to: URL(fileURLWithPath: b))
     try await withClient { client in
-      for (op, code) in [(VFSOp.stat(path: b + "-missing"), MachineErrorCode.notFound), (.rm(path: b + "-missing", ifMatch: "stale"), .conflict), (.mv(from: a, to: b), .conflict), (.read(path: a, offset: -1), .invalidArgument), (.read(path: a, length: VFSDefaults.maxReadBytes + 1), .tooLarge)] {
-        let result = try await client.vfs(machine: "disk", op: op, owner: owner())
-        guard case let .error(error) = result else { Issue.record("expected error for \(op)"); continue }
-        #expect(error.code == code)
+      let lookup = await #expect(throws: OperationError.self) {
+        try await client.call(.init(kind: "stat.v1", input: ["path": .string(b + "-missing")]))
       }
-      #expect(try Data(contentsOf: URL(fileURLWithPath: a)) == Data([1])); #expect(try Data(contentsOf: URL(fileURLWithPath: b)) == Data([2]))
+      #expect(lookup?.code == .fileUnavailable)
+      #expect(lookup?.details?.object?["lookup"] == .bool(true))
+      let stale = await #expect(throws: OperationError.self) {
+        try await client.call(.init(kind: "remove.v1", input: ["path": .string(b + "-missing"), "ifMatch": "stale"]))
+      }
+      #expect(stale?.code == .fileChanged)
+      let exists = await #expect(throws: OperationError.self) {
+        try await client.call(.init(kind: "move.v1", input: ["from": .string(a), "to": .string(b)]))
+      }
+      #expect(exists?.code == .fileUnavailable)
+      #expect(exists?.details?.object?["errno"] == 17)
     }
+    #expect(try Data(contentsOf: URL(fileURLWithPath: a)) == Data([1]))
+    #expect(try Data(contentsOf: URL(fileURLWithPath: b)) == Data([2]))
   }
 
   @Test func listStreamsBeyondResultCapAndReportsSymlinkItself() async throws {
@@ -77,32 +91,40 @@ import Testing
     let link = folder.url.appending(path: "link")
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: folder.url)
     try await withClient { client in
-      let entries = try await client.list(machine: "disk", path: folder.url.path, owner: owner())
+      var entries: [MachineEntry] = []
+      _ = try await client.call(.init(kind: "list.v1", input: ["path": .string(folder.url.path)])) { payload in
+        try entries.append(contentsOf: payload.records!.map(decodeEntry))
+      }
+      entries.sort { $0.name < $1.name }
       #expect(entries.count == 501); #expect(entries.last?.kind == .symlink)
-      #expect(try await client.stat(machine: "disk", path: link.path, owner: owner()).kind == .symlink)
-      await #expect(throws: OperationError.self) { try await client.list(machine: "disk", path: link.path + "/", owner: owner()) }
-      await #expect(throws: OperationError.self) { try await client.writeFile(machine: "disk", path: link.path, data: Data(), owner: owner()) }
-      try await client.remove(machine: "disk", path: link.path, owner: owner())
+      #expect(try decodeEntry(await client.call(.init(kind: "stat.v1", input: ["path": .string(link.path)]))).kind == .symlink)
+      await #expect(throws: OperationError.self) { try await client.call(.init(kind: "list.v1", input: ["path": .string(link.path + "/")])) }
+      await #expect(throws: OperationError.self) { try await client.write(path: link.path, data: Data()) }
+      _ = try await client.call(.init(kind: "remove.v1", input: ["path": .string(link.path)]))
       #expect(FileManager.default.fileExists(atPath: folder.url.path))
     }
   }
 
-  @Test func repeatedOwnerNeverWritesTwiceAndChangedPayloadConflicts() async throws {
-    let folder = try ScratchFolder("metadata-owner")
+  @Test func duplicateOperationIDRefusesAnotherWrite() async throws {
+    let folder = try ScratchFolder("metadata-duplicate-id")
     let path = folder.url.appending(path: "file").path
-    let key = owner()
     try await withClient { client in
-      let token = try await client.writeFile(machine: "disk", path: path, data: Data([1]), owner: key)
-      #expect(try await client.writeFile(machine: "disk", path: path, data: Data([1]), owner: key) == token)
-      await #expect(throws: OperationError.self) { try await client.writeFile(machine: "disk", path: path, data: Data([2]), owner: key) }
-      #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data([1]))
+      let id = UUID()
+      let bytes = Data([1])
+      let request = StartRequest(kind: "write.v1", input: ["path": .string(path), "bytes": "1", "digest": .string(sha256(bytes))])
+      let operation = try await client.start(request, id: id)
+      try await operation.write("data", .init(data: bytes), end: true)
+      #expect(try await operation.verdict().tag == .completed)
+      let duplicate = await #expect(throws: OperationError.self) { try await client.start(request, id: id) }
+      #expect(duplicate?.code == .operationExists)
+      #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == bytes)
     }
   }
 
   @Test func lostInputReceiptRetriesIdenticalOffsetWithoutDuplicateBytes() async throws {
     let folder = try ScratchFolder("metadata-input-retry")
     let path = folder.url.appending(path: "file").path
-    let dropped = Mutex(false); let starts = Mutex(0)
+    let dropped = Mutex(false), starts = Mutex(0)
     let bytes = Data(repeating: 42, count: 200_000)
     try await withClient(fetch: { request, handler in
       if request.method == .post { starts.withLock { $0 += 1 } }
@@ -110,9 +132,25 @@ import Testing
       if request.url.path.contains("/inputs/"), dropped.withLock({ if $0 { return false }; $0 = true; return true }) { throw OperationError(.transport) }
       return response
     }) { client in
-      _ = try await client.writeFile(machine: "disk", path: path, data: bytes, owner: owner())
+      let operation = try await client.start(.init(kind: "write.v1", input: ["path": .string(path), "bytes": .string(String(bytes.count)), "digest": .string(sha256(bytes))]))
+      let first = Data(bytes.prefix(64 * 1024))
+      let request = WriteRequest(offset: .zero, payload: .init(data: first))
+      let error = await #expect(throws: OperationError.self) { try await operation.input("data", request) }
+      #expect(error?.code == .transport)
+      let receipt = try await operation.input("data", request)
+      #expect(receipt.acceptedThrough.rawValue == UInt64(first.count))
+      #expect(!receipt.end)
+      var offset = first.count
+      while offset < bytes.count {
+        let end = min(bytes.count, offset + 64 * 1024)
+        try await operation.write("data", .init(data: bytes.subdata(in: offset ..< end)), end: end == bytes.count)
+        offset = end
+      }
+      #expect(try await operation.verdict().tag == .completed)
     }
-    #expect(starts.withLock { $0 } == 1); #expect(dropped.withLock { $0 }); #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == bytes)
+    #expect(starts.withLock { $0 } == 1)
+    #expect(dropped.withLock { $0 })
+    #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == bytes)
   }
 }
 
@@ -132,12 +170,16 @@ extension MetadataOperationTests {
     }, mkdir: { path in events.withLock { $0.append("mkdir \(path)") } }, remove: { path, token in events.withLock { $0.append("remove \(path) \(token ?? "nil")") } }, move: { from, to in events.withLock { $0.append("move \(from) \(to)") } })
     let files = ComputerFileSystem(status: { _ in throw OperationError(.fileUnavailable) }, read: { _, _, _ in throw OperationError(.fileUnavailable) }, search: { _ in NoFiles() }, operations: operations)
     try await withClient(files: files) { client in
-      #expect(try await client.stat(machine: "disk", path: "/file", owner: owner()) == entry)
-      #expect(try await client.list(machine: "disk", path: "/", owner: owner()) == [entry])
-      #expect(try await client.writeFile(machine: "disk", path: "/file", data: Data([1, 2, 3]), ifMatch: "recorded-token", owner: owner()) == "new-token")
-      try await client.mkdir(machine: "disk", path: "/dir", owner: owner())
-      try await client.remove(machine: "disk", path: "/file", ifMatch: "new-token", owner: owner())
-      try await client.move(machine: "disk", from: "/a", to: "/b", owner: owner())
+      #expect(try decodeEntry(await client.call(.init(kind: "stat.v1", input: ["path": "/file"]))) == entry)
+      var entries: [MachineEntry] = []
+      _ = try await client.call(.init(kind: "list.v1", input: ["path": "/"])) { payload in
+        try entries.append(contentsOf: payload.records!.map(decodeEntry))
+      }
+      #expect(entries == [entry])
+      #expect(try await client.write(path: "/file", data: Data([1, 2, 3]), ifMatch: "recorded-token") == "new-token")
+      _ = try await client.call(.init(kind: "mkdir.v1", input: ["path": "/dir"]))
+      _ = try await client.call(.init(kind: "remove.v1", input: ["path": "/file", "ifMatch": "new-token"]))
+      _ = try await client.call(.init(kind: "move.v1", input: ["from": "/a", "to": "/b"]))
     }
     var count = 0
     for await _ in closes { count += 1; if count == 2 { break } }
@@ -154,17 +196,17 @@ extension MetadataOperationTests {
     try Data("original".utf8).write(to: URL(fileURLWithPath: path))
     let time = MetadataTime()
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
-    let client = try machineOperations(agent.handler)
+    let client = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      let operation = try await client.open(owner(), machine: "disk", start: .init(kind: "write.v1", input: ["path": .string(path), "bytes": "4", "digest": .string(String(repeating: "0", count: 64))]))
+      let operation = try await client.start(.init(kind: "write.v1", input: ["path": .string(path), "bytes": "4", "digest": .string(String(repeating: "0", count: 64))]))
       try await operation.write("data", .init(data: Data([1, 2, 3, 4])), end: action == "digest")
       if action == "stop" { try await operation.stop("testStop") }
       if action == "lease" { time.advance(.seconds(61)) }
       let end = try await operation.verdict()
       #expect(end.tag == (action == "digest" ? .failed : .stopped))
       #expect(end.error?.code == (action == "digest" ? .invalidInput : nil))
-      await client.shutdown(); await agent.shutdown()
+      await agent.shutdown()
     }
     #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data("original".utf8))
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path) == ["file"])
@@ -252,7 +294,7 @@ extension MetadataOperationTests {
     await writer.close()
     #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data([3, 4]))
     try await withClient { client in
-      _ = try await client.writeFile(machine: "disk", path: path, data: Data(), owner: owner())
+      _ = try await client.write(path: path, data: Data())
       #expect(try Data(contentsOf: URL(fileURLWithPath: path)).isEmpty)
     }
   }
@@ -354,7 +396,7 @@ extension MetadataOperationTests {
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
     // A stop is durable intent; the commit is released only once the machine holds it.
     let (stopped, stopAnswered) = AsyncStream<Void>.makeStream()
-    let client = try machineOperations { request in
+    let client = AgentWire { request in
       let response = try await agent.handler(request)
       if request.method == .put, request.url.lastPathComponent == "stop" { stopAnswered.yield() }
       return response
@@ -363,13 +405,16 @@ extension MetadataOperationTests {
       group.addTask { await agent.run() }; defer { group.cancelAll() }
       let bytes = Data("replacement".utf8)
       let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-      let operation = try await client.open(owner(), machine: "disk", start: .init(kind: "write.v1", input: ["path": .string(path), "bytes": .string(String(bytes.count)), "digest": .string(digest)]))
+      let operation = try await client.start(.init(kind: "write.v1", input: ["path": .string(path), "bytes": .string(String(bytes.count)), "digest": .string(digest)]))
       try await operation.write("data", .init(data: bytes), end: true)
       for await _ in reached.stream { break }
       if action.hasSuffix("stop") {
         try await operation.stop("commitStop")
         for await _ in stopped { break }
-      } else { time.advance(.seconds(61)) }
+      } else {
+        time.advance(.seconds(61))
+        _ = try await operation.poll()
+      }
       release.signal()
       let verdict = try await operation.verdict()
       #expect(verdict.tag == (action.hasPrefix("sync") ? .stopped : .completed))
@@ -377,7 +422,7 @@ extension MetadataOperationTests {
         #expect(verdict.reason == nil)
         #expect(verdict.result != nil)
       }
-      await client.shutdown(); await agent.shutdown()
+      await agent.shutdown()
     }
     #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data((action.hasPrefix("sync") ? "original" : "replacement").utf8))
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path) == ["file"])
@@ -390,19 +435,19 @@ extension MetadataOperationTests {
     try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: path.path)
     defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path) }
     try await withClient { client in
-      let result = try await client.vfs(machine: "disk", op: .write(path: path.path, data: .init([2]), ifMatch: nil), owner: owner())
-      guard case let .error(error) = result else { Issue.record("read-only target was replaced"); return }
-      #expect(error.code == .io)
+      let error = await #expect(throws: OperationError.self) { try await client.write(path: path.path, data: Data([2])) }
+      #expect(error?.code == .fileUnavailable)
+      #expect(error?.details?.object?["lookup"] != .bool(true))
       #expect(try Data(contentsOf: path) == Data([1]))
       #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path) == ["file"])
       try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: path.path)
-      _ = try await client.vfs(machine: "disk", op: .write(path: path.path, data: .init([3]), ifMatch: nil), owner: owner())
+      _ = try await client.write(path: path.path, data: Data([3]))
       #expect(try Data(contentsOf: path) == Data([3]))
       #expect((try FileManager.default.attributesOfItem(atPath: path.path)[.posixPermissions] as? Int) == 0o640)
     }
   }
 
-  @Test func sourceLookupFailuresMatchV1WithoutMisclassifyingMutationPermissionErrors() async throws {
+  @Test func sourceLookupFailuresAreMarkedButMutationPermissionErrorsAreNot() async throws {
     let folder = try ScratchFolder("metadata-lookup-errors")
     let file = folder.url.appending(path: "file")
     let denied = folder.url.appending(path: "denied")
@@ -413,45 +458,66 @@ extension MetadataOperationTests {
     defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: denied.path) }
     try await withClient { client in
       for source in [file.path + "/child", denied.appending(path: "child").path] {
-        for op in [VFSOp.stat(path: source), .ls(path: source), .read(path: source), .rm(path: source, ifMatch: nil), .mv(from: source, to: folder.url.appending(path: "moved").path)] {
-          let result = try await client.vfs(machine: "disk", op: op, owner: owner())
-          guard case let .error(error) = result else { Issue.record("lookup unexpectedly succeeded"); continue }
-          #expect(error.code == .notFound)
+        for start in [
+          StartRequest(kind: "stat.v1", input: ["path": .string(source)]),
+          .init(kind: "list.v1", input: ["path": .string(source)]),
+          .init(kind: "read.v1", input: ["path": .string(source)]),
+          .init(kind: "remove.v1", input: ["path": .string(source)]),
+          .init(kind: "move.v1", input: ["from": .string(source), "to": .string(folder.url.appending(path: "moved").path)]),
+        ] {
+          let error = await #expect(throws: OperationError.self) { try await client.call(start) }
+          #expect(error?.code == .fileUnavailable)
+          #expect(error?.details?.object?["lookup"] == .bool(true))
         }
-        let guarded = try await client.vfs(machine: "disk", op: .rm(path: source, ifMatch: "expected"), owner: owner())
-        guard case let .error(error) = guarded else { Issue.record("guarded lookup unexpectedly succeeded"); continue }
-        #expect(error.code == .conflict)
+        let guarded = await #expect(throws: OperationError.self) {
+          try await client.call(.init(kind: "remove.v1", input: ["path": .string(source), "ifMatch": "expected"]))
+        }
+        #expect(guarded?.code == .fileChanged)
       }
-      let result = try await client.vfs(machine: "disk", op: .mv(from: file.path, to: denied.appending(path: "destination").path), owner: owner())
-      guard case let .error(error) = result else { Issue.record("mutation into denied directory succeeded"); return }
-      #expect(error.code == .io)
+      let error = await #expect(throws: OperationError.self) {
+        try await client.call(.init(kind: "move.v1", input: ["from": .string(file.path), "to": .string(denied.appending(path: "destination").path)]))
+      }
+      #expect(error?.code == .fileUnavailable)
+      #expect(error?.details?.object?["lookup"] != .bool(true))
     }
   }
 }
 
 extension MetadataOperationTests {
-  @Test func missingDestinationParentsAreIOAndMissingReadListLookupsAreNotFound() async throws {
+  @Test func missingDestinationParentsHaveNoLookupMarkerButMissingSourcesDo() async throws {
     let folder = try ScratchFolder("metadata-missing-parent")
     let source = folder.url.appending(path: "source")
     let destination = folder.url.appending(path: "missing/file")
     try Data([1]).write(to: source)
     try await withClient { client in
-      for op in [VFSOp.write(path: destination.path, data: .init([2]), ifMatch: nil), .mv(from: source.path, to: destination.path), .mkdir(path: source.path + "/child")] {
-        let result = try await client.vfs(machine: "disk", op: op, owner: owner())
-        guard case let .error(error) = result else { Issue.record("mutation unexpectedly succeeded"); continue }
-        #expect(error.code == .io)
+      let write = await #expect(throws: OperationError.self) { try await client.write(path: destination.path, data: Data([2])) }
+      #expect(write?.code == .fileUnavailable)
+      #expect(write?.details?.object?["lookup"] != .bool(true))
+      for start in [
+        StartRequest(kind: "move.v1", input: ["from": .string(source.path), "to": .string(destination.path)]),
+        .init(kind: "mkdir.v1", input: ["path": .string(source.path + "/child")]),
+      ] {
+        let error = await #expect(throws: OperationError.self) { try await client.call(start) }
+        #expect(error?.code == .fileUnavailable)
+        #expect(error?.details?.object?["lookup"] != .bool(true))
       }
-      for op in [VFSOp.stat(path: destination.path), .ls(path: destination.path), .read(path: destination.path), .rm(path: destination.path, ifMatch: nil), .mv(from: destination.path, to: source.path)] {
-        let result = try await client.vfs(machine: "disk", op: op, owner: owner())
-        guard case let .error(error) = result else { Issue.record("lookup unexpectedly succeeded"); continue }
-        #expect(error.code == .notFound)
+      for start in [
+        StartRequest(kind: "stat.v1", input: ["path": .string(destination.path)]),
+        .init(kind: "list.v1", input: ["path": .string(destination.path)]),
+        .init(kind: "read.v1", input: ["path": .string(destination.path)]),
+        .init(kind: "remove.v1", input: ["path": .string(destination.path)]),
+        .init(kind: "move.v1", input: ["from": .string(destination.path), "to": .string(source.path)]),
+      ] {
+        let error = await #expect(throws: OperationError.self) { try await client.call(start) }
+        #expect(error?.code == .fileUnavailable)
+        #expect(error?.details?.object?["lookup"] == .bool(true))
       }
     }
     #expect(try Data(contentsOf: source) == Data([1]))
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path) == ["source"])
   }
 
-  @Test func existingUnreadableFileAndDirectoryAreIOAfterSuccessfulLookup() async throws {
+  @Test func existingUnreadableFileAndDirectoryHaveNoLookupMarker() async throws {
     let folder = try ScratchFolder("metadata-denied-data")
     let file = folder.url.appending(path: "file")
     let directory = folder.url.appending(path: "directory")
@@ -460,10 +526,10 @@ extension MetadataOperationTests {
     for path in [file, directory] { try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path.path) }
     defer { for path in [file, directory] { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path.path) } }
     try await withClient { client in
-      for op in [VFSOp.read(path: file.path), .ls(path: directory.path)] {
-        let result = try await client.vfs(machine: "disk", op: op, owner: owner())
-        guard case let .error(error) = result else { Issue.record("unreadable entry unexpectedly opened"); continue }
-        #expect(error.code == .io)
+      for start in [StartRequest(kind: "read.v1", input: ["path": .string(file.path)]), .init(kind: "list.v1", input: ["path": .string(directory.path)])] {
+        let error = await #expect(throws: OperationError.self) { try await client.call(start) }
+        #expect(error?.code == .fileUnavailable)
+        #expect(error?.details?.object?["lookup"] != .bool(true))
       }
     }
   }

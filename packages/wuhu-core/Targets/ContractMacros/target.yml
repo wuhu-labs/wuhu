@@ -11,4 +11,5 @@ dependencies:
   - SwiftCompilerPlugin
 tests:
   dependencies:
-    - SwiftSyntaxMacrosTestSupport
+    - SwiftSyntaxMacroExpansion
+    - SwiftSyntaxMacrosGenericTestSupport

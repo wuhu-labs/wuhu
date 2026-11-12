@@ -119,7 +119,7 @@ import Testing
       let before = try await p.harness.store.promptRevision(theirs)
       _ = try await p.harness.space.fs(.shared).write("/bump.md", Data("x".utf8), ifMatch: nil)
 
-      for path in ["lines/page", "lines", "context", "home", "log", "entry/1"] {
+      for path in ["lines/page", "lines", "context", "home"] {
         let response = try await send(p, .get, "/v1/session/\(id)/\(path)", group: p.alice)
         #expect(response.status == .notFound, "\(path)")
         #expect(try await code(response) == "notFound", "\(path)")

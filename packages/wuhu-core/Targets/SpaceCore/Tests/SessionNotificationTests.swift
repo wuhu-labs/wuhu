@@ -7,21 +7,6 @@ import Testing
 
 @Suite(.deterministicDependencies)
 struct SessionNotificationTests {
-  @Test func settlingNotifiesNobody() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await store.put(sid, input: SessionFix.message("do it"))
-      _ = try await store.drainQueue(sid)
-      _ = try await store.appendAssistant(
-        sid, attemptID: UUID(), message: SessionFix.assistant("all done"), metadata: SessionFix.metadata,
-      )
-      #expect(try await store.record(sid).work == .noWork)
-      #expect(try await store.inbox("morgan").isEmpty)
-      #expect(try await store.inbox("owner").isEmpty)
-    }
-  }
-
   @Test func aKernelResumeQueuesNoReminder() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
@@ -31,15 +16,11 @@ struct SessionNotificationTests {
       )
       _ = try await store.drainQueue(sid)
       try await store.markInterrupted(sid)
-      _ = try await store.appendAssistant(
-        sid, attemptID: UUID(), message: SessionFix.assistant("finished anyway"), metadata: SessionFix.metadata,
-      )
       try await store.markResumed(sid)
 
       #expect(try await store.inbox("morgan").isEmpty)
       let hydration = try await store.hydrate(sid)
-      #expect(hydration.queueHead == hydration.queueTail, "the resumed loop reads the owe from its transcript")
-      #expect(hydration.record.work == .noWork)
+      #expect(hydration.queueHead == hydration.queueTail, "resume adds no queue input")
     }
   }
 

@@ -71,7 +71,7 @@ import Testing
     let token1 = try await space.writeText("/doc.md", "v1")
     let rev1 = Rev(token1.rev!)
     let liveToken = try await space.writeText("/doc.md", "v2")
-    let stream = await space.observeFS(glob: "**", group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", group: .shared).mutations
     var events = stream.makeAsyncIterator()
     let (rev, token) = try await space.checkout(path("/doc.md"), rev: rev1, in: .shared, acting: .shared, ifMatch: liveToken)
 
@@ -100,7 +100,7 @@ import Testing
     _ = try await space.writeText("/other.md", "unrelated")
     let revBefore = try await space.currentRevision()
     let historyBefore = try await space.history(path("/same.md"), in: .shared)
-    let stream = await space.observeFS(glob: "**", group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", group: .shared).mutations
     var events = stream.makeAsyncIterator()
 
     await #expect(throws: SpaceError.versionMismatch("/same.md")) {

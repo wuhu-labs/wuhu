@@ -17,7 +17,7 @@ import struct SpaceContract.EnrollConsumeOutput
 import struct SpaceContract.GroupID
 import SpaceCore
 
-func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub, upgrades: MachineV2Upgrades, fingerprint: String?, principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
+func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, upgrades: MachineV2Upgrades, fingerprint: String?, principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
   let challenges = OneShotChallenges(prefix: "mv2_")
   @Sendable func enroll(_ input: MachineAddInput, pubkey: String, principal: Principal) async throws -> Response {
     guard let name = input.name, MachineName.normalized(name) != nil else {
@@ -100,7 +100,6 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     guard revoked else {
       return errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not a live key of this Machine v2 identity")
     }
-    await hub.kick(MachineID(rawValue: id))
     return jsonResponse(.object([:]))
   }
 
@@ -183,13 +182,16 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
       streams = value
     }
     if let refusal = await authorizationRefusal(hub, credential, message: "Credential cannot serve the addressed machines") { return .response(refusal) }
+    guard let boxLink = await hub.boxLink(credential, streams: streams) else {
+      return .response(errorResponse(.serviceUnavailable, code: "machineNotHosted", message: "Machine owner is hosted elsewhere; retry"))
+    }
     return .boundedWebSocket(limits: .init(), subprotocol: TunnelTransport.webSocketSubprotocol) { [streams] transport in
-      await hub.run(credential, transport: transport, streams: streams)
+      await hub.run(credential, transport: transport, boxLink: boxLink, streams: streams)
     }
   }
 }
 
-private func machineV2Credential(_ request: Request, challenges: OneShotChallenges) -> MachineV2Hub.Credential? {
+private func machineV2Credential(_ request: Request, challenges: OneShotChallenges) -> MachineHub.Credential? {
   guard let pubkey = request.headers[MachineV2Connect.pubkeyHeader],
         let challenge = request.headers[MachineV2Connect.challengeHeader],
         let raw = request.headers[MachineV2Connect.machinesHeader], raw.utf8.count <= 4096,
@@ -203,7 +205,7 @@ private func machineV2Credential(_ request: Request, challenges: OneShotChalleng
 
 // 401 tells a machine its key is dead and may be discarded; anything that is
 // not a definitive refusal must stay retryable, or an outage destroys keys.
-private func authorizationRefusal(_ hub: MachineV2Hub, _ credential: MachineV2Hub.Credential, message: String) async -> Response? {
+private func authorizationRefusal(_ hub: MachineHub, _ credential: MachineHub.Credential, message: String) async -> Response? {
   do {
     try await hub.authorize(credential)
     return nil

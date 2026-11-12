@@ -7,7 +7,6 @@
 import Fetch
 import FileSearch
 import enum JSONValue.JSONValue
-import OperationClient
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -50,17 +49,17 @@ private final class FakeExternal: Sendable {
   @Test func extraKindsAndInjectedFilesShareOneMachine() async throws {
     let files = FakeFiles(data: Data("injected".utf8))
     let agent = try ComputerAgent(machine: "disk", files: files.system, kinds: [AnyOperationKind(EchoKind())])
-    let operations = try machineOperations(agent.handler)
+    let operations = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
       defer { group.cancelAll() }
-      let description = try await operations.describe("disk")
+      let description = try await operations.describe()
       #expect(description.kinds.map(\.name) == ["read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "stagedWrite.v1", "echo.v1"])
-      let echo = try await operations.open(.init(scope: "test", key: "echo"), machine: "disk", start: .init(kind: "echo.v1", input: ["text": "hi"]))
+      let echo = try await operations.start(.init(kind: "echo.v1", input: ["text": "hi"]))
       #expect(try await echo.drain().end.verdict?.result == "hi")
-      let read = try await operations.open(.init(scope: "test", key: "read"), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/file"]))
+      let read = try await operations.start(.init(kind: "read.v1", input: ["path": "/file"]))
       #expect(try await read.drain().data == Data("injected".utf8))
-      await operations.shutdown(); await agent.shutdown()
+      await agent.shutdown()
     }
   }
 
@@ -230,9 +229,8 @@ extension ComputerAgentTests {
     defer { disk.release() }
     let external = FakeExternal()
     let agent = try ComputerAgent(machine: "disk", files: disk.files, kinds: [AnyOperationKind(EchoKind())], external: external.kind)
-    // The driver sends the terminal acknowledgement after the verdict; the agent releases the stopped operation on the last one.
     let (released, releasedNow) = AsyncStream<Void>.makeStream()
-    let operations = try machineOperations { request in
+    let operations = AgentWire { request in
       let response = try await agent.handler(request)
       if request.url.query?.contains("terminalAck") == true, await !agent.runtime.hasRetainedOperations() { releasedNow.yield() }
       return response
@@ -248,9 +246,9 @@ extension ComputerAgentTests {
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
       defer { group.cancelAll() }
-      _ = try await operations.describe("disk")
+      _ = try await operations.describe()
       let query = SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test")
-      let operation = try await operations.open(.init(scope: "test", key: "abandoned"), machine: "disk", start: .init(kind: "search.v1", input: json(query)))
+      let operation = try await operations.start(.init(kind: "search.v1", input: json(query)))
       for await _ in disk.entered {}
       try await operation.stop("testStop")
       _ = try await operation.drain()
@@ -262,7 +260,7 @@ extension ComputerAgentTests {
       var used = hung
       while used == hung, ContinuousClock().now < deadline { used = try #require(try await usedReceipts()) }
       #expect(used == hung - 1)
-      await operations.shutdown(); await agent.shutdown()
+      await agent.shutdown()
     }
   }
 }

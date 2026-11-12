@@ -16,7 +16,7 @@ import SessionDomain
 import struct SpaceContract.GroupID
 import struct SpaceContract.ObserverInput
 import struct SpaceContract.SubscriptionObserveInput
-@_spi(SessionObservation) import SpaceCore
+import SpaceCore
 import Synchronization
 import Testing
 
@@ -108,6 +108,9 @@ private func seen(_ space: Space) async throws -> [String]? {
           #expect(try await seen(space) == ["1:message:a", "1:build:b"])
           events.send("id: 2\ndata: c\n\n", on: 0)
           events.dials[0].stream.finish()
+          try await until("all three firings finished") {
+            try await space.query("SELECT outcome FROM subscription_firings", as: space.principal(of: session)).rows == Array(repeating: [.text("ok")], count: 3)
+          }
           try await untilAdvancing("second dial", time) { events.dials.count == 2 }
           #expect(events.dials[1].lastEventID == "2")
         }
@@ -139,18 +142,26 @@ private func seen(_ space: Space) async throws -> [String]? {
       };
       """.utf8), ifMatch: nil)
       let events = EventServer()
+      var failures: [String] = []
       try await withEventServer(events) { url, sources in
         try await withHandlerFiring(space, sources: sources) { worker, _ in
           var world = ToolWorld(worker: worker, session: session)
           _ = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/flaky.js"]))
           try await until("first dial") { events.dials.count == 1 }
           events.send("id: 1\ndata: steady\n\nid: 2\ndata: flaky\n\n", on: 0)
-          try await untilAdvancing("the failed event fired again", time) { try await seen(space)?.count == 2 }
+          try await until("the steady event succeeded and the flaky event failed") {
+            try await space.query("SELECT outcome FROM subscription_firings ORDER BY outcome", as: space.principal(of: session)).rows == [[.text("failed")], [.text("ok")]]
+          }
+          try await time.wake("the failed firing's retry backoff", after: 1)
+          try await until("the failed event fired again") {
+            try await space.query("SELECT outcome FROM subscription_firings ORDER BY outcome", as: space.principal(of: session)).rows == [[.text("failed")], [.text("ok")], [.text("ok")]]
+          }
           #expect(events.dials.count == 1)
+          // Read while the worker still takes mail: the firing group quiesces it on the way out, and no cell takes mail then.
+          failures = try await handlerNotifications(space, session).map(\.content.text)
         }
       }
       #expect(try await seen(space) == ["steady", "flaky"])
-      let failures = try await handlerNotifications(space, session).map(\.content.text)
       #expect(failures.count == 1 && failures[0].contains("first try fails"))
     }
   }
@@ -193,7 +204,9 @@ private func seen(_ space: Space) async throws -> [String]? {
           _ = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/record.js"]))
           try await until("first dial") { events.dials.count == 1 }
           events.send("id: 1\ndata: a\n\nid:\ndata: b\n\n", on: 0)
-          try await until("both fired") { try await seen(space)?.count == 2 }
+          try await until("both firings finished") {
+            try await space.query("SELECT outcome FROM subscription_firings", as: space.principal(of: session)).rows == Array(repeating: [.text("ok")], count: 2)
+          }
           events.dials[0].stream.finish()
           try await untilAdvancing("second dial", time) { events.dials.count == 2 }
         }

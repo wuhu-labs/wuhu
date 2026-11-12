@@ -13,7 +13,7 @@ import LoopCore
 import JSONValue
 import Scratch
 import SessionDomain
-@_spi(SessionObservation) @testable import SpaceCore
+@testable import SpaceCore
 import SpaceFS
 import Testing
 
@@ -35,17 +35,12 @@ func withHandlerFiring(
   _ space: Space,
   owner: Hub? = nil,
   sources: EventSources = .unavailable,
-  configure: (inout SubscriptionFiring) -> Void = { _ in },
   _ body: (SessionExecution, Hub) async throws -> Void,
 ) async throws {
   let owner = owner ?? Hub(space: space)
-  let worker = await firingWorker(owner, sources: sources)
-  var configured = SubscriptionFiring(space: space) { worker.observe($0, $1, $2) }
-  configure(&configured)
-  let firing = configured
+  let worker = try await firingWorker(owner, sources: sources)
   try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { await whenCancelled { await worker.shutdown() } }
-    group.addTask { await firing.run() }
     defer { group.cancelAll() }
     try await body(worker, owner)
   }
@@ -84,6 +79,36 @@ func withHandlerFiring(
     }
   }
 
+  @Test func aSQLSlotsThrottleWaitsOnTheOwnersInjectedClock() async throws {
+    try await withToolDeps { time in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let input = try SpacePath(validating: "/throttle-input.table")
+      let output = try SpacePath(validating: "/throttle-output.table")
+      let header = TableHeader(columns: [.init(name: "n", type: .integer)])
+      _ = try await space.createTable(input, header: header, in: .shared, acting: .shared)
+      _ = try await space.createTable(output, header: header, in: .shared, acting: .shared)
+      _ = try await space.fs(.shared).write("/throttle.js", Data("""
+      import {mutateRows} from 'wuhu:space';
+      export default async ({rows}) => { await mutateRows('/throttle-output.table', [{insert: {n: rows.at(-1).n}}]); };
+      """.utf8), ifMatch: nil)
+      try await withHandlerFiring(space) { worker, _ in
+        let stream = try space.observeRows("SELECT n FROM \"/throttle-output.table\" ORDER BY id", throttle: .zero, as: .shared(.anonymous))
+        var snapshots = stream.makeAsyncIterator()
+        #expect(try await snapshots.next()?.rows.isEmpty == true)
+        var world = ToolWorld(worker: worker, session: session)
+        _ = try await world.run("observe", .object(["sql": "SELECT n FROM \"/throttle-input.table\" ORDER BY n", "throttle_seconds": 10, "handler": "/throttle.js"]))
+        _ = try await space.mutateRows(input, [.insert([.integer(1)])], in: .shared, acting: .shared)
+        #expect(try await snapshots.next()?.rows == [[.integer(1)]])
+        _ = try await space.mutateRows(input, [.insert([.integer(2)])], in: .shared, acting: .shared)
+        try await time.asleep("the SQL slot's owner throttle", dueIn: 10)
+        #expect(try await space.query("SELECT n FROM \"/throttle-output.table\"", as: .shared(.anonymous)).rows == [[.integer(1)]])
+        await time.advance(by: 10)
+        #expect(try await snapshots.next()?.rows == [[.integer(1)], [.integer(2)]])
+      }
+    }
+  }
+
   @Test func archiveCancelsCPUHandlerAndArchivedFiringRetiresSlot() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
@@ -101,8 +126,8 @@ func withHandlerFiring(
         try await untilAdvancing("archive handler started", time) { (try? await space.fs(.shared).stat("/archive-started.md")) != nil }
         _ = try await space.sessions.archive(session, grace: .seconds(100))
         try await untilAdvancing("archived pending timer retires", time) { try await space.sessions.armedSubscriptions(session).isEmpty }
+        #expect(try await handlerNotifications(space, session).isEmpty)
       }
-      #expect(try await handlerNotifications(space, session).isEmpty)
     }
   }
 
@@ -113,8 +138,8 @@ func withHandlerFiring(
       _ = try await space.fs(.shared).write("/must-not-run.js", Data("import {writeText} from 'wuhu:space'; export default async () => { await writeText('/ran.md','bad',{ifMatch:null}); wake('bad'); return null; };".utf8), ifMatch: nil)
       let watched = try SpacePath(validating: "/archived-input.table")
       _ = try await space.createTable(watched, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
-      _ = await firingWorker(Hub(space: space))
-      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      _ = try await firingWorker(Hub(space: space))
+      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       for handler in [false, true] {
         var timer: [String: JSONValue] = ["message": "bad", "in_seconds": 10]
         var observe: [String: JSONValue] = ["sql": "SELECT n FROM \"/archived-input.table\"", "throttle_seconds": 1]
@@ -125,11 +150,14 @@ func withHandlerFiring(
       try await until("the observers armed theirs") { try await space.sessions.armedSubscriptions(session).count == 3 }
       _ = try await space.sessions.archive(session, grace: .seconds(100))
       _ = try await space.mutateRows(watched, [.insert([.integer(1)])], in: .shared, acting: .shared)
+      var notices: [SystemNotification] = []
       try await withHandlerFiring(space) { _, _ in
         await time.advance(by: 11)
         try await untilAdvancing("archived firings retire registrations", time) { try await space.sessions.armedSubscriptions(session).isEmpty }
+        // Read while the worker still takes mail: the firing group quiesces it on the way out, and no cell takes mail then.
+        notices = try await handlerNotifications(space, session)
       }
-      #expect(try await handlerNotifications(space, session).allSatisfy { $0.kind == .timer }, "only the plain timer's own input came due")
+      #expect(notices.allSatisfy { $0.kind == .timer }, "only the plain timer's own input came due")
       #expect((try? await space.fs(.shared).stat("/ran.md")) == nil)
     }
   }
@@ -178,7 +206,7 @@ func withHandlerFiring(
         while(true) {}
       };
       """)
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
+      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space))
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
           do { _ = try await rig.scripts.runHandler(path: "/cpu.js", actor: .session(rig.session), tools: tools) }
@@ -193,7 +221,7 @@ func withHandlerFiring(
 
   @Test func handlerTimeoutDiscardsEarlyWake() async throws {
     try await withRig { rig in
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
+      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space))
       try await rig.write("/timeout.js", "export default async ({wake}) => { wake('discard'); await sleep(120000); return 1; }")
       do {
         async let run = rig.scripts.runHandler(path: "/timeout.js", actor: .session(rig.session), tools: tools)
@@ -212,7 +240,7 @@ func withHandlerFiring(
       import {sendMessage} from 'wuhu:session';
       export default async () => { await sendMessage({message:'handler answered'}); };
       """)
-      _ = try await rig.scripts.runHandler(path: "/post.js", actor: .session(rig.session), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
+      _ = try await rig.scripts.runHandler(path: "/post.js", actor: .session(rig.session), tools: try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       let page = try await rig.evaluate("import {conversation} from 'wuhu:space'; result((await conversation(import.meta.session)).messages.map(m=>m.text));")
       #expect(page == .array(["handler answered"]))
       let refused = try await rig.evaluate("import {sendMessage} from 'wuhu:session'; try { await sendMessage({message:'wrong',user:'morgan'}); } catch(e) { result(e.message); }")
@@ -230,7 +258,7 @@ func withHandlerFiring(
       }
       """)
       let rows = try await rig.space.query("SELECT 'release?' AS text", as: try await rig.space.principal(of: rig.session))
-      let result = try await rig.scripts.runHandler(path: "/handler.js", actor: .session(rig.session), input: handlerInput(rows), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
+      let result = try await rig.scripts.runHandler(path: "/handler.js", actor: .session(rig.session), input: handlerInput(rows), tools: try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       #expect(result.wakes == ["release digest"])
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
       #expect(String(decoding: try await rig.space.fs(.shared).read("/handler-note.md").1, as: UTF8.self) == "release?")
@@ -241,7 +269,7 @@ func withHandlerFiring(
     try await withRig { rig in
       try await rig.write("/throws.js", "export default ({wake}) => { wake('must not deliver'); throw Error('boom'); }")
       await #expect(throws: (any Error).self) {
-        try await rig.scripts.runHandler(path: "/throws.js", actor: .session(rig.session), tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
+        try await rig.scripts.runHandler(path: "/throws.js", actor: .session(rig.session), tools: try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       }
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
     }
@@ -335,28 +363,20 @@ private func untilTicking(_ description: String, _ time: TimeControl, _ conditio
       let session = try await makeSession(space)
       _ = try await space.fs(.shared).write("/unchanged.js", Data("export default () => {};".utf8), ifMatch: nil)
       let owner = Hub(space: space)
-      let worker = await firingWorker(owner)
-      let streams = Box(0)
-      var firing = SubscriptionFiring(space: space) { worker.observe($0, $1, $2) }
-      firing.observationStream = { space, principal, sql in
-        streams.withLock { $0 += 1 }
-        return await space.observeQuery(sql, throttle: .zero, as: principal)
-      }
-      let runner = firing
+      let worker = try await firingWorker(owner)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await whenCancelled { await worker.shutdown() } }
-        group.addTask { await runner.run() }
         defer { group.cancelAll() }
         var world = ToolWorld(worker: worker, session: session)
         var arguments: [String: JSONValue] = ["sql": "SELECT 1", "throttle_seconds": 1]
         if handler { arguments["handler"] = "/unchanged.js" }
         _ = try await world.run("observe", .object(.init(uniqueKeysWithValues: arguments.sorted { $0.key < $1.key })))
-        try await untilAdvancing("live observer starts", time) { streams.value == 1 }
+        try await untilAdvancing("live observer starts", time) {
+          try await space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM observation_slots") == 1 }
+        }
         _ = try await space.sessions.archive(session, grace: .seconds(100))
-        try await untilAdvancing("runtime handles archive change", time) { streams.value == 2 }
         try await holds("unchanged archived observer stays registered") { try await space.sessions.armedSubscriptions(session).count == 1 }
         try await space.sessions.unarchive(session)
-        try await untilAdvancing("runtime resumes retained observer", time) { streams.value == 3 }
         #expect(try await space.sessions.armedSubscriptions(session).count == 1, "unarchive before any query change must preserve the observer")
         #expect(try await handlerNotifications(space, session).isEmpty)
       }

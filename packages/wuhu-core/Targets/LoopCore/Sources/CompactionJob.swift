@@ -6,7 +6,7 @@ import Wuwei
   import Foundation
 #endif
 
-/// One compaction of the generation its id names, at `position`: what it needs from outside the session (running work, placement, open requests) gathered into the next generation's head, which its session cell writes. A restart computes it again.
+/// One compaction gathers the next generation's head and the positions to carry; its session cell writes them. A restart computes it again.
 @Job
 struct CompactionJob {
   struct Params: Codable {
@@ -17,11 +17,10 @@ struct CompactionJob {
   }
 
   enum Kind: Codable {
-    /// The model's `compact` call.
     case fold(ToolCallID)
-    /// No summary and nothing kept: the head points at the files of the generation it closes. Past the hard threshold, or when the provider refused the request for its size.
     case pointer
-    case handoff(ReplayBinding, ContextBudget)
+    case legacy
+    case handoff(ReplayBinding)
   }
 
   typealias Message = Never
@@ -29,44 +28,85 @@ struct CompactionJob {
   mutating func start() async throws -> Outcome {
     let client = ctx.dependency(LoopClient.self)
     let params = ctx.params
-    let answer = try await ctx.effect { try await compaction(params, client) }
+    switch params.kind {
+    case .legacy:
+      break
+    case .fold, .pointer, .handoff:
+      if try await ctx.effect({ try await client.store.isLegacy(params.session, generation: params.generation) }) {
+        return .done(sending: .look, to: SessionCell.ID(params.session.rawValue).recipient)
+      }
+    }
+    guard let turn = ctx.cell(SessionCell.ID(params.session.rawValue)).turn() else { preconditionFailure("compaction requires a turn row") }
+    let bookmarks = turn.bookmarks ?? [:]
+    let answer = try await ctx.effect { try await compaction(params, client, bookmarks: bookmarks) }
     return .done(sending: .compacted(id, answer), to: SessionCell.ID(params.session.rawValue).recipient)
   }
 
-  private func compaction(_ params: Params, _ client: LoopClient) async throws -> CompactionAnswer {
-    let transcript = try await client.transcript(params.session, params.generation, params.position)
-    let environment = transcript.environment
+  private func compaction(_ params: Params, _ client: LoopClient, bookmarks: [String: Int]) async throws -> CompactionAnswer {
     do {
+      let stored = try await client.store.transcriptLines(params.session, generation: params.generation)
+      let lines = try stored.map { try $0.line() }
       switch params.kind {
       case let .fold(callID):
-        let arguments = try decodeArguments(CompactArguments.self, from: transcript.compactCall(callID))
-        let kept = try transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark)
+        guard let compact = lines.toolCall(callID) else { preconditionFailure("compact tool call \(callID.rawValue) is not in the generation's lines") }
+        let arguments = try decodeArguments(CompactArguments.self, from: compact.call)
+        let kept: Range<Int>?
+        if let name = arguments.bookmark {
+          guard let position = bookmarks[name] else { preconditionFailure("compact bookmark \(name) was validated by the cell") }
+          guard let marker = stored.firstIndex(where: { $0.position == position }) else { preconditionFailure("bookmark position \(position) has no line") }
+          precondition(marker < compact.index, "compact bookmark precedes the reply holding the compact call")
+          kept = lines.keptRange(after: marker, upTo: compact.index).map { stored[$0.lowerBound].position ..< stored[$0.upperBound].position }
+        } else {
+          kept = nil
+        }
         let head = GenerationHead(
           id: client.uuid(), timestamp: client.now(), summary: arguments.summary,
-          snapshot: .init(preReads: arguments.preReads ?? []), settle: environment.settle,
+          snapshot: .init(preReads: arguments.preReads ?? []),
           runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
         )
+        let budget = await client.budget(params.session)
+        let carried = try stored.filter { kept?.contains($0.position) == true && $0.key != LineKey.pressure }
+          .compactMap { try $0.line().carried(portable: false) }
+        let tokenEstimate = (head.lines(session: params.session) + carried).estimatedContextTokens(images: budget.images)
         let transition: ModelRouteTransition?
         do {
-          transition = try await client.prepareCompaction(params.session, transcript.compacted(head: head, kept: kept), arguments.target)
+          transition = try await client.prepareCompaction(params.session, tokenEstimate, arguments.target)
         } catch let refusal where arguments.target != nil && !(refusal is CancellationError) {
           return .refused(callID, "compact target \"\(arguments.target!.model)\" refused, nothing was folded: \(refusal)")
         }
-        return .folded(head: head, kept: kept, transition: transition, call: callID)
-      case .pointer:
+        return .folded(head: head, kept: transition?.carriesTail == false ? nil : kept, transition: transition, call: callID)
+      case .pointer, .legacy:
+        let summary: String
+        if case .legacy = params.kind {
+          summary = "The server now stores transcript lines instead of typed items. This session's earlier context was not converted, so this generation starts without a summary. Read the old items with SELECT generation, position, kind, payload FROM session_legacy_items WHERE session_id = '\(params.session.rawValue)' ORDER BY generation, position; then pick up the outstanding work."
+        } else {
+          summary = SessionPrompt.pointerSummary(session: params.session, generation: params.generation)
+        }
         let head = GenerationHead(
-          id: client.uuid(), timestamp: client.now(), summary: SessionPrompt.pointerSummary(session: params.session, generation: params.generation),
-          snapshot: .init(), settle: environment.settle,
+          id: client.uuid(), timestamp: client.now(), summary: summary, snapshot: .init(),
           runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
         )
-        let transition = try await client.prepareCompaction(params.session, transcript.compacted(head: head, kept: nil), nil)
+        let budget = await client.budget(params.session)
+        let transition = try await client.prepareCompaction(params.session, head.lines(session: params.session).estimatedContextTokens(images: budget.images), nil)
         return .folded(head: head, kept: nil, transition: transition, call: nil)
-      case let .handoff(binding, budget):
-        let openRequests = try await client.store.openRequests(params.session)
-        let runningWork = try await client.runningWork(params.session)
-        return try client.dependencies.yield {
-          try .handoff(transcript.portableHandoff(binding: binding, budget: budget, runningWork: runningWork, openRequests: openRequests))
+      case let .handoff(binding):
+        let budget = await client.budget(params.session)
+        let head = GenerationHead(
+          id: client.uuid(), timestamp: client.now(), summary: SessionPrompt.pointerSummary(session: params.session, generation: params.generation),
+          snapshot: .init(), replayBinding: binding,
+          runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
+        )
+        let after = TranscriptItem.notification(SystemNotification(
+          id: client.uuid(), timestamp: client.now(), kind: .context, subscriptionID: SubscriptionID("replay-handoff"),
+          content: .init(text: "Portable replay handoff completed. Earlier tool calls have their committed receipts; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the carried context; re-read files/history as needed."),
+        )).lines(session: params.session)
+        let tail = try stored.filter { !$0.key.hasPrefix(LineKey.head) && $0.key != LineKey.pressure }.compactMap { stored in
+          try stored.line().carried(portable: true).map { (position: stored.position, line: $0) }
         }
+        let portable = tail.map(\.line)
+        let start = portable.recentTail(tokens: 8192, images: budget.images)
+        let kept = start.map { tail[$0].position ..< (tail[tail.count - 1].position + 1) }
+        return .handoff(head: head, kept: kept, binding: binding, after: after)
       }
     } catch is CancellationError {
       throw CancellationError()
@@ -76,12 +116,9 @@ struct CompactionJob {
   }
 }
 
-/// How a compaction ended, as the session cell writes it.
 enum CompactionAnswer: Sendable, Codable {
-  /// `call` is the model's `compact` call the fold closes, if it made one.
   case folded(head: GenerationHead, kept: Range<Int>?, transition: ModelRouteTransition?, call: ToolCallID?)
   case refused(ToolCallID, String)
-  case handoff(Transcript)
-  /// Terminal: the session is errored.
+  case handoff(head: GenerationHead, kept: Range<Int>?, binding: ReplayBinding, after: [TranscriptLine])
   case failed(String)
 }

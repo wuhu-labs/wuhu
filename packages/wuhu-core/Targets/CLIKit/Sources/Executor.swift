@@ -91,7 +91,7 @@ struct Executor {
       var input: JSONValue = ["path": .string(route.path)]
       input.set("rev", rev.map(JSONValue.integer))
       input.set("lines", lines.map(JSONValue.string))
-      let output: ReadOutput = try await self.tool("read", input, space: route.space)
+      let output: ReadOutput = try await self.tool("read", input, space: route.space, longRunning: true)
       if rev == nil {
         try self.wallet.record(token: output.token, space: route.space, path: route.path)
       }
@@ -101,7 +101,7 @@ struct Executor {
       let token = try await self.ifMatchForMutation(path: route.path, space: route.space, force: force)
       var input: JSONValue = ["path": .string(route.path), "content": .string(body)]
       input.set("ifMatch", token.map(JSONValue.string))
-      let output: WriteOutput = try await self.tool("write", input, space: route.space)
+      let output: WriteOutput = try await self.tool("write", input, space: route.space, longRunning: true)
       try self.wallet.record(token: output.token, space: route.space, path: route.path)
       await self.runner.stdout(revPrefix(output.rev) + "token \(output.token)\n")
     case let .transcribe(file, language, provider, model, timestamps, diarize, json):
@@ -116,7 +116,7 @@ struct Executor {
       try await self.transcriber()
     case let .cat(path):
       let route = try self.route(path)
-      let file = try await self.authenticated(route.space).file(route.path)
+      let file = try await self.authenticated(route.space, longRunning: true).file(route.path)
       try self.wallet.record(token: file.token, space: route.space, path: route.path)
       await self.runner.stdoutBytes(Array(file.data))
     case let .put(path, force):
@@ -129,7 +129,7 @@ struct Executor {
       for await chunk in self.runner.stdinChunks() {
         data.append(contentsOf: chunk)
       }
-      let output: WriteOutput = try await self.authenticated(route.space)
+      let output: WriteOutput = try await self.authenticated(route.space, longRunning: true)
         .putFileBytes(route.path, data, ifMatch: token)
       try self.wallet.record(token: output.token, space: route.space, path: route.path)
       await self.runner.stdout(revPrefix(output.rev) + "token \(output.token)\n")
@@ -139,7 +139,7 @@ struct Executor {
       let edit: JSONValue = ["old": .string(old), "new": .string(new)]
       var input: JSONValue = ["path": .string(route.path), "edits": .array([edit])]
       input.set("ifMatch", token.map(JSONValue.string))
-      let output: EditOutput = try await self.tool("edit", input, space: route.space)
+      let output: EditOutput = try await self.tool("edit", input, space: route.space, longRunning: true)
       try self.wallet.record(token: output.token, space: route.space, path: route.path)
       await self.runner.stdout(revPrefix(output.rev) + "token \(output.token)\n")
     case let .remove(path, force):
@@ -148,14 +148,14 @@ struct Executor {
       var input: JSONValue = ["path": .string(route.path)]
       input.set("ifMatch", token.map(JSONValue.string))
       // Machine rm returns {} — there is no revision on a raw box.
-      let output: OptionalRevision = try await self.tool("rm", input, space: route.space)
+      let output: OptionalRevision = try await self.tool("rm", input, space: route.space, longRunning: isMachinePath(route.path))
       try self.wallet.removeToken(space: route.space, path: route.path)
       await self.runner.stdout(output.rev.map { "rev \($0)\n" } ?? "")
     case let .move(from, to, replace):
       let route = try self.route([from, to])
       var input: JSONValue = ["from": .string(route.paths[0]), "to": .string(route.paths[1])]
       if replace { input.set("replace", .bool(true)) }
-      let output: MoveOutput = try await self.tool("mv", input, space: route.space)
+      let output: MoveOutput = try await self.tool("mv", input, space: route.space, longRunning: route.paths.contains(where: isMachinePath))
       try self.wallet.moveTokens(space: route.space, from: route.paths[0], to: route.paths[1])
       var text = output.rev.map { "rev \($0)\n" } ?? ""
       for path in output.dangling {
@@ -166,18 +166,18 @@ struct Executor {
       let route = try self.route([from, to])
       var input: JSONValue = ["from": .string(route.paths[0]), "to": .string(route.paths[1])]
       if overwrite { input.set("overwrite", .bool(true)) }
-      let output: CopyOutput = try await self.tool("copy", input, space: route.space)
+      let output: CopyOutput = try await self.tool("copy", input, space: route.space, longRunning: true)
       await self.runner.stdout("\(output.bytes) bytes sha256 \(output.sha256)\ntoken \(output.token)\n")
     case let .list(path, rev):
       let route = try self.route(path)
       var input: JSONValue = ["path": .string(route.path)]
       input.set("rev", rev.map(JSONValue.integer))
-      let output: ListOutput = try await self.tool("ls", input, space: route.space)
+      let output: ListOutput = try await self.tool("ls", input, space: route.space, longRunning: isMachinePath(route.path))
       await self.runner.stdout(formatList(output))
     case let .stat(path):
       let route = try self.route(path)
       let input: JSONValue = ["path": .string(route.path)]
-      let entry: Entry = try await self.tool("stat", input, space: route.space)
+      let entry: Entry = try await self.tool("stat", input, space: route.space, longRunning: isMachinePath(route.path))
       try self.wallet.record(token: entry.token, space: route.space, path: route.path)
       await self.runner.stdout(formatStat(entry) + "\n")
     case let .grep(pattern, path, matchLimit, hidden, noIgnore, step):
@@ -188,7 +188,7 @@ struct Executor {
       input.set("hidden", hidden ? .bool(true) : nil)
       input.set("noIgnore", noIgnore ? .bool(true) : nil)
       input.set("step", step.map(JSONValue.string))
-      let output: GrepOutput = try await self.tool("grep", input, space: route.space)
+      let output: GrepOutput = try await self.tool("grep", input, space: route.space, longRunning: route.path.map(isMachinePath) ?? false)
       await self.runner.stdout(formatGrep(output))
     case let .find(glob, path, matchLimit, hidden, noIgnore, step):
       let route = try self.routeOptional(path)
@@ -198,7 +198,7 @@ struct Executor {
       input.set("hidden", hidden ? .bool(true) : nil)
       input.set("noIgnore", noIgnore ? .bool(true) : nil)
       input.set("step", step.map(JSONValue.string))
-      let output: FindOutput = try await self.tool("find", input, space: route.space)
+      let output: FindOutput = try await self.tool("find", input, space: route.space, longRunning: route.path.map(isMachinePath) ?? false)
       await self.runner.stdout(formatFind(output))
     case let .history(path):
       let route = try self.route(path)
@@ -326,10 +326,6 @@ struct Executor {
       try await self.sessionTags(id: id, tags: tags)
     case let .sessionRestart(command):
       try await self.sessionRestart(command)
-    case let .sessionLog(id, view):
-      try await self.sessionLog(id: id, view: view)
-    case let .sessionEntry(session, ref):
-      try await self.sessionEntry(id: session, ref: ref)
     case let .sessionInspect(id):
       try await self.sessionInspect(id: id)
     case .sessionList:
@@ -542,7 +538,7 @@ struct Executor {
 
     let input: JSONValue = ["path": .string(path)]
     do {
-      let _: Entry = try await self.tool("stat", input, space: space)
+      let _: Entry = try await self.tool("stat", input, space: space, longRunning: isMachinePath(path))
       throw CLIError(message: "refusing to overwrite \(path): read it first, or pass --force")
     } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {
       return nil
@@ -553,8 +549,9 @@ struct Executor {
     _ name: String,
     _ input: JSONValue,
     space: String,
+    longRunning: Bool = false,
   ) async throws -> Output {
-    try await self.authenticated(space).tool(name, input)
+    try await self.authenticated(space, longRunning: longRunning).tool(name, input)
   }
 }
 

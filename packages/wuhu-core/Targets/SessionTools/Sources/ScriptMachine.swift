@@ -118,7 +118,7 @@ final class ScriptMachineBindings: Sendable {
       return path
     }
     func address(_ path: String) -> String { Address.machine(machine, path).rendered }
-    let main = try await tools.client(execution.actor)
+    let main = tools.client(execution.actor)
     func machineCall<Output>(_ run: () async throws -> Output) async throws -> Output {
       do {
         return try await run()
@@ -271,7 +271,6 @@ final class ScriptMachineBindings: Sendable {
       let (id, exec) = try await mint(machine, command: command, options: options, environment: environment, spawn: true)
       process = ScriptProcess(
         id: id,
-        machine: machine,
         acceptsStdin: options.stdin,
         exec: exec,
         giveBack: { [execution] bytes in execution.buffers.withLock { $0.unclaim(bytes) } },
@@ -312,10 +311,6 @@ final class ScriptMachineBindings: Sendable {
     do {
       minted = try await client.api(.post, "/v1/exec", body: .object(["machine": .string(machine.rawValue), "script": .string(execution.id)]))
     } catch { throw scriptFailure(error) }
-    guard execution.processes.minted(minted.id) else {
-      try? await killScriptExec(minted.id, via: client)
-      throw CancellationError()
-    }
     let start = ExecStart(
       id: minted.id, cwd: options.cwd, command: ["sh", "-c", command],
       env: environment.env, secrets: environment.secrets, window: scriptProcessWindow,
@@ -402,12 +397,4 @@ func lostReason(_ termination: ExecSession.Termination, id: ExecID) -> String? {
   case .cancelled: "\(execHandle(id)) was cancelled"
   case let .streamFailed(message): message
   }
-}
-
-// Kills a script's exec on main; one that has already ended is no failure.
-func killScriptExec(_ id: ExecID, via client: SpaceClient) async throws {
-  do {
-    let _: JSONValue = try await client.api(.post, "/v1/exec/\(id.rawValue)/kill")
-  } catch let failure as SpaceClient.ToolFailure where failure.error.code.rawValue == "alreadyEnded" {
-  } catch let failure as SpaceClient.TransportFailure where failure.code == "alreadyEnded" {}
 }

@@ -2,7 +2,6 @@ import Dependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
-import WuhuAI
 
 func withSessionDeps<T>(_ body: () async throws -> T) async rethrows -> T {
   try await withDependencies({
@@ -41,19 +40,6 @@ enum SessionFix {
       content: .init(text: text),
     ))
   }
-
-  static func toolResult(callID: String, id: UUID = UUID()) -> ToolResultItem {
-    .init(id: id, timestamp: fixedDate, provenance: .toolCall(.init(callID)), payload: .grep(.init(output: "hit")))
-  }
-
-  static func assistant(_ text: String = "ok", toolCalls: [ToolCall] = []) -> AssistantMessage {
-    .init(content: [.text(text)] + toolCalls.map { .toolCall($0) })
-  }
-
-  static let metadata = AssistantMessageMetadata(
-    stopReason: .stop,
-    usage: .init(inputTokens: 5, outputTokens: 5, totalTokens: 100),
-  )
 }
 
 extension ModelSpecifier {

@@ -2,7 +2,16 @@
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import InferenceKit
 import JSONValue
 import LoopCore
@@ -110,7 +119,7 @@ private final class SessionCLIHarness: Sendable {
       _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
     let hub = MachineHub(space: space)
-    let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+    let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
     let config = LoopConfig(
       executeTool: { invocation in
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
@@ -125,9 +134,9 @@ private final class SessionCLIHarness: Sendable {
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
     )
-    let tokens = ExecTokens(spaceURL: "http://space")
+    let tokens = try await testTokens(space: space, spaceURL: "http://space")
     let connection = MainConnection()
-    let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, space: owner.space) { _ in config }
+    let worker = SessionExecution(connection: connection, credential: { try await tokens.sessionToken($0) }, space: owner.space) { _ in config }
     let runtime = SessionRuntime(execution: worker, owner: owner, tokens: tokens, connection: connection)
     let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     worker.start()
@@ -180,11 +189,10 @@ private actor Sink {
   }
 }
 
-private func pendingMessageIDs(in transcript: Transcript) -> [String] {
-  transcript.items.compactMap { item in
-    guard case let .message(message) = item, message.owesReply else { return nil }
-    return message.messageID.rawValue
-  }.sorted()
+private func deliveredMessageIDs(in lines: [TranscriptLine]) -> [String] {
+  lines.filter { $0.role == .user && $0.key.hasPrefix("message:") }
+    .map { String($0.key.dropFirst("message:".count)) }
+    .sorted()
 }
 
 private struct UntilTimeout: Error {}
@@ -230,7 +238,9 @@ private func until(
 
       #expect(await harness.run(["send", id, "please look"]) != 0)
       #expect(await harness.stderr.text.contains("takes no messages from people"))
-      #expect(try await !harness.store.transcript(SessionID(id)).hasWork)
+      #expect(try await harness.store.record(SessionID(id)).work == .noWork)
+      let lines = try await harness.store.transcriptLines(SessionID(id)).map { try $0.line() }
+      #expect(deliveredMessageIDs(in: lines).isEmpty)
     }
   }
 
@@ -280,10 +290,10 @@ private func until(
       let id = try await harness.createSession()
       func sparse(_ name: String, _ size: Int) throws -> String {
         let url = harness.root.appendingPathComponent(name)
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: url)
-        try handle.truncate(atOffset: UInt64(size))
-        try handle.close()
+        let descriptor = open(url.path, O_WRONLY | O_CREAT | O_TRUNC, mode_t(S_IRUSR | S_IWUSR))
+        try #require(descriptor >= 0)
+        defer { #expect(close(descriptor) == 0) }
+        try #require(ftruncate(descriptor, off_t(size)) == 0)
         return url.path
       }
       let small = try (1 ... 9).map { try sparse("small\($0).txt", 1) }
@@ -304,40 +314,17 @@ private func until(
     }
   }
 
-  @Test func sessionLogNamesTheSenderTheMessageAndItsAttachments() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "ok"))]) }
-      let id = try await harness.createSession()
-      _ = try await harness.space.setUserProfile(principal: "owner", handle: "boss", displayName: nil)
-      let shot = harness.root.appendingPathComponent("shot.png")
-      let report = harness.root.appendingPathComponent("report.pdf")
-      try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01]).write(to: shot)
-      try Data("%PDF-1.7".utf8).write(to: report)
-      #expect(await harness.run(["send", "--attach", shot.path, "--attach", report.path, id, "look"]) == 0)
-      let message = try #require(try await harness.store.messages(conversation: ConversationID(id)).last)
-      let paths = message.content.attachments.map(\.path)
-      #expect(paths.count == 2)
-
-      let before = await harness.stdout.text
-      #expect(await harness.run(["session", "log", id]) == 0)
-      let log = String(await harness.stdout.text.dropFirst(before.count))
-      #expect(log.contains("] boss (owner) · user · group shared · "))
-      let attached = paths.map { "\nattached: \($0)" }.joined()
-      #expect(log.contains(" · message · id \(message.id.rawValue)\nlook\(attached)\n"))
-    }
-  }
-
   @Test func sendWaitTerminatesOnTheSessionsPost() async throws {
     try await withSessionDeps {
       let steps = Steps([
         { request in
-          let pending = pendingMessageIDs(in: request.transcript)
+          let message = try #require(deliveredMessageIDs(in: request.lines).first)
           return reply([.toolCall(ToolCall(
             id: "call_1",
             name: "send_message",
             arguments: .object([
               "message": .string("hello from the session"),
-              "reply_target": pending.first.map(JSONValue.string) ?? .null,
+              "reply_target": .string(message),
             ]),
           ))])
         },
@@ -540,104 +527,6 @@ private func until(
       #expect(await harness.run(["session", "interrupt", "solo"]) == 64)
     }
   }
-
-  @Test func sessionLogDefaultsToTheConversationAndLevelsTheDirectView() async throws {
-    try await withSessionDeps {
-      let steps = Steps([
-        { request in
-          let pending = pendingMessageIDs(in: request.transcript)
-          return reply([
-            .text(.init(text: "thinking out loud")),
-            .toolCall(ToolCall(
-              id: "call_read",
-              name: "read",
-              arguments: .object(["path": .string("wuhu://settings.localspace/models.json")]),
-            )),
-            .toolCall(ToolCall(
-              id: "call_reply",
-              name: "send_message",
-              arguments: .object([
-                "message": .string("forty-two"),
-                "reply_target": pending.first.map(JSONValue.string) ?? .null,
-              ]),
-            )),
-          ])
-        },
-        { _ in reply([.text(.init(text: "wrapping up"))]) },
-      ])
-      let harness = try await SessionCLIHarness { try await steps.next($0) }
-      let id = try await harness.createSession()
-      #expect(await harness.run(["send", id, "what is the answer?", "--wait", "--timeout", "30"]) == 0)
-
-      let beforeConversation = await harness.stdout.text
-      #expect(await harness.run(["session", "log", id]) == 0)
-      let conversation = String(await harness.stdout.text.dropFirst(beforeConversation.count))
-      #expect(conversation.contains("what is the answer?"))
-      #expect(conversation.contains("forty-two"))
-      #expect(!conversation.contains("thinking out loud"), "the conversation view never shows private monologue")
-
-      let beforeNarrative = await harness.stdout.text
-      #expect(await harness.run(["session", "log", "--direct", id]) == 0)
-      let narrative = String(await harness.stdout.text.dropFirst(beforeNarrative.count))
-      #expect(narrative.contains("thinking out loud"))
-      #expect(narrative.contains("↩ forty-two"), "L1 shows what the session actually said")
-      #expect(narrative.contains("← posted"), "send_message results are the narrative reply")
-      #expect(!narrative.contains("→ read"))
-      #expect(!narrative.contains("→ send_message"))
-      #expect(!narrative.contains("ctx "))
-
-      let beforeVerbose = await harness.stdout.text
-      #expect(await harness.run(["session", "log", "-v", id]) == 0)
-      let verbose = String(await harness.stdout.text.dropFirst(beforeVerbose.count))
-      #expect(verbose.contains("→ read"))
-      #expect(verbose.contains("→ send_message"))
-      #expect(verbose.contains("ctx 10 tok"))
-      #expect(!verbose.contains("dialect"), "tool results stay out of L2")
-
-      let beforeEverything = await harness.stdout.text
-      #expect(await harness.run(["session", "log", "-vv", id]) == 0)
-      let everything = String(await harness.stdout.text.dropFirst(beforeEverything.count))
-      #expect(everything.contains("dialect"), "L3 carries the read result")
-    }
-  }
-
-  @Test func sessionEntryPrintsOneItemInFull() async throws {
-    try await withSessionDeps {
-      let steps = Steps([
-        { request in
-          let pending = pendingMessageIDs(in: request.transcript)
-          return reply([
-            .text(.init(text: "thinking out loud")),
-            .toolCall(ToolCall(
-              id: "call_reply",
-              name: "send_message",
-              arguments: .object([
-                "message": .string("forty-two"),
-                "reply_target": pending.first.map(JSONValue.string) ?? .null,
-              ]),
-            )),
-          ])
-        },
-        { _ in reply([.text(.init(text: "wrapping up"))]) },
-      ])
-      let harness = try await SessionCLIHarness { try await steps.next($0) }
-      let id = try await harness.createSession()
-      #expect(await harness.run(["send", id, "what is the answer?", "--wait", "--timeout", "30"]) == 0)
-
-      let beforeNarrative = await harness.stdout.text
-      #expect(await harness.run(["session", "log", "--direct", id]) == 0)
-      let narrative = String(await harness.stdout.text.dropFirst(beforeNarrative.count))
-      let ref = try #require(narrative.firstMatch(of: /\[([0-9a-f]+:\d+:\d+)\] assistant/)?.1)
-
-      let beforeEntry = await harness.stdout.text
-      #expect(await harness.run(["session", "entry", id, String(ref)]) == 0)
-      let entry = String(await harness.stdout.text.dropFirst(beforeEntry.count))
-      #expect(entry.contains("thinking out loud"))
-      #expect(entry.contains("→ send_message"), "the entry view is the full item, levels do not apply")
-
-      #expect(await harness.run(["session", "entry", id, "99:0"]) == 1)
-    }
-  }
 }
 
 @Suite(.deterministicDependencies) struct SessionVerbParserTests {
@@ -686,31 +575,6 @@ private func until(
     #expect(try Command.parse(["session", "tags", "abc", "--", "--odd"]) == .sessionTags(id: "abc", tags: ["--odd"]))
     #expect(throws: (any Error).self) { try Command.parse(["session", "tags"]) }
     #expect(try Command.parse(["session", "unarchive", "abc"]) == .sessionAction(.unarchive, id: "abc"))
-    #expect(try Command.parse(["session", "log", "abc"]) == .sessionLog(id: "abc", view: .conversation(limit: nil, before: nil)))
-    #expect(
-      try Command.parse(["session", "log", "--direct", "abc"])
-        == .sessionLog(id: "abc", view: .direct(level: 1, limit: nil, before: nil)),
-    )
-    #expect(
-      try Command.parse(["session", "log", "-v", "abc"])
-        == .sessionLog(id: "abc", view: .direct(level: 2, limit: nil, before: nil)),
-    )
-    #expect(
-      try Command.parse(["session", "log", "-vv", "--limit", "10", "--before", "3:41", "abc"])
-        == .sessionLog(id: "abc", view: .direct(level: 3, limit: 10, before: "3:41")),
-    )
-    #expect(
-      try Command.parse(["session", "log", "--limit", "5", "abc"])
-        == .sessionLog(id: "abc", view: .conversation(limit: 5, before: nil)),
-    )
-    #expect(
-      try Command.parse(["session", "log", "--before", "12", "abc"])
-        == .sessionLog(id: "abc", view: .conversation(limit: nil, before: 12)),
-    )
-    #expect(throws: (any Error).self) { try Command.parse(["session", "log", "--before", "3:41", "abc"]) }
-    #expect(throws: (any Error).self) { try Command.parse(["session", "log", "--all", "abc"]) }
-    #expect(try Command.parse(["session", "entry", "abc", "1:2"]) == .sessionEntry(session: "abc", ref: "1:2"))
-    #expect(throws: (any Error).self) { try Command.parse(["session", "entry", "abc"]) }
     #expect(try Command.parse(["session", "list"]) == .sessionList)
     #expect(try Command.parse(["inbox"]) == .inbox)
     #expect(throws: (any Error).self) { try Command.parse(["session", "steer", "abc"]) }

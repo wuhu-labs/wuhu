@@ -42,7 +42,7 @@ import WuhuAI
       await time.advance(by: 60)
 
       let script = InferenceScript([
-        Fix.replying("looking", calls: [.init(id: "call_0", name: "exec", arguments: .object(["command": .string("find ~")]))]),
+        Fix.replying("looking", calls: [.init(id: "call_0", name: "test_tool", arguments: .object(["command": .string("find ~")]))]),
         Fix.replying("found it"),
       ])
       let release = Latch()
@@ -70,11 +70,13 @@ import WuhuAI
       #expect(try await row(space, sid) == waiting)
       await time.advance(by: 3600)
 
-      // A restart ends the call interrupted, and the model goes on from there.
+      // The drain answers the call that the restart ended, and the model goes on from there.
       try await runService(space, config) { _ in
         try await until("settled") { try await sessions.settledWork(sid) }
       }
       #expect(exec.calls.value.count == 1)
+      let answered = try await sessions.lines(sid).first { $0.role == .toolResult && $0.message.toolResult?.isError == true }
+      #expect(answered?.text == serverRestartedToolMessage)
 
       let settled = try await row(space, sid)
       #expect(settled.run == "no_run")

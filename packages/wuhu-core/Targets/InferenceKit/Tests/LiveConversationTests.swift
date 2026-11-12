@@ -4,7 +4,11 @@ import DeterministicDependencies
 import struct ExecutionOwner.AttemptLogConfig
 import Fetch
 import FetchURLSession
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import InferenceKit
 import ModelProviders
 import Scratch
@@ -50,12 +54,13 @@ private let liveCases: [(provider: String, model: String)] = [
       $0.date = DateGenerator { Date() }
       $0.continuousClock = ContinuousClock()
     } operation: {
-      var transcript = Transcript()
+      var lines: [TranscriptLine] = []
       func send(_ text: String) async throws -> String {
-        transcript.append(.direct(.init(id: UUID(), sender: sender, timestamp: Date(), content: .init(text: text))))
+        lines += TranscriptItem.message(.init(id: UUID(), messageID: .init(UUID().uuidString), conversationID: .init("live"), sender: sender, timestamp: Date(), content: .init(text: text))).lines(session: executor.session)
         let attemptID = UUID()
-        let reply = try await executor.run(attemptID: attemptID, transcript: transcript)
-        transcript.appendAssistant(reply.message, id: attemptID, metadata: reply.metadata)
+        let reply = try await executor.run(attemptID: attemptID, lines: lines)
+        let entry = AssistantEntry(reply.message, id: attemptID, at: Date(), metadata: reply.metadata, replayBinding: nil, mint: { ToolCallID(UUID().uuidString) })
+        lines += TranscriptItem.assistant(entry).lines(session: executor.session)
         let answer = reply.message.content.compactMap { block -> String? in
           if case let .text(t) = block { return t.text }
           return nil
@@ -70,7 +75,7 @@ private let liveCases: [(provider: String, model: String)] = [
       #expect(!first.isEmpty)
       let second = try await send("What was the codeword?")
       #expect(second.localizedCaseInsensitiveContains("heliotrope"))
-      #expect(transcript.items.count == 4)
+      #expect(lines.count == 4)
     }
   }
 }

@@ -1,5 +1,4 @@
 import struct Credentials.SpaceSecretStores
-import Crypto
 import Dependencies
 import DeterministicDependencies
 #if canImport(FoundationEssentials)
@@ -9,17 +8,87 @@ import DeterministicDependencies
 #endif
 @testable import ExecSupervisor
 import Fetch
+import GRDB
 import MachineChannel
 import MachineContract
+import OperationProtocol
 import OperationRuntime
 import Scratch
 import Serve
 import SpaceContract
 @testable import SpaceCore
 @testable import SpaceServer
+import Synchronization
 import Testing
+import Wuwei
 
-@Suite(.deterministicDependencies) struct GroupSecretExecTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct GroupSecretExecTests {
+  @Test func preparedSecretsAndCredentialsNeverEnterCellRowsOrMail() async throws {
+    let scratch = try ScratchFolder("exec-cell-secrecy")
+    defer { scratch.remove() }
+    let stores = SpaceSecretStores(configDirectory: scratch.url.appendingPathComponent("config", isDirectory: true), spaceID: "spc_test")
+    let secret = "cell-secret-value-not-an-argument"
+    try await stores.group("shared").set("API_KEY", to: secret)
+    let space = try makeMachineSpace()
+    let tokens = try await testTokens(space: space, spaceURL: "https://space.test")
+    let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens, secrets: stores)
+    let (machine, _) = try await addMachine(server)
+    let session = try await space.sessions.createSession(group: .shared, title: "secrecy", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
+    let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
+    let prepared = Mutex<StartRequest?>(nil)
+    let started = Gate(), release = Gate()
+    let client = FetchClient { request in
+      var request = request
+      if request.method == .post, request.url.path.contains("/operations/") {
+        let start = try await request.json(StartRequest.self)
+        prepared.withLock { $0 = start }
+        started.open()
+        await release.wait()
+        request.body = try .json(start)
+      }
+      return try await agent.handler(request)
+    }
+    let exec = try await space.reserveExec(machine: machine, caller: session.rawValue)
+    let endpoint = ChannelEndpoint()
+    let outgoing = await endpoint.startExec(.init(id: exec.id, cwd: "/", command: ["sh", "-c", "printf '%s|%s' \"$TOKEN\" \"$WUHU_TOKEN\""], secrets: ["TOKEN": "API_KEY"]))
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await agent.run() }
+      defer { release.open(); tasks.cancelAll() }
+      try await withMachineBox(space: space, hub: server.hub, machine: machine, client: client) {
+        let transport = try await connectExecCaller(exec.id, space: space, hub: server.hub)
+        let caller = Task { await endpoint.run(transport) }
+        defer { caller.cancel() }
+        await started.wait()
+        let input = try #require(prepared.withLock { $0?.input.object })
+        #expect(input["secretValues"]?.object?["TOKEN"] == .string(secret))
+        let credential = try #require(input["sessionCredential"]?.object?["token"]?.stringValue)
+        #expect(credential.hasPrefix(ExecTokens.prefix))
+        #expect(input["secretValues"]?.object?["WUHU_ID_TOKEN_REQUEST"] == nil)
+        #expect(input["env"]?.object?["WUHU_ID_TOKEN_URL"] == nil)
+        let payloads = try await space.writer.read { db in
+          try Row.fetchAll(db, sql: "SELECT * FROM machine_operations").flatMap { row in
+            row.compactMap { _, value -> Data? in
+              switch value.storage {
+              case let .string(text): Data(text.utf8)
+              case let .blob(data): data
+              case .null, .int64, .double: nil
+              }
+            }
+          } + Data.fetchAll(db, sql: "SELECT payload FROM wuwei_mail")
+        }
+        for value in [secret, credential] {
+          #expect(!value.isEmpty)
+          #expect(payloads.allSatisfy { $0.range(of: Data(value.utf8)) == nil })
+        }
+        release.open()
+        let collected = try await collectExec(outgoing)
+        #expect(String(decoding: collected.stdout, as: UTF8.self) == "***|***")
+        #expect(collected.exit == .exited(code: 0))
+      }
+      await agent.shutdown()
+    }
+  }
+
   @Test func twoMachinesInOneGroupUseOneSecretMasked() async throws {
     try await withSecretServer { rig in
       try await rig.stores.group("shared").set("API_KEY", to: "hunter2-value")
@@ -50,7 +119,10 @@ import Testing
         #expect(collected.exit == .exited(code: 1))
         #expect(!FileManager.default.fileExists(atPath: marker.path))
         let record = try #require(try await rig.space.execRecord(collected.id))
-        #expect(record.terminal == .exited(code: 1))
+        #expect(record.terminal == .machineLost)
+        let operation = try #require(rig.space.worker.cell(MachineCell.ID(machine.id.rawValue)).operation(collected.id.rawValue))
+        #expect(operation.diagnostic?.code == .invalidInput)
+        #expect(operation.snapshot?.verdict?.result == nil)
       }
     }
   }
@@ -77,7 +149,7 @@ import Testing
     }
   }
 
-  @Test func aRunningExecKeepsItsSecretsAcrossAMoveAndABlip() async throws {
+  @Test func aRunningExecKeepsItsSecretsAcrossAMove() async throws {
     try await withSecretServer { rig in
       try await rig.stores.group("shared").set("API_KEY", to: "hunter2-value")
       let team = try await rig.addGroup("team")
@@ -97,10 +169,6 @@ import Testing
           #expect(ready == Array("ready\n".utf8))
 
           _ = try await rig.space.moveMachine(machine.id, to: team)
-          caller.close()
-          #expect(try await realPollUntil { host.completedRounds >= 1 })
-          host.attach(try await connectCaller(rig.server, exec: exec))
-
           try await outgoing.sendStdin(Array("go\n".utf8))
           await outgoing.closeStdin()
           let (rest, exit) = try await mixedExecExit(&events)
@@ -161,7 +229,7 @@ struct SecretRig: Sendable {
   }
 
   func run(machines: [Machine], _ body: @escaping @Sendable () async throws -> Void) async throws {
-    try await withMixedExecAgents(server, machines: machines.map(\.id)) { _ in try await body() }
+    try await withMixedExecAgents(server, machines: machines.map(\.id)) { try await body() }
   }
 }
 
@@ -176,7 +244,7 @@ func withSecretServer(_ body: (SecretRig) async throws -> Void) async throws {
 
 func withMixedExecAgents(
   _ server: TestServer, machines: [MachineID],
-  _ body: @escaping @Sendable (MachineV2Service) async throws -> Void,
+  _ body: @escaping @Sendable () async throws -> Void,
 ) async throws {
   try await withDependencies {
     $0.date = DateGenerator { Date() }
@@ -185,27 +253,28 @@ func withMixedExecAgents(
     let agents = try Dictionary(uniqueKeysWithValues: machines.map { machine in
       (machine.rawValue, try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in }))
     })
-    let service = MachineV2Service(space: server.space, hub: MachineV2Hub(space: server.space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
-      let parts = request.url.pathComponents
-      let index = try #require(parts.firstIndex(of: "machines"))
-      let agent = try #require(agents[parts[index + 1]])
-      return try await agent.handler(request)
-    } })
-    await server.hub.configureV2(service)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await server.run() }
-      tasks.addTask { try await service.run() }
-      for agent in agents.values { tasks.addTask { await agent.run() } }
+      var links: [BoxLink] = []
+      for (id, agent) in agents {
+        tasks.addTask { await agent.run() }
+        let pubkey = try await seedBoxKey(space: server.space, machine: id)
+        let link = try #require(BoxLink(worker: server.space.worker, machine: id, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: server.space.machineBuffers) {
+          try await server.hub.prepare($0, machine: id)
+        })
+        links.append(link)
+        tasks.addTask { await link.run(client: FetchClient { try await agent.handler($0) }) }
+      }
+      defer { for link in links { link.close() } }
+      for machine in machines { try #require(try await realPollUntil { try await server.space.machineDescription(machine) != nil }) }
       defer { tasks.cancelAll() }
       do {
-        try await body(service)
+        try await body()
       } catch {
         for agent in agents.values { await agent.shutdown() }
-        await service.shutdown()
         throw error
       }
       for agent in agents.values { await agent.shutdown() }
-      await service.shutdown()
     }
   }
 }

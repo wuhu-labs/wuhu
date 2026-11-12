@@ -189,20 +189,9 @@ private let liveViewDocuments = [
 ]
 
 @Suite
-struct SessionLogCodingTests {
+struct ConversationMessageCodingTests {
   private let encoder = JSONValueEncoder()
   private let decoder = JSONValueDecoder()
-
-  @Test func logOutputOmitsAbsentOptionals() throws {
-    let kernel = SessionLogOutput(
-      context: SessionContext(usedTokens: 10, maxTokens: 100, percentage: 10, updatedAt: nil, source: .estimate),
-      items: [SessionLogItem(ref: "2:41", receivedAt: nil, emittedAt: nil, item: .object(["direct": .object([:])]))],
-    )
-    #expect(try encoder.encode(kernel) == .object([
-      "context": .object(["usedTokens": 10, "maxTokens": 100, "percentage": 10, "source": "estimate"]),
-      "items": .array([.object(["ref": "2:41", "item": .object(["direct": .object([:])])])]),
-    ]))
-  }
 
   private func message(attachments: JSONValue?) -> JSONValue {
     guard let attachments else {

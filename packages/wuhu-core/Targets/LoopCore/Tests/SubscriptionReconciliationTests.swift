@@ -18,10 +18,7 @@ import WuhuAI
       let id = try await sessions.createSession(group: .shared, title: "running work", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         { request in
-          let rendered = await request.transcript.renderRequest(session: id, systemPrompt: "test")
-          let text = rendered.messages.compactMap(\.user).flatMap(\.content).compactMap { block -> String? in
-            if case let .text(text) = block { return text.text }; return nil
-          }.joined(separator: "\n")
+          let text = request.lines.map(\.text).joined(separator: "\n")
           #expect(text.contains("running: exec.ex_0a1b2c3d, script.ffff0000"))
           return Fix.reply("done")
         },

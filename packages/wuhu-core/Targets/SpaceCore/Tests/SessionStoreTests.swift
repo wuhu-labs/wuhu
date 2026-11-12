@@ -4,9 +4,8 @@ import Foundation
 import GRDB
 import JSONValue
 import SessionDomain
-@_spi(SessionObservation) @testable import SpaceCore
+@testable import SpaceCore
 import Testing
-import WuhuAI
 
 @Suite(.deterministicDependencies)
 struct SessionStoreTests {
@@ -23,7 +22,8 @@ struct SessionStoreTests {
       #expect(hydration.record.work == .noWork)
       #expect(hydration.record.lifecycle == .live)
       #expect(hydration.record.errorMessage == nil)
-      #expect(hydration.transcript.kernel == Transcript())
+      #expect(!hydration.legacy)
+      #expect(try await store.transcriptLines(sid).isEmpty)
       #expect(hydration.queueHead == hydration.queueTail)
       #expect(hydration.queueHead == 0)
       #expect(hydration.queueTail == 0)
@@ -44,107 +44,27 @@ struct SessionStoreTests {
 
       let hydration = try await store.hydrate(sid)
       #expect(hydration.record.work == .noWork, "creation stays inert")
-      #expect(hydration.transcript.kernel.keptCount == 1)
-      guard case let .generationHead(head)? = hydration.transcript.kernel.items.first, hydration.transcript.kernel.items.count == 1 else {
-        Issue.record("expected exactly the seeded generation head, got \(hydration.transcript.kernel.items)")
-        return
-      }
-      #expect(head.summary.isEmpty)
-      #expect(head.snapshot == snapshot)
-      #expect(hydration.transcript.kernel.needsReestablishment)
+      #expect(!hydration.legacy)
+      let lines = try await store.transcriptLines(sid)
+      #expect(lines.map(\.key) == ["head"])
+      #expect(try lines[0].line().message.text.contains("/AGENTS.md"))
     }
   }
 
-  @Test func hydrationRoundTripsWritesQueueAndPointers() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      #expect(try await store.put(sid, input: SessionFix.message("hello")) == 1)
-      #expect(try await store.put(sid, input: SessionFix.message("ping")) == 2)
-      _ = try await store.drainQueue(sid)
-      var transcript = try await store.transcript(sid)
-      #expect(transcript.items.count == 2)
-
-      let call = ToolCall(id: "call_0", name: "grep", arguments: .object(["pattern": .string("x")]))
-      try await store.appendAssistant(
-        sid, attemptID: UUID(), message: SessionFix.assistant("on it", toolCalls: [call]), metadata: SessionFix.metadata,
-      )
-      transcript = try await store.transcript(sid)
-      guard case let .assistant(entry) = transcript.items.last else {
-        Issue.record("expected assistant entry")
-        return
-      }
-      try await store.writeToolResult(sid, SessionFix.toolResult(callID: entry.toolCalls[0].id))
-      transcript = try await store.transcript(sid)
-      #expect(try await store.put(sid, input: SessionFix.notification()) == 3)
-
-      let hydration = try await store.hydrate(sid)
-      #expect(hydration.transcript.kernel == transcript)
-      #expect(hydration.queueHead == 3)
-      #expect(hydration.queueTail == 2)
-      #expect(hydration.record.work == .hasWork)
-    }
-  }
-
-  @Test func toolCallArgumentsSurviveTheStoreVerbatim() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let emitted = #"{"command":"bash -lc 'ls -la'", "max_output":30000,"timeout_seconds":30}"#
-      let call = ToolCall(id: "call_0", name: "exec", arguments: try #require(ToolArguments(verbatim: emitted)))
-      _ = try await store.appendAssistant(
-        sid, attemptID: UUID(), message: SessionFix.assistant("on it", toolCalls: [call]), metadata: SessionFix.metadata,
-      )
-
-      // Repeatedly: Foundation's keyed decoding has handed back a different key
-      // order on a later pass over identical bytes.
-      for pass in 1 ... 8 {
-        guard case let .assistant(entry) = try await store.hydrate(sid).transcript.kernel.items.last else {
-          Issue.record("expected assistant entry on pass \(pass)")
-          return
-        }
-        #expect(entry.toolCalls[0].arguments.text == emitted)
-      }
-    }
-  }
-
-  // The caller owns the transcript it renders from, but not where a row lands:
-  // a stale count must not be able to overwrite a pointer.
-  @Test func appendPositionsRowsFromTheStoreNotTheCaller() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await store.put(sid, input: SessionFix.message("one"))
-      try await store.put(sid, input: SessionFix.message("two"))
-      _ = try await store.drainQueue(sid)
-
-      let marker = BookmarkMarker(id: UUID(), timestamp: Date(timeIntervalSinceReferenceDate: 0))
-      try await store.append(sid, items: [.bookmark(marker)], inputOrigin: Transcript(items: [.bookmark(marker)]).cacheWarmingInputOrigin)
-
-      let stored = try await store.transcript(sid)
-      #expect(stored.items.count == 3)
-      #expect(stored.items.last?.id == marker.id)
-    }
-  }
-
-  @Test func storedPayloadsAreCanonicalBytes() async throws {
+  @Test func storedQueuePayloadsAreCanonicalBytes() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
       let store = space.sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let call = ToolCall(id: "call_0", name: "grep", arguments: .object(["pattern": .string("x")]))
-      _ = try await store.appendAssistant(
-        sid, attemptID: UUID(), message: SessionFix.assistant("on it", toolCalls: [call]), metadata: SessionFix.metadata,
-      )
       try await store.put(sid, input: SessionFix.message("hello"))
 
       let payloads = try await space.writer.read { db in
         try String.fetchAll(
           db,
-          sql: "SELECT payload FROM session_contents UNION ALL SELECT payload FROM session_queue",
+          sql: "SELECT payload FROM session_queue",
         )
       }
-      #expect(payloads.count == 2)
+      #expect(payloads.count == 1)
       for payload in payloads {
         #expect(keysAreSorted(try #require(JSONValue.parse(payload))), "unsorted keys in \(payload)")
       }
@@ -167,87 +87,6 @@ struct SessionStoreTests {
       let hydration = try await store.hydrate(sid)
       #expect(hydration.queueHead == hydration.queueTail)
       #expect(hydration.queueTail == 1)
-    }
-  }
-
-  @Test func aKernelSettleQueuesNoNag() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await store.put(sid, input: SessionFix.message("please review", conversation: sid.rawValue, owesReply: true))
-      _ = try await store.drainQueue(sid)
-
-      _ = try await store.appendAssistant(
-        sid, attemptID: UUID(), message: SessionFix.assistant("done thinking"), metadata: SessionFix.metadata,
-      )
-      let hydration = try await store.hydrate(sid)
-      #expect(hydration.record.work == .noWork)
-      #expect(hydration.queueHead == hydration.queueTail, "the loop nags from its transcript; the store queues nothing")
-      #expect(try await store.armedSubscriptions(sid).isEmpty)
-    }
-  }
-
-  @Test func aHeadWithoutASettleStateTakesTheStoresAsOfTheHead() async throws {
-    let rig = try MovingClockSpace()
-    let store = rig.store
-    let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-    try await store.put(sid, input: SessionFix.message("before", message: "m1", conversation: sid.rawValue, owesReply: true))
-    _ = try await store.drainQueue(sid)
-    rig.advance(60)
-    let head = GenerationHead(id: UUID(), timestamp: rig.store.dateGen.now, summary: "compacted", snapshot: .init(), runningWork: [])
-    _ = try await store.writeCompaction(sid, head: head, kept: nil)
-    rig.advance(60)
-    try await store.put(sid, input: SessionFix.message("after", message: "m2", conversation: "elsewhere", owesReply: true))
-    _ = try await store.drainQueue(sid)
-
-    let transcript = try await store.hydrate(sid).transcript.kernel
-    guard case let .generationHead(hydrated) = transcript.items.first else {
-      Issue.record("a compacted generation opens with its head")
-      return
-    }
-    #expect(hydrated.settle?.owedConversations == [ConversationID(sid.rawValue)])
-    #expect(Set(transcript.environment.settle.owedConversations) == [ConversationID("elsewhere"), ConversationID(sid.rawValue)])
-  }
-
-  @Test func compactionMintsGenerationAndSharesKeptContent() async throws {
-    try await withSessionDeps {
-      let space = try makeSpace()
-      let store = space.sessions
-      let keptID = UUID()
-      let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await store.put(sid, input: SessionFix.message("old"))
-      _ = try await store.drainQueue(sid)
-      _ = try await store.appendAssistant(sid, attemptID: UUID(), message: SessionFix.assistant(), metadata: SessionFix.metadata)
-      try await store.put(sid, input: SessionFix.message("recent", id: keptID))
-      _ = try await store.drainQueue(sid)
-      let before = try await store.transcript(sid)
-      #expect(before.items.count == 3)
-
-      let head = GenerationHead(
-        id: UUID(),
-        timestamp: fixedDate,
-        summary: "compacted",
-        snapshot: .init(),
-        settle: SettleState(),
-        runningWork: [],
-      )
-      let compacted = try await store.writeCompaction(sid, head: head, kept: 2 ..< 3)
-      #expect(compacted.items.count == 2)
-      #expect(compacted.keptCount == 2)
-      #expect(compacted.items[0] == .generationHead(head))
-      #expect(compacted.items[1].id == keptID)
-
-      let hydration = try await store.hydrate(sid)
-      #expect(hydration.transcript.kernel == compacted)
-
-      let keptRows = try await space.writer.read { db in
-        try Int.fetchOne(
-          db,
-          sql: "SELECT COUNT(*) FROM session_contents WHERE session_id = ? AND id = ?",
-          arguments: [sid.rawValue, keptID.uuidString.lowercased()],
-        )!
-      }
-      #expect(keptRows == 1)
     }
   }
 
@@ -287,7 +126,7 @@ struct SessionStoreTests {
     }
   }
 
-  @Test func erroredParksUntilResumeRederives() async throws {
+  @Test func erroredParksUntilResumeClearsTheError() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
@@ -297,13 +136,12 @@ struct SessionStoreTests {
       #expect(record.work == .errored)
       #expect(record.errorMessage == "boom")
 
-      // Errored is sticky across transcript writes until an explicit resume.
       _ = try await store.drainQueue(sid)
       #expect(try await store.record(sid).work == .errored)
 
       try await store.markResumed(sid)
       record = try await store.record(sid)
-      #expect(record.work == .hasWork)
+      #expect(record.work == .noWork, "the cell shows its turn after resume")
       #expect(record.errorMessage == nil)
       #expect(record.hold == .normal)
     }

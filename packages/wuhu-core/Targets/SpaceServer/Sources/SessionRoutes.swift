@@ -160,7 +160,7 @@ func addSessionRoutes(
     case let .refused(response): return response
     }
     return scriptStream(in: runtime.streamScope) { say in
-      try await runtime.tokens.runSessionless(.person(run), script: run.id, machines: hub) { token in
+      try await runtime.tokens.runSessionless(.person(run)) { token in
         try await service.run(ScriptRun(runner: .person(run), source: input.source, arguments: input.arguments, token: token), output: say)
       }
     }
@@ -357,7 +357,7 @@ func addSessionRoutes(
     do {
       let record = try await store.record(id)
       return try Response.json(SessionContextOutput(
-        context: await sessionContext(
+        context: try await sessionContext(
           record, store: store, budget: runtime.budget,
         ),
       ))
@@ -593,8 +593,8 @@ func addSessionRoutes(
     }
     do {
       if let rawTail = query["tail"] {
-        guard let tail = Int(rawTail), tail > 0, tail <= maxLogLimit else {
-          return errorResponse(.badRequest, code: "invalidArgument", message: "tail must be a positive integer up to \(maxLogLimit)")
+        guard let tail = Int(rawTail), tail > 0, tail <= maxConversationTail else {
+          return errorResponse(.badRequest, code: "invalidArgument", message: "tail must be a positive integer up to \(maxConversationTail)")
         }
         let before: Int64?
         switch query["before"] {
@@ -977,3 +977,5 @@ func reader(
     return .refused(sessionErrorResponse(error))
   }
 }
+
+private let maxConversationTail = 500

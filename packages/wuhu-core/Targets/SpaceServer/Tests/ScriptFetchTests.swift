@@ -10,6 +10,7 @@ import HTTPTypes
 import JSONValue
 import func MainHub.fetchOrigin
 import class MainHub.Hub
+import struct MainHub.ScriptRun
 import OrderedCollections
 import ServeNIO
 import SessionDomain
@@ -23,7 +24,7 @@ import struct WuhuAI.ToolCall
 
 @Suite(.deterministicDependencies) struct ScriptFetchTests {
   @Test func scriptVerifierChecksJWKSClaimsAndPerCallTokensWhileEchoesAreMasked() async throws {
-    let identity = try testIdentity()
+    let identity = try await testIdentity()
     let tokens = Mutex<[String]>([])
     let hop = FetchClient { request in
       let auth = try #require(request.headers[.authorization])
@@ -72,7 +73,7 @@ import struct WuhuAI.ToolCall
       ordinary.withLock { $0.append(request) }
       return Response(status: .ok, body: .string("plain"))
     }
-    try await withIdentityScript(identity: try testIdentity().controller, hop: FetchClient { _ in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: FetchClient { _ in
       hops.withLock { $0 += 1 }
       return Response(status: .ok)
     }, fetch: fetch) { rig in
@@ -94,7 +95,7 @@ import struct WuhuAI.ToolCall
       effects.withLock { $0 += 1 }
       return Response(status: .ok)
     }
-    try await withIdentityScript(identity: try testIdentity().controller, hop: transport, fetch: transport) { rig in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: transport, fetch: transport) { rig in
       let output = try await rig.evaluate(#"""
       const errors = []
       for (const identity of [null, undefined, "true", 1, {}, []]) {
@@ -112,7 +113,7 @@ import struct WuhuAI.ToolCall
 
   @Test func redirectsKeepTheOriginalOriginOnlyAndDoNotRemint() async throws {
     let seen = Mutex<[Request]>([])
-    let identity = try testIdentity()
+    let identity = try await testIdentity()
     let hop = FetchClient { request in
       seen.withLock { $0.append(request) }
       var headers = Headers()
@@ -138,7 +139,7 @@ import struct WuhuAI.ToolCall
 
   @Test func realHTTPTransportDoesNotFollowRedirectsBehindTheOriginPolicy() async throws {
     let seen = Mutex<[String?]>([])
-    let identity = try testIdentity()
+    let identity = try await testIdentity()
     let cross = try await ServeNIOServer.bind(port: 0, handler: { request in
       seen.withLock { $0.append(request.headers[.authorization]) }
       #expect(request.method == .post)
@@ -192,7 +193,7 @@ import struct WuhuAI.ToolCall
   }
 
   @Test func responseBodyFailureIsMaskedBeforeTheScriptCanReuseIt() async throws {
-    try await withIdentityScript(identity: try testIdentity().controller, hop: FetchClient { request in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: FetchClient { request in
       let jwt = String(try #require(request.headers[.authorization]).dropFirst(7))
       let body = AsyncThrowingStream<Data, any Error> { $0.finish(throwing: EchoError(description: jwt)) }
       return Response(status: .ok, body: .stream(body))
@@ -214,7 +215,7 @@ import struct WuhuAI.ToolCall
     let clock = VirtualClock()
     let (reads, read) = AsyncStream<Void>.makeStream()
     let stalled = AsyncThrowingStream<Data, any Error> { _ in }
-    try await withIdentityScript(identity: try testIdentity().controller, clock: clock, hop: FetchClient { _ in
+    try await withIdentityScript(identity: try await testIdentity().controller, clock: clock, hop: FetchClient { _ in
       Response(status: .ok, body: .stream(AsyncThrowingStream<Data, any Error>(unfolding: {
         read.yield(())
         for try await chunk in stalled { return chunk }
@@ -232,7 +233,7 @@ import struct WuhuAI.ToolCall
   }
 
   @Test func exactTransportErrorEchoIsMaskedBeforeConsoleAndScriptUse() async throws {
-    try await withIdentityScript(identity: try testIdentity().controller, hop: FetchClient { request in
+    try await withIdentityScript(identity: try await testIdentity().controller, hop: FetchClient { request in
       throw EchoError(description: try #require(request.headers[.authorization]))
     }) { rig in
       let output = try await rig.evaluate(#"try { await fetch('http://backend.test', { identity: true }) } catch (e) { console.log(e.message); result(e.name === 'TypeError' && e.code === undefined && e.message === 'fetch failed: Bearer ***') }"#)
@@ -249,11 +250,10 @@ struct TestIdentity {
 }
 
 /// A server identity issuing for itself at `origin`, no directory.
-func testIdentity(origin: String = "https://space.test") throws -> TestIdentity {
+func testIdentity(origin: String = "https://space.test") async throws -> TestIdentity {
   let key = try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation)
-  let controller = try IdentityController(
-    identity: key, origin: origin, store: .init(load: { nil }, save: { _ in }), fetch: FetchClient { _ in Response(status: .forbidden) },
-  )
+  let controller = IdentityController.configure(space: try Space.inMemory(), origin: origin, keys: MemoryFiles().identityKeys, fetch: FetchClient { _ in Response(status: .forbidden) })
+  try await controller.initialize(identity: key)
   return TestIdentity(key: key, controller: controller)
 }
 
@@ -261,11 +261,18 @@ struct IdentityScriptRig {
   let space: Space
   let session: SessionID
   let executor: ToolExecutor
+  let scripts: Scripts
 
   func evaluate(_ source: String, wait: Int = 60) async throws -> JSONValue {
-    let payload = try await executor.execute(session: session, call: ToolCall(id: UUID().uuidString, name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": .integer(wait)])), state: ToolExecutionState()).payload
-    guard case let .script(result) = payload else { Issue.record("unexpected script result: \(payload)"); return .null }
-    let first = String(result.output.prefix { $0 != "\n" })
+    let result = Mutex<String?>(nil)
+    try await scripts.run(.init(runner: .session(session, group: .shared), source: source, arguments: []), tools: executor) { output in
+      switch output {
+      case let .result(text): result.withLock { $0 = text }
+      case let .failure(message): Issue.record("\(message)")
+      case .update, .end: break
+      }
+    }
+    let first = String(try #require(result.withLock { $0 }).prefix { $0 != "\n" })
     return JSONValue.parse(first) ?? .string(first)
   }
 }
@@ -290,8 +297,8 @@ func withIdentityScript(
       let space = try Space.inMemory()
       let session = try await space.sessions.createSession(group: .shared, title: "fetch test", kind: .agent, createdBy: "tester", model: .init(provider: "test", model: "test", effort: "high"))
       let owner = Hub(space: space)
-      let scripts = Scripts(sessions: owner.space.sessions)
-      let rig = IdentityScriptRig(space: space, session: session, executor: SessionRuntime.toolExecutor(owner: owner, scripts: scripts, identity: identity))
+      let scripts = Scripts()
+      let rig = IdentityScriptRig(space: space, session: session, executor: try await SessionRuntime.toolExecutor(owner: owner, identity: identity), scripts: scripts)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await whenCancelled { await scripts.close() } }
         defer { group.cancelAll() }

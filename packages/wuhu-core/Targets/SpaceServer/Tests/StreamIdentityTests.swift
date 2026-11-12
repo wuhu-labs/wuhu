@@ -11,7 +11,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct StreamIdentityTests {
   @Test func streamsDialWithAMinuteTokenNamingTheSubscriberForTheStreamOrigin() async throws {
-    let identity = try testIdentity()
+    let identity = try await testIdentity()
     let dials = Mutex<[Request]>([])
     let hop = FetchClient { request in
       dials.withLock { $0.append(request) }

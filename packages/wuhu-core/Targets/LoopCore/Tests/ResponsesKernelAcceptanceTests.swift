@@ -93,13 +93,13 @@ import WuhuAI
       }, inference: { request in
         let lease = try await registry.acquire(session: sid, model: resolved)
         let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline acceptance", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object"), "properties": .object([:])]))], webSocket: lease.session)
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
+        let completed = try await executor.run(attemptID: request.attemptID, lines: request.lines)
         await registry.release(session: sid, lease: lease.lease)
-        return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in
+        return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry in
           commits.withLock { $0.append(entry) }
           if kind != "no-ack" {
             if kind == "handles" { _ = try? await space.setUserProfile(principal: "morgan", handle: "new_handle", displayName: nil) }
-            await executor.acknowledge(entry: entry, transcript: transcript)
+            await executor.acknowledge(entry: entry, context: completed.context)
           }
         })
       })

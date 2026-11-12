@@ -37,7 +37,7 @@ import struct WuhuAI.ToolArguments
     }
     return Rig(
       space: space,
-      executor: SessionRuntime.toolExecutor(owner: Hub(space: space)),
+      executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)),
       p: try await makeSession(space, name: "P", group: Self.alice),
       s: try await makeSession(space, name: "S"),
       b: try await makeSession(space, name: "B", group: Self.bob),
@@ -157,7 +157,7 @@ import struct WuhuAI.ToolArguments
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [hers.id] }
       machineFS.put("/x.txt", "hi", mtime: 1)
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: rig.space, machines: machineFS.seam))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space, machines: machineFS.seam))
 
       func roster(_ session: SessionID) async throws -> [String] {
         var world = ToolWorld(executor: executor, session: session)
@@ -183,7 +183,7 @@ import struct WuhuAI.ToolArguments
   @Test func archiveIsForTheSessionItsCreatorAndAdminsButForceCannotArchiveSelf() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: rig.space))
+      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space))
       let st = try await task(rig, of: rig.s, in: .shared)
       let other = try await makeSession(rig.space, name: "S2")
       let theirs = try await task(rig, of: other, in: .shared)

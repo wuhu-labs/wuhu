@@ -28,6 +28,8 @@ public struct PersonCell {
         recipient: id.key, source: note.source, kind: note.kind.rawValue, payload: note.payload, createdAt: note.createdAt, group: note.group.rawValue,
       )
     })
+    ctx.send(.changed, to: NotificationDeliveryJob.webPush)
+    ctx.send(.changed, to: NotificationDeliveryJob.pushRelay)
   }
 
   /// Everything in the inbox now is read as far as `source` goes. Answers the mark: the newest notification's number.

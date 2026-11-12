@@ -11,6 +11,11 @@ import Wuwei
 
 /// Session writes the cell makes, as fixtures: a test sets a session's state with them directly.
 extension SessionStore {
+  @discardableResult
+  func drainQueue(_ id: SessionID) async throws -> QueueDrain {
+    try await rows { try $0.drainQueue(id) }
+  }
+
   /// Has the session's cell look at what a test wrote to its tables behind its back.
   func look(_ id: SessionID) async throws {
     try await writer.write { db in

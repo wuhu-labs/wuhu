@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SessionDomain
 import struct SpaceContract.PixelSize
 import Testing
@@ -20,24 +24,19 @@ private func imageRead(_ bytes: Int = 100, pixels: PixelSize? = nil) -> ToolResu
 
 @Suite struct ImageReadEstimateTests {
   @Test func unsizedImageCostsTheModelMaximumNotItsBytes() {
-    let transcript = Transcript(items: [.toolResult(imageRead(1 << 20))])
-    let estimated = transcript.estimatedContextTokens(images: .claude)
-    #expect(estimated >= 4784, "an image of unknown size counts as the largest the model takes")
-    #expect(estimated < 5200, "a 1MB image must not be counted as prose")
+    let lines = TranscriptItem.toolResult(imageRead(1 << 20)).lines(session: Fix.session)
+    let estimated = lines.estimatedContextTokens(images: .claude)
+    #expect(estimated >= 4784)
+    #expect(estimated < 5200, "image bytes are not prose")
+    #expect(lines.map(\.key) == ["call:tc-1", "call:tc-1:image"])
+    #expect(lines.map(\.role) == [.toolResult, .user])
   }
 
-  @Test func sizedImageCostsWhatItIsSentAs() {
-    let small = Transcript(items: [.toolResult(imageRead(1 << 20, pixels: PixelSize(width: 280, height: 280)))])
-      .estimatedContextTokens(images: .claude)
-    #expect(small >= 100 && small < 400, "280x280 is 10x10 patches of 28px")
-
-    // 6000x4000 is fitted to Claude's 2576px edge and its patch budget.
-    let huge = Transcript(items: [.toolResult(imageRead(1 << 20, pixels: PixelSize(width: 6000, height: 4000)))])
-    let claude = huge.estimatedContextTokens(images: .claude)
-    #expect(claude >= 4500 && claude < 5200)
-    // OpenAI keeps it whole: 188x125 patches of 32px at 1.2 tokens each.
-    let openAI = huge.estimatedContextTokens(images: .openAI)
-    #expect(openAI >= 28200 && openAI < 28700)
+  @Test func renderedMediaUsesTheModelImageMaximum() {
+    let small = TranscriptItem.toolResult(imageRead(100, pixels: PixelSize(width: 280, height: 280))).lines(session: Fix.session)
+    let huge = TranscriptItem.toolResult(imageRead(100, pixels: PixelSize(width: 6000, height: 4000))).lines(session: Fix.session)
+    #expect(small.estimatedContextTokens(images: .claude) == huge.estimatedContextTokens(images: .claude))
+    #expect(huge.estimatedContextTokens(images: .openAI) > huge.estimatedContextTokens(images: .claude))
   }
 }
 

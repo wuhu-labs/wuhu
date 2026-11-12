@@ -16,38 +16,52 @@ extension SpaceToolbox {
     }
     if to.system { throw SpaceError.systemReadOnly(input.to) }
     let replace = input.overwrite == true
-    let source: CopySource
-    if let machine = from.machine {
-      source = .machine(machine, path: from.path)
-    } else {
-      let (_, data) = try await context.read(from, upTo: copySpaceBytes) { size in
-        .failed(code: .byteLimitExceeded, message: "\(input.from) is \(size) bytes; copy takes at most \(copySpaceBytes) bytes from the space", hint: nil)
+    var restarted = false
+    while true {
+      do {
+        let source: CopySource
+        if let machine = from.machine {
+          source = .machine(machine, path: from.path)
+        } else {
+          let (_, data) = try await context.read(from, upTo: copySpaceBytes) { size in
+            .failed(code: .byteLimitExceeded, message: "\(input.from) is \(size) bytes; copy takes at most \(copySpaceBytes) bytes from the space", hint: nil)
+          }
+          source = .bytes([UInt8](data))
+        }
+        if let machine = to.machine {
+          let receipt = try await machines.copy(source, .machine(machine, path: to.path, replace: replace))
+          guard case let .machine(token) = receipt.landing else { throw ToolRunError.failed(code: .internal, message: "copy landed off its target", hint: nil) }
+          return output(receipt, token: token)
+        }
+        guard input.to.firstIndex(of: "@") == nil, let group = to.group else {
+          throw ToolRunError.failed(code: .invalidPath, message: "invalid space path: \(input.to)", hint: "Historical views are read-only.")
+        }
+        let path = try context.spacePath(to.path)
+        try await SpaceView.requireReadable(group, by: context.principal.group, actor: context.principal.actor, path: path.rawValue, in: context.space)
+        try await context.refuseWrite(path, in: group)
+        if !replace, (try? await to.backend.stat(to.path)) != nil { throw CopyRefusal.targetExists }
+        let receipt = try await machines.copy(source, .caller(limit: copySpaceBytes))
+        try Task.checkCancellation()
+        guard case let .caller(bytes) = receipt.landing else { throw ToolRunError.failed(code: .internal, message: "copy landed off its target", hint: nil) }
+        let token = try await context.space.writeFile(
+          path, data: Data(bytes), in: group, acting: context.principal.group, attribution: context.attribution, ifMatch: nil, createOnly: !replace,
+        )
+        return output(receipt, token: Wire.string(token))
+      } catch let loss as MachineFileFailure {
+        switch loss {
+        case .rangeLost where !replace, .outcomeUnknown where !replace:
+          throw MachineFileFailure.outcomeUnknown
+        case .rangeLost where !restarted, .outcomeUnknown where !restarted:
+          restarted = true
+          continue
+        default:
+          throw loss
+        }
+      } catch let refusal as CopyRefusal {
+        throw failure(refusal, input)
+      } catch SpaceError.alreadyExists(_) {
+        throw failure(.targetExists, input)
       }
-      source = .bytes([UInt8](data))
-    }
-    do {
-      if let machine = to.machine {
-        let receipt = try await machines.copy(source, .machine(machine, path: to.path, replace: replace))
-        guard case let .machine(token) = receipt.landing else { throw ToolRunError.failed(code: .internal, message: "copy landed off its target", hint: nil) }
-        return output(receipt, token: token)
-      }
-      guard input.to.firstIndex(of: "@") == nil, let group = to.group else {
-        throw ToolRunError.failed(code: .invalidPath, message: "invalid space path: \(input.to)", hint: "Historical views are read-only.")
-      }
-      let path = try context.spacePath(to.path)
-      try await SpaceView.requireReadable(group, by: context.principal.group, actor: context.principal.actor, path: path.rawValue, in: context.space)
-      try await context.refuseWrite(path, in: group)
-      if !replace, (try? await to.backend.stat(to.path)) != nil { throw CopyRefusal.targetExists }
-      let receipt = try await machines.copy(source, .caller(limit: copySpaceBytes))
-      guard case let .caller(bytes) = receipt.landing else { throw ToolRunError.failed(code: .internal, message: "copy landed off its target", hint: nil) }
-      let token = try await context.space.writeFile(
-        path, data: Data(bytes), in: group, acting: context.principal.group, attribution: context.attribution, ifMatch: nil, createOnly: !replace,
-      )
-      return output(receipt, token: Wire.string(token))
-    } catch let refusal as CopyRefusal {
-      throw failure(refusal, input)
-    } catch SpaceError.alreadyExists(_) {
-      throw failure(.targetExists, input)
     }
   }
 }

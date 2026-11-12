@@ -14,12 +14,12 @@ func whenCancelled(_ then: @Sendable () async -> Void) async {
 }
 
 // The sessions' runtime with main bound in process, as the kernel wires it, started.
-func firingWorker(_ owner: Hub, sources: EventSources = .unavailable) async -> SessionExecution {
-  let tokens = ExecTokens(spaceURL: "http://main")
+func firingWorker(_ owner: Hub, sources: EventSources = .unavailable) async throws -> SessionExecution {
+  let tokens = try await testTokens(space: owner.space, spaceURL: "http://main")
   let connection = MainConnection()
   let worker = SessionExecution(
     connection: connection,
-    credential: { tokens.sessionToken($0) },
+    credential: { try await tokens.sessionToken($0) },
     space: owner.space,
     observerRun: { observer, _, body in
       let token = tokens.scriptToken(.observer(observer))

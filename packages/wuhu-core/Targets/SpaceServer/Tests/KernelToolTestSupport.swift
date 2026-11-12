@@ -4,9 +4,12 @@
   import Foundation
 #endif
 import JSONValue
+@testable import LoopCore
 import SessionDomain
 import SessionTools
+@testable import SpaceCore
 @testable import SpaceServer
+import StructuredQueries
 import Testing
 import WuhuAI
 
@@ -28,6 +31,32 @@ func callResult(
   let id = SessionID(session)
   let state = harness.toolStates.values.withLock { $0[id] ?? ToolExecutionState() }
   let callID = UUID().uuidString.lowercased()
+  let call = ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments))
+  if tool == "run_script" {
+    let cell = SessionCell.ID(session)
+    try await harness.space.worker.call(cell) { cell in
+      let hydration = try cell.rows.hydrate(id)
+      var turn = cell.turn() ?? SessionTurn(generation: hydration.generation, position: 1)
+      turn.position += 1
+      turn.turn = .tools(calls: [call])
+      turn.replied = true
+      turn.armed = true
+      try cell.db.execute(SessionTurn.delete())
+      try cell.db.execute(SessionTurn.insert { turn })
+      let slot = Slot(session: id, generation: turn.generation, position: turn.position, stepTry: 0)
+      try cell.startScript(slot.call, call, ScriptPlan(call))
+    }
+    var result: JSONValue?
+    try await until("the script job answers") {
+      for line in try await harness.store.transcriptLines(id) where line.key == "call:\(callID)" {
+        guard case let .toolResult(answer) = try line.line().message else { continue }
+        let text = answer.content.compactMap { if case let .text(text) = $0 { text.text } else { nil } }.joined()
+        result = .object(["isError": .bool(answer.isError), "content": .array([.object(["type": "text", "text": .string(text)])])])
+      }
+      return result != nil
+    }
+    return result!
+  }
   let outcome = try await harness.runtime.execution.tools.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
   let payload = outcome.payload
   harness.toolStates.values.withLock {

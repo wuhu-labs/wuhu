@@ -1,11 +1,12 @@
 import ContractMacros
-import SwiftSyntaxMacrosTestSupport
-import XCTest
+import SwiftSyntaxMacroExpansion
+import SwiftSyntaxMacrosGenericTestSupport
+import Testing
 
-final class ContractMacroExpansionTests: XCTestCase {
+struct ContractMacroExpansionTests {
   private let macros = ["Contract": ContractMacro.self]
 
-  func testCustomDiscriminatorCollisionDiagnoses() {
+  @Test func testCustomDiscriminatorCollisionDiagnoses() {
     assertMacroExpansion(
       """
       @Contract(discriminator: "view")
@@ -25,11 +26,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testDiscriminatorOnStructDiagnoses() {
+  @Test func testDiscriminatorOnStructDiagnoses() {
     assertMacroExpansion(
       """
       @Contract(discriminator: "view")
@@ -49,11 +51,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testQualifiedStringRawTypeAccepted() {
+  @Test func testQualifiedStringRawTypeAccepted() {
     assertMacroExpansion(
       """
       @Contract
@@ -70,11 +73,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           }
       }
       """,
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testUnlabeledAssociatedValueDiagnoses() {
+  @Test func testUnlabeledAssociatedValueDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -94,11 +98,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testWildcardSuppressedLabelDiagnoses() {
+  @Test func testWildcardSuppressedLabelDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -118,11 +123,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testDiscriminatorCollisionDiagnoses() {
+  @Test func testDiscriminatorCollisionDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -142,11 +148,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testNonLiteralRawValueDiagnoses() {
+  @Test func testNonLiteralRawValueDiagnoses() {
     assertMacroExpansion(
       #"""
       @Contract
@@ -166,11 +173,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testPlainEnumNeedsRawOrAssociatedDiagnoses() {
+  @Test func testPlainEnumNeedsRawOrAssociatedDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -192,11 +200,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testAppliedToClassDiagnoses() {
+  @Test func testAppliedToClassDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -212,11 +221,12 @@ final class ContractMacroExpansionTests: XCTestCase {
       diagnostics: [
         DiagnosticSpec(message: "@Contract can only be applied to a struct or enum", line: 1, column: 1),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testAccessModifierPropagates() {
+  @Test func testAccessModifierPropagates() {
     assertMacroExpansion(
       """
       @Contract
@@ -237,11 +247,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           }
       }
       """,
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testAccessModifierPropagatesToEnum() {
+  @Test func testAccessModifierPropagatesToEnum() {
     assertMacroExpansion(
       """
       @Contract
@@ -258,11 +269,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           }
       }
       """,
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testTuplePatternDiagnoses() {
+  @Test func testTuplePatternDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -282,11 +294,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testUnsupportedLeafTypeDiagnoses() {
+  @Test func testUnsupportedLeafTypeDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -306,11 +319,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testFloatSuggestsDouble() {
+  @Test func testFloatSuggestsDouble() {
     assertMacroExpansion(
       """
       @Contract
@@ -330,11 +344,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testPropertyWrapperDiagnoses() {
+  @Test func testPropertyWrapperDiagnoses() {
     assertMacroExpansion(
       """
       @Contract
@@ -354,11 +369,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testUnionFallbackOfTheWrongShapeDiagnoses() {
+  @Test func testUnionFallbackOfTheWrongShapeDiagnoses() {
     assertMacroExpansion(
       """
       @Contract(fallback: "unknown")
@@ -380,11 +396,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testMissingStringFallbackDiagnoses() {
+  @Test func testMissingStringFallbackDiagnoses() {
     assertMacroExpansion(
       """
       @Contract(fallback: "other")
@@ -406,11 +423,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
   }
 
-  func testFallbackOnStructDiagnoses() {
+  @Test func testFallbackOnStructDiagnoses() {
     assertMacroExpansion(
       """
       @Contract(fallback: "unknown")
@@ -430,7 +448,12 @@ final class ContractMacroExpansionTests: XCTestCase {
           column: 1,
         ),
       ],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
+      failureHandler: recordFailure,
     )
+  }
+
+  private func recordFailure(_ failure: TestFailureSpec) {
+    Issue.record("\(failure.message)", sourceLocation: .init(fileID: failure.location.fileID, filePath: failure.location.filePath, line: failure.location.line, column: failure.location.column))
   }
 }

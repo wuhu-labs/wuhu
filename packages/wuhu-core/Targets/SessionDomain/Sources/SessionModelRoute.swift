@@ -53,25 +53,33 @@ public struct ModelRouteFailure: Hashable, Sendable, Codable {
   }
 
   public var refusing: Bool { reason != .upstreamOutage || consecutiveFailures >= 3 }
-
-  /// An authentication refusal stands until a success clears it; any other until its retry time, or a minute past the last failure without one.
-  public func stands(at now: Date) -> Bool {
-    switch reason {
-    case .authentication: true
-    case .quota, .upstreamOutage: (retryAt ?? (lastFailureAt ?? firstFailureAt).addingTimeInterval(60)) > now
-    }
-  }
 }
 
+/// A compaction that moves the session's route. With `binding` the account changes: the lines the new generation carries leave out what only the old one can replay (`Message.portable`), and `notice` tells the model so after them.
 public struct ModelRouteTransition: Sendable, Codable {
   public var expectedEpoch: String
   public var route: SessionModelRoute
-  public var transcript: Transcript
+  public var binding: ReplayBinding?
+  public var notice: String?
+  public var carriesTail: Bool
 
-  public init(expectedEpoch: String, route: SessionModelRoute, transcript: Transcript) {
+  public init(expectedEpoch: String, route: SessionModelRoute, binding: ReplayBinding? = nil, notice: String? = nil, carriesTail: Bool) {
     self.expectedEpoch = expectedEpoch
     self.route = route
-    self.transcript = transcript
+    self.binding = binding
+    self.notice = notice
+    self.carriesTail = carriesTail
+  }
+
+  public static let source = SubscriptionID("model-route")
+
+  /// For a switch the session asked for at its own compaction when it leaves or changes its group: `from`/`to` are `provider/model` for a concrete target and `group:member` for a group placement.
+  public static func requestedSwitchNotice(from: String, to: String) -> String {
+    "Model switched \(from) → \(to) (requested at compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."
+  }
+
+  public static func routeNotice(group: String, from: String, to: String, reason: ModelPlacementReason) -> String {
+    "Model group \(group) moved \(from) → \(to) (\(reason.rawValue)). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."
   }
 }
 
@@ -85,22 +93,5 @@ public struct CompactionTarget: Hashable, Sendable {
   public init(model: String, effort: String? = nil) {
     self.model = model
     self.effort = effort
-  }
-}
-
-extension Transcript {
-  /// The notice for a switch the session asked for at its own compaction
-  /// when it leaves or changes its group: `from`/`to` are `provider/model`
-  /// for a concrete target and `group:member` for a group placement.
-  public mutating func appendRequestedSwitchNotice(from: String, to: String) {
-    @Dependency(\.uuid) var uuid
-    @Dependency(\.date.now) var now
-    append(.notification(.init(id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("model-route"), content: .init(text: "Model switched \(from) → \(to) (requested at compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."))))
-  }
-
-  public mutating func appendRouteNotice(group: String, from: String, to: String, reason: ModelPlacementReason) {
-    @Dependency(\.uuid) var uuid
-    @Dependency(\.date.now) var now
-    append(.notification(.init(id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("model-route"), content: .init(text: "Model group \(group) moved \(from) → \(to) (\(reason.rawValue)). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."))))
   }
 }

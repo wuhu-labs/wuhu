@@ -1,5 +1,11 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import class Foundation.FileHandle
+  import class Foundation.Process
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import Logging
 import Scratch
@@ -98,9 +104,9 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_key_check", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_retention", "machine_v2_maintenance", "aliases", "session_command_tokens", "session_cache_warming", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_api_receipts", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines"]
+    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_api_receipts", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
-    let dropped: Set = ["session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions"]
+    let dropped: Set = ["session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs"]
     let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)
     let expectedKeys = Set(expected.keys).subtracting(later)
     #expect(
@@ -115,7 +121,6 @@ import Testing
       #expect(migrated[table] == lines.filter { line in
         !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)
           && !line.contains("_alias_insert") && !line.contains("_alias_update")
-          && !(table == "machine_execs" && (line.contains("tool_spec") || line.contains("tool_end_owed")))
           && !(table == "session_runtime" && line.contains("step_try"))
           && !(table == "session_queue" && (line.contains("topic") || line.contains("due_at")))
       }, "\(table)")
@@ -127,6 +132,10 @@ import Testing
     for table in retired {
       #expect(reopened[table] == nil)
     }
+    let fileSchema = try #require(reopened["machine_file_operations"])
+    #expect(!fileSchema.contains { $0.contains("machine_file_operations_live") })
+    try await Space.open(file: file).close()
+    #expect(try Self.shape(file) == reopened)
   }
 
   // A read session binds the web host it was minted on: a nullable grp, NULL

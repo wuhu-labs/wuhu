@@ -122,37 +122,16 @@ func addMachineRoutes(
         return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
       }
       try await hub.requireExecKind(input.machine)
-      let record: ExecRecord
-      if let script = input.script {
-        // A script's process: owned by the script, released when it ends.
-        record = try await space.mintScriptExec(machine: input.machine, caller: acting.member, script: script, group: acting.group)
-        await hub.noteMinted(record)
-      } else if acting.session == nil {
+      guard input.script != nil || acting.session != nil else {
         return errorResponse(.forbidden, code: "forbidden", message: "a script without a session mints execs only for that script")
-      } else if let callID = request.headers[ToolCallHeader.name] {
-        let claim = try await space.claimExec(
-          machine: input.machine, caller: acting.member,
-          toolCallID: ToolCallID(rawValue: callID), spec: input.spec?.jsonString(),
-        )
-        record = claim.record
-        if !claim.rejoined { await hub.noteMinted(record) }
-      } else {
-        record = try await space.mintExec(machine: input.machine, caller: acting.member)
-        await hub.noteMinted(record)
       }
+      let record = try await space.reserveExec(machine: input.machine, caller: acting.member, group: acting.group, script: input.script)
       return try Response.json(ExecMintOutput(id: record.id))
     } catch let error as OperationError {
       return try Response.json(ErrorEnvelope(error), status: .unprocessableContent)
     } catch is SpaceError {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
     }
-  }
-  router.delete("/v1/script-execs/:script") { _, parameters in
-    guard let script = parameters["script"], !script.isEmpty else {
-      return errorResponse(.notFound, code: "notFound", message: "unknown script")
-    }
-    try await space.releaseScriptExecs(script: script, caller: user().member)
-    return try Response.json([String: String]())
   }
   router.get("/v1/exec") { _, _ in
     try Response.json(try await SpaceToolContext(space: space, principal: user().principal).ownExecs())

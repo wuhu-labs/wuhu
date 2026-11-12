@@ -12,7 +12,7 @@ private actor Sink {
   func append(_ text: String) { self.text += text }
 }
 
-private let capability = "wit_" + String(repeating: "a", count: 64)
+private let capability = "signed.jwt.token" + String(repeating: "a", count: 64)
 
 private func idToken(_ arguments: [String], environment: [String: String], reply: Response) async throws -> (code: Int32, stdout: String, stderr: String, requests: [Request]) {
   let scratch = try ScratchFolder("id-token-verb")
@@ -31,7 +31,7 @@ private func idToken(_ arguments: [String], environment: [String: String], reply
 }
 
 @Suite(.deterministicDependencies) struct IDTokenVerbTests {
-  static let exec = ["WUHU_ID_TOKEN_URL": "https://space.test/v1/id-token", "WUHU_ID_TOKEN_REQUEST": capability]
+  static let exec = ["WUHU_SPACE_URL": "https://space.test", "WUHU_TOKEN": capability]
 
   @Test func parsesTheAudienceAndRequiresIt() throws {
     #expect(try Command.parse(["id-token", "--audience", "https://pool.example"]) == .idToken(audience: "https://pool.example", json: false))
@@ -39,9 +39,9 @@ private func idToken(_ arguments: [String], environment: [String: String], reply
     #expect(throws: UsageError.self) { try Command.parse(["id-token"]) }
   }
 
-  @Test func presentsOnlyTheCapabilityAndPrintsTheToken() async throws {
+  @Test func presentsTheExecTokenAndIgnoresTheOldGrant() async throws {
     let reply = try Response.json(JSONValue.object(["token": "header.claims.signature", "expiresAt": 1_800_000_060]))
-    let run = try await idToken(["--audience", "https://pool.example"], environment: Self.exec.merging(["WUHU_TOKEN": "wst_session"]) { _, new in new }, reply: reply)
+    let run = try await idToken(["--audience", "https://pool.example"], environment: Self.exec.merging(["WUHU_ID_TOKEN_REQUEST": "wit_old", "WUHU_ID_TOKEN_URL": "https://old.invalid"]) { _, new in new }, reply: reply)
     #expect(run.code == 0)
     #expect(run.stdout == "header.claims.signature\n")
     let request = try #require(run.requests.first)

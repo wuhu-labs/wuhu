@@ -69,10 +69,10 @@ import Testing
 
     let first = try #require(try await space.dueWebPushDeliveries(at: fixedDate).only)
     #expect(first.notification.payload.contains("first live reply"))
-    try await space.markWebPushDelivered(endpoint: first.endpoint, notification: first.notification.n)
+    try await mutateOutbox(space, .commit(first.endpoint, first.notification.n))
     let second = try #require(try await space.dueWebPushDeliveries(at: fixedDate).only)
     #expect(second.notification.payload.contains("second live reply"))
-    try await space.markWebPushDelivered(endpoint: second.endpoint, notification: second.notification.n)
+    try await mutateOutbox(space, .commit(second.endpoint, second.notification.n))
     #expect(try await space.dueWebPushDeliveries(at: fixedDate).isEmpty)
 
     try await space.registerWebPushSubscription(registration)
@@ -131,7 +131,7 @@ import Testing
 
     let deliveries = try await space.dueWebPushDeliveries(at: fixedDate)
     #expect(deliveries.map(\.endpoint) == ["https://push.example/expired", "https://push.example/live"])
-    try await space.deferWebPushDelivery(endpoint: "https://push.example/live", until: fixedDate.addingTimeInterval(30))
+    try await mutateOutbox(space, .postpone("https://push.example/live", fixedDate.addingTimeInterval(30)))
     #expect(try await space.dueWebPushDeliveries(at: fixedDate).map(\.endpoint) == ["https://push.example/expired"])
     #expect(try await space.dueWebPushDeliveries(at: fixedDate.addingTimeInterval(2)).isEmpty)
 

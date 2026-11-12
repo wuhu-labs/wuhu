@@ -17,7 +17,7 @@ import OperationProtocol
 import OperationRuntime
 import Serve
 import SessionDomain
-import struct SpaceContract.GroupID
+import SpaceContract
 import SpaceCore
 @testable import SpaceServer
 import Synchronization
@@ -65,15 +65,12 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
 }
 
 @Suite(.deterministicDependencies(clock: ContinuousClock())) struct SessionlessExecReleaseTests {
-  // The script's own leg attaches to the exec it minted and reads it; when its
-  // run ends, cancelled or not, its token is revoked and main kills the exec
-  // and forgets its owner row.
   @Test(arguments: [SessionlessEnd.firingCancelled, .terminalCancelled, .terminalReturned])
   func aRunsEndRevokesItsTokenAndKillsTheProcessItsScriptStarted(_ end: SessionlessEnd) async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: VirtualClock())
     let (machineID, _) = try await addMachine(server)
-    let tokens = ExecTokens(spaceURL: "http://main")
+    let tokens = try await testTokens(space: space, spaceURL: "http://main")
     let observer = Observer(group: .shared, name: "nightly", firing: "f1")
     let firing = handlerScriptID(UUID())
     let account = AccountID(rawValue: "ac_alice001")
@@ -84,23 +81,23 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
     }
     let (running, run) = AsyncStream<ExecID>.makeStream()
     let side = FiringProcessSide()
+    let mayReturn = Gate()
     defer { side.release.open() }
     let agent = try OperationAgent(machine: machineID.rawValue, kinds: [.init(FiringProcess(side: side))], authorize: { _, _ in })
     let acknowledged = Mutex(false)
-    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
+    let client = FetchClient { request in
       let response = try await agent.handler(request)
       if request.url.query?.contains("terminalAck=") == true, response.status == .ok {
         acknowledged.withLock { $0 = true }
       }
       return response
-    } })
-    await server.hub.configureV2(service)
+    }
 
     let worker = Spawning { scriptID in
-      let record = try await space.mintScriptExec(machine: machineID, caller: caller, script: scriptID)
-      await server.hub.noteMinted(record)
+      defer { run.finish() }
+      let record = try await space.reserveExec(machine: machineID, caller: caller, script: scriptID)
       // An observer named after the person's persona is not the exec's holder.
-      #expect(await server.hub.admitsCaller(record, leg: leg))
+      try #require(await server.hub.admitsCaller(record, leg: leg))
       if case .person = leg { #expect(await !server.hub.admitsCaller(record, leg: .observer("nightly@shared"))) }
       let endpoint = ChannelEndpoint()
       let outgoing = await endpoint.startExec(ExecStart(id: record.id, cwd: "/", command: ["wait"]))
@@ -111,8 +108,13 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
         defer { tasks.cancelAll() }
         var events = outgoing.events.makeAsyncIterator()
         _ = try await mixedExecOutput(&events, atLeast: 6)
+        #expect(await !server.hub.admitsCaller(record, leg: leg))
+        if case .person = leg { #expect(await !server.hub.admitsCaller(record, leg: .observer("nightly@shared"))) }
         run.yield(record.id)
-        if case .terminalReturned = end { return }
+        if case .terminalReturned = end {
+          await mayReturn.wait()
+          return
+        }
         _ = try await mixedExecExit(&events)
       }
     }
@@ -120,33 +122,80 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await server.run() }
       tasks.addTask { await agent.run() }
-      tasks.addTask { try await service.run() }
       defer { side.release.open(); tasks.cancelAll() }
-      // A firing ends cancelled; a terminal run is cancelled or returns.
-      let task = Task {
-        try await tokens.runSessionless(sessionless, script: script, machines: server.hub) { token in
-          try await worker.run(token: token, script: script)
-          if case .firingCancelled = end { throw CancellationError() }
+      try await withMachineBox(space: space, hub: server.hub, machine: machineID, client: client) {
+        // A firing ends cancelled; a terminal run is cancelled or returns.
+        let task = Task {
+          try await tokens.runSessionless(sessionless) { token in
+            try await worker.run(token: token, script: script)
+            if case .firingCancelled = end { throw CancellationError() }
+          }
         }
+        defer { task.cancel(); mayReturn.open() }
+        var started = running.makeAsyncIterator()
+        let exec = try #require(await started.next())
+        let token = try #require(worker.tokens.withLock { $0.first })
+        #expect(tokens.script(ofBearer: token) == sessionless)
+
+        if case .terminalReturned = end { mayReturn.open() } else { task.cancel() }
+        _ = try? await task.value
+        #expect(tokens.script(ofBearer: token) == nil)
+        await side.stopped.wait()
+        #expect(side.reason.withLock { $0 == "callerGone" })
+        #expect(try await realPollUntil { try await space.execRecord(exec)?.killDelivered == true })
+
+        #expect(acknowledged.withLock { !$0 })
+        side.release.open()
+        #expect(try await realPollUntil { acknowledged.withLock { $0 } })
+        #expect(try await space.liveScriptExecs(script: script, caller: caller).isEmpty)
       }
-      var started = running.makeAsyncIterator()
-      let exec = try #require(await started.next())
-      let token = try #require(worker.tokens.withLock { $0.first })
-      #expect(tokens.script(ofBearer: token) == sessionless)
+      await agent.shutdown()
+    }
+  }
+}
 
-      if case .terminalReturned = end {} else { task.cancel() }
-      _ = try? await task.value
-      #expect(tokens.script(ofBearer: token) == nil)
-      await side.stopped.wait()
-      #expect(side.reason.withLock { $0 } == "callerCancelled")
-      #expect(try await space.execRecord(exec)?.terminal == .cancelled)
-      #expect(try await space.liveScriptExecs(script: script, caller: caller).isEmpty)
-      #expect(try await space.takeScriptExecOwners().isEmpty)
+extension SessionlessExecReleaseTests {
+  @Test func cancellingAScriptJobClosesItsRealExecCallerAndTheMachineStopsIt() async throws {
+    try await withSessionDeps { try await proveScriptJobCallerClosure() }
+  }
+}
 
-      #expect(acknowledged.withLock { !$0 })
-      side.release.open()
-      #expect(try await realPollUntil { acknowledged.withLock { $0 } })
-      await agent.shutdown(); await service.shutdown()
+private func proveScriptJobCallerClosure() async throws {
+  let harness = try await SessionHarness()
+  let session = try await harness.createSession(title: "script caller")
+  let key = Curve25519.Signing.PrivateKey()
+  let enrolled = try await harness.post("/v1/machine-v2", .object(["name": .string("scriptbox"), "pubkey": .string(key.pubkeyLabel)]))
+  let enrollment = try await enrolled.json(EnrollConsumeOutput.self)
+  let machine = MachineID(rawValue: try #require(enrollment.machine))
+  let side = FiringProcessSide()
+  defer { side.release.open() }
+  let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(FiringProcess(side: side))], authorize: { _, _ in })
+  let client = FetchClient { try await agent.handler($0) }
+  try await harness.running {
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await agent.run() }
+      defer { side.release.open(); tasks.cancelAll() }
+      try await withMachineBox(space: harness.space, hub: harness.hub, machine: machine, client: client) {
+        let result = try await callResult(harness, session.rawValue, tool: "run_script", .object(["source": .string("""
+        import { machine } from "wuhu:machine"
+        const process = await machine("scriptbox").spawn("wait")
+        for await (const line of process.lines()) break
+        result(process.id)
+        await process.wait()
+        """)]))
+        let text = try #require(resultText(result))
+        let exec = ExecID(rawValue: String(text.prefix { $0 != "\n" }))
+        let note = try #require(text.split(separator: "\n").first { $0.hasPrefix("[script.") })
+        let handle = String(note.dropFirst().prefix(15))
+        let cancelled = try await callResult(harness, session.rawValue, tool: "cancel", .object(["id": .string(handle)]))
+        #expect(resultText(cancelled)?.contains("abort signalled") == true)
+        await side.stopped.wait()
+        #expect(side.reason.withLock { $0 == "callerGone" })
+        #expect(try await realPollUntil { try await harness.space.execRecord(exec)?.killDelivered == true })
+        side.release.open()
+        #expect(try await realPollUntil { try await harness.space.liveScriptExecs(script: String(handle.dropFirst(7)), caller: session.rawValue).isEmpty })
+      }
+      await agent.shutdown()
     }
   }
 }

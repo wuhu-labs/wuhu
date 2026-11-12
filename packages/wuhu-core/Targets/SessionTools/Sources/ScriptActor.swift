@@ -1,3 +1,8 @@
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct MainHub.TerminalRun
 import SessionDomain
 import struct SpaceCore.Observer

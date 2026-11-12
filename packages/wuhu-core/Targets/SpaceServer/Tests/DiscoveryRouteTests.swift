@@ -25,8 +25,8 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
       let harness = tree.harness
       let session = task ? tree.child : tree.parent
       let machine = try #require(try await harness.space.resolveMachine("box", usableFrom: .shared))
-      let record = try await harness.space.mintExec(machine: machine.id, caller: session.rawValue)
-      let token = tree.tokens.credential(session: session, exec: record.id, timeout: nil, now: Date()).token
+      let record = try await harness.space.reserveExec(machine: machine.id, caller: session.rawValue)
+      let token = try await tree.tokens.credential(session: session, exec: record.id, timeout: nil, now: Date()).token
       let context = try await json(harness.get("/v1/context", bearer: token))
       let groups = try await json(harness.get("/v1/groups", bearer: token))
       let roster = try await json(harness.get("/v1/session-tools", bearer: token))

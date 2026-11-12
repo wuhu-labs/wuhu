@@ -3,57 +3,38 @@
 #else
   import Foundation
 #endif
+import Dependencies
 import enum JSONValue.JSONValue
 import MachineContract
-import struct OperationProtocol.OperationError
 import SessionDomain
-import struct SpaceContract.GroupID
+import SpaceContract
+import SpaceCore
 import Synchronization
 
 final class ExecTokens: Sendable {
-  static let prefix: String = "wst_"
+  static let prefix = "wst_"
   static let longestLife: Double = 24 * 60 * 60
-
-  struct Holder: Hashable, Sendable {
-    var session: SessionID
-    var exec: ExecID
-    var expiresAt: Date
-  }
-
-  struct V2Key: Hashable, Sendable { let session: SessionID; let group: GroupID; let scope: String; let key: String }
-  struct V2Holder: Sendable { let key: V2Key; let expiresAt: Date; let active: @Sendable () async throws -> Bool }
-  private let v2 = Mutex<[V2Key: (token: [UInt8], holder: V2Holder, attempts: Int, issued: Bool)]>([:])
   let spaceURL: String
-  let idTokens = IDTokenGrants()
-  private let held = Mutex<[ExecID: (token: [UInt8], holder: Holder)]>([:])
-  // The worker's token for a mounted session: minted once, good until the
-  // session is archived.
-  private let sessions = Mutex<[SessionID: [UInt8]]>([:])
+  let identity: IdentityController
+  var space: Space { identity.space }
 
-  init(spaceURL: String) {
+  init(spaceURL: String, identity: IdentityController) {
     self.spaceURL = spaceURL
+    self.identity = identity
   }
 
-  func sessionToken(_ session: SessionID) -> String {
-    sessions.withLock { held in
-      if let token = held[session] { return String(decoding: token, as: UTF8.self) }
-      let token = Array(Self.randomToken().utf8)
-      held[session] = token
-      return String(decoding: token, as: UTF8.self)
-    }
+  func sessionToken(_ session: SessionID) async throws -> String {
+    @Dependency(\.date) var date
+    let group = try await space.principal(of: session).group
+    return try await Self.prefix + identity.credential(session: session, group: group, exec: nil, now: date.now, lifetime: 300)
   }
 
-  func revokeSession(_ session: SessionID) {
-    _ = sessions.withLock { $0.removeValue(forKey: session) }
-  }
-
-  func session(ofBearer bearer: String) -> SessionID? {
-    let presented = Array(bearer.utf8)
-    return sessions.withLock { held in
-      var found: SessionID?
-      for (session, token) in held where execTokenEqual(token, presented) { found = session }
-      return found
-    }
+  func credential(session: SessionID, group: GroupID, machine: MachineID, exec: ExecID, timeout: Duration, issuedAt: Date) async throws -> JSONValue {
+    let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
+    precondition(seconds > 0)
+    let life = Int(min(seconds.rounded(.up), Self.longestLife))
+    let token = try await identity.credential(session: session, group: group, exec: ExecClaims(machine: machine.rawValue, exec: exec.rawValue), now: issuedAt, lifetime: life)
+    return ["token": .string(Self.prefix + token), "spaceURL": .string(spaceURL), "expiresAt": .number(Double(Int(issuedAt.timeIntervalSince1970) + life))]
   }
 
   // A sessionless script's token for one run (an observer's firing, a
@@ -71,26 +52,13 @@ final class ExecTokens: Sendable {
     _ = scripts.withLock { $0.removeValue(forKey: Array(token.utf8)) }
   }
 
-  /// Runs `body` with a token minted for this sessionless script alone. A cancelled run loses the token at once, before whoever runs it stops; when it ends, so does every process its script started on `machines`.
-  nonisolated(nonsending) func runSessionless<T>(_ sessionless: SessionlessScript, script: String, machines: MachineHub?, _ body: (String) async throws -> T) async throws -> T {
+  nonisolated(nonsending) func runSessionless<T>(_ sessionless: SessionlessScript, _ body: (String) async throws -> T) async throws -> T {
     let token = scriptToken(sessionless)
     defer { revokeScript(token) }
-    let release = {
-      guard let machines else { return }
-      let caller = sessionless.member
-      await Task { await machines.releaseScript(script, caller: caller) }.value
-    }
-    do {
-      let result = try await withTaskCancellationHandler {
-        try await body(token)
-      } onCancel: {
-        revokeScript(token)
-      }
-      await release()
-      return result
-    } catch {
-      await release()
-      throw error
+    return try await withTaskCancellationHandler {
+      try await body(token)
+    } onCancel: {
+      revokeScript(token)
     }
   }
 
@@ -99,60 +67,6 @@ final class ExecTokens: Sendable {
     return scripts.withLock { held in
       var found: SessionlessScript?
       for (token, script) in held where execTokenEqual(token, presented) { found = script }
-      return found
-    }
-  }
-
-  func credential(session: SessionID, exec: ExecID, timeout: Double?, now: Date) -> ExecSessionCredential {
-    let life = min(timeout.flatMap { $0 > 0 ? $0 : nil } ?? Self.longestLife, Self.longestLife)
-    let token = held.withLock { held in
-      held = held.filter { $0.value.holder.expiresAt > now }
-      if let existing = held[exec], existing.holder.session == session {
-        return String(decoding: existing.token, as: UTF8.self)
-      }
-      let token = Array(Self.randomToken().utf8)
-      held[exec] = (token, Holder(session: session, exec: exec, expiresAt: now.addingTimeInterval(life)))
-      return String(decoding: token, as: UTF8.self)
-    }
-    return ExecSessionCredential(token: token, spaceURL: spaceURL)
-  }
-
-  func credential(session: SessionID, group: GroupID, scope: String, key: String, timeout: Duration, now: Date, previouslyIssued: Bool = false, reserveAttempt: Bool = false, active: @escaping @Sendable () async throws -> Bool) throws -> JSONValue {
-    let identity = V2Key(session: session, group: group, scope: scope, key: key)
-    return try v2.withLock { held in
-      held = held.filter { $0.value.holder.expiresAt.addingTimeInterval(Self.longestLife) > now }
-      if held[identity] == nil {
-        guard !previouslyIssued else { throw OperationError(.credentialExpired, message: "Session exec credential unavailable; credentials are not renewed") }
-        guard held.count < 65536 else { throw OperationError.capacityExceeded("execCredentials", used: held.count, limit: 65536) }
-        let life = min(Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18, Self.longestLife)
-        let expiry = now.addingTimeInterval(life)
-        guard expiry > now else { throw OperationError(.invalidInput, message: "Session exec credential requires a positive lifetime") }
-        held[identity] = (Array(Self.randomToken().utf8), V2Holder(key: identity, expiresAt: expiry, active: active), 0, previouslyIssued)
-      }
-      let entry = held[identity]!
-      guard entry.holder.expiresAt > now else { throw OperationError(.credentialExpired, message: "Session exec credential expired; credentials are not renewed") }
-      if reserveAttempt { held[identity]?.attempts += 1 }
-      return ["token": .string(String(decoding: entry.token, as: UTF8.self)), "spaceURL": .string(spaceURL), "expiresAt": .number(entry.holder.expiresAt.timeIntervalSince1970)]
-    }
-  }
-
-  func finishCredentialAttempt(session: SessionID, group: GroupID, scope: String, key: String, claimed: Bool) {
-    let identity = V2Key(session: session, group: group, scope: scope, key: key)
-    v2.withLock { held in
-      guard var entry = held[identity] else { return }
-      precondition(entry.attempts > 0)
-      entry.attempts -= 1
-      entry.issued = entry.issued || claimed
-      if entry.attempts == 0 && !entry.issued { held.removeValue(forKey: identity) }
-      else { held[identity] = entry }
-    }
-  }
-
-  func v2Holder(ofBearer bearer: String) -> V2Holder? {
-    let presented = Array(bearer.utf8)
-    return v2.withLock { held in
-      var found: V2Holder?
-      for entry in held.values where execTokenEqual(entry.token, presented) { found = entry.holder }
       return found
     }
   }
@@ -166,74 +80,6 @@ final class ExecTokens: Sendable {
       token += [digits[Int(byte >> 4)], digits[Int(byte & 0x0F)]]
     }
     return String(decoding: token, as: UTF8.self)
-  }
-
-  func revoke(_ exec: ExecID) {
-    _ = held.withLock { $0.removeValue(forKey: exec) }
-    idTokens.revoke(exec)
-  }
-
-  // Every held token is compared in full, so the time taken says nothing about
-  // how much of a guess matched.
-  func holder(ofBearer bearer: String, now: Date) -> Holder? {
-    let presented = Array(bearer.utf8)
-    return held.withLock { held in
-      var found: Holder?
-      for (token, holder) in held.values where execTokenEqual(token, presented) {
-        found = holder
-      }
-      guard let found, found.expiresAt > now else { return nil }
-      return found
-    }
-  }
-}
-
-/// The capability a session's exec gets in `WUHU_ID_TOKEN_REQUEST`: it mints
-/// OIDC tokens for that session, machine and exec at `/v1/id-token`, and
-/// nothing else. It lives in memory, so a server restart ends it too.
-final class IDTokenGrants: Sendable {
-  static let prefix: String = "wit_"
-
-  struct Grant: Equatable, Sendable {
-    let session: SessionID
-    let machine: MachineID
-    let exec: ExecID
-    let expiresAt: Date
-  }
-
-  private let held = Mutex<[ExecID: (token: [UInt8], grant: Grant)]>([:])
-
-  func environment(spaceURL: String, session: SessionID, machine: MachineID, exec: ExecID, timeout: Double?, now: Date) -> (url: String, request: String) {
-    let life = min(timeout.flatMap { $0 > 0 ? $0 : nil } ?? ExecTokens.longestLife, ExecTokens.longestLife)
-    let token = held.withLock { held in
-      held = held.filter { $0.value.grant.expiresAt > now }
-      if let existing = held[exec], existing.grant.session == session, existing.grant.machine == machine {
-        return String(decoding: existing.token, as: UTF8.self)
-      }
-      let token = Array(ExecTokens.randomToken(prefix: Self.prefix).utf8)
-      held[exec] = (token, Grant(session: session, machine: machine, exec: exec, expiresAt: now.addingTimeInterval(life)))
-      return String(decoding: token, as: UTF8.self)
-    }
-    return (spaceURL + "/v1/id-token", token)
-  }
-
-  func grant(ofBearer bearer: String, now: Date) -> Grant? {
-    let presented = Array(bearer.utf8)
-    return held.withLock { held in
-      var found: Grant?
-      for (token, grant) in held.values where execTokenEqual(token, presented) { found = grant }
-      guard let found, found.expiresAt > now else { return nil }
-      return found
-    }
-  }
-
-  func revoke(_ exec: ExecID) {
-    _ = held.withLock { $0.removeValue(forKey: exec) }
-  }
-
-  /// When `exec`'s grant lapses, or nil when it holds none.
-  func expiry(of exec: ExecID) -> Date? {
-    held.withLock { $0[exec]?.grant.expiresAt }
   }
 }
 

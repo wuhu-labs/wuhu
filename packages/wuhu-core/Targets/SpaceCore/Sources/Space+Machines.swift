@@ -95,22 +95,6 @@ public struct ExecRecord: Equatable, Sendable, Codable {
   public var session: SessionID? { caller.flatMap { Observer.isMember($0) ? nil : SessionID(rawValue: $0) } }
 }
 
-public struct ExecClaim: Equatable, Sendable {
-  public let record: ExecRecord
-  public let rejoined: Bool
-  public init(record: ExecRecord, rejoined: Bool) { self.record = record; self.rejoined = rejoined }
-}
-
-// The execs a run_script execution owned when the server that ran it went
-// away; `live` are the ones the registry still holds live.
-public struct ScriptExecOwner: Equatable, Sendable {
-  public let script: String
-  public let session: String
-  public let live: [ExecID]
-
-  public init(script: String, session: String, live: [ExecID]) { self.script = script; self.session = session; self.live = live }
-}
-
 extension Space {
   /// A machine enrolled by a person joins that person's group; `shared` holds
   /// every machine from before groups.
@@ -268,319 +252,73 @@ extension Space {
   public func moveMachine(_ id: MachineID, to group: GroupID) async throws -> MachineRecord {
     let notes = try SpacePath(validating: "/_/machines/\(id.rawValue)")
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let broadcast = broadcast
-    if let current = try await writer.read({ db in try MachineRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)?.grp }) {
-      try await live.settle(under: notes, in: GroupID(rawValue: current))
-    }
-    let (record, moved): (MachineRecord, (from: GroupID, rev: Int64)?) = try await blobs.write(
-      writer, emittingTo: broadcast,
-      prefetching: { db in
-        guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else { return [] }
-        return try Substrate.descendantHeads(of: notes, group: GroupID(rawValue: row.grp), in: db)
-          .compactMap { $0.kind == "file" ? $0.blobHash : nil }
-      },
-    ) { db, cache, pending in
-      guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
-        throw SpaceError.notFound(id.rawValue)
+    var tries = 0
+    while true {
+      if let current = try await writer.read({ db in try MachineRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)?.grp }) {
+        try await documents.checkpoint(under: notes, in: GroupID(rawValue: current))
       }
-      let from = GroupID(rawValue: row.grp)
-      let movedRow = MachineRow(
-        id: row.id, accountID: row.accountID, name: row.name, createdAt: row.createdAt, grp: group.rawValue, scope: row.scope,
-      )
-      try MachineRow.update(movedRow).execute(db)
-      if var member = try MachineV2MemberRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) {
-        member.grp = group.rawValue
-        try MachineV2MemberRow.update(member).execute(db)
-      }
-      if var presence = try MachineV2PresenceRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) {
-        presence.grp = group.rawValue
-        try MachineV2PresenceRow.update(presence).execute(db)
-      }
-      let record = Self.machineRecord(from: movedRow)
-      guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return (record, nil) }
-      let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
-      try Substrate.ensureAncestorDirectories(notes, group: group, rev: rev, mtime: mtime, in: db)
-      var moved: [(path: String, entry: Entry.Kind)] = []
-      for node in try Substrate.descendantHeads(of: notes, group: from, in: db).reversed() {
-        let path = try SpacePath(validating: node.path)
-        if let existing = try Substrate.head(path, group: group, in: db) {
-          if existing.kind == "directory", node.kind == "directory" {
+      do {
+        return try await blobs.write(
+          writer,
+          prefetching: { db in
+            guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else { return [] }
+            return try Substrate.descendantHeads(of: notes, group: GroupID(rawValue: row.grp), in: db)
+              .compactMap { $0.kind == "file" ? $0.blobHash : nil }
+          },
+        ) { db, cache in
+          guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
+            throw SpaceError.notFound(id.rawValue)
+          }
+          let from = GroupID(rawValue: row.grp)
+          try DocumentRows.requireCommitted(from, under: notes, in: db)
+          let movedRow = MachineRow(
+            id: row.id, accountID: row.accountID, name: row.name, createdAt: row.createdAt, grp: group.rawValue, scope: row.scope,
+          )
+          try MachineRow.update(movedRow).execute(db)
+          if var member = try MachineV2MemberRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) {
+            member.grp = group.rawValue
+            try MachineV2MemberRow.update(member).execute(db)
+          }
+          let record = Self.machineRecord(from: movedRow)
+          guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return record }
+          let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
+          try Substrate.ensureAncestorDirectories(notes, group: group, rev: rev, mtime: mtime, in: db)
+          for node in try Substrate.descendantHeads(of: notes, group: from, in: db).reversed() {
+            let path = try SpacePath(validating: node.path)
+            if let existing = try Substrate.head(path, group: group, in: db) {
+              if existing.kind == "directory", node.kind == "directory" {
+                try LiveFS.tombstone(path: node.path, group: from, rev: rev, op: .delete, in: db)
+                continue
+              }
+              let displaced = existing.kind == "directory" ? try Substrate.descendantHeads(of: path, group: group, in: db) : [existing]
+              for stale in displaced {
+                try LiveFS.remove(stale, group: group, rev: rev, op: .delete, in: db)
+              }
+            }
+            if node.kind == "table" {
+              try Tables.reparent(from: path, in: from, to: path, in: group, rev: rev, in: db)
+            }
             try LiveFS.tombstone(path: node.path, group: from, rev: rev, op: .delete, in: db)
-            continue
+            try Substrate.appendVersion(group: group, path: node.path, rev: rev, kind: node.kind, blobHash: node.blobHash, op: .write, in: db)
+            try Substrate.upsertHead(
+              FSHeadRow(
+                grp: group.rawValue, path: node.path, parentPath: path.parent.rawValue, kind: node.kind,
+                blobHash: node.blobHash, size: node.size, lineCount: node.lineCount, etag: node.etag, rev: rev, mtime: mtime,
+              ),
+              in: db,
+            )
+            if node.kind == "file", let hash = node.blobHash {
+              try Induction.index(path: path, group: group, content: try cache.blob(of: hash, in: db).content, in: db)
+            }
           }
-          let displaced = existing.kind == "directory" ? try Substrate.descendantHeads(of: path, group: group, in: db) : [existing]
-          for stale in displaced {
-            try LiveFS.remove(stale, group: group, rev: rev, op: .delete, in: db)
-          }
+          try self.documents.removed(under: notes, in: from, rev: rev, on: db)
+          try self.documents.removed(under: notes, in: group, rev: rev, on: db)
+          return record
         }
-        if node.kind == "table" {
-          try Tables.reparent(from: path, in: from, to: path, in: group, rev: rev, in: db)
-        }
-        try LiveStore.relocate(node, group: from, to: path, in: group, rev: rev, in: db)
-        try LiveFS.tombstone(path: node.path, group: from, rev: rev, op: .delete, in: db)
-        try Substrate.appendVersion(group: group, path: node.path, rev: rev, kind: node.kind, blobHash: node.blobHash, op: .write, in: db)
-        try Substrate.upsertHead(
-          FSHeadRow(
-            grp: group.rawValue, path: node.path, parentPath: path.parent.rawValue, kind: node.kind,
-            blobHash: node.blobHash, size: node.size, lineCount: node.lineCount, etag: node.etag, rev: rev, mtime: mtime,
-          ),
-          in: db,
-        )
-        if node.kind == "file", let hash = node.blobHash {
-          try Induction.index(path: path, group: group, content: try cache.blob(of: hash, in: db).content, in: db)
-        }
-        moved.append((node.path, Substrate.entryKind(node.kind)))
+      } catch is DocumentEdited {
+        tries += 1
+        if tries == 3 { throw SpaceError.liveBusy(notes.rawValue) }
       }
-      pending += moved.flatMap { note in
-        [
-          MutationEvent(group: from, path: note.path, rev: Int(rev), kind: .delete, entry: nil),
-          MutationEvent(group: group, path: note.path, rev: Int(rev), kind: .write, entry: note.entry),
-        ]
-      }
-      return (record, (from, rev))
-    }
-    if let moved {
-      await live.drop(under: notes, in: moved.from, rev: moved.rev)
-      await live.drop(under: notes, in: group, rev: moved.rev)
-    }
-    return record
-  }
-
-  /// `group` homes the exec where its minter acts; nil homes it by `execGroup`.
-  public func mintExec(machine: MachineID, caller: String? = nil, group: GroupID? = nil) async throws -> ExecRecord {
-    let id = ExecID(rawValue: "ex_" + randomSuffix(ExecID.suffixLength))
-    let startedAt = dateGen.now
-    let started = SQLiteDateFormat.string(from: startedAt)
-    let (streamID, home) = try await writer.write { db in
-      let home = try group?.rawValue ?? Self.execGroup(machine, caller: caller, in: db)
-      return (try Self.insertExec(id, machine: machine, caller: caller, toolCallID: nil, startedAt: started, group: home, in: db), home)
-    }
-    return ExecRecord(
-      id: id,
-      machine: machine,
-      streamID: Int(streamID),
-      command: "",
-      caller: caller,
-      toolCallID: nil,
-      startedAt: startedAt,
-      terminal: nil,
-      killDelivered: false,
-      group: GroupID(rawValue: home),
-    )
-  }
-
-  // The owner row commits with the exec row, so no process exists that a boot
-  // after a crash could not attribute to its script.
-  /// `caller` is a session's id or an observer's member; `group` homes the
-  /// exec where it acts, nil by `execGroup`.
-  public func mintScriptExec(machine: MachineID, caller: String, script: String, group home: GroupID? = nil) async throws -> ExecRecord {
-    let id = ExecID(rawValue: "ex_" + randomSuffix(ExecID.suffixLength))
-    let startedAt = dateGen.now
-    let started = SQLiteDateFormat.string(from: startedAt)
-    let (streamID, group) = try await writer.write { db in
-      let group = try home?.rawValue ?? Self.execGroup(machine, caller: caller, in: db)
-      let streamID = try Self.insertExec(id, machine: machine, caller: caller, toolCallID: nil, startedAt: started, group: group, in: db)
-      try ScriptExecRow.insert {
-        ScriptExecRow(execID: id.rawValue, scriptID: script, sessionID: caller, grp: group)
-      }.execute(db)
-      return (streamID, group)
-    }
-    return ExecRecord(
-      id: id,
-      machine: machine,
-      streamID: Int(streamID),
-      command: "",
-      caller: caller,
-      toolCallID: nil,
-      startedAt: startedAt,
-      terminal: nil,
-      killDelivered: false,
-      group: GroupID(rawValue: group),
-    )
-  }
-
-  public func liveScriptExecs(script: String, caller: String) async throws -> [ExecID] {
-    try await writer.read { db in
-      try String.fetchAll(
-        db,
-        sql: """
-        SELECT e.id FROM machine_execs e JOIN script_execs s ON s.exec_id = e.id
-        WHERE s.script_id = ? AND s.session_id = ? AND e.terminal_state IS NULL ORDER BY e.started_at, e.id
-        """,
-        arguments: [script, caller],
-      ).map(ExecID.init(rawValue:))
-    }
-  }
-
-  public func releaseScriptExecs(script: String, caller: String) async throws {
-    try await writer.write { db in
-      try ScriptExecRow.where { $0.scriptID.eq(script) && $0.sessionID.eq(caller) }.delete().execute(db)
-    }
-  }
-
-  // Owner rows outlive their script only when the server running it died, so
-  // at boot every row left is a script that restart killed. Taking them clears
-  // them: each script is reported once.
-  public func takeScriptExecOwners() async throws -> [ScriptExecOwner] {
-    try await writer.write { db in
-      let rows = try ScriptExecRow.order { ($0.sessionID, $0.scriptID, $0.execID) }.fetchAll(db)
-      guard !rows.isEmpty else { return [] }
-      let live = try Set(String.fetchAll(
-        db,
-        sql: "SELECT e.id FROM machine_execs e JOIN script_execs s ON s.exec_id = e.id WHERE e.terminal_state IS NULL",
-      ))
-      for row in rows { try ScriptExecRow.where { $0.execID.eq(row.execID) }.delete().execute(db) }
-      var owners: [ScriptExecOwner] = []
-      for row in rows {
-        let exec = live.contains(row.execID) ? [ExecID(rawValue: row.execID)] : []
-        if let last = owners.last, last.script == row.scriptID, last.session == row.sessionID {
-          owners[owners.count - 1] = ScriptExecOwner(script: last.script, session: last.session, live: last.live + exec)
-        } else {
-          owners.append(ScriptExecOwner(script: row.scriptID, session: row.sessionID, live: exec))
-        }
-      }
-      return owners
-    }
-  }
-
-  // Mark-started-before-spawn: the row exists before any exec-start frame is
-  // sent, so a crash-retry with the same kernel tool call id rejoins this exec
-  // instead of spawning a second process.
-  public func claimExec(machine: MachineID, caller: String, toolCallID: ToolCallID, spec: String? = nil) async throws -> ExecClaim {
-    let id = ExecID(rawValue: "ex_" + randomSuffix(ExecID.suffixLength))
-    let started = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      if let existing = try Row.fetchOne(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE caller = ? AND tool_call_id = ?",
-        arguments: [caller, toolCallID.rawValue],
-      ) {
-        return ExecClaim(record: Self.execRecord(from: existing), rejoined: true)
-      }
-      _ = try Self.insertExec(
-        id, machine: machine, caller: caller, toolCallID: toolCallID, startedAt: started,
-        group: Self.execGroup(machine, caller: caller, in: db), toolSpec: spec, in: db,
-      )
-      guard let row = try Row.fetchOne(db, sql: "SELECT * FROM machine_execs WHERE id = ?", arguments: [id.rawValue]) else {
-        throw SpaceError.notFound(id.rawValue)
-      }
-      return ExecClaim(record: Self.execRecord(from: row), rejoined: false)
-    }
-  }
-
-  // An exec is homed in its calling session's group, else in its machine's.
-  private static func execGroup(_ machine: MachineID, caller: String?, in db: Database) throws -> String {
-    if let caller, let group = try String.fetchOne(db, sql: "SELECT grp FROM sessions WHERE id = ?", arguments: [caller]) {
-      return group
-    }
-    return try String.fetchOne(db, sql: "SELECT grp FROM machines WHERE id = ?", arguments: [machine.rawValue]) ?? GroupID.shared.rawValue
-  }
-
-  private static func insertExec(
-    _ id: ExecID,
-    machine: MachineID,
-    caller: String?,
-    toolCallID: ToolCallID?,
-    startedAt: String,
-    group: String,
-    toolSpec: String? = nil,
-    in db: Database,
-  ) throws -> Int64 {
-    try requireMachine(machine, in: db)
-    let streamID = (try Int64.fetchOne(
-      db,
-      sql: "SELECT COALESCE(MAX(stream_id), 0) + 1 FROM machine_execs WHERE machine_id = ?",
-      arguments: [machine.rawValue],
-    )) ?? 1
-    try db.execute(
-      sql: """
-      INSERT INTO machine_execs (id, machine_id, stream_id, command, caller, tool_call_id, started_at, grp, tool_spec)
-      VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)
-      """,
-      arguments: [id.rawValue, machine.rawValue, streamID, caller, toolCallID?.rawValue, startedAt, group, toolSpec],
-    )
-    return streamID
-  }
-
-  public func recordExecCommand(_ id: ExecID, command: String) async throws {
-    try await writer.write { db in
-      try db.execute(
-        sql: "UPDATE machine_execs SET command = ? WHERE id = ? AND command = ''",
-        arguments: [command, id.rawValue],
-      )
-    }
-  }
-
-  public func execRecord(_ id: ExecID) async throws -> ExecRecord? {
-    try await writer.read { db in
-      try Row.fetchOne(db, sql: "SELECT * FROM machine_execs WHERE id = ?", arguments: [id.rawValue])
-        .map(Self.execRecord(from:))
-    }
-  }
-
-  public func execRecord(caller: String, toolCallID: ToolCallID) async throws -> ExecRecord? {
-    try await writer.read { db in
-      try Row.fetchOne(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE caller = ? AND tool_call_id = ?",
-        arguments: [caller, toolCallID.rawValue],
-      ).map(Self.execRecord(from:))
-    }
-  }
-
-  public func backgroundExec(_ id: ExecID, caller: String) async throws -> Bool {
-    try await writer.write { db in
-      try db.execute(
-        sql: "UPDATE machine_execs SET tool_end_owed = 1 WHERE id = ? AND caller = ? AND tool_call_id IS NOT NULL",
-        arguments: [id.rawValue, caller],
-      )
-      return db.changesCount > 0
-    }
-  }
-
-  public func liveToolExecs(caller: String) async throws -> [ExecRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE caller = ? AND tool_call_id IS NOT NULL AND terminal_state IS NULL ORDER BY started_at, id",
-        arguments: [caller],
-      ).map(Self.execRecord(from:))
-    }
-  }
-
-  public func liveExecs() async throws -> [ExecRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM machine_execs WHERE terminal_state IS NULL ORDER BY started_at, id",
-      ).map(Self.execRecord(from:))
-    }
-  }
-
-  // Exit states settle cancelled and machine-lost rows (they can still resolve
-  // to the real exit once it replays) but never a reaped one: the reap verdict
-  // is the honest story a rejoining retry must see. Cancel, reap, and
-  // machine-lost only claim rows that are still live.
-  public func finishExec(_ id: ExecID, _ state: ExecTerminalState) async throws {
-    try await writer.write { db in
-      switch state {
-      case .exited, .signaled:
-        try db.execute(
-          sql: "UPDATE machine_execs SET terminal_state = ? WHERE id = ? AND (terminal_state IS NULL OR terminal_state IN ('cancelled', 'machine-lost'))",
-          arguments: [state.stored, id.rawValue],
-        )
-      case .cancelled, .reaped, .machineLost:
-        try db.execute(
-          sql: "UPDATE machine_execs SET terminal_state = ? WHERE id = ? AND terminal_state IS NULL",
-          arguments: [state.stored, id.rawValue],
-        )
-      }
-    }
-  }
-
-  public func markKillDelivered(_ id: ExecID) async throws {
-    try await writer.write { db in
-      try db.execute(sql: "UPDATE machine_execs SET kill_delivered = 1 WHERE id = ?", arguments: [id.rawValue])
     }
   }
 
@@ -621,23 +359,6 @@ extension Space {
       createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
       group: GroupID(rawValue: row.grp),
       scope: ReachScope(rawValue: row.scope) ?? .owner,
-    )
-  }
-
-  private static func execRecord(from row: Row) -> ExecRecord {
-    ExecRecord(
-      id: ExecID(rawValue: row["id"]),
-      machine: MachineID(rawValue: row["machine_id"]),
-      streamID: Int(row["stream_id"] as Int64),
-      command: row["command"],
-      caller: row["caller"],
-      toolCallID: (row["tool_call_id"] as String?).map(ToolCallID.init(rawValue:)),
-      startedAt: (try? SQLiteDateFormat.date(from: row["started_at"])) ?? Date(timeIntervalSince1970: 0),
-      terminal: (row["terminal_state"] as String?).flatMap(ExecTerminalState.init(stored:)),
-      killDelivered: (row["kill_delivered"] as Int64) != 0,
-      group: GroupID(rawValue: row["grp"] as String? ?? GroupID.shared.rawValue),
-      toolSpec: row["tool_spec"],
-      background: (row["tool_end_owed"] as Int64) != 0,
     )
   }
 }

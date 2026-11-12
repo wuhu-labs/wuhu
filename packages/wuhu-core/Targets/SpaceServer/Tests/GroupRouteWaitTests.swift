@@ -1,7 +1,12 @@
+import ControlledTime
 import Credentials
 import Dependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import InferenceKit
 import LoopCore
 import class MainHub.Hub
@@ -18,11 +23,11 @@ extension GroupSwitchingTests {
     try await withSessionDeps {
       let failures = 9
       let requests = Mutex(0)
-      let reads = Mutex(0)
-      let start = Date()
+      let now = Mutex(Date())
+      let clock = VirtualClock()
       try await withDependencies {
-        // Each read is past the previous outage's one-minute retry, so the waits are immediate.
-        $0.date = DateGenerator { start.addingTimeInterval(61 * Double(reads.withLock { $0 += 1; return $0 })) }
+        $0.date = DateGenerator { now.withLock { $0 } }
+        $0.continuousClock = clock
         $0.withRandomNumberGenerator = WithRandomNumberGenerator(NoJitter())
         $0.fetch = FetchClient { _ in
           let round = requests.withLock { $0 += 1; return $0 }
@@ -36,6 +41,11 @@ extension GroupSwitchingTests {
           try await harness.deliver("request during an outage", to: id)
           try await until("the outage passed and the held member answered") {
             let work = try await harness.store.record(id).work
+            // The retry's sleep is armed on the clock after the failure lands, which can be after the advance that made it due: keep the clock moving while a failure stands rather than only while its deadline is ahead.
+            if let retry = try await harness.store.modelRoute(id)?.failure?.retryAt {
+              now.withLock { $0 = max($0, retry).addingTimeInterval(1) }
+              await clock.advance(by: .seconds(61))
+            }
             #expect(work != .errored)
             return work == .noWork && requests.withLock { $0 } > failures
           }
@@ -60,8 +70,9 @@ extension GroupSwitchingTests {
       let reset = resetAhead ? Date().addingTimeInterval(7800) : nil
       #expect(try await recordRouteFailure(InferenceError.rateLimited(retryAt: reset), session: id, store: owner.space.sessions, catalog: catalog)?.retryAt == reset)
       let ready = catalog
-      let compacted = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "folded", snapshot: .init(), runningWork: []), kept: nil)
-      let transition = try await compactionPlacement(store: owner.space.sessions, catalog: { _ in ready }, usage: harness.runtime.usage)(id, compacted, nil)
+      let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "folded", snapshot: .init(), runningWork: [])
+      let tokens = head.lines(session: id).estimatedContextTokens(images: .claude)
+      let transition = try await compactionPlacement(store: owner.space.sessions, catalog: { _ in ready }, usage: harness.runtime.usage)(id, tokens, nil)
       #expect(transition?.route.member == (resetAhead && otherUsable ? "b" : nil))
     }
   }

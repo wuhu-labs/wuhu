@@ -150,26 +150,25 @@ private final class ToolsWitness: Sendable {
             }
 
             let delegating = try await harness.store.hydrate(agent)
-            let delegated = try await harness.store.transcript(agent)
+            let delegated = try await harness.store.testLines(agent)
             let createCall = try #require(
               delegated.toolCalls(named: "create_session").first,
               "agent transcript:\n\(delegated.outline)",
             )
             #expect(createCall.arguments.object?["expects_reply"] == .bool(true))
             #expect(createCall.arguments.object?["message"] != nil)
-            let created = try #require(delegated.results.compactMap { payload -> CreateSessionResult? in
-              guard case let .createSession(result) = payload else { return nil }
-              return result
-            }.first)
-            let request = try #require(created.requestID)
+            let receipt = try #require(await harness.store.receipt(.session(agent), toolCallID: ToolCallID(createCall.id)))
+            let created = try #require({ () -> CreateSessionResult? in
+              if case let .createSession(result) = receipt { result } else { nil }
+            }())
             let task = created.sessionID
+            let request = try #require(await harness.store.openRequests(task).first?.id)
             #expect(try await harness.store.record(task).kind == .task)
             #expect(try await harness.store.record(task).parent == agent)
 
             let acknowledged = try await harness.boxMessages(agent).filter { $0.senderSession == agent.rawValue }
             #expect(!acknowledged.isEmpty, "the agent acknowledged the ask in its box")
-            #expect(try await harness.store.settleState(agent).owedConversations.isEmpty)
-            #expect(delegated.notifications(kind: .owedReply).isEmpty)
+            #expect(!delegated.contains { $0.key == "subscription:owed.reply" })
             #expect(delegating.queueHead == delegating.queueTail)
             #expect(try await harness.store.openRequests(task).map(\.id) == [request])
 
@@ -178,13 +177,11 @@ private final class ToolsWitness: Sendable {
             try await until("the task settles after its final", timeout: .seconds(300)) {
               try await harness.store.settledWork(task)
             }
-            let reported = try await harness.store.transcript(task)
-            let reports = reported.results.compactMap { payload -> ReportResult? in
-              guard case let .report(result) = payload else { return nil }
-              return result
-            }
-            #expect(reports.map(\.kind) == [.final], "task transcript:\n\(reported.outline)")
-            #expect(reports.map(\.requestID) == [request])
+            let reported = try await harness.store.testLines(task)
+            let reports = reported.toolCalls(named: "report")
+            #expect(reports.map { $0.arguments.object?["kind"]?.stringValue } == ["final"], "task transcript:\n\(reported.outline)")
+            #expect(reports.map { $0.arguments.object?["request_id"]?.stringValue } == [request.rawValue])
+            #expect(reports.allSatisfy { call in reported.contains { $0.key == "call:\(call.id)" && $0.text.contains("reported final") } })
             #expect(try await harness.store.openRequests(task).isEmpty)
 
             try await until("the agent relays the final into its box", timeout: .seconds(300)) {
@@ -194,22 +191,13 @@ private final class ToolsWitness: Sendable {
               }
             }
 
-            let relayed = try await harness.store.transcript(agent)
-            let final = try #require(
-              relayed.items.compactMap { item -> ConversationMessage? in
-                guard case let .message(message) = item, message.kind == .final else { return nil }
-                return message
-              }.first,
-              "agent transcript:\n\(relayed.outline)",
-            )
-            #expect(final.requestID == request)
-            #expect(final.senderSession == task)
-            #expect(final.header.kind == .final)
-            #expect(final.header.source == .conversation(final.conversationID))
-            #expect(final.content.text.localizedCaseInsensitiveContains("pineapple"))
-            #expect(relayed.notifications(kind: .owedReply).isEmpty)
-            #expect(relayed.notifications(kind: .parkReminder).isEmpty)
-            #expect(try await harness.store.settleState(agent).owedConversations.isEmpty)
+            let relayed = try await harness.store.testLines(agent)
+            let final = try #require(relayed.first { $0.key.hasPrefix("message:") && $0.text.contains("<type>final report</type>") }, "agent transcript:\n\(relayed.outline)")
+            #expect(final.text.contains(task.rawValue))
+            #expect(final.text.contains("<source>conversation/"))
+            #expect(final.text.localizedCaseInsensitiveContains("pineapple"))
+            #expect(!relayed.contains { $0.key == "subscription:owed.reply" })
+            #expect(!relayed.contains { $0.key.hasPrefix("subscription:park.") })
             #expect(try await harness.store.undrainedInputs(agent).isEmpty)
 
             let served = try #require(
@@ -307,46 +295,18 @@ extension SessionHarness {
   }
 }
 
-extension Transcript {
+extension [TranscriptLine] {
   fileprivate func toolCalls(named name: String) -> [ToolCall] {
-    items.flatMap { item -> [ToolCall] in
-      guard case let .assistant(entry) = item else { return [] }
-      return entry.toolCalls.filter { $0.name == name }
-    }
-  }
-
-  fileprivate var results: [ToolResultPayload] {
-    items.compactMap { item in
-      guard case let .toolResult(result) = item else { return nil }
-      return result.payload
-    }
-  }
-
-  fileprivate func notifications(kind: SystemNotification.Kind) -> [SystemNotification] {
-    items.compactMap { item in
-      guard case let .notification(notification) = item, notification.kind == kind else { return nil }
-      return notification
+    flatMap { line -> [ToolCall] in
+      guard case let .assistant(reply) = line.message else { return [] }
+      return reply.content.compactMap { block in
+        guard case let .toolCall(call) = block, call.name == name else { return nil }
+        return call
+      }
     }
   }
 
   fileprivate var outline: String {
-    items.map { item -> String in
-      switch item {
-      case let .direct(message): "direct: \(message.content.text.prefix(80))"
-      case let .message(message): "\(message.kind) from \(message.sender.id): \(message.content.text.prefix(80))"
-      case let .notification(notification): "notification \(notification.kind): \(notification.content.text.prefix(80))"
-      case let .assistant(entry):
-        "assistant \(entry.stopReason): " + entry.content.map { block -> String in
-          switch block {
-          case let .text(text): "text(\(text.text.prefix(80)))"
-          case let .toolCall(call): "\(call.name)(\(call.arguments.text.prefix(120)))"
-          default: "\(block)".prefix(40).description
-          }
-        }.joined(separator: " | ")
-      case let .toolResult(result): "result: \("\(result.payload)".prefix(120))"
-      case .bookmark: "bookmark"
-      case .generationHead: "generation head"
-      }
-    }.joined(separator: "\n")
+    map { "\($0.role): \($0.key): \($0.text.prefix(160))" }.joined(separator: "\n")
   }
 }

@@ -12,8 +12,8 @@ import struct Credentials.CredentialsStore
 import Dependencies
 import Fetch
 import Logging
-import struct OperationClient.OperationOwner
 import Serve
+import ServeRouting
 import struct SessionDomain.SessionID
 import struct SpaceContract.AIDisclosure
 import SpaceCore
@@ -54,9 +54,8 @@ public actor SpaceHost {
       let advertisedOrigin = deployment.origin
       let logger = Logger(label: "wuhu.serve")
       let identityDirectory = folder.appendingPathComponent("identity")
-      let serverKey = try await ServerIdentity.loadOrCreate(directory: identityDirectory)
       @Dependency(\.fetch) var identityFetch
-      let serverIdentity = try await IdentityController.load(identity: serverKey, origin: advertisedOrigin, store: .disk(identityDirectory), fetch: identityFetch)
+      let serverIdentity = try await IdentityController.load(space: space, origin: advertisedOrigin, directory: identityDirectory, fetch: identityFetch)
       // Apple's push service rejects VAPID subjects that are not public https/mailto
       // contacts, so the contact must never derive from --origin (LAN or localhost hosts).
       let vapid = try await WebPushKeyStore.loadOrCreate(
@@ -69,12 +68,9 @@ public actor SpaceHost {
       if let devImport {
         try await space.importFolder(devImport)
       }
-      let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? fallbackOrigin)
+      let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? fallbackOrigin, identity: serverIdentity)
       let secrets = try configDirectory.map { try secretStores(configDirectory: $0, spaceID: id) }
       let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets)
-      let v2Hub = MachineV2Hub(space: space)
-      let v2Service = await MachineV2Service.open(space: space, hub: v2Hub, directory: folder.appendingPathComponent("machine-v2"))
-      await hub.configureV2(v2Service)
       let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
       let credentials = configDirectory.map { CredentialResolver.live(store: CredentialsStore(configDirectory: $0, spaceID: id), allowEnvironment: allowEnvironmentCredentials) } ?? (allowEnvironmentCredentials ? .environmentOnly : .unavailable)
       let usage = UsageBoard()
@@ -100,10 +96,9 @@ public actor SpaceHost {
         },
         oidcBindingIdentity: { audience, session in
           let record = try await space.sessions.record(session)
-          return try await serverIdentity.inferenceReplayIdentity(audience: audience, space: space.identity().rawValue, group: record.group.rawValue)
+          return try serverIdentity.inferenceReplayIdentity(audience: audience, space: await space.identity().rawValue, group: record.group.rawValue)
         },
         eventSources: .signed(by: serverIdentity, in: space),
-        lineDifferences: lineDifferenceLog(),
       )
       var pushConfiguration = HTTPClient.Configuration()
       pushConfiguration.httpVersion = .automatic
@@ -118,20 +113,21 @@ public actor SpaceHost {
         backgroundActivityLogger: logger,
         unsafeHTTPClient: webPushHTTPClient,
       )
-      let webPushRuntime = WebPushRuntime(
-        space: space,
-        logger: logger,
-        client: .live(manager: webPushManager, logger: logger),
-      )
       @Dependency(\.fetch) var fetch
-      let pushRelayRuntime = PushRelayRuntime(
-        space: space,
-        logger: logger,
-        client: .live(fetch: fetch),
+      try registerNotificationDelivery(
+        space: space, logger: logger,
+        webPush: .live(manager: webPushManager, logger: logger),
+        pushRelay: .live(fetch: fetch),
       )
       let keyStreams = KeyStreams()
       @Dependency(\.continuousClock) var releaseClock
+      @Dependency(\.date) var date
       let releases = MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: releaseClock)
+      var listenerRoutes = Router()
+      let upgrades = MachineV2Upgrades(space: space, serverVersion: version, releases: releases)
+      addMachineV2Routes(&listenerRoutes, space: space, hub: hub, upgrades: upgrades, fingerprint: deployment.pin) { request in
+        return try await requestPrincipal(request, space: space, date: date)
+      }
       let handler = SpaceServer.configuredHandler(
         space: space,
         hub: hub,
@@ -150,8 +146,7 @@ public actor SpaceHost {
         secrets: secrets,
         execTokens: execTokens,
         identityController: serverIdentity,
-        machineV2Hub: v2Hub,
-        machineV2Releases: releases,
+        listenerRoutes: listenerRoutes,
         keyStreams: keyStreams,
         pageFetch: PageFetch(controller: serverIdentity).response,
       )
@@ -160,24 +155,12 @@ public actor SpaceHost {
       let scoped = spaceScopedHandler(id: id, handler: handler)
       let owned = spaceOwnedHandler(handler: scoped, requests: requests, sockets: sockets)
       return SpaceHost(space: space, id: id, credentials: credentials, sockets: sockets, requests: requests, handler: owned, runBody: {
-        await withTaskGroup(of: Void.self) { group in
-          group.addTask { await serverIdentity.run() }
-          group.addTask {
-            do { try await v2Service.run() }
-            catch is CancellationError {}
-            catch { logger.error("Machine v2 coordinator stopped", metadata: ["error": "\(error)"]) }
-          }
-          group.addTask { await sessions.run() }
-          group.addTask { await webPushRuntime.run() }
-          group.addTask { await pushRelayRuntime.run() }
-          await group.waitForAll()
-        }
+        await sessions.run()
       }, shutdownBody: {
         await keyStreams.close()
         await releases.close()
         await hub.callerScope.close()
-        await v2Service.shutdown()
-        await sessions.execution.shutdown()
+        await sessions.execution.quiesce()
         await metricsWriter.close()
         var failure: (any Error)?
         if let devExport {

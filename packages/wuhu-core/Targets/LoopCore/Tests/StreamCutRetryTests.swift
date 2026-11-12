@@ -34,8 +34,8 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
-        let result = try await executor.run(attemptID: request.attemptID, transcript: request.transcript)
-        return InferenceReply(message: result.message, metadata: result.metadata, committed: { entry, _ in commits.withLock { $0.append(entry.id) } })
+        let result = try await executor.run(attemptID: request.attemptID, lines: request.lines)
+        return InferenceReply(message: result.message, metadata: result.metadata, committed: { entry in commits.withLock { $0.append(entry.id) } })
       }
       let script = InferenceScript([step, step])
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
@@ -48,7 +48,7 @@ import WuhuAI
           try await time.asleep("retry", dueIn: delay)
           #expect(try await sessions.record(sid).work != .errored)
           #expect(try await sessions.record(sid).errorMessage == nil)
-          #expect(try await sessions.hydrate(sid).transcript.kernel.assistantEntries.isEmpty)
+          #expect(try await sessions.lines(sid).assistantLines.isEmpty)
           #expect(commits.value.isEmpty)
           try await time.wake("retry", after: delay)
           try await until("settled") { try await sessions.settledWork(sid) }
@@ -59,9 +59,9 @@ import WuhuAI
       #expect(requests.value.count == 2)
       #expect(requests.value[0] == requests.value[1])
       #expect(commits.value == [script.attempts.value[1].id])
-      let entries = try await sessions.hydrate(sid).transcript.kernel.assistantEntries
+      let entries = try await sessions.lines(sid).assistantLines
       #expect(entries.count == 1)
-      #expect(entries[0].content == [.text(TextContent(text: "done"))])
+      #expect(entries[0].message.assistant?.content == [.text(TextContent(text: "done"))])
     }
   }
 }

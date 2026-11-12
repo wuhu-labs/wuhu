@@ -179,21 +179,27 @@ import Testing
           let bob = Principal.shared(.person(persona: "bob", account: AccountID(rawValue: "bob")))
           let carol = Principal.shared(.person(persona: "carol", account: AccountID(rawValue: "carol")))
           #expect(try await space.query(sql, as: carol).rows.isEmpty)
-          #expect(try await !space.query(sql, as: bob).rows.isEmpty)
-          if group == .shared || name != "notifications" {
-            #expect(try await !space.query(sql, as: .shared(.session(agent))).rows.isEmpty)
-          }
-          for try await snapshot in await space.observeQuery(sql, throttle: .zero, as: carol) {
+          for try await snapshot in try space.observeRows(sql, throttle: .zero, as: carol) {
             #expect(snapshot.rows.isEmpty)
             break
           }
+          // The inbox row is mail to bob's cell: it is there once that cell has taken it, not when the post returns.
           let frames = Collector<Rows>()
-          let stream = await space.observeQuery(sql, throttle: .zero, as: bob)
+          let stream = try space.observeRows(sql, throttle: .zero, as: bob)
           let consumer = Task { do { for try await frame in stream { await frames.append(frame) } } catch { Issue.record(error) } }
           defer { consumer.cancel() }
-          #expect(try await awaitItems(frames, atLeast: 1).count == 1)
+          let landed = try #require(await awaitItem(frames) { !$0.rows.isEmpty })
+          #expect(landed.rows.count == 1)
+          if group == .shared || name != "notifications" {
+            let readerFrames = Collector<Rows>()
+            let readerStream = try space.observeRows(sql, throttle: .zero, as: .shared(.session(agent)))
+            let reader = Task { do { for try await frame in readerStream { await readerFrames.append(frame) } } catch { Issue.record(error) } }
+            defer { reader.cancel() }
+            #expect(try #require(await awaitItem(readerFrames) { !$0.rows.isEmpty }).rows.count == 1)
+          }
+          let before = await frames.items.count
           try await space.sessions.removeChannelMembers(id, people: ["bob"], as: Principal(actor: .person(persona: "alice", account: AccountID(rawValue: "alice")), group: group))
-          #expect(try await awaitItems(frames, atLeast: 2).last?.rows.isEmpty == true)
+          #expect(try await awaitItems(frames, atLeast: before + 1).last?.rows.isEmpty == true)
           try await space.sessions.addChannelMembers(id, people: ["bob"], as: Principal(actor: .person(persona: "alice", account: AccountID(rawValue: "alice")), group: group))
         }
       }

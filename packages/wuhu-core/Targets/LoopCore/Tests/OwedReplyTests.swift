@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import LoopCore
 import SessionDomain
 import SpaceCore
@@ -13,11 +17,11 @@ import WuhuAI
       let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
-      let nagSeen = Box<[SystemNotification]>([])
+      let nagSeen = Box<[TranscriptLine]>([])
       let script = InferenceScript([
         Fix.replying("thinking out loud"),
         { request in
-          nagSeen.withLock { $0 = request.transcript.owedReplyReminders }
+          nagSeen.withLock { $0 = request.lines.owedReplyReminders }
           return Fix.reply("on it", calls: [ToolCall(id: "c-1", name: "send_message", arguments: .object([:]))])
         },
         Fix.replying("all done"),
@@ -46,16 +50,16 @@ import WuhuAI
           item: Fix.message("please review", conversation: sid.rawValue, owesReply: true),
           to: sid,
         )
-        // At least: the whole exchange may run on to the wrap-up between polls.
         try await until("the settle's own reminder reaches the model") { script.count >= 2 }
         try await until("the exchange settles") { try await sessions.settledWork(sid) }
         try await holds("the wrap-up to be the last word") { script.count == 3 }
       }
 
       #expect(nagSeen.value.count == 1, "the reminder rode the second request with no further delivery")
-      #expect(nagSeen.value.first?.conversations == [ConversationID(sid.rawValue)])
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(transcript.owedReplyReminders.count == 1, "a standing owe is reminded once")
+      #expect(nagSeen.value.first?.role == .user)
+      #expect(nagSeen.value.first?.text.hasSuffix("\n\n" + SessionPrompt.owedReply(conversations: [sid.rawValue])) == true)
+      let lines = try await sessions.lines(sid)
+      #expect(lines.owedReplyReminders.count == 1, "a standing owe is reminded once")
     }
   }
 }

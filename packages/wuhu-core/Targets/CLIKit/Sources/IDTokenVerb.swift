@@ -9,29 +9,25 @@ import struct Fetch.RequestHeaders
 import JSONValue
 import enum MachineContract.SessionExecEnvironment
 
-/// `wuhu id-token --audience <origin>`: inside a session's exec, trades the
-/// exec's `WUHU_ID_TOKEN_REQUEST` capability at `WUHU_ID_TOKEN_URL` for a
-/// short-lived OIDC token naming the session, machine and exec. Like `agent`,
-/// it needs no wallet: the capability is the whole credential.
 struct IDTokenVerb {
   let runner: CommandRunner
 
   func run(audience: String, json: Bool) async throws {
     let environment = runner.environment
-    guard let endpoint = environment[SessionExecEnvironment.idTokenURL], !endpoint.isEmpty,
-          let capability = environment[SessionExecEnvironment.idTokenRequest], !capability.isEmpty
+    guard let endpoint = environment[SessionExecEnvironment.spaceURL], !endpoint.isEmpty,
+          let capability = environment[SessionExecEnvironment.token], !capability.isEmpty
     else {
-      throw CLIError(message: "id-token: only a session's exec can mint one (\(SessionExecEnvironment.idTokenURL) and \(SessionExecEnvironment.idTokenRequest) are unset)")
+      throw CLIError(message: "id-token: only a session's exec can mint one (\(SessionExecEnvironment.spaceURL) and \(SessionExecEnvironment.token) are unset)")
     }
-    guard var parts = URLComponents(string: endpoint), parts.scheme == "https" || parts.scheme == "http" else {
-      throw CLIError(message: "id-token: \(SessionExecEnvironment.idTokenURL) is not an http(s) URL")
+    guard var parts = URLComponents(string: endpoint + "/v1/id-token"), parts.scheme == "https" || parts.scheme == "http" else {
+      throw CLIError(message: "id-token: \(SessionExecEnvironment.spaceURL) is not an http(s) URL")
     }
     parts.queryItems = [URLQueryItem(name: "audience", value: audience)]
-    guard let url = parts.url else { throw CLIError(message: "id-token: \(SessionExecEnvironment.idTokenURL) is not a URL") }
+    guard let url = parts.url else { throw CLIError(message: "id-token: \(SessionExecEnvironment.spaceURL) is not a URL") }
     var headers = RequestHeaders()
     headers.set("authorization", "Bearer \(capability)")
     let reply = try await runner.fetch(Request(url: url, headers: headers))
-    var response = reply
+    let response = reply
     let body = try await response.data(upTo: 1 << 16)
     let value = JSONValue.parse(String(decoding: body, as: UTF8.self))?.object
     guard response.status.code == 200 else {

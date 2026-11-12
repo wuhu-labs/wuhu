@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 @testable import LoopCore
 import SessionDomain
@@ -19,12 +23,14 @@ import WuhuAI
         Fix.replying("cancelling", calls: [ToolCall(id: "cancel", name: "cancel", arguments: .object([:]))]),
         Fix.replying("folding", calls: [fold("first")]),
         { request in
-          #expect(request.transcript.armed == [plain: .timer(once), quiet: .timer(yearly)])
+          let head = try #require(request.lines.first { $0.key == LineKey.head })
+          #expect(head.text.contains("active subscriptions: timer.plain, timer.quiet\n"))
           return Fix.reply("armed")
         },
         Fix.replying("folding", calls: [fold("second")]),
         { request in
-          #expect(request.transcript.armed == [plain: .timer(once)])
+          let head = try #require(request.lines.first { $0.key == LineKey.head })
+          #expect(head.text.contains("active subscriptions: timer.plain\n"))
           return Fix.reply("the handler's is gone")
         },
         Fix.replying("nothing"),
@@ -57,11 +63,11 @@ import WuhuAI
         try await service.enqueue(item: Fix.message("fold again"), to: sid)
         try await until("it folded again") { try await sessions.settledWork(sid) && script.count == 6 }
         #expect(try await armed(space) == ["timer.plain": false])
-        // The one-shot's last notice is drained with the message, whether or not its own wake came first. Time keeps moving so the worker's scan does: the jump takes the cell past its idle eviction.
+        // The one-shot's last notice is a queued input due at its fire time: the jump passes it, and the drain follows at whichever wake
+        // comes next (measured 6 to 13 s of clock, bounded at 30). One worker here, so no lease lapses to another (see `until`).
         await time.advance(by: 60)
         try await service.enqueue(item: Fix.message("anything left?"), to: sid)
-        try await until("the one-shot's last notice ended its row") {
-          await time.advance(by: 1)
+        try await untilAdvancing("the one-shot's last notice ended its row", time, attempts: 30) {
           guard try await sessions.settledWork(sid) else { return false }
           return try await armed(space)["timer.plain"] == nil
         }
@@ -73,14 +79,6 @@ import WuhuAI
 
 private func fold(_ id: String) -> ToolCall {
   ToolCall(id: id, name: "compact", arguments: .object(["summary": .string("so far")]))
-}
-
-private extension Transcript {
-  /// What the generation's head says the session had armed.
-  var armed: [SubscriptionID: Subscription] {
-    guard case let .generationHead(head)? = items.first else { return [:] }
-    return head.snapshot.subscriptions
-  }
 }
 
 private func armed(_ space: Space) async throws -> [String: Bool] {

@@ -19,8 +19,8 @@ import Testing
     let bob: GroupID
   }
 
-  func people(tokens: ExecTokens? = nil) async throws -> People {
-    let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens)
+  func people() async throws -> People {
+    let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530")
     let (bearer, key) = try await harness.enrolledBearer()
     let alice = try await harness.space.ensurePersonalGroup(account: key.account)
     let bob = try await harness.space.ensurePersonalGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
@@ -73,13 +73,13 @@ import Testing
 
   @Test func anExecTokenNamingAnotherGroupIsRefused() async throws {
     try await withSessionDeps {
-      let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-      let p = try await people(tokens: tokens)
+      let p = try await people()
+      let tokens = p.harness.runtime.tokens
       let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
       let session = try await p.harness.store.createSession(group: p.alice, title: "a", kind: .agent, createdBy: "owner", executor: model)
       let machine = (try await p.harness.space.addMachineV2(name: "box")).machine
-      let exec = try await p.harness.space.mintExec(machine: machine.id, caller: session.rawValue)
-      let token = tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
+      let exec = try await p.harness.space.reserveExec(machine: machine.id, caller: session.rawValue)
+      let token = try await tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
       let mismatched = try await write(p, "/x.md", group: GroupID.shared.rawValue, bearer: token)
       #expect(mismatched.status == .forbidden)
       #expect(try await code(mismatched) == "groupMismatch")

@@ -16,10 +16,27 @@ public final class Lane: SerialExecutor {
   }
 
   static let drainEvery = 256
+  private static let writingThreads = Mutex<Set<UInt>>([])
+
+  @discardableResult
+  static func beganWriter() -> UInt {
+    let thread = currentThread()
+    precondition(writingThreads.withLock { $0.insert(thread).inserted })
+    return thread
+  }
+
+  static func endedWriter(_ thread: UInt? = nil) {
+    precondition(writingThreads.withLock { $0.remove(thread ?? currentThread()) != nil })
+  }
+
+  static func preconditionNoWriter(_ operation: String = "enter a writer-waiting lifecycle lock") {
+    precondition(!writingThreads.withLock { $0.contains(currentThread()) }, "a thread holding the writer cannot \(operation): this thread already holds the writer")
+  }
 
   let scheduler: any Scheduler
   private let queue = Mutex(Queue())
   private let runner = Atomic<UInt>(0)
+  private let returnHook = Mutex<Hook?>(nil)
   private let drainHook = Mutex<Hook?>(nil)
 
   /// Kept in a struct: a bare function in a `Mutex` is wrapped once more every time it is read.
@@ -33,6 +50,10 @@ public final class Lane: SerialExecutor {
 
   func onDrain(_ hook: @escaping @Sendable () -> Void) {
     drainHook.withLock { $0 = Hook(run: hook) }
+  }
+
+  func onReturn(_ hook: @escaping @Sendable () -> Void) {
+    returnHook.withLock { $0 = Hook(run: hook) }
   }
 
   public func enqueue(_ job: consuming ExecutorJob) {
@@ -56,6 +77,7 @@ public final class Lane: SerialExecutor {
       guard let job = queue.withLock({ $0.jobs.isEmpty ? nil : $0.jobs.remove(at: pick($0.jobs.count)) }) else { break }
       // Naming the task executor too lets an await on this lane continue inline; with only the serial executor named, a task that prefers the scheduler hops through `enqueue` at every await.
       job.runSynchronously(isolatedTo: asUnownedSerialExecutor(), taskExecutor: scheduler.asUnownedTaskExecutor())
+      returnHook.withLock { $0 }?.run()
       let drained = queue.withLock { queue in
         queue.sinceDrain += 1
         guard queue.jobs.isEmpty || queue.sinceDrain == Self.drainEvery else { return false }

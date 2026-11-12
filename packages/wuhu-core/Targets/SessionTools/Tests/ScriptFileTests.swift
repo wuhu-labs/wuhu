@@ -161,8 +161,11 @@ import Testing
   }
 
   @Test func bufferedResponsesDoNotSuggestReplacingTheFile() async throws {
-    let fetch = FetchClient { _ in Response(status: .ok, body: .string(String(repeating: "x", count: 20 << 20))) }
-    try await withRig(fetch: fetch) { rig in
+    var limits = ScriptLimits.standard
+    limits.bufferBytes = 64 << 10
+    limits.fileResultBytes = 24 << 10
+    let fetch = FetchClient { _ in Response(status: .ok, body: .string(String(repeating: "x", count: 20 << 10))) }
+    try await withRig(fetch: fetch, limits: limits) { rig in
       _ = try await rig.space.fs(.shared).write("/small.md", Data("small".utf8), ifMatch: nil)
       let value = try await rig.evaluate(#"""
       import {readText,list} from 'wuhu:space'

@@ -151,7 +151,7 @@ enum Rendezvous {
 
   /// One dial: handshake, then serve until the agent goes away. `accepted` sees the agent's reply before serving starts.
   /// Throws the agent's refusal, or the transport's failure.
-  static func dial(path: String, hello: Hello, group: any EventLoopGroup, limits: TunnelLimits = .init(), handler: @escaping Handler, accepted: @Sendable (Reply) async -> Void = { _ in }) async throws {
+  static func dial(path: String, hello: Hello, group: any EventLoopGroup, limits: TunnelLimits = .init(), handler: @escaping Handler, accepted: @Sendable (Reply, Tunnel) async -> Void = { _, _ in }) async throws {
     let channel = try await ClientBootstrap(group: group).connect(unixDomainSocketPath: path) { channel in
       channel.eventLoop.makeCompletedFuture { try framed(channel) }
     }
@@ -161,8 +161,9 @@ enum Rendezvous {
       try await link.send(hello)
       let reply = try await link.receive(Reply.self)
       guard reply.accepted else { throw reply.refused ?? .unknownOperation }
-      await accepted(reply)
-      try? await Tunnel.serve(over: link.transport, limits: limits, handler: handler)
+      let tunnel = try Tunnel(over: link.transport, limits: limits, handler: handler)
+      await accepted(reply, tunnel)
+      try? await tunnel.run()
     }
   }
 
@@ -170,15 +171,15 @@ enum Rendezvous {
   /// permanent. `unlinked` runs whenever an accepted link ends.
   static func redial(
     path: String, hello: @Sendable () async -> Hello, group: any EventLoopGroup, limits: TunnelLimits = .init(), handler: @escaping Handler,
-    accepted: @Sendable (Reply) async -> Void = { _ in }, unlinked: @Sendable () async -> Void = {},
+    accepted: @Sendable (Reply, Tunnel) async -> Void = { _, _ in }, unlinked: @Sendable () async -> Void = {},
   ) async -> Refusal? {
     var delay = redialFloor
     while !Task.isCancelled {
       let linked = Mutex(false)
       do {
-        try await dial(path: path, hello: hello(), group: group, limits: limits, handler: handler) { reply in
+        try await dial(path: path, hello: hello(), group: group, limits: limits, handler: handler) { reply, tunnel in
           linked.withLock { $0 = true }
-          await accepted(reply)
+          await accepted(reply, tunnel)
         }
       } catch let refusal as Refusal { return refusal }
       catch {}

@@ -13,6 +13,12 @@ public struct Tunnel: Sendable {
     state = TunnelState(transport: transport, limits: limits, handler: nil)
   }
 
+  public init(over transport: TunnelTransport, limits: TunnelLimits = .init(), handler: @escaping @Sendable (Request) async throws -> Response) throws {
+    try limits.validate(maxMessageBytes: transport.maxMessageBytes)
+    state = TunnelState(transport: transport, limits: limits, handler: handler)
+  }
+
+  public var isIdle: Bool { get async { await state.isIdle } }
   public var client: FetchClient { FetchClient { try await state.fetch($0) } }
   public func run() async throws { try await state.run() }
   public func abort() async { await state.close(.cancelled) }
@@ -22,8 +28,7 @@ public struct Tunnel: Sendable {
     limits: TunnelLimits = .init(),
     handler: @escaping @Sendable (Request) async throws -> Response,
   ) async throws {
-    try limits.validate(maxMessageBytes: transport.maxMessageBytes)
-    try await TunnelState(transport: transport, limits: limits, handler: handler).run()
+    try await Tunnel(over: transport, limits: limits, handler: handler).run()
   }
 }
 
@@ -47,6 +52,8 @@ actor TunnelState {
   var preparing = 0
   let work: AsyncStream<Work>
   let workSignal: AsyncStream<Work>.Continuation
+  var sending = false
+  var isIdle: Bool { exchanges.isEmpty && jobs.isEmpty && preparing == 0 && outbox.isEmpty && !sending }
   var running = false
   var failure: TunnelError?
   let wake: AsyncStream<Void>
@@ -150,11 +157,14 @@ actor TunnelState {
       for await _ in wake {
         while let frame = outbox.next() {
           try Task.checkCancellation()
+          sending = true
           try await transport.send(frame.encoded())
+          sending = false
           sent(frame)
         }
       }
     } catch {
+      sending = false
       close(map(error))
       throw error
     }

@@ -83,7 +83,7 @@ for (const { id, title } of await query`
 }
 
 while (watching.size > 0) {
-  await sleep(60_000) // cancel lands here as an AbortError and ends the run
+  await sleep(61_234) // cancel lands here as an AbortError and ends the run
 
   const ids = JSON.stringify([...watching.keys()])
 

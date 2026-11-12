@@ -7,6 +7,7 @@
 import GRDB
 import GRDBSQLite
 import struct SpaceContract.GroupID
+import StructuredQueriesCore
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -142,17 +143,36 @@ final class ReadConnection {
     byteLimit: Int?,
     scope: ReadScope,
   ) throws -> (ReadRows, ReadTables) {
-    try transaction(sql, scope: scope) { statement in
+    try transaction(sql, scope: { _ in scope }) { statement in
       let rows = try self.rows(statement, sql: sql, arguments: arguments, byteLimit: byteLimit)
       return (rows, ReadTables(names: self.gate.read))
     }
   }
 
-  func tables(_ sql: String, scope: ReadScope) throws -> ReadTables {
-    try transaction(sql, scope: scope) { _ in ReadTables(names: self.gate.read) }
+  func run(
+    _ sql: String, arguments: [DatabaseValue],
+    resolving scope: (ReadSnapshot) throws -> ReadScope,
+  ) throws -> (ReadRows, ReadTables) {
+    try transaction(sql, scope: scope) { statement in
+      let rows = try self.rows(statement, sql: sql, arguments: arguments, byteLimit: nil)
+      return (rows, ReadTables(names: self.gate.read.union(self.gate.trustedRead)))
+    }
   }
 
-  private func transaction<T>(_ sql: String, scope: ReadScope, _ body: (OpaquePointer) throws -> T) throws -> T {
+  private func trustedRows(_ sql: String, arguments: [DatabaseValue]) throws -> ReadRows {
+    var statement: OpaquePointer?
+    let code = sqlite3_prepare_v2(handle, sql, -1, &statement, nil)
+    guard code == SQLITE_OK, let statement else { throw failure(code, sql: sql) }
+    defer { sqlite3_finalize(statement) }
+    precondition(sqlite3_stmt_readonly(statement) != 0, "a scope resolver only reads")
+    return try rows(statement, sql: sql, arguments: arguments, byteLimit: nil)
+  }
+
+  func tables(_ sql: String, scope: ReadScope) throws -> ReadTables {
+    try transaction(sql, scope: { _ in scope }) { _ in ReadTables(names: self.gate.read) }
+  }
+
+  private func transaction<T>(_ sql: String, scope: (ReadSnapshot) throws -> ReadScope, _ body: (OpaquePointer) throws -> T) throws -> T {
     try SQLText.requireLeadingKeyword(sql)
     if screensText {
       let text = sql.lowercased()
@@ -162,8 +182,16 @@ final class ReadConnection {
     try exec("BEGIN")
     var rebound = false
     do {
-      rebound = try bind(scope)
-      gate.viewer = scope.viewer
+      let snapshot = ReadSnapshot { table, query, arguments in
+        let qualified = query.replacing("\"" + table + "\"", with: self.quoted(self.schema) + ".\"" + table + "\"")
+        self.gate.mode = .trusted
+        defer { self.gate.mode = .setup }
+        return try self.trustedRows(qualified, arguments: arguments)
+      }
+      gate.trustedRead = []
+      let resolved = try scope(snapshot)
+      rebound = try bind(resolved)
+      gate.viewer = resolved.viewer
       let result = try withStatement(sql, body)
       gate.mode = .setup
       try exec("COMMIT")
@@ -395,7 +423,9 @@ final class ReadConnection {
 /// The authorizer's state. Setup mode is the connection's own work and may do
 /// anything; user mode admits reads of the views and nothing else.
 private final class Gate {
-  enum Mode { case setup, user }
+  enum Mode { case setup, trusted, user }
+
+  var trustedRead: Set<String> = []
 
   struct Flags {
     var read: Set<String> = []
@@ -436,6 +466,10 @@ private final class Gate {
   }
 
   func verdict(_ action: Int32, first: String?, second: String?, database: String?, accessor: String?) -> Int32 {
+    if mode == .trusted {
+      if action == SQLITE_READ, database == schema, let first { trustedRead.insert(first) }
+      return SQLITE_OK
+    }
     guard mode == .user else { return SQLITE_OK }
     switch action {
     case SQLITE_SELECT, SQLITE_RECURSIVE:

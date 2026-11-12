@@ -55,8 +55,7 @@ extension SessionStore {
     try SessionHome.refuseForeignWrite(to: p, in: group, by: id, home: home)
     try await writer.read { db in try GroupWrites.refuseWrite(p, in: group, by: .session(id), acting: home, in: db) }
     let blob = try await blobs.stage(Array(content))
-    let broadcast = broadcast
-    let result: RecordedWrite = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+    let result: RecordedWrite = try await writer.write { db in
       if let toolCallID, let recorded = try Sessions.receipt(key, toolCallID: toolCallID.rawValue, in: db) {
         return RecordedWrite(payload: recorded, replayed: true)
       }
@@ -78,7 +77,6 @@ extension SessionStore {
         rev = current
       case let .wrote(minted):
         rev = minted
-        pending += [MutationEvent(group: group, path: p.rawValue, rev: Int(minted), kind: .write, entry: .file)]
       }
       let built = payload(rev)
       if let toolCallID {

@@ -7,7 +7,7 @@ import DeterministicDependencies
 #endif
 import SessionDomain
 import struct SpaceContract.GroupID
-@_spi(SessionObservation) @testable import SpaceCore
+@testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct ObserverStoreTests {

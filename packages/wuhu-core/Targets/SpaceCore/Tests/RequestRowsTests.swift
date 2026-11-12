@@ -208,7 +208,7 @@ import Testing
 
   @Test func `an observation of requests sees each transition`() async throws {
     let fleet = try await Fleet(tasks: 3)
-    let stream = await fleet.rig.space.observeQuery(
+    let stream = try fleet.rig.space.observeRows(
       "SELECT id, status FROM requests ORDER BY id", throttle: .zero, as: .shared(.anonymous),
     )
     let frames = Collector<[[Cell]]>()

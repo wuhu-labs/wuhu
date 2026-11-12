@@ -21,7 +21,9 @@ private func context(_ harness: SessionHarness, _ id: String) async throws -> Se
       let id = try await harness.createSession()
       let empty = try #require(try await context(harness, id.rawValue))
       #expect(empty.source == .estimate)
-      #expect(empty.usedTokens == 0)
+      let head = try await harness.store.testLines(id)
+      #expect(empty.usedTokens == head.estimatedContextTokens(images: .claude))
+      #expect(empty.usedTokens > 0)
       #expect(empty.maxTokens == 99000, "maxInput minus maxOutput from the space's models document")
       #expect(empty.updatedAt == nil)
 

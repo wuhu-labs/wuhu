@@ -27,7 +27,7 @@ import Testing
       try await store.markInterrupted(id)
       try await store.markResumed(id)
       let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: .init(), runningWork: [])
-      _ = try await store.writeCompaction(id, head: head, kept: nil)
+      _ = try await store.rows { try $0.writeGeneration(id, head: head) }
       let reopened = try Space.open(file: file)
       #expect(try await reopened.sessions.modelRoute(id) == pin)
       #expect(try await reopened.sessions.establishModelRoute(id, route: route(member: "other")) == pin)

@@ -10,6 +10,7 @@
 #endif
 @testable import ExecSupervisor
 import Fetch
+import FetchTunnel
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
@@ -23,6 +24,10 @@ import Testing
     try ExecWorker(manifest: WorkerManifest(machine: "test", worker: UUID(), nonce: UUID().uuidString + UUID().uuidString, socket: "/tmp/unused/ctl.sock"), directory: directory, clock: clock)
   }
 
+  func idleTunnel() throws -> Tunnel {
+    try Tunnel(over: TunnelTransport(receive: { nil }, send: { _ in }, abort: {}), handler: { _ in .text("") })
+  }
+
   @Test func aWorkerLivesWhileLinkedAndCurrentOrHoldingOperations() async throws {
     let now = Mutex(Duration.zero)
     let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { _ in try await ContinuousClock().sleep(for: .milliseconds(1)) })
@@ -32,13 +37,13 @@ import Testing
     #expect(await fresh.shouldExit(), "an agent that never linked it is gone")
 
     let current = try worker(clock)
-    await current.accepted(.init(accepted: true, current: true))
+    try await current.accepted(.init(accepted: true, current: true), tunnel: idleTunnel())
     #expect(!(await current.shouldExit()))
     await current.unlinked()
     #expect(await current.shouldExit(), "unlinked and idle: a restarted agent launches its own current worker")
 
     let earlier = try worker(clock)
-    await earlier.accepted(.init(accepted: true, current: false))
+    try await earlier.accepted(.init(accepted: true, current: false), tunnel: idleTunnel())
     #expect(await earlier.shouldExit())
 
     let refused = try worker(clock)
@@ -63,9 +68,9 @@ import Testing
       return response.status.code == 201 ? nil : try await response.body.json(ErrorEnvelope.self).error
     }
     #expect(try await start(UUID())?.message == Unavailable.workerNotCurrent.rawValue, "not linked")
-    await worker.accepted(.init(accepted: true, current: false))
+    try await worker.accepted(.init(accepted: true, current: false), tunnel: idleTunnel())
     #expect(try await start(UUID())?.message == Unavailable.workerNotCurrent.rawValue, "not current")
-    await worker.accepted(.init(accepted: true, current: true))
+    try await worker.accepted(.init(accepted: true, current: true), tunnel: idleTunnel())
     let admitted = UUID()
     #expect(try await start(admitted) == nil)
     #expect(try WorkerDirectory.inventory(path).retained == [admitted])
@@ -85,7 +90,7 @@ import Testing
     let path = WorkerDirectory.path(workers: home.workers, manifest.worker)
     try WorkerDirectory.create(path, manifest)
     let worker = try ExecWorker(manifest: manifest, directory: path)
-    await worker.accepted(.init(accepted: true, current: true))
+    try await worker.accepted(.init(accepted: true, current: true), tunnel: idleTunnel())
     let id = UUID()
     #expect(await worker.claim(id))
     let answered = Mutex(false)

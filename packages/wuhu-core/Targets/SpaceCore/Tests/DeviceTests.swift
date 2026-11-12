@@ -150,8 +150,8 @@ struct DeviceTests {
     #expect(untouched.machine == machine.id)
     _ = try await space.sessions.put(session, input: input())
     let after = try await space.sessions.drainQueue(session)
-    let hydrated = try await space.sessions.hydrate(session).transcript.kernel
-    #expect(hydrated.items == before.items + after.items)
+    let stored = try await space.sessions.transcriptLines(session)
+    #expect(try stored.map { try $0.line() } == (before.items + after.items).flatMap { $0.lines(session: session) })
     guard case let .message(first) = before.items[0], case let .message(last) = after.items[0] else { Issue.record("missing messages"); return }
     #expect(first.sender.handle == "before" && first.sender.deviceName == "Mac")
     #expect(last.sender.handle == "after" && last.sender.deviceName == "Studio Mac")

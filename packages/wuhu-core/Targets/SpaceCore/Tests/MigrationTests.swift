@@ -1,7 +1,10 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
-import struct MachineContract.ExecID
 import Scratch
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -18,15 +21,19 @@ import Testing
   private func baseline(_ database: DatabaseQueue) async throws -> Space {
     let space = try Space(writer: database)
     _ = try await space.addAccount(kind: .human, name: "Kept")
-    let machine = try await space.addMachineV2(name: "box").machine.id
-    let exec = try await space.claimExec(machine: machine, caller: "caller", toolCallID: .init("call"))
     try await database.write { db in
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005')")
-      try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_spec")
-      try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_end_owed")
+      try db.execute(sql: """
+      CREATE TABLE machine_execs (
+        id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, stream_id INTEGER NOT NULL,
+        command TEXT NOT NULL, caller TEXT, tool_call_id TEXT, started_at TEXT NOT NULL,
+        terminal_state TEXT, kill_delivered INTEGER NOT NULL DEFAULT 0, grp TEXT NOT NULL
+      );
+      INSERT INTO machine_execs VALUES ('ex_old', 'old-box', 1, '', 'caller', 'call', '2026-01-01T00:00:00Z', NULL, 0, 'shared');
+      """)
       try db.execute(sql: "ALTER TABLE session_api_receipts DROP COLUMN request")
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
-      try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, '{}')", arguments: [exec.record.id.rawValue])
+      try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, '{}')", arguments: ["ex_old"])
     }
     return space
   }
@@ -63,7 +70,7 @@ import Testing
     let identity = try await first.identity()
     try await database.write { db in
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
-      try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, 'changed')", arguments: [owed.id.rawValue])
+      try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, 'changed')", arguments: [owed.id])
     }
     let secondConnection = try DatabaseQueue(path: database.path)
     let second = try Space(writer: secondConnection)
@@ -103,6 +110,46 @@ import Testing
     try await original.close()
   }
 
+  @Test func historicalMachineCellMigrationDropsExecStateButKeepsFileOperations() async throws {
+    let database = try database()
+    let original = try Space(writer: database)
+    _ = try await original.addAccount(kind: .human, name: "Kept")
+    try await database.write { db in
+      try LegacyMachineSchema.create(in: db)
+      try db.execute(sql: """
+      DROP TABLE machine_operations;
+      DROP TABLE machine_presence;
+      CREATE TABLE machine_execs (
+        id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, stream_id INTEGER NOT NULL,
+        command TEXT NOT NULL, caller TEXT, tool_call_id TEXT, started_at TEXT NOT NULL,
+        terminal_state TEXT, kill_delivered INTEGER NOT NULL DEFAULT 0, grp TEXT NOT NULL,
+        tool_spec TEXT, tool_end_owed INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE script_execs (exec_id TEXT PRIMARY KEY, script_id TEXT NOT NULL, session_id TEXT NOT NULL, grp TEXT NOT NULL);
+      CREATE TABLE machine_v2_presence (machine_id TEXT PRIMARY KEY, grp TEXT NOT NULL, state TEXT NOT NULL, description TEXT, observed_at TEXT NOT NULL, reason TEXT);
+      INSERT INTO machine_execs VALUES ('ex_old', 'box', 1, 'sleep', 'caller', 'call', '2026-01-01T00:00:00Z', NULL, 0, 'shared', '{}', 1);
+      INSERT INTO script_execs VALUES ('ex_old', 'script', 'caller', 'shared');
+      INSERT INTO machine_v2_presence VALUES ('box', 'shared', 'attached', '{}', '2026-01-01T00:00:00Z', NULL);
+      INSERT INTO machine_v2_operations VALUES
+        ('exec-op', 'shared', 'exec/ex_old', 'exec', 'box', 'exec-correlation', 'digest', 1, '{}', 1, 1024, '2026-01-01T00:00:00Z'),
+        ('file-op', 'shared', 'script', 'read', 'box', 'file-correlation', 'digest', 1, '{}', 1, 1024, '2026-01-01T00:00:00Z');
+      INSERT INTO machine_v2_channels VALUES ('exec-channel', 'exec-op', 'stdout', '0', '0', NULL), ('file-channel', 'file-op', 'data', '0', '0', NULL);
+      INSERT INTO machine_v2_output VALUES ('exec-output', 'exec-op', 'stdout', 0, 'exec bytes'), ('file-output', 'file-op', 'data', 0, 'file bytes');
+      INSERT INTO machine_v2_retention VALUES ('exec-op', 'shared', 'exec', '2026-01-01T00:00:00Z'), ('file-op', 'shared', 'read', '2026-01-01T00:00:00Z');
+      """)
+    }
+    try await database.write { try Migration033.apply($0) }
+    #expect(try await original.accounts().contains { $0.name == "Kept" })
+    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT name FROM sqlite_master WHERE name IN ('machine_execs', 'script_execs', 'machine_v2_presence')") } == [])
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM machine_operations") } == 0)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM machine_presence") } == 0)
+    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_operations") } == ["file-op"])
+    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_channels") } == ["file-channel"])
+    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_output") } == ["file-output"])
+    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_retention") } == ["file-op"])
+    try await original.close()
+  }
+
   @Test func freshBootRecordsLinksCompactionWithItsMigration() async throws {
     let database = try database()
     let space = try Space(writer: database)
@@ -115,7 +162,7 @@ import Testing
   /// its own formatting, while a fresh table declares them inline. Columns,
   /// indexes, keys and triggers can — plus the exact text of every index and
   /// trigger, which no migration rewrites.
-  private func schemaShape(_ database: DatabaseQueue) throws -> (tables: [String: [String]], indexesAndTriggers: [String]) {
+  static func schemaShape(_ database: DatabaseQueue) throws -> (tables: [String: [String]], indexesAndTriggers: [String]) {
     try database.read { db in
       var shape: [String: [String]] = [:]
       let tables = try String.fetchAll(db, sql: """
@@ -344,8 +391,8 @@ import Testing
     #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE name IN (\(Self.dropped.map { "'" + $0 + "'" }.joined(separator: ","))) ORDER BY 1") } == [])
     let fresh = try self.database()
     let freshSpace = try Space(writer: fresh)
-    let migrated = try schemaShape(reopened)
-    let expected = try schemaShape(fresh)
+    let migrated = try Self.schemaShape(reopened)
+    let expected = try Self.schemaShape(fresh)
     #expect(migrated.tables.keys.sorted() == expected.tables.keys.sorted())
     for (table, lines) in expected.tables.sorted(by: { $0.key < $1.key }) {
       #expect(migrated.tables[table] == lines, "\(table)")
@@ -388,26 +435,17 @@ import Testing
     let database = try database()
     let original = try Space(writer: database)
     try await database.write { db in
-      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '011'")
-      if !existingIndexes {
-        try db.execute(sql: "DROP INDEX machine_v2_operations_admission; DROP INDEX machine_v2_channels_by_operation")
-      }
+      try LegacyMachineSchema.create(in: db)
+      if existingIndexes { try Migration011.apply(db) }
+      try Migration011.apply(db)
     }
-    let reopened = try DatabaseQueue(path: database.path)
-    let upgraded = try Space(writer: reopened)
-    #expect(try await reopened.read { db in
+    #expect(try await database.read { db in
       try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_operations_admission') ORDER BY seqno")
     } == ["machine_id", "active", "reserved_bytes"])
-    #expect(try await reopened.read { db in
+    #expect(try await database.read { db in
       try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_channels_by_operation') ORDER BY seqno")
     } == ["operation_id"])
-    #expect(try await reopened.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier = '011'")
-    } == 1)
-    #expect(try await plan(reopened, "SELECT reserved_bytes FROM machine_v2_operations WHERE machine_id = 'm' AND (active OR reserved_bytes > 0)").contains("machine_v2_operations_admission"))
-    #expect(try await plan(reopened, "SELECT * FROM machine_v2_channels WHERE operation_id = 'o'").contains("machine_v2_channels_by_operation"))
     try await original.close()
-    try await upgraded.close()
   }
 
   @Test func fileBackedWriterHasThePageCache() async throws {
@@ -441,22 +479,19 @@ import Testing
   }
 
   static let mmapCap = "SELECT substr(compile_options, 15) FROM pragma_compile_options WHERE compile_options LIKE 'MAX!_MMAP!_SIZE=%' ESCAPE '!'"
+}
 
-  private func plan(_ database: DatabaseQueue, _ sql: String) async throws -> String {
-    try await database.read { db in
-      try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql).map { $0["detail"] as String }.joined(separator: "\n")
-    }
-  }
+private struct LegacyExec: Equatable {
+  let id: String
+  let toolSpec: String?
 }
 
 private extension Space {
-  /// The rows the upgrade marked as owing their tool call's end.
-  func owedExecs() async throws -> [ExecRecord] {
-    let ids = try await writer.read { try String.fetchAll($0, sql: "SELECT id FROM machine_execs WHERE tool_end_owed = 1 ORDER BY started_at, id") }
-    var records: [ExecRecord] = []
-    for id in ids {
-      if let record = try await execRecord(ExecID(rawValue: id)) { records.append(record) }
+  func owedExecs() async throws -> [LegacyExec] {
+    try await writer.read { db in
+      try Row.fetchAll(db, sql: "SELECT id, tool_spec FROM machine_execs WHERE tool_end_owed = 1 ORDER BY started_at, id").map {
+        LegacyExec(id: $0["id"], toolSpec: $0["tool_spec"])
+      }
     }
-    return records
   }
 }

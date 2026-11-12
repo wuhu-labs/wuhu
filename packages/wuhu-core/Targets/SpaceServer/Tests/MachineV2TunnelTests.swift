@@ -1,33 +1,32 @@
-import ControlledTime
 import Crypto
 import Dependencies
 import DeterministicDependencies
-import Dispatch
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import enum JSONValue.JSONValue
 import MachineContract
-import OperationClient
 import OperationProtocol
-import OperationRuntime
 import Serve
 import SpaceContract
 @testable import SpaceCore
 @testable import SpaceServer
-import Synchronization
 import Testing
 
 @Suite(.deterministicDependencies) struct MachineV2TunnelTests {
   struct Fixture {
     let space: Space
-    let hub: MachineV2Hub
+    let hub: MachineHub
     let handler: UpgradingHandler
     let machine: MachineRecord
     let key: Curve25519.Signing.PrivateKey
     init() async throws {
       space = try Space.inMemory()
-      hub = MachineV2Hub(space: space)
-      handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, machineV2Hub: hub)
+      hub = MachineHub(space: space)
+      handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
       key = .init()
       let handler = self.handler
       func http<T: Encodable & Sendable>(_ path: String, method: Fetch.Method, input: T) async throws -> Response {
@@ -86,31 +85,19 @@ import Testing
     #expect(refused.status == .badRequest)
   }
 
-  @Test func everyDispatchChecksIdentityVisibilityAndNoFallbackRoute() async throws {
+  @Test func retainedHubChecksLiveKeyAndExactMachineIdentity() async throws {
     let f = try await Fixture()
-    let dispatched = Mutex(0)
-    let aborts = Mutex(0)
-    let credential = MachineV2Hub.Credential(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])
-    let request = Request(url: URL(string: "https://operation.test/machine/v2/machines/" + f.machine.id.rawValue)!)
-    do { _ = try await f.hub.fetch(request, usableFrom: .shared); Issue.record("missing route should fail") }
-    catch let error as OperationError { #expect(error.code == .machineUnavailable) }
-    let first = try await f.hub.attach(credential, client: FetchClient { _ in dispatched.withLock { $0 += 1 }; return Response(status: .ok) }, abort: { aborts.withLock { $0 += 1 } })
-    _ = try await f.hub.fetch(request, usableFrom: .shared)
-    #expect(dispatched.withLock { $0 } == 1)
-    let second = try await f.hub.attach(credential, client: FetchClient { _ in dispatched.withLock { $0 += 1 }; return Response(status: .ok) }, abort: { aborts.withLock { $0 += 1 } })
-    #expect(aborts.withLock { $0 } == 1)
-    await f.hub.remove(first)
-    _ = try await f.hub.fetch(request, usableFrom: .shared)
-    #expect(dispatched.withLock { $0 } == 2)
-    let other = try await f.space.addMachine(name: "other_v2", group: .shared)
-    try await f.space.registerMachineV2(other.id.rawValue, group: .shared)
-    do { _ = try await f.hub.fetch(Request(url: URL(string: "https://operation.test/machine/v2/machines/" + other.id.rawValue)!), usableFrom: .shared); Issue.record("connection cannot authorize another machine") }
-    catch let error as OperationError { #expect(error.code == .machineUnavailable) }
+    let credential = MachineHub.Credential(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])
+    try await f.hub.authorize(credential)
+    await #expect(throws: OperationError(.machineNotAuthorized)) {
+      try await f.hub.authorize(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue, "mc_zzzzzzzz"]))
+    }
     _ = try await f.space.resetCredentials(account: f.machine.account)
-    do { _ = try await f.hub.fetch(request, usableFrom: .shared); Issue.record("revoked key dispatched") }
-    catch let error as OperationError { #expect(error.code == .machineNotAuthorized) }
-    #expect(dispatched.withLock { $0 } == 2)
-    await f.hub.remove(second)
+    await #expect(throws: OperationError(.machineNotAuthorized)) { try await f.hub.authorize(credential) }
+    guard case let .response(refused) = try await f.connect(try await f.challenge(), machines: [f.machine.id.rawValue]) else {
+      Issue.record("revoked key connected"); return
+    }
+    #expect(refused.status == .unauthorized)
   }
 }
 
@@ -152,22 +139,20 @@ extension MachineV2TunnelTests {
     let f = try await Fixture()
     let person = try await f.space.addAccount(kind: .human, name: "other", admin: false)
     let group = try await f.space.ensurePersonalGroup(account: person.id)
-    let credential = MachineV2Hub.Credential(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])
-    _ = try await f.hub.attach(credential, client: FetchClient { _ in Response(status: .ok) }, abort: {})
+    let credential = MachineHub.Credential(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])
     _ = try await f.space.moveMachine(f.machine.id, to: group)
     #expect(try await f.space.machineV2Members(group: .shared).isEmpty)
     #expect(try await f.space.machineV2Members(group: group) == [f.machine.id.rawValue])
-    let request = Request(url: URL(string: "https://operation.test/machine/v2/machines/" + f.machine.id.rawValue)!)
-    do { _ = try await f.hub.fetch(request, usableFrom: .shared); Issue.record("old group retained v2 visibility") }
-    catch let error as OperationError { #expect(error.code == .unknownMachine) }
-    #expect(try await f.hub.fetch(request, usableFrom: group).status == .ok)
+    #expect(try await f.space.resolveMachine(f.machine.id.rawValue, usableFrom: .shared) == nil)
+    #expect(try await f.space.resolveMachine(f.machine.id.rawValue, usableFrom: group)?.id == f.machine.id)
+    try await f.hub.authorize(credential)
   }
 }
 
 extension MachineV2TunnelTests {
   @Test func productionWallAdmitsOnlySelfAuthenticatedV2Routes() async throws {
     let f = try await Fixture()
-    let handler = SpaceServer.configuredHandler(space: f.space, hub: MachineHub(space: f.space), dev: false, machineV2Hub: f.hub)
+    let handler = SpaceServer.configuredHandler(space: f.space, hub: f.hub, dev: false, listenerRoutes: machineListenerRoutes(space: f.space, hub: f.hub))
     guard case let .response(challengeResponse) = try await handler(Request(url: URL(string: "https://space.test/v1/machine-v2/challenge")!)) else { Issue.record("challenge should be HTTP"); return }
     #expect(challengeResponse.status == .ok)
     let challenge = try await challengeResponse.body.json(MachineChallengeOutput.self).challenge
@@ -189,35 +174,45 @@ extension MachineV2TunnelTests {
 }
 
 extension MachineV2TunnelTests {
-  @Test func missingRoutePreservesPersistedGoodbyeAcrossServerRestart() async throws {
+  @Test func statusPreservesKnownSilenceAndRegistrationOrigin() async throws {
     let f = try await Fixture()
-    try await f.space.recordMachineV2Presence(f.machine.id.rawValue, group: .shared, state: .detached, reason: "leaving")
-    let evidence = try #require(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
-    let restarted = MachineV2Hub(space: f.space)
-    let request = Request(url: URL(string: "https://operation.test/machine/v2/machines/" + f.machine.id.rawValue)!)
-    do { _ = try await restarted.fetch(request, usableFrom: .shared); Issue.record("missing route must not dispatch") }
-    catch let error as OperationError {
-      #expect(error.code == .machineUnavailable)
-      #expect(error.details == ["state": "detached", "started": false, "leftAt": .number(evidence.observedAt.timeIntervalSince1970)])
-    }
-  }
-
-  @Test func missingRoutePreservesKnownSilenceAndRegistrationOrigin() async throws {
-    let f = try await Fixture()
-    let request = Request(url: URL(string: "https://operation.test/machine/v2/machines/" + f.machine.id.rawValue)!)
     let registration = try #require(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
-    do { _ = try await f.hub.fetch(request, usableFrom: .shared); Issue.record("unanswered machine must not dispatch") }
-    catch let error as OperationError {
-      #expect(error.details == ["state": "lost", "started": false, "silentSince": .number(registration.observedAt.timeIntervalSince1970)])
+    let initial = try await f.http("/v1/machine-v2/" + f.machine.id.rawValue, method: .get, input: [String: String]())
+    #expect(initial.status == .ok)
+    let initialStatus = try await initial.body.json(JSONValue.self)
+    #expect(initialStatus.object?["state"] == .string(registration.state.rawValue))
+    #expect(initialStatus.object?["attached"] == .bool(false))
+    try await f.space.worker.call(MachineCell.ID(f.machine.id.rawValue)) { cell in
+      try cell.ensurePresence()
+      var presence = cell.presence
+      presence.state = "attached"
+      let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
+      presence.leaseMs = description.limits.leaseMs
+      presence.pollHoldMs = description.limits.pollHoldMs
+      presence.pollBytes = description.limits.pollBytes
+      presence.resultBytes = description.limits.resultBytes
+      presence.execStdoutWindow = nil
+      presence.execStderrWindow = nil
+      try cell.save(MachineDescriptionRow(description: description))
+      presence.observed = cell.now
+      try cell.save(presence)
     }
-    try await f.space.recordMachineV2Presence(f.machine.id.rawValue, group: .shared, state: .attached, description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: []))
-    let answer = try #require(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
-    try await f.space.recordMachineV2Presence(f.machine.id.rawValue, group: .shared, state: .lost, reason: "transportLost")
-    let restarted = MachineV2Hub(space: f.space)
-    do { _ = try await restarted.fetch(request, usableFrom: .shared); Issue.record("lost machine must not dispatch") }
-    catch let error as OperationError {
-      #expect(error.details == ["state": "lost", "started": false, "silentSince": .number(answer.observedAt.timeIntervalSince1970)])
+    let answered = try #require(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
+    try await f.space.worker.call(MachineCell.ID(f.machine.id.rawValue)) { cell in
+      var presence = cell.presence
+      presence.state = "lost"
+      try cell.save(presence)
     }
+    let restarted = MachineHub(space: f.space)
+    let handler = SpaceServer.configuredHandler(space: f.space, hub: restarted, dev: true, listenerRoutes: machineListenerRoutes(space: f.space, hub: restarted))
+    guard case let .response(response) = try await handler(Request(url: URL(string: "https://space.test/v1/machine-v2/" + f.machine.id.rawValue)!)) else {
+      Issue.record("status should be HTTP"); return
+    }
+    #expect(response.status == .ok)
+    let status = try await response.body.json(JSONValue.self)
+    #expect(status.object?["state"] == .string("lost"))
+    #expect(status.object?["attached"] == .bool(false))
+    #expect(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared)?.observedAt == answered.observedAt)
   }
 }
 
@@ -274,7 +269,7 @@ extension MachineV2TunnelTests {
     #expect(foreign.status == .unauthorized)
     #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
 
-    let wall = SpaceServer.configuredHandler(space: f.space, hub: MachineHub(space: f.space), dev: false, machineV2Hub: f.hub)
+    let wall = SpaceServer.configuredHandler(space: f.space, hub: f.hub, dev: false, listenerRoutes: machineListenerRoutes(space: f.space, hub: f.hub))
     let request = try await signed(wall, path, key: f.key, machine: f.machine.id)
     guard case let .response(revoked) = try await wall(request) else { Issue.record("revoke should be HTTP"); return }
     #expect(revoked.status == .ok)
@@ -290,11 +285,11 @@ extension MachineV2TunnelTests {
     let parked = AsyncStream<Void>.makeStream()
     let resume = AsyncStream<Void>.makeStream()
     let space = try Space.inMemory()
-    let hub = MachineV2Hub(space: space) { _ in
+    let hub = MachineHub(space: space, tokens: nil, revocationGate: { _ in
       parked.continuation.yield()
       for await _ in resume.stream { return }
-    }
-    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, machineV2Hub: hub)
+    })
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
     let key = Curve25519.Signing.PrivateKey()
     let enrolled = try await space.enrollMachineV2(name: "racer", group: .shared, pubkey: key.pubkeyLabel)
     let machine = enrolled.machine
@@ -308,106 +303,5 @@ extension MachineV2TunnelTests {
     guard case let .response(stale) = try await inFlight.value else { Issue.record("revoke should be HTTP"); return }
     #expect(stale.status == .unauthorized)
     #expect(try await space.machine(pubkey: replacement.pubkeyLabel) == machine.id)
-  }
-}
-
-extension MachineV2TunnelTests {
-  @Test func localPreparationIncludesBlockedIdentityReadAndCancelledPreparationNeverDispatches() async throws {
-    let f = try await Fixture()
-    let dispatched = Mutex(0)
-    let preparation = Mutex(0)
-    _ = try await f.hub.attach(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue]), client: FetchClient { _ in
-      dispatched.withLock { $0 += 1 }; return Response(status: .ok)
-    }, abort: {})
-    let entered = AsyncStream<Void>.makeStream()
-    let gate = DispatchSemaphore(value: 0)
-    let writer = await f.space.writer
-    let blocker = Task { try await writer.write { _ in entered.continuation.yield(()); gate.wait() } }
-    for await _ in entered.stream { break }
-    defer { gate.signal() }
-    let request = Request(url: URL(string: "https://operation.test/machine/v2/machines/" + f.machine.id.rawValue)!)
-    let began = AsyncStream<Void>.makeStream()
-    let exchange = Task {
-      try await OperationPreparation.$observer.withValue({ active in
-        preparation.withLock { $0 += active ? 1 : -1 }
-        if active { began.continuation.yield(()) }
-      }) { try await f.hub.fetch(request, usableFrom: .shared) }
-    }
-    for await _ in began.stream { break }
-    #expect(preparation.withLock { $0 } == 1)
-    exchange.cancel()
-    gate.signal(); try await blocker.value
-    do { _ = try await exchange.value; Issue.record("cancelled preparation dispatched") } catch {}
-    #expect(preparation.withLock { $0 } == 0)
-    #expect(dispatched.withLock { $0 } == 0)
-    try await f.space.close()
-  }
-}
-
-private struct PreparedHold: OperationKind {
-  let gate: AsyncStream<Void>
-  let descriptor = KindDescriptor("prepared-hold.v1", inputSchema: ["type": "object"], resultSchema: ["type": "object"])
-  func run(_ input: [String: String], channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
-    for await _ in gate {}
-    return [:]
-  }
-}
-
-extension MachineV2TunnelTests {
-  @Test(.timeLimit(.minutes(1))) func routingDatabaseWaitBeyondClientLeaseDoesNotBecomeMachineSilence() async throws {
-    try await withDependencies {
-      $0.installTimeControl()
-    } operation: {
-      @Dependency(\.continuousClock) var clock
-      @Dependency(\.timeControl) var time
-      @Dependency(\.date) var date
-      let origin = date.now
-      let operationClock = OperationClock(now: { .seconds(date.now.timeIntervalSince(origin)) }, sleep: { try await clock.sleep(for: $0) })
-      let f = try await Fixture()
-      let finish = AsyncStream<Void>.makeStream()
-      let started = AsyncStream<Void>.makeStream()
-      let entered = AsyncStream<Void>.makeStream()
-      let preparing = AsyncStream<Void>.makeStream()
-      let gate = DispatchSemaphore(value: 0)
-      let writer = await f.space.writer
-      let blocker = Task {
-        for await _ in started.stream { break }
-        try await writer.write { _ in entered.continuation.yield(()); gate.wait() }
-      }
-      defer { gate.signal() }
-      let agent = try OperationAgent(machine: f.machine.id.rawValue, kinds: [.init(PreparedHold(gate: finish.stream))], clock: operationClock, authorize: { _, _ in })
-      let run = Task { await agent.run() }
-      _ = try await f.hub.attach(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue]), client: FetchClient { request in
-        let response = try await agent.handler(request)
-        if request.method == .post {
-          started.continuation.yield(())
-          for await _ in entered.stream { break }
-        }
-        guard request.url.lastPathComponent == f.machine.id.rawValue else { return response }
-        let description = try await response.body.json(MachineDescription.self)
-        var limits = description.limits
-        limits.leaseMs = 900; limits.pollHoldMs = 200
-        var headers = response.headers
-        headers[.contentLength] = nil
-        return try .json(MachineDescription(instance: description.instance, acceptingStarts: true, limits: limits, kinds: description.kinds), headers: headers)
-      }, abort: {})
-      let operations = try MachineOperations(origin: URL(string: "https://operation.test")!, fetch: FetchClient { request in
-        let observer = OperationPreparation.observer
-        return try await OperationPreparation.$observer.withValue({ active in
-          observer?(active)
-          if active, request.method == .get, request.url.path.contains("/operations/") { preparing.continuation.yield(()) }
-        }) { try await f.hub.fetch(request, usableFrom: .shared) }
-      }, store: MemoryOperationStore(), clock: operationClock)
-      let operation = try await operations.open(.init(scope: "test", key: "routing-stall"), machine: f.machine.id.rawValue, start: .init(kind: "prepared-hold.v1", input: [:]))
-      for await _ in preparing.stream { break }
-      try await time.wake("blocked routing exchange deadline", after: 0.9)
-      try await time.asleep("routing exchange retry", dueIn: 0.1)
-      gate.signal(); try await blocker.value
-      finish.continuation.finish()
-      try await time.wake("routing exchange retry", after: 0.1)
-      #expect(try await operation.verdict().tag == .completed)
-      await operations.shutdown(); await agent.shutdown(); await run.value
-      try await f.space.close()
-    }
   }
 }

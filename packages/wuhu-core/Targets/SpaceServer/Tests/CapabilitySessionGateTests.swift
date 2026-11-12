@@ -44,7 +44,7 @@ extension SessionGateTests {
         #expect(try await t.harness.api(request).status == .unauthorized, "\(path)")
       }
       #expect(calls.value == 3)
-      try await t.harness.space.finishExec(t.exec, .exited(code: 0))
+      try await setExecTerminalFixture(space: t.harness.space, exec: t.exec, terminal: .exited(code: 0))
       for (method, path, body) in routes {
         var request = Request(url: URL(string: "http://space" + path)!, method: method, body: body)
         request.headers[.authorization] = "Bearer " + t.token

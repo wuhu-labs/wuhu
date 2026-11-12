@@ -100,9 +100,9 @@ final class IdentityHarness: Sendable {
     self.space = space
     self.store = space.sessions
     _ = try await space.fs(.settings).write("/models.json", Data(identityModelsJSON.utf8), ifMatch: nil)
-    let tokens = ExecTokens(spaceURL: Self.sessionSpace)
+    let tokens = try await testTokens(space: space, spaceURL: Self.sessionSpace)
     let hub = MachineHub(space: space, tokens: tokens)
-    let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
+    let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
     let config = LoopConfig(
       executeTool: { invocation in
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
@@ -124,7 +124,7 @@ final class IdentityHarness: Sendable {
     )
     let connection = MainConnection()
     let access = InferenceAccess(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "identity-fixture") })
-    let worker = SessionExecution(connection: connection, credential: { tokens.sessionToken($0) }, access: access, space: owner.space) { _ in config }
+    let worker = SessionExecution(connection: connection, credential: { try await tokens.sessionToken($0) }, access: access, space: owner.space) { _ in config }
     let runtime = SessionRuntime(execution: worker, owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: dev, execTokens: tokens)
     worker.start()
@@ -148,16 +148,11 @@ final class IdentityHarness: Sendable {
       title: "coder", kind: .task, parent: self.parent, createdBy: self.parent.rawValue, executor: model,
     )
     self.stranger = try await self.store.createSession(group: .shared, title: "stranger", kind: .agent, createdBy: "owner", executor: model)
-    if v2 {
-      let credential = try tokens.credential(session: self.parent, group: .shared, scope: "script", key: "cli", timeout: .seconds(60), now: Date(), active: { true })
-      self.token = try #require(credential.object?["token"]?.stringValue)
-      self.expiresAt = try #require(credential.object?["expiresAt"]).jsonString()
-    } else {
-      let machine = try await space.addMachine(name: "box")
-      let exec = try await space.mintExec(machine: machine.id, caller: self.parent.rawValue)
-      self.token = tokens.credential(session: self.parent, exec: exec.id, timeout: nil, now: Date()).token
-      self.expiresAt = nil
-    }
+    let machine = try await space.addMachine(name: "box")
+    let exec = try await space.reserveExec(machine: machine.id, caller: self.parent.rawValue)
+    let credential = try await tokens.credential(session: self.parent, group: .shared, machine: machine.id, exec: exec.id, timeout: .seconds(60), issuedAt: Date())
+    self.token = try #require(credential.object?["token"]?.stringValue)
+    self.expiresAt = v2 ? try #require(credential.object?["expiresAt"]).jsonString() : nil
   }
 
   var sessionEnvironment: [String: String] {

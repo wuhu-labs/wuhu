@@ -1,12 +1,13 @@
+import SwiftSyntaxMacroExpansion
 import SwiftSyntaxMacros
-import SwiftSyntaxMacrosTestSupport
+import SwiftSyntaxMacrosGenericTestSupport
+import Testing
 import WuweiMacros
-import XCTest
 
-final class CellMacroTests: XCTestCase {
+struct CellMacroTests {
   private let macros: [String: any Macro.Type] = ["Cell": CellMacro.self, "Job": JobMacro.self]
 
-  func testMutatingMethodsBecomeMessagesButWakeAndAround() {
+  @Test func testMutatingMethodsBecomeMessagesButWakeAndAround() {
     assertMacroExpansion(
       """
       @Cell
@@ -89,12 +90,13 @@ final class CellMacroTests: XCTestCase {
         }
       }
       """,
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
       indentationWidth: .spaces(2),
+      failureHandler: recordFailure,
     )
   }
 
-  func testAMessageCannotAwait() {
+  @Test func testAMessageCannotAwait() {
     assertMacroExpansion(
       """
       @Cell
@@ -153,12 +155,13 @@ final class CellMacroTests: XCTestCase {
       }
       """,
       diagnostics: [DiagnosticSpec(message: "a cell never awaits: 'charge' is async; effects belong to a job", line: 3, column: 17)],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
       indentationWidth: .spaces(2),
+      failureHandler: recordFailure,
     )
   }
 
-  func testSocketHandlersAreDispatchedBySocketType() {
+  @Test func testSocketHandlersAreDispatchedBySocketType() {
     assertMacroExpansion(
       """
       @Cell
@@ -244,12 +247,13 @@ final class CellMacroTests: XCTestCase {
         }
       }
       """,
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
       indentationWidth: .spaces(2),
+      failureHandler: recordFailure,
     )
   }
 
-  func testASocketHandlerHasAFixedShape() {
+  @Test func testASocketHandlerHasAFixedShape() {
     assertMacroExpansion(
       """
       @Cell
@@ -308,12 +312,13 @@ final class CellMacroTests: XCTestCase {
       }
       """,
       diagnostics: [DiagnosticSpec(message: "a socket handler is attached(_:), receive(_:from:) or closed(_:), not 'joined'", line: 3, column: 17)],
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
       indentationWidth: .spaces(2),
+      failureHandler: recordFailure,
     )
   }
 
-  func testAJobGetsItsContextAndState() {
+  @Test func testAJobGetsItsContextAndState() {
     assertMacroExpansion(
       """
       @Job
@@ -365,8 +370,13 @@ final class CellMacroTests: XCTestCase {
         }
       }
       """,
-      macros: macros,
+      macroSpecs: macros.mapValues { MacroSpec(type: $0) },
       indentationWidth: .spaces(2),
+      failureHandler: recordFailure,
     )
+  }
+
+  private func recordFailure(_ failure: TestFailureSpec) {
+    Issue.record("\(failure.message)", sourceLocation: .init(fileID: failure.location.fileID, filePath: failure.location.filePath, line: failure.location.line, column: failure.location.column))
   }
 }

@@ -7,6 +7,7 @@ struct FairOutbox {
 
   private var queues: [UInt64: Queue] = [:]
   private var order: [UInt64] = []
+  var isEmpty: Bool { queues.isEmpty }
   var abortCount: Int { queues.values.filter { $0.next.kind == .abort }.count }
 
   func isAborting(_ id: UInt64) -> Bool { queues[id]?.next.kind == .abort }

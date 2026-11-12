@@ -80,7 +80,7 @@ import Testing
     let folder = try scratchURL("space-host-observation")
     defer { try? FileManager.default.removeItem(at: folder) }
     let host = try await SpaceHost.open(folder: folder, deployment: DeploymentRecord(origin: "https://stopped.test", tlsFingerprint: "test", certificate: .provided), configDirectory: nil, allowEnvironmentCredentials: false)
-    let stream = await host.space.observeQuery("SELECT path FROM docs", throttle: .zero, as: .shared(.anonymous))
+    let stream = try host.space.observeRows("SELECT path FROM docs", throttle: .zero, as: .shared(.anonymous))
     var iterator = stream.makeAsyncIterator()
     #expect(try await iterator.next() != nil)
     try await host.shutdown()

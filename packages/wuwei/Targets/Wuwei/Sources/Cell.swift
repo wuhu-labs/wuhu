@@ -212,7 +212,8 @@ extension Incarnation {
 
   /// A wake that rolls back is tried again after `retryDelay`.
   private func wake<C: Cell>(_: C.Type, _ generation: Int) {
-    guard generation == wakeGeneration, !dead, !retiring else { return }
+    guard generation == wakeGeneration, !dead, !worker.isQuiescing else { return }
+    guard !retiring else { return handOff() }
     let now = worker.scheduler.now
     if call(C.self, woke: now, { cell, _ in try cell.wake() }) != nil {
       armWake(C.self, at: wakeAt.map { max($0, now + worker.options.retryDelay) })
@@ -231,6 +232,6 @@ extension Incarnation {
   }
 
   private func evictIfIdle(_ generation: Int) {
-    if generation == idleGeneration, !dead, !retiring { retire(.released) }
+    if generation == idleGeneration, !dead, !retiring, !worker.isQuiescing { retire(.released) }
   }
 }

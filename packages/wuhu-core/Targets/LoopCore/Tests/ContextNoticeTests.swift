@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -11,7 +15,7 @@ import struct WuhuAI.ToolCall
     var path: String
   }
 
-  @Test func `a tool call that touched a repository is followed by its context notice`() async throws {
+  @Test func `a scope notice waits behind the turns last tool answer`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -25,12 +29,18 @@ import struct WuhuAI.ToolCall
         Fix.replying("done"),
       ])
       let calls = Box<[ToolCall]>([])
+      let shown = Box<ToolExecutionState?>(nil)
       var config = makeConfig(inference: { try await script($0) })
       config.executeTool = { invocation in
         let call = invocation.call
         calls.withLock { $0.append(call) }
         let payload = ToolResultPayload.read(.init(path: repo, revision: .journal(1), content: call.id))
-        guard call.arguments == .object(["path": .string(repo + "/a")]) else { return ToolOutcome(payload: payload) }
+        guard call.arguments == .object(["path": .string(repo + "/a")]) else {
+          do {
+            #expect(try await sessions.lines(sid).allSatisfy { $0.key != LineKey.scope }, "the notice remains held while another call is pending")
+          } catch { Issue.record(error) }
+          return ToolOutcome(payload: payload)
+        }
         return ToolOutcome(
           payload: payload,
           context: ScopeContext(folders: [repo: repo], deliveredContext: ["hash": repo + "/AGENTS.md"], text: "repo manual"),
@@ -40,23 +50,22 @@ import struct WuhuAI.ToolCall
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("second assistant reply") {
-          try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 2
+          try await sessions.lines(sid).assistantLines.count == 2
         }
+        let state = try space.worker.cell(SessionCell.ID(sid.rawValue)).shown()
+        shown.withLock { $0 = state }
       }
 
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      let shape = transcript.items.compactMap { item -> String? in
-        switch item {
-        case let .toolResult(result): "result \(result.payload.renderedText)"
-        case let .notification(notice) where notice.kind == .context: "context \(notice.content.text)"
-        default: nil
-        }
-      }
+      let lines = try await sessions.lines(sid)
+      let relevant = lines.filter { $0.role == .toolResult || $0.key == LineKey.scope }
       let ids = calls.value.map(\.id)
-      #expect(shape == ["result \(ids[0])", "context repo manual", "result \(ids[1])"])
+      #expect(relevant.map(\.key) == ids.map { "call:" + $0 } + [LineKey.scope])
+      #expect(relevant.map(\.role) == [.toolResult, .toolResult, .user])
+      #expect(Array(relevant.prefix(2)).map(\.text) == ids)
+      #expect(relevant.last?.text.hasSuffix("\n\nrepo manual") == true)
       let expected: [String: String?] = [repo: repo]
-      #expect(transcript.environment.tools.folderRoots == expected)
-      #expect(transcript.environment.tools.deliveredContext == ["hash": repo + "/AGENTS.md"])
+      #expect(shown.value?.folderRoots == expected)
+      #expect(shown.value?.deliveredContext == ["hash": repo + "/AGENTS.md"])
     }
   }
 
@@ -90,14 +99,17 @@ import struct WuhuAI.ToolCall
       }
 
       let folded = Box<ToolExecutionState?>(nil)
+      let restarted = Box<ToolExecutionState?>(nil)
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 5 }
-        let tools = try await sessions.hydrate(sid).transcript.kernel.environment.tools
+        let tools = try space.worker.cell(SessionCell.ID(sid.rawValue)).shown()
         folded.withLock { $0 = tools }
         _ = try await service.restart(sid, executor: nil, note: nil)
         try await service.enqueue(item: Fix.message("again", message: "m2"), to: sid)
         try await until("the restarted generation stops") { try await sessions.settledWork(sid) && script.count == 6 }
+        let state = try space.worker.cell(SessionCell.ID(sid.rawValue)).shown()
+        restarted.withLock { $0 = state }
       }
 
       #expect(secondCall.value?.fileAccessLog == [repo + "/a": .mtime(Date(timeIntervalSince1970: 1_700_000_000.123456))], "a tool call goes by what the generation was shown")
@@ -106,7 +118,7 @@ import struct WuhuAI.ToolCall
       #expect(Set(try #require(folded.value).fileAccessLog.keys) == (kept ? [repo + "/a", repo + "/b"] : []))
       #expect(folded.value?.folderRoots.isEmpty == true)
       #expect(folded.value?.deliveredContext.isEmpty == true)
-      #expect(try await sessions.hydrate(sid).transcript.kernel.environment.tools.fileAccessLog.isEmpty)
+      #expect(restarted.value?.fileAccessLog.isEmpty == true)
     }
   }
 }

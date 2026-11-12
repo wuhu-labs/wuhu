@@ -26,7 +26,7 @@ actor MemoryFiles {
     .init(load: { await self.load(name) }, create: { try await self.create(name, data: $0) })
   }
 
-  nonisolated var identityStateStore: IdentityStateStore {
-    .init(load: { await self.load("/settings.json") }, save: { await self.write($0, at: "/settings.json") })
+  nonisolated var identityKeys: IdentityKeys {
+    .init(load: { kid in try ServerIdentity(rawKey: await self.read(kid)) }, store: { key in await self.write(key.rawKey, at: key.kid) })
   }
 }

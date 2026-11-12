@@ -9,6 +9,7 @@ import Fetch
 import JSONValue
 import Serve
 import ServeSSE
+import enum SpaceContract.ErrorCode
 import struct SpaceContract.GroupID
 import SpaceCore
 import struct SpaceFS.Entry
@@ -72,29 +73,48 @@ func watchResponse(space: Space, glob: String, from rawFrom: String?, principal:
   } catch {
     return jsonResponse(Wire.failure(error).payload, status: error is SpaceError ? .notFound : .badRequest)
   }
-  let events = await space.observeFS(glob: watched.pattern, from: from, group: watched.group)
-  var initial: SSEEvent?
-  if head, from == nil {
+  // The subscription starts after the revision the head frame names, so a
+  // client resumes from it without missing or repeating a commit.
+  let after: Rev
+  if let from {
+    after = from
+  } else {
     do {
-      initial = .message(JSONValue.object(["rev": .integer(try await space.currentRevision())]).jsonString(), event: "head")
+      after = Rev(try await space.currentRevision())
     } catch {
       return jsonResponse(Wire.failure(error).payload, status: .internalServerError)
     }
   }
+  var initial: SSEEvent?
+  if head, from == nil {
+    initial = .message(JSONValue.object(["rev": .integer(after.value)]).jsonString(), event: "head")
+  }
+  let events: AsyncStream<FSCommit>
+  do {
+    events = try await space.observeFS(glob: watched.pattern, from: after, group: watched.group, as: principal)
+  } catch {
+    return observationsUnavailable()
+  }
   if batch {
     return .sse(initial: initial, forwarding: events) { commit in
-      guard (try? await space.reads(for: principal).contains(watched.group)) == true else { return nil }
-      return .message(JSONValue.object([
+      .message(JSONValue.object([
         "rev": .integer(commit.rev),
         "events": .array(commit.events.map { Wire.mutationJSON($0, prefix: watched.prefix) }),
       ]).jsonString(), event: "revision")
     }
   }
   return .sse(initial: initial, forwarding: events.mutations) { event in
-    // A group the reader no longer reaches stops streaming to it, mid-stream.
-    guard (try? await space.reads(for: principal).contains(watched.group)) == true else { return nil }
-    return .message(Wire.mutationJSON(event, prefix: watched.prefix).jsonString())
+    .message(Wire.mutationJSON(event, prefix: watched.prefix).jsonString())
   }
+}
+
+/// The space's observation job lives in another process: the streams it held closed at a drain, and the client reconnects instead of giving up.
+func observationsUnavailable() -> Response {
+  var response = errorResponse(
+    .serviceUnavailable, code: ErrorCode.unavailable.rawValue, message: "this space's observation job is not hosted here — reconnect",
+  )
+  response.headers[.retryAfter] = "1"
+  return response
 }
 
 /// `sql`'s snapshots as SSE, each rendered by `render`: the current result,
@@ -138,9 +158,12 @@ func snapshotsResponse(
       return jsonResponse(Wire.failure(error).payload, status: .internalServerError)
     }
   }
-  let snapshots = await space.observeQuery(
-    sql, parameters: parameters, throttle: .milliseconds(throttleMs), viewer: identity, as: principal,
-  )
+  let snapshots: AsyncThrowingStream<Rows, any Error>
+  do {
+    snapshots = try space.observeRows(sql, parameters: parameters, throttle: .milliseconds(throttleMs), viewer: identity, as: principal)
+  } catch {
+    return observationsUnavailable()
+  }
   return .sse(forwarding: snapshots) { rows in
     .message(render(rows).jsonString())
   }

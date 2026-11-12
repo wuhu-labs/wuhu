@@ -29,6 +29,7 @@ import enum SpaceContract.ToolCallHeader
 import struct SpaceContract.ToolError
 import SpaceCore
 import SpaceTools
+import TaskLifetime
 import struct WuhuAI.InvalidToolArguments
 import struct WuhuAI.ToolCall
 
@@ -37,7 +38,7 @@ public struct ToolExecutor: Sendable {
   let credential: @Sendable (SessionID) async throws -> String
   /// What the worker brings to the inferences it runs itself (the loop's and scripts' `complete()`).
   let access: InferenceAccess
-  let scripts: Scripts?
+  let cancelScript: @Sendable (SessionID, String) async throws -> ToolResultPayload
 
   /// `credential` is the token main issued the session; every call the worker
   /// makes to main's API carries it.
@@ -45,30 +46,29 @@ public struct ToolExecutor: Sendable {
     main: MainConnection,
     credential: @escaping @Sendable (SessionID) async throws -> String,
     access: InferenceAccess = InferenceAccess(),
-    scripts: Scripts? = nil,
+    cancelScript: @escaping @Sendable (SessionID, String) async throws -> ToolResultPayload = { _, _ in throw ToolProblem("cancel: scripts are not available here") },
   ) {
     self.main = main
     self.credential = credential
     self.access = access
-    self.scripts = scripts
+    self.cancelScript = cancelScript
   }
 
   /// Main's API as `session`; with `toolCall`, every request names the tool
   /// call it runs for, and main answers a repeat with its first response.
-  func client(_ session: SessionID, toolCall: String? = nil) async throws -> SpaceClient {
-    try await client(.session(session), toolCall: toolCall)
+  func client(_ session: SessionID, toolCall: String? = nil) -> SpaceClient {
+    client(.session(session), toolCall: toolCall)
   }
 
-  func client(_ actor: ScriptActor, toolCall: String? = nil) async throws -> SpaceClient {
-    let token = try await bearer(actor)
+  func client(_ actor: ScriptActor, toolCall: String? = nil) -> SpaceClient {
     let main = main
     return SpaceClient(space: "http://main", fetch: FetchClient { request in
       var request = request
-      request.headers[.authorization] = "Bearer " + token
+      request.headers[.authorization] = "Bearer " + (try await bearer(actor))
       if let toolCall { request.headers[ToolCallHeader.name] = toolCall }
       return try await main.fetch(request)
     }, dial: { url, headers in
-      var headers = headers + [("authorization", "Bearer " + token)]
+      var headers = headers + [("authorization", "Bearer " + (try await bearer(actor)))]
       if let toolCall { headers.append((ToolCallHeader.name, toolCall)) }
       return try await main.dial(url, headers: headers)
     })
@@ -79,6 +79,16 @@ public struct ToolExecutor: Sendable {
     guard let tool = RosterTool(rawValue: call.name) else {
       return ToolOutcome(payload: .failure(.init(message: "unknown tool: \(call.name)")))
     }
+    if tool.finishesWhenCancelled {
+      return try await uncancellable("A tool that ends nothing by stopping runs to its answer") {
+        try await answer(session, tool, call, state: state, yielded: yielded)
+      }
+    }
+    try Task.checkCancellation()
+    return try await answer(session, tool, call, state: state, yielded: yielded)
+  }
+
+  private func answer(_ session: SessionID, _ tool: RosterTool, _ call: ToolCall, state: ToolExecutionState, yielded: @escaping @Sendable () async -> Bool) async throws -> ToolOutcome {
     let (call, touched) = await resolvingMachine(session, tool, call)
     let payload = try await result(session, tool, call, state: state, yielded: yielded)
     if case .failure = payload { return ToolOutcome(payload: payload) }
@@ -88,7 +98,7 @@ public struct ToolExecutor: Sendable {
   private func result(_ session: SessionID, _ tool: RosterTool, _ call: ToolCall, state: ToolExecutionState, yielded: @escaping @Sendable () async -> Bool) async throws -> ToolResultPayload {
     do {
       switch tool {
-      case .runScript: return try await runScript(session, decoded(RunScriptArguments.self, call), yielded: yielded)
+      case .runScript: preconditionFailure("run_script is owned by ScriptJob")
       case .cancel: return try await cancel(session, decoded(CancelArguments.self, call), call: call, state: state)
       case .grep: return try await grep(session, decoded(GrepArguments.self, call))
       case .find: return try await find(session, decoded(FindArguments.self, call))
@@ -107,7 +117,7 @@ public struct ToolExecutor: Sendable {
       case .createSession: return try await createSession(.session(session), call.id, decoded(CreateSessionArguments.self, call))
       case .setTitle: return try await setTitle(session, call.id, decoded(SetTitleArguments.self, call))
       case .manipulateUI: return try await manipulateUI(session, call.id, decoded(ManipulateUIArguments.self, call))
-      case .exec: return try await exec(session, ToolCallID(call.id), decoded(ExecArguments.self, call), yielded: yielded)
+      case .exec: preconditionFailure("exec is owned by ToolCallJob")
       }
     } catch let error as CapabilityError { return .failure(.init(message: error.description)) }
     catch let error as OperationError { return .failure(.init(message: error.message.isEmpty ? error.code.rawValue : error.message, code: error.code.rawValue)) }

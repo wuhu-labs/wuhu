@@ -57,26 +57,15 @@ extension SessionRows {
     }
     try Sessions.writeModelRoute(key, route: modelRoute, in: db)
     let runtime = try Sessions.runtime(key, in: db)
-    try CacheWarmingRow.reset(key, in: db)
-    do {
-      head.settle = try Sessions.settleState(key, through: nowDate, in: db)
-    } catch where isUnreadableSessionData(error) {
-      head.settle = SettleState()
-    }
     let queue = try Sessions.recoverRestartQueue(key, tail: runtime.queueTail, in: db)
     if queue.dropped > 0 {
       let dropped = "Dropped \(queue.dropped) queued input(s) that could not be read."
       head.note = [note, dropped].compactMap(\.self).joined(separator: "\n")
     }
     let generation = runtime.generation + 1
-    do {
-      head.snapshot = .init(subscriptions: try armed ?? armedSlots(id).slots)
-      head.settleBoundary = .init(
-        queueTail: queue.tail,
-        messageTail: try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(n), 0) FROM messages WHERE sender_session_id = ?", arguments: [key])!,
-      )
-      try Sessions.writeGeneration(key, generation: generation, transcript: Transcript().compacted(head: head, kept: nil), in: db)
-    }
+    head.snapshot = .init(subscriptions: try armed ?? armedSlots(id).slots)
+    try Sessions.openGeneration(key, generation: generation, in: db)
+    try Sessions.appendLines(key, generation: generation, head.lines(session: id), in: db)
     try db.execute(
       sql: """
       UPDATE sessions
@@ -137,19 +126,7 @@ extension Sessions {
   static func generationState(_ key: String, in db: Database) throws -> GenerationState {
     let generation = try runtime(key, in: db).generation
     if try record(key, in: db).executor.isRetired { return GenerationState(generation: Int(generation), note: nil) }
-    let payload = try String.fetchOne(
-      db,
-      sql: """
-      SELECT c.payload FROM session_pointers p
-      JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
-      WHERE p.session_id = ? AND p.generation = ? AND p.position = 0
-      """,
-      arguments: [key, generation],
-    )
-    guard let payload, case let .generationHead(head) = try decode(TranscriptItem.self, from: payload) else {
-      return GenerationState(generation: Int(generation), note: nil)
-    }
-    return GenerationState(generation: Int(generation), note: head.note)
+    return GenerationState(generation: Int(generation), note: try lineText(key, generation: generation, lineKey: "head:note", in: db)?.text)
   }
 }
 

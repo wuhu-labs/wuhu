@@ -91,7 +91,9 @@ import Testing
       #expect(try await code(restartWithMessage) == "taskInput")
       let bare = try await t.harness.call("/v1/session/\(task)/restart", .null, as: SessionRestartOutput.self)
       #expect(bare.generation == 1, "the refused restart changed nothing")
-      #expect(try await !t.harness.store.transcript(t.task).hasWork)
+      try await until("the task's bare restart settles") { try await t.harness.store.settledWork(t.task) }
+      #expect(try await t.harness.store.undrainedInputs(t.task).isEmpty)
+      #expect(try await t.harness.store.testLines(t.task).allSatisfy { !$0.key.hasPrefix("message:") })
     }
   }
 

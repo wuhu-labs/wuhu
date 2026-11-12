@@ -23,6 +23,11 @@ extension SessionStore {
     try await rows { try $0.put(id, SessionPut(input)) }
   }
 
+  @discardableResult
+  func drainQueue(_ id: SessionID) async throws -> QueueDrain {
+    try await rows { try $0.drainQueue(id) }
+  }
+
   /// Returns once every person's cell has taken the mail on its way: what a push outbox reads is then there.
   func inboxesSettled() async throws {
     while try await writer.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient LIKE 'PersonCell/%')")! }) {

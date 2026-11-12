@@ -401,7 +401,12 @@ struct ProcessEntry { let pid, ppid, pgid: Int32 }
 /// Every process's parent and process group.
 func processTable() -> [ProcessEntry] {
   #if os(Linux)
-    let pids = ((try? FileManager.default.contentsOfDirectory(atPath: "/proc")) ?? []).compactMap { Int32($0) }
+    let entries: [String]
+    do { entries = try FileManager.default.contentsOfDirectory(atPath: "/proc") } catch {
+      Issue.record("Cannot list /proc: \(error)")
+      return []
+    }
+    let pids = entries.compactMap { Int32($0) }
     return pids.compactMap { pid in
       // After the parenthesised command: state, ppid, pgrp.
       guard let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8), let close = stat.lastIndex(of: ")") else { return nil }
@@ -410,17 +415,21 @@ func processTable() -> [ProcessEntry] {
       return ProcessEntry(pid: pid, ppid: ppid, pgid: pgid)
     }
   #else
-    let ps = Process()
-    ps.executableURL = URL(fileURLWithPath: "/bin/ps")
-    ps.arguments = ["-A", "-o", "pid=,ppid=,pgid="]
-    let pipe = Pipe()
-    ps.standardOutput = pipe
-    guard (try? ps.run()) != nil else { return [] }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    ps.waitUntilExit()
-    return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
-      let fields = line.split(separator: " ").compactMap { Int32($0) }
-      return fields.count == 3 ? ProcessEntry(pid: fields[0], ppid: fields[1], pgid: fields[2]) : nil
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+    var size = 0
+    guard sysctl(&mib, 3, nil, &size, nil, 0) == 0 else {
+      Issue.record("Cannot size process table: errno \(errno)")
+      return []
+    }
+    var processes = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 32)
+    size = processes.count * MemoryLayout<kinfo_proc>.stride
+    let status = processes.withUnsafeMutableBytes { sysctl(&mib, 3, $0.baseAddress, &size, nil, 0) }
+    guard status == 0 else {
+      Issue.record("Cannot read process table: errno \(errno)")
+      return []
+    }
+    return processes.prefix(size / MemoryLayout<kinfo_proc>.stride).map {
+      ProcessEntry(pid: $0.kp_proc.p_pid, ppid: $0.kp_eproc.e_ppid, pgid: $0.kp_eproc.e_pgid)
     }
   #endif
 }

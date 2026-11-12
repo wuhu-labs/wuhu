@@ -9,6 +9,7 @@ import func MainHub.fetchOrigin
 import Serve
 import ServeRouting
 import SpaceCore
+import Wuwei
 
 private struct IdentitySetInput: Decodable {
   var defaultIssuer: IssuerChoice?
@@ -27,11 +28,11 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
       }
       guard let identity else { return identityUnavailable() }
       do {
-        if path == "/v1/identity" { return jsonResponse(try await identity.snapshot()) }
+        if path == "/v1/identity" { return jsonResponse(try identity.snapshot()) }
         guard let origin = queryValues(of: request.url)["origin"], let url = URL(string: origin),
               try ServerIdentity.audience(url) == origin, fetchOrigin(url) == origin
         else { throw IdentityError.invalidAudience }
-        return jsonResponse(.object(["issuer": .string(try await identity.issuerFor(url))]))
+        return jsonResponse(.object(["issuer": .string(try identity.issuerFor(url))]))
       } catch let error as IdentityError { return identityFailure(error) }
     }
   }
@@ -44,9 +45,9 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     }
     guard let identity else { return identityUnavailable() }
     do {
-      try await identity.registerNew()
-      return jsonResponse(try await identity.snapshot())
+      return jsonResponse(try await identity.registerNew())
     } catch let error as IdentityError { return identityFailure(error) }
+    catch is Evicted { return identityUnavailable() }
   }
   router.post("/v1/identity/rotate") { request, _ in
     guard SessionPrincipal.current == nil else { return adminRequired("rotating the server key") }
@@ -57,9 +58,9 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     }
     guard let identity else { return identityUnavailable() }
     do {
-      try await identity.rotate()
-      return jsonResponse(.object(["rotating": .bool(true)]))
+      return jsonResponse(try await identity.rotate())
     } catch let error as IdentityError { return identityFailure(error) }
+    catch is Evicted { return identityUnavailable() }
   }
   router.put("/v1/identity") { request, _ in
     guard SessionPrincipal.current == nil else { return adminRequired("changing the server issuer") }
@@ -76,9 +77,9 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
       (input.defaultIssuer == nil && input.audience != nil && ((input.issuer != nil && input.remove == nil) || (input.issuer == nil && input.remove == true)))
     else { return errorResponse(.badRequest, code: "invalidArgument", message: "set exactly one default or audience override") }
     do {
-      try await identity.set(defaultIssuer: input.defaultIssuer, audience: input.audience, choice: input.issuer)
-      return jsonResponse(try await identity.snapshot())
+      return jsonResponse(try await identity.set(defaultIssuer: input.defaultIssuer, audience: input.audience, choice: input.issuer))
     } catch let error as IdentityError { return identityFailure(error) }
+    catch is Evicted { return identityUnavailable() }
   }
 }
 
@@ -91,7 +92,7 @@ func identityFailure(_ error: IdentityError) -> Response {
   let status: Status
   switch error {
   case .directoryUnavailable, .unknownId, .unlistedKey: code = error.directoryCode!; status = .serviceUnavailable
-  case .mutationInProgress: code = "identityBusy"; status = .conflict
+  case .busy: code = "identityBusy"; status = .conflict
   case .directoryNotSelected: code = "directoryNotSelected"; status = .unprocessableContent
   default: code = "identityConfiguration"; status = .unprocessableContent
   }

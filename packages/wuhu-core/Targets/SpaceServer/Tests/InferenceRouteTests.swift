@@ -15,20 +15,20 @@ import Testing
 private func worker(_ harness: SessionHarness, _ tokens: ExecTokens) async throws -> (SessionID, String) {
   let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
   let session = try await harness.store.createSession(group: .shared, title: "worker", kind: .agent, createdBy: "owner", executor: model)
-  return (session, tokens.sessionToken(session))
+  return (session, try await tokens.sessionToken(session))
 }
 
 private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session: SessionID) async throws -> String {
   let machine = (try await harness.space.addMachineV2(name: "box")).machine
-  let exec = try await harness.space.mintExec(machine: machine.id, caller: session.rawValue)
-  return tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
+  let exec = try await harness.space.reserveExec(machine: machine.id, caller: session.rawValue)
+  return try await tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
 }
 
 @Suite(.deterministicDependencies) struct InferenceRouteTests {
   @Test func promptIsRenderedOnceAtTheSessionsPromptRevision() async throws {
     try await withSessionDeps {
-      let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-      let harness = try await SessionHarness(execTokens: tokens)
+      let harness = try await SessionHarness(spaceURL: "https://space.test:5530")
+      let tokens = harness.runtime.tokens
       let fs = await harness.space.fs(.shared)
       let guidance = try await fs.write("/AGENTS.md", Data("frozen guidance".utf8), ifMatch: nil)
       let (session, token) = try await worker(harness, tokens)
@@ -50,8 +50,8 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
 
   @Test func mediaIsWorkerOnlyWithoutBlobOwnershipOrFileReaderChecks() async throws {
     try await withSessionDeps {
-      let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-      let harness = try await SessionHarness(execTokens: tokens)
+      let harness = try await SessionHarness(spaceURL: "https://space.test:5530")
+      let tokens = harness.runtime.tokens
       let (session, token) = try await worker(harness, tokens)
       let (_, otherToken) = try await worker(harness, tokens)
       let bytes = Data([1, 2, 3, 4])
@@ -83,8 +83,8 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
   @Test func reportedInferencesCarryThePrincipal() async throws {
     try await withSessionDeps {
       let recorded = Mutex<[InferenceMetric]>([])
-      let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-      let harness = try await SessionHarness(execTokens: tokens, metrics: .init { metric in recorded.withLock { $0.append(metric) } })
+      let harness = try await SessionHarness(spaceURL: "https://space.test:5530", metrics: .init { metric in recorded.withLock { $0.append(metric) } })
+      let tokens = harness.runtime.tokens
       let (session, token) = try await worker(harness, tokens)
       let response = try await harness.post("/v1/inferences", .object([
         "id": .string("attempt-1"), "timestamp": .number(1_700_000_000), "provider": .string("offline"), "model": .string("small"), "servedModel": .string("served-small"),

@@ -14,6 +14,12 @@ import Testing
   @Test func upgradeDeletesOnlyMachinesWithoutMembershipAndRunsOnce() async throws {
     let database = try DatabaseQueue()
     let original = try Space(writer: database)
+    try await database.write { db in
+      try db.execute(sql: """
+      CREATE TABLE machine_execs (id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, stream_id INTEGER NOT NULL, command TEXT NOT NULL, started_at TEXT NOT NULL, grp TEXT NOT NULL);
+      CREATE TABLE script_execs (exec_id TEXT PRIMARY KEY, script_id TEXT NOT NULL, session_id TEXT NOT NULL, grp TEXT NOT NULL);
+      """)
+    }
     let old = try await original.addMachine(name: "old_box")
     _ = try await original.renameMachine(old.id, name: "renamed_box")
     let unnamed = try await original.addMachine(name: nil)

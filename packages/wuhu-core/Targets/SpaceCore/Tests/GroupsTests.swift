@@ -71,7 +71,7 @@ import Testing
   @Test func aStreamCarriesOnlyItsGroup() async throws {
     let space = try await seeded()
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
     _ = try await space.fs(Self.alice).write("/late.md", bytes("alice"), ifMatch: nil)
@@ -85,8 +85,8 @@ import Testing
   @Test func aCrossGroupMoveIsOneRevisionLeavingOneGroupForTheOther() async throws {
     let space = try await seeded()
     let (left, arrived) = (Collector<MutationEvent>(), Collector<MutationEvent>())
-    let fromShared = await space.observeFS(glob: "**", group: .shared).mutations
-    let intoAlice = await space.observeFS(glob: "**", group: Self.alice).mutations
+    let fromShared = try await space.observeFS(glob: "**", group: .shared).mutations
+    let intoAlice = try await space.observeFS(glob: "**", group: Self.alice, as: Principal(actor: .anonymous, group: Self.alice)).mutations
     let consumers = [
       Task { for await event in fromShared { await left.append(event) } },
       Task { for await event in intoAlice { await arrived.append(event) } },
@@ -137,7 +137,7 @@ import Testing
     }
     try await space.setGrant(.group, Self.alice.rawValue, role: .write, in: vault, by: .anonymous, acting: vault)
     _ = try await space.fs(vault).write("/readme.md", bytes("# Vault\n"), ifMatch: nil)
-    let stream = await space.observeQuery(
+    let stream = try space.observeRows(
       "SELECT path FROM \"wuhu://vault.localspace/docs\"", throttle: .zero, as: Principal(actor: .anonymous, group: Self.alice),
     )
     let frames = Collector<Rows>()
@@ -152,12 +152,12 @@ import Testing
     #expect(try await awaitItems(frames, atLeast: 1).map(\.rows) == [[[.text("/readme.md")]]])
     try await space.removeGrant(.group, Self.alice.rawValue, in: vault, by: .anonymous, acting: vault)
     let error = await ending.value
-    #expect(error as? SpaceError == .unknownRelation("wuhu://vault.localspace/docs"))
+    #expect(error == nil)
   }
 
   @Test func aRowWithoutAGroupIsRefused() async throws {
     let space = try makeSpace()
-    for table in ["sessions", "revisions", "conversations", "notifications", "machines", "machine_execs", "script_execs", "join_tokens"] {
+    for table in ["sessions", "revisions", "conversations", "notifications", "machines", "join_tokens"] {
       await #expect {
         try await space.writer.write { db in try db.execute(sql: "INSERT INTO \(table) DEFAULT VALUES") }
       } throws: { error in

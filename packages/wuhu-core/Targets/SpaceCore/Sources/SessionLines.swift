@@ -1,4 +1,3 @@
-import Crypto
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,11 +8,7 @@ import SessionDomain
 import StructuredQueries
 import WuhuAI
 
-// Lines beside the typed items, written in the same transaction and read by
-// the transcript file and the mismatch check. A generation has lines only
-// when it opened with them: an append to one that has none writes nothing.
-// Positions 1 and 2 are not the transcript's: they are kept for the prompt's
-// opening, which is stored nowhere else and written when the prompt renders.
+// A generation's messages as sent, written by the session's cell in the step that makes them. Positions 1 and 2 are not the transcript's: they are kept for the prompt's opening, which is stored nowhere else and written when the prompt renders.
 @Table("session_lines")
 struct SessionLineRow {
   @Column("session_id") var sessionID: String
@@ -26,11 +21,6 @@ struct SessionLineRow {
   @Column("meta") var meta: String?
 }
 
-@Selection private struct LinePayload {
-  var position: Int64
-  var payload: String
-}
-
 /// A line as stored: its message is the JSON the request carried, before media resolution.
 public struct StoredTranscriptLine: Hashable, Sendable {
   public var position: Int
@@ -41,34 +31,43 @@ public struct StoredTranscriptLine: Hashable, Sendable {
   public var meta: String?
 }
 
-/// The first position where the stored lines and the render of the typed items disagree; a nil side has no line there.
-public struct TranscriptLineDifference: Hashable, Sendable {
-  public struct Side: Hashable, Sendable {
-    public var hash: String
-    public var excerpt: String
+extension StoredTranscriptLine {
+  public func line() throws -> TranscriptLine {
+    TranscriptLine(at: at, key: key, message: try Sessions.decode(Message.self, from: message), meta: try meta.map { try Sessions.decode(TranscriptLine.Meta.self, from: $0) })
   }
-
-  public var position: Int
-  public var line: Side?
-  public var render: Side?
 }
 
 extension Sessions {
-  static func writeLines(_ key: String, generation: Int64, appending items: some Collection<TranscriptItem>, after count: Int, in db: Database) throws {
-    let written: Int64
-    let carried: [TranscriptItem]
-    if count == 0 {
-      (written, carried) = (Int64(openingKeys.count), [])
-    } else {
-      guard let last = try lastLine(key, generation: generation, in: db) else { return }
-      (written, carried) = (last, try unsettledTail(key, generation: generation, before: count, in: db))
+  /// Writes `lines` after the generation's last and returns the first position taken.
+  @discardableResult
+  static func appendLines(_ key: String, generation: Int64, _ lines: some Sequence<TranscriptLine>, in db: Database) throws -> Int64 {
+    let first = max(try lastLine(key, generation: generation, in: db) ?? 0, Int64(openingKeys.count)) + 1
+    for (offset, line) in lines.enumerated() {
+      try insertLine(key, generation: generation, position: first + Int64(offset), line: line, in: db)
     }
-    let session = SessionID(key)
-    let before = Transcript.lines(session: session, items: carried).settled
-    let after = Transcript.lines(session: session, items: carried + items)
-    for (offset, line) in after.lines[before ..< after.settled].enumerated() {
-      try insertLine(key, generation: generation, position: written + 1 + Int64(offset), line: line, in: db)
-    }
+    return first
+  }
+
+  /// The generation's transcript is an older build's typed items and was never written as lines.
+  static func isLegacy(_ key: String, generation: Int64, in db: Database) throws -> Bool {
+    guard try firstTranscriptLine(key, generation: generation, in: db) == nil else { return false }
+    return try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM session_pointers WHERE session_id = ? AND generation = ?)", arguments: [key, generation])!
+  }
+
+  static func transcriptLineCount(_ key: String, generation: Int64, in db: Database) throws -> Int {
+    try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) && !$0.key.in(promptKeys) }
+      .asSelect().count().fetchOne(db)!
+  }
+
+  /// The generation's lines after its prompt's, in position order.
+  static func transcriptLines(_ key: String, generation: Int64, in db: Database) throws -> [StoredTranscriptLine] {
+    try lines(key, generation: generation, in: db).filter { !$0.isPrompt }
+  }
+
+  /// The text of the generation's first line under `lineKey`.
+  static func lineText(_ key: String, generation: Int64, lineKey: String, in db: Database) throws -> (at: Date, text: String)? {
+    guard let row = try SessionLineRow.where({ $0.sessionID.eq(key) && $0.generation.eq(generation) && $0.key.eq(lineKey) }).order(by: \.position).limit(1).fetchOne(db) else { return nil }
+    return (try SQLiteDateFormat.date(from: row.at), try StoredTranscriptLine(row: row).line().message.text)
   }
 
   /// Line 0 names its preamble, the blob `/_/rendered/<rendered>`, instead of carrying it.
@@ -93,11 +92,14 @@ extension Sessions {
   /// The keys of positions 1 and 2: the group's instructions, then the session's own.
   static let openingKeys = ["group", "session"]
 
-  /// Whether the generation leaves positions 1 and 2 to the opening: one opened before they existed starts its transcript at 1 or has items and no lines.
+  /// Whether the generation leaves positions 1 and 2 to the opening: one opened before they existed starts its transcript at 1.
   static func keepsOpening(_ key: String, generation: Int64, in db: Database) throws -> Bool {
-    let first = try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) && $0.position.gt(Int64(0)) && !$0.key.in(openingKeys) }
+    try firstTranscriptLine(key, generation: generation, in: db).map { $0 == Int64(openingKeys.count + 1) } ?? !isLegacy(key, generation: generation, in: db)
+  }
+
+  private static func firstTranscriptLine(_ key: String, generation: Int64, in db: Database) throws -> Int64? {
+    try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) && $0.position.gt(Int64(0)) && !$0.key.in(openingKeys) }
       .order { $0.position.asc() }.limit(1).select(\.position).fetchOne(db)
-    return try first.map { $0 == Int64(openingKeys.count + 1) } ?? (nextPosition(key, generation: generation, in: db) == 0)
   }
 
   /// The opening's texts as stored, in position order; a generation that kept no room for it has none.
@@ -116,28 +118,6 @@ extension Sessions {
       .order { $0.position.desc() }.limit(1).select(\.position).fetchOne(db)
   }
 
-  // Everything before the tail's first item is settled: rendering from an
-  // item that flushes held notices reproduces the generation's lines from there.
-  private static func unsettledTail(_ key: String, generation: Int64, before end: Int, in db: Database) throws -> [TranscriptItem] {
-    var tail: [TranscriptItem] = []
-    var boundary = Int64(end)
-    while true {
-      let page = try SessionPointerRow
-        .where { $0.sessionID.eq(key) && $0.generation.eq(generation) && $0.position < boundary }
-        .order { $0.position.desc() }.limit(16)
-        .join(SessionContentRow.all) { $0.sessionID.eq($1.sessionID) && $0.contentID.eq($1.id) }
-        .select { LinePayload.Columns(position: $0.position, payload: $1.payload) }
-        .fetchAll(db)
-      for row in page {
-        let item = try decode(TranscriptItem.self, from: row.payload)
-        tail.append(item)
-        if !item.holdsNotices { return tail.reversed() }
-      }
-      guard let last = page.last, page.count == 16 else { return tail.reversed() }
-      boundary = last.position
-    }
-  }
-
   private static func insertLine(_ key: String, generation: Int64, position: Int64, line: TranscriptLine, in db: Database) throws {
     let row = SessionLineRow(
       sessionID: key, generation: generation, position: position, at: SQLiteDateFormat.string(from: line.at),
@@ -152,6 +132,10 @@ extension Sessions {
 }
 
 extension SessionStore {
+  public func isLegacy(_ id: SessionID, generation: Int) async throws -> Bool {
+    try await writer.read { db in try Sessions.isLegacy(id.rawValue, generation: Int64(generation), in: db) }
+  }
+
   /// The session's current generation and the generations that have lines, oldest first.
   public func lineGenerations(_ id: SessionID) async throws -> (current: Int, withLines: [Int]) {
     let key = id.rawValue
@@ -167,29 +151,31 @@ extension SessionStore {
     try await writer.read { db in try Sessions.lines(id.rawValue, generation: Int64(generation), in: db) }
   }
 
-  /// Compares the generation's stored lines with what a request over `transcript` sends; lines the render has not reached yet do not count, and a generation without lines has no difference.
-  public func lineDifference(_ id: SessionID, generation: Int, rendered preamble: String, transcript: Transcript) async throws -> TranscriptLineDifference? {
-    let stored = try await lines(id, generation: generation)
-    guard !stored.isEmpty else { return nil }
-    let rendered = Transcript.lines(session: id, items: transcript.items)
-    // The opening is read from its lines, so only the positions around it are compared.
-    let start = stored.contains { Sessions.openingKeys.contains($0.key) } ? Sessions.openingKeys.count + 1
-      : stored.first { $0.position > 0 }?.position ?? 1
-    let expected = try [(0, (TranscriptLine.Role.system, "system", Sessions.preambleLine(rendered: preamble)))]
-      + rendered.lines[..<rendered.settled].enumerated().map { ($0 + start, ($1.role, $1.key, try Sessions.encode($1.message))) }
-    let byPosition = Dictionary(uniqueKeysWithValues: stored.map { ($0.position, $0) })
-    for (position, line) in expected {
-      let render = TranscriptLineDifference.Side(role: line.0, key: line.1, message: line.2)
-      let line = byPosition[position].map { TranscriptLineDifference.Side(role: $0.role, key: $0.key, message: $0.message) }
-      if line != render { return .init(position: position, line: line, render: render) }
+  public func transcriptLineCount(_ id: SessionID) async throws -> Int {
+    try await writer.read { db in
+      try Sessions.transcriptLineCount(id.rawValue, generation: Sessions.runtime(id.rawValue, in: db).generation, in: db)
     }
-    return nil
+  }
+
+  /// The lines a request sends after its prompt: the session's current generation's, or `generation`'s.
+  public func transcriptLines(_ id: SessionID, generation: Int? = nil) async throws -> [StoredTranscriptLine] {
+    let key = id.rawValue
+    return try await writer.read { db in
+      try Sessions.transcriptLines(key, generation: try generation.map { Int64($0) } ?? Sessions.runtime(key, in: db).generation, in: db)
+    }
   }
 }
 
-extension TranscriptLineDifference.Side {
-  init(role: TranscriptLine.Role, key: String, message: String) {
-    hash = hexEncoded(SHA256.hash(data: Data("\(role.rawValue)\n\(key)\n\(message)".utf8)))
-    excerpt = String("\(role.rawValue) \(key) \(message)".prefix(120))
+extension Message {
+  /// The message's text blocks, joined.
+  var text: String {
+    let content = switch self {
+    case let .user(message): message.content
+    case let .assistant(message): message.content
+    case let .toolResult(message): message.content
+    }
+    return content.compactMap { block in
+      if case let .text(text) = block { text.text } else { nil }
+    }.joined(separator: "\n")
   }
 }

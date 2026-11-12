@@ -17,7 +17,6 @@ private func retiredSession(_ harness: SessionHarness) async throws -> SessionID
   let retired = SessionExecutor.retired(kind: "claude-code")
   try await harness.store.writer.write { db in
     try db.execute(sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?", arguments: [retired.kind, retired.configJSON, id.rawValue])
-    try db.execute(sql: "UPDATE session_contents SET payload = ? WHERE session_id = ?", arguments: [#"{"type":"assistant","uuid":"old-turn","message":{"content":[{"type":"text","text":"old Claude Code turn"}]}}"#, id.rawValue])
   }
   return id
 }
@@ -104,7 +103,7 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
       try await harness.running {
         try await harness.deliver("waiting", to: id)
         try await until("the message stays queued") { try await harness.store.record(id).work == .hasWork }
-        #expect(try await harness.store.transcriptSnapshot(id).items.isEmpty)
+        #expect(try await harness.store.testLines(id).allSatisfy { $0.key.hasPrefix(LineKey.head) })
       }
     }
   }
@@ -120,7 +119,7 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
         #expect(restarted.executor == "kernel")
         #expect(restarted.generation == 1)
         try await harness.deliver("waiting", to: id)
-        try await until("expected session state") { try await harness.store.transcript(id).items.contains { if case .assistant = $0 { true } else { false } } }
+        try await until("expected session state") { try await harness.store.testLines(id).contains { $0.role == .assistant } }
         #expect(try await harness.store.record(id).executor.kind == "kernel")
       }
     }

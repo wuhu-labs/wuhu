@@ -1,5 +1,4 @@
 import struct Credentials.CredentialResolver
-import struct ExecutionOwner.LineDifferenceLog
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -21,15 +20,12 @@ import protocol WuhuAI.MediaResolver
 /// it holds, the OIDC signing done for it, and where it traces attempts.
 /// Everything else an inference needs comes from main as the session: the
 /// models catalog, the frozen prompt home, media, and the record of the attempt.
-/// `lineDifferences`, when set, receives each request whose stored transcript
-/// lines differ from the typed-item render.
 public struct InferenceAccess: Sendable {
   public var credentials: CredentialResolver
   public var oidcToken: (@Sendable (URL, SessionID) async throws -> String)?
   public var oidcReadiness: (@Sendable (URL) async throws -> Void)?
   public var oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String?)?
   public var trace: AttemptTraceClient?
-  public var lineDifferences: LineDifferenceLog?
 
   public init(
     credentials: CredentialResolver = .unavailable,
@@ -37,14 +33,12 @@ public struct InferenceAccess: Sendable {
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String?)? = nil,
     trace: AttemptTraceClient? = nil,
-    lineDifferences: LineDifferenceLog? = nil,
   ) {
     self.credentials = credentials
     self.oidcToken = oidcToken
     self.oidcReadiness = oidcReadiness
     self.oidcBindingIdentity = oidcBindingIdentity
     self.trace = trace
-    self.lineDifferences = lineDifferences
   }
 
   /// The catalog over a models document, signing with this access; without

@@ -63,7 +63,7 @@ public struct CellMacro: MemberMacro, ExtensionMacro {
   }
 }
 
-/// `@Job`: the context, its private `ctx`, `kind`, a private `state` when the job declares a `State`, and an `_attached` dispatching to its `attached(_:)` methods, one per socket type.
+/// `@Job`: the context, its private `ctx`, `kind`, a private `state` when the job declares a `State`, and `_attached` and `_closed` dispatching to its `attached(_:)` and `closed(_:)` methods, one per socket type.
 public struct JobMacro: MemberMacro, ExtensionMacro {
   public static func expansion(
     of _: AttributeSyntax,
@@ -91,9 +91,10 @@ public struct JobMacro: MemberMacro, ExtensionMacro {
         handlers.append(handler)
       }
     }
-    if !handlers.isEmpty {
-      let branches = handlers.map { "if let socket = event.socket(\($0.socket).self) { \($0.call) }" }
-      members.append("\(raw: access)func _attached(_ event: SocketEvent) {\n  \(raw: branches.joined(separator: " else "))\n}")
+    for (name, dispatch) in [("attached", "_attached"), ("closed", "_closed")] {
+      let branches = handlers.filter { $0.name == name }.map { "if let socket = event.socket(\($0.socket).self) { \($0.call) }" }
+      guard !branches.isEmpty else { continue }
+      members.append("\(raw: access)func \(raw: dispatch)(_ event: SocketEvent) {\n  \(raw: branches.joined(separator: " else "))\n}")
     }
     return members
   }
@@ -235,11 +236,11 @@ private struct SocketHandler {
     return nil
   }
 
-  /// A job's sockets only hear it publish, so its one handler greets a socket as it attaches, and it may not write or mutate: it runs beside `start`.
+  /// A job's sockets only hear it publish, so its handlers greet a socket as it attaches and say goodbye as it closes, and they may not write or mutate: they run beside `start`.
   func jobRefusal(_ method: FunctionDeclSyntax) -> Refusal? {
-    if name != "attached" || method.signature.parameterClause.parameters.count != 1 { return Refusal("a job's only socket handler is attached(_:), not '\(name)'") }
-    if method.modifiers.contains(where: { $0.name.tokenKind == .keyword(.mutating) }) { return Refusal("a job's attached(_:) is not mutating: it runs beside start") }
-    if method.signature.effectSpecifiers?.asyncSpecifier != nil || method.signature.effectSpecifiers?.throwsClause != nil { return Refusal("a job's attached(_:) neither awaits nor throws") }
+    if !["attached", "closed"].contains(name) || method.signature.parameterClause.parameters.count != 1 { return Refusal("a job's socket handlers are attached(_:) and closed(_:), not '\(name)'") }
+    if method.modifiers.contains(where: { $0.name.tokenKind == .keyword(.mutating) }) { return Refusal("a job's \(name)(_:) is not mutating: it runs beside start") }
+    if method.signature.effectSpecifiers?.asyncSpecifier != nil || method.signature.effectSpecifiers?.throwsClause != nil { return Refusal("a job's \(name)(_:) neither awaits nor throws") }
     if method.signature.returnClause != nil { return Refusal("a socket handler returns nothing: '\(name)'") }
     return nil
   }

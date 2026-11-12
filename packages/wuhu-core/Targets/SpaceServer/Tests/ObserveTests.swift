@@ -4,7 +4,11 @@ import FetchSSE
 import Foundation
 import HTTPTypes
 import JSONValue
+import Scratch
 import SpaceContract
+import struct SpaceContract.GroupID
+import struct SpaceCore.Principal
+import class SpaceCore.Space
 import Testing
 
 @Suite(.deterministicDependencies) struct ObserveTests {
@@ -42,6 +46,25 @@ import Testing
       #expect(value.object?["events"]?.array?.count == 3)
       break
     }
+  }
+
+  @Test func anAttachToAnObservationJobHeldElsewhereIsRefusedBeforeStreaming() async throws {
+    let folder = try ScratchFolder("observe-unavailable")
+    let file = folder.url.appending(path: "space.sqlite")
+    let holder = try Space.open(file: file)
+    _ = try await holder.observeFS(glob: "**", group: .shared, as: .shared(.anonymous))
+    let harness = try Harness(opening: { try Space.open(file: file) })
+
+    for query in [["glob": "/**"], ["sql": "SELECT 1"]] {
+      let response = try await harness.get(harness.api, "/v1/observe", query: query)
+      #expect(response.status.code == 503, "\(query)")
+      #expect(response.headers[.retryAfter] == "1", "\(query)")
+      #expect(response.headers[.contentType] == "application/json", "\(query)")
+      let error = try JSONValueDecoder().decode(ToolError.self, from: try await json(response))
+      #expect(error.code == .unavailable, "\(query)")
+    }
+    try await harness.space.close()
+    try await holder.close()
   }
 
   @Test func discoveryAdvertisesBatchObservation() async throws {

@@ -46,6 +46,7 @@ extension SubscriptionID {
   public static let compactRequest: SubscriptionID = SubscriptionID("command.compact")
   public static let owedReply: SubscriptionID = SubscriptionID("owed.reply")
   public static let context: SubscriptionID = SubscriptionID("context")
+  public static let cacheWarming: SubscriptionID = SubscriptionID("cache-warming")
 
   public static func park(_ request: RequestID) -> SubscriptionID {
     SubscriptionID("park.\(request.rawValue)")

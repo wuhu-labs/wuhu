@@ -8,8 +8,9 @@ import Fetch
 #endif
 import struct MachineContract.MachineID
 import struct MachineContract.MachineStatus
+import struct OperationProtocol.MachineDescription
 import struct SpaceContract.EnrollConsumeOutput
-import SpaceCore
+@testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct MachineAdminTests {
@@ -21,14 +22,32 @@ import Testing
     let before = try await server.http(.get, "/v1/machine").json([MachineStatus].self)
     #expect(before == [MachineStatus(id: id, name: "box", group: "shared", attached: false, scope: "owner")])
 
-    try await space.recordMachineV2Presence(id.rawValue, group: .shared, state: .attached, description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: []))
+    try await space.worker.call(MachineCell.ID(id.rawValue)) { cell in
+      try cell.ensurePresence()
+      var presence = cell.presence
+      presence.state = "attached"
+      let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
+      presence.leaseMs = description.limits.leaseMs
+      presence.pollHoldMs = description.limits.pollHoldMs
+      presence.pollBytes = description.limits.pollBytes
+      presence.resultBytes = description.limits.resultBytes
+      presence.execStdoutWindow = nil
+      presence.execStderrWindow = nil
+      try cell.save(MachineDescriptionRow(description: description))
+      presence.observed = cell.now
+      try cell.save(presence)
+    }
     let attached = MachineStatus(id: id, name: "box", group: "shared", attached: true, scope: "owner")
     #expect(try await server.http(.get, "/v1/machine").json([MachineStatus].self) == [attached])
     #expect(try await server.http(.get, "/v1/machine/box/status").json(MachineStatus.self) == attached)
     #expect(try await server.http(.get, "/v1/machine/\(id.rawValue)/status").json(MachineStatus.self) == attached)
 
-    for state in [MachineV2Presence.detached, .lost] {
-      try await space.recordMachineV2Presence(id.rawValue, group: .shared, state: state)
+    do {
+      try await space.worker.call(MachineCell.ID(id.rawValue)) { cell in
+        var presence = cell.presence
+        presence.state = "lost"
+        try cell.save(presence)
+      }
       let listed = try await server.http(.get, "/v1/machine").json([MachineStatus].self)
       let seen = try #require(listed.first?.lastSeen)
       let detached = MachineStatus(id: id, name: "box", group: "shared", attached: false, scope: "owner", lastSeen: seen)

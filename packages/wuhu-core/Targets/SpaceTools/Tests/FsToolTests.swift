@@ -148,6 +148,32 @@ import Testing
     #expect(hint?.contains("at lines 1, 3") == true)
   }
 
+  @Test func editAmbiguousMatchHintCountsOverlappingAndAdjacentMatches() async throws {
+    let context = try makeContext()
+    _ = try await seedFile("/a.md", "a\n\n\n\n\n\nb\nxyxxyx\n", context)
+
+    // Six newlines: two three-line needles that do not overlap, four that do.
+    let overlapping = await failure(
+      "edit", .object(["path": "/a.md", "edits": .array([.object(["old": "\n\n\n", "new": "\n"])])]), context,
+    )
+    guard case let .failed(_, message, overlappingHint, _) = overlapping else {
+      Issue.record("expected invalidArgument, got \(String(describing: overlapping))")
+      return
+    }
+    #expect(message.contains("2 times"))
+    #expect(overlappingHint?.contains("at lines 1, 2, 3, 4") == true)
+
+    // Back to back on one line.
+    let adjacent = await failure(
+      "edit", .object(["path": "/a.md", "edits": .array([.object(["old": "xyx", "new": "z"])])]), context,
+    )
+    guard case let .failed(_, _, adjacentHint, _) = adjacent else {
+      Issue.record("expected invalidArgument, got \(String(describing: adjacent))")
+      return
+    }
+    #expect(adjacentHint?.contains("at lines 8, 8") == true)
+  }
+
   @Test func editStaleIfMatchConflicts() async throws {
     let context = try makeContext()
     let first = try await seedFile("/a.md", "v1", context)

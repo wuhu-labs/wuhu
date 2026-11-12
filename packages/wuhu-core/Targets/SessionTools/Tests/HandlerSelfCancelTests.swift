@@ -8,7 +8,7 @@ import DeterministicDependencies
   import Foundation
 #endif
 import SessionDomain
-@_spi(SessionObservation) import SpaceCore
+import SpaceCore
 import SpaceFS
 import Testing
 

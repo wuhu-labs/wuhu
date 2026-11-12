@@ -30,7 +30,7 @@ import WuhuAI
 
 // What the model answers next, made from the transcript it is asked with.
 struct Reply: Sendable {
-  var message: @Sendable (Transcript) -> AssistantMessage
+  var message: @Sendable ([TranscriptLine]) -> AssistantMessage
 
   static func say(_ text: String) -> Reply {
     Reply { _ in AssistantMessage(content: [.text(.init(text: text))]) }
@@ -40,7 +40,7 @@ struct Reply: Sendable {
     .call(tool) { _ in arguments }
   }
 
-  static func call(_ tool: String, _ arguments: @escaping @Sendable (Transcript) -> JSONValue) -> Reply {
+  static func call(_ tool: String, _ arguments: @escaping @Sendable ([TranscriptLine]) -> JSONValue) -> Reply {
     let id = "call-" + UUID().uuidString.lowercased().prefix(8)
     return Reply { AssistantMessage(content: [.toolCall(ToolCall(id: id, name: tool, arguments: ToolArguments(arguments($0))))]) }
   }
@@ -71,24 +71,20 @@ final class Story: Sendable {
   let tokens: ExecTokens
   let execution: SessionExecution
   let hub: MachineHub
-  let machineV2Hub: MachineV2Hub
   let handler: UpgradingHandler
   let api: FetchClient
   let model = Model()
   private let jobs: AsyncStream<@Sendable () async -> Void>
   private let host: AsyncStream<@Sendable () async -> Void>.Continuation
   private let scratch = Mutex<[ScratchFolder]>([])
-  private let machineServices = Mutex<[MachineV2Service]>([])
   init() async throws {
     let space = try Space.inMemory()
     self.space = space
     store = space.sessions
     _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
-    tokens = ExecTokens(spaceURL: "http://space")
+    tokens = try await testTokens(space: space, spaceURL: "http://space")
     let hub = MachineHub(space: space, tokens: tokens)
     self.hub = hub
-    let machineV2Hub = MachineV2Hub(space: space)
-    self.machineV2Hub = machineV2Hub
     let usage = UsageBoard()
     let catalog = groupCatalog(space: space, access: InferenceAccess())
     let owner = Hub(
@@ -101,14 +97,14 @@ final class Story: Sendable {
     let connection = MainConnection()
     let model = model
     execution = SessionExecution(
-      connection: connection, credential: { [tokens] in tokens.sessionToken($0) }, space: space,
+      connection: connection, credential: { [tokens] in try await tokens.sessionToken($0) }, space: space,
     ) { executor in
       LoopConfig(
         executeTool: { try await executor.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
         inference: { request in
           let reply = try model.next(for: request.sessionID)
           return LoopCore.InferenceReply(
-            message: reply.message(request.transcript),
+            message: reply.message(request.lines),
             metadata: AssistantMessageMetadata(stopReason: .stop, usage: Usage(inputTokens: 1, outputTokens: 1, totalTokens: 10)),
           )
         },
@@ -116,7 +112,7 @@ final class Story: Sendable {
       )
     }
     let runtime = SessionRuntime(execution: execution, owner: owner, tokens: tokens, connection: MainConnection())
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens, machineV2Hub: machineV2Hub)
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
     api = ServeTesting.client(upgrading: handler)
     connection.bind(api, dial: inProcessDial(api: handler, hub: hub))
     (jobs, host) = AsyncStream.makeStream()
@@ -131,28 +127,20 @@ final class Story: Sendable {
     let work = try ScratchFolder("story-work")
     scratch.withLock { $0.append(work) }
     let agent = try OperationAgent(machine: added.id.rawValue, kinds: fileOperationKinds() + [.init(ExecKind())], authorize: { _, _ in })
-    let service = MachineV2Service(
-      space: space, hub: machineV2Hub, key: SymmetricKey(size: .bits256), failure: nil,
-      fetch: { _ in FetchClient { request in seeing(request); return try await agent.handler(request) } },
-    )
-    await hub.configureV2(service)
-    machineServices.withLock { $0.append(service) }
-    host.yield { await agent.run() }
+    let link = try #require(BoxLink(worker: space.worker, machine: added.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
+      try await self.hub.prepare($0, machine: added.id.rawValue)
+    })
+    let client = FetchClient { request in seeing(request); return try await agent.handler(request) }
     host.yield {
-      do { try await service.run() }
-      catch is CancellationError {} catch { Issue.record("machine service failed: \(error)") }
-      await agent.shutdown()
-      await service.shutdown()
+      defer { link.close() }
+      await withDiscardingTaskGroup { tasks in
+        tasks.addTask { await agent.run() }
+        await link.run(client: client)
+        tasks.cancelAll()
+        await agent.shutdown()
+      }
     }
     return (added.id, work.path)
-  }
-
-  /// Every machine operation's driver has ended: an operation's terminal acknowledgement goes out after its verdict reached the caller.
-  func machineOperationsEnded() async throws {
-    for service in machineServices.withLock({ $0 }) {
-      let operations = try await service.operations(group: .shared)
-      try await until("the machine's operations end") { await operations.running == 0 }
-    }
   }
 
   func running<R: Sendable>(_ body: () async throws -> R) async throws -> R {
@@ -194,7 +182,7 @@ final class Story: Sendable {
   }
 
   func replies(_ id: SessionID) async throws -> [String] {
-    try await store.transcript(id).assistantTexts
+    try await store.testLines(id).assistantTexts
   }
 
   private func call<Output: Decodable>(_ method: Fetch.Method, _ path: String, _ body: JSONValue? = nil, bearer: String? = nil) async throws -> Output {
@@ -208,11 +196,11 @@ final class Story: Sendable {
   }
 }
 
-extension Transcript {
+extension [TranscriptLine] {
   var assistantTexts: [String] {
-    items.flatMap { item -> [String] in
-      guard case let .assistant(entry) = item else { return [] }
-      return entry.content.compactMap { block in
+    flatMap { line -> [String] in
+      guard case let .assistant(message) = line.message else { return [] }
+      return message.content.compactMap { block in
         guard case let .text(text) = block else { return nil }
         return text.text
       }

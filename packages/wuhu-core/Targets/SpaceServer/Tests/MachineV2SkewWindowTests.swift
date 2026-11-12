@@ -70,15 +70,14 @@ private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHu
     return try .json(MachineDescription(instance: description.instance, acceptingStarts: description.acceptingStarts, limits: description.limits, kinds: kinds, availability: description.availability?.filter { names.contains($0.key) }), headers: headers)
   }
   let hub = MachineHub(space: space)
-  let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in proxy })
-  await hub.configureV2(service)
   try await withThrowingTaskGroup(of: Void.self) { tasks in
     tasks.addTask { await agent.run() }
     defer { tasks.cancelAll() }
-    try await body(hub, record.id, starts)
+    try await withMachineBox(space: space, hub: hub, machine: record.id, client: proxy) {
+      try await body(hub, record.id, starts)
+    }
     await agent.shutdown()
   }
-  await service.shutdown()
   try await space.close()
 }
 

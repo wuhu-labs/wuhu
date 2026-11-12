@@ -48,7 +48,7 @@ one at a time: m1 m2 m3 m4 m5
 dm: true d1 next=null
 no dm: null null
 a group I am in:  next=null
-a group I am not in: unknown conversation: 00000000-0000-0000-0000-000000000000
+a group I am not in: unknown conversation: <theirs>
 unknown message: unknown message in conversation <me>: m-missing
 message elsewhere: unknown message in conversation <me>: d1
 both cursors: pass after or before, not both

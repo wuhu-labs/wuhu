@@ -2,7 +2,6 @@ import Dependencies
 import Logging
 import struct MainHub.ArchiveBusySession
 import func MainHub.handlerScriptID
-import enum MainHub.ObserverMail
 import struct MainHub.ScriptHandlerResult
 import struct MainHub.ScriptRun
 import enum MainHub.SessionError
@@ -43,8 +42,16 @@ public struct SessionExecution: Sendable {
     observerRun: @escaping ObserverRun = { _, _, _ in preconditionFailure("this worker runs no group observer") },
     loopConfig: @Sendable (ToolExecutor) -> LoopConfig,
   ) {
-    let scripts = scripts ?? Scripts(sessions: space.sessions)
-    let tools = ToolExecutor(main: connection, credential: credential, access: access, scripts: scripts)
+    let scripts = scripts ?? Scripts()
+    let tools = ToolExecutor(main: connection, credential: credential, access: access, cancelScript: { session, handle in
+      let id = ScriptJob.ID("\(session.rawValue):script.\(handle)")
+      guard let row = space.worker.job(id).db.rows(ScriptRow.all).first else {
+        return .failure(.init(message: "you have no script script.\(handle)", code: "notFound"))
+      }
+      guard row.phase != "ended" else { return .failure(.init(message: "script.\(handle) has already ended", code: "alreadyEnded")) }
+      space.worker.send(.cancel, to: id)
+      return .script(.init(output: "script.\(handle): abort signalled; killed after 5 s if it is still running"))
+    })
     self.scripts = scripts
     self.tools = tools
     self.archiveGrace = archiveGrace
@@ -52,7 +59,7 @@ public struct SessionExecution: Sendable {
     var config = loopConfig(tools)
     let runningWork = config.runningWork
     config.runningWork = { session in
-      scripts.running(of: session) + (try await runningWork(session))
+      space.worker.cell(SessionCell.ID(session.rawValue)).runningScripts() + (try await runningWork(session))
     }
     running = config.runningWork
     @Dependency(\.continuousClock) var clock
@@ -70,7 +77,7 @@ public struct SessionExecution: Sendable {
     }
     client = withEscapedDependencies { [config] dependencies in
       LoopClient(
-        store: space.sessions, config: config, sleep: { deadlineSleep(after: $0, clock: clock) }, dependencies: dependencies, scheduler: space.worker.scheduler,
+        space: space, scripts: scripts, tools: tools, store: space.sessions, config: config, sleep: { deadlineSleep(after: $0, clock: clock) }, dependencies: dependencies, scheduler: space.worker.scheduler,
         handler: handler,
       )
     }
@@ -89,16 +96,21 @@ public struct SessionExecution: Sendable {
     loops.provide(client)
     for kind: Registration in [
       .cell(SessionCell.self), .cell(ObserverCell.self),
-      .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self),
+      .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self), .job(ScriptJob.self),
     ] {
       loops.register(kind)
     }
     loops.start()
   }
 
-  public func shutdown() async {
-    await space.stopWorker()
+  public func quiesce() async {
+    await space.quiesceWorker()
     await scripts.close()
+  }
+
+  public func shutdown() async {
+    await quiesce()
+    await space.stopWorker()
   }
 
   private func cell(_ session: SessionID) -> SessionCell.Sender {
@@ -149,7 +161,6 @@ public struct SessionExecution: Sendable {
     // Parents first: a child's failed request reaches a parent already archived, which does not start on it.
     for record in subtree.reversed() {
       try await store.closeRequestsForArchive(record.id)
-      scripts.stopScripts(of: record.id)
       cell(record.id).archive(archiveGrace)
       await archived(record.id)
     }
@@ -182,11 +193,19 @@ public struct SessionExecution: Sendable {
   private func settled(_ session: SessionID) async throws -> Bool {
     if try await store.record(session).stopped { return true }
     guard !loops.hasMail(for: SessionCell.ID(session.rawValue).recipient) else { return false }
-    let state = SessionState(try await store.hydrate(session), turn: loops.cell(SessionCell.ID(session.rawValue)).turn())
+    let hydration = try await store.hydrate(session)
+    let turn: SessionTurn
+    if let stored = loops.cell(SessionCell.ID(session.rawValue)).turn() {
+      turn = stored
+    } else {
+      turn = SessionTurn(generation: hydration.generation, position: try await store.transcriptLineCount(session))
+    }
+    let state = SessionState(hydration, turn: turn)
     return state.settled && (state.slot.working(exists: { [loops] work in
       switch work {
       case let .step(id): loops.exists(id)
       case let .call(id): loops.exists(id)
+      case .script: preconditionFailure("script membership is separate from slot jobs")
       case let .compaction(id): loops.exists(id)
       }
     }, outcome: { [loops] in loops.job($0).outcome() }) == nil)
@@ -216,18 +235,6 @@ public struct SessionExecution: Sendable {
       }
       continuation.onTermination = { _ in peer?.close() }
       if peer == nil { continuation.finish() }
-    }
-  }
-
-  /// Mail to a slot's owner: a handler slot's observer cell, or the session's cell for a plain one.
-  public func observe(_ owner: SubscriptionOwner, _ subscription: SubscriptionID, _ mail: ObserverMail) {
-    let observer = loops.send(ObserverCell.ID(owner, subscription))
-    switch (mail, owner) {
-    case (.look, _): observer.look()
-    case let (.rows(input, marker), _): observer.observed(input, marker)
-    case let (.failed(reason), _): observer.failed(reason)
-    case let (.plain(token, observed), .session(session)): cell(session).observed(subscription, token, observed)
-    case (.plain, .group): preconditionFailure("a group's slot runs a handler")
     }
   }
 

@@ -47,8 +47,8 @@ import Testing
     let folder = try scratchURL("group-isolation")
     defer { try? FileManager.default.removeItem(at: folder) }
     let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
-    let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-    let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens, secrets: stores, machineV2: true)
+    let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", spaceURL: "https://space.test:5530", secrets: stores, machineV2: true)
+    let tokens = harness.runtime.tokens
     let (alice, aliceKey) = try await harness.enrolledBearer()
     let aliceGroup = try await harness.space.ensurePersonalGroup(account: aliceKey.account)
     let (bob, bobKey) = try await harness.enrolledBearer()
@@ -79,8 +79,8 @@ import Testing
   /// An exec token for `session`, minted on any machine.
   func token(_ w: World, _ session: SessionID) async throws -> String {
     let (machine, _) = try await w.harness.space.addMachineV2(name: "credential_" + UUID().uuidString.lowercased(), group: .shared)
-    let exec = try await w.harness.space.mintExec(machine: machine.id, caller: session.rawValue)
-    return w.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
+    let exec = try await w.harness.space.reserveExec(machine: machine.id, caller: session.rawValue)
+    return try await w.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
   }
 
   func upgrade(_ path: String, headers extra: [(String, String)]) -> Request {
@@ -105,24 +105,16 @@ import Testing
 
   func withMachine(_ w: World, _ machine: MachineRecord, _ body: @escaping @Sendable () async throws -> Void) async throws {
     let agent = try OperationAgent(machine: machine.id.rawValue, kinds: fileOperationKinds() + [.init(ExecKind())], authorize: { _, _ in })
-    let service = MachineV2Service(
-      space: w.harness.space, hub: MachineV2Hub(space: w.harness.space), key: SymmetricKey(size: .bits256), failure: nil,
-      fetch: { _ in FetchClient { try await agent.handler($0) } },
-    )
-    await w.harness.hub.configureV2(service)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
-      tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
       do {
-        try await body()
+        try await withMachineBox(space: w.harness.space, hub: w.harness.hub, machine: machine.id, client: FetchClient { try await agent.handler($0) }, body)
       } catch {
         await agent.shutdown()
-        await service.shutdown()
         throw error
       }
       await agent.shutdown()
-      await service.shutdown()
     }
   }
 
@@ -179,7 +171,7 @@ import Testing
         let fromExec = try await send(w, .get, "/v1/secret/Y", bearer: try await token(w, w.s))
         #expect(fromExec.status == .forbidden)
         #expect(try await code(fromExec) == "unauthorized")
-        let fromWorker = try await send(w, .get, "/v1/secret/Y", bearer: w.tokens.sessionToken(w.s))
+        let fromWorker = try await send(w, .get, "/v1/secret/Y", bearer: try await w.tokens.sessionToken(w.s))
         #expect(fromWorker.status == .ok)
         #expect(try await fromWorker.body.json(JSONValue.self) == .object(["value": "v"]))
       }
@@ -477,13 +469,12 @@ import Testing
   @Test func aSessionsV2ExecRefusesEveryOtherActorsDial() async throws {
     try await withSessionDeps {
       try await world { w in
-        await w.harness.hub.configureV2(MachineV2Service(space: w.harness.space, hub: MachineV2Hub(space: w.harness.space), key: nil, failure: nil))
         let (machine, _) = try await w.harness.space.addMachineV2(name: "common_v2", group: .shared)
-        let exec = try await w.harness.space.mintExec(machine: machine.id, caller: w.s.rawValue, group: .shared)
+        let exec = try await w.harness.space.reserveExec(machine: machine.id, caller: w.s.rawValue, group: .shared)
         #expect(try await dialRefusal(w, exec.id, bearer: w.bob) == .conflict)
         #expect(try await dialRefusal(w, exec.id, bearer: w.admin) == .conflict)
         #expect(try await dialRefusal(w, exec.id, bearer: try await token(w, w.s)) == nil)
-        let own = try await w.harness.space.mintExec(machine: machine.id, group: .shared)
+        let own = try await w.harness.space.reserveExec(machine: machine.id, group: .shared)
         #expect(try await dialRefusal(w, own.id, bearer: w.bob) == nil)
       }
     }

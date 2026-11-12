@@ -11,6 +11,11 @@ import SessionDomain
 /// Session writes the cell makes, as fixtures: a test sets a session's state with them directly.
 extension SessionStore {
   @discardableResult
+  func drainQueue(_ id: SessionID) async throws -> QueueDrain {
+    try await rows { try $0.drainQueue(id) }
+  }
+
+  @discardableResult
   func archive(_ id: SessionID, grace: Duration) async throws -> Date {
     try await rows {
       return try $0.archive(id, grace: grace)

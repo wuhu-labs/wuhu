@@ -25,27 +25,6 @@ enum JournalOp: String {
 }
 
 enum Substrate {
-  static func writeEmitting<Value: Sendable>(
-    _ writer: any DatabaseWriter,
-    to broadcast: FSBroadcast,
-    _ body: @escaping @Sendable (Database, inout [MutationEvent]) throws -> Value,
-  ) async throws -> Value {
-    try await writer.writeWithoutTransaction { db in
-      var value: Value?
-      var pending: [MutationEvent] = []
-      try db.inTransaction {
-        value = try body(db, &pending)
-        return .commit
-      }
-      let commits = Dictionary(grouping: pending, by: \.group).map { group, events in
-        FSCommit(group: group, rev: events[0].rev, events: events)
-      }
-      // The transaction succeeded, and the writer is still held. No rollback notification owns this buffer's lifetime.
-      broadcast.emit(commits)
-      return value!
-    }
-  }
-
   static func mintRevision(
     mtime: String, group: GroupID, attribution: RevisionAttribution? = nil, in db: Database,
   ) throws -> Int64 {
@@ -245,17 +224,9 @@ enum Substrate {
     mtime: String,
     in db: Database,
   ) throws {
-    var ancestor = path.parent
-    var chain: [SpacePath] = []
-    while !ancestor.isRoot {
-      chain.append(ancestor)
-      ancestor = ancestor.parent
-    }
-    for dir in chain.reversed() {
-      if let existing = try head(dir, group: group, in: db) {
-        if existing.kind != "directory" { throw SpaceError.notADirectory(dir.rawValue) }
-        continue
-      }
+    let chain = ancestorChain(of: path)
+    try requireDirectories(chain, group: group, in: db)
+    for dir in chain where try head(dir, group: group, in: db) == nil {
       try appendVersion(group: group, path: dir.rawValue, rev: rev, kind: "directory", blobHash: nil, op: .write, in: db)
       try upsertHead(
         FSHeadRow(
@@ -265,6 +236,30 @@ enum Substrate {
         in: db,
       )
     }
+  }
+
+  /// Refuses a write whose path runs through a file, before anything is written: a caller that answers
+  /// the refusal instead of rolling back must find nothing left behind.
+  static func requireAncestorDirectories(_ path: SpacePath, group: GroupID, in db: Database) throws {
+    try requireDirectories(ancestorChain(of: path), group: group, in: db)
+  }
+
+  private static func requireDirectories(_ chain: [SpacePath], group: GroupID, in db: Database) throws {
+    for dir in chain {
+      if let existing = try head(dir, group: group, in: db), existing.kind != "directory" {
+        throw SpaceError.notADirectory(dir.rawValue)
+      }
+    }
+  }
+
+  private static func ancestorChain(of path: SpacePath) -> [SpacePath] {
+    var ancestor = path.parent
+    var chain: [SpacePath] = []
+    while !ancestor.isRoot {
+      chain.append(ancestor)
+      ancestor = ancestor.parent
+    }
+    return chain.reversed()
   }
 }
 

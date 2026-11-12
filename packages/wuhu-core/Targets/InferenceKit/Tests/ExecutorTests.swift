@@ -4,7 +4,11 @@ import Credentials
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import InferenceKit
 import JSONValue
 import ModelProviders
@@ -49,14 +53,9 @@ private func stubFetch(sse: String, into box: RequestBox) -> FetchClient {
   }
 }
 
-private let transcript = Transcript(items: [
-  .direct(.init(
-    id: UUID(0),
-    sender: Sender(id: "morgan", timeZone: TimeZone(identifier: "UTC")!),
-    timestamp: Date(timeIntervalSinceReferenceDate: 0),
-    content: .init(text: "hello"),
-  )),
-])
+private let lines: [TranscriptLine] = [
+  .init(at: Date(timeIntervalSinceReferenceDate: 0), key: "message:hello", message: .user(.init(content: [.text("hello")]))),
+]
 
 private let compactTool = Tool(
   name: "compact",
@@ -126,7 +125,7 @@ private func run(
     $0.fetch = stubFetch(sse: sse, into: box)
     $0.continuousClock = ImmediateClock()
   } operation: {
-    try await executor.run(attemptID: attemptID, transcript: transcript)
+    try await executor.run(attemptID: attemptID, lines: lines)
   }
   return (reply, box.captured)
 }
@@ -165,6 +164,17 @@ private func run(
     #expect(reply.metadata.usage?.totalTokens == 19)
   }
 
+  @Test func completedRequestContextContainsOpeningThenUnmodifiedLineMessages() async throws {
+    var executor = try await makeExecutor()
+    executor.opening = ["first opening", "second opening"]
+    let (reply, _) = try await run(executor, sse: textSSE)
+    #expect(reply.context == Context(
+      systemPrompt: executor.systemPrompt,
+      messages: executor.opening.map { .user(.init(content: [.text($0)])) } + lines.map(\.message),
+      tools: executor.tools,
+    ))
+  }
+
   @Test func attemptLogCapturesRequestAndRawSSE() async throws {
     let bytes = Mutex(Data())
     let opened = Mutex<[UUID]>([])
@@ -194,7 +204,7 @@ private func run(
       $0.continuousClock = SteppingClock()
       $0.date = .constant(fixed)
     } operation: {
-      try await executor.run(attemptID: UUID(2), transcript: transcript)
+      try await executor.run(attemptID: UUID(2), lines: lines)
     }
 
     let metric = try #require(box.metric)
@@ -230,7 +240,7 @@ private func run(
         $0.continuousClock = ImmediateClock()
         $0.date = .constant(Date(timeIntervalSince1970: 0))
       } operation: {
-        try await executor.run(attemptID: UUID(3), transcript: transcript)
+        try await executor.run(attemptID: UUID(3), lines: lines)
       }
     }
 
@@ -259,7 +269,7 @@ private func run(
         $0.fetch = stubFetch(sse: partial, into: RequestBox())
         $0.continuousClock = ImmediateClock()
       } operation: {
-        try await executor.run(attemptID: UUID(4), transcript: transcript)
+        try await executor.run(attemptID: UUID(4), lines: lines)
       }
     }
     let metric = try #require(box.metric)
@@ -285,7 +295,7 @@ extension ExecutorTests {
     let requests = RequestBox()
     let executor = InferenceExecutor(session: .init("none-test"), model: resolved, systemPrompt: "offline", tools: [])
     try await withDependencies { $0.fetch = stubFetch(sse: textSSE, into: requests) } operation: {
-      let result = try await executor.run(attemptID: UUID(99), transcript: transcript)
+      let result = try await executor.run(attemptID: UUID(99), lines: lines)
       #expect(result.message.content.contains { if case .text = $0 { true } else { false } })
     }
     let body = try #require(requests.captured.first?.object)
@@ -321,7 +331,7 @@ extension ExecutorTests {
     let requests = RequestBox()
     let executor = InferenceExecutor(session: session, model: resolved, systemPrompt: "offline", tools: [])
     try await withDependencies { $0.fetch = stubFetch(sse: textSSE, into: requests) } operation: {
-      _ = try await executor.run(attemptID: UUID(98), transcript: transcript)
+      _ = try await executor.run(attemptID: UUID(98), lines: lines)
     }
     #expect(requests.captured.first?.object?["thinking"]?.object?["type"] == .string("adaptive"))
     setenv(name, "env-thinking-replacement", 1)
@@ -339,11 +349,12 @@ extension ExecutorTests {
       $0.date = .constant(Date(timeIntervalSince1970: 100))
       $0.uuid = .incrementing
     } operation: {
-      var warming = transcript
-      let reply = try await executor.run(attemptID: UUID(40), transcript: warming)
-      warming.appendAssistant(reply.message, id: UUID(40), metadata: reply.metadata)
-      warming.append(.notification(.init(id: UUID(41), timestamp: Date(timeIntervalSince1970: 3400), kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: "<cache-warming-notice>Ignore if there is nothing to do.</cache-warming-notice>"))))
-      _ = try await executor.run(attemptID: UUID(42), transcript: warming)
+      var warming = lines
+      let reply = try await executor.run(attemptID: UUID(40), lines: warming)
+      let entry = AssistantEntry(reply.message, id: UUID(40), at: Date(timeIntervalSince1970: 100), metadata: reply.metadata, replayBinding: nil, mint: { ToolCallID(UUID().uuidString) })
+      warming += TranscriptItem.assistant(entry).lines(session: executor.session)
+      warming += TranscriptItem.notification(.init(id: UUID(41), timestamp: Date(timeIntervalSince1970: 3400), kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: "<cache-warming-notice>Ignore if there is nothing to do.</cache-warming-notice>"))).lines(session: executor.session)
+      _ = try await executor.run(attemptID: UUID(42), lines: warming)
       let before = try #require(box.captured.first?.object)
       let after = try #require(box.captured.last?.object)
       let encoder = JSONEncoder()
@@ -355,9 +366,7 @@ extension ExecutorTests {
       let messages = try #require(after["messages"]?.array)
       #expect(messages.count > prefix.count)
       #expect(try encoder.encode(prefix) == encoder.encode(Array(messages.prefix(prefix.count))))
-      let normalBefore = await transcript.renderRequest(session: executor.session, systemPrompt: executor.systemPrompt, tools: executor.tools)
-      let normalAfter = await warming.renderRequest(session: executor.session, systemPrompt: executor.systemPrompt, tools: executor.tools)
-      #expect(try encoder.encode(normalBefore.messages) == encoder.encode(Array(normalAfter.messages.prefix(normalBefore.messages.count))))
+      #expect(Array(warming.prefix(lines.count)) == lines)
     }
   }
 }

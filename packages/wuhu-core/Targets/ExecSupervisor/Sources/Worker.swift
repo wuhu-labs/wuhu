@@ -11,6 +11,7 @@ import TaskLifetime
 #endif
 import CExecSupervisor
 import Fetch
+import struct FetchTunnel.Tunnel
 import class NIOPosix.MultiThreadedEventLoopGroup
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
@@ -189,13 +190,14 @@ enum WorkerDirectory {
   }
 }
 
-/// The worker's one lifetime rule: it exits once it holds no operations and it is not the linked, current worker.
+/// A non-current worker exits once it holds neither operations nor a serving exchange awaiting transport handover.
 actor ExecWorker {
   let manifest: WorkerManifest
   let directory: String
   let agent: OperationAgent
   let clock: OperationClock
   let began: Duration
+  var tunnel: Tunnel?
   var standing = Standing.awaitingLink
   /// Admitted starts not yet answered, in the inventory from before they run until the runtime holds them, each with the
   /// requests waiting for its answer.
@@ -301,11 +303,12 @@ actor ExecWorker {
     return .init(protocol: Rendezvous.protocolName, machine: manifest.machine, worker: manifest.worker, nonce: manifest.nonce)
   }
 
-  func accepted(_ reply: Rendezvous.Reply) {
+  func accepted(_ reply: Rendezvous.Reply, tunnel: Tunnel) {
+    self.tunnel = tunnel
     standing = .linked(current: reply.current == true && !WorkerDirectory.superseded(directory))
   }
 
-  func unlinked() { standing = .unlinked }
+  func unlinked() { tunnel = nil; standing = .unlinked }
 
   /// A permanent refusal: the worker stops its running execs and never redials; it exits under the same rule.
   func refuse(_ refusal: Rendezvous.Refusal) async {
@@ -320,7 +323,9 @@ actor ExecWorker {
     default: break
     }
     guard claims.isEmpty else { return false }
-    return !(await agent.hasRetainedOperations())
+    guard !(await agent.hasRetainedOperations()) else { return false }
+    if let tunnel { return await tunnel.isIdle }
+    return true
   }
 
   /// Removes the directory, or leaves it with an inventory naming what it dropped unsettled.
@@ -356,7 +361,7 @@ extension ExecSupervisor {
       group.addTask {
         let refusal = await Rendezvous.redial(
           path: worker.manifest.socket, hello: { await worker.hello() }, group: events, limits: Rendezvous.workerLimits, handler: worker.handler,
-          accepted: { await worker.accepted($0) }, unlinked: { await worker.unlinked() },
+          accepted: { await worker.accepted($0, tunnel: $1) }, unlinked: { await worker.unlinked() },
         )
         if let refusal { await worker.refuse(refusal) }
         // Without a link there is nothing more to serve; the lifetime loop decides when to exit.

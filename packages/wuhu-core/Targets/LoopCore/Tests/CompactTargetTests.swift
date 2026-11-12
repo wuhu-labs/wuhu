@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -37,10 +41,11 @@ private struct TargetRefused: Error, CustomStringConvertible {
       let script = InferenceScript([
         Fix.replying("switching", calls: [targetedCompact(model: "nope/x")]),
         { request in
-          guard case let .toolResult(result)? = request.transcript.items.last,
-                case let .failure(failure) = result.payload else { throw UnexpectedCall("missing target refusal") }
-          #expect(failure.message.contains("compact target \"nope/x\" refused, nothing was folded"))
-          #expect(failure.message.contains("unknownProvider: nope"))
+          let result = try #require(request.lines.last)
+          #expect(result.role == .toolResult)
+          #expect(result.message.toolResult?.isError == true)
+          #expect(result.text.contains("compact target \"nope/x\" refused, nothing was folded"))
+          #expect(result.text.contains("unknownProvider: nope"))
           return Fix.reply("staying put")
         },
       ])
@@ -56,9 +61,9 @@ private struct TargetRefused: Error, CustomStringConvertible {
       #expect(seen.withLock { $0 } == [CompactionTarget(model: "nope/x")])
       #expect(try await sessions.generationState(id).generation == 0)
       #expect(try await sessions.record(id).errorMessage == nil)
-      let transcript = try await sessions.hydrate(id).transcript.kernel
-      #expect(!transcript.items.contains { if case .generationHead = $0 { true } else { false } })
-      #expect(transcript.items.contains { if case let .message(message) = $0 { message.content.text == "work" } else { false } })
+      let lines = try await sessions.lines(id)
+      #expect(!lines.contains { $0.key == LineKey.head })
+      #expect(lines.contains { $0.key.hasPrefix("message:") && $0.role == .user && $0.text.hasSuffix("\n\nwork") })
     }
   }
 
@@ -83,11 +88,9 @@ private struct TargetRefused: Error, CustomStringConvertible {
       }
       #expect(seen.withLock { $0 } == [CompactionTarget(model: "work", effort: "low")])
       #expect(try await sessions.generationState(id).generation == 1)
-      guard case let .generationHead(head)? = try await sessions.hydrate(id).transcript.kernel.items.first else {
-        Issue.record("expected a generation head")
-        return
-      }
-      #expect(head.summary == "where things stand")
+      let head = try #require(try await sessions.lines(id).first { $0.key == "head:summary" })
+      #expect(head.role == .user)
+      #expect(head.text == "<conversation-summary>\nwhere things stand\n</conversation-summary>")
     }
   }
 
@@ -99,14 +102,20 @@ private struct TargetRefused: Error, CustomStringConvertible {
       let id = try await sessions.createSession(group: .shared, title: "moved", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: old)
       let script = InferenceScript([
         Fix.replying("switching", calls: [targetedCompact(model: nil, preReads: ["/notes.md"])]),
-        Fix.replying("continuing"),
+        { request in
+          #expect(request.lines.first { $0.key == LineKey.head }?.text.contains("files to re-read (re-established below): /notes.md") == true)
+          let read = try #require(request.lines.first { $0.key == "reestablish" })
+          #expect(read.role == .user)
+          #expect(read.text.contains("<compaction-reestablished>"))
+          #expect(read.text.contains("no file"))
+          return Fix.reply("continuing")
+        },
       ])
       var config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      config.prepareCompaction = { _, compacted, _ in
+      config.prepareCompaction = { _, _, _ in
         var next = old
         next.specifier.effort = "low"
-        let moved = try compacted.portableHandoff(binding: .init(identity: "scope", epoch: old.epoch), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [], openRequests: [])
-        return ModelRouteTransition(expectedEpoch: old.epoch, route: next, transcript: moved)
+        return ModelRouteTransition(expectedEpoch: old.epoch, route: next, binding: .init(identity: "scope", epoch: old.epoch), carriesTail: true)
       }
       try await runService(space, config) { service in
         try await service.enqueue(item: Fix.message("work"), to: id)

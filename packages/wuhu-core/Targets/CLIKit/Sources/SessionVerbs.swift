@@ -244,39 +244,6 @@ extension Executor {
     await self.runner.stdout("\(output.id) generation \(output.generation) on \(output.executor)\(spec)\n")
   }
 
-  mutating func sessionLog(id: String, view: SessionLogView) async throws {
-    let session = try sessionKey(id)
-    let space = try self.wallet.pinnedSpace()
-    let client = try await self.authenticated(space)
-    switch view {
-    case let .conversation(limit, before):
-      var query = "tail=\(limit ?? 50)"
-      if let before { query += "&before=\(before)" }
-      let output: ConversationReadOutput = try await client.api(
-        .get, "/v1/conversation/\(session)/messages?\(query)",
-      )
-      await self.runner.stdout(renderConversationLog(output.messages))
-    case let .direct(level, limit, before):
-      var query = "level=\(level)"
-      if let limit { query += "&limit=\(limit)" }
-      if let before { query += "&before=\(queryEncoded(before))" }
-      let output: SessionLogOutput = try await client.api(
-        .get, "/v1/session/\(session)/log?\(query)",
-      )
-      await self.runner.stdout(try renderSessionLog(output, level: level))
-    }
-  }
-
-  mutating func sessionEntry(id: String, ref: String) async throws {
-    let session = try sessionKey(id)
-    let space = try self.wallet.pinnedSpace()
-    let client = try await self.authenticated(space)
-    let output: SessionEntryOutput = try await client.api(
-      .get, "/v1/session/\(session)/entry/\(pathEncoded(ref))",
-    )
-    await self.runner.stdout(try renderSessionEntry(output))
-  }
-
   mutating func sessionInspect(id: String) async throws {
     let session = try sessionKey(id)
     let space = try self.wallet.pinnedSpace()

@@ -1,4 +1,5 @@
 === run_script
 failed: script.00000000 threw before calling result(): Error: update() needs result() first
-    at update (<prelude>:460:30)
+    at <anonymous> (native)
+    at update (<prelude>:454:49)
     at <anonymous> (script:1:1)

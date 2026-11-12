@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import LoopCore
 import SessionDomain
 import SpaceCore
@@ -26,7 +30,7 @@ import Testing
       try await runService(space, makeConfig(inference: { try await script($0) })) { _ in
         try await until("settled") { try await sessions.settledWork(sid) && script.count == 1 }
       }
-      #expect(try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 1)
+      #expect(try await sessions.lines(sid).assistantLines.count == 1)
     }
   }
 }

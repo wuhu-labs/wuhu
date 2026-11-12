@@ -118,6 +118,21 @@ final class Asked: Sendable {
     worker.cell(counter).value()
   }
 
+  @Test(arguments: [false, true], 1 ... 12 as ClosedRange<UInt64>)
+  func aPullThatRunsAfterIdleEvictionHandsMailToTheNextIncarnation(shared: Bool, seed: UInt64) throws {
+    let world = World(seed: seed, shared: shared)
+    let a = try world.node("a", [.cell(Counter.self)], starts: false)
+    let counter = Counter.ID("idle")
+    a.worker.send(counter).add(1)
+    world.run(for: .seconds(1))
+    a.process.at(world.simulation.now + .seconds(4)) {
+      a.worker.send(counter).add(10)
+    }
+    world.run(for: .seconds(5))
+    #expect(a.worker.cell(counter).value() == 11)
+    #expect(!a.worker.hasMail(for: counter.recipient))
+  }
+
   @Test func callsCommitTheirWritesAndOutliveTheProcess() throws {
     let a = try node("a")
     let client = try world.client()

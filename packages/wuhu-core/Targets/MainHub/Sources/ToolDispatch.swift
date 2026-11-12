@@ -28,7 +28,7 @@ public struct IncompleteSession: Error, Sendable {
   }
 }
 
-public enum RosterTool: String, CaseIterable {
+public enum RosterTool: String, CaseIterable, Sendable {
   case read
   case write
   case edit
@@ -48,4 +48,14 @@ public enum RosterTool: String, CaseIterable {
   case setTitle = "set_title"
   case manipulateUI = "manipulate_ui"
   case runScript = "run_script"
+}
+
+extension RosterTool {
+  /// Whether a call of the tool runs to its end and answers with its own result when the task running it is cancelled. The five that reach a machine or a script — `grep`, `find`, `query`, `exec`, `run_script` — throw `CancellationError` where the cancellation reaches them instead, and their job answers the restart failure; a `grep` or a `find` already begun still finishes its page.
+  public var finishesWhenCancelled: Bool {
+    switch self {
+    case .grep, .find, .query, .exec, .runScript: false
+    default: true
+    }
+  }
 }

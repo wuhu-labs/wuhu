@@ -8,10 +8,20 @@ import Testing
 // A space from before migration 008: request state lived on messages
 // (`deadline_at`) and in the fold of finals, with no `requests` table.
 @Suite(.deterministicDependencies) struct Migration008Tests {
-  private func database() throws -> DatabaseQueue {
+  /// The space and every second connection of a test wait for each other: a memory database's readers hold transactions its writer meets.
+  private func memoryConfiguration() -> Configuration {
     var configuration = Configuration()
     configuration.foreignKeysEnabled = true
-    return try DatabaseQueue(path: "file:/migration-008-\(UUID())?vfs=memdb", configuration: configuration)
+    configuration.busyMode = .timeout(5)
+    return configuration
+  }
+
+  private func database() throws -> DatabaseQueue {
+    try DatabaseQueue(path: "file:/migration-008-\(UUID())?vfs=memdb", configuration: memoryConfiguration())
+  }
+
+  private func connection(to database: DatabaseQueue) throws -> DatabaseQueue {
+    try DatabaseQueue(path: database.path, configuration: memoryConfiguration())
   }
 
   // Five requests: answered, on an archived task, past its deadline, before
@@ -35,7 +45,7 @@ import Testing
       default: break
       }
     }
-    try await DatabaseQueue(path: database.path).write { db in
+    try await connection(to: database).write { db in
       try db.execute(sql: """
       DELETE FROM grdb_migrations WHERE identifier IN ('008', '009');
       CREATE TABLE "session_subscriptions" (
@@ -62,7 +72,7 @@ import Testing
   @Test func `every request message becomes one row and deadline_at is dropped`() async throws {
     let database = try database()
     let original = try await before008(database)
-    let reopened = try DatabaseQueue(path: database.path)
+    let reopened = try connection(to: database)
     let space = try Space(writer: reopened)
     let rows = try await reopened.read { db in
       try Row.fetchAll(db, sql: "SELECT id, status, brief, result, deadline_at, kind, key FROM requests ORDER BY id")
@@ -83,7 +93,7 @@ import Testing
   @Test func `the backfill reports what it made`() async throws {
     let database = try database()
     let original = try await before008(database)
-    let backfill = try await DatabaseQueue(path: database.path).writeWithoutTransaction { db in
+    let backfill = try await connection(to: database).writeWithoutTransaction { db in
       var backfill: Migration008.Backfill?
       try db.inTransaction {
         backfill = try Migration008.run(db)
@@ -98,10 +108,10 @@ import Testing
   @Test func `a request message without exactly one row stops the migration and changes nothing`() async throws {
     let database = try database()
     let original = try await before008(database)
-    try await DatabaseQueue(path: database.path).write { db in
+    try await connection(to: database).write { db in
       try db.execute(sql: "DELETE FROM conversation_members WHERE member_kind = 'session' AND member IN (SELECT id FROM sessions WHERE title = 'plain')")
     }
-    let reopened = try DatabaseQueue(path: database.path)
+    let reopened = try connection(to: database)
     #expect(throws: Migration008.Unmatched.self) { try Space(writer: reopened) }
     #expect(try await reopened.read { try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'requests')") } == false)
     #expect(try await reopened.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'deadline_at'") } == 1)

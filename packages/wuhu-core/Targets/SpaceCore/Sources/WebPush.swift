@@ -1,5 +1,11 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
+import StructuredQueries
+import StructuredQueriesSQLite
 
 public struct WebPushSubscriptionRegistration: Hashable, Sendable {
   public var endpoint: String
@@ -42,129 +48,61 @@ extension Space {
   public func registerWebPushSubscription(_ registration: WebPushSubscriptionRegistration) async throws {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
-      let newest = try Int64.fetchOne(db, sql: "SELECT MAX(n) FROM notifications") ?? 0
-      let existing = try Row.fetchOne(
-        db,
-        sql: "SELECT recipient, notification_cursor, created_at FROM web_push_subscriptions WHERE endpoint = ?",
-        arguments: [registration.endpoint],
+      let newest = (try NotificationRow.select { $0.n.max() }.fetchOne(db))! ?? 0
+      let existing = try WebPushSubscriptionRow.where { $0.endpoint.eq(registration.endpoint) }.fetchOne(db)
+      let sameRecipient = existing?.recipient == registration.recipient
+      let row = WebPushSubscriptionRow(
+        endpoint: registration.endpoint, recipient: registration.recipient, devicePublicKey: registration.devicePublicKey,
+        p256dh: registration.p256dh, auth: registration.auth, vapidKeyID: registration.vapidKeyID,
+        notificationCursor: sameRecipient ? existing!.notificationCursor : newest,
+        consecutiveFailures: 0, retryAt: nil, expiresAt: registration.expiresAt.map(SQLiteDateFormat.string(from:)),
+        createdAt: sameRecipient ? existing!.createdAt : now, updatedAt: now,
       )
-      let cursor: Int64
-      let createdAt: String
-      if let existing, existing["recipient"] == registration.recipient {
-        cursor = existing["notification_cursor"]
-        createdAt = existing["created_at"]
-      } else {
-        cursor = newest
-        createdAt = now
-      }
-      try db.execute(
-        sql: """
-        INSERT INTO web_push_subscriptions (
-          endpoint, recipient, device_pubkey, p256dh, auth, vapid_key_id,
-          notification_cursor, consecutive_failures, retry_at, expires_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)
-        ON CONFLICT (endpoint) DO UPDATE SET
-          recipient = excluded.recipient,
-          device_pubkey = excluded.device_pubkey,
-          p256dh = excluded.p256dh,
-          auth = excluded.auth,
-          vapid_key_id = excluded.vapid_key_id,
-          notification_cursor = excluded.notification_cursor,
-          consecutive_failures = 0,
-          retry_at = NULL,
-          expires_at = excluded.expires_at,
-          created_at = excluded.created_at,
-          updated_at = excluded.updated_at
-        """,
-        arguments: [
-          registration.endpoint, registration.recipient, registration.devicePublicKey,
-          registration.p256dh, registration.auth, registration.vapidKeyID, cursor,
-          registration.expiresAt.map(SQLiteDateFormat.string(from:)), createdAt, now,
-        ],
-      )
+      try WebPushSubscriptionRow.insert { row } onConflict: { $0.endpoint } doUpdate: {
+        $0.recipient = $1.recipient
+        $0.devicePublicKey = $1.devicePublicKey
+        $0.p256dh = $1.p256dh
+        $0.auth = $1.auth
+        $0.vapidKeyID = $1.vapidKeyID
+        $0.notificationCursor = $1.notificationCursor
+        $0.consecutiveFailures = $1.consecutiveFailures
+        $0.retryAt = $1.retryAt
+        $0.expiresAt = $1.expiresAt
+        $0.createdAt = $1.createdAt
+        $0.updatedAt = $1.updatedAt
+      }.execute(db)
     }
   }
 
   public func removeWebPushSubscription(endpoint: String, devicePublicKey: String) async throws {
     try await writer.write { db in
-      try db.execute(
-        sql: "DELETE FROM web_push_subscriptions WHERE endpoint = ? AND device_pubkey = ?",
-        arguments: [endpoint, devicePublicKey],
-      )
+      try WebPushSubscriptionRow.where { $0.endpoint.eq(endpoint) && $0.devicePublicKey.eq(devicePublicKey) }.delete().execute(db)
     }
   }
 
   public func dueWebPushDeliveries(at date: Date, limit: Int = 64) async throws -> [WebPushDeliveryRecord] {
     let now = SQLiteDateFormat.string(from: date)
-    return try await writer.write { db in
-      try db.execute(
-        sql: "DELETE FROM web_push_subscriptions WHERE expires_at IS NOT NULL AND expires_at <= ?",
-        arguments: [now],
-      )
-      return try Row.fetchAll(
-        db,
-        sql: """
-        SELECT
-          s.endpoint, s.p256dh, s.auth, s.vapid_key_id, s.consecutive_failures,
-          n.n, n.recipient, n.source, n.kind, n.payload, n.created_at, n.grp
-        FROM web_push_subscriptions s
-        JOIN notifications n ON n.n = (
-          SELECT MIN(candidate.n) FROM notifications candidate
-          WHERE candidate.recipient = s.recipient AND candidate.n > s.notification_cursor
-        )
-        WHERE s.retry_at IS NULL OR s.retry_at <= ?
-        ORDER BY n.n, s.endpoint
-        LIMIT ?
-        """,
-        arguments: [now, limit],
-      ).map { row in
-        WebPushDeliveryRecord(
-          endpoint: row["endpoint"],
-          p256dh: row["p256dh"],
-          auth: row["auth"],
-          vapidKeyID: row["vapid_key_id"],
-          consecutiveFailures: row["consecutive_failures"],
-          notification: try NotificationRecord(row: row),
-        )
-      }
+    return try await writer.read { db in
+      try WebPushSubscriptionRow
+        .where { ($0.retryAt.is(nil) || $0.retryAt.lte(Optional(now))) && ($0.expiresAt.is(nil) || $0.expiresAt.gt(Optional(now))) }
+        .join(NotificationRow.all) { subscription, notification in
+          notification.n.eq(#sql("(SELECT MIN(candidate.n) FROM notifications candidate WHERE candidate.recipient = \(subscription.recipient) AND candidate.n > \(subscription.notificationCursor))", as: Int64.self))
+        }
+        .order { ($1.n, $0.endpoint) }.limit(limit)
+        .select { WebPushPending.Columns(subscription: $0, notification: $1) }
+        .fetchAll(db).map { row in
+          WebPushDeliveryRecord(
+            endpoint: row.subscription.endpoint, p256dh: row.subscription.p256dh, auth: row.subscription.auth,
+            vapidKeyID: row.subscription.vapidKeyID, consecutiveFailures: row.subscription.consecutiveFailures,
+            notification: NotificationRecord(row: row.notification),
+          )
+        }
     }
   }
+}
 
-  public func markWebPushDelivered(endpoint: String, notification: Int64) async throws {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      try db.execute(
-        sql: """
-        UPDATE web_push_subscriptions
-        SET notification_cursor = ?, consecutive_failures = 0, retry_at = NULL, updated_at = ?
-        WHERE endpoint = ? AND notification_cursor < ?
-        """,
-        arguments: [notification, now, endpoint, notification],
-      )
-    }
-  }
-
-  public func deferWebPushDelivery(endpoint: String, until retryAt: Date) async throws {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      try db.execute(
-        sql: """
-        UPDATE web_push_subscriptions
-        SET consecutive_failures = consecutive_failures + 1, retry_at = ?, updated_at = ?
-        WHERE endpoint = ?
-        """,
-        arguments: [SQLiteDateFormat.string(from: retryAt), now, endpoint],
-      )
-    }
-  }
-
-  public func removeWebPushSubscription(endpoint: String) async throws {
-    try await writer.write { db in
-      try db.execute(sql: "DELETE FROM web_push_subscriptions WHERE endpoint = ?", arguments: [endpoint])
-    }
-  }
-
-  public nonisolated func observeWebPushChanges() -> AsyncStream<Void> {
-    regionWakes([Table("notifications"), Table("web_push_subscriptions")], in: writer)
-  }
+@Selection
+private struct WebPushPending {
+  var subscription: WebPushSubscriptionRow
+  var notification: NotificationRow
 }

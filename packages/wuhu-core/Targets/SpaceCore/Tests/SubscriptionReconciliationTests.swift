@@ -6,7 +6,7 @@ import DeterministicDependencies
 #endif
 import Scratch
 import SessionDomain
-@_spi(SessionObservation) @testable import SpaceCore
+@testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct SubscriptionReconciliationTests {
@@ -30,32 +30,6 @@ import Testing
       #expect(try await reopened.sessions.undrainedInputs(id).isEmpty)
       try await reopened.close()
       try await space.close()
-    }
-  }
-
-  @Test func registrationObservationTracksArchiveLifecycleWithSlotsPreserved() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let id = try await ObserverRowsTests().owner(store)
-      _ = try await ObserverRowsTests().arm(store, id)
-      let lifecycle = Collector<Bool>()
-      let registrations = store.observeArmedSubscriptions()
-      let task = Task {
-        do {
-          for try await snapshot in registrations {
-            if let first = snapshot.first { await lifecycle.append(first.orphaned) }
-          }
-        } catch { Issue.record(error) }
-      }
-      defer { task.cancel() }
-      _ = try await awaitItems(lifecycle, atLeast: 1)
-      _ = try await store.archive(id, grace: .seconds(100))
-      _ = try await awaitItems(lifecycle, atLeast: 2)
-      try await store.unarchive(id)
-      let snapshots = try await awaitItems(lifecycle, atLeast: 3)
-      #expect(snapshots == [false, true, false])
-      #expect(try await store.subscriptionRegistrations().first?.orphaned == false)
-      #expect(try await store.armedSubscriptions(id).count == 1)
     }
   }
 

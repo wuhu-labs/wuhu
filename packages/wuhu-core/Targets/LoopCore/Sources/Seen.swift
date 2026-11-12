@@ -13,6 +13,7 @@ struct Seen: Owned, Hashable, Encodable, Sendable {
   var kind: Kind
   var key: String
   var value: String?
+  var position: Int? = nil
 
   enum Kind: String, QueryBindable, Encodable, Sendable {
     case file, folder, text
@@ -47,9 +48,8 @@ struct Seen: Owned, Hashable, Encodable, Sendable {
 
   /// What one item shows.
   static func of(_ item: TranscriptItem) throws -> Set<Seen> {
-    guard let event = SessionEnvironment.Event(item) else { return [] }
-    var environment = SessionEnvironment()
-    environment.apply(event)
-    return try folding(environment.tools)
+    var tools = ToolExecutionState()
+    tools.apply(item)
+    return try folding(tools)
   }
 }

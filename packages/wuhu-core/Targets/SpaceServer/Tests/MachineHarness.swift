@@ -4,18 +4,32 @@ import Crypto
 import Dependencies
 @testable import ExecSupervisor
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import MachineChannel
 import MachineContract
 import OperationRuntime
 import Serve
+import ServeRouting
 import ServeTesting
 import struct SpaceContract.EnrollConsumeOutput
 import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
+
+/// A response that fails at the transport is retried on the injected date a moment later; a suite with `\.date` pinned would never get there, so every test that drives a real tunnel runs its space on the live date, as production does.
+func withLiveDate<R>(_ body: () async throws -> R) async throws -> R {
+  try await withDependencies {
+    $0.date = DateGenerator { Date() }
+  } operation: {
+    try await body()
+  }
+}
 
 struct SeededRNG: RandomNumberGenerator, Sendable {
   private var state: UInt64
@@ -35,7 +49,9 @@ func makeMachineSpace(seed: UInt64 = 7) throws -> Space {
     $0.continuousClock = ContinuousClock()
     $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: seed))
   } operation: {
-    try Space.inMemory()
+    let space = try Space.inMemory()
+    _ = space.worker
+    return space
   }
 }
 
@@ -59,7 +75,7 @@ final class TestServer: Sendable {
     } operation: {
       MachineHub(space: space, tokens: tokens, secrets: secrets)
     }
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: dev, secrets: secrets, machineV2Hub: MachineV2Hub(space: space))
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: dev, secrets: secrets, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
     api = ServeTesting.client(upgrading: handler)
     (sessions, sessionsContinuation) = AsyncStream.makeStream()
   }
@@ -117,14 +133,11 @@ struct UnexpectedResponse: Error {
   let status: Status
 }
 
-// A caller-leg ChannelEndpoint driven by a feed of transports: each attached
-// socket is one connection round; endpoint state survives across them.
 final class EndpointHost: Sendable {
   let endpoint: ChannelEndpoint = ChannelEndpoint()
 
   private let transports: AsyncStream<any FrameTransport>
   private let continuation: AsyncStream<any FrameTransport>.Continuation
-  private let finishedRounds = Mutex(0)
 
   init() {
     (transports, continuation) = AsyncStream.makeStream()
@@ -138,14 +151,9 @@ final class EndpointHost: Sendable {
     continuation.yield(transport)
   }
 
-  var completedRounds: Int {
-    finishedRounds.withLock { $0 }
-  }
-
   func run() async {
     for await transport in transports {
       await endpoint.run(transport)
-      finishedRounds.withLock { $0 += 1 }
     }
   }
 }
@@ -212,19 +220,48 @@ func realPollUntil(attempts: Int = 500, _ condition: @Sendable () async throws -
 
 func withExecDescription<R>(space: Space, hub: MachineHub, machine: MachineID, _ body: () async throws -> R) async throws -> R {
   let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
-  let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
-  await hub.configureV2(service)
   return try await withThrowingTaskGroup(of: Void.self) { tasks in
     tasks.addTask { await agent.run() }
-    tasks.addTask { try await service.run() }
     defer { tasks.cancelAll() }
     do {
-      let result = try await body()
-      await agent.shutdown(); await service.shutdown()
+      let result = try await withMachineBox(space: space, hub: hub, machine: machine, client: FetchClient { try await agent.handler($0) }, body)
+      await agent.shutdown()
       return result
     } catch {
-      await agent.shutdown(); await service.shutdown()
+      await agent.shutdown()
       throw error
     }
   }
+}
+
+func withMachineBox<R>(
+  space: Space, hub: MachineHub, machine: MachineID, client: FetchClient,
+  _ body: () async throws -> R,
+) async throws -> R {
+  let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
+  let link = try #require(BoxLink(worker: space.worker, machine: machine.rawValue, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
+    try await hub.prepare($0, machine: machine.rawValue)
+  })
+  return try await withThrowingTaskGroup(of: Void.self) { tasks in
+    tasks.addTask { await link.run(client: client) }
+    defer { link.close(); tasks.cancelAll() }
+    try #require(try await realPollUntil { try await space.machineDescription(machine) != nil })
+    return try await body()
+  }
+}
+
+func machineListenerRoutes(
+  space: Space, hub: MachineHub, version: String = SpaceServer.unstampedVersion,
+  releases: MachineV2Releases? = nil, fingerprint: String? = nil,
+) -> Router {
+  @Dependency(\.fetch) var fetch
+  @Dependency(\.continuousClock) var clock
+  let releases = releases ?? MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: clock)
+  let upgrades = MachineV2Upgrades(space: space, serverVersion: version, releases: releases)
+  var router = Router()
+  addMachineV2Routes(&router, space: space, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
+    @Dependency(\.date) var date
+    return try await requestPrincipal(request, space: space, date: date)
+  }
+  return router
 }

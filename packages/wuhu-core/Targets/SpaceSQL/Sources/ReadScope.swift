@@ -108,6 +108,26 @@ public struct ViewCatalog: Sendable {
         let path = String(table[table.index(after: colon)...])
         if group == acting { views.append(View(name: path, table: table)) }
         if readable.contains(group) { views.append(View(name: "wuhu://\(group).localspace\(path)", table: table)) }
+      } else if table == "session_pointers" {
+        func legacyItems(_ name: String, groupFilter: String, includeGroup: Bool = false) -> View {
+          View(
+            name: name, table: table,
+            select: """
+            SELECT \(includeGroup ? "se.grp, " : "")p.session_id, p.generation, p.position,
+              (SELECT key FROM json_each(c.payload) LIMIT 1) AS kind, c.payload
+            FROM \(s)."session_pointers" p
+            JOIN \(s)."session_contents" c ON c.session_id = p.session_id AND c.id = p.content_id
+            JOIN \(s)."sessions" se ON se.id = p.session_id
+            WHERE \(groupFilter)
+            """,
+            joins: ["session_contents", "sessions"],
+          )
+        }
+        views.append(legacyItems("session_legacy_items", groupFilter: "se.grp = \(literal(acting))"))
+        for group in readable.sorted() {
+          views.append(legacyItems("wuhu://\(group).localspace/session_legacy_items", groupFilter: "se.grp = \(literal(group))"))
+        }
+        views.append(legacyItems("wuhu://*.localspace/session_legacy_items", groupFilter: "se.\(everyReadable)", includeGroup: true))
       } else if table == "subscription_slots" {
         // A session's plain stream is a job of its worker, once one has made the table.
         let streams = tables["streams"] == nil ? "" : """

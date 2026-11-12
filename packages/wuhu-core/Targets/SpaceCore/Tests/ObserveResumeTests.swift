@@ -11,7 +11,7 @@ import Testing
     _ = try await space.writeText("/b.md", "two")
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", from: Rev(1), group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", from: Rev(1), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -35,7 +35,7 @@ import Testing
     }
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -54,7 +54,7 @@ import Testing
     _ = try await space.writeText("/other.md", "y")
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "/notes/**", from: Rev(0), group: .shared).mutations
+    let stream = try await space.observeFS(glob: "/notes/**", from: Rev(0), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -64,20 +64,19 @@ import Testing
     #expect(collected == [MutationEvent(group: .shared, path: "/notes/a.md", rev: 1, kind: .write, entry: .file)])
   }
 
-  @Test func cursorBeyondCurrentRevReplaysNothingAndStaysLive() async throws {
+  @Test func aCursorAheadOfTheJournalReplaysNothingAndStaysSilent() async throws {
     let space = try makeSpace()
     _ = try await space.writeText("/a.md", "one")
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", from: Rev(100), group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", from: Rev(100), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
     _ = try await space.writeText("/b.md", "two")
-    let collected = try await awaitItems(events, atLeast: 1)
-    await settle()
+    await settle(.milliseconds(200))
 
-    #expect(collected == [MutationEvent(group: .shared, path: "/b.md", rev: 2, kind: .write, entry: .file)])
+    #expect(await events.items.isEmpty)
   }
 
   @Test func tableOpsReachLiveSubscribersMatchingReplay() async throws {
@@ -85,7 +84,7 @@ import Testing
     let table = try path("/t.table")
 
     let live = Collector<MutationEvent>()
-    let liveStream = await space.observeFS(glob: "**", group: .shared).mutations
+    let liveStream = try await space.observeFS(glob: "**", group: .shared).mutations
     let liveConsumer = Task { for await event in liveStream { await live.append(event) } }
     defer { liveConsumer.cancel() }
 
@@ -100,7 +99,7 @@ import Testing
     await settle()
 
     let replayed = Collector<MutationEvent>()
-    let replayStream = await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
+    let replayStream = try await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
     let replayConsumer = Task { for await event in replayStream { await replayed.append(event) } }
     defer { replayConsumer.cancel() }
     let replayCollected = try await awaitItems(replayed, atLeast: 3)
@@ -122,7 +121,7 @@ import Testing
     ]), in: .shared, acting: .shared)
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -143,7 +142,7 @@ import Testing
     try await space.fs(.shared).delete("/b.md", ifMatch: nil)
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
+    let stream = try await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 

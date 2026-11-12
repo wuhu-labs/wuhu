@@ -55,25 +55,6 @@ extension SessionStore {
     }
   }
 
-  public func modelProviderRefusing(provider: String, model: String) async throws -> Bool {
-    @Dependency(\.date.now) var now
-    return try await writer.read { db in
-      for row in try SessionModelRouteRow.where({ $0.provider.eq(provider) && $0.phase.eq("waiting") }).fetchAll(db) {
-        let route = try Sessions.decode(SessionModelRoute.self, from: row.payload)
-        guard let failure = route.failure, failure.refusing, failure.stands(at: now),
-              failure.reason != .upstreamOutage || route.specifier.model == model else { continue }
-        let record = try Sessions.record(row.sessionID, in: db)
-        guard record.lifecycle == .live, record.hold == .normal else { continue }
-        let since = SQLiteDateFormat.string(from: failure.lastFailureAt ?? failure.firstFailureAt)
-        let recovered = try InferenceRow.where {
-          $0.provider.eq(provider) && $0.grp.eq(row.group) && $0.outcome.eq("ok") && $0.at.gt(since)
-        }.fetchAll(db).contains { failure.reason != .upstreamOutage || $0.model == model }
-        if !recovered { return true }
-      }
-      return false
-    }
-  }
-
   public func updateModelRouteFailure(_ id: SessionID, expectedEpoch: String, failure: ModelRouteFailure?) async throws {
     let key = id.rawValue
     try await writer.write { db in
@@ -156,12 +137,16 @@ extension Sessions {
   }
 }
 
+public enum PortableHandoffConflict: Error, Equatable, Sendable {
+  case routeChanged
+}
+
 extension Sessions {
   static func commitRouteTransition(_ key: String, transition: ModelRouteTransition, in db: Database) throws {
     guard let row = try SessionModelRouteRow.where({ $0.sessionID.eq(key) }).fetchOne(db), row.routeEpoch == transition.expectedEpoch else { throw PortableHandoffConflict.routeChanged }
     let old = try decode(SessionModelRoute.self, from: row.payload)
     let route = transition.route
-    guard route.failure == nil, (route.group == nil) == (route.member == nil), transition.transcript.pendingToolCallIDs.isEmpty else { throw PortableHandoffConflict.routeChanged }
+    guard route.failure == nil, (route.group == nil) == (route.member == nil) else { throw PortableHandoffConflict.routeChanged }
     let config = SessionExecutor.kernel(route.specifier).configJSON
     if route.epoch == old.epoch {
       // Effort only: same group intent, member, model and binding, so the
@@ -178,13 +163,7 @@ extension Sessions {
     // A server placement moves within the held group; a requested switch may
     // leave it, join another, or bind to a concrete model.
     guard route.group != old.group || route.member != old.member || route.specifier != old.specifier,
-          transition.transcript.replayBinding?.epoch == route.epoch else { throw PortableHandoffConflict.routeChanged }
-    guard !transition.transcript.items.contains(where: { item in
-      guard case let .assistant(entry) = item else { return false }
-      return entry.content.contains { block in
-        switch block { case .reasoning(.encrypted), .hostedTool: true; default: false }
-      }
-    }) else { throw PortableHandoffConflict.routeChanged }
+          transition.binding?.epoch == route.epoch else { throw PortableHandoffConflict.routeChanged }
     try RouteExecutorRow.where { $0.id.eq(key) }.update { $0.executorConfig = config }.execute(db)
     try writeModelRoute(key, route: route, in: db)
   }

@@ -6,6 +6,7 @@ final class OuterStore: Sendable {
   /// The layered backend's file; `nil` on the shared backend.
   let file: FileDatabase?
   private let prepared = Mutex<Set<String>>([])
+  private let holdingLeases = Mutex(false)
 
   init(_ storage: Storage) {
     switch storage {
@@ -20,16 +21,25 @@ final class OuterStore: Sendable {
 
   /// One write transaction, with `cell()` returning `owner`.
   func write<T>(owner: String? = nil, _ body: (Connection) throws -> T) throws -> T {
+    Lane.preconditionNoWriter("acquire the writer through an outside path")
     var result: T?
+    var writingThread: UInt?
+    // The host runs its commit hooks after the callback returns, still on the writer.
+    defer { if let writingThread { Lane.endedWriter(writingThread) } }
     try database.write { handle, host in
-      let db = Connection(borrowing: handle)
-      db.host = host
-      db.hostWrite = { [database] in try database.execute($0, $1, on: host) }
-      db.owner = owner
-      defer { db.owner = nil }
-      result = try body(db)
+      writingThread = Lane.beganWriter()
+      result = try Self.borrow(database, handle: handle, host: host, owner: owner, body)
     }
     return result!
+  }
+
+  static func borrow<T>(_ database: any SharedDatabase, handle: OpaquePointer, host: AnyObject?, owner: String?, _ body: (Connection) throws -> T) rethrows -> T {
+    let db = Connection(borrowing: handle)
+    db.host = host
+    db.hostWrite = { try database.execute($0, $1, on: host) }
+    db.owner = owner
+    defer { db.owner = nil }
+    return try body(db)
   }
 
   func read<T>(owner: String? = nil, _ body: (Connection) throws -> T) throws -> T {
@@ -52,9 +62,17 @@ final class OuterStore: Sendable {
     try read { try $0.page(id, number) }
   }
 
+  func holdLeases() {
+    do {
+      try write { _ in holdingLeases.withLock { $0 = true } }
+    } catch {
+      preconditionFailure("could not hold leases during quiescence: \(error)")
+    }
+  }
+
   /// Checks the epoch's fence, which renews the lease, and applies its outer writes.
   func commit(_ epoch: Epoch, on db: Connection, now: Instant, leaseDuration: Duration) throws {
-    let released = epoch.writes.contains { if case .finished = $0 { true } else if case .released = $0 { true } else { false } }
+    let released = !holdingLeases.withLock { $0 } && epoch.writes.contains { if case .finished = $0 { true } else if case .released = $0 { true } else { false } }
     let held = try db.rows(
       "UPDATE wuwei_addressable SET expires_at = ?, page_count = ? WHERE id = ? AND fence = ? RETURNING id",
       .integer(released ? 0 : (now + leaseDuration).milliseconds), .integer(Int64(epoch.pageCount)), .integer(epoch.lease.id), .integer(epoch.lease.fence),
@@ -84,10 +102,10 @@ final class OuterStore: Sendable {
   }
 
   /// Brings a kind's tables in the shared database up to its schema, each statement once, tracked in `wuwei_schema`. Two kinds creating one table is a bug, and traps here.
-  func prepare(kind: String, schema: [String], owned: [String: String]) {
-    guard prepared.withLock({ $0.insert(kind).inserted }) else { return }
+  func prepare(kind: String, schema: [String], owned: [String: String], within: Incarnation? = nil) {
+    guard !prepared.withLock({ $0.contains(kind) }) else { return }
     do {
-      try write { db in
+      let apply: @Sendable (Connection) throws -> Void = { [self] db in
         let applied = Int(try db.rows("SELECT applied FROM wuwei_schema WHERE kind = ?", .text(kind)).first?["applied"].integer ?? 0)
         precondition(applied <= schema.count, "lost schema steps of \(kind): \(applied) applied, \(schema.count) declared")
         for statement in schema[applied...] {
@@ -99,6 +117,9 @@ final class OuterStore: Sendable {
         )
         try guardOwnedTables(db, named: owned)
       }
+      if try within?.accessOpen(as: "", apply) != nil { return }
+      try write(apply)
+      prepared.withLock { _ = $0.insert(kind) }
     } catch {
       preconditionFailure("could not apply the schema of \(kind): \(error)")
     }

@@ -28,22 +28,6 @@ public enum SettleEvent: Hashable, Sendable {
       self.at = at
     }
   }
-
-  var at: Date {
-    switch self {
-    case let .delivered(event): event.at
-    case let .posted(event): event.at
-    case let .owedReminder(_, at): at
-    }
-  }
-
-  var tieBreak: Int {
-    switch self {
-    case .delivered: 0
-    case .posted: 1
-    case .owedReminder: 2
-    }
-  }
 }
 
 /// A request whose final report this session owes, as the requests table holds it.
@@ -79,11 +63,6 @@ public struct SettleState: Hashable, Sendable, Codable {
 
   public init(owed: [ConversationID: Owed] = [:]) {
     self.owed = owed
-  }
-
-  public init(folding events: some Sequence<SettleEvent>) {
-    self.init()
-    for event in events { apply(event) }
   }
 
   public mutating func apply(_ event: SettleEvent) {
@@ -146,17 +125,6 @@ extension QueueInput {
       case .timer, .spaceObservation, .compactRequest, .requestStall, .script, .exec, .context, .parkReminder:
         nil
       }
-    }
-  }
-}
-
-extension [SettleEvent] {
-  // Delivery time is when the session SAW the message, so a mid-generation
-  // arrival already sorts after the post that preceded it. The same-instant
-  // tie therefore resolves the other way: the post clears.
-  public mutating func sortByTime() {
-    sort { left, right in
-      left.at == right.at ? left.tieBreak < right.tieBreak : left.at < right.at
     }
   }
 }

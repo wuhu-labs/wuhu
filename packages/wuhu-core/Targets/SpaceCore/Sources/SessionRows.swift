@@ -83,7 +83,7 @@ public struct SessionRows {
       }
       return .message(message)
     }
-    try Sessions.append(key, generation: runtime.generation, items: items, in: db)
+    try Sessions.appendLines(key, generation: runtime.generation, items.flatMap { $0.lines(session: id) }, in: db)
     try db.execute(
       sql: "UPDATE session_runtime SET queue_tail = ? WHERE session_id = ?",
       arguments: [lastID, key],
@@ -93,69 +93,76 @@ public struct SessionRows {
     return QueueDrain(items: items, queueTail: lastID, firings: try Sessions.firings(of: entries.map(\.input), in: db))
   }
 
-  /// `items` go after the generation's tail; `inputOrigin` is the appended
-  /// transcript's `cacheWarmingInputOrigin`, the one thing of it the store
-  /// keeps.
-  public func append(_ id: SessionID, items: [TranscriptItem], inputOrigin: Bool?) throws {
-    guard !items.isEmpty else { return }
+  /// `lines` go after the generation's last; the first position taken is returned.
+  @discardableResult
+  public func append(_ id: SessionID, lines: [TranscriptLine]) throws -> Int {
     let key = id.rawValue
-    let runtime = try Sessions.runtime(key, in: db)
-    try Sessions.append(key, generation: runtime.generation, items: items, in: db)
-    if items.contains(where: { if case .assistant = $0 { true } else { false } }) {
-      try CacheWarmingRow.recordInference(key, origin: inputOrigin, now: store.dateGen.now, in: db)
-    }
+    return Int(try Sessions.appendLines(key, generation: try Sessions.runtime(key, in: db).generation, lines, in: db))
   }
 
-  public func writeCompaction(
+  /// Whether a new generation would leave something behind: the generation holds more than its head and the pressure notices it was given.
+  public func droppable(_ id: SessionID) throws -> Bool {
+    let key = id.rawValue
+    let generation = try Sessions.runtime(key, in: db).generation
+    return try #sql("""
+    SELECT EXISTS (SELECT 1 FROM session_lines
+      WHERE session_id = \(bind: key) AND generation = \(bind: generation)
+        AND key NOT IN ('system', 'group', 'session')
+        AND key NOT GLOB \(bind: LineKey.head + "*") AND key != \(bind: LineKey.pressure))
+    """, as: Bool.self).fetchOne(db)!
+  }
+
+  public func transcriptLineCount(_ id: SessionID) throws -> Int {
+    let key = id.rawValue
+    return try Sessions.transcriptLineCount(key, generation: Sessions.runtime(key, in: db).generation, in: db)
+  }
+
+  public func lastReplyPosition(_ id: SessionID) throws -> Int? {
+    let key = id.rawValue
+    let generation = try Sessions.runtime(key, in: db).generation
+    return try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) && $0.role.eq(TranscriptLine.Role.assistant.rawValue) }
+      .order { $0.position.desc() }.limit(1).select(\.position).fetchOne(db).map(Int.init)
+  }
+
+  public func lastLineRole(_ id: SessionID) throws -> TranscriptLine.Role? {
+    let key = id.rawValue
+    let generation = try Sessions.runtime(key, in: db).generation
+    return try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) }
+      .order { $0.position.desc() }.limit(1).select(\.role).fetchOne(db).flatMap(TranscriptLine.Role.init(rawValue:))
+  }
+
+  /// The generation's lines after its prompt's, in position order.
+  public func transcriptLines(_ id: SessionID) throws -> [StoredTranscriptLine] {
+    let key = id.rawValue
+    return try Sessions.transcriptLines(key, generation: try Sessions.runtime(key, in: db).generation, in: db)
+  }
+
+  /// Closes the generation with `closing` and opens the next: its head, the lines at the positions `kept` as a new generation carries them (`TranscriptLine.carried`, without the pressure notices), then `after`. A transition that changes the account commits with it and makes the carried lines portable. Returns the new generation.
+  @discardableResult
+  public func writeGeneration(
     _ id: SessionID,
-    closing: ToolResultItem? = nil,
+    closing: [TranscriptLine] = [],
     head: GenerationHead,
-    kept: Range<Int>?,
+    kept: Range<Int>? = nil,
+    portable: Bool = false,
+    after: [TranscriptLine] = [],
     transition: ModelRouteTransition? = nil,
-  ) throws -> Transcript {
+  ) throws -> Int {
     let key = id.rawValue
-    let runtime = try Sessions.runtime(key, in: db)
-    let transcript = try Sessions.transcript(key, in: db)
-    // The closing result joins the OLD generation in the same commit; the
-    // kept range never includes it (it was computed before the close).
-    if let closing {
-      try Sessions.append(key, generation: runtime.generation, items: [TranscriptItem.toolResult(closing)], in: db)
+    let generation = try Sessions.runtime(key, in: db).generation
+    try Sessions.appendLines(key, generation: generation, closing, in: db)
+    var lines = head.lines(session: id)
+    if let kept {
+      let portable = portable || transition?.binding != nil
+      lines += try Sessions.transcriptLines(key, generation: generation, in: db)
+        .filter { kept.contains($0.position) && $0.key != LineKey.pressure }
+        .compactMap { try $0.line().carried(portable: portable) }
     }
-    let compacted = transition?.transcript ?? transcript.compacted(head: head, kept: kept)
-    if let transition {
-      try Sessions.commitRouteTransition(key, transition: transition, in: db)
-      let existing = Set(transcript.items.map(\.id))
-      for item in compacted.items.dropFirst() where !existing.contains(item.id) {
-        let row = SessionContentRow(sessionID: key, id: item.id.uuidString.lowercased(), payload: try Sessions.encode(item))
-        try SessionContentRow.insert { row }.execute(db)
-      }
-    }
-    try Sessions.writeGeneration(key, generation: runtime.generation + 1, transcript: compacted, in: db)
+    if let transition { try Sessions.commitRouteTransition(key, transition: transition, in: db) }
+    try Sessions.openGeneration(key, generation: generation + 1, in: db)
+    try Sessions.appendLines(key, generation: generation + 1, lines + after, in: db)
     try SessionPrompts.advance(key, in: db)
-    return compacted
-  }
-
-  public func writePortableHandoff(_ id: SessionID, transcript: Transcript) throws -> Transcript {
-    precondition(transcript.pendingToolCallIDs.isEmpty)
-    guard case let .generationHead(head)? = transcript.items.first, head.replayBinding != nil else {
-      preconditionFailure("portable handoff requires a bound generation head")
-    }
-    let key = id.rawValue
-    let runtime = try Sessions.runtime(key, in: db)
-    let old = try Sessions.transcript(key, in: db)
-    let existing = Dictionary(uniqueKeysWithValues: old.items.map { ($0.id, $0) })
-    guard old.pendingToolCallIDs.isEmpty else { throw PortableHandoffError.outstandingToolCalls }
-    for item in transcript.items.dropFirst() {
-      if let original = existing[item.id] {
-        precondition(original == item, "rewritten handoff items require new content IDs")
-      } else {
-        let row = SessionContentRow(sessionID: key, id: item.id.uuidString.lowercased(), payload: try Sessions.encode(item))
-        try SessionContentRow.insert { row }.execute(db)
-      }
-    }
-    try Sessions.writeGeneration(key, generation: runtime.generation + 1, transcript: transcript, in: db)
-    try SessionPrompts.advance(key, in: db)
-    return transcript
+    return Int(generation) + 1
   }
 
   public func markInterrupted(_ id: SessionID) throws {
@@ -199,16 +206,10 @@ public struct SessionRows {
       """,
       arguments: [message, now, key],
     )
-    let transcript: Transcript
-    do {
-      transcript = switch record?.executor {
-      case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
-      case .retired, nil: Transcript()
-      }
-    } catch where isUnreadableSessionData(error) {
-      transcript = Transcript()
+    let said = try record.flatMap { _ in
+      try Sessions.transcriptLines(key, generation: try Sessions.runtime(key, in: db).generation, in: db).last { $0.role == .assistant }?.line().message.text
     }
-    try Notifications.fireErrored(key, error: message, transcript: transcript, now: now, in: db)
+    try Notifications.fireErrored(key, error: message, said: said, now: now, in: db)
     let runtime = store.runtime
     db.afterNextTransaction { _ in runtime.poke(person: Notifications.ownerRecipient) }
   }
@@ -239,7 +240,7 @@ public struct SessionRows {
       """,
       arguments: [SQLiteDateFormat.string(from: deadline), SQLiteDateFormat.string(from: nowDate), id.rawValue],
     )
-    if let parent = try Sessions.record(id.rawValue, in: db).parent { try SessionStore.unwatchChildren(parent, in: db) }
+    if let parent = try Sessions.record(id.rawValue, in: db).parent { try SessionStore.unwatchChildren(parent, runtime: store.runtime, in: db) }
     return deadline
   }
 
@@ -255,7 +256,7 @@ public struct SessionRows {
       arguments: [SQLiteDateFormat.string(from: nowDate), key],
     )
     if let parent = record.parent, try Sessions.record(parent.rawValue, in: db).lifecycle == .live {
-      try SessionStore.watchChildren(parent, now: SQLiteDateFormat.string(from: nowDate), in: db)
+      try SessionStore.watchChildren(parent, now: SQLiteDateFormat.string(from: nowDate), runtime: store.runtime, in: db)
     }
   }
 }

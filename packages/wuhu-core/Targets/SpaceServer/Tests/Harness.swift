@@ -46,7 +46,7 @@ struct Harness {
     webPushApplicationServerKey: String? = nil,
     credentials: CredentialResolver = .unavailable,
     pageFetch: PageFetchHandler? = nil,
-    identityJWKS: JSONValue? = nil,
+    identityController: IdentityController? = nil,
     clock: (any NonsendingClock<Duration>)? = nil,
     opening: () throws -> Space = { try Space.inMemory() },
   ) throws {
@@ -62,7 +62,7 @@ struct Harness {
         space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern, aiDisclosure: aiDisclosure,
         fingerprint: fingerprint, dev: dev, publicRead: publicRead, webContent: WebContent(webApp: webApp, views: views, scripts: ["shell.js": Data(), "worker.js": Data(), "space-core.js": Data("export function createSpace() {}".utf8)]),
         webPushApplicationServerKey: webPushApplicationServerKey,
-        credentials: credentials, identityJWKS: identityJWKS, machineV2Hub: MachineV2Hub(space: space), pageFetch: pageFetch,
+        credentials: credentials, identityController: identityController, listenerRoutes: machineListenerRoutes(space: space, hub: hub, fingerprint: fingerprint), pageFetch: pageFetch,
       )
       return (space, handler)
     }

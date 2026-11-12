@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -21,19 +25,6 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
   Fix.replying(text, calls: [parkingCompact()])
 }
 
-extension Transcript {
-  var head: GenerationHead? {
-    guard case let .generationHead(head)? = items.first else { return nil }
-    return head
-  }
-}
-
-private extension Transcript {
-  func carries(message text: String) -> Bool {
-    items.contains { if case let .message(message) = $0 { message.content.text == text } else { false } }
-  }
-}
-
 @Suite struct ParkedCompactionTests {
   @Test func parkWithAModelIsATypedRefusal() {
     #expect(throws: CompactArgumentsError.parkWithModel) { _ = try decodeArguments(CompactArguments.self, from: parkingCompact(model: "work")) }
@@ -49,9 +40,9 @@ private extension Transcript {
       let script = InferenceScript([
         parks(),
         { request in
-          #expect(request.transcript.head?.summary == summary)
-          #expect(request.transcript.head?.snapshot.preReads == ["/notes.md"])
-          #expect(request.transcript.carries(message: "next"))
+          #expect(request.lines.first { $0.key == "head:summary" }?.text == "<conversation-summary>\n\(summary)\n</conversation-summary>")
+          #expect(request.lines.first { $0.key == LineKey.head }?.text.contains("files to re-read (re-established below): /notes.md") == true)
+          #expect(request.lines.contains { $0.key == "message:m2" && $0.role == .user && $0.text.hasSuffix("\n\nnext") })
           return Fix.reply("on it")
         },
       ])
@@ -68,7 +59,7 @@ private extension Transcript {
         #expect(placements.withLock { $0 } == 0)
         #expect(try await sessions.generationState(id).generation == 0)
         #expect(try await sessions.promptRevision(id) == created)
-        guard case .foldPending = try await sessions.hydrate(id).transcript.kernel.phase else { throw UnexpectedCall("a live phase after the park") }
+        guard case .folding? = space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn else { throw UnexpectedCall("a live turn after the park") }
 
         _ = try await space.fs(.shared).write("/AGENTS.md", Data("edited while parked".utf8), ifMatch: nil)
         try await service.enqueue(item: Fix.message("next", message: "m2"), to: id)
@@ -88,8 +79,8 @@ private extension Transcript {
       let script = InferenceScript([
         parks(),
         { request in
-          #expect(request.transcript.head?.summary == summary)
-          #expect(request.transcript.carries(message: "after restart"))
+          #expect(request.lines.first { $0.key == "head:summary" }?.text == "<conversation-summary>\n\(summary)\n</conversation-summary>")
+          #expect(request.lines.contains { $0.key == "message:m2" && $0.role == .user && $0.text.hasSuffix("\n\nafter restart") })
           return Fix.reply("back")
         },
       ])
@@ -121,12 +112,13 @@ private extension Transcript {
       try await runService(space, config) { _ in
         _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "ask @\(bystander.rawValue) first")
         try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
+        guard case .folding? = space.worker.cell(SessionCell.ID(bystander.rawValue)).turn()?.turn else { throw UnexpectedCall("the park was refused") }
       }
-      let transcript = try await sessions.hydrate(bystander).transcript.kernel
-      guard case .foldPending = transcript.phase else { throw UnexpectedCall("the park was refused") }
-      let copy = try #require(transcript.items.lazy.compactMap { if case let .message(message) = $0 { message } else { nil } }.first)
-      #expect(copy.kind == .message)
-      #expect(copy.requestID == nil)
+      let lines = try await sessions.lines(bystander)
+      let copy = try #require(lines.first { $0.key == "message:r1" })
+      #expect(copy.role == .user)
+      #expect(copy.text.contains("<type>message</type>"))
+      #expect(!copy.text.contains("<type>request</type>"))
       #expect(try await sessions.openRequests(bystander).isEmpty)
       #expect(try await sessions.openRequests(task).map(\.id) == [RequestID("r1")])
     }
@@ -149,8 +141,8 @@ private extension Transcript {
       try await runService(space, config) { service in
         try await service.enqueue(item: foreignBrief, to: bystander)
         try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
+        guard case .folding? = space.worker.cell(SessionCell.ID(bystander.rawValue)).turn()?.turn else { throw UnexpectedCall("the park was refused") }
       }
-      guard case .foldPending = try await sessions.hydrate(bystander).transcript.kernel.phase else { throw UnexpectedCall("the park was refused") }
       #expect(try await sessions.openRequests(task).map(\.id) == [RequestID("r1")])
     }
   }
@@ -174,10 +166,10 @@ private extension Transcript {
       try await runService(space, config) { service in
         try await sessions.look(task)
         try await until("the task's park settles") { try await sessions.settledWork(task) && script.count == 1 }
+        guard case .folding? = space.worker.cell(SessionCell.ID(task.rawValue)).turn()?.turn else { throw UnexpectedCall("the park was refused") }
       }
-      let transcript = try await sessions.hydrate(task).transcript.kernel
-      guard case .foldPending = transcript.phase else { throw UnexpectedCall("the park was refused") }
-      #expect(transcript.items.contains { if case let .message(message) = $0 { message.requestID == RequestID("r1") } else { false } })
+      let lines = try await sessions.lines(task)
+      #expect(lines.contains { $0.key == "message:r1" && $0.text.contains("<type>request</type>") })
     }
   }
 
@@ -193,9 +185,10 @@ private extension Transcript {
       let script = InferenceScript([
         parks("parking without answering"),
         { request in
-          guard case let .toolResult(result)? = request.transcript.items.last, case let .failure(failure) = result.payload else { throw UnexpectedCall("park refusal") }
-          #expect(failure.message.hasPrefix(kind == .agent ? "owesReply: " : "owesReport: "))
-          #expect(request.transcript.phase == .live)
+          let result = try #require(request.lines.last)
+          #expect(result.role == .toolResult)
+          #expect(result.message.toolResult?.isError == true)
+          #expect(result.text.hasPrefix(kind == .agent ? "owesReply: " : "owesReport: "))
           return Fix.reply("answering instead")
         },
         { _ in Fix.reply("still owing") },
@@ -204,9 +197,9 @@ private extension Transcript {
       try await runService(space, config) { service in
         if let owing { try await service.enqueue(item: owing, to: id) } else { try await sessions.openParentRequest(on: id) }
         try await until("the refused park's turn goes on and its nag is answered") { try await sessions.settledWork(id) && script.count == 3 }
+        #expect(space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn == .idle)
       }
       #expect(try await sessions.generationState(id).generation == 0)
-      #expect(try await sessions.hydrate(id).transcript.kernel.phase == .live)
     }
   }
 
@@ -218,8 +211,8 @@ private extension Transcript {
       let script = InferenceScript([
         parks(),
         { request in
-          #expect(request.transcript.head?.summary == "")
-          #expect(!request.transcript.items.contains { if case let .toolResult(result) = $0, case .compact = result.payload { true } else { false } })
+          #expect(request.lines.first?.key == LineKey.head)
+          #expect(!request.lines.contains { $0.key == "head:summary" || $0.role == .toolResult })
           return Fix.reply("fresh")
         },
       ])
@@ -243,16 +236,19 @@ private extension Transcript {
       let script = InferenceScript([
         Fix.replying("parking", calls: [parkingCompact(bookmark: "nowhere")]),
         { request in
-          guard case let .toolResult(result)? = request.transcript.items.last, case let .failure(failure) = result.payload else { throw UnexpectedCall("missing bookmark refusal") }
-          #expect(failure.message.contains("bookmark \"nowhere\" not found"))
+          let result = try #require(request.lines.last)
+          #expect(result.role == .toolResult)
+          #expect(result.message.toolResult?.isError == true)
+          #expect(result.text.contains("bookmark \"nowhere\" not found"))
           return Fix.reply("staying live")
         },
       ])
       try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the refusal is answered") { try await sessions.settledWork(id) && script.count == 2 }
+        #expect(space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn == .idle)
       }
-      #expect(try await sessions.hydrate(id).transcript.kernel.phase == .live)
+      #expect(try await sessions.generationState(id).generation == 0)
     }
   }
 }

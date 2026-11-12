@@ -182,7 +182,7 @@ data: {}
     try await withRig(fetch: fetch) { rig in
       let models = completionModels.replacingOccurrences(of: "\"dialect\":\"anthropic\"", with: "\"dialect\":\"anthropic\",\"auth\":\"oidc\"")
       try await rig.write("/models.json", models)
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .init { _ in
+      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .init { _ in
         Issue.record("OIDC must not resolve a stored credential")
         return nil
       }, oidcToken: { _, _ in throw SigningFailure() }))
@@ -212,7 +212,7 @@ data: {}
     try await withRig(fetch: fetch) { rig in
       let models = completionModels.replacingOccurrences(of: "\"dialect\":\"anthropic\"", with: "\"dialect\":\"anthropic\",\"auth\":\"oidc\"")
       try await rig.write("/models.json", models)
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .init { _ in
+      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .init { _ in
         Issue.record("OIDC must not use stored credentials")
         return nil
       }, oidcToken: { _, caller in
@@ -255,7 +255,7 @@ data: {}
     let fetch = FetchClient { _ in throw CancellationError() }
     try await withRig(fetch: fetch) { rig in
       try await rig.write("/models.json", completionModels)
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
+      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       await #expect(throws: CancellationError.self) { try await tools.complete(.session(rig.session), request) }
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
@@ -280,7 +280,7 @@ data: {}
         wake(JSON.stringify({session:(await context()).session,text}))
       }
       """#)
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
+      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
       let result = try await rig.scripts.runHandler(path: "/complete-handler.js", actor: .session(rig.session), tools: tools)
       #expect(result.wakes.count == 2)
       #expect(result.wakes.first == "Release question")

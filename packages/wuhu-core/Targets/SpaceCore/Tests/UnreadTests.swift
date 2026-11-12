@@ -29,7 +29,7 @@ struct UnreadTests {
       )
 
       let carol = Collector<Rows>()
-      let stream = await space.observeQuery(unreadSQL, throttle: .zero, viewer: "carol")
+      let stream = try space.observeRows(unreadSQL, throttle: .zero, viewer: "carol")
       let consumer = Task { do { for try await rows in stream { await carol.append(rows) } } catch {} }
       defer { consumer.cancel() }
       #expect(try await awaitItems(carol, atLeast: 1).last?.rows == [[.text(box.rawValue), .integer(0)]])

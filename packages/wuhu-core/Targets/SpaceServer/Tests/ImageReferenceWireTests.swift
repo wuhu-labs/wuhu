@@ -23,8 +23,8 @@ private let endpoint = OpenAIGPTEndpoint(model: "gpt-5.6-luna", apiKey: "test-ke
 
 private struct RequestInterrupted: Error {}
 
-private func imageRead(_ image: ImageContent) -> Transcript {
-  Transcript(items: [.toolResult(ToolResultItem(
+private func imageRead(_ image: ImageContent) -> [TranscriptLine] {
+  TranscriptItem.toolResult(ToolResultItem(
     id: itemID,
     timestamp: anchor,
     provenance: .toolCall(callID),
@@ -34,10 +34,10 @@ private func imageRead(_ image: ImageContent) -> Transcript {
       content: "image image/png, \(pngBytes.count) bytes; delivered as an attached image",
       image: image,
     )),
-  ))])
+  )).lines(session: SessionID("s-1"))
 }
 
-private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)?) async throws -> String {
+private func requestBody(_ lines: [TranscriptLine], resolver: (any MediaResolver)?) async throws -> String {
   let bodies = Mutex<[String]>([])
   var capturing: any ModelEndpoint = endpoint.withFetch(FetchClient { request in
     let body = try await request.body?.text() ?? ""
@@ -45,10 +45,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
     throw RequestInterrupted()
   })
   if let resolver { capturing = capturing.withMediaResolver(resolver) }
-  let context = await transcript.renderRequest(
-    session: SessionID("s-1"),
-    systemPrompt: "sys",
-  )
+  let context = Context(systemPrompt: "sys", messages: lines.map(\.message))
   _ = try? await capturing.inference(context: context).collect()
   return try #require(bodies.withLock { $0.first })
 }
@@ -66,7 +63,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
       let legacy = try await requestBody(imageRead(ImageContent(mimeType: "image/png", data: pngBytes)), resolver: nil)
       let referenced = try await requestBody(
         imageRead(ImageContent(mimeType: "image/png", source: .blob(hash), byteCount: pngBytes.count)),
-        resolver: mediaResolver(space, session: session),
+        resolver: try await mediaResolver(space, session: session),
       )
 
       #expect(legacy == referenced)
@@ -95,17 +92,17 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
           }
           _ = try await harness.space.fs(group).write("/image.png", pngBytes, ifMatch: nil)
           #expect(try await harness.space.reads(.shared).contains(group))
-          let message = TranscriptItem.direct(.init(
-            id: UUID(), sender: .init(id: "sender", timeZone: .gmt), timestamp: anchor,
+          let message = TranscriptItem.message(.init(
+            id: UUID(), messageID: MessageID("image-attachment"), conversationID: ConversationID(session.rawValue), sender: .init(id: "sender", timeZone: .gmt), timestamp: anchor,
             content: .init(text: "see image", attachments: [.image(path: "wuhu://\(group.rawValue).localspace/image.png", mimeType: "image/png", size: pngBytes.count)]),
           ))
-          try await harness.store.append(session, items: [message], inputOrigin: nil)
+          try await harness.store.appendTestLines(session, message.lines(session: session))
           try await harness.space.setVisibility(.private, of: group, by: .anonymous, acting: group)
           #expect(try await !harness.space.reads(.shared).contains(group))
         } else {
           let hash = try await harness.space.storeImage(pngBytes)
           let read = imageRead(ImageContent(mimeType: "image/png", source: .blob(hash), byteCount: pngBytes.count))
-          try await harness.store.append(session, items: read.items, inputOrigin: nil)
+          try await harness.store.appendTestLines(session, read)
         }
         try await harness.running {
           try await harness.deliver("next turn", to: session)
@@ -125,12 +122,9 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
       let session = try await fixtureSession(space)
       let missing = ImageContent(mimeType: "image/png", source: .blob(String(repeating: "0", count: 64)), byteCount: 11)
       await #expect(throws: (any Error).self) {
-        let context = await imageRead(missing).renderRequest(
-          session: SessionID("s-1"),
-          systemPrompt: "sys",
-        )
+        let context = Context(systemPrompt: "sys", messages: imageRead(missing).map(\.message))
         _ = try await endpoint
-          .withMediaResolver(mediaResolver(space, session: session))
+          .withMediaResolver(try await mediaResolver(space, session: session))
           .withFetch(FetchClient { _ in throw RequestInterrupted() })
           .inference(context: context)
           .collect()
@@ -141,7 +135,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
   @Test func `a reference nobody owns is left for another resolver`() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
-      let resolver = mediaResolver(space, session: try await fixtureSession(space))
+      let resolver = try await mediaResolver(space, session: try await fixtureSession(space))
       let resolved = try await resolver.resolve(MediaContent(url: URL(string: "https://example.com/a.png")!, mimeType: "image/png"))
       #expect(resolved == nil)
     }
@@ -154,6 +148,6 @@ private func fixtureSession(_ space: Space) async throws -> SessionID {
   )
 }
 
-private func mediaResolver(_ space: Space, session: SessionID) -> any MediaResolver {
-  SessionRuntime.toolExecutor(owner: Hub(space: space)).mediaResolver(session)
+private func mediaResolver(_ space: Space, session: SessionID) async throws -> any MediaResolver {
+  try await SessionRuntime.toolExecutor(owner: Hub(space: space)).mediaResolver(session)
 }

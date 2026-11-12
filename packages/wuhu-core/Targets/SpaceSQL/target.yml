@@ -7,9 +7,11 @@ checks:
 dependencies:
   - SpaceContract
   - GRDB
+  - StructuredQueriesCore
   - GRDBSQLite
 tests:
   dependencies:
+    - StructuredQueries
     - SpaceContract
     - GRDB
     - GRDBSQLite

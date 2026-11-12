@@ -83,6 +83,8 @@ final class Attachment: Sendable {
   private struct State {
     var gone = false
     var greeted = false
+    /// Whether the peer's frames are still for the addressable to hear: its own close ends that, a hang-up does not.
+    var frames = true
     var queue = Deque<Inbound>()
     var delivering = false
   }
@@ -115,24 +117,61 @@ final class Attachment: Sendable {
     state.withLock { $0.greeted = true }
   }
 
+  /// A frame or an attach for the addressable to take.
   func enqueue(_ inbound: Inbound) {
-    push(inbound, hangingUp: false)
-  }
-
-  func hangUp() {
-    worker.detach(self)
-    push(.closed, hangingUp: true)
-  }
-
-  private func push(_ inbound: Inbound, hangingUp: Bool) {
     let starts = state.withLock { state in
       guard !state.gone else { return false }
-      state.gone = hangingUp
       state.queue.append(inbound)
       defer { state.delivering = true }
       return !state.delivering
     }
     guard starts else { return }
+    deliver()
+  }
+
+  /// The peer hangs up: the addressable hears what it sent, then `closed`.
+  func hangUp() {
+    worker.detach(self)
+    if let starts = ending(droppingFrames: false), starts { deliver() }
+  }
+
+  /// The addressable closes its own socket: what is queued behind the call that closed it is dropped, its peer hears it, and it hears `closed`.
+  func close() {
+    guard let starts = ending(droppingFrames: true) else { return }
+    worker.detach(self)
+    output(nil)
+    if starts { deliver() }
+  }
+
+  /// Whether the addressable still wants `inbound`: a frame that left the queue before its own close, waiting for the lane, is not for it to hear.
+  func takes(_ inbound: Inbound) -> Bool {
+    state.withLock { state in
+      if case .frame = inbound { return state.frames }
+      return true
+    }
+  }
+
+  /// The addressable closed it in a step that landed: what the peer queued behind that call is not for it to hear, the step's own frame aside.
+  func discardFrames() {
+    state.withLock { state in
+      state.frames = false
+      state.queue.removeAll { if case .frame = $0 { true } else { false } }
+    }
+  }
+
+  /// Ends the queue with `closed`, saying whether the caller must deliver it; nil when the socket was already over.
+  private func ending(droppingFrames: Bool) -> Bool? {
+    state.withLock { state in
+      guard !state.gone else { return nil }
+      state.gone = true
+      if droppingFrames { state.queue.removeAll() }
+      state.queue.append(.closed)
+      defer { state.delivering = true }
+      return !state.delivering
+    }
+  }
+
+  private func deliver() {
     worker.task { [self] in
       while let next = next() {
         await worker.deliver(next, from: self)
@@ -142,7 +181,10 @@ final class Attachment: Sendable {
 
   private func next() -> Inbound? {
     state.withLock { state in
-      if let next = state.queue.popFirst() { return next }
+      while let next = state.queue.popFirst() {
+        if case .frame = next, !state.frames { continue }
+        return next
+      }
       state.delivering = false
       return nil
     }

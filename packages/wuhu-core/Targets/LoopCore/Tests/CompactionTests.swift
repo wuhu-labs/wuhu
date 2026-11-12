@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -33,10 +37,11 @@ private func compactCall(
       let script = InferenceScript([
         Fix.replying("compact", calls: [call]),
         { request in
-          guard case let .toolResult(result)? = request.transcript.items.last,
-                case let .failure(failure) = result.payload else { throw UnexpectedCall("missing compact refusal") }
-          #expect(failure.message.contains("emptySummary"))
-          #expect(failure.message.contains("non-empty summary"))
+          let result = try #require(request.lines.last)
+          #expect(result.role == .toolResult)
+          #expect(result.message.toolResult?.isError == true)
+          #expect(result.text.contains("emptySummary"))
+          #expect(result.text.contains("non-empty summary"))
           return Fix.reply("continued after refusal")
         },
       ])
@@ -46,6 +51,45 @@ private func compactCall(
       }
       #expect(try await sessions.generationState(id).generation == 0)
       #expect(try await sessions.record(id).errorMessage == nil)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func aBookmarkInTheCompactReplyIsRefusedBeforeFoldingOrParking(park: Bool) async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let id = try await space.sessions.createSession(group: .shared, title: "same-reply bookmark", kind: .agent, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        Fix.replying("bookmark then compact", calls: [
+          .init(id: "bookmark", name: "bookmark", arguments: .object(["name": .string("cut")])),
+          .init(id: "compact", name: "compact", arguments: .object(["summary": .string("folded"), "bookmark": .string("cut"), "park": .bool(park)])),
+        ]),
+        { request in
+          let receipt = try #require(request.lines.last)
+          #expect(receipt.role == .toolResult)
+          #expect(receipt.message.toolResult?.isError == true)
+          #expect(receipt.text.contains("bookmark \"cut\""))
+          return Fix.reply("continued after refusal")
+        },
+      ])
+      let preparations = Box(0)
+      var config = makeConfig(inference: { try await script($0) })
+      config.prepareCompaction = { _, _, _ in preparations.withLock { $0 += 1 }; return nil }
+      try await runService(space, config) { service in
+        try await service.enqueue(item: Fix.message("work"), to: id)
+        try await until("the compact refusal is written") {
+          let errored = try await space.sessions.record(id).work == .errored
+          return try await space.sessions.lines(id).contains { line in
+            guard case let .toolResult(receipt) = line.message, line.text.contains("bookmark") else { return false }
+            return receipt.isError
+          } || errored || space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn.isFolding == true
+        }
+        #expect(try await space.sessions.record(id).errorMessage == nil)
+        #expect(space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn.isFolding == false)
+        try await until("a normal model turn follows the refusal") { try await space.sessions.settledWork(id) && script.count == 2 }
+        #expect(try await space.sessions.generation(id) == 0)
+        #expect(preparations.value == 0)
+      }
     }
   }
 
@@ -59,11 +103,15 @@ private func compactCall(
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh turn landed") { try await sessions.settledWork(sid) && script.count == 2 }
       }
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
+      let lines = try await sessions.lines(sid)
       #expect(try await sessions.generationState(sid).generation == 1)
-      #expect(transcript.head?.summary == SessionPrompt.pointerSummary(session: sid, generation: 0))
-      #expect(transcript.head?.summary.contains("/_/session-transcripts/\(sid.rawValue)/0.outline.txt") == true)
-      #expect(transcript.items.count == 2, "nothing is kept: the head, then the fresh reply")
+      let summary = try #require(lines.first { $0.key == "head:summary" })
+      #expect(summary.role == .user)
+      #expect(summary.text == "<conversation-summary>\n" + SessionPrompt.pointerSummary(session: sid, generation: 0) + "\n</conversation-summary>")
+      #expect(summary.text.contains("/_/session-transcripts/\(sid.rawValue)/0.outline.txt"))
+      #expect(lines.assistantLines.map(\.text) == ["fresh start"])
+      #expect(lines.assistantLines.allSatisfy { $0.meta != nil })
+      #expect(!lines.contains { $0.key.hasPrefix("message:") || $0.role == .toolResult })
     }
   }
 
@@ -102,7 +150,8 @@ private func compactCall(
       }
 
       #expect(try await sessions.generationState(sid).generation == 1)
-      #expect(try await sessions.hydrate(sid).transcript.kernel.head?.summary == SessionPrompt.pointerSummary(session: sid, generation: 0))
+      let summary = try #require(try await sessions.lines(sid).first { $0.key == "head:summary" })
+      #expect(summary.text == "<conversation-summary>\n" + SessionPrompt.pointerSummary(session: sid, generation: 0) + "\n</conversation-summary>")
       #expect(script.count == 2)
     }
   }
@@ -119,7 +168,6 @@ private func compactCall(
         Fix.replying("folding", calls: [compactCall(summary: "exploration notes", bookmark: "b1")]),
         Fix.replying("continuing"),
       ])
-      // No executeTool: the executor must never see bookmark or compact.
       let config = makeConfig(inference: { try await script($0) })
 
       try await runService(space, config) { service in
@@ -132,76 +180,17 @@ private func compactCall(
         try await until("settled") { try await sessions.settledWork(sid) }
       }
 
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      guard case let .generationHead(head) = transcript.items.first else {
-        Issue.record("expected a generation head")
-        return
-      }
-      #expect(head.summary == "exploration notes")
-
-      // Kept verbatim: everything after the bookmark up to the compact call.
-      #expect(transcript.keptCount == 3)
-      guard case let .assistant(kept) = transcript.items[1] else {
-        Issue.record("expected the explored turn kept")
-        return
-      }
-      #expect(kept.content.contains(.text("explored a dead end")))
-      guard case let .message(keptMessage) = transcript.items[2] else {
-        Issue.record("expected the compact-triggering message kept")
-        return
-      }
-      #expect(keptMessage.content.text == "now compact")
-      guard case let .assistant(fresh) = transcript.items.last else {
-        Issue.record("expected the continuation turn")
-        return
-      }
-      #expect(fresh.content.contains(.text("continuing")))
-      let hasBookmark = transcript.items.contains { item in
-        if case .bookmark = item { return true } else { return false }
-      }
-      #expect(!hasBookmark)
-    }
-  }
-
-  @Test func `a crash between compaction and first inference redoes the pre-reads wholesale`() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      try await sessions.put(sid, input: Fix.message("hello"))
-      _ = try await sessions.drainQueue(sid)
-      _ = try await sessions.writeCompaction(
-        sid,
-        head: .init(
-          id: UUID(),
-          timestamp: anchor,
-          summary: "pre-crash summary",
-          snapshot: .init(preReads: ["space://a.md"]),
-          runningWork: [],
-        ),
-        kept: nil,
-      )
-
-      let script = InferenceScript([Fix.replying("resumed")])
-      let exec = ExecScript { call in
-        switch call.name {
-        case "read":
-          return .read(.init(path: "space://a.md", revision: .journal(1), content: "body"))
-        default:
-          throw UnexpectedCall("executor saw \(call.name)")
-        }
-      }
-      let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
-
-      try await runService(space, config) { _ in
-        try await sessions.look(sid)
-        try await until("settled") { try await sessions.settledWork(sid) }
-      }
-
-      #expect(exec.calls.value.map(\.name) == ["read"])
-      let transcript = try await sessions.hydrate(sid).transcript.kernel
-      #expect(script.attempts.value.first?.itemCount == 2)
-      #expect(transcript.assistantEntries.count == 1)
+      let lines = try await sessions.lines(sid)
+      #expect(lines.first { $0.key == "head:summary" }?.text == "<conversation-summary>\nexploration notes\n</conversation-summary>")
+      let replies = lines.assistantLines
+      #expect(replies.map(\.text) == ["explored a dead end", "continuing"])
+      #expect(replies.first?.meta == nil, "a carried reply has no inference metadata in this generation")
+      #expect(replies.last?.meta != nil)
+      let messages = lines.filter { $0.key.hasPrefix("message:") }
+      #expect(messages.count == 1)
+      #expect(messages.first?.role == .user)
+      #expect(messages.first?.text.hasSuffix("\n\nnow compact") == true)
+      #expect(!lines.contains { $0.role == .toolResult }, "the bookmark and compact receipts belong to the old generation")
     }
   }
 }

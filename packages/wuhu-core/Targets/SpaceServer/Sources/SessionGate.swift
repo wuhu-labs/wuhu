@@ -79,7 +79,7 @@ func sessionGate(
   ).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
-    guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix) else {
+    guard let header = request.headers[.authorization], header.hasPrefix("Bearer "), isSessionBearer(String(header.dropFirst("Bearer ".count))) else {
       return try await otherwise(request)
     }
     switch await sessionVerdict(String(header.dropFirst("Bearer ".count)), tokens: tokens, space: space, now: dateGen.now) {
@@ -112,52 +112,31 @@ enum SessionVerdict {
   case refused(Response)
 }
 
-// Only a state the exec never comes back from ends its token. Machine-lost is
-// not one: the exec resumes when its machine reconnects (and a real exit then
-// settles the row), so the token keeps working meanwhile.
-func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
-  switch terminal {
-  case nil, .machineLost: false
-  case .exited, .signaled, .cancelled, .reaped: true
-  }
+func execStillRunning(_ id: ExecID, space: Space) async throws -> ExecRecord? {
+  guard let record = try await space.execRecord(id), record.terminal == nil else { return nil }
+  return record
 }
 
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
   if let script = tokens.script(ofBearer: bearer) { return .script(script) }
-  let session: SessionID
-  var boundGroup: GroupID?
-  var exec = true
-  if let mounted = tokens.session(ofBearer: bearer) {
-    session = mounted
-    exec = false
-  } else if let holder = tokens.v2Holder(ofBearer: bearer) {
-    guard holder.expiresAt > now else { return .refused(errorResponse(.unauthorized, code: "credentialExpired", message: "Session exec credential expired; credentials are not renewed")) }
-    guard (try? await holder.active()) == true else { return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "Session exec operation ended or is unavailable")) }
-    session = holder.key.session; boundGroup = holder.key.group
-  } else {
-    guard let holder = tokens.holder(ofBearer: bearer, now: now) else {
-      return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "this session token is not valid: its exec has ended or passed its timeout, or the server restarted since it started"))
-    }
-    guard let exec = try? await space.execRecord(holder.exec), !execHasEnded(exec.terminal) else {
-      tokens.revoke(holder.exec)
-      return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "this session token's exec \(holder.exec.rawValue) has ended"))
-    }
-    session = holder.session
+  guard let claims = try? await tokens.identity.credential(String(bearer.dropFirst(ExecTokens.prefix.count))) else {
+    return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "this session token is not valid: invalid signature or claims"))
   }
-  guard let record = try? await space.sessions.record(session),
-        let group = try? await space.principal(of: session).group
-  else {
-    return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "unknown session: \(session.rawValue)"))
+  guard Double(claims.exp) > now.timeIntervalSince1970, Double(claims.iat) <= now.timeIntervalSince1970 else {
+    return .refused(errorResponse(.unauthorized, code: "credentialExpired", message: "Session credential expired or not yet valid"))
   }
-  guard boundGroup == nil || boundGroup == group else { return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "Session exec group changed")) }
+  if claims.credential == .exec {
+    guard (try? await execStillRunning(claims.exec!, space: space)) != nil
+    else { return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "Session exec ended or is unavailable")) }
+  }
+  guard let record = try? await space.sessions.record(claims.session),
+        let group = try? await space.principal(of: claims.session).group
+  else { return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "unknown session: \(claims.session.rawValue)")) }
+  guard claims.group == group else { return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "Session group changed")) }
   guard case .live = record.lifecycle else {
-    return .refused(errorResponse(
-      .forbidden,
-      code: "forbidden",
-      message: "session \(session.rawValue) is archived and may no longer act",
-    ))
+    return .refused(errorResponse(.forbidden, code: "forbidden", message: "session \(claims.session.rawValue) is archived and may no longer act"))
   }
-  return .session(GatedSession(session: session, group: group, exec: exec))
+  return .session(GatedSession(session: claims.session, group: group, exec: claims.credential == .exec))
 }
 
 private func principal() -> GatedSession {
@@ -185,7 +164,6 @@ private func sessionRouter(
 ) -> Router {
   let store = space.sessions
   @Dependency(\.uuid) var uuid
-  @Dependency(\.date) var date
   let forward: RouteHandler = { request, _ in
     switch try await routed(request) {
     case let .response(response): response
@@ -284,29 +262,7 @@ private func sessionRouter(
   }
   router.put("/v1/secret/:name", use: forward)
   router.delete("/v1/secret/:name", use: forward)
-  // A session's own 60-second OIDC token for `audience`, naming the session
-  // and its group (no exec claims): what a script's `fetch(url, {identity:
-  // true})` carries. The exec variant (an exec's `wit_` grant) lives outside
-  // the gate, in addIDTokenRoute.
-  router.get("/v1/id-token") { request, _ in
-    guard let named = queryValues(of: request.url)["audience"], let audience = URL(string: named), fetchOrigin(audience) == named else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "audience must be an origin: scheme://host[:port], lowercase, without a path")
-    }
-    guard let identity else {
-      return errorResponse(.serviceUnavailable, code: "fetchIdentityUnavailable", message: "The server could not sign an OIDC token.")
-    }
-    let now = date.now
-    let lifetime = 60
-    do {
-      let token = try await identity.token(
-        audience: audience, space: try await space.identity().rawValue, group: principal().group.rawValue, session: principal().session.rawValue,
-        now: now, id: uuid(), lifetime: lifetime,
-      )
-      return clockReading(jsonResponse(.object(["token": .string(token), "expiresAt": .integer(Int(now.timeIntervalSince1970) + lifetime)])), now: now)
-    } catch let error as IdentityError {
-      return identityFailure(error)
-    }
-  }
+  router.get("/v1/id-token", use: forward)
   addMachineRoutes(to: &router, space: space, hub: hub, owner: owner, machines: machines, routed: routed) {
     .session(principal().session, group: principal().group)
   }
@@ -423,9 +379,8 @@ private func sessionRouter(
     return scriptStream(in: streams) { say in try await execution.run(script, output: say) }
   }
   router.post("/v1/exec/:id/background") { _, parameters in
-    guard let raw = parameters["id"], ExecID.isValid(raw),
-          try await space.backgroundExec(ExecID(rawValue: raw), caller: principal().session.rawValue)
-    else { return unknownExec(parameters) }
+    guard let raw = parameters["id"], let record = try await space.execRecord(ExecID(rawValue: raw)), record.caller == principal().session.rawValue else { return unknownExec(parameters) }
+    try await space.worker.call(MachineCell.ID(record.machine.rawValue)) { try $0.background(raw) }
     return try Response.json(JSONValue.object([:]))
   }
   router.post("/v1/session") { request, _ in

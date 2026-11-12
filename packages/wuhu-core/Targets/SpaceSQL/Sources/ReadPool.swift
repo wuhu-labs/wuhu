@@ -33,6 +33,15 @@ public final class ReadPool: Sendable {
     }
   }
 
+  public func run(
+    _ sql: String, arguments: [DatabaseValue] = [],
+    resolving scope: @escaping @Sendable (ReadSnapshot) throws -> ReadScope,
+  ) async throws -> (ReadRows, ReadTables) {
+    try await withSlot { slot, token in
+      try await slot.run(sql, arguments: arguments, resolving: scope, token: token)
+    }
+  }
+
   /// The base tables `sql` reads, after the same verdicts `run` gives.
   public func tables(_ sql: String, scope: ReadScope) async throws -> ReadTables {
     try await withSlot { slot, token in
@@ -94,6 +103,13 @@ actor ReadSlot {
     token: UInt64,
   ) throws -> (ReadRows, ReadTables) {
     try interruptible(token) { try $0.run(sql, arguments: arguments, byteLimit: byteLimit, scope: scope) }
+  }
+
+  func run(
+    _ sql: String, arguments: [DatabaseValue],
+    resolving scope: @Sendable (ReadSnapshot) throws -> ReadScope, token: UInt64,
+  ) throws -> (ReadRows, ReadTables) {
+    try interruptible(token) { try $0.run(sql, arguments: arguments, resolving: scope) }
   }
 
   func tables(_ sql: String, scope: ReadScope, token: UInt64) throws -> ReadTables {

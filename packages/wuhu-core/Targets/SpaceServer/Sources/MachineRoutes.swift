@@ -24,7 +24,6 @@ func addMachineRoutes(
   _ router: inout Router,
   space: Space,
   hub: MachineHub,
-  machineV2Hub: MachineV2Hub? = nil,
   fingerprint: String?,
   principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict,
 ) {
@@ -121,7 +120,6 @@ func addMachineRoutes(
     case let .failure(response): return response
     }
     _ = try await space.resetCredentials(account: record.account)
-    await machineV2Hub?.kick(record.id)
     let minted = try await space.mintJoinToken(
       account: record.account,
       capabilities: [.execMachine],
@@ -143,7 +141,6 @@ func addMachineRoutes(
     case let .failure(response): return response
     }
     _ = try await space.resetCredentials(account: record.account)
-    await machineV2Hub?.kick(record.id)
     return jsonResponse(.object([:]))
   }
 
@@ -159,10 +156,10 @@ func addMachineRoutes(
       guard try await space.reads(for: principal).contains(record.group) else { return unknownMachine(parameters) }
       return humanAdminRequired("deleting machine \(record.name ?? record.id.rawValue)", group: record.group)
     }
-    do { try await space.deleteMachine(record.id, by: principal) }
-    catch SpaceError.notFound { return unknownMachine(parameters) }
+    do {
+      try await space.deleteMachine(record.id, by: principal)
+    } catch SpaceError.notFound { return unknownMachine(parameters) }
     catch SpaceError.groupForbidden { return humanAdminRequired("deleting machine", group: record.group) }
-    await machineV2Hub?.kick(record.id)
     return jsonResponse(.object([:]))
   }
 
@@ -249,8 +246,7 @@ func addMachineRoutes(
     }
     do {
       try await hub.requireExecKind(input.machine)
-      let record = try await space.mintExec(machine: input.machine, group: principal.group)
-      await hub.noteMinted(record)
+      let record = try await space.reserveExec(machine: input.machine, group: principal.group)
       return try Response.json(ExecMintOutput(id: record.id))
     } catch let error as OperationError {
       return try Response.json(ErrorEnvelope(error), status: .unprocessableContent)

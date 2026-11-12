@@ -43,6 +43,7 @@ tests:
     - AsyncHTTPClient
     - CExecSupervisor
     - FetchExchangeRecording
+    - FetchTunnel
     - OperationProtocol
     - OperationRuntime
     - JSONValue

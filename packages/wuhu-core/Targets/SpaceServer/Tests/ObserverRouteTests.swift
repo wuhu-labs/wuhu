@@ -24,8 +24,8 @@ import Testing
 
   @Test func createListCancelAndRefusals() async throws {
     try await withSessionDeps {
-      let tokens = ExecTokens(spaceURL: "http://space")
-      let harness = try await SessionHarness(execTokens: tokens)
+      let harness = try await SessionHarness(spaceURL: "http://space")
+      let tokens = harness.runtime.tokens
       let body: JSONValue = ["name": "nightly", "handler": "/nightly.js", "timer": ["cron": "0 3 * * *"], "sessionsPerHour": 3]
       let created = try await harness.post("/v1/group/shared/observers", body)
       let createdText = try await created.text()
@@ -54,7 +54,7 @@ import Testing
         group: .shared, title: "agent", kind: .agent, createdBy: "owner",
         executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
       )
-      let outsider = try await harness.post("/v1/group/\(foreign.rawValue)/observers", body, bearer: tokens.sessionToken(session))
+      let outsider = try await harness.post("/v1/group/\(foreign.rawValue)/observers", body, bearer: try await tokens.sessionToken(session))
       #expect(outsider.status == .forbidden)
       #expect(try await harness.store.observers(foreign).isEmpty)
 
@@ -80,8 +80,8 @@ import Testing
 
   @Test func aFiringUsesItsGroupsMachinesAndOwnsWhatItsScriptMints() async throws {
     try await withSessionDeps {
-      let tokens = ExecTokens(spaceURL: "http://space")
-      let harness = try await SessionHarness(execTokens: tokens)
+      let harness = try await SessionHarness(spaceURL: "http://space")
+      let tokens = harness.runtime.tokens
       let common = (try await harness.space.addMachineV2(name: "common")).machine.id
       try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
         let alice = try await harness.space.addAccount(kind: .human, name: "alice")
@@ -111,7 +111,7 @@ import Testing
           group: .shared, title: "agent", kind: .agent, createdBy: "owner",
           executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
         )
-        #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: tokens.sessionToken(session)).status == .notFound)
+        #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: try await tokens.sessionToken(session)).status == .notFound)
         let other = tokens.scriptToken(.observer(Observer(group: .shared, name: "other", firing: "f2")))
         #expect(try await harness.get("/v1/exec/\(id.rawValue)", bearer: other).status == .notFound)
       }
@@ -123,8 +123,8 @@ import Testing
   // nor reads them, and the run's token has no session verbs.
   @Test func aTerminalRunsExecsAreItsOwnAndItHasNoSessionVerbs() async throws {
     try await withSessionDeps {
-      let tokens = ExecTokens(spaceURL: "http://space")
-      let harness = try await SessionHarness(execTokens: tokens)
+      let harness = try await SessionHarness(spaceURL: "http://space")
+      let tokens = harness.runtime.tokens
       let common = (try await harness.space.addMachineV2(name: "common")).machine.id
       try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
         let alice = try await harness.space.addAccount(kind: .human, name: "alice")
@@ -142,6 +142,9 @@ import Testing
         #expect(record.caller == "@\(alice.id.rawValue)")
         #expect(record.session == nil)
         #expect(record.group == .shared)
+        #expect(record.terminal == nil)
+        let request = try #require(try await harness.space.execRequest(id))
+        #expect(request.argv.isEmpty)
         #expect(await harness.hub.admitsCaller(record, leg: .person(alice.id)))
         #expect(await !harness.hub.admitsCaller(record, leg: .observer("nightly@shared")))
 

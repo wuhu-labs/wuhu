@@ -67,7 +67,7 @@ extension SessionStore {
         }
         return .success(result.sessionID)
       }
-      if let observer, let refusal = try Self.admit(observer, now: nowDate, in: db) { return .failure(refusal) }
+      if let observer, let refusal = try Self.admit(observer, now: nowDate, runtime: self.runtime, in: db) { return .failure(refusal) }
       if let parent {
         let parentRecord = try Sessions.record(parent.rawValue, in: db)
         guard parentRecord.lifecycle == .live else {
@@ -99,14 +99,9 @@ extension SessionStore {
         arguments: [name],
       )
       try SessionPrompts.advance(name, in: db)
-      // Mirrors writeCompaction's convention: a generation head counts as
-      // carried, so kept_count covers it.
-      try Sessions.openGeneration(name, generation: 0, keptCount: head == nil ? 0 : 1, in: db)
-      if let head {
-        try Sessions.append(name, generation: 0, items: [TranscriptItem.generationHead(head)], in: db)
-      }
       let id = SessionID(name)
-      if let parent { try Self.watchChildren(parent, now: now, in: db) }
+      if let head { try Sessions.appendLines(name, generation: 0, head.lines(session: id), in: db) }
+      if let parent { try Self.watchChildren(parent, now: now, runtime: self.runtime, in: db) }
       if let receipt {
         try Sessions.recordReceipt(
           receipt.holder.receiptHolder,
@@ -138,18 +133,6 @@ extension SessionStore {
     let key = id.rawValue
     try await writer.write { db in try Sessions.clear(key, topic: topic, in: db) }
     runtime.poke(id)
-  }
-
-  public func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await rows { try $0.drainQueue(id) }
-  }
-
-  public func append(_ id: SessionID, items: [TranscriptItem], inputOrigin: Bool?) async throws {
-    try await rows { try $0.append(id, items: items, inputOrigin: inputOrigin) }
-  }
-
-  public func writeCompaction(_ id: SessionID, closing: ToolResultItem? = nil, head: GenerationHead, kept: Range<Int>?, transition: ModelRouteTransition? = nil) async throws -> Transcript {
-    try await rows { try $0.writeCompaction(id, closing: closing, head: head, kept: kept, transition: transition) }
   }
 
   // One line, trimmed, capped: the title is a row every roster and dashboard
@@ -249,25 +232,5 @@ extension Duration {
   var timeInterval: TimeInterval {
     let (seconds, attoseconds) = components
     return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
-  }
-}
-
-extension Sessions {
-  static func writeGeneration(_ key: String, generation: Int64, transcript: Transcript, in db: Database) throws {
-    guard case let .generationHead(head)? = transcript.items.first else {
-      preconditionFailure("a generation must open with its head")
-    }
-    try openGeneration(key, generation: generation, keptCount: transcript.keptCount, in: db)
-    try db.execute(
-      sql: "INSERT INTO session_contents (session_id, id, payload) VALUES (?, ?, ?)",
-      arguments: [key, head.id.uuidString.lowercased(), try encode(TranscriptItem.generationHead(head))],
-    )
-    for (position, item) in transcript.items.enumerated() {
-      try db.execute(
-        sql: "INSERT INTO session_pointers (session_id, generation, position, content_id) VALUES (?, ?, ?, ?)",
-        arguments: [key, generation, position, item.id.uuidString.lowercased()],
-      )
-    }
-    try writeLines(key, generation: generation, appending: transcript.items, after: 0, in: db)
   }
 }

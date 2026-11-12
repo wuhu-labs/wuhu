@@ -105,7 +105,7 @@ extension ToolExecutor {
       try await refuseForeignHome(destination, session)
       try await refuseExisting(destination, session)
       let image = try await make(format, destination.rendered)
-      _ = try await place(image.bytes, at: destination, try await client(session))
+      _ = try await place(image.bytes, at: destination, client(session))
       return image.answer
     } catch {
       claims.release(destination)

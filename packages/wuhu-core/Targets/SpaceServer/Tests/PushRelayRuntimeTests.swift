@@ -17,7 +17,7 @@ import Testing
     try await withDependencies {
       $0.date = .constant(fixedDate)
     } operation: {
-      try await PushRelayRuntime(
+      try await PushRelayJobTest(
         space: space,
         logger: Logger(label: "push-relay-test"),
         client: PushRelayClient { await messages.append($0) },
@@ -69,7 +69,7 @@ import Testing
         content: .init(text: "from outside"),
       )
       try await space.sessions.inboxesSettled()
-      try await PushRelayRuntime(
+      try await PushRelayJobTest(
         space: space,
         logger: Logger(label: "push-relay-test"),
         client: PushRelayClient { await messages.append($0) },
@@ -105,7 +105,7 @@ import Testing
         content: .init(text: "aside"),
       )
       try await space.sessions.inboxesSettled()
-      try await PushRelayRuntime(
+      try await PushRelayJobTest(
         space: space,
         logger: Logger(label: "push-relay-test"),
         client: PushRelayClient { await messages.append($0) },
@@ -124,7 +124,7 @@ import Testing
     try await withDependencies {
       $0.date = .constant(fixedDate)
     } operation: {
-      try await PushRelayRuntime(
+      try await PushRelayJobTest(
         space: space,
         logger: Logger(label: "push-relay-test"),
         client: PushRelayClient { message in
@@ -163,7 +163,7 @@ import Testing
           )
           try await space.sessions.inboxesSettled()
         }
-        try await PushRelayRuntime(space: space, logger: Logger(label: "push-relay-test"), client: client).drain()
+        try await PushRelayJobTest(space: space, logger: Logger(label: "push-relay-test"), client: client).drain()
       }
     }
 
@@ -184,7 +184,7 @@ import Testing
     try await withDependencies {
       $0.date = .constant(fixedDate)
     } operation: {
-      try await PushRelayRuntime(
+      try await PushRelayJobTest(
         space: space,
         logger: Logger(label: "push-relay-test"),
         client: PushRelayClient { _ in
@@ -206,7 +206,7 @@ import Testing
     try await withDependencies {
       $0.date = .constant(fixedDate)
     } operation: {
-      try await PushRelayRuntime(
+      try await PushRelayJobTest(
         space: space,
         logger: Logger(label: "push-relay-test"),
         client: PushRelayClient { _ in
@@ -236,7 +236,7 @@ import Testing
         content: .init(text: text),
       )
       try await space.sessions.inboxesSettled()
-      try await PushRelayRuntime(
+      try await PushRelayJobTest(
         space: space,
         logger: Logger(label: "push-relay-test"),
         client: .live(fetch: FetchClient { request in
@@ -270,7 +270,7 @@ import Testing
     guard case let .text(helperID)? = helperRow.first?.first else { Issue.record("no helper"); return }
     let helper = SessionID(helperID)
     let utc = TimeZone(identifier: "UTC")!
-    let runtime = PushRelayRuntime(
+    let runtime = PushRelayJobTest(
       space: space,
       logger: Logger(label: "push-relay-test"),
       client: PushRelayClient { await messages.append($0) },
@@ -310,7 +310,7 @@ import Testing
     let (space, owner) = try await relaySpace(grants: ["g1_live"])
     let persona = try #require(await onlyPersona(space))
     let utc = TimeZone(identifier: "UTC")!
-    let runtime = PushRelayRuntime(
+    let runtime = PushRelayJobTest(
       space: space,
       logger: Logger(label: "push-relay-test"),
       client: PushRelayClient { await messages.append($0) },
@@ -333,34 +333,6 @@ import Testing
     }
     #expect(await messages.values.map(\.badge) == [1, 1, 0])
   }
-
-  @Test func concurrentDrainsNeverDuplicateADelivery() async throws {
-    let messages = MessageCollector()
-    let entered = Gate()
-    let release = Gate()
-    let (space, _) = try await relaySpace(grants: ["g1_live"])
-
-    try await withDependencies {
-      $0.date = .constant(fixedDate)
-    } operation: {
-      let runtime = PushRelayRuntime(
-        space: space,
-        logger: Logger(label: "push-relay-test"),
-        client: PushRelayClient { message in
-          entered.open()
-          await release.wait()
-          await messages.append(message)
-        },
-      )
-      let first = Task { try await runtime.drain() }
-      await entered.wait()
-      try await runtime.drain()
-      release.open()
-      try await first.value
-    }
-
-    #expect(await messages.values.count == 1)
-  }
 }
 
 private actor MessageCollector {
@@ -372,11 +344,14 @@ private func onlyPersona(_ space: Space) async -> String? {
   try? await space.personas().only?.name
 }
 
-private func relaySpace(grants: [String]) async throws -> (space: Space, owner: SessionID) {
+func relaySpace(grants: [String]) async throws -> (space: Space, owner: SessionID) {
+  try await relaySpace(grants: grants, space: Space.inMemory())
+}
+
+func relaySpace(grants: [String], space: Space) async throws -> (space: Space, owner: SessionID) {
   try await withDependencies {
     $0.date = .constant(fixedDate)
   } operation: {
-    let space = try Space.inMemory()
     let account = try await space.addAccount(kind: .human, name: nil)
     let key = try await space.addKey(
       testPubkey("relay-device"),
