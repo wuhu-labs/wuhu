@@ -1,3 +1,4 @@
+load("//bazel/rules:rules.bzl", "wuhu_platforms", "wuhu_swift_test")
 load(":manual_tags_tests.bzl", "manual_tags_tests")
 load(":platform_floor_tests.bzl", "platform_floor_tests")
 
@@ -6,3 +7,14 @@ package(default_visibility = ["//tools:__pkg__"])
 manual_tags_tests(name = "manual-tags-test")
 
 platform_floor_tests(name = "platform-floor-test")
+
+wuhu_swift_test(
+    name = "runner-test",
+    srcs = ["RunnerTests.swift"],
+    deps = [
+        "//packages/wuhu-test-support:TestRunner",
+        "@swiftpkg_swift_issue_reporting//:IssueReportingTestSupport",
+    ],
+    package_name = "BazelRunnerTests",
+    target_compatible_with = wuhu_platforms(["linux", "mac"]),
+)

@@ -13,7 +13,7 @@ extension MachineCell {
   mutating func drive() throws {
     guard let box else { return }
     var p = presence
-    guard p.state != "deleted", let lease = p.lease, lease > now else { return }
+    guard p.state == "attached", let lease = p.lease, lease > now else { return }
     if requestDescribe(&p, to: box) { try save(p) }
     guard let runtime = p.runtime else { return }
     let files = db.rows(MachineFileOperation.all)
@@ -29,7 +29,7 @@ extension MachineCell {
   }
 
   @discardableResult func requestDescribe(_ p: inout MachinePresence, to box: SocketHandle<BoxSocket>) -> Bool {
-    guard p.state != "deleted", let lease = p.lease, lease > now,
+    guard p.state == "attached", let lease = p.lease, lease > now,
           let due = p.describeAt, due <= now, p.describeDeadline == nil else { return false }
     box.send(.init(tag: .describe, exchange: .describe))
     p.describeAt = nil; p.describeDeadline = now + 5000
@@ -44,7 +44,7 @@ extension MachineCell {
 
   mutating func finishExecStep(_ row: inout MachineOperation, presence: MachinePresence) throws {
     let presence = try prepareDrive(presence)
-    if presence.state != "deleted", let lease = presence.lease, lease > now, let box, let runtime = presence.runtime {
+    if presence.state == "attached", let lease = presence.lease, lease > now, let box, let runtime = presence.runtime {
       try driveExec(&row, box: box, runtime: runtime)
     }
     try save(row)

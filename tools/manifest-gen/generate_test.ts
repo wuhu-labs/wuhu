@@ -52,6 +52,7 @@ import {
 } from './generate.ts'
 import { join } from '@std/path'
 import { parse } from '@std/yaml'
+import { BuildLaneError } from './build-lanes.ts'
 
 Deno.test('--help names every flag and writes nothing', async () => {
   const dir = await Deno.makeTempDir()
@@ -84,6 +85,195 @@ Deno.test('--help names every flag and writes nothing', async () => {
     ]
   ) {
     assertStringIncludes(usage, flag)
+  }
+})
+
+Deno.test('generation refuses unavailable build lanes across resolved target edges before writing', async () => {
+  const root = await Deno.makeTempDir()
+  const cwd = Deno.cwd()
+  const write = async (path: string, value: unknown) => {
+    await Deno.mkdir(join(root, path, '..'), { recursive: true })
+    await Deno.writeTextFile(join(root, path), JSON.stringify(value))
+  }
+  const packageManifest = {
+    name: 'a',
+    packageName: 'a',
+    owner: 'shared',
+    swiftToolsVersion: '6.2',
+    platforms: { macOS: '26.0', iOS: '26.0', visionOS: '26.0' },
+    checks: { build: ['linux', 'mac', 'ios', 'visionos'] },
+    externalPackages: {
+      b: { path: '../b', products: { Alias: 'Restricted' } },
+    },
+  }
+  const restricted = {
+    name: 'Restricted',
+    kind: 'library',
+    sources: 'Sources',
+    checks: { build: ['linux', 'mac'] },
+  }
+  await write('packages/a/package.yml', packageManifest)
+  await write('packages/b/package.yml', {
+    ...packageManifest,
+    name: 'b',
+    packageName: 'b',
+    externalPackages: {},
+  })
+  await write('packages/a/Targets/Restricted/target.yml', restricted)
+  await write('packages/b/Targets/Restricted/target.yml', restricted)
+  await write('packages/a/Targets/Plugin/target.yml', {
+    ...restricted,
+    name: 'Plugin',
+    kind: 'macro',
+    dependencies: ['Restricted'],
+  })
+  const consumer = { name: 'Consumer', kind: 'library', sources: 'Sources' }
+  Deno.chdir(root)
+  try {
+    for (
+      const dependency of [
+        { name: 'Restricted' },
+        { name: 'Alias' },
+        {
+          name: '//packages/b:Restricted',
+          swiftpm: { systemLibrary: { module: 'Restricted', path: 'Sources' } },
+        },
+      ]
+    ) {
+      await write('packages/a/Targets/Consumer/target.yml', {
+        ...consumer,
+        dependencies: [dependency],
+      })
+      const error = await assertRejects(
+        () => main(['--apply', '--public-tree', 'packages/a']),
+        BuildLaneError,
+      )
+      const label = dependency.name === 'Restricted'
+        ? '//packages/a:Restricted'
+        : '//packages/b:Restricted'
+      assertEquals(
+        error.violations,
+        (['ios', 'visionos'] as const).map((platform) => ({
+          importer: '//packages/a:Consumer',
+          dependency: label,
+          platform,
+        })),
+      )
+      assertStringIncludes(error.message, label)
+      assertStringIncludes(error.message, '//packages/a:Consumer')
+      assertStringIncludes(error.message, 'ios')
+      assertEquals(
+        await Array.fromAsync(Deno.readDir(join(root, 'packages/a')))
+          .then((entries) => entries.map((entry) => entry.name).sort()),
+        ['Targets', 'package.yml'],
+      )
+    }
+    await write('packages/a/Targets/Consumer/target.yml', {
+      ...consumer,
+      checks: { build: ['mac'] },
+      tests: { checks: { test: ['ios'] } },
+      dependencies: ['Alias'],
+    })
+    const testLaneError = await assertRejects(
+      () => main(['--apply', '--public-tree', 'packages/a']),
+      BuildLaneError,
+    )
+    assertEquals(testLaneError.violations, [{
+      importer: '//packages/a:Consumer',
+      dependency: '//packages/b:Restricted',
+      platform: 'ios',
+    }])
+    for (
+      const override of [
+        { checks: { build: ['linux', 'mac'] }, dependencies: ['Alias'] },
+        { dependencies: [{ name: 'Alias', platforms: ['mac'] }, 'Plugin'] },
+        { dependencies: [{ name: 'Alias', bazel: false }] },
+      ]
+    ) {
+      await write('packages/a/Targets/Consumer/target.yml', {
+        ...consumer,
+        ...override,
+      })
+      await main(['--apply', '--public-tree', 'packages/a'])
+    }
+    assertStringIncludes(
+      await Deno.readTextFile(join(root, 'packages/a/BUILD.bazel')),
+      'name = "Consumer"',
+    )
+  } finally {
+    Deno.chdir(cwd)
+    await Deno.remove(root, { recursive: true })
+  }
+})
+
+Deno.test('generation checks dependencies linked only by primary and additional test targets', async () => {
+  const root = await Deno.makeTempDir()
+  const cwd = Deno.cwd()
+  const write = async (path: string, value: unknown) => {
+    await Deno.mkdir(join(root, path, '..'), { recursive: true })
+    await Deno.writeTextFile(join(root, path), JSON.stringify(value))
+  }
+  await write('packages/a/package.yml', {
+    name: 'a',
+    packageName: 'a',
+    owner: 'shared',
+    swiftToolsVersion: '6.2',
+    platforms: { macOS: '26.0', iOS: '26.0' },
+    checks: { build: ['mac'], test: ['mac', 'ios'] },
+    externalPackages: {
+      b: { path: '../b', products: { Alias: 'Restricted' } },
+    },
+  })
+  await write('packages/b/package.yml', {
+    name: 'b',
+    packageName: 'b',
+    owner: 'shared',
+    swiftToolsVersion: '6.2',
+    checks: { build: ['mac'] },
+  })
+  await write('packages/b/Targets/Restricted/target.yml', {
+    name: 'Restricted',
+    kind: 'library',
+    sources: 'Sources',
+  })
+  const consumer = { name: 'Consumer', kind: 'library', sources: 'Sources' }
+  Deno.chdir(root)
+  try {
+    for (const additional of [false, true]) {
+      const test = { dependencies: ['Alias'] }
+      await write('packages/a/Targets/Consumer/target.yml', {
+        ...consumer,
+        ...(additional
+          ? { additionalTestTargets: [{ ...test, sources: 'ExtraTests' }] }
+          : { tests: test }),
+      })
+      const error = await assertRejects(
+        () => main(['--apply', '--public-tree', 'packages/a']),
+        BuildLaneError,
+      )
+      assertEquals(error.violations, [{
+        importer: additional
+          ? '//packages/a:ConsumerExtraTests.ios'
+          : '//packages/a:ConsumerTests.ios',
+        dependency: '//packages/b:Restricted',
+        platform: 'ios',
+      }])
+    }
+    await write('packages/a/Targets/Consumer/target.yml', {
+      ...consumer,
+      tests: { dependencies: [{ name: 'Alias', platforms: ['mac'] }] },
+    })
+    await main(['--apply', '--public-tree', 'packages/a'])
+    const build = await Deno.readTextFile(join(root, 'packages/a/BUILD.bazel'))
+    assertStringIncludes(build, 'name = "ConsumerTests"')
+    assertStringIncludes(build, 'name = "ConsumerTests.ios"')
+    assertStringIncludes(
+      build,
+      '"//bazel/constraints:mac": ["//packages/b:Restricted"]',
+    )
+  } finally {
+    Deno.chdir(cwd)
+    await Deno.remove(root, { recursive: true })
   }
 })
 

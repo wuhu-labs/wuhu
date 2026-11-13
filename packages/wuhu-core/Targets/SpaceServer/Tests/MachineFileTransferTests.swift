@@ -37,18 +37,14 @@ import Testing
       let space = try Space.inMemory()
       var agents: [OperationAgent] = []
       var links: [(BoxLink, FetchClient)] = []
-      var attached: [AsyncStream<Void>] = []
       for (name, kinds) in machines {
         let agent = try OperationAgent(machine: name, kinds: kinds, limits: limits, authorize: { _, _ in })
         agents.append(agent)
         let pubkey = try await seedBoxKey(space: space, machine: name)
         let link = try #require(BoxLink(worker: space.worker, machine: name, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) { _ in preconditionFailure("file-only fixture") })
-        let ready = AsyncStream<Void>.makeStream()
-        attached.append(ready.stream)
         links.append((link, FetchClient { request in
           try await intercept(name, request)
           let response = try await agent.handler(request)
-          if request.method == .get, request.url.path == "/machine/v2/machines/\(name)" { ready.continuation.finish() }
           return try await interceptResponse(name, request, response)
         }))
       }
@@ -58,7 +54,7 @@ import Testing
         for (link, client) in links { group.addTask { await link.run(client: client) } }
         let result: Result<T, any Error>
         do {
-          for ready in attached { for await _ in ready {} }
+          for name in machines.keys { try await waitForMachineDescription(MachineCell.ID(name), in: space) }
           result = .success(try await body(MachineFileTransfer(space: space, caller: nil)))
         } catch { result = .failure(error) }
         for (link, _) in links { link.close() }

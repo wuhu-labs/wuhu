@@ -20,3 +20,13 @@ func testFileOperations(in space: Space) -> [(machine: String, row: MachineFileO
 extension MachineCell {
   func fileOperationsForTest() -> [MachineFileOperation] { db.rows(MachineFileOperation.all) }
 }
+
+func waitForMachineDescription(_ cell: MachineCell.ID, in space: Space) async throws {
+  let watch = await watchSpaceTables(["machine_presence"], in: space)
+  defer { watch.cancel() }
+  for await _ in watch.changes {
+    if space.worker.cell(cell).db.rows(MachinePresence.all).first?.state == "attached" { return }
+  }
+  try Task.checkCancellation()
+  throw CancellationError()
+}

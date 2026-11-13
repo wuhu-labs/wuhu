@@ -425,7 +425,7 @@ struct FileLaneFixture {
     })
     var boxIterator = boxStream.stream.makeAsyncIterator()
     #expect(try #require(await boxIterator.next()).tag == .describe)
-    box.send(.init(tag: .describe, answer: .description(Self.description)))
+    try await Self.describe(worker: worker, machine: machine)
     let request = MachineFile(operation: operation, start: .init(kind: kind, input: kind == "stagedWrite.v1" ? ["path": "/target", "replace": false] : ["path": "/target"]))
     let callerMachine = attachCaller ? machine : try await space.addMachineV2(name: "unused").machine.id.rawValue
     let caller = try #require(worker.attach(FileBulk.self, to: MachineCell.ID(callerMachine), opening: .init(request: request)) {
@@ -433,6 +433,13 @@ struct FileLaneFixture {
       else { callerStream.continuation.finish() }
     })
     return Self(space: space, worker: worker, machineBuffers: buffers, machine: machine, pubkey: pubkey, operation: operation, box: box, caller: caller, boxFrames: boxFrames, callerFrames: callerFrames, boxIterator: boxIterator, callerIterator: callerStream.stream.makeAsyncIterator())
+  }
+
+  private static func describe(worker: Worker, machine: String) async throws {
+    let description = Self.description
+    try await worker.call(MachineCell.ID(machine)) { cell in
+      try cell.answer(.init(tag: .describe, answer: .description(description)), from: cell.box!)
+    }
   }
 
   static var description: MachineDescription { .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.stagedWrite, ComputerKindSchemas.read, ComputerKindSchemas.list]) }
@@ -496,7 +503,7 @@ struct FileLaneFixture {
     })
     boxIterator = stream.stream.makeAsyncIterator()
     #expect(try #require(await boxIterator.next()).tag == .describe)
-    box.send(.init(tag: .describe, answer: .description(Self.description)))
+    try await Self.describe(worker: worker, machine: machine)
   }
 
   func close() { caller.close(); box.close() }

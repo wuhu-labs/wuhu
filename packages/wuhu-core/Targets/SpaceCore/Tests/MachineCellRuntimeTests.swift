@@ -15,6 +15,9 @@ import Wuwei
     let space = try await MachineCellTestSpace.inMemory()
     let machine = try await space.addMachineV2(name: "runtime").machine.id
     let id = MachineCell.ID(machine.rawValue)
+    let originalBox = try await RuntimeBox.attach(space, id: id)
+    let baseline = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read, ComputerKindSchemas.stat, ComputerKindSchemas.exec])
+    try await originalBox.answer(.init(tag: .describe, answer: .description(baseline)), space: space, id: id)
     let box = try await RuntimeBox.attach(space, id: id)
     let read = UUID(), stat = UUID()
     let readFrames = RuntimeLog<FileBulk.Outgoing>()
@@ -73,9 +76,11 @@ import Wuwei
 
     let replacement = try await RuntimeBox.attach(space, id: id)
     #expect(replacement.frames.values.withLock { $0.first?.tag } == .describe)
+    #expect(replacement.frames.values.withLock { $0.count } == 1)
+    try await replacement.answer(.init(tag: .describe, answer: .description(description)), space: space, id: id)
     #expect(replacement.frames.values.withLock { $0.contains { if case .poll = $0.exchange { true } else { false } } })
     #expect(try await space.space.machineDescription(machine)?.instance == description.instance)
-    reader.close(); metadata.close(); stream.close(); box.peer.close(); replacement.peer.close()
+    reader.close(); metadata.close(); stream.close(); originalBox.peer.close(); box.peer.close(); replacement.peer.close()
     try await space.close()
   }
 
@@ -168,7 +173,11 @@ import Wuwei
     var limits = OperationLimits(); limits.leaseMs = 9000; limits.pollHoldMs = 3000
     let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [ComputerKindSchemas.read])
     try await box.answer(.init(tag: .describe, answer: .description(description)), space: space, id: id)
-    try await space.space.plant("UPDATE machine_presence SET filePieceBytes = NULL WHERE owner = ?", arguments: [machine.rawValue])
+    try await space.worker.call(id) { cell in
+      var p = cell.presence
+      p.filePieceBytes = nil
+      try cell.save(p)
+    }
     #expect(space.worker.cell(id).presence.filePieceBytes == nil)
     #expect(try await space.worker.call(id) { $0.presence.runtime?.filePieceBytes } == 64 * 1024)
     let read = UUID()

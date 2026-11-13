@@ -132,14 +132,16 @@ func withCellExecFixture<R>(_ body: (CellExecFixture) async throws -> R) async t
       let exec = MachineExec(id: "retry", operation: UUID(), createdAt: f.now, group: .shared, argv: ["held"], maxOutput: site == .outputLimit ? 3 : nil, timeout: site == .timeout ? 1 : nil)
       let failure: BoxAnswer = requestDeadline ? .box(.init(.requestDeadline)) : .transport(.init(.transport))
       if site == .describe {
-        try await f.wait { f.count(.describe) == 1 }
-        f.box.send(.init(tag: .describe, answer: failure))
-        try await f.wait { f.space.worker.cell(f.cell).presence.describeAt != nil }
-        #expect(f.space.worker.cell(f.cell).presence.state != "attached")
-        try await f.advance(0.099)
-        #expect(f.count(.describe) == 1)
-        try await f.advance(0.002)
+        try await f.described()
+        try await f.advance(20)
         try await f.wait { f.count(.describe) == 2 }
+        f.box.send(.init(tag: .describe, answer: failure))
+        try await f.wait { f.space.worker.cell(f.cell).presence.describeDeadline == nil }
+        #expect(f.space.worker.cell(f.cell).presence.state == "attached")
+        try await f.advance(0.099)
+        #expect(f.count(.describe) == 2)
+        try await f.advance(0.002)
+        try await f.wait { f.count(.describe) == 3 }
         f.box.send(.init(tag: .describe, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))))
         try await f.wait { f.space.worker.cell(f.cell).presence.state == "attached" }
       } else { try await f.described() }

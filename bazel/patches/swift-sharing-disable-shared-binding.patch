@@ -1,0 +1,55 @@
+--- a/Sources/Sharing/SharedBinding.swift
++++ b/Sources/Sharing/SharedBinding.swift
+@@ -1,51 +1 @@
+-#if canImport(SwiftUI)
+-  import PerceptionCore
+-  public import SwiftUI
+-
+-  extension Binding {
+-    /// Creates a binding from a shared reference.
+-    ///
+-    /// Useful for binding shared state to a SwiftUI control.
+-    ///
+-    /// ```swift
+-    /// @Shared var count: Int
+-    /// // ...
+-    /// Stepper("\(count)", value: Binding($count))
+-    /// ```
+-    ///
+-    /// - Parameter base: A shared reference to a value.
+-    @MainActor
+-    public init(_ base: Shared<Value>) {
+-      guard
+-        #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *),
+-        // NB: We can't do 'any MutableReference<Value> & Observable' and must force-cast, instead.
+-        //     https://github.com/swiftlang/swift/pull/76705
+-        let reference = base.reference as? any MutableReference & Observable
+-      else {
+-        #if os(visionOS)
+-          fatalError("This should be unreachable: visionOS should always support Observation")
+-        #else
+-          func open(_ reference: some MutableReference<Value>) -> Binding<Value> {
+-            @PerceptionCore.Bindable var reference = reference
+-            return $reference._wrappedValue
+-          }
+-          self = open(base.reference)
+-          return
+-        #endif
+-      }
+-      func open<V>(_ reference: some MutableReference<V> & Observable) -> Binding<Value> {
+-        @SwiftUI.Bindable var reference = reference
+-        return $reference._wrappedValue as! Binding<Value>
+-      }
+-      self = open(reference)
+-    }
+-  }
+-
+-  extension MutableReference {
+-    @_spi(References)
+-    public var _wrappedValue: Value {
+-      get { wrappedValue }
+-      set { withLock { $0 = newValue } }
+-    }
+-  }
+-#endif
++// Disabled for Wuhu: SwiftUI Binding(Shared) cannot compile for iOS/tvOS 17+.

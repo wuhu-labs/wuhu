@@ -18,6 +18,7 @@ exports_files([
     "snapshot-testing-image-format.patch",
     "snapshot-testing-bazel-artifacts.patch",
     "swift-clocks-linux-lock.patch",
+    "swift-sharing-disable-shared-binding.patch",
     "swift-dependencies-linux-lock.patch",
     "swift-dependencies-linux-typename.patch",
     "swift-dependencies-linux-uuid-hex.patch",

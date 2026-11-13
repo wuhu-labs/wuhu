@@ -46,6 +46,7 @@ func withFileBox<R: Sendable>(
       for await request in requests {
         if case .describe = request.exchange {
           peer.send(.init(tag: request.tag, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: kinds))))
+          try await waitForMachineDescription(MachineCell.ID(machine.rawValue), in: space)
           ready.continuation.yield(())
           ready.continuation.finish()
         } else { try await respond(request, peer, space) }
@@ -348,6 +349,17 @@ private func waitForFileConsumption(_ operation: UUID, channel: String, through:
     var iterator = requests.makeAsyncIterator()
     let description = try #require(await iterator.next())
     guard case .describe = description.exchange else { Issue.record("expected description request"); return }
+    box.send(.init(tag: description.tag, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.mkdir]))))
+    try await waitForMachineDescription(MachineCell.ID(machine.rawValue), in: space)
+    let replacement = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine.rawValue), opening: .init(connection: UUID(), pubkey: pubkey, streams: 64)) {
+      if case let .frame(frame) = $0 {
+        if case .startFile = frame.exchange { starts.withLock { $0 += 1 } }
+        continuation.yield(frame)
+      }
+    })
+    defer { replacement.close() }
+    let reconnect = try #require(await iterator.next())
+    guard case .describe = reconnect.exchange else { Issue.record("expected reconnect description request"); return }
     try await withThrowingTaskGroup(of: OperationError?.self) { group in
       group.addTask {
         await #expect(throws: OperationError.self) {

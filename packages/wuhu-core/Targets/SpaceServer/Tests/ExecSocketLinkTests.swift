@@ -6,6 +6,7 @@ import DeterministicDependencies
 #endif
 import MachineChannel
 import MachineContract
+import OperationProtocol
 import Serve
 @testable import SpaceCore
 @testable import SpaceServer
@@ -27,6 +28,8 @@ import Wuwei
     defer { box.close() }
     await described.wait()
     try Task.checkCancellation()
+    box.send(.init(tag: .describe, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))))
+    try await waitForMachineDescription(cell, in: space)
 
     let incoming = AsyncStream<WebSocketMessage>.makeStream()
     let outgoing = AsyncStream<Frame>.makeStream()

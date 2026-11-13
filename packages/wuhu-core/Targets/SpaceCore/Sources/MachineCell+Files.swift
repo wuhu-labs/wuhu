@@ -19,7 +19,7 @@ extension MachineCell {
     var row = MachineFileOperation(id: request.operation.uuidString.lowercased(), request: request, stream: socket.id, created: now)
     row.state = "pendingStart"
     row.worker = buffers.worker
-    if box == nil, p.lease == nil || p.lease! <= now {
+    if p.state == "lost" || box == nil && (p.lease == nil || p.lease! <= now) {
       try failFile(&row, lostFile(row))
     } else {
       try finishFileStep(&row, presence: p)
@@ -163,7 +163,7 @@ extension MachineCell {
     try deliverFile(&row)
     if cleanup, row.dispatched, let box {
       row.state = "stopping"
-      requestFile(.stop, .stop(row.request.operation, row.stop!), row: &row, to: box)
+      if presence.state == "attached" { requestFile(.stop, .stop(row.request.operation, row.stop!), row: &row, to: box) }
       try saveFile(row)
     } else { try deleteFile(row) }
   }

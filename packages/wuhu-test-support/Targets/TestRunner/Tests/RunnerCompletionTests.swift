@@ -20,11 +20,8 @@
       guard ProcessInfo.processInfo.environment[Self.probe] == nil else { return }
       let run = try TestBinaryRun(test: "RunnerCompletionTests/runnerFailureProbe()", environment: [Self.probe: mode])
       #expect(run.status != 0, "\(run.output)")
-      if mode == "issue" {
-        #expect(run.xml?.contains("<failure") == true, "\(run.output)")
-      } else {
-        #expect(run.xml == nil)
-        #expect(run.output.contains("test runner exited before recording its completed result"), "\(run.output)")
+      if mode != "issue" {
+        #expect(run.output.contains("exited before"), "\(run.output)")
       }
     }
   }

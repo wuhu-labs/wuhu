@@ -42,15 +42,19 @@ import Wuwei
     }
   }
 
-  @Test func aTunnelThatReplacesASilentOneGetsALeaseOfItsOwn() async throws {
+  @Test func aDescribedReplacementGetsALeaseOfItsOwn() async throws {
     try await withLeaseSpace { space, date in
       let cell = MachineCell.ID(try await space.addMachineV2(name: "replacement").machine.id.rawValue)
       let first = try await LeaseBox(space: space, cell: cell)
       try await first.describe()
+      first.peer.send(.init(tag: .describe, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: []))))
+      try await waitForMachineDescription(cell, in: space)
       date.value.withLock { $0 = leaseOrigin.addingTimeInterval(40) }
       let second = try await LeaseBox(space: space, cell: cell)
       try await second.describe()
       await first.closed.wait()
+      second.peer.send(.init(tag: .describe, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: []))))
+      try await waitForMachineDescription(cell, in: space)
       #expect(!second.closed.isOpen)
       for elapsed in [60.0, 99.0] {
         date.value.withLock { $0 = leaseOrigin.addingTimeInterval(elapsed) }
@@ -73,7 +77,7 @@ import Wuwei
       let second = try await LeaseBox(space: space, cell: cell)
       try await second.describe()
       await first.closed.wait()
-      date.value.withLock { $0 = leaseOrigin.addingTimeInterval(10) }
+      date.value.withLock { $0 = leaseOrigin.addingTimeInterval(1) }
       let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
       second.peer.send(.init(tag: .describe, answer: .description(description)))
       try await leaseStep { space.worker.cell(cell).machineDescription?.instance == description.instance }
@@ -82,7 +86,7 @@ import Wuwei
       _ = try await space.worker.call(cell) { _ in true }
       #expect(!second.closed.isOpen)
       #expect(space.worker.cell(cell).machineDescription?.instance == description.instance)
-      #expect(space.worker.cell(cell).presence.lease == Int64((leaseOrigin.timeIntervalSince1970 + 70) * 1000))
+      #expect(space.worker.cell(cell).presence.lease == Int64((leaseOrigin.timeIntervalSince1970 + 61) * 1000))
       date.value.withLock { $0 = leaseOrigin.addingTimeInterval(60) }
       try await space.worker.call(cell) { try $0.wake() }
       #expect(!second.closed.isOpen)

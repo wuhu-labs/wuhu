@@ -238,10 +238,12 @@ extension MachineCellTests {
     }
   }
 
-  @Test func `starts admitted before describe cannot exceed tunnel capacity`() async throws {
+  @Test func `starts waiting for a healthy reconnect cannot exceed tunnel capacity`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       _ = setup(space)
+      let first = try await attach(space, Box([]))
+      try await described(first, space)
       let requests = Box<[BoxSocket.Outgoing]>([])
       let pubkey = try await seedBoxKey(space: space, machine: cell.key)
       let peer = try #require(space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 5)) {

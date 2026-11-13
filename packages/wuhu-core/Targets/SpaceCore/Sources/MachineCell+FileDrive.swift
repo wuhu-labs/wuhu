@@ -19,7 +19,7 @@ extension MachineCell {
 
   mutating func finishFileStep(_ row: inout MachineFileOperation, presence: MachinePresence) throws {
     let presence = try prepareDrive(presence)
-    if presence.state != "deleted", let lease = presence.lease, lease > now,
+    if presence.state == "attached", let lease = presence.lease, lease > now,
        let box, let runtime = presence.runtime,
        try driveFile(&row, box: box, runtime: runtime) == .settled { return }
     try saveFile(row)

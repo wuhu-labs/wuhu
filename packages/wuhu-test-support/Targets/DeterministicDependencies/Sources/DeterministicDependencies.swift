@@ -1,4 +1,5 @@
 import protocol Clocks.NonsendingClock
+import ControlledTime
 import Dependencies
 import DependenciesTestSupport
 #if canImport(FoundationEssentials)
@@ -21,6 +22,7 @@ extension Trait where Self == _DependenciesTrait {
   }
 
   private static func install(into values: inout DependencyValues) {
+    values.continuousClock = VirtualClock()
     values.uuid = .incrementing
     values.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
     values.withRandomNumberGenerator = WithRandomNumberGenerator(SeededGenerator())

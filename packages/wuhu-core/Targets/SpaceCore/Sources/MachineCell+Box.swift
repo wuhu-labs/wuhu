@@ -19,19 +19,12 @@ extension MachineCell {
           let account = db.rows(MachineRow.where { $0.id.eq(machine) }).first?.accountID,
           !db.rows(BoxCredentialRow.where { $0.pubkey.eq(pubkey) && $0.accountID.eq(account) }).isEmpty
     else { socket.close(); return }
+    if let lease = p.lease, lease <= now { p = try endLease(p) }
     for old in ctx.sockets(of: BoxSocket.self) where old.id != socket.id { old.close() }
-    p.lease = now + Int64(p.leaseMs)
-    p.describeAt = now; p.describeDeadline = nil
-    requestDescribe(&p, to: socket)
+    if p.state == "attached" { p.state = "handshaking" }
+    p.describeAt = nil; p.describeDeadline = now + 5000
+    socket.send(.init(tag: .describe, exchange: .describe))
     try save(p)
-    try resetFilesForBox(presence: p)
-    for var row in db.rows(MachineOperation.live) {
-      try stopOrphanStream(&row)
-      row.flights = [:]
-      if row.dispatched && row.state == "starting" { row.state = "reconciling" }
-      row.stopSent = false
-      try finishExecStep(&row, presence: p)
-    }
   }
 
   mutating func closeBox(_ socket: SocketHandle<BoxSocket>) throws {
@@ -41,6 +34,17 @@ extension MachineCell {
     try save(p)
     for var row in db.rows(MachineOperation.live) { row.flights = [:]; try save(row) }
     for var row in db.rows(MachineFileOperation.all) { row.flights = [:]; try saveFile(row) }
+  }
+
+  private mutating func reconcileBox(presence p: MachinePresence) throws {
+    try resetFilesForBox(presence: p)
+    for var row in db.rows(MachineOperation.live) {
+      try stopOrphanStream(&row)
+      row.flights = [:]
+      if row.dispatched && row.state == "starting" { row.state = "reconciling" }
+      row.stopSent = false
+      try finishExecStep(&row, presence: p)
+    }
   }
 
   private mutating func invalidResponse(_ row: inout MachineOperation) throws {
@@ -64,14 +68,19 @@ extension MachineCell {
   mutating func answer(_ frame: BoxSocket.Incoming, from socket: SocketHandle<BoxSocket>) throws {
     guard box?.id == socket.id else { return }
     let before = presence
+    if before.state != "attached", let deadline = before.describeDeadline, deadline <= now {
+      try wake()
+      return
+    }
     var p = before
-    switch frame.answer {
-    case .description, .snapshot, .input, .box:
-      p.lease = now + Int64(p.leaseMs)
-    case .transport, .preparation: break
+    if p.state == "attached" {
+      switch frame.answer {
+      case .description, .snapshot, .input, .box:
+        p.lease = now + Int64(p.leaseMs)
+      case .transport, .preparation: break
+      }
     }
     if case .describe = frame.tag {
-      p.describeDeadline = nil
       switch frame.answer {
       case let .description(description):
         let exec = description.kinds.first { $0.name == "exec.v1" }
@@ -83,7 +92,7 @@ extension MachineCell {
           return Set(channels.map(\.name)).count == channels.count
         }
         guard description.version == 2, description.limits.isValid, validChannels, uniqueChannels else {
-          p.state = "lost"; p.lease = nil; p.describeAt = nil
+          p.state = "lost"; p.lease = nil; p.describeAt = nil; p.describeDeadline = nil
           if p != before { try save(p) }
           for var row in db.rows(MachineFileOperation.all) {
             try failFile(&row, .operation(.init(.invalidResponse)), cleanup: false)
@@ -108,16 +117,20 @@ extension MachineCell {
         p.execStdoutWindow = exec?.outputChannels.first { $0.name == "stdout" }?.windowBytes
         p.execStderrWindow = exec?.outputChannels.first { $0.name == "stderr" }?.windowBytes
         p.filePieceBytes = description.limits.filePieceBytes
-        p.state = "attached"; p.observed = now
+        p.state = "attached"; p.observed = now; p.describeDeadline = nil
         p.lease = now + Int64(description.limits.leaseMs)
         p.describeAt = now + Int64(description.limits.leaseMs / 3); p.describeRetry = 100
       case .box, .transport, .preparation:
+        guard p.state == "attached" else { return }
+        p.describeDeadline = nil
         p.describeAt = now + p.describeRetry; p.describeRetry = min(2000, p.describeRetry * 2)
       case .snapshot, .input: preconditionFailure("describe answered with operation data")
       }
       if p != before { try save(p) }
+      if before.state != "attached", p.state == "attached" { try reconcileBox(presence: p) }
       return
     }
+    precondition(p.state == "attached", "operation answered before the socket described")
     requestDescribe(&p, to: socket)
     if p != before { try save(p) }
     if case let .operation(op, purpose) = frame.tag, var row = fileOperation(op) {

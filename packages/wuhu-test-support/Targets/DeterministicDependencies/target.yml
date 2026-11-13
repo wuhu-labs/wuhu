@@ -4,6 +4,7 @@ testOnly: true
 sources: Sources
 dependencies:
   - Clocks
+  - ControlledTime
   - Dependencies
   - DependenciesTestSupport
 tests:

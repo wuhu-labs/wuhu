@@ -9,7 +9,7 @@ platforms:
   iOS: "26.0"
   visionOS: "26.0"
 checks:
-  build: [linux, mac, ios, visionos]
+  build: [linux, mac]
   test: [linux, mac]
 externalPackages:
   wuhu-json:

@@ -155,8 +155,10 @@ extension MachineCellTests {
       let space = try Space.inMemory()
       _ = setup(space)
       let requests = Box<[BoxSocket.Outgoing]>([])
+      let first = try await attach(space, Box([]))
+      try await described(first, space)
       let peer = try await attach(space, requests)
-      try await until("box attaches without a description") { requests.value.contains { $0.tag == .describe } }
+      try await until("box reconnects without a description") { requests.value.contains { $0.tag == .describe } }
       let exec = MachineExec(id: "pending-timeout", operation: UUID(), createdAt: anchor, group: .shared, argv: ["echo"], timeout: 1)
       try await space.worker.call(cell) { try $0.start(exec, finished: recipient) }
       #expect(space.worker.cell(cell).operation(exec.id)?.dispatched == false)

@@ -1,4 +1,5 @@
 import ControlledTime
+import Dependencies
 import DeterministicDependencies
 import Dispatch
 #if canImport(FoundationEssentials)
@@ -209,6 +210,34 @@ import Testing
     var after = again.makeAsyncIterator()
     #expect(try await after.next()?.rows == [[.integer(1)]])
     try await next.close()
+  }
+
+  /// A roll leaves two servers on one file: the other process's commit never reaches the writer's hooks, so the watch wakes on the writer's `data_version` alone.
+  @Test(.timeLimit(.minutes(1))) func aCommitFromAnotherWriterWakesTheWatch() async throws {
+    let folder = try ScratchFolder("observation-foreign-commit")
+    let file = folder.url.appending(path: "space.sqlite")
+    let clock = VirtualClock()
+    let space = try withDependencies { $0.continuousClock = clock } operation: { try Space.open(file: file) }
+    let other = try WuweiDatabase(path: file.path)
+    let table = try await makeTable(space)
+    _ = try await space.mutateRows(table, [.insert([.integer(1), .string("a")])], in: .shared, acting: .shared)
+
+    let snapshots = Collector<Rows>()
+    let stream = try space.observeRows("SELECT n FROM \"/t.table\" ORDER BY n", throttle: .zero, as: .shared(.publicReader))
+    let consumer = Task { do { for try await rows in stream { await snapshots.append(rows) } } catch {} }
+    defer { consumer.cancel() }
+    #expect(try await awaitItems(snapshots, atLeast: 1).first?.rows == [[.integer(1)]])
+
+    try other.write { handle in
+      try MigrationDB(handle: handle).execute(sql: "INSERT INTO \"shared:/t.table\" (\"n\", \"s\") VALUES (2, 'b')")
+    }
+    // No local write follows: only the clock moving wakes the watch.
+    try await clock.sleeping(where: { $0 == .seconds(1) })
+    await clock.advance(by: .seconds(1))
+    #expect(try await awaitItems(snapshots, atLeast: 2).last?.rows == [[.integer(1)], [.integer(2)]])
+
+    try other.closeWriter()
+    try await space.close()
   }
 
   @Test(.timeLimit(.minutes(1))) func aRevocationAfterAPageCeilingCannotLeakLaterCommits() async throws {

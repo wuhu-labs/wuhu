@@ -32,6 +32,7 @@ import {
   platformFloorRule,
 } from './platform-floors.ts'
 import { assertManualBoundaries, validateManual } from './manual.ts'
+import { assertBuildLaneEdges, type BuildLaneTarget } from './build-lanes.ts'
 import {
   pinnedRepos,
   readConfigureFragments,
@@ -1407,29 +1408,29 @@ function validateDependencyPlatforms(platforms: CheckPlatform[]): void {
   }
 }
 
-function bazelDependency(
+function bazelDependencyLabel(
   pkg: PackageManifest,
   targetNames: Set<string>,
   dep: Dependency,
 ): string {
   const name = dependencyName(dep)
-  if (targetNames.has(name)) return `":${name}"`
+  if (targetNames.has(name)) return `:${name}`
   // A raw Bazel label passes through, as it already does in app.yml. It names a
   // pinned `http_archive` repository such as `@ffmpeg//:libavcodec`; the
   // lowering it must carry (validated here so the error fires on every
   // generation, not only under --swiftpm) is what the SwiftPM emitter uses.
   if (isRawLabel(name)) {
     rawLabelLowering(dep)
-    return `"${name}"`
+    return name
   }
   const [, external] = externalForProduct(pkg, name)
   const target = productTargetLabel(external, name)
-  if (isRawLabel(target)) return `"${target}"`
-  if (external.bazelPackage) return `"${external.bazelPackage}:${target}"`
+  if (isRawLabel(target)) return target
+  if (external.bazelPackage) return `${external.bazelPackage}:${target}`
   if (!external.bazelRepo) {
     throw new Error(`External package for ${name} has no bazelRepo`)
   }
-  return `"@${external.bazelRepo}//:${target}"`
+  return `@${external.bazelRepo}//:${target}`
 }
 
 // A sibling target of `kind: macro` is a compiler plugin: `swift_compiler_plugin`
@@ -1465,7 +1466,7 @@ export function partitionBazelDeps(
     } else if (macroSibling) {
       deps.push(`":${name}"`)
     } else {
-      const label = bazelDependency(pkg, targetNames, dep)
+      const label = JSON.stringify(bazelDependencyLabel(pkg, targetNames, dep))
       const platforms = typeof dep === 'string' ? undefined : dep.platforms
       if (platforms) {
         validateDependencyPlatforms(platforms)
@@ -1602,10 +1603,7 @@ const simulatorPlatformFloorKeys: Record<string, string> = {
   visionos: 'visionOS',
 }
 
-// A library must compile wherever anything that depends on it is checked, so it
-// claims the union of its build and test platforms. A dependent claiming more
-// platforms than its dependency is a metadata bug that Bazel now reports as an
-// analysis error naming both targets, instead of never being built at all.
+// Tests compile their library too, so its compatibility includes test lanes.
 function libraryPlatforms(
   pkg: PackageManifest,
   target: TargetManifest,
@@ -1617,6 +1615,72 @@ function libraryPlatforms(
   return checkPlatforms.filter((platform) =>
     build.includes(platform) || test.includes(platform)
   )
+}
+
+async function validateBuildLanes(packageDirs: string[]): Promise<void> {
+  const targetsByLabel = new Map<string, BuildLaneTarget>()
+  const pending = [...packageDirs]
+  const loaded = new Set<string>()
+  while (pending.length) {
+    const dir = normalize(pending.shift()!)
+    if (loaded.has(dir)) continue
+    loaded.add(dir)
+    if (!await exists(join(dir, 'package.yml'))) continue
+    const pkg = await readPackageManifest(dir)
+    await resolveExternalPackages(pkg, dir)
+    const targets = await discoverTargets(dir)
+    const names = new Set(targets.map((target) => target.name))
+    const dependencies = (deps: Dependency[] | undefined) =>
+      (deps ?? []).filter(bazelEnabled)
+        .map((dep) => {
+          const label = bazelDependencyLabel(pkg, names, dep)
+          const absolute = label.startsWith(':') ? `//${dir}${label}` : label
+          const local = /^\/\/(.+):/.exec(absolute)
+          if (local) pending.push(local[1])
+          return {
+            label: absolute,
+            platforms: typeof dep === 'string' ? undefined : dep.platforms,
+          }
+        })
+    for (const target of targets) {
+      targetsByLabel.set(`//${dir}:${target.name}`, {
+        platforms: libraryPlatforms(pkg, target),
+        host: target.kind === 'macro',
+        dependencies: dependencies(target.dependencies),
+      })
+      if (
+        target.kind === 'systemLibrary' || target.kind === 'objcLibrary' ||
+        target.kind === 'cLibrary'
+      ) continue
+      for (const test of testTargets(target)) {
+        const location = `${target.manifestDir}/target.yml`
+        const testDependencies = dependencies(test.config.dependencies)
+        const hosts = testTargetPlatforms(pkg, target, test.config, location)
+        if (hosts.length) {
+          targetsByLabel.set(`//${dir}:${test.name}`, {
+            platforms: hosts,
+            host: false,
+            dependencies: testDependencies,
+          })
+        }
+        for (
+          const { lane } of simulatorTestLanes(
+            pkg,
+            target,
+            test.config,
+            location,
+          )
+        ) {
+          targetsByLabel.set(`//${dir}:${test.name}.${lane}`, {
+            platforms: [lane],
+            host: false,
+            dependencies: testDependencies,
+          })
+        }
+      }
+    }
+  }
+  assertBuildLaneEdges(targetsByLabel)
 }
 
 function declaredTestPlatforms(
@@ -5438,6 +5502,7 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
     : ['packages/wuhu-core']
   const packageDirs = [...new Set([...requested, ...swiftPMPackages])]
   await assertSwiftOrDeno(packageDirs)
+  await validateBuildLanes(packageDirs)
 
   const floorDeclarations: FloorDeclaration[] = []
   const floorEdges: FloorEdge[] = []

@@ -51,6 +51,11 @@ public actor Space {
     self.dateGen = date
     self.clock = clock
     let changes = database.changes
+    // A memory space's writer is its only connection: no other commit can move its data_version.
+    if database.journalMode == .wal {
+      let foreignCommits = try ForeignCommits(database: database, changes: changes, clock: clock)
+      try taskScope.run("foreign-commits") { await foreignCommits.watch() }
+    }
     let subscribe: RegionSource = { tables, wakes in changes.subscribe(tables, wakes) }
     self.observations = ObservationSources(
       reads: reads, clock: clock,

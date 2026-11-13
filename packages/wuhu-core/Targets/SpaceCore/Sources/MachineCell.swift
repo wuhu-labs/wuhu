@@ -212,15 +212,10 @@ public struct MachineCell {
     let before = try ensurePresence()
     var p = before
     if box == nil { p.describeAt = nil; p.describeDeadline = nil }
-    if let lease = p.lease, lease <= now {
-      p.state = "lost"; p.lease = nil; p.describeAt = nil; p.describeDeadline = nil
+    let handshakeExpired = p.state != "attached" && p.describeDeadline.map { $0 <= now } == true
+    if handshakeExpired || p.lease.map({ $0 <= now }) == true {
       for socket in ctx.sockets(of: BoxSocket.self) { socket.close() }
-      for var row in db.rows(MachineFileOperation.all) { try failFile(&row, lostFile(row), cleanup: false) }
-      for var row in db.rows(MachineOperation.live.where { $0.opened }) {
-        try stopOrphanStream(&row)
-        try finish(&row, error: OperationError(.unknownOperation, message: "Machine was silent for the operation's lease", details: ["outcome": "unknown", "reason": "leaseSilence"]))
-        try finishExecStep(&row, presence: p)
-      }
+      p = try endLease(p)
     }
     if let deadline = p.describeDeadline, deadline <= now {
       p.describeDeadline = nil; p.describeAt = now + p.describeRetry; p.describeRetry = min(2000, p.describeRetry * 2)
@@ -269,7 +264,10 @@ public struct MachineCell {
   }
 
   func admission(_ box: SocketHandle<BoxSocket>?) -> OperationError? {
-    guard let box else { return OperationError(.machineUnavailable, message: "Machine is not attached") }
+    let p = presence
+    guard let box, let lease = p.lease, lease > now else { return OperationError(.machineUnavailable, message: "Machine is not attached") }
+    if p.state == "handshaking", let deadline = p.describeDeadline, deadline > now { return nil }
+    guard p.state == "attached" else { return OperationError(.machineUnavailable, message: "Machine is not attached") }
     let live = db.rows(MachineOperation.live.where { $0.dispatched }.asSelect().count()).first!
     return live * 3 + dispatchedFileStreams + 3 > box.opening.streams - 2 ? OperationError(.capacityExceeded, message: "Machine exec tunnel capacity is full") : nil
   }
@@ -290,6 +288,18 @@ extension MachineCell {
     if let p = db.rows(MachinePresence.all).first { return p }
     let p = MachinePresence()
     try save(p)
+    return p
+  }
+
+  mutating func endLease(_ presence: MachinePresence) throws -> MachinePresence {
+    var p = presence
+    p.state = "lost"; p.lease = nil; p.describeAt = nil; p.describeDeadline = nil
+    for var row in db.rows(MachineFileOperation.all) { try failFile(&row, lostFile(row), cleanup: false) }
+    for var row in db.rows(MachineOperation.live.where { $0.opened }) {
+      try stopOrphanStream(&row)
+      try finish(&row, error: OperationError(.unknownOperation, message: "Machine was silent for the operation's lease", details: ["outcome": "unknown", "reason": "leaseSilence"]))
+      try finishExecStep(&row, presence: p)
+    }
     return p
   }
 
