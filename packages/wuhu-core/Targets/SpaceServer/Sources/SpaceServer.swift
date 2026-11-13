@@ -435,9 +435,9 @@ public enum SpaceServer {
     options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
     options.maximumBodyBytes = maximumPostBodyBytes
     // A roll cannot wait on a handler that never returns: the drain gives the
-    // requests already running five seconds, then ends them with the streams.
+    // requests already running one second, then ends them with the streams.
     @Dependency(\.continuousClock) var drainClock
-    options.gracefulDrain = .init(timeout: .seconds(5)) { try await drainClock.sleep(for: $0) }
+    options.gracefulDrain = .init(timeout: .seconds(1)) { try await drainClock.sleep(for: $0) }
     var hooks = hooks
     let upstreamDrain = hooks.onGracefulDrain
     hooks.onGracefulDrain = { outcome in
