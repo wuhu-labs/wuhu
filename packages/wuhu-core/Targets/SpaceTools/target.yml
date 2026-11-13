@@ -18,6 +18,8 @@ dependencies:
   - OrderedCollections
 tests:
   dependencies:
+    - SessionTools
+    - LoopCore
     - ControlledTime
     - DeterministicDependencies
     - OrderedCollections

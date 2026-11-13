@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import KeelObjectStore
 import struct SpaceContract.GroupID
 import SpaceFS
 import StructuredQueries
@@ -20,8 +19,7 @@ extension FSHeadRow {
 // What a host action asks of a document that one statement answers: its file, its state row and when
 // it fell behind. What a merge needs of the state, snapshot, log and checkpoints together is a host
 // read (`DocumentRows.material`), because those must agree and a read handle is a snapshot per
-// statement. The file store's own reads stay in `Substrate`, so the two queries over `fs_heads` and
-// the blobs are kept in both places.
+// statement.
 extension DocumentCell {
   struct Checkpoint: Sendable {
     let rev: Int64
@@ -32,7 +30,7 @@ extension DocumentCell {
   func file() throws -> (rev: Int64, text: Data?, hash: String)? {
     guard let head = db.rows(FSHeadRow.at(path, in: group)).first else { return nil }
     guard head.kind == "file", let hash = head.blobHash else { throw SpaceError.notAFile(path.rawValue) }
-    switch try storedBlob(hash) {
+    switch try Bucket.stored(hash, in: db) {
     case let .inline(content): return (head.rev, Data(content), hash)
     case .external: return (head.rev, nil, hash)
     }
@@ -63,15 +61,5 @@ extension DocumentCell {
   /// How many snapshot rows it holds: at most one, and one whenever it holds a state.
   func snapshotCount() -> Int {
     db.rows(DocumentSnapshotRow.all.asSelect().count()).first!
-  }
-
-  private func storedBlob(_ hash: String) throws -> StoredBlob {
-    if let key = db.rows(BlobObjectRow.where { $0.hash.eq(hash) }.select(\.objectKey)).first {
-      return .external(try ObjectKey(key))
-    }
-    guard let content = db.rows(BlobRow.where { $0.hash.eq(hash) }.select(\.content)).first else {
-      throw SpaceError.notFound(hash)
-    }
-    return .inline(content)
   }
 }

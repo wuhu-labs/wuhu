@@ -3,6 +3,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import LoopCore
 import MachineContract
 import SessionDomain
 import SpaceCore

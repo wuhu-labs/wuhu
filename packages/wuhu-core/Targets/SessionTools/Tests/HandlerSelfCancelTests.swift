@@ -20,7 +20,9 @@ import Testing
   @Test func aHandlerCancellingItsOwnTimerFinishesItsFiringWithItsWakes() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
+      try await space.sessions.markInterrupted(session)
       let fs = await space.fs(.shared)
       _ = try await fs.write("/self.js", Data("""
       import {readText} from 'wuhu:space';
@@ -32,7 +34,7 @@ import Testing
         return {n: 1};
       };
       """.utf8), ifMatch: nil)
-      try await withHandlerFiring(space) { worker, _ in
+      try await withHandlerFiring(loop) { worker, _ in
         var world = ToolWorld(worker: worker, session: session)
         guard case let .timer(timer) = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/self.js"])) else {
           Issue.record("expected a timer"); return
@@ -57,7 +59,9 @@ import Testing
   @Test func aToolCancelDuringAFiringLetsItFinish() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
+      try await space.sessions.markInterrupted(session)
       let fs = await space.fs(.shared)
       _ = try await fs.write("/slow.js", Data("""
       import {readText, writeText} from 'wuhu:space';
@@ -68,7 +72,7 @@ import Testing
         return {n: 1};
       };
       """.utf8), ifMatch: nil)
-      try await withHandlerFiring(space) { worker, _ in
+      try await withHandlerFiring(loop) { worker, _ in
         var world = ToolWorld(worker: worker, session: session)
         guard case let .timer(timer) = try await world.run("timer", .object(["message": "unused", "in_seconds": 1, "handler": "/slow.js"])) else {
           Issue.record("expected a timer"); return
@@ -89,7 +93,9 @@ import Testing
   @Test func aSelfCancelledFiringThatTimesOutEndsFailedSilently() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
+      try await space.sessions.markInterrupted(session)
       let fs = await space.fs(.shared)
       _ = try await fs.write("/stuck.js", Data("""
       import {readText} from 'wuhu:space';
@@ -101,7 +107,7 @@ import Testing
         return {n: 1};
       };
       """.utf8), ifMatch: nil)
-      try await withHandlerFiring(space) { worker, _ in
+      try await withHandlerFiring(loop) { worker, _ in
         var world = ToolWorld(worker: worker, session: session)
         guard case let .timer(timer) = try await world.run("timer", .object(["message": "unused", "in_seconds": 1, "handler": "/stuck.js"])) else {
           Issue.record("expected a timer"); return

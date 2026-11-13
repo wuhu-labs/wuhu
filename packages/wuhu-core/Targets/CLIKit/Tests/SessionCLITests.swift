@@ -16,6 +16,7 @@ import InferenceKit
 import JSONValue
 import LoopCore
 import class MainHub.Hub
+import struct MainHub.SessionEffects
 import Scratch
 import ServeTesting
 import SessionDomain
@@ -26,6 +27,7 @@ import SpaceContract
 import Synchronization
 import Testing
 import WuhuAI
+import Wuwei
 
 private let testModelsJSON = """
 {
@@ -113,30 +115,42 @@ private final class SessionCLIHarness: Sendable {
     self.home = home
     self.cwd = cwd
 
-    space = try Space.inMemory()
+    let space = try Space.inMemory()
+    self.space = space
     store = space.sessions
     if models {
       _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
     let hub = MachineHub(space: space)
-    let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
-    let config = LoopConfig(
-      executeTool: { invocation in
-        try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
-      },
-      inference: { request in try await inference(request) },
-      budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
-    )
-    let catalog = groupCatalog(space: space, access: InferenceAccess())
-    let owner = Hub(
-      space: space, machines: machineSeam(hub: hub),
-      resolveModelExecutor: modelExecutorResolver(space: space),
-      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
-      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
-    )
     let tokens = try await testTokens(space: space, spaceURL: "http://space")
     let connection = MainConnection()
-    let worker = SessionExecution(connection: connection, credential: { try await tokens.sessionToken($0) }, space: owner.space) { _ in config }
+    let worker = SessionExecution(
+      connection: connection, credential: { try await tokens.sessionToken($0) }, space: space,
+      observerRun: { observer, _, body in
+        let token = tokens.scriptToken(.observer(observer))
+        defer { tokens.revokeScript(token) }
+        return try await body(token)
+      },
+    ) { tools in
+      LoopConfig(
+        executeTool: { invocation in
+          try await tools.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
+        },
+        inference: { request in try await inference(request) },
+        budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
+      )
+    }
+    let catalog = groupCatalog(space: space, access: InferenceAccess())
+    let owner = withDependencies {
+      $0[SessionEffects.self] = worker.sessionEffects
+    } operation: {
+      Hub(
+        space: space, machines: machineSeam(hub: hub),
+        resolveModelExecutor: modelExecutorResolver(space: space),
+        resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+        prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
+      )
+    }
     let runtime = SessionRuntime(execution: worker, owner: owner, tokens: tokens, connection: connection)
     let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     worker.start()
@@ -368,8 +382,7 @@ private func until(
       let id = try await harness.createSession()
       try await harness.store.markErrored(SessionID(id), message: "provider exploded")
       // The note is mail to the owner's cell, which takes it a moment after the commit.
-      _ = harness.store.runtime.worker()
-      harness.store.runtime.poke(person: "owner")
+      harness.space.worker.poke(PersonCell.ID("owner").recipient)
       while harness.store.notifications(recipient: "owner").isEmpty { await Task.yield() }
 
       let before = await harness.stdout.text
@@ -397,12 +410,7 @@ private func until(
       }
       let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
       let requester = try await harness.store.createSession(group: .shared, title: "requester", kind: .agent, createdBy: "owner", model: .init(provider: "testing", model: "test-model", effort: "high"))
-      try await harness.space.writer.write { db in
-        try db.execute(
-          sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?",
-          arguments: ["contractor:retired", "{}", requester.rawValue],
-        )
-      }
+      try await harness.store.markInterrupted(requester)
       let root = try await harness.store.createSession(group: .shared, title: "coder", kind: .task, parent: requester, createdBy: requester.rawValue, executor: model)
       let child = try await harness.store.createSession(group: .shared, title: "proxy", kind: .task, parent: root, createdBy: root.rawValue, executor: model)
       let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)

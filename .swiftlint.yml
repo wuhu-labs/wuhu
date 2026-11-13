@@ -5,10 +5,7 @@ excluded:
 
 only_rules:
   - duplicate_conditions
-  - testable_import_outside_tests
   - custom_rules
-  - no_unchecked_sendable
-  - no_observable_object
   - superfluous_disable_command
   - blanket_disable_command
 
@@ -19,6 +16,24 @@ blanket_disable_command:
   severity: error
 
 custom_rules:
+  testable_import_outside_tests:
+    excluded: '(^|/)[^/]*Tests(/|$)'
+    regex: '@\s*testable\b'
+    match_kinds: [keyword, identifier, typeidentifier, attribute.builtin, attribute.id]
+    message: 'Use ordinary imports outside test folders'
+    severity: error
+  no_unchecked_sendable:
+    included: '(^|/)Sources(/|$)'
+    regex: '@\s*unchecked\b'
+    match_kinds: [keyword, identifier, typeidentifier, attribute.builtin, attribute.id]
+    message: 'Use checked Sendable conformance'
+    severity: error
+  no_observable_object:
+    included: '(^|/)Sources(/|$)'
+    regex: '\bObservableObject\b|@\s*(?:(?:Combine\.)?Published|(?:SwiftUI\.)?ObservedObject)\b'
+    match_kinds: [typeidentifier, attribute.builtin, attribute.id]
+    message: 'Use Swift Observation and TCA stores'
+    severity: error
   ban_disable_requires_reason:
     regex: '(?m)//\h*swiftlint:(?!disable:next\h+no_\w+\h+-\h+\S[^\r\n]*$)[^\r\n]*\bno_\w+\b[^\r\n]*'
     match_kinds: [comment]

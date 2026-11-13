@@ -63,8 +63,8 @@ import WuhuAI
 
       let space = try Space.open(file: file)
       let upgraded = SessionExecution(space: space, loopConfig: makeConfig())
-      upgraded.start()
       let id = try await space.sessions.createSession(group: .shared, title: "upgraded", kind: .agent, createdBy: "morgan", model: .test)
+      upgraded.start()
       #expect(try await space.sessions.record(id).title == "upgraded")
       await upgraded.shutdown()
       let columns = try await DatabaseQueue(path: file.path).read { db in try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('session_state')") }
@@ -76,11 +76,12 @@ import WuhuAI
   @Test func aReplyWithAPolicyArmsTheWakeAndThePingIsAnInference() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 5)
       let script = InferenceScript([Fix.replying("hi", warming: schedule), Fix.replying("still here", warming: schedule)])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -102,10 +103,11 @@ import WuhuAI
   @Test func aReplyWithoutAPolicyLeavesNoWake() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let script = InferenceScript([Fix.replying("hi")])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply is answered") { script.count == 1 && turn(space, id)?.turn == .idle }
         #expect(turn(space, id)?.warming == nil)
@@ -118,7 +120,6 @@ import WuhuAI
   @Test func maxPingsEndsWarming() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 2)
       let script = InferenceScript([
         Fix.replying("hi", warming: schedule),
@@ -126,7 +127,9 @@ import WuhuAI
         Fix.replying("two", warming: schedule),
       ])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -151,7 +154,6 @@ import WuhuAI
   @Test func aRealInputResetsTheCountAndAPingsReplyDoesNot() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 5)
       let script = InferenceScript([
         Fix.replying("hi", warming: schedule),
@@ -159,7 +161,9 @@ import WuhuAI
         Fix.replying("answer", warming: schedule),
       ])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -181,11 +185,12 @@ import WuhuAI
   @Test func aWakePastTheCellIdleIsBroughtBackByTheScanAndPingsOnce() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 100, lifetimeSeconds: 1000, maxPings: 5)
       let script = InferenceScript([Fix.replying("hi", warming: schedule), Fix.replying("still here", warming: schedule)])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -202,11 +207,11 @@ import WuhuAI
   @Test func aWakePastTheLifetimeEndsWarmingWithoutAnInference() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 15, maxPings: 10)
       let script = InferenceScript([Fix.replying("hi", warming: schedule)])
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
       first.start()
       try await first.enqueue(item: Fix.message("hello"), to: id)
       try await until("the reply") { script.count == 1 }
@@ -228,11 +233,12 @@ import WuhuAI
   @Test func aHeldSessionIsNotPinged() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 5)
       let script = InferenceScript([Fix.replying("hi", warming: schedule)])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -248,7 +254,6 @@ import WuhuAI
   @Test func aFailedPingEndsWarmingAndTheSessionTakesTheNextInput() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 5)
       let script = InferenceScript([
         Fix.replying("hi", warming: schedule),
@@ -256,7 +261,9 @@ import WuhuAI
         Fix.replying("after"),
       ])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -279,7 +286,6 @@ import WuhuAI
   @Test func aPingsToolContinuationThatFailsLeavesTheToolResultsLast() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 5)
       let script = InferenceScript([
         Fix.replying("hi", warming: schedule),
@@ -289,7 +295,9 @@ import WuhuAI
       ])
       let exec = ExecScript { _ in .exec(.init(output: "ok", exitCode: 0)) }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -315,7 +323,6 @@ import WuhuAI
   @Test func aPingInFlightAcrossItsDeadlineSpendsNothingMore() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 1000, maxPings: 1)
       let gate = Latch()
       let script = InferenceScript([
@@ -326,7 +333,9 @@ import WuhuAI
         },
       ])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -354,7 +363,6 @@ import WuhuAI
   @Test func aPingsReplyThatCompactsKeepsItsBudget() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 1)
       let call = ToolCall(id: "call_c", name: "compact", arguments: .object(["summary": .string("what happened")]))
       let script = InferenceScript([
@@ -363,7 +371,9 @@ import WuhuAI
         Fix.replying("on with it", warming: schedule),
       ])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -382,7 +392,6 @@ import WuhuAI
   @Test func aPingsCompactedContinuationThatFailsEndsWarming() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 100, maxPings: 1)
       let call = ToolCall(id: "call_c", name: "compact", arguments: .object(["summary": .string("what happened")]))
       let script = InferenceScript([
@@ -391,7 +400,9 @@ import WuhuAI
         Fix.failing(.rateLimited(retryAt: nil)),
       ])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -410,7 +421,6 @@ import WuhuAI
   @Test func aWithdrawnDelayedInputDoesNotRefillTheBudgetOfThePingItInterrupted() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 1000, maxPings: 1)
       let gate = Latch()
       let script = InferenceScript([
@@ -422,7 +432,9 @@ import WuhuAI
         Fix.replying("after real input", warming: schedule),
       ])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }
@@ -459,7 +471,6 @@ import WuhuAI
   @Test func aPointerCompactionAcrossTheWarmingDeadlineDoesNotRefillThePingsBudget() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
-      let id = try await agent(space)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 1000, maxPings: 1)
       let gate = Latch()
       let preparing = Box(false)
@@ -475,7 +486,9 @@ import WuhuAI
         await gate.wait(unless: { Task.isCancelled })
         return nil
       }
-      try await runService(space, config) { execution in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await agent(space)
+      try await runService(service) { execution in
         try await execution.enqueue(item: Fix.message("hello"), to: id)
         try await until("the reply") { script.count == 1 }
         try await until("warming is armed") { turn(space, id)?.warming != nil }

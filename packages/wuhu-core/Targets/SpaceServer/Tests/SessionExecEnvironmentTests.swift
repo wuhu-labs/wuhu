@@ -2,6 +2,7 @@ import Clocks
 import Dependencies
 import DeterministicDependencies
 import Fetch
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -22,6 +23,7 @@ import Testing
   @Test func aSessionsExecRunsWithItsTokenMaskedAndAHumansWithout() async throws {
     let space = try makeMachineSpace()
     let tokens = try await testTokens(space: space, spaceURL: "https://space.test:5530")
+    _ = try await SessionToolFixture(space: space, tokens: tokens)
     let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
     let (machine, _) = try await addMachine(server)
     let sessionID = try await makeEnvironmentSession(space)
@@ -57,6 +59,7 @@ import Testing
   @Test func theSignedExecCredentialKeepsTheExecsOriginalTimeout() async throws {
     let space = try makeMachineSpace()
     let tokens = try await testTokens(space: space, spaceURL: "https://space.test:5530")
+    _ = try await SessionToolFixture(space: space, tokens: tokens)
     let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
     let (machine, _) = try await addMachine(server)
     let sessionID = try await makeEnvironmentSession(space)

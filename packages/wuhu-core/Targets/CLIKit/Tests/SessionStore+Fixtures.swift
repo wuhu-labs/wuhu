@@ -3,12 +3,13 @@
 #else
   import Foundation
 #endif
+@testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import Wuwei
 
-/// Session writes the cell makes, as fixtures: a test sets a session's state with them directly.
 extension SessionStore {
   func markInterrupted(_ id: SessionID) async throws {
-    try await rows { try $0.markInterrupted(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.interrupt() }
   }
 }

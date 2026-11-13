@@ -136,5 +136,5 @@ extension SpaceCell {
 
 extension SessionStore {
   /// The space's own cell: what spans its groups.
-  var space: SpaceCell { runtime.worker().cell(SpaceCell.ID("space")) }
+  var spaceCell: SpaceCell { runtime.worker().cell(SpaceCell.ID("space")) }
 }

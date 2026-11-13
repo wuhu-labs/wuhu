@@ -15,6 +15,16 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let seen = Box<[[TranscriptLine]]>([])
+      let committed = AsyncStream<Void>.makeStream()
+      defer { committed.continuation.finish() }
+      let config = makeConfig(inference: { request in
+        seen.withLock { $0.append(request.lines) }
+        var reply = Fix.reply("recovered")
+        reply.committed = { _ in committed.continuation.yield(()) }
+        return reply
+      })
+      let service = SessionExecution(space: space, loopConfig: config)
       let id = try await sessions.createSession(group: .shared, title: "queue recovery", kind: .agent, createdBy: "morgan", model: .test)
       try await sessions.put(id, input: Fix.message("first", message: "first"))
       try await sessions.put(id, input: Fix.message("bad", message: "bad"))
@@ -23,15 +33,8 @@ import Testing
         try db.execute(sql: "UPDATE session_queue SET payload = '{}' WHERE session_id = ? AND id = 2", arguments: [id.rawValue])
       }
       try await sessions.markErrored(id, message: "bad queue")
-      let seen = Box<[[TranscriptLine]]>([])
-      let committed = AsyncStream<Void>.makeStream()
-      defer { committed.continuation.finish() }
-      try await runService(space, makeConfig(inference: { request in
-        seen.withLock { $0.append(request.lines) }
-        var reply = Fix.reply("recovered")
-        reply.committed = { _ in committed.continuation.yield(()) }
-        return reply
-      })) { service in
+      try await until("the queue error is visible") { try await sessions.record(id).errorMessage == "bad queue" }
+      try await runService(service) { service in
         _ = try await service.restart(id, executor: nil, note: "Started over.")
         for await _ in committed.stream { break }
         #expect(seen.value.count == 1)
@@ -56,11 +59,6 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
-      let id = try await sessions.createSession(group: .shared, title: "restart", kind: kind, parent: kind == .task ? parent : nil, createdBy: "morgan", executor: .kernel(.test))
-      _ = try await sessions.armSubscription(id, slot: .init(id: .init("timer.keep"), kind: .timer(.cron("* * * * *"), message: "later")), nextFireAt: anchor.addingTimeInterval(60))
-      try await sessions.markInterrupted(id)
-      try await sessions.enqueue(id, input: Fix.message("waiting before restart"))
       let seen = Box<[[TranscriptLine]]>([])
       let committed = AsyncStream<Void>.makeStream()
       defer { committed.continuation.finish() }
@@ -70,7 +68,13 @@ import Testing
         reply.committed = { _ in committed.continuation.yield(()) }
         return reply
       })
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
+      let id = try await sessions.createSession(group: .shared, title: "restart", kind: kind, parent: kind == .task ? parent : nil, createdBy: "morgan", executor: .kernel(.test))
+      _ = try await sessions.armSubscription(id, slot: .init(id: .init("timer.keep"), kind: .timer(.cron("* * * * *"), message: "later")), nextFireAt: anchor.addingTimeInterval(60))
+      try await sessions.markInterrupted(id)
+      try await sessions.enqueue(id, input: Fix.message("waiting before restart"))
+      try await runService(service) { service in
         _ = try await service.restart(id, executor: nil, note: "Started over. Catch up before acting.")
         for await _ in committed.stream { break }
         let lines = try #require(seen.value.first)

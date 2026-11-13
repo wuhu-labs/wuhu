@@ -1,5 +1,9 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import class MainHub.Hub
 import SessionDomain
@@ -12,7 +16,8 @@ import Testing
   @Test func anEmptySpaceSaysSoRatherThanListingNothing() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      let loop = try await ToolFixture(space: space)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .templates(result) = try await world.run("templates", .object([:])) else {
         throw Mismatch("templates failed")
@@ -25,6 +30,7 @@ import Testing
   @Test func templatesCarryTheSpecCreateSessionWouldInherit() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write(
         "/templates/triage/template.json",
         Data(#"{"kind":"task","provider":"test","model":"test-model","effort":"high","description":"Triage the inbox."}"#.utf8),
@@ -35,7 +41,7 @@ import Testing
         Data(#"{"kind":"agent"}"#.utf8),
         ifMatch: nil,
       )
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .templates(result) = try await world.run("templates", .object([:])) else {
         throw Mismatch("templates failed")

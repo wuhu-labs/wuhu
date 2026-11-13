@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -234,7 +235,9 @@ private struct Rig {
   @Test func aBackgroundExecOutlivesItsCallerAndTellsItsSessionHowItEnded() async throws {
     let rig = try await Rig()
     let hub = MachineHub(space: rig.space)
+    _ = try await SessionToolFixture(space: rig.space)
     let session = try await rig.space.sessions.createSession(group: .shared, title: "s", kind: .agent, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
+    try await rig.space.sessions.markInterrupted(session)
     let minted = try await rig.space.reserveExec(machine: rig.machine.id, caller: session.rawValue, toolCall: ToolCallID(rawValue: "call"))
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["gate", "a", "b"]))
@@ -255,7 +258,7 @@ private struct Rig {
         rig.side.release()
         #expect(try await eventually(diagnostics: { rig.diagnostic(minted.id, events: events) }) { try await rig.space.execRecord(minted.id)?.terminal == .exited(code: 5) })
         #expect(try await eventually {
-          try await rig.space.sessions.deliverMail()
+          try await rig.space.sessions.deliverMail(session)
           return try await rig.space.sessions.undrainedInputs(session).contains { entry in
             guard case let .notification(n) = entry.input else { return false }
             return n.content.text.hasPrefix("exec.\(minted.id.rawValue) ended") && n.content.text.hasSuffix("ab")

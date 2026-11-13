@@ -98,7 +98,7 @@ struct CompactionJob {
         )
         let after = TranscriptItem.notification(SystemNotification(
           id: client.uuid(), timestamp: client.now(), kind: .context, subscriptionID: SubscriptionID("replay-handoff"),
-          content: .init(text: "Portable replay handoff completed. Earlier tool calls have their committed receipts; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the carried context; re-read files/history as needed."),
+          content: .init(text: "Portable replay handoff completed. Earlier tool calls remain recorded in the carried transcript; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the carried context; re-read files/history as needed."),
         )).lines(session: params.session)
         let tail = try stored.filter { !$0.key.hasPrefix(LineKey.head) && $0.key != LineKey.pressure }.compactMap { stored in
           try stored.line().carried(portable: true).map { (position: stored.position, line: $0) }

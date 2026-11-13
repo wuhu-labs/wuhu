@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import GRDB
+import LoopCore
 import SessionDomain
 import struct SpaceContract.GroupID
 @testable import SpaceCore

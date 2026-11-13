@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -10,7 +11,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct HumanAgentDMTests {
   @Test func personAliasesAndCanonicalIDsOpenOneDMAndUnknownPeopleAreRefused() async throws {
-    let space = try Space.inMemory()
+    let space = registerSessionExecution(try Space.inMemory())
     try await space.registerPeople(["alice-id", "bob-id"])
     _ = try await space.setUserProfile(principal: "bob-id", handle: "bob", displayName: nil)
     _ = try await space.setUserProfile(principal: "bob-id", handle: "renamed", displayName: nil)
@@ -29,7 +30,7 @@ import Testing
   }
 
   @Test func unenrolledDevSeatCanOpenAPersonDM() async throws {
-    let space = try Space.inMemory()
+    let space = registerSessionExecution(try Space.inMemory())
     try await space.registerPeople(["bob-id"])
     _ = try await space.setUserProfile(principal: "bob-id", handle: "bob", displayName: nil)
     let delivery = try await space.sessions.post(.dm(with: "BOB"), messageID: .init("dev-dm"), sender: Sender(id: "owner", timeZone: .gmt), content: .init(text: "hello"))
@@ -39,7 +40,7 @@ import Testing
 
   @Test func openingAHumanSessionDMIsRefusedForAgentsAndTasksFromEitherSide() async throws {
     try await withSessionDeps {
-      let space = try Space.inMemory()
+      let space = registerSessionExecution(try Space.inMemory())
       try await space.registerPeople(["carol", "dave"])
       let store = space.sessions
       let agent = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "carol", model: .test)
@@ -65,7 +66,7 @@ import Testing
 
   @Test func oldHumanSessionDMsRemainReadableButNeitherSideCanPost() async throws {
     try await withSessionDeps {
-      let space = try Space.inMemory()
+      let space = registerSessionExecution(try Space.inMemory())
       try await space.registerPeople(["carol", "dave"])
       let store = space.sessions
       let agent = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "carol", model: .test)
@@ -97,7 +98,7 @@ import Testing
 
   @Test func humanHumanDMsStillPostAndNotify() async throws {
     try await withSessionDeps {
-      let space = try Space.inMemory()
+      let space = registerSessionExecution(try Space.inMemory())
       try await space.registerPeople(["carol", "dave"])
       let store = space.sessions
       let delivery = try await store.post(.dm(with: "dave"), messageID: .init("m1"), sender: Sender(id: "carol", timeZone: .gmt), content: .init(text: "hi"))

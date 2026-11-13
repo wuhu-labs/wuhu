@@ -2,6 +2,7 @@ import Crypto
 import Dependencies
 import DeterministicDependencies
 import Fetch
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -70,7 +71,7 @@ import Testing
     let otherFile = try await reserveFile(in: space, machine: other.machine.id, kind: "read.v1")
     let otherPointer = try #require(space.machineBuffers.put(Data("untouched".utf8), operation: otherFile.operation, channel: "data", from: 0))
     _ = try await space.fs(.settings).write("/_/machines/untouched/AGENTS.md", Data("other notes".utf8), ifMatch: nil)
-    let before = try await space.currentRevision()
+    let before = try await space.currentRevision(in: .shared)
     try await space.deleteMachine(machine.id, by: .shared(.anonymous))
     try await until("posted deletion cleans the owning cell and buffers", timeout: .seconds(4)) {
       space.worker.cell(MachineCell.ID(machine.id.rawValue)).presence.state == "deleted"
@@ -82,7 +83,7 @@ import Testing
     #expect(space.worker.cell(MachineCell.ID(machine.id.rawValue)).fileOperation(fileRequest.operation) == nil)
     #expect(space.worker.cell(MachineCell.ID(machine.id.rawValue)).fileOperation(writeRequest.operation) == nil)
     #expect(space.worker.cell(MachineCell.ID(other.machine.id.rawValue)).fileOperation(otherFile.operation)?.request == otherFile)
-    #expect(try await space.currentRevision() == before + 1)
+    #expect(try await space.currentRevision(in: .shared) == before + 1)
     try await space.close()
 
     let reopened = try Space.open(file: file)

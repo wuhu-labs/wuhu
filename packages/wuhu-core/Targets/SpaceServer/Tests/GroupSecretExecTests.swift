@@ -1,6 +1,7 @@
 import struct Credentials.SpaceSecretStores
 import Dependencies
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -31,6 +32,7 @@ import Wuwei
     try await stores.group("shared").set("API_KEY", to: secret)
     let space = try makeMachineSpace()
     let tokens = try await testTokens(space: space, spaceURL: "https://space.test")
+    _ = try await SessionToolFixture(space: space, tokens: tokens)
     let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens, secrets: stores)
     let (machine, _) = try await addMachine(server)
     let session = try await space.sessions.createSession(group: .shared, title: "secrecy", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))

@@ -4,15 +4,12 @@
   import Foundation
 #endif
 
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 
 extension Space {
   public func storeImage(_ data: Data) async throws -> String {
-    let blob = try await blobs.stage(Array(data))
-    try await writer.write { db in try Substrate.record(blob, in: db) }
-    return blob.hash
+    try await bucket.put(Array(data))
   }
 
   // Only the kernel's own request path gets to defer image bytes to a
@@ -32,8 +29,6 @@ extension Space {
   }
 
   public func blobBytes(_ hash: String) async throws -> [UInt8] {
-    try await blobs.read(writer, prefetching: { _ in [hash] }) { db, cache in
-      try cache.blob(of: hash, in: db).content
-    }
+    try await bucket.bytes(hash)
   }
 }

@@ -3,15 +3,9 @@ import StructuredQueriesSQLite
 
 @Table("revisions")
 struct RevisionRow {
-  @Column("rev", primaryKey: true) var rev: Int64
+  @Column("rev") var rev: Int64
   @Column("mtime") var mtime: String
   @Column("grp") var grp: String
-}
-
-@Table("blobs")
-struct BlobRow {
-  @Column("hash", primaryKey: true) var hash: String
-  @Column("content") var content: [UInt8]
 }
 
 @Table("fs_versions")

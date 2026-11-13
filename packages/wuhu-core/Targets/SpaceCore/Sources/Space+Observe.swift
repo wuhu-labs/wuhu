@@ -10,7 +10,7 @@ extension Space {
     if let from {
       after = from
     } else {
-      after = Rev(try await currentRevision())
+      after = Rev(try await currentRevision(in: group))
     }
     let (stream, continuation) = AsyncStream<FSCommit>.makeStream()
     guard let peer = worker.attach(FileStream.self, to: ObservationJob.address, opening: .init(glob: glob, group: group, after: after.value, principal: principal), output: { output in

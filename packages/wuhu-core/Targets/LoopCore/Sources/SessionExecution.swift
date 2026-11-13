@@ -18,7 +18,7 @@ import Wuwei
 import SessionDomain
 import SpaceCore
 
-/// The sessions' runtime: the loops, the tools and the scripts, the handler slots' observer cells, and the verbs main's routes take for a session. Each loop is a session cell on wuwei's shared backend over `space`'s database. Nothing runs until `start`: mail waits in the store.
+/// Composing an execution registers its cells and jobs immediately; `start` begins the worker scan.
 public struct SessionExecution: Sendable {
   private let space: Space
   private let client: LoopClient
@@ -82,24 +82,23 @@ public struct SessionExecution: Sendable {
       )
     }
     store = space.sessions
+    let worker = space.worker
+    registerSessionCells(in: space)
+    worker.provide(client)
+    for kind: Registration in [
+      .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self), .job(ScriptJob.self),
+    ] {
+      worker.register(kind)
+    }
   }
 
   private var loops: Wuwei.Worker {
     space.worker
   }
 
-  /// Gives the space's worker the loops' kinds and starts it: it takes the mail that waited and whatever a restart left to run.
   public func start() {
     let loops = loops
     guard !loops.isStarted else { return }
-    // The client first: a worker hosts a kind from the moment it is registered, and a poke may land before `start`.
-    loops.provide(client)
-    for kind: Registration in [
-      .cell(SessionCell.self), .cell(ObserverCell.self),
-      .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self), .job(ScriptJob.self),
-    ] {
-      loops.register(kind)
-    }
     loops.start()
   }
 
@@ -211,14 +210,14 @@ public struct SessionExecution: Sendable {
     }, outcome: { [loops] in loops.job($0).outcome() }) == nil)
   }
 
-  /// Arms a slot for the session's tool call, in a step of its cell; a call already answered gets that answer.
-  public func arm(_ session: SessionID, _ arming: Arming, answering call: ToolCallID) async throws -> ToolResultPayload {
-    try await loops.call(SessionCell.ID(session.rawValue)) { try $0.arm(arming, answering: call) }
+  /// Arms a slot for the session's tool call in a step of its cell.
+  public func arm(_ session: SessionID, _ arming: Arming) async throws -> ToolResultPayload {
+    try await loops.call(SessionCell.ID(session.rawValue)) { try $0.arm(arming) }
   }
 
   /// Ends a slot of the session's for a call of its own; one it does not have throws a `notFound` `ToolProblem`.
-  public func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: ToolCallID) async throws -> ToolResultPayload {
-    guard let answer = try await loops.call(SessionCell.ID(session.rawValue), { try $0.disarm(subscription, answering: call) }) else {
+  public func disarm(_ session: SessionID, _ subscription: SubscriptionID) async throws -> ToolResultPayload {
+    guard let answer = try await loops.call(SessionCell.ID(session.rawValue), { try $0.disarm(subscription) }) else {
       throw ToolProblem("\(subscription.rawValue) is not armed: it already ended, or you never had it", code: "notFound")
     }
     return answer
@@ -246,3 +245,11 @@ public struct SessionExecution: Sendable {
 
 /// Runs a group observer's handler: `body` gets the token minted for this firing alone, which ends with the call, and so does every machine process its script started.
 public typealias ObserverRun = @Sendable (Observer, _ script: String, (String) async throws -> ScriptHandlerResult) async throws -> ScriptHandlerResult
+
+public func registerSessionCells(in space: Space) {
+  let worker = space.worker
+  worker.provide(space.sessions)
+  for kind: Registration in [.cell(SessionCell.self), .cell(ObserverCell.self)] {
+    worker.register(kind)
+  }
+}

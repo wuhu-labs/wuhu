@@ -14,9 +14,7 @@ public struct ToolProblem: Error {
   }
 }
 
-// A session that exists but was not finished (its template not cloned, its
-// brief not handed over): the failure names it, so the caller can find it and
-// a retry of the same call can finish it.
+// Creation committed, but its template or brief did not finish; the error names the session left behind.
 public struct IncompleteSession: Error, Sendable {
   public static let code = "incompleteSession"
   public var id: SessionID

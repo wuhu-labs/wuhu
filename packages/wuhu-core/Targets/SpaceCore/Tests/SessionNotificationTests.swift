@@ -1,6 +1,7 @@
 import Dependencies
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -31,6 +32,7 @@ struct SessionNotificationTests {
       try await store.put(sid, input: SessionFix.message("do it"))
       _ = try await store.drainQueue(sid)
       try await store.markErrored(sid, message: "provider exploded")
+      try await store.deliverMail()
 
       let rows = try await store.inbox("owner")
       #expect(rows.map(\.kind) == [.sessionErrored])

@@ -8,6 +8,7 @@ import SessionDomain
 import SpaceContract
 import SpaceCore
 @testable import SpaceServer
+import SpaceTools
 import Synchronization
 import Testing
 
@@ -48,10 +49,27 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
   @Test(arguments: [false, true])
   func contentOriginUsesServerHostingConfiguration(flat: Bool) async throws {
     let harness = try Harness(origin: "https://space.test:5530", contentHostPattern: flat ? "{group}--space.test:5530" : nil)
+    let owner = try await harness.space.addAccount(kind: .human, name: nil).id
+    let open = try await harness.space.createGroup(alias: "readable", owner: owner)
+    let hidden = try await harness.space.createGroup(alias: "hidden", owner: owner)
+    try await harness.space.setVisibility(.private, of: hidden, by: .anonymous, acting: hidden)
+    let personal = try await harness.space.ensurePersonalGroup(account: owner)
+    let groups: [GroupID] = [.shared, .settings, open, hidden, personal]
+    for group in groups {
+      _ = try await harness.space.fs(group).write("/module.js", Data(group.rawValue.utf8), ifMatch: nil)
+    }
     let response = try await harness.api(Request(url: URL(string: "https://space.test:5530/v1/context")!))
     #expect(response.status == .ok)
     var context = try #require(try await json(response).object)
-    #expect(context.removeValue(forKey: "rev") == .integer(try await harness.space.currentRevision()))
+    let revisions = try #require(context.removeValue(forKey: "revs")?.object)
+    #expect(Set(revisions.keys) == Set([GroupID.shared, .settings, open].map(\.rawValue)))
+    let files = SpaceToolContext(space: harness.space, principal: .shared(.anonymous))
+    for group in groups {
+      let address = "wuhu://\(group.rawValue).localspace/module.js"
+      let readable = (try? await files.readBytes(address)) != nil
+      #expect(revisions.keys.contains(group.rawValue) == readable, "\(group.rawValue)")
+      if readable { #expect(try await revisions[group.rawValue]?.intValue == harness.space.currentRevision(in: group)) }
+    }
     #expect(JSONValue.object(context) == ["session": .null, "group": "shared", "contentHost": .string(flat ? "https://shared--space.test:5530" : "https://shared.space.test:5530")])
   }
 

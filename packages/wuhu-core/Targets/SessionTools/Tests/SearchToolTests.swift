@@ -1,5 +1,9 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import class MainHub.Hub
 import SessionDomain
@@ -12,10 +16,11 @@ import Testing
   @Test func findHonorsMatchLimitAndResumesWithStep() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       for name in ["a", "b", "c", "d", "e"] {
         _ = try await space.fs(.shared).write("/src/\(name).swift", Data("x".utf8), ifMatch: nil)
       }
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .find(first) = try await world.run(
         "find", .object(["glob": "**/*.swift", "path": "/src", "match_limit": 2]),
@@ -37,10 +42,11 @@ import Testing
   @Test func findSaysWhatItSkippedAndIncludesItOnRequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/src/.gitignore", Data("gen/\n".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/src/a.txt", Data("x".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/src/gen/b.txt", Data("x".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .find(plain) = try await world.run(
         "find", .object(["glob": "**/*.txt", "path": "/src"]),
@@ -60,10 +66,11 @@ import Testing
   @Test func grepMatchesUnderTheGivenPath() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/src/a.swift", Data("let alpha = 1\nlet beta = 2".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/src/b.swift", Data("let beta = 3".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/elsewhere/c.swift", Data("let beta = 4".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .grep(result) = try await world.run("grep", .object(["pattern": "beta", "path": "/src"])) else {
         throw Mismatch("grep failed")
@@ -78,8 +85,9 @@ import Testing
   @Test func queryRunsThroughTheSandbox() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: session)
 
       guard case let .query(rows) = try await world.run(
         "query", .object(["sql": "SELECT id, title FROM sessions ORDER BY id"]),
@@ -95,7 +103,8 @@ import Testing
   @Test func queryStopsReadingPastTheScriptBuffer() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      let loop = try await ToolFixture(space: space)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       let huge = try await world.run("query", .object([
         "sql": "SELECT zeroblob(68000000)",

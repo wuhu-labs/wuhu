@@ -14,7 +14,7 @@ struct AttachmentFolders: SpaceVFS {
   let base: any SpaceVFS
   let runtime: SpaceRuntime
   let writer: any DatabaseWriter
-  let blobs: BlobStore
+  let bucket: Bucket
   let group: GroupID
 
   private static let root = ["_", "conversations"]
@@ -23,12 +23,12 @@ struct AttachmentFolders: SpaceVFS {
   func read(_ path: String) async throws -> (VersionToken, Data) {
     guard let components = inside(path) else { return try await base.read(path) }
     let hash = try file(components, at: path).blob
-    return (Self.token, try await blobs.read(writer) { db, cache in Data(try cache.blob(of: hash, in: db).content) })
+    return (Self.token, Data(try await bucket.bytes(hash)))
   }
 
   func reader(_ path: String) async throws -> any SpaceFileReader {
     guard let components = inside(path) else { return try await base.reader(path) }
-    return BlobReader(blobs: blobs, database: writer, hash: try file(components, at: path).blob)
+    return BucketReader(bucket: bucket, hash: try file(components, at: path).blob)
   }
 
   // The journal refuses every mutation under `/_/conversations/`: the paths are reserved.

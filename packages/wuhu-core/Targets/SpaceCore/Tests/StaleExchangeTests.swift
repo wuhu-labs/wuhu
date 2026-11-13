@@ -1,6 +1,7 @@
 import Dependencies
 import DeterministicDependencies
 import Foundation
+@testable import LoopCore
 import Scratch
 import SessionDomain
 @testable import SpaceCore
@@ -38,7 +39,7 @@ import Testing
 
     func compacts(keeping kept: Range<Int>? = nil) async throws {
       let head = GenerationHead(id: UUID(), timestamp: ticker.tick(), summary: "folded", snapshot: .init(), runningWork: [])
-      _ = try await store.rows { try $0.writeGeneration(agent, head: head, kept: kept) }
+      _ = try await space.worker.call(SessionCell.ID(agent.rawValue)) { try $0.rows.writeGeneration(agent, head: head, kept: kept) }
     }
 
     func stored() async throws -> [StoredTranscriptLine] {
@@ -59,11 +60,12 @@ import Testing
     let agent = try await space.sessions.createSession(
       group: .shared, title: "A", kind: .agent, createdBy: "owner", model: .test, snapshot: .init(),
     )
+    try await space.sessions.markInterrupted(agent)
     return Rig(space: space, agent: agent, ticker: ticker)
   }
 
   func opened(_ ticker: Ticker, _ open: () throws -> Space) throws -> Space {
-    try withDependencies { $0.date = DateGenerator { ticker.tick() } } operation: { try open() }
+    try withDependencies { $0.date = DateGenerator { ticker.tick() } } operation: { registerSessionExecution(try open()) }
   }
 
   func stamp(_ text: String) -> String {
@@ -190,6 +192,7 @@ import Testing
     _ = try await rig.drained()
     try await rig.replies("m2", to: "m1", "42")
     try await rig.store.restart(rig.agent)
+    try await rig.store.markInterrupted(rig.agent)
     try await rig.says("m3", "and the trace?")
     let a = rig.agent.rawValue
     #expect(try await rig.drained().map(stamp) == [

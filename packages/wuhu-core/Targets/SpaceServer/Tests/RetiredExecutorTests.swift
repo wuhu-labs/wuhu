@@ -7,16 +7,21 @@ import Fetch
   import Foundation
 #endif
 import JSONValue
+@testable import LoopCore
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
+import StructuredQueries
 import Testing
 
 private func retiredSession(_ harness: SessionHarness) async throws -> SessionID {
   let id = try await harness.createSession()
   let retired = SessionExecutor.retired(kind: "claude-code")
-  try await harness.store.writer.write { db in
-    try db.execute(sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?", arguments: [retired.kind, retired.configJSON, id.rawValue])
+  try await harness.space.worker.call(SessionCell.ID(id.rawValue)) { cell in
+    try cell.db.execute(RetiredFixtureRow.where { $0.id.eq(id.rawValue) }.update {
+      $0.executor = retired.kind
+      $0.executorConfig = retired.configJSON
+    })
   }
   return id
 }
@@ -35,6 +40,7 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
       let id = try await retiredSession(harness)
       try await harness.store.markErrored(id, message: "executor no longer supported")
       try await harness.runtime.execution.interrupt(id)
+      try await harness.store.deliverMail(id)
       let record = try await harness.store.record(id)
       #expect(record.work == .errored)
       #expect(record.hold == .normal)
@@ -74,7 +80,7 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
         code: "invalidArgument",
         message: "template legacy: unknown executor: claude-code",
       )
-      #expect(try await harness.store.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sessions") } == 0)
+      #expect(try await harness.space.query("SELECT id FROM sessions", as: .shared(.anonymous)).rows.isEmpty)
     }
   }
 
@@ -124,4 +130,11 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
       }
     }
   }
+}
+
+@Table("sessions")
+private struct RetiredFixtureRow {
+  let id: String
+  var executor: String
+  @Column("executor_config") var executorConfig: String
 }

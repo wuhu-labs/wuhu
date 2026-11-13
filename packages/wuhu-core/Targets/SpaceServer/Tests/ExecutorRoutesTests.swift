@@ -131,7 +131,7 @@ import Testing
         SessionHomeOutput.self,
         from: try #require(JSONValue.parse(try await harness.get("/v1/session/\(agent.id)/home").text())),
       )
-      #expect(frozen.chain == ["wuhu://system/AGENTS.md", "/AGENTS.md", "wuhu://system/SESSION.md"], "the view shows the prompt's revision, not the latest")
+      #expect(frozen.chain == ["wuhu://system/AGENTS.md", "/AGENTS.md", "wuhu://system/SESSION.md", "/_/sessions/\(agent.id)/AGENTS.md"], "before first inference the view reads live")
       try await harness.store.markInterrupted(SessionID(agent.id))
       try await harness.store.restart(SessionID(agent.id))
 

@@ -1,5 +1,9 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import class MainHub.Hub
 import SessionDomain
@@ -53,6 +57,7 @@ private func rendered(_ path: String) -> String {
   @Test func identicalFilesAcrossCheckoutsLoadOnceAndCompactionResets() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = repoMachine()
       for checkout in ["copy", "third"] {
         machineFS.put("/work/\(checkout)/.git/HEAD", "ref: refs/heads/main", mtime: 1)
@@ -60,7 +65,7 @@ private func rendered(_ path: String) -> String {
         machineFS.put("/work/\(checkout)/.agents/skills/lint/SKILL.md", skillMarkdown, mtime: 1)
         machineFS.put("/work/\(checkout)/README.md", "readme", mtime: 1)
       }
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space))
       let first = try #require(try await readContext(&world, "/work/repo/README.md"))
       #expect(first.text.contains("repo manual"))
       let second = try #require(try await readContext(&world, "/work/copy/README.md"))
@@ -81,12 +86,13 @@ private func rendered(_ path: String) -> String {
   @Test func differentExactTextAlwaysLoadsEvenWithTheSameSkillDescription() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = repoMachine()
       machineFS.put("/work/copy/.git/HEAD", "ref: refs/heads/main", mtime: 1)
       machineFS.put("/work/copy/AGENTS.md", "repo manual\n", mtime: 1)
       machineFS.put("/work/copy/.agents/skills/lint/SKILL.md", skillMarkdown + "\nchanged body", mtime: 1)
       machineFS.put("/work/copy/README.md", "readme", mtime: 1)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space))
       _ = try await readContext(&world, "/work/repo/README.md")
       let second = try #require(try await readContext(&world, "/work/copy/README.md"))
       #expect(second.text.contains("repo manual\n"))
@@ -98,12 +104,13 @@ private func rendered(_ path: String) -> String {
   @Test func aSkillListingNeverSuppressesIdenticalFullInstructions() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = repoMachine()
       machineFS.put("/work/repo/pkg/AGENTS.md", skillMarkdown, mtime: 1)
       machineFS.put("/work/copy/.git/HEAD", "ref: refs/heads/main", mtime: 1)
       machineFS.put("/work/copy/AGENTS.md", skillMarkdown, mtime: 1)
       machineFS.put("/work/copy/README.md", "readme", mtime: 1)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space))
       let first = try #require(try await readContext(&world, "/work/repo/pkg/main.swift"))
       #expect(first.text.contains("<AGENTS.md from=\"\(rendered("/work/repo/pkg/AGENTS.md"))\">\n# Lint\n"), "an AGENTS.md renders without its frontmatter")
       #expect(first.text.contains("Body that must never be inlined"))
@@ -116,9 +123,10 @@ private func rendered(_ path: String) -> String {
   @Test func identicalFullInstructionsAndSkillListingsHaveSeparateDeliveryHistory() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = repoMachine()
       machineFS.put("/work/repo/AGENTS.md", skillMarkdown, mtime: 1)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space))
       let notice = try #require(try await readContext(&world, "/work/repo/README.md"))
       #expect(notice.text.contains("- lint — Run the linter before committing."))
       #expect(notice.text.contains("<AGENTS.md"))
@@ -129,8 +137,9 @@ private func rendered(_ path: String) -> String {
   @Test func theFirstTouchDeliversTheRepositoryFromItsRootDownOnce() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: repoMachine().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: repoMachine().seam) }),
         session: try await makeSession(space),
       )
 
@@ -152,8 +161,9 @@ private func rendered(_ path: String) -> String {
   @Test func descendingLaterDeliversOnlyTheNewFolders() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: repoMachine().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: repoMachine().seam) }),
         session: try await makeSession(space),
       )
 
@@ -170,8 +180,9 @@ private func rendered(_ path: String) -> String {
   @Test func aFolderInNoRepositoryIsRecordedWithoutText() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: repoMachine().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: repoMachine().seam) }),
         session: try await makeSession(space),
       )
 
@@ -185,9 +196,10 @@ private func rendered(_ path: String) -> String {
   @Test func aNonRepositoryFolderTouchedAgainCostsNoStats() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = repoMachine()
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
         session: try await makeSession(space),
       )
 
@@ -201,6 +213,7 @@ private func rendered(_ path: String) -> String {
   @Test func aSiblingUnderARecordedRepositoryDeliversOnlyItselfWithoutStats() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = FakeMachineFS()
       machineFS.put("/a/.git/HEAD", "ref: refs/heads/main", mtime: 1)
       machineFS.put("/a/AGENTS.md", "a manual", mtime: 1)
@@ -209,7 +222,7 @@ private func rendered(_ path: String) -> String {
       machineFS.put("/a/b/z/AGENTS.md", "z manual", mtime: 1)
       machineFS.put("/a/b/z/f", "z", mtime: 1)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
         session: try await makeSession(space),
       )
 
@@ -228,8 +241,9 @@ private func rendered(_ path: String) -> String {
   @Test func aRepositoryNestedInARecordedNonRepositoryFolderIsFound() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: repoMachine().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: repoMachine().seam) }),
         session: try await makeSession(space),
       )
 
@@ -246,8 +260,9 @@ private func rendered(_ path: String) -> String {
   @Test func touchingAParentOfARecordedFolderDeliversNothing() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: repoMachine().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: repoMachine().seam) }),
         session: try await makeSession(space),
       )
 
@@ -259,9 +274,10 @@ private func rendered(_ path: String) -> String {
   @Test func spacePathsLeaveInstructionsToTheSystemPrompt() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/AGENTS.md", Data("space manual".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/docs/a.md", Data("x".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case .read = try await world.run("read", .object(["path": "/docs/a.md"])) else {
         throw Mismatch("space read failed")
@@ -273,8 +289,9 @@ private func rendered(_ path: String) -> String {
   @Test func aCompactionDeliversTheRepositoryAgainOnTheNextTouch() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: repoMachine().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: repoMachine().seam) }),
         session: try await makeSession(space),
       )
 
@@ -290,8 +307,9 @@ private func rendered(_ path: String) -> String {
   @Test func theToolResultHoldsOnlyTheToolOutput() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: repoMachine().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: repoMachine().seam) }),
         session: try await makeSession(space),
       )
 
@@ -305,13 +323,14 @@ private func rendered(_ path: String) -> String {
   @Test func differentTextBeyondTheDisplayCapStillLoads() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = repoMachine()
       let prefix = String(repeating: "a", count: 40 * 1024)
       machineFS.put("/work/repo/AGENTS.md", prefix + "first", mtime: 2)
       machineFS.put("/work/copy/.git/HEAD", "ref: refs/heads/main", mtime: 1)
       machineFS.put("/work/copy/AGENTS.md", prefix + "different", mtime: 1)
       machineFS.put("/work/copy/README.md", "readme", mtime: 1)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space))
       _ = try await readContext(&world, "/work/repo/README.md")
       let second = try #require(try await readContext(&world, "/work/copy/README.md"))
       #expect(second.text.contains("(AGENTS.md truncated at 32KiB)"))
@@ -322,10 +341,11 @@ private func rendered(_ path: String) -> String {
   @Test func enormousAgentsFilesAreCapped() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let machineFS = repoMachine()
       machineFS.put("/work/repo/AGENTS.md", String(repeating: "a", count: 40 * 1024), mtime: 2)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
         session: try await makeSession(space),
       )
 

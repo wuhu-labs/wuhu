@@ -81,7 +81,7 @@ extension Space {
     var documents: [(group: GroupID, path: SpacePath, hash: String, content: [UInt8])] = []
     for head in try await writer.read({ db in try Self.documentHeads(in: db) }) {
       do {
-        let content = try await blobs.read(writer) { db, cache in try cache.blob(of: head.hash, in: db).content }
+        let content = try await bucket.bytes(head.hash)
         documents.append((head.group, head.path, head.hash, content))
       } catch {
         log.warning("\(Self.linksCompaction): skipped \(head.group.rawValue):\(head.path.rawValue), its blob is unreadable: \(error)")

@@ -2,6 +2,7 @@ import InferenceKit
 import struct Instructions.InstructionRenderer
 import struct Instructions.InstructionSourceFailure
 import LoopCore
+import func MainHub.groupModulePath
 import class MainHub.Hub
 import ModelProviders
 import SessionDomain
@@ -48,21 +49,21 @@ private func contextBudget(_ specifier: ModelSpecifier, _ document: ModelsDocume
 // after the prompt revision moves, then the same stored bytes until it moves
 // again, so nothing within a generation (a rename, a model switch) changes it.
 func sessionPrompt(space: Space, session: SessionID) async throws -> StoredPrompt {
-  switch try await space.sessions.activatePrompt(session) {
+  switch try await space.sessions.promptForInference(session) {
   case let .rendered(stored):
     return stored
   case let .pending(pending):
     let record = try await space.sessions.record(session)
-    let (prompt, rendered) = try await renderPrompt(space: space, record: record, rev: pending.rev)
+    let (prompt, rendered) = try await renderPrompt(space: space, record: record, revs: pending.revs)
     let tools = SessionToolExecutor.kernel.tools
     guard pending.opening else {
-      return try await space.sessions.storePrompt(session, for: pending, prompt.filter { !$0.isEmpty }.joined(separator: "\n\n"), tools: tools, session: rendered)
+      return try await space.sessions.storeInferencePrompt(session, for: pending, prompt.filter { !$0.isEmpty }.joined(separator: "\n\n"), tools: tools, session: rendered)
     }
     let opening = PromptOpening(
       group: prompt[1].isEmpty ? "" : "<group-instructions>\n\(prompt[1])\n</group-instructions>",
       session: "<session-instructions>\n\(prompt[2])\n</session-instructions>",
     )
-    return try await space.sessions.storePrompt(session, for: pending, prompt[0], opening: opening, tools: tools, session: rendered)
+    return try await space.sessions.storeInferencePrompt(session, for: pending, prompt[0], opening: opening, tools: tools, session: rendered)
   }
 }
 
@@ -72,12 +73,22 @@ func sessionPrompt(space: Space, session: SessionID) async throws -> StoredPromp
 // with the home's AGENTS.md and skills. The first is the system text and the
 // other two open the generation as user-role lines; a generation opened
 // before those lines existed gets the three joined as its system text. The
-// space's files are read as the session at `rev`.
-func renderPrompt(space: Space, record: SessionRecord, rev: Int) async throws -> (prompt: [String], session: PromptSession) {
-  let home = try await space.sessionHome(record.id, at: rev)
+// space's files are read as the session at each group's frozen revision.
+func renderPrompt(space: Space, record: SessionRecord, revs: [String: Int]) async throws -> (prompt: [String], session: PromptSession) {
+  let home = try await space.sessionHome(record.id, at: revs)
   let session = PromptSession(record)
   let context = SpaceToolContext(space: space, principal: Principal(actor: .session(record.id), group: record.group))
-  let renderer = InstructionRenderer(session: session, rev: rev) { name, input throws(InstructionSourceFailure) in
+  let renderer = InstructionRenderer(session: session, revision: { address throws(InstructionSourceFailure) in
+    do {
+      var group = record.group
+      if let (named, _) = groupModulePath(address) {
+        guard let resolved = try await space.resolveGroup(named.rawValue) else { throw SpaceError.notFound(address) }
+        group = resolved
+      }
+      guard let rev = revs[group.rawValue] else { throw SpaceError.notFound(address) }
+      return rev
+    } catch { throw InstructionSourceFailure(String(describing: error)) }
+  }) { name, input throws(InstructionSourceFailure) in
     let tool = SpaceToolbox.all.first { $0.name == name }!
     do throws(ToolRunError) {
       return try await tool.run(context, input: input)

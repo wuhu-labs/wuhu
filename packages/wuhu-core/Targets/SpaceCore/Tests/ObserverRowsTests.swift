@@ -1,5 +1,6 @@
 import Dependencies
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

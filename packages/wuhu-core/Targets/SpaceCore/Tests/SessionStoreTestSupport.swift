@@ -5,25 +5,27 @@ import Dependencies
   import Foundation
 #endif
 import GRDB
+@testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
 
 extension SessionStore {
   func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await rows { try $0.drainQueue(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.drainQueue(id) }
   }
 
   @discardableResult
   func archive(_ id: SessionID, grace: Duration) async throws -> Date {
-    try await rows {
-      return try $0.archive(id, grace: grace)
-    }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.archive(grace) }
+    guard case let .archived(deadline) = try await record(id).lifecycle else { preconditionFailure("archive did not archive") }
+    return deadline
   }
 
   /// The cell's write of an input, which answers with its place in the queue.
   @discardableResult
   func put(_ id: SessionID, input: QueueInput, topic: String? = nil, due: Date? = nil, throttle: Double? = nil) async throws -> Int {
-    try await rows { rows in
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { cell in
+      let rows = cell.rows
       try rows.put(id, SessionPut(input, topic: topic, due: due, throttle: throttle))
       return try Int.fetchOne(rows.db, sql: "SELECT id FROM session_queue WHERE session_id = ? AND input_id = ?", arguments: [id.rawValue, input.id.uuidString.lowercased()])!
     }
@@ -31,11 +33,11 @@ extension SessionStore {
 
   /// A person's inbox once their cell has taken the mail on its way.
   func inbox(_ recipient: String) async throws -> [NotificationRecord] {
-    _ = runtime.worker()
-    runtime.poke(person: recipient)
-    while try await writer.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["PersonCell/" + (runtime.worker().cell(SpaceCell.ID("space")).personCell(recipient)?.key ?? recipient)])! }) {
-      await Task.yield()
-    }
+    let worker = space.worker
+    guard let person = spaceCell.personCell(recipient) else { return [] }
+    worker.poke(person.recipient)
+    while worker.hasMail(for: person.recipient) { await Task.yield() }
+    try await worker.call(person) { _ in () }
     return notifications(recipient: recipient)
   }
 
@@ -55,52 +57,43 @@ extension SessionStore {
     }
   }
 
-  /// What the session cells do with the mail main posted, for a test with no worker.
   func deliverMail() async throws {
-    try await rows { rows in
-      let prefix = SessionMail.kind + "/"
-      for row in try Row.fetchAll(rows.db, sql: "SELECT id, recipient, payload FROM wuwei_mail WHERE recipient LIKE ? ORDER BY id", arguments: [prefix + "%"]) {
-        let id = SessionID(String((row["recipient"] as String).dropFirst(prefix.count)))
-        switch try? JSONDecoder().decode(SessionMail.self, from: row["payload"] as Data) {
-        case let .put(put): try rows.put(id, put)
-        case let .clear(topic): try rows.clear(id, topic: topic)
-        default: continue
-        }
-        try rows.db.execute(sql: "DELETE FROM wuwei_mail WHERE id = ?", arguments: [row["id"] as Int64])
-      }
+    let worker = space.worker
+    let sessions = try await writer.read { try String.fetchAll($0, sql: "SELECT id FROM sessions") }
+    for session in sessions {
+      let id = SessionCell.ID(session)
+      worker.poke(id.recipient)
+      while worker.hasMail(for: id.recipient) { await Task.yield() }
+      try await worker.call(id) { _ in () }
     }
   }
 
   func markInterrupted(_ id: SessionID) async throws {
-    try await rows { try $0.markInterrupted(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.interrupt() }
   }
 
   func markResumed(_ id: SessionID) async throws {
-    try await rows { try $0.markResumed(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.resume() }
   }
 
   @discardableResult
   func restart(_ id: SessionID, executor: SessionExecutor? = nil, note: String? = nil, modelRoute: SessionModelRoute? = nil, runningWork: [String] = []) async throws -> SessionRestart {
-    @Dependency(\.uuid) var uuid
-    let head = uuid()
-    let restart = try await rows { try $0.restart(id, executor: executor, note: note, modelRoute: modelRoute, runningWork: runningWork, uuid: { head }) }
-    let hydration = try await hydrate(id)
-    if hydration.queueHead > hydration.queueTail { runtime.poke(id) }
-    return restart
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.restart(executor, modelRoute, note, runningWork) }
+    return try await SessionRestart(generation: generation(id), executor: record(id).executor)
   }
 
   func setTags(_ id: SessionID, to tags: [String]) async throws {
-    try await rows { try $0.retag(id, tags) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.retag(tags) }
   }
 
   @discardableResult
   func setTitle(_ id: SessionID, to title: String) async throws -> String {
     let title = try SessionStore.usableTitle(title)
-    try await rows { try $0.retitle(id, title) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.retitle(title) }
     return title
   }
 
   func unarchive(_ id: SessionID) async throws {
-    try await rows { try $0.unarchive(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.unarchive() }
   }
 }

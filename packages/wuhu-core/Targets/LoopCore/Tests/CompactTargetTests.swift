@@ -36,7 +36,6 @@ private struct TargetRefused: Error, CustomStringConvertible {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "refused target", kind: .agent, createdBy: "morgan", model: .test)
       let seen = Mutex<[CompactionTarget?]>([])
       let script = InferenceScript([
         Fix.replying("switching", calls: [targetedCompact(model: "nope/x")]),
@@ -54,7 +53,9 @@ private struct TargetRefused: Error, CustomStringConvertible {
         seen.withLock { $0.append(target) }
         throw TargetRefused()
       }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await sessions.createSession(group: .shared, title: "refused target", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("refusal is followed by another inference") { try await sessions.settledWork(id) && script.count == 2 }
       }
@@ -71,7 +72,6 @@ private struct TargetRefused: Error, CustomStringConvertible {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "accepted target", kind: .agent, createdBy: "morgan", model: .test)
       let seen = Mutex<[CompactionTarget?]>([])
       let script = InferenceScript([
         Fix.replying("switching", calls: [targetedCompact(model: "work", effort: "low")]),
@@ -82,7 +82,9 @@ private struct TargetRefused: Error, CustomStringConvertible {
         seen.withLock { $0.append(target) }
         return nil
       }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await sessions.createSession(group: .shared, title: "accepted target", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("compaction then continuation") { try await sessions.settledWork(id) && script.count == 2 }
       }
@@ -99,7 +101,6 @@ private struct TargetRefused: Error, CustomStringConvertible {
       let space = try Space.inMemory()
       let sessions = space.sessions
       let old = SessionModelRoute(group: "work", member: "primary", specifier: .test, bindingFingerprint: "fixture", epoch: "primary", reason: .create, placedAt: Date(timeIntervalSince1970: 0), evidence: [])
-      let id = try await sessions.createSession(group: .shared, title: "moved", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: old)
       let script = InferenceScript([
         Fix.replying("switching", calls: [targetedCompact(model: nil, preReads: ["/notes.md"])]),
         { request in
@@ -117,7 +118,9 @@ private struct TargetRefused: Error, CustomStringConvertible {
         next.specifier.effort = "low"
         return ModelRouteTransition(expectedEpoch: old.epoch, route: next, binding: .init(identity: "scope", epoch: old.epoch), carriesTail: true)
       }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await sessions.createSession(group: .shared, title: "moved", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: old)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("the moved generation re-reads and continues") { try await sessions.settledWork(id) && script.count == 2 }
       }

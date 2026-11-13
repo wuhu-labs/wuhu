@@ -144,7 +144,8 @@ import Wuwei
         }
         try await time.asleep("the transport poll", dueIn: 15)
         let recipient = try await old.sessions.record(owner).createdBy
-        let another = try await other.sessions.createSession(group: .shared, title: "another", kind: .agent, createdBy: recipient, model: .init(provider: "testing", model: "test-model", effort: "medium"))
+        let another = try await old.sessions.createSession(group: .shared, title: "another", kind: .agent, createdBy: recipient, model: .init(provider: "testing", model: "test-model", effort: "medium"))
+        try await old.sessions.markInterrupted(another)
         _ = try await other.sessions.post(
           .box(another), messageID: MessageID("another-question"),
           sender: Sender(id: recipient, timeZone: TimeZone(identifier: "UTC")!), content: .init(text: "question"),
@@ -155,7 +156,7 @@ import Wuwei
           content: .init(text: "another process"),
         )
         try await time.wake("the scan delivers notification mail", after: 1)
-        try await other.sessions.inboxesSettled()
+        try await old.sessions.inboxesSettled()
         try await outboxEventually("durable mail sends the other process's notification") {
           let pending = try await due(old, transport)
           return sent.values.withLock { $0.count == 2 } && pending.isEmpty

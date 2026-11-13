@@ -31,12 +31,13 @@ import struct WuhuAI.ToolCall
   @Test func execContextCarriesRepositoryInstructionsOnce() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
       let machine = try await space.addMachine(name: "box").id
       let files = FakeMachineFS()
       files.put("/work/.git/HEAD", "ref: refs/heads/main", mtime: 1)
       files.put("/work/AGENTS.md", "repo manual", mtime: 1)
-      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: files.seam))
+      let executor = try await loop.executor(owner: loop.hub { Hub(space: space, machines: files.seam) })
       let first = try #require(await executor.execContext(session, machine: machine, cwd: "/work", state: .init()))
       #expect(first.text.contains("repo manual"))
       let state = ToolExecutionState(folderRoots: first.folders, deliveredContext: first.deliveredContext ?? [:])

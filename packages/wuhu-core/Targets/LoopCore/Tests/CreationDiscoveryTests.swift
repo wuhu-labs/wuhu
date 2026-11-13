@@ -15,10 +15,11 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let config = makeConfig()
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await sessions.look(sid)
         try await until("the cell has looked") { try await sessions.settledWork(sid) }
       }

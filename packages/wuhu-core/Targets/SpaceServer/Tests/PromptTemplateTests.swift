@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 import struct SpaceContract.PromptSession
 import SpaceCore
@@ -9,7 +10,7 @@ import Testing
 private let model = ModelSpecifier(provider: "openai", model: "gpt-5.6-luna", effort: "medium")
 
 private func latest(_ space: Space, _ id: SessionID) async throws -> String {
-  try await renderPrompt(space: space, record: try await space.sessions.record(id), rev: try await space.currentRevision()).prompt
+  try await renderPrompt(space: space, record: try await space.sessions.record(id), revs: space.currentRevisions(for: Principal(actor: .session(id), group: .shared))).prompt
     .filter { !$0.isEmpty }.joined(separator: "\n\n")
 }
 
@@ -28,6 +29,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
   @Test func theSessionPartIsPinnedForAnAgentAndATask() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let agent = try await space.sessions.createSession(group: .shared, title: "desk", kind: .agent, createdBy: "owner", model: model)
       let task = try await space.sessions.createSession(
         group: .shared, title: "errand", kind: .task, parent: agent, createdBy: agent.rawValue, executor: .kernel(model),
@@ -73,6 +75,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
   @Test func theTemplateManualShowsItsTagsLiterally() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let agent = try await space.sessions.createSession(group: .shared, title: "a", kind: .agent, createdBy: "owner", model: model)
       let prompt = try await sessionPrompt(space: space, session: agent).preamble.system
       #expect(prompt.contains(#"""
@@ -95,9 +98,11 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
   @Test func aStoredPromptOutlivesAChangeOfTheSystemFiles() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let agent = try await space.sessions.createSession(group: .shared, title: "a", kind: .agent, createdBy: "owner", model: model)
-      guard case let .pending(pending) = try await space.sessions.activatePrompt(agent) else { throw Unexpected() }
-      let older = try await space.sessions.storePrompt(agent, for: pending, "rendered by an older binary", tools: [], session: PromptSession(try await space.sessions.record(agent)))
+      guard case let .pending(pending) = try await space.sessions.promptForInference(agent) else { throw Unexpected() }
+      let older = try await space.sessions.storeInferencePrompt(agent, for: pending, "rendered by an older binary", tools: [], session: PromptSession(try await space.sessions.record(agent)))
+      try await space.sessions.deliverMail(agent)
       #expect(try await sessionPrompt(space: space, session: agent) == older)
       #expect(older.preamble == .init(system: "rendered by an older binary", tools: []))
     }
@@ -106,6 +111,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
   @Test func partialsQueriesAndCyclesRenderAsTheSession() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let reviewer = try await space.sessions.createSession(
         group: .shared, title: "desk reviewer", kind: .agent, tags: ["review"], createdBy: "owner", model: model,
       )
@@ -170,6 +176,7 @@ private func write(_ space: Space, _ path: String, _ text: String) async throws 
   @Test func skillsAreFilteredByWuhuWhenBeforeTheNearerNameHidesTheFarther() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let agent = try await space.sessions.createSession(group: .shared, title: "a", kind: .agent, createdBy: "owner", model: model)
       let home = SessionHome.path(of: agent)
       try await write(space, "/.agents/skills/image/SKILL.md", "---\ndescription: The house image style.\n---\n")

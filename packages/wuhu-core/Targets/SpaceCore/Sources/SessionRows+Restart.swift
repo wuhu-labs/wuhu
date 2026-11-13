@@ -76,7 +76,7 @@ extension SessionRows {
       """,
       arguments: [now, key],
     )
-    try SessionPrompts.advance(key, in: db)
+    try SessionPrompts.invalidate(key, in: db)
     if try Sessions.queueHead(key, tail: queue.tail, at: now, in: db) > queue.tail { try Sessions.markHasWork(key, now: now, in: db) }
     return SessionRestart(generation: Int(generation), executor: try Sessions.record(key, in: db).executor)
   }

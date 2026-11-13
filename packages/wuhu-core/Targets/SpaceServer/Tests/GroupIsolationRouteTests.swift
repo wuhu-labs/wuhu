@@ -2,6 +2,7 @@ import struct Credentials.SpaceSecretStores
 import Crypto
 import DeterministicDependencies
 import Fetch
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

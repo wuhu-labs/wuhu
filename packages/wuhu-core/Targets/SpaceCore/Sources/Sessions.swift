@@ -188,46 +188,6 @@ enum Sessions {
     try db.execute(sql: "DELETE FROM session_queue WHERE session_id = ? AND topic = ? AND id > ?", arguments: [key, topic, tail])
   }
 
-  static func receipt(_ key: String, toolCallID: String, in db: Database) throws -> ToolResultPayload? {
-    guard let payload = try String.fetchOne(
-      db,
-      sql: "SELECT payload FROM session_receipts WHERE session_id = ? AND tool_call_id = ?",
-      arguments: [key, toolCallID],
-    ) else { return nil }
-    return try decode(ToolResultPayload.self, from: payload)
-  }
-
-  static func recordReceipt(_ key: String, toolCallID: String, payload: String, now: String, in db: Database) throws {
-    // The first recorded outcome is authoritative; a crash-retry that
-    // re-records must not overwrite it.
-    try db.execute(
-      sql: """
-      INSERT OR IGNORE INTO session_receipts (session_id, tool_call_id, payload, recorded_at)
-      VALUES (?, ?, ?, ?)
-      """,
-      arguments: [key, toolCallID, payload, now],
-    )
-  }
-
-  static func apiReceipt(_ key: String, toolCallID: String, in db: Database) throws -> APIReceipt? {
-    guard let row = try Row.fetchOne(
-      db,
-      sql: "SELECT status, body, request FROM session_api_receipts WHERE session_id = ? AND tool_call_id = ?",
-      arguments: [key, toolCallID],
-    ) else { return nil }
-    return APIReceipt(status: row["status"], body: row["body"], request: row["request"])
-  }
-
-  static func recordAPIReceipt(_ key: String, toolCallID: String, _ receipt: APIReceipt, now: String, in db: Database) throws {
-    try db.execute(
-      sql: """
-      INSERT OR IGNORE INTO session_api_receipts (session_id, tool_call_id, status, body, recorded_at, request)
-      VALUES (?, ?, ?, ?, ?, ?)
-      """,
-      arguments: [key, toolCallID, receipt.status, receipt.body, now, receipt.request],
-    )
-  }
-
   /// The session cell's write of an input it was sent; one it already has is not queued twice.
   static func insertInput(_ key: String, _ put: SessionPut, nowDate: Date, in db: Database) throws {
     let record = try record(key, in: db)

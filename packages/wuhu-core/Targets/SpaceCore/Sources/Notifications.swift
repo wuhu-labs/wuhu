@@ -3,10 +3,8 @@
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
-import Wuwei
 
 public enum NotificationKind: String, Hashable, Sendable, Codable {
   case conversationMessage = "conversation_message"
@@ -74,16 +72,6 @@ enum Notifications {
   // The distinguished owner principal (SpaceContract's ownerIdentity on the
   // wire).
   static let ownerRecipient = "owner"
-
-  static func fireErrored(_ key: String, error: String, said: String?, now: String, in db: GRDB.Database) throws {
-    let payload = try Sessions.encode(ErroredPayload(
-      sessionID: key,
-      error: error,
-      message: said,
-    ))
-    let note = PersonNote(source: key, group: try Sessions.group(of: key, in: db), kind: .sessionErrored, payload: payload, createdAt: now)
-    try PersonCell.ID(ownerRecipient).recipient.post(.notify(ownerRecipient, note), on: db.sqliteConnection!)
-  }
 }
 
 extension SessionStore {

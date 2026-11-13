@@ -1,6 +1,7 @@
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -43,6 +44,7 @@ private struct SilentExec: OperationKind {
     let file = folder.url.appending(path: "notes.txt")
     try Data("needle".utf8).write(to: file)
     let space = try Space.inMemory()
+    _ = try await SessionToolFixture(space: space)
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
     let (record, _) = try await space.addMachineV2(name: "caller_v2", group: .shared)
     let seen = Mutex<[AdmittedStart]>([])
@@ -204,6 +206,7 @@ private struct SilentExec: OperationKind {
 
   private func withExecFixture(caller: Bool = true, _ body: (Space, MachineHub, SessionID, ExecRecord, Starts) async throws -> Void) async throws {
     let space = try Space.inMemory()
+    _ = try await SessionToolFixture(space: space)
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
     let (record, _) = try await space.addMachineV2(name: "forge_v2", group: .shared)
     let seen = Starts()

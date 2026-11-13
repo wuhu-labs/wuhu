@@ -2,8 +2,8 @@ import struct Credentials.CredentialResolver
 import DeterministicDependencies
 import Fetch
 import Foundation
-import GRDB
 import JSONValue
+@testable import LoopCore
 import MachineContract
 import ServeTesting
 import SessionDomain
@@ -12,6 +12,7 @@ import struct SpaceFS.SpacePath
 import SpaceTools
 @_spi(Testing) @testable import SpaceCore
 @testable import SpaceServer
+import StructuredQueries
 import Testing
 
 // A session's exec token through the real handler: what it may do, as whom,
@@ -318,78 +319,6 @@ import Testing
     }
   }
 
-  // The tool call a request runs for is its idempotency key: the same call
-  // again gets the first answer back, not a second slot, child or cancel.
-  @Test func aRepeatedToolCallReplaysItsFirstAnswer() async throws {
-    try await withSessionDeps {
-      let t = try await tree()
-      func call(_ method: Fetch.Method, _ path: String, _ body: JSONValue, toolCall: String) async throws -> (Status, String) {
-        try await toolCalled(t.harness, bearer: t.token, method, path, body, toolCall: toolCall)
-      }
-      let armed = try await call(.post, "/v1/subscription", .object(["timer": ["message": "ping", "inSeconds": 60]]), toolCall: "tc-timer")
-      #expect(armed.0 == .ok)
-      #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "ping", "inSeconds": 60]]), toolCall: "tc-timer") == armed)
-      let timers = try await pendingTimers(t.harness, t.parent)
-      #expect(timers.count == 1)
-      let id = try #require(timers.first)
-
-      let cancelled = try await call(.delete, "/v1/subscription/\(id)", .null, toolCall: "tc-cancel")
-      #expect(cancelled.0 == .ok)
-      // The slot is gone, yet the retried cancel is answered as the first was.
-      #expect(try await call(.delete, "/v1/subscription/\(id)", .null, toolCall: "tc-cancel") == cancelled)
-      #expect(try await call(.delete, "/v1/subscription/\(id)", .null, toolCall: "tc-cancel-2").0 == .unprocessableContent)
-
-      let created = try await call(.post, "/v1/session", .object(["title": "helper"]), toolCall: "tc-create")
-      #expect(created.0 == .ok)
-      #expect(try await call(.post, "/v1/session", .object(["title": "helper"]), toolCall: "tc-create") == created)
-      let helpers = try await t.harness.space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
-      #expect(helpers.count == 1)
-
-      // A failure is not a receipt: the same call runs again.
-      let refused = try await call(.post, "/v1/session/\(t.stranger.rawValue)/request", .object(["message": "do it"]), toolCall: "tc-request")
-      #expect(refused.0 == .unprocessableContent)
-      #expect(try await call(.post, "/v1/session/\(t.stranger.rawValue)/request", .object(["message": "do it"]), toolCall: "tc-request").0 == .unprocessableContent)
-
-      // An arm retried after its slot is gone is answered as the first was
-      // and arms nothing.
-      let gone = try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone")
-      #expect(gone.0 == .ok)
-      let goneID = try #require(JSONValue.parse(gone.1)?.object?["id"]?.stringValue)
-      #expect(try await call(.delete, "/v1/subscription/\(goneID)", .null, toolCall: "tc-timer-gone-cancel").0 == .ok)
-      #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone") == gone)
-      #expect(try await t.harness.store.armedSubscriptions(t.parent).allSatisfy { $0.slot.id.rawValue != goneID })
-    }
-  }
-
-  // Two runs of one tool call at once (a worker retrying while its first
-  // run still runs) act once: the answer is looked up in the write that
-  // makes the effect, not before it.
-  @Test func overlappingRunsOfOneToolCallActOnce() async throws {
-    try await withSessionDeps {
-      let t = try await tree()
-      let call: @Sendable (Fetch.Method, String, JSONValue, String) async throws -> (Status, String) = { method, path, body, toolCall in
-        try await toolCalled(t.harness, bearer: t.token, method, path, body, toolCall: toolCall)
-      }
-
-      let timer: JSONValue = .object(["timer": ["message": "ping", "inSeconds": 60]])
-      async let firstArm = call(.post, "/v1/subscription", timer, "tc-timer")
-      async let secondArm = call(.post, "/v1/subscription", timer, "tc-timer")
-      let armed = try await (firstArm, secondArm)
-      #expect(armed.0.0 == .ok)
-      #expect(armed.0 == armed.1)
-      let timers = try await pendingTimers(t.harness, t.parent)
-      #expect(timers.count == 1)
-      let id = try #require(timers.first)
-
-      async let firstCancel = call(.delete, "/v1/subscription/\(id)", .null, "tc-cancel")
-      async let secondCancel = call(.delete, "/v1/subscription/\(id)", .null, "tc-cancel")
-      let cancelled = try await (firstCancel, secondCancel)
-      #expect(cancelled.0.0 == .ok)
-      #expect(cancelled.0 == cancelled.1)
-      #expect(try await pendingTimers(t.harness, t.parent).isEmpty)
-    }
-  }
-
   // A retry of a request or a report is the first one again.
   @Test func aRetriedRequestOrReportIsTheFirstOne() async throws {
     try await withSessionDeps {
@@ -416,9 +345,7 @@ import Testing
     }
   }
 
-  // A create that left its session unfinished names it, and the same call
-  // again finishes that session rather than making another.
-  @Test func anIncompleteCreateNamesTheSessionAndItsRetryFinishesIt() async throws {
+  @Test func anIncompleteCreateNamesTheSession() async throws {
     try await withSessionDeps {
       let t = try await tree()
       let fs = await t.harness.space.fs(.shared)
@@ -433,12 +360,6 @@ import Testing
       let id = try #require(fields["id"]?.stringValue)
       #expect(fields["message"] == .string("create_session: session \(id) was created, but internal: the disk is full"))
       #expect(try await t.harness.store.record(SessionID(id)).title == "shift")
-
-      await t.harness.space.failTemplateClones(nil)
-      let finished = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session", body, toolCall: "tc-half")
-      #expect(finished.0 == .ok)
-      #expect(JSONValue.parse(finished.1)?.object?["id"] == .string(id))
-      #expect(try await fs.read("/_/sessions/\(id)/AGENTS.md").1 == Data("night rules".utf8))
     }
   }
 
@@ -676,14 +597,9 @@ private func toolCalled(
 
 private func pendingTimers(_ harness: SessionHarness, _ session: SessionID) async throws -> [String] {
   _ = try await harness.store.sent(session)
-  return try await harness.space.writer.read { db in
-    try String.fetchAll(
-      db,
-      sql: """
-      SELECT q.topic FROM session_queue q JOIN session_runtime r ON r.session_id = q.session_id
-      WHERE q.session_id = ? AND q.id > r.queue_tail AND q.topic LIKE 'timer.%' ORDER BY q.id
-      """,
-      arguments: [session.rawValue],
-    )
-  }
+  let cell = harness.space.worker.cell(SessionCell.ID(session.rawValue))
+  let tail = try await harness.store.hydrate(session).queueTail
+  return cell.db.rows(
+    SessionFixtureQueue.where { $0.sessionID.eq(session.rawValue) && $0.id.gt(Int64(tail)) }.order { $0.id },
+  ).compactMap(\.topic).filter { $0.hasPrefix("timer.") }
 }

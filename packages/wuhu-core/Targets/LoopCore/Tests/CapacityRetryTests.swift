@@ -16,10 +16,11 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "capacity size", kind: .agent, createdBy: "morgan", model: .test)
       let error = InferenceError.capacityExceeded(code: code, message: "payload too large", status: 413)
       let script = InferenceScript([Fix.failing(error), Fix.failing(error), Fix.replying("must not run")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await sessions.createSession(group: .shared, title: "capacity size", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("errored") { try await sessions.record(sid).work == .errored }
       }

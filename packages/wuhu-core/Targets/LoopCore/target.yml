@@ -29,6 +29,7 @@ swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
   dependencies:
+    - DeterministicDependencies
     - Crypto
     - OperationProtocol
     - MachineContract

@@ -5,6 +5,7 @@ import ExecutionOwner
 import struct FileSearch.SearchError
 import struct MainHub.EventSources
 import class MainHub.Hub
+import struct MainHub.SessionEffects
 import TaskLifetime
 import enum Wuwei.Storage
 #if canImport(FoundationEssentials)
@@ -151,18 +152,22 @@ extension SessionRuntime {
       trace: attemptLog?.traceClient,
     )
     let catalog = groupCatalog(space: space, access: access)
-    let toolOwner = Hub(
-      space: space,
-      secrets: secrets,
-      machines: machineSeam(hub: hub),
-      resolveModelExecutor: modelExecutorResolver(space: space),
-      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
-      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
-    )
     let worker = KernelWorker(
       connection: connection, tokens: tokens, machines: hub, access: access, usage: usage,
       sources: eventSources ?? .unavailable, space: space,
     )
+    let toolOwner = withDependencies {
+      $0[SessionEffects.self] = worker.execution.sessionEffects
+    } operation: {
+      Hub(
+        space: space,
+        secrets: secrets,
+        machines: machineSeam(hub: hub),
+        resolveModelExecutor: modelExecutorResolver(space: space),
+        resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+        prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
+      )
+    }
     return SessionRuntime(
       execution: worker.execution,
       usage: usage,
@@ -174,19 +179,15 @@ extension SessionRuntime {
   }
 }
 
-// MARK: - Tools without loops
+// MARK: - In-process tools
 
 extension SessionRuntime {
-  /// Main's API bound in process to `connection`, for tools that present `tokens`. Without an `execution`, its sessions are never started: nothing runs a loop, and what is mailed to a cell waits.
   @discardableResult
   static func bindMain(
-    owner: Hub, execution: SessionExecution? = nil, tokens: ExecTokens, connection: MainConnection, hub: MachineHub? = nil,
+    owner: Hub, execution: SessionExecution, tokens: ExecTokens, connection: MainConnection, hub: MachineHub? = nil,
     origin: String? = nil, contentHostPattern: String? = nil, credentials: CredentialResolver = .unavailable, secrets: SpaceSecretStores? = nil,
     identity: IdentityController? = nil,
   ) -> UpgradingHandler {
-    let execution = execution ?? KernelWorker(
-      connection: connection, tokens: tokens, machines: hub, access: InferenceAccess(credentials: credentials), usage: UsageBoard(), space: owner.space,
-    ).execution
     let runtime = SessionRuntime(
       execution: execution, owner: owner, metrics: .recording(in: owner.space), tokens: tokens, connection: connection,
     )
@@ -196,9 +197,9 @@ extension SessionRuntime {
     )
   }
 
-  /// The tool executor as the kernel wires it, main's API bound in process and reached as the session with the session's token, without the loops.
   static func toolExecutor(
     owner: Hub,
+    execution: SessionExecution,
     tokens: ExecTokens,
     hub: MachineHub? = nil,
     access: InferenceAccess = InferenceAccess(),
@@ -209,7 +210,7 @@ extension SessionRuntime {
   ) -> ToolExecutor {
     let connection = MainConnection()
     bindMain(
-      owner: owner, tokens: tokens, connection: connection, hub: hub,
+      owner: owner, execution: execution, tokens: tokens, connection: connection, hub: hub,
       origin: origin, contentHostPattern: contentHostPattern, credentials: access.credentials, secrets: secrets, identity: identity,
     )
     return ToolExecutor(main: connection, credential: { try await tokens.sessionToken($0) }, access: access)

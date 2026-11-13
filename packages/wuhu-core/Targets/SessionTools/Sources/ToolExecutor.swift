@@ -54,8 +54,6 @@ public struct ToolExecutor: Sendable {
     self.cancelScript = cancelScript
   }
 
-  /// Main's API as `session`; with `toolCall`, every request names the tool
-  /// call it runs for, and main answers a repeat with its first response.
   func client(_ session: SessionID, toolCall: String? = nil) -> SpaceClient {
     client(.session(session), toolCall: toolCall)
   }

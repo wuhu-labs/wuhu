@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+import LoopCore
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import Testing
@@ -89,7 +90,7 @@ import Testing
     #expect(facts.tables == [])
     #expect(facts.guest == 0)
 
-    let space = try Space(writer: database)
+    let space = registerSessionExecution(try Space(writer: database))
     let team = GroupID(rawValue: "team")
     let person = AccountID(rawValue: "person")
     #expect(try await space.reads(team) == [team, GroupID(rawValue: "ops"), .settings, .shared])

@@ -1,5 +1,10 @@
 import DeterministicDependencies
-import Foundation
+import LoopCore
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import JSONValue
 import enum ModelProviders.CatalogError

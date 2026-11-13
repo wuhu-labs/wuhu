@@ -259,7 +259,7 @@ struct DocumentCellTests {
     let fs = await space.fs(.shared)
     let read = try await fs.write(plan, bytes("# A\n\none\n"), ifMatch: nil)
     var client = try await Client.join(space, plan)
-    let before = try await space.currentRevision()
+    let before = try await space.currentRevision(in: .shared)
     let revision = try #require(read.rev)
     let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
     let original = document.checkpoints().first { $0.rev == revision }?.frontiers
@@ -272,7 +272,7 @@ struct DocumentCellTests {
     try await fireIdleCheckpoint(clock)
     guard case let .control(.checkpoint(rev))? = await client.next() else { Issue.record("no idle checkpoint"); return }
     #expect(rev == read.rev, "an unchanged text minted a revision")
-    #expect(try await space.currentRevision() == before)
+    #expect(try await space.currentRevision(in: .shared) == before)
 
     let kept = document.checkpoints().filter { $0.rev == revision }
     let state = try #require(document.state())
@@ -289,10 +289,10 @@ struct DocumentCellTests {
     let space = try makeSpace(clock: VirtualClock())
     _ = try await space.fs(.shared).write(plan, bytes("Hello\n"), ifMatch: nil)
     var client = try await Client.join(space, plan)
-    let before = try await space.currentRevision()
+    let before = try await space.currentRevision(in: .shared)
     try client.edit("Hello there\n")
     #expect(await client.next() == .control(.ack(count: 1)))
-    #expect(try await space.currentRevision() == before)
+    #expect(try await space.currentRevision(in: .shared) == before)
     #expect(try logRows(space) == 1)
   }
 
@@ -472,17 +472,18 @@ struct DocumentCellTests {
     #expect(await client.next() == .control(.ack(count: 1)))
 
     // A file too big to be inline is moved onto the path, and the mail never comes.
-    let big = String(repeating: "x", count: BlobStore.inlineThreshold + 1) + "\n"
-    let blob = try await space.blobs.stage(Array(big.utf8))
+    let big = String(repeating: "x", count: Bucket.inlineThreshold + 1) + "\n"
+    let blob = try await space.bucket.stage(Array(big.utf8))
     try await space.writer.write { db in
       let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
+      try InterimBlob.record(blob, in: db)
       try Substrate.writeFile(
         try SpacePath(validating: plan), group: .shared, blob: blob, rev: rev,
         mtime: SQLiteDateFormat.string(from: fixedDate), in: db,
       )
     }
-    let blobRows = try await space.writer.read { db in try Substrate.storedBlob(Substrate.blobHash(Array(big.utf8)), in: db) }
-    guard case .external = blobRows else { Issue.record("the file stayed inline, so nothing is fetched"); return }
+    let bucketBlob = try await space.bucket.blob(Substrate.blobHash(Array(big.utf8)))
+    guard bucketBlob.externalKey != nil else { Issue.record("the file stayed inline, so nothing is fetched"); return }
     let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
     let stored = document.fileRev()
     let head = try #require(try document.file()).rev
@@ -635,7 +636,7 @@ struct DocumentCellTests {
     let fs = await space.fs(.shared)
     let first = try await fs.write(plan, bytes("Hello\n"), ifMatch: nil)
     var client = try await Client.join(space, plan)
-    let before = try await space.currentRevision()
+    let before = try await space.currentRevision(in: .shared)
 
     var typed = "Hello\n"
     for line in 0 ..< DocumentCell.foldLength {
@@ -644,7 +645,7 @@ struct DocumentCellTests {
       #expect(await client.next() == .control(.ack(count: 1)))
     }
     #expect(try logRows(space) == 0, "the log folded into the snapshot")
-    #expect(try await space.currentRevision() == before, "a fold writes no file")
+    #expect(try await space.currentRevision(in: .shared) == before, "a fold writes no file")
 
     let (read, data) = try await fs.read(plan)
     #expect(text(data) == typed)
@@ -663,11 +664,12 @@ struct DocumentCellTests {
 
     // A writer that never tells the cell replaces the file at a revision of its own.
     let replaced = Array("Other\n".utf8)
+    let blob = Blob(hash: Substrate.blobHash(replaced), content: replaced, externalKey: nil)
     try await space.writer.write { db in
       let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
+      try InterimBlob.record(blob, in: db)
       try Substrate.writeFile(
-        try SpacePath(validating: plan), group: .shared,
-        blob: Blob(hash: Substrate.blobHash(replaced), content: replaced, externalKey: nil), rev: rev,
+        try SpacePath(validating: plan), group: .shared, blob: blob, rev: rev,
         mtime: SQLiteDateFormat.string(from: fixedDate), in: db,
       )
     }

@@ -113,9 +113,6 @@ extension ToolExecutor {
     }
   }
 
-  // The answer main recorded for the client's tool call, when its write ran
-  // before. It stands only for the destination written then: a retry that
-  // names another is refused, not answered.
   private func refuseForeignHome(_ destination: Address, _ session: SessionID) async throws {
     guard case let .space(path, group) = destination, let target = try? SpacePath(validating: path), target.homeOwner != nil else { return }
     let context: DiscoveryContext = try await client(session).api(.get, "/v1/context")

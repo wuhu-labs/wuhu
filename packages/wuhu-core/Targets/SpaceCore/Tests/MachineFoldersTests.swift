@@ -153,10 +153,10 @@ struct MachineFoldersTests {
     let fs = await space.fs(.shared)
     let studio = try await space.addMachine(name: "studio")
     _ = try await fs.write("/_/machines/studio/AGENTS.md", Data("manual".utf8), ifMatch: nil)
-    let before = try await space.currentRevision()
+    let before = try await space.currentRevision(in: .shared)
 
     _ = try await space.renameMachine(studio.id, name: "atelier")
-    #expect(try await space.currentRevision() == before)
+    #expect(try await space.currentRevision(in: .shared) == before)
     #expect(try await text(fs, "/_/machines/atelier/AGENTS.md") == "manual")
     #expect(try await fs.list("/_/machines").1.map(\.name) == ["atelier"])
     #expect(try await text(fs, "/_/machines/studio/AGENTS.md") == "manual")
@@ -170,7 +170,7 @@ struct MachineFoldersTests {
     _ = try await fs.write("/drafts/AGENTS.md", Data("manual".utf8), ifMatch: nil)
 
     try await fs.move("/drafts/AGENTS.md", to: "/_/machines/studio/AGENTS.md")
-    let moved = try await space.currentRevision()
+    let moved = try await space.currentRevision(in: .shared)
     try await fs.move("/_/machines/\(studio.id.rawValue)/AGENTS.md", to: "/_/machines/laptop/AGENTS.md")
     #expect(try await text(fs, "/_/machines/\(laptop.id.rawValue)/AGENTS.md") == "manual")
     await #expect(throws: SpaceError.notFound("/_/machines/\(studio.id.rawValue)/AGENTS.md")) {

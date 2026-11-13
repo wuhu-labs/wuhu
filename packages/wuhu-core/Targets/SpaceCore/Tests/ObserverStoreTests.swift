@@ -1,5 +1,6 @@
 import Dependencies
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -55,31 +56,30 @@ import Testing
       let store = try makeSpace().sessions
       _ = try await arm(store, cap: 2)
       let observer = Observer(group: .shared, name: "triage", firing: "f1")
-      @Sendable func make(_ call: Int) async throws -> SessionID {
+      @Sendable func make() async throws -> SessionID {
         try await store.createSession(
           group: .shared, title: "made", kind: .agent, createdBy: observer.member, executor: .kernel(.test),
-          receipt: (.observer(observer), ToolCallID("call-\(call)")), observer: observer,
+          observer: observer,
         )
       }
-      let first = try await make(0)
+      _ = try await make()
       let outcomes = await withTaskGroup(of: String.self) { group in
-        for call in 1 ... 4 {
+        for _ in 1 ... 4 {
           group.addTask {
-            do { _ = try await make(call); return "made" } catch { return "\(error)" }
+            do { _ = try await make(); return "made" } catch { return "\(error)" }
           }
         }
         return await group.reduce(into: [String]()) { $0.append($1) }
       }
       let atCap = ObserverRefusal.atCap(name: "triage", sessionsPerHour: 2)
       #expect(outcomes.sorted() == ["made", atCap.description, "\(ObserverRefusal.paused("triage"))", "\(ObserverRefusal.paused("triage"))"])
-      #expect(try await make(0) == first)
       let paused = try #require(try await store.observers(.shared).first)
       #expect(paused.status == .paused)
       #expect(paused.slot.lastError == ObserverRefusal.atCap(name: "triage", sessionsPerHour: 2).description)
       let resumed = try await arm(store, cap: 3)
       #expect(resumed.status == .armed)
       #expect(resumed.slot.lastError == nil)
-      _ = try await make(5)
+      _ = try await make()
     }
   }
 

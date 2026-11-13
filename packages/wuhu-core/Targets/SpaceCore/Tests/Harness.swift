@@ -1,9 +1,12 @@
 import Clocks
+import ControlledTime
 import Dependencies
 import Foundation
 import GRDB
 import JSONValue
 import Logging
+import LoopCore
+import SessionTools
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
@@ -21,15 +24,50 @@ func makeSpace(
   regions: (@Sendable (any DatabaseWriter) -> RegionSource)? = nil,
 ) throws -> Space {
   try withDependencies {
+    $0.installTimeControl(anchor: date)
     $0.date = .constant(date)
     if let clock { $0.continuousClock = clock }
   } operation: {
-    guard log != nil || regions != nil else { return try Space.inMemory() }
-    return try Space.inMemory(
+    guard log != nil || regions != nil else { return registerSessionExecution(try Space.inMemory(), clock: clock) }
+    return registerSessionExecution(try Space.inMemory(
       configuration: Space.makeConfiguration(journalMode: .default), log: log ?? Logger(label: "wuhu.space"), regions: regions,
-    )
+    ), clock: clock)
   }
 }
+
+@discardableResult
+func registerSessionExecution(_ space: Space, clock: (any NonsendingClock<Duration>)? = nil) -> Space {
+  withDependencies {
+    if let clock {
+      $0.continuousClock = clock
+    } else {
+      let date = $0.date
+      $0.installTimeControl(anchor: date.now)
+      $0.date = date
+    }
+  } operation: {
+    _ = SessionExecution(
+      connection: MainConnection(), credential: { _ in throw MainUnavailable() }, space: space,
+      observerRun: { _, _, _ in try await sessionFixtureWait() },
+      loopConfig: { _ in
+        LoopConfig(
+          executeTool: { _ in throw SessionFixtureUnexpectedWork() },
+          inference: { _ in try await sessionFixtureWait() },
+          budget: { _ in .init(maxInput: 1_001_000, maxOutput: 1000) },
+        )
+      },
+    )
+    return space
+  }
+}
+
+private func sessionFixtureWait<Value>() async throws -> Value {
+  let waiting = AsyncStream<Void> { _ in }
+  for await _ in waiting {}
+  throw CancellationError()
+}
+
+private struct SessionFixtureUnexpectedWork: Error {}
 
 // Tests read as nobody in particular, in the shared group.
 extension Space {

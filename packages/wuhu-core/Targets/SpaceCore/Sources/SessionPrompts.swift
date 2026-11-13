@@ -3,26 +3,17 @@
 #else
   import Foundation
 #endif
-import GRDB
-import SessionDomain
+import struct SessionDomain.TranscriptPreamble
 import struct SpaceContract.PromptSession
 import StructuredQueries
-import StructuredQueriesSQLite
-import enum WuhuAI.Tool
+import Wuwei
+import WuweiQueries
 
-// A session's prompt for its generation. The row moves to the current
-// generation and revision at creation, after a template clone, at every
-// compaction and at Start over, and clears the rendering; the first inference
-// after renders the prompt at that revision and stores it, and every later
-// inference of the generation sends the same bytes: the system text and the
-// tool list, one content-addressed blob the row names by hash, then the
-// opening, the generation's lines 1 and 2. A session with no row predates the
-// table: it gets one on its next activation.
 @Table("session_prompts")
 struct SessionPromptRow {
   @Column("session_id", primaryKey: true) var sessionID: String
   @Column("generation") var generation: Int64
-  @Column("rev") var rev: Int64
+  @Column("revs") var revs: String
   @Column("rendered") var rendered: String?
   @Column("session") var session: String?
 }
@@ -33,10 +24,17 @@ public struct StoredPrompt: Equatable, Sendable {
   public let preamble: TranscriptPreamble
   public let opening: [String]
   public let session: PromptSession
+
+  public init(rendered: String, preamble: TranscriptPreamble, opening: [String], session: PromptSession) {
+    self.rendered = rendered
+    self.preamble = preamble
+    self.opening = opening
+    self.session = session
+  }
 }
 
 /// What follows the system text, split from it by who changes it: the group's instructions, then the session's own. An empty one has no line.
-public struct PromptOpening: Equatable, Sendable {
+public struct PromptOpening: Equatable, Sendable, Codable {
   public let group: String
   public let session: String
 
@@ -46,13 +44,13 @@ public struct PromptOpening: Equatable, Sendable {
   }
 }
 
-/// A prompt not rendered yet: the space's files are read at `rev`, and only
+/// A prompt not rendered yet: the groups' files are read at `revs`, and only
 /// a rendering for this very generation and revision is stored. `opening` is
 /// whether the generation's lines keep room for one; without it the whole
 /// prompt is the system text.
-public struct PendingPrompt: Equatable, Sendable {
+public struct PendingPrompt: Equatable, Sendable, Codable {
   public let generation: Int
-  public let rev: Int
+  public let revs: [String: Int]
   public let opening: Bool
 }
 
@@ -61,93 +59,102 @@ public enum SessionPromptState: Equatable, Sendable {
   case rendered(StoredPrompt)
 }
 
-enum SessionPrompts {
-  static func advance(_ key: String, in db: Database) throws {
-    let rev = try Substrate.maxRevision(in: db)
-    let generation = try Sessions.runtime(key, in: db).generation
-    try SessionPromptRow.upsert { SessionPromptRow(sessionID: key, generation: generation, rev: rev, rendered: nil, session: nil) }.execute(db)
+public enum SessionPromptReference: Sendable {
+  case pending(PendingPrompt)
+  case rendered(hash: String, opening: [String], session: PromptSession)
+}
+
+public enum SessionPrompts {
+  public static func revisions(_ key: String, in db: Wuwei.Database) throws -> [String: Int]? {
+    _ = try generation(key, in: db)
+    return try row(key, in: db).map { try Sessions.decode([String: Int].self, from: $0.revs) }
   }
 
-  static func row(_ key: String, in db: Database) throws -> SessionPromptRow? {
-    try SessionPromptRow.where { $0.sessionID.eq(key) }.fetchOne(db)
+  public static func reference(_ key: String, in db: Wuwei.Database) throws -> SessionPromptReference? {
+    _ = try generation(key, in: db)
+    return try row(key, in: db).map { try reference($0, in: db) }
   }
 
-  static func state(_ row: SessionPromptRow, in db: Database, _ blobs: BlobCache) throws -> SessionPromptState {
-    guard let rendered = row.rendered, let session = row.session else {
-      return .pending(PendingPrompt(generation: Int(row.generation), rev: Int(row.rev), opening: try Sessions.keepsOpening(row.sessionID, generation: row.generation, in: db)))
+  public static func invalidate(_ key: String, in db: inout Wuwei.Database) throws {
+    _ = try generation(key, in: db)
+    try db.execute(SessionPromptRow.where { $0.sessionID.eq(key) }.delete())
+  }
+
+  public static func pending(_ key: String, revs: [String: Int], in db: Wuwei.Database) throws -> PendingPrompt {
+    let query = PromptRuntimeRow.where { $0.sessionID.eq(key) }.select { runtime in
+      PendingPromptRead.Columns(
+        generation: runtime.generation,
+        opening: #sql("""
+        COALESCE((
+          SELECT position = \(bind: Int64(Sessions.openingKeys.count + 1)) FROM session_lines
+          WHERE session_id = \(runtime.sessionID) AND generation = \(runtime.generation) AND position > 0
+            AND key NOT IN (\(bind: Sessions.openingKeys[0]), \(bind: Sessions.openingKeys[1]))
+          ORDER BY position LIMIT 1
+        ), NOT EXISTS (
+          SELECT 1 FROM session_pointers WHERE session_id = \(runtime.sessionID) AND generation = \(runtime.generation)
+        ))
+        """, as: Bool.self),
+      )
     }
-    return .rendered(StoredPrompt(
-      rendered: rendered, preamble: try JSONDecoder().decode(TranscriptPreamble.self, from: Data(try blobs.blob(of: rendered, in: db).content)),
-      opening: try Sessions.opening(row.sessionID, generation: row.generation, in: db),
-      session: try JSONDecoder().decode(PromptSession.self, from: Data(session.utf8)),
-    ))
+    guard let row = db.rows(query).first else { throw SessionStoreError.unknownSession(key) }
+    return PendingPrompt(generation: Int(row.generation), revs: revs, opening: row.opening)
+  }
+
+  public static func setIfAbsent(_ key: String, pending: PendingPrompt, in db: inout Wuwei.Database) throws {
+    guard try generation(key, in: db) == Int64(pending.generation) else { return }
+    let row = SessionPromptRow(sessionID: key, generation: Int64(pending.generation), revs: try Sessions.encode(pending.revs), rendered: nil, session: nil)
+    try db.execute(SessionPromptRow.insert { row } onConflict: { $0.sessionID })
+  }
+
+  public static func winner(_ key: String, for pending: PendingPrompt, in db: Wuwei.Database) throws -> SessionPromptReference? {
+    guard let row = row(key, in: db), row.generation == Int64(pending.generation), try Sessions.decode([String: Int].self, from: row.revs) == pending.revs, row.rendered != nil else { return nil }
+    return try reference(row, in: db)
+  }
+
+  public static func store(
+    _ key: String, for pending: PendingPrompt, rendered: String, opening: PromptOpening?, session: PromptSession, at: Date, in db: inout Wuwei.Database,
+  ) throws {
+    precondition(opening == nil || pending.opening, "the generation keeps no room for an opening")
+    guard let row = row(key, in: db), row.generation == Int64(pending.generation), try Sessions.decode([String: Int].self, from: row.revs) == pending.revs, row.rendered == nil else { return }
+    let encoded = try Sessions.encode(session)
+    try db.execute(SessionPromptRow.where { $0.sessionID.eq(key) }.update { $0.rendered = #bind(rendered); $0.session = #bind(encoded) })
+    try writePreamble(key, generation: row.generation, rendered: rendered, opening: opening, at: at, in: &db)
+  }
+
+  private static func row(_ key: String, in db: Wuwei.Database) -> SessionPromptRow? {
+    db.rows(SessionPromptRow.where { $0.sessionID.eq(key) }).first
+  }
+
+  private static func generation(_ key: String, in db: Wuwei.Database) throws -> Int64 {
+    guard let generation = db.rows(PromptRuntimeRow.where { $0.sessionID.eq(key) }.select(\.generation)).first else {
+      throw SessionStoreError.unknownSession(key)
+    }
+    return generation
+  }
+
+  private static func reference(_ row: SessionPromptRow, in db: Wuwei.Database) throws -> SessionPromptReference {
+    switch (row.rendered, row.session) {
+    case (nil, nil):
+      return .pending(PendingPrompt(generation: Int(row.generation), revs: try Sessions.decode([String: Int].self, from: row.revs), opening: keepsOpening(row.sessionID, generation: row.generation, in: db)))
+    case let (rendered?, session?):
+      return .rendered(
+        hash: rendered, opening: try opening(row.sessionID, generation: row.generation, in: db),
+        session: try Sessions.decode(PromptSession.self, from: session),
+      )
+    default:
+      preconditionFailure("a rendered prompt stores both its blob and session")
+    }
   }
 }
 
-extension SessionStore {
-  /// The revision the session's prompt reads files at, or nil for a session
-  /// that predates the table and has not been activated since.
-  public func promptRevision(_ id: SessionID) async throws -> Int? {
-    let key = id.rawValue
-    return try await writer.read { db in
-      _ = try Sessions.record(key, in: db)
-      return try SessionPrompts.row(key, in: db).map { Int($0.rev) }
-    }
-  }
+@Table("session_runtime")
+private struct PromptRuntimeRow {
+  @Column("session_id", primaryKey: true) var sessionID: String
+  var generation: Int64
+}
 
-  /// The generation's prompt, or the revision it renders at; a session with
-  /// no row gets one at the current revision.
-  public func activatePrompt(_ id: SessionID) async throws -> SessionPromptState {
-    let key = id.rawValue
-    // Every kernel inference lands here: a stored row is a plain read, and a
-    // write transaction opens only for a session that has none yet.
-    if let state = try await blobs.read(writer, { db, blobs in
-      _ = try Sessions.record(key, in: db)
-      return try SessionPrompts.row(key, in: db).map { try SessionPrompts.state($0, in: db, blobs) }
-    }) {
-      return state
-    }
-    return try await blobs.write(writer) { db, blobs in
-      if let row = try SessionPrompts.row(key, in: db) { return try SessionPrompts.state(row, in: db, blobs) }
-      try SessionPrompts.advance(key, in: db)
-      return try SessionPrompts.state(SessionPrompts.row(key, in: db)!, in: db, blobs)
-    }
-  }
-
-  /// Stores `prompt`, `tools` and `opening` as the prompt of `pending` and
-  /// returns the generation's prompt: one already stored wins, and a
-  /// rendering for a generation or revision that has since moved is returned
-  /// unstored. A stored one is the generation's line 0, by reference, and
-  /// its opening lines 1 and 2; `opening` is given only when `pending` has room for one.
-  public func storePrompt(_ id: SessionID, for pending: PendingPrompt, _ prompt: String, opening: PromptOpening? = nil, tools: [Tool], session: PromptSession) async throws -> StoredPrompt {
-    precondition(opening == nil || pending.opening, "the generation keeps no room for an opening")
-    let key = id.rawValue
-    let preamble = TranscriptPreamble(system: prompt, tools: tools)
-    let blob = try await blobs.stage(Array(try Sessions.encode(preamble).utf8))
-    let rendered = StoredPrompt(
-      rendered: blob.hash, preamble: preamble, opening: [opening?.group, opening?.session].compactMap(\.self).filter { !$0.isEmpty }, session: session,
-    )
-    let encoded = String(decoding: try JSONEncoder().encode(session), as: UTF8.self)
-    let now = dateGen.now
-    return try await blobs.write(writer) { db, blobs in
-      guard let row = try SessionPrompts.row(key, in: db),
-            row.generation == Int64(pending.generation), row.rev == Int64(pending.rev)
-      else { return rendered }
-      if case let .rendered(stored) = try SessionPrompts.state(row, in: db, blobs) { return stored }
-      try Substrate.record(blob, in: db)
-      try SessionPromptRow.where { $0.sessionID.eq(key) }
-        .update { $0.rendered = #bind(blob.hash); $0.session = #bind(encoded) }
-        .execute(db)
-      try Sessions.writePreamble(key, generation: row.generation, rendered: blob.hash, opening: opening, at: now, in: db)
-      return rendered
-    }
-  }
-
-  func advancePromptRevision(_ id: SessionID) async throws {
-    let key = id.rawValue
-    try await writer.write { db in
-      _ = try Sessions.record(key, in: db)
-      try SessionPrompts.advance(key, in: db)
-    }
-  }
+@Selection
+private struct PendingPromptRead {
+  let generation: Int64
+  let opening: Bool
 }

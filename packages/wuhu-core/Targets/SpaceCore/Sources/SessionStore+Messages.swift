@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceFS
@@ -50,14 +49,14 @@ extension SessionStore {
 
   public func conversations(member: String) -> [ConversationRecord] {
     let ids: [ConversationID]
-    if let person = space.personCell(member) { ids = runtime.worker().cell(person).conversations() }
-    else { ids = space.conversations(member: member) }
+    if let person = spaceCell.personCell(member) { ids = runtime.worker().cell(person).conversations() }
+    else { ids = spaceCell.conversations(member: member) }
     return ids.compactMap { conversationCell($0).record() }
   }
 
   public func conversations(reader: String?, group: GroupID) async throws -> [ConversationRecord] {
     var readable: [ConversationRecord] = []
-    for record in space.conversations().compactMap({ conversationCell($0).record() }) {
+    for record in spaceCell.conversations().compactMap({ conversationCell($0).record() }) {
       if record.kind == .users {
         if try await reads(record, reader: reader, group: group) { readable.append(record) }
       } else if record.members.contains(where: { $0.member == reader }) { readable.append(record) }
@@ -84,7 +83,7 @@ extension SessionStore {
     let me = senderSession?.rawValue ?? sender.id
     let conversation: ConversationID
     let place: Post.Target
-    if let existing = space.message(messageID) {
+    if let existing = spaceCell.message(messageID) {
       (conversation, place) = (existing.conversation, .conversation)
     } else {
       switch target {
@@ -93,7 +92,7 @@ extension SessionStore {
       case let .box(owner):
         (conversation, place) = (ConversationID(owner.rawValue), .box)
       case let .dm(spelling):
-        guard let other = space.directMessageTarget(spelling) else { throw SessionStoreError.unknownPerson(spelling) }
+        guard let other = spaceCell.directMessageTarget(spelling) else { throw SessionStoreError.unknownPerson(spelling) }
         guard me != other else { throw SessionStoreError.selfDirectMessage(me) }
         (conversation, place) = (Conversations.dmID(me, other), .dm(with: other))
       }
@@ -102,23 +101,20 @@ extension SessionStore {
       target: place, messageID: messageID, sender: sender, senderSession: senderSession, kind: kind, requestID: requestID, replyTarget: replyTarget,
       viewing: viewing, content: content, acting: acting, at: now,
     )
-    // The bytes are stored before the call, by their hash: a post the cell then refuses leaves a blob nothing names.
+    // The post's step puts the bytes, so a refused post takes them back too; only a large upload's object store entry stays.
     var staged: [Blob] = []
     for upload in uploads {
-      let blob = try await blobs.stage(upload.bytes)
+      let blob = try await bucket.stage(upload.bytes)
       staged.append(blob)
       post.uploads.append(Post.Upload(name: upload.name, blob: blob.hash, size: upload.bytes.count, file: upload.attachment(at: upload.name)))
     }
-    if !staged.isEmpty {
-      try await writer.write { [staged] db in
-        for blob in staged { try Substrate.record(blob, in: db) }
-      }
+    return try await runtime.worker().call(ConversationCell.ID(conversation.rawValue)) { [post, staged] in
+      try $0.post(post, storing: staged)
     }
-    return try await runtime.worker().call(ConversationCell.ID(conversation.rawValue)) { [post] in try $0.post(post) }
   }
 
   public func message(_ id: MessageID) -> MessageRecord? {
-    space.message(id)
+    spaceCell.message(id)
   }
 
   private func conversationCell(_ id: ConversationID) -> ConversationCell {

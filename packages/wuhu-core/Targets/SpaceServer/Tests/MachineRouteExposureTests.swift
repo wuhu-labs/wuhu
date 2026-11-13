@@ -4,10 +4,12 @@
   import Foundation
 #endif
 import ControlledTime
+import Dependencies
 import DeterministicDependencies
 import Fetch
 import enum JSONValue.JSONValue
 import class MainHub.Hub
+import struct MainHub.SessionEffects
 @testable import SessionTools
 @testable import SpaceCore
 @testable import SpaceServer
@@ -23,9 +25,12 @@ import Testing
       let group = try await space.ensurePersonalGroup(account: person.id)
       input["group"] = .string(group.rawValue)
     }
-    let connection = MainConnection()
-    let tokens = try await testTokens(space: space)
-    SessionRuntime.bindMain(owner: Hub(space: space), tokens: tokens, connection: connection)
+    let fixture = try await SessionToolFixture(space: space)
+    let connection = fixture.connection
+    let owner = withDependencies {
+      $0[SessionEffects.self] = fixture.execution.sessionEffects
+    } operation: { Hub(space: space) }
+    SessionRuntime.bindMain(owner: owner, execution: fixture.execution, tokens: fixture.tokens, connection: connection)
     let response = try await connection.fetch(Request(
       url: URL(string: "http://space/v1/machine-v2")!,
       method: .post,

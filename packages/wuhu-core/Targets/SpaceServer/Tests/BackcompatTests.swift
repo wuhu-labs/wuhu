@@ -6,6 +6,7 @@ import FetchSSE
 import Foundation
 import GRDB
 import JSONValue
+import LoopCore
 import Scratch
 import SessionDomain
 import SpaceCore
@@ -152,7 +153,7 @@ enum Backcompat {
       "tool/count": .tool("SELECT count(*) AS n, count(DISTINCT kind) AS kinds FROM sessions"),
       "tool/lowercase-keyword": .tool("select title from docs where path = '/notes/b.md'"),
       "tool/error-forbidden": .tool("SELECT * FROM fs_heads"),
-      "tool/error-forbidden-many": .tool("SELECT * FROM fs_heads JOIN blobs JOIN docs"),
+      "tool/error-forbidden-many": .tool("SELECT * FROM fs_heads JOIN bucket_objects JOIN docs"),
       "tool/error-master": .tool("SELECT * FROM sqlite_master"),
       "tool/error-unknown": .tool("SELECT * FROM nope"),
       "tool/error-write": .tool("DELETE FROM docs"),
@@ -266,6 +267,7 @@ enum Backcompat {
 
     let meta = try await fixtureDependencies(fixedDate) {
       let space = try Space.open(file: file)
+      _ = try await SessionToolFixture(space: space)
       let fs = await space.fs(.shared)
       for (path, content) in [
         ("/models.json", testModelsJSON),

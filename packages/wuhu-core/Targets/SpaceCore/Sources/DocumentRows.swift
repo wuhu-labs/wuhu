@@ -18,7 +18,7 @@ struct DocumentEdited: Error {}
 /// store. Everything read about a document itself is the document cell's.
 struct DocumentRows: Sendable {
   let writer: any DatabaseWriter
-  let blobs: BlobStore
+  let bucket: Bucket
 
   // MARK: A step's work, on the connection the step writes on
 
@@ -31,28 +31,17 @@ struct DocumentRows: Sendable {
     return (head.rev, hash)
   }
 
-  /// The blob's bytes when they are inline; nil when they live in the object store, which a step cannot reach.
-  static func inlineText(_ hash: String, in host: AnyObject) throws -> Data? {
-    let db = host as! GRDB.Database
-    switch try! Substrate.storedBlob(hash, in: db) {
-    case let .inline(content): return Data(content)
-    case .external: return nil
-    }
-  }
-
   /// Writes `text` as the file in the step's transaction, one revision, and answers the revision the
   /// head now holds — its own when the bytes are already there. `DocumentGone` when the head is not
   /// the revision the document built on.
   @discardableResult
   static func commit(
-    _ path: SpacePath, _ group: GroupID, acting: GroupID, attribution: RevisionAttribution?, text: String, expecting: Int64?,
+    _ path: SpacePath, _ group: GroupID, acting: GroupID, attribution: RevisionAttribution?, blob: Blob, expecting: Int64?,
     checkout: Int64?, mtime: String, in host: AnyObject,
   ) throws -> Int64 {
     let db = host as! GRDB.Database
     let head = try! Substrate.head(path, group: group, in: db)
     guard head?.rev == expecting else { throw DocumentGone() }
-    let content = Array(text.utf8)
-    let blob = Blob(hash: Substrate.blobHash(content), content: content, externalKey: nil)
     let outcome: FSWriteOutcome
     do {
       outcome = try LiveFS.commitFile(
@@ -80,9 +69,9 @@ struct DocumentRows: Sendable {
 
   // MARK: The bytes only the host can reach
 
-  /// The text of a file whose bytes live in the object store.
+  /// The bytes of a file, inline or in the object store.
   func text(of hash: String) async throws -> Data {
-    try await blobs.read(writer) { db, cache in Data(try cache.blob(of: hash, in: db).content) }
+    Data(try await bucket.bytes(hash))
   }
 
   /// The document as a merge takes it. One read, because the state, snapshot, log and checkpoint it
@@ -112,11 +101,7 @@ struct DocumentRows: Sendable {
         )
       }
       guard let head else { return DocumentMaterial() }
-      let hash = head.blobHash!
-      switch try Substrate.storedBlob(hash, in: db) {
-      case let .inline(content): return DocumentMaterial(fileRev: head.rev, text: Data(content))
-      case .external: return DocumentMaterial(fileRev: head.rev, hash: hash)
-      }
+      return DocumentMaterial(fileRev: head.rev, hash: head.blobHash!)
     }
     if let hash = material.hash { material.text = try await text(of: hash) }
     return material

@@ -15,7 +15,6 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "running work", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         { request in
           let text = request.lines.map(\.text).joined(separator: "\n")
@@ -25,11 +24,14 @@ import WuhuAI
       ])
       var config = makeConfig(inference: { try await script($0) })
       let running = Box(["script.ffff0000", "exec.ex_0a1b2c3d"])
-      config.runningWork = { session in
-        #expect(session == id)
+      config.runningWork = { session async throws in
+        let record = try await sessions.record(session)
+        #expect(record.title == "running work")
         return running.value
       }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await sessions.createSession(group: .shared, title: "running work", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         _ = try await service.restart(id, executor: nil, note: nil)
         running.withLock { $0 = [] }
         try await service.enqueue(item: Fix.message("what is still running?"), to: id)

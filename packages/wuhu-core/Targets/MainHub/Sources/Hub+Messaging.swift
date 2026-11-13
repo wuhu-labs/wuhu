@@ -19,8 +19,7 @@ extension Hub {
     _ arguments: SendMessageArguments,
   ) async throws -> ToolResultPayload {
     if case let .person(person) = caller { try await admit(person) }
-    // Scoped like every receipt key: (caller, kernel tool call id).
-    let messageID = MessageID(UUID.deterministic("post", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
+    let messageID = MessageID(UUID.deterministic("post", caller.messageNamespace, callID.rawValue).uuidString.lowercased())
     // A retry of a send that already committed must not read its attachments
     // again: the machine may be gone by now, and a failure here would make the
     // model send the message twice.
@@ -91,7 +90,7 @@ extension Hub {
     let stall = try stallSeconds(arguments.stallSeconds)
     let terms = try arguments.terms.terms()
     let task = SessionID(arguments.task)
-    let messageID = MessageID(UUID.deterministic("request", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
+    let messageID = MessageID(UUID.deterministic("request", caller.messageNamespace, callID.rawValue).uuidString.lowercased())
     do {
       let delivery = try await store.openRequest(
         on: task,

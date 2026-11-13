@@ -1,6 +1,10 @@
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import class MainHub.Hub
 import SessionDomain
@@ -25,7 +29,8 @@ import struct WuhuAI.ToolCall
   @Test func `a write cancelled before it begins writes and answers with its own result`() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let loop = try await ToolFixture(space: space)
+      let executor = try await loop.executor(owner: loop.hub { Hub(space: space) })
       let session = try await makeSession(space)
 
       let call = ToolCall(id: "tc-cancelled-write", name: "write", arguments: .object(["path": "/notes/cancelled.md", "content": "written anyway"]))
@@ -39,8 +44,9 @@ import struct WuhuAI.ToolCall
   @Test func `a grep cancelled before it begins runs nothing`() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/notes/a.md", Data("needle".utf8), ifMatch: nil)
-      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
+      let executor = try await loop.executor(owner: loop.hub { Hub(space: space) })
       let session = try await makeSession(space)
 
       let call = ToolCall(id: "tc-cancelled-grep", name: "grep", arguments: .object(["pattern": .string("needle")]))
@@ -53,11 +59,12 @@ import struct WuhuAI.ToolCall
   @Test func `a grep cancelled while it runs answers its result`() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/notes/a.md", Data("needle".utf8), ifMatch: nil)
       let session = try await makeSession(space)
-      let tokens = try await testTokens(space: space, spaceURL: "http://main")
-      let connection = MainConnection()
-      let main = FetchClient.inProcess(SessionRuntime.bindMain(owner: Hub(space: space), tokens: tokens, connection: connection))
+      let tokens = loop.tokens
+      let connection = loop.connection
+      let main = FetchClient.inProcess(SessionRuntime.bindMain(owner: loop.hub { Hub(space: space) }, execution: loop.execution, tokens: tokens, connection: connection))
       let held = HeldRequest()
       connection.bind(FetchClient { request in
         if request.url.path == "/v1/tools/grep" { await held.wait() }

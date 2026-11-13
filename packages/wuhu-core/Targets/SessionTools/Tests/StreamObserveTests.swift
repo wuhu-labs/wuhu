@@ -92,11 +92,13 @@ private func seen(_ space: Space) async throws -> [String]? {
   @Test func `a handler fires per event and every dial resumes after the last one taken`() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
-      let session = try await makeSession(space)
       _ = try await space.fs(.shared).write("/record.js", Data(recording.utf8), ifMatch: nil)
       let events = EventServer()
       try await withEventServer(events) { url, sources in
-        try await withHandlerFiring(space, sources: sources) { worker, _ in
+        let loop = try await ToolFixture(space: space, sources: sources)
+        let session = try await makeSession(space)
+        try await space.sessions.markInterrupted(session)
+        try await withHandlerFiring(loop) { worker, _ in
           var world = ToolWorld(worker: worker, session: session)
           let armed = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/record.js"]))
           guard case let .observe(result) = armed else { Issue.record("unexpected \(armed)"); return }
@@ -114,20 +116,20 @@ private func seen(_ space: Space) async throws -> [String]? {
           try await untilAdvancing("second dial", time) { events.dials.count == 2 }
           #expect(events.dials[1].lastEventID == "2")
         }
-        try await withHandlerFiring(space, sources: sources) { _, _ in
+        let restarted = try await ToolFixture(space: space, sources: sources)
+        try await withHandlerFiring(restarted) { _, _ in
           try await until("dial after a restart") { events.dials.count == 3 }
           #expect(events.dials[2].lastEventID == "2")
         }
+        #expect(try await handlerNotifications(space, session).isEmpty)
       }
       #expect(try await seen(space) == ["1:message:a", "1:build:b", "2:message:c"])
-      #expect(try await handlerNotifications(space, session).isEmpty)
     }
   }
 
   @Test func `a failed firing keeps its event and retries it on the same connection`() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
-      let session = try await makeSession(space)
       _ = try await space.fs(.shared).write("/flaky.js", Data("""
       import {readText, writeText} from 'wuhu:space';
       export default async ({event}) => {
@@ -144,7 +146,10 @@ private func seen(_ space: Space) async throws -> [String]? {
       let events = EventServer()
       var failures: [String] = []
       try await withEventServer(events) { url, sources in
-        try await withHandlerFiring(space, sources: sources) { worker, _ in
+        let loop = try await ToolFixture(space: space, sources: sources)
+        let session = try await makeSession(space)
+        try await space.sessions.markInterrupted(session)
+        try await withHandlerFiring(loop) { worker, _ in
           var world = ToolWorld(worker: worker, session: session)
           _ = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/flaky.js"]))
           try await until("first dial") { events.dials.count == 1 }
@@ -169,11 +174,13 @@ private func seen(_ space: Space) async throws -> [String]? {
   @Test func `an archived owner's idle stream keeps its slot and its connection`() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
-      let session = try await makeSession(space)
       _ = try await space.fs(.shared).write("/record.js", Data(recording.utf8), ifMatch: nil)
       let events = EventServer()
       try await withEventServer(events) { url, sources in
-        try await withHandlerFiring(space, sources: sources) { worker, _ in
+        let loop = try await ToolFixture(space: space, sources: sources)
+        let session = try await makeSession(space)
+        try await space.sessions.markInterrupted(session)
+        try await withHandlerFiring(loop) { worker, _ in
           var world = ToolWorld(worker: worker, session: session)
           _ = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/record.js"]))
           try await until("first dial") { events.dials.count == 1 }
@@ -195,11 +202,13 @@ private func seen(_ space: Space) async throws -> [String]? {
   @Test func `an empty id resets where the stream resumes, across a restart`() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
-      let session = try await makeSession(space)
       _ = try await space.fs(.shared).write("/record.js", Data(recording.utf8), ifMatch: nil)
       let events = EventServer()
       try await withEventServer(events) { url, sources in
-        try await withHandlerFiring(space, sources: sources) { worker, _ in
+        let loop = try await ToolFixture(space: space, sources: sources)
+        let session = try await makeSession(space)
+        try await space.sessions.markInterrupted(session)
+        try await withHandlerFiring(loop) { worker, _ in
           var world = ToolWorld(worker: worker, session: session)
           _ = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/record.js"]))
           try await until("first dial") { events.dials.count == 1 }
@@ -210,7 +219,8 @@ private func seen(_ space: Space) async throws -> [String]? {
           events.dials[0].stream.finish()
           try await untilAdvancing("second dial", time) { events.dials.count == 2 }
         }
-        try await withHandlerFiring(space, sources: sources) { _, _ in
+        let restarted = try await ToolFixture(space: space, sources: sources)
+        try await withHandlerFiring(restarted) { _, _ in
           try await until("dial after a restart") { events.dials.count == 3 }
         }
       }
@@ -222,12 +232,14 @@ private func seen(_ space: Space) async throws -> [String]? {
   @Test(arguments: [false, true]) func `a busy stream is dialled again only after its Retry-After`(asDate: Bool) async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
-      let session = try await makeSession(space)
       @Dependency(\.date.now) var now
       let retryAfter = asDate ? Date.HTTPFormatStyle().format(now.addingTimeInterval(120)) : "120"
       let events = EventServer { $0 == 0 ? Response(status: .tooManyRequests, headers: [.retryAfter: retryAfter]) : nil }
       try await withEventServer(events) { url, sources in
-        try await withHandlerFiring(space, sources: sources) { worker, _ in
+        let loop = try await ToolFixture(space: space, sources: sources)
+        let session = try await makeSession(space)
+        try await space.sessions.markInterrupted(session)
+        try await withHandlerFiring(loop) { worker, _ in
           var world = ToolWorld(worker: worker, session: session)
           _ = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/record.js"]))
           try await until("first dial") { events.dials.count == 1 }
@@ -235,18 +247,20 @@ private func seen(_ space: Space) async throws -> [String]? {
           try await holds("no dial before Retry-After") { events.dials.count == 1 }
           try await untilAdvancing("second dial", time) { events.dials.count == 2 }
         }
+        #expect(try await handlerNotifications(space, session).isEmpty)
       }
-      #expect(try await handlerNotifications(space, session).isEmpty)
     }
   }
 
   @Test func `cancelling a stream observation closes its connection`() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let session = try await makeSession(space)
       let events = EventServer()
       try await withEventServer(events) { url, sources in
-        try await withHandlerFiring(space, sources: sources) { worker, _ in
+        let loop = try await ToolFixture(space: space, sources: sources)
+        let session = try await makeSession(space)
+        try await space.sessions.markInterrupted(session)
+        try await withHandlerFiring(loop) { worker, _ in
           var world = ToolWorld(worker: worker, session: session)
           let armed = try await world.run("observe", .object(["url": .string(url.absoluteString), "handler": "/record.js"]))
           guard case let .observe(result) = armed else { Issue.record("unexpected \(armed)"); return }
@@ -270,7 +284,8 @@ private func seen(_ space: Space) async throws -> [String]? {
           owners.withLock { $0.append(owner) }
           return try await sources.token(owner, url)
         }, fetch: sources.fetch)
-        try await withHandlerFiring(space, sources: signed) { _, owner in
+        let loop = try await ToolFixture(space: space, sources: signed)
+        try await withHandlerFiring(loop) { _, owner in
           let observe = SubscriptionObserveInput(sql: nil, url: url.absoluteString, throttleSeconds: nil)
           _ = try await owner.armObserver(.shared, ObserverInput(name: "feed", handler: "/record.js", observe: observe, timer: nil, sessionsPerHour: nil))
           try await until("first dial") { events.dials.count == 1 }

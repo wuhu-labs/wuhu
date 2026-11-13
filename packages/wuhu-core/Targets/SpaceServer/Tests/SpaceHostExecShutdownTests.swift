@@ -4,6 +4,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import FetchTunnel
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

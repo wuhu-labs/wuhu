@@ -3,6 +3,7 @@ import Fetch
 import FetchSSE
 import Foundation
 import JSONValue
+import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore

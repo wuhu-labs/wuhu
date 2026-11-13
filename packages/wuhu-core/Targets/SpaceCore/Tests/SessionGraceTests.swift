@@ -2,6 +2,7 @@ import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -14,7 +15,8 @@ struct SessionGraceTests {
       $0.uuid = .incrementing
     } operation: {
       @Dependency(\.timeControl) var timeControl
-      return (try Space.inMemory(), timeControl)
+      @Dependency(\.continuousClock) var clock
+      return (registerSessionExecution(try Space.inMemory(), clock: clock), timeControl)
     }
   }
 

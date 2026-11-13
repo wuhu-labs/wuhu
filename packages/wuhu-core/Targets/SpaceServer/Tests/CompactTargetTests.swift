@@ -34,7 +34,9 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
   let created = try await harness.call("/v1/session", .object(["title": "Direct", "kind": "agent", "provider": "testing", "model": "test-model"]), as: SessionCreateOutput.self)
   let id = SessionID(created.id)
   let bound = SessionModelRoute(group: nil, member: nil, specifier: .init(provider: "testing", model: "test-model", effort: "high"), bindingFingerprint: catalog.document.providers["testing"]!.routeFingerprint, epoch: UUID().uuidString.lowercased(), reason: .create, placedAt: Date(), evidence: [])
-  return (id, try await owner.space.sessions.establishModelRoute(id, route: bound))
+  let route = try await owner.space.sessions.establishInferenceModelRoute(id, route: bound)
+  try await harness.store.deliverMail(id)
+  return (id, route)
 }
 
 @Suite(.deterministicDependencies) struct CompactTargetTests {
@@ -49,20 +51,20 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       let route: SessionModelRoute
       do {
         let space = try Space.open(file: file)
+        _ = try await SessionToolFixture(space: space)
         let fs = await space.fs(.settings)
         var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
         document.providers["alternate"] = document.providers["testing"]
         let groups = ["work": ModelsDocument.Group(members: [.init(id: "a", provider: "testing", model: "test-model"), .init(id: "b", provider: "alternate", model: "test-model")], defaultEffort: "high", policy: .quotaAware)]
         _ = try await fs.write(ModelsDocument.spacePath, JSONEncoder().encode(document), ifMatch: nil)
         _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: nil)
-        let owner = Hub(space: space)
         let catalog = try await groupCatalog(space: space, access: InferenceAccess(credentials: boundKeys))()
         let usage = UsageBoard()
         let placed = try #require(await modelRoutePreparer(catalog: { catalog }, usage: usage)(.modelGroup(id: "work", effort: "high"), .create))
         id = try await space.sessions.createSession(group: .shared, title: "Switch", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), snapshot: .init(), modelRoute: placed)
-        old = try #require(await owner.space.sessions.modelRoute(id))
+        old = try #require(await space.sessions.modelRoute(id))
         let tokens = compactedTokens(id)
-        let prepare = compactionPlacement(store: owner.space.sessions, catalog: { _ in catalog }, usage: usage)
+        let prepare = compactionPlacement(store: space.sessions, catalog: { _ in catalog }, usage: usage)
         let transition = try #require(await prepare(id, tokens, .init(model: "alternate/test-model", effort: "low")))
         route = transition.route
         #expect(route.group == nil && route.member == nil)

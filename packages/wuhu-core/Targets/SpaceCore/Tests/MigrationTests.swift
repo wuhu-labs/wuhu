@@ -8,6 +8,7 @@ import GRDB
 import Scratch
 import struct SpaceContract.GroupID
 @testable import SpaceCore
+import SpaceFS
 import enum SpaceSQL.PageCache
 import Testing
 
@@ -23,7 +24,7 @@ import Testing
     let space = try Space(writer: database)
     try await database.write { db in
       try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005')")
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005', '042')")
       try db.execute(sql: """
       CREATE TABLE machine_execs (
         id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, stream_id INTEGER NOT NULL,
@@ -32,7 +33,12 @@ import Testing
       );
       INSERT INTO machine_execs VALUES ('ex_old', 'old-box', 1, '', 'caller', 'call', '2026-01-01T00:00:00Z', NULL, 0, 'shared');
       """)
-      try db.execute(sql: "ALTER TABLE session_api_receipts DROP COLUMN request")
+      try db.execute(sql: """
+      CREATE TABLE session_api_receipts (
+        session_id TEXT NOT NULL, tool_call_id TEXT NOT NULL, status INTEGER NOT NULL,
+        body TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY (session_id, tool_call_id)
+      );
+      """)
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
       try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, '{}')", arguments: ["ex_old"])
     }
@@ -63,9 +69,51 @@ import Testing
   @Test func upgradePreservesRowsAndRunsOnlyOnce() async throws {
     let database = try database()
     let original = try await baseline(database)
+    let shared = await original.fs(.shared)
+    let settings = await original.fs(.settings)
+    let file = try SpacePath(validating: "/kept.md")
+    let attribution = RevisionAttribution(actor: "reader", via: "page:/kept.html")
+    _ = try await original.writeFile(file, data: Data("one".utf8), in: .shared, acting: .settings, attribution: attribution, ifMatch: nil, createOnly: false)
+    _ = try await shared.write(file.rawValue, Data("two".utf8), ifMatch: nil)
+    _ = try await settings.write(file.rawValue, Data("foreign".utf8), ifMatch: nil)
+    let table = try SpacePath(validating: "/kept.table")
+    _ = try await original.createTable(table, header: TableHeader(columns: []), in: .shared, acting: .settings)
+    let inserted = try await original.commitRows(table, [.insert([])], in: .shared, acting: .settings)
+    let history = try await original.history(file, in: .shared)
+    try await database.write { db in
+      try db.execute(sql: """
+      UPDATE fs_versions SET rev = 9 WHERE grp = 'settings';
+      UPDATE fs_heads SET rev = 9 WHERE grp = 'settings';
+      DROP TABLE revisions;
+      DROP TABLE revision_actors;
+      CREATE TABLE revisions (rev INTEGER PRIMARY KEY AUTOINCREMENT, mtime TEXT NOT NULL, grp TEXT NOT NULL);
+      CREATE TABLE revision_actors (rev INTEGER PRIMARY KEY, actor TEXT, via TEXT NOT NULL);
+      INSERT INTO revisions VALUES (1, '2026-01-01T00:00:00Z', 'settings'), (2, '2026-01-02T00:00:00Z', 'shared'), (3, '2026-01-03T00:00:00Z', 'settings'), (4, '2026-01-04T00:00:00Z', 'settings'), (9, '2026-01-09T00:00:00Z', 'shared'), (12, '2026-01-12T00:00:00Z', 'shared');
+      INSERT INTO revision_actors VALUES (1, 'reader', 'page:/kept.html'), (9, 'reader', 'page:/foreign.html');
+      DROP TABLE session_prompts;
+      CREATE TABLE session_prompts (session_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, rev INTEGER NOT NULL, rendered TEXT, session TEXT, CHECK ((rendered IS NULL) = (session IS NULL)));
+      INSERT INTO session_prompts VALUES ('kept-session', 0, 9, NULL, NULL);
+      DELETE FROM grdb_migrations WHERE identifier = '046';
+      """)
+    }
     let firstConnection = try DatabaseQueue(path: database.path)
     let first = try Space(writer: firstConnection)
     #expect(try await first.accounts().contains { $0.name == "Kept" })
+    #expect(try await first.currentRevision(in: .shared) == 12)
+    #expect(try await first.currentRevision(in: .settings) == 12)
+    #expect(try await first.fs(.shared, at: Rev(8)).read(file.rawValue).1 == Data("two".utf8))
+    #expect(try await first.fs(.settings, at: Rev(9)).read(file.rawValue).1 == Data("foreign".utf8))
+    let migratedHistory = try await first.history(file, in: .shared)
+    #expect(migratedHistory.map(\.0) == history.map(\.0))
+    #expect(migratedHistory.map { SQLiteDateFormat.string(from: $0.1) } == ["2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z"])
+    #expect(try await first.tableSchema(table, in: .shared, rev: Rev(8)).token.rev == inserted.rev.value)
+    #expect(try await first.query("SELECT id FROM \"/kept.table\"").rows.count == 1)
+    let actors = try await first.attributions(of: [(.shared, Rev(1)), (.settings, Rev(9))])
+    #expect(actors[.shared]?[Rev(1)] == attribution)
+    #expect(actors[.settings]?[Rev(9)]?.via == "page:/foreign.html")
+    #expect(try await database.read { try String.fetchOne($0, sql: "SELECT revs FROM session_prompts WHERE session_id = 'kept-session'") }.map { try JSONDecoder().decode([String: Int].self, from: Data($0.utf8)) } == ["shared": 9, "settings": 9])
+    #expect(try await first.fs(.shared).write(file.rawValue, Data("three".utf8), ifMatch: nil).rev == 13)
+    #expect(try await first.currentRevision(in: .settings) == 12)
     let owed = try #require(try await first.owedExecs().first)
     #expect(owed.toolSpec == "{}")
     let identity = try await first.identity()
@@ -482,7 +530,7 @@ import Testing
     let original = try await baseline(database)
     let logs = RecordedLogs()
     let upgraded = try Space(writer: database, log: logs.logger)
-    #expect(logs.all.map(\.message).filter { $0.hasPrefix("migration ") } == ["001", "002", "005"].flatMap { ["migration \($0): applying", "migration \($0): applied in 0 ms"] })
+    #expect(logs.all.map(\.message).filter { $0.hasPrefix("migration ") } == ["001", "002", "005", "042"].flatMap { ["migration \($0): applying", "migration \($0): applied in 0 ms"] })
     try await upgraded.close()
     try await original.close()
   }

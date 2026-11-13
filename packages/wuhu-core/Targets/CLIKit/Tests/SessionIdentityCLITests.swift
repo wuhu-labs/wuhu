@@ -3,11 +3,16 @@ import Credentials
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import InferenceKit
 import LoopCore
 import MachineContract
 import class MainHub.Hub
+import struct MainHub.SessionEffects
 import Scratch
 import ServeTesting
 import SessionDomain
@@ -102,29 +107,40 @@ final class IdentityHarness: Sendable {
     _ = try await space.fs(.settings).write("/models.json", Data(identityModelsJSON.utf8), ifMatch: nil)
     let tokens = try await testTokens(space: space, spaceURL: Self.sessionSpace)
     let hub = MachineHub(space: space, tokens: tokens)
-    let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: space))
-    let config = LoopConfig(
-      executeTool: { invocation in
-        try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
-      },
-      inference: { _ in
-        LoopCore.InferenceReply(
-          message: AssistantMessage(content: [.text(.init(text: "ok"))]),
-          metadata: AssistantMessageMetadata(stopReason: .stop, usage: Usage(inputTokens: 1, outputTokens: 1, totalTokens: 10)),
-        )
-      },
-      budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
-    )
-    let catalog = groupCatalog(space: space, access: InferenceAccess())
-    let owner = Hub(
-      space: space, machines: machineSeam(hub: hub),
-      resolveModelExecutor: modelExecutorResolver(space: space),
-      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
-      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
-    )
     let connection = MainConnection()
     let access = InferenceAccess(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "identity-fixture") })
-    let worker = SessionExecution(connection: connection, credential: { try await tokens.sessionToken($0) }, access: access, space: owner.space) { _ in config }
+    let worker = SessionExecution(
+      connection: connection, credential: { try await tokens.sessionToken($0) }, access: access, space: space,
+      observerRun: { observer, _, body in
+        let token = tokens.scriptToken(.observer(observer))
+        defer { tokens.revokeScript(token) }
+        return try await body(token)
+      },
+    ) { tools in
+      LoopConfig(
+        executeTool: { invocation in
+          try await tools.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
+        },
+        inference: { _ in
+          LoopCore.InferenceReply(
+            message: AssistantMessage(content: [.text(.init(text: "ok"))]),
+            metadata: AssistantMessageMetadata(stopReason: .stop, usage: Usage(inputTokens: 1, outputTokens: 1, totalTokens: 10)),
+          )
+        },
+        budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
+      )
+    }
+    let catalog = groupCatalog(space: space, access: InferenceAccess())
+    let owner = withDependencies {
+      $0[SessionEffects.self] = worker.sessionEffects
+    } operation: {
+      Hub(
+        space: space, machines: machineSeam(hub: hub),
+        resolveModelExecutor: modelExecutorResolver(space: space),
+        resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+        prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
+      )
+    }
     let runtime = SessionRuntime(execution: worker, owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: dev, execTokens: tokens)
     worker.start()

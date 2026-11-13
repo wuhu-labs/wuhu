@@ -15,7 +15,7 @@ extension Space {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let rev = try await writer.write { db in
       try MachineFolders.requireStored(path, in: db)
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
       try Tables.create(path, group: group, header: header, rev: rev, mtime: mtime, in: db)
       return Rev(Int(rev))
     }
@@ -27,7 +27,7 @@ extension Space {
     let rev = try await writer.write { db in
       let old = try Tables.currentHeader(path, group: group, in: db)
       try LiveFS.checkIfMatch(ifMatch, head: Substrate.head(path, group: group, in: db), path: path)
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
       if !allowDropColumns, !Set(old.columns.map(\.name)).isSubset(of: Set(header.columns.map(\.name))) {
         throw SpaceError.invalidTableHeader("omitting a column requires allowDropColumns: true")
       }
@@ -40,7 +40,7 @@ extension Space {
   public func tableSchema(_ path: SpacePath, in group: GroupID, rev: Rev? = nil) async throws -> (header: TableHeader, token: VersionToken) {
     try await writer.read { db in
       if let rev {
-        try HistoricalFS.requireRevision(Int64(rev.value), in: db)
+        try HistoricalFS.requireRevision(Int64(rev.value), group: group, in: db)
         guard let node = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: Int64(rev.value), in: db) else { throw SpaceError.notFound(path.rawValue) }
         guard node.kind == "table" else { throw SpaceError.notATable(path.rawValue) }
         return (try TableReplay.state(path, group: group, ceiling: Int64(rev.value), in: db).0, VersionToken(rev: Int(node.rev)))
@@ -90,7 +90,7 @@ extension Space {
     let commit = try await writer.write { db in
       let header = try Tables.currentHeader(path, group: group, in: db)
       let resolved = try ops(header, db)
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
       var ids: [Int64] = []
       for op in resolved {
         switch op {

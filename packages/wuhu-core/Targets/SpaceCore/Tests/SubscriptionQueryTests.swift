@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -18,7 +19,7 @@ import Testing
       let id = try await tests.owner(store)
       let observation = try await tests.arm(store, id)
       func timer(_ name: String, _ schedule: TimerSchedule, due: Date) async throws {
-        try await store.rows { try $0.arm(id, Arming(.init(id: .init(name), kind: .timer(schedule, message: name)), nextFireAt: due), uuid: UUID.init) }
+        _ = try await store.armSubscription(id, slot: .init(id: .init(name), kind: .timer(schedule, message: name)), nextFireAt: due)
       }
       try await timer("timer", .cron("* * * * *"), due: fixedDate.addingTimeInterval(60))
       let initial = try await space.query("SELECT id, session_id, kind, sql, schedule, handler, armed_at, last_fired_at, last_error FROM subscriptions ORDER BY id")

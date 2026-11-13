@@ -3,6 +3,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import LoopCore
 import SessionDomain
 import SessionTools
 import SpaceContract
@@ -157,12 +158,13 @@ private final class ToolsWitness: Sendable {
             )
             #expect(createCall.arguments.object?["expects_reply"] == .bool(true))
             #expect(createCall.arguments.object?["message"] != nil)
-            let receipt = try #require(await harness.store.receipt(.session(agent), toolCallID: ToolCallID(createCall.id)))
-            let created = try #require({ () -> CreateSessionResult? in
-              if case let .createSession(result) = receipt { result } else { nil }
-            }())
-            let task = created.sessionID
-            let request = try #require(await harness.store.openRequests(task).first?.id)
+            let created = try #require(delegated.first { line in
+              guard case let .toolResult(result) = line.message else { return false }
+              return result.toolCallId == createCall.id
+            })
+            #expect(created.text.hasPrefix("created session "))
+            let task = SessionID(try #require(created.text.split(separator: " ").dropFirst(2).first).description)
+            let request = try #require(harness.store.openRequests(task).first?.id)
             #expect(try await harness.store.record(task).kind == .task)
             #expect(try await harness.store.record(task).parent == agent)
 
@@ -213,6 +215,7 @@ private final class ToolsWitness: Sendable {
   @Test func systemPromptLeadsWithReplyDiscipline() async throws {
     try await withReplayableDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let sessions = space.sessions
       let id = try await sessions.createSession(
         group: .shared,
@@ -258,6 +261,7 @@ private final class ToolsWitness: Sendable {
   @Test func systemPromptCarriesTheRootAndTheOwnHomeWithOrigins() async throws {
     try await withReplayableDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let sessions = space.sessions
       let model = ModelSpecifier(provider: "deepseek", model: "deepseek-v4-flash", effort: "medium")
       let agent = try await sessions.createSession(group: .shared, title: "agent", kind: .agent, createdBy: "owner", model: model)
@@ -271,7 +275,7 @@ private final class ToolsWitness: Sendable {
       _ = try await space.fs(.shared).write("/.agents/skills/review/SKILL.md", Data("# Review\nReview things\n".utf8), ifMatch: nil)
 
       // The files came after creation: render the latest revision, not the frozen one.
-      let prompt = try await renderPrompt(space: space, record: try await sessions.record(task), rev: try await space.currentRevision()).prompt.joined(separator: "\n\n")
+      let prompt = try await renderPrompt(space: space, record: try await sessions.record(task), revs: space.currentRevisions(for: Principal(actor: .session(task), group: .shared))).prompt.joined(separator: "\n\n")
       let addressing = try #require(prompt.range(of: "Every path is absolute"))
       let root = try #require(prompt.range(of: "from /AGENTS.md:\n\nroot manual"))
       let own = try #require(prompt.range(of: "from /_/sessions/\(task.rawValue)/AGENTS.md:\n\ntask manual"))

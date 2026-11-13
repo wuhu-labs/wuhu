@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -116,7 +117,7 @@ import Testing
       let p = try await people()
       let theirs = try await session(p, in: p.bob)
       let id = theirs.rawValue
-      let before = try await p.harness.store.promptRevision(theirs)
+      let before = try await p.harness.store.promptRevisions(theirs)
       _ = try await p.harness.space.fs(.shared).write("/bump.md", Data("x".utf8), ifMatch: nil)
 
       for path in ["lines/page", "lines", "context", "home"] {
@@ -140,7 +141,7 @@ import Testing
       let record = try await p.harness.store.record(theirs)
       #expect(record.title == "s")
       #expect(record.tags.isEmpty)
-      #expect(try await p.harness.store.promptRevision(theirs) == before)
+      #expect(try await p.harness.store.promptRevisions(theirs) == before)
       #expect(try await p.harness.store.messages(conversation: ConversationID(id)).isEmpty)
     }
   }

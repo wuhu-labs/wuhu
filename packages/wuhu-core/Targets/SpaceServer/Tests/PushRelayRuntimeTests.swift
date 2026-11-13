@@ -3,6 +3,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import Logging
+import LoopCore
 @testable import MainHub
 import SessionDomain
 import SpaceCore
@@ -322,7 +323,10 @@ import Testing
       try await runtime.drain()
       try await space.registerPeople(["other-person"])
       for id in ["d1", "d2"] {
-        if id == "d2" { try await space.sessions.archive(owner, grace: .seconds(3600)) }
+        if id == "d2" {
+          _ = try await SessionToolFixture(space: space)
+          try await space.sessions.archive(owner, grace: .seconds(3600))
+        }
         _ = try await space.sessions.post(
           .dm(with: persona), messageID: MessageID(id), sender: Sender(id: "other-person", timeZone: utc),
           content: .init(text: id),
@@ -352,6 +356,7 @@ func relaySpace(grants: [String], space: Space) async throws -> (space: Space, o
   try await withDependencies {
     $0.date = .constant(fixedDate)
   } operation: {
+    _ = try await SessionToolFixture(space: space)
     let account = try await space.addAccount(kind: .human, name: nil)
     let key = try await space.addKey(
       testPubkey("relay-device"),
@@ -370,6 +375,8 @@ func relaySpace(grants: [String], space: Space) async throws -> (space: Space, o
       group: .shared,
       title: "helper", kind: .agent, createdBy: persona.name, model: model,
     )
+    try await space.sessions.markInterrupted(owner)
+    try await space.sessions.markInterrupted(helper)
     _ = try await space.sessions.post(
       .box(owner),
       messageID: MessageID("question"),

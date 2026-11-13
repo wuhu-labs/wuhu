@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -29,7 +30,7 @@ import Testing
   // schema goes back to before 008 (and 009, which builds on it), on a
   // connection of its own: the space's writer guards the rows its cells own.
   private func before008(_ database: DatabaseQueue) async throws -> Space {
-    let space = try Space(writer: database)
+    let space = registerSessionExecution(try Space(writer: database))
     let store = space.sessions
     let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
     for id in ["done", "gone", "late", "pending", "plain"] {
@@ -45,6 +46,8 @@ import Testing
       default: break
       }
     }
+    try await store.deliverMail()
+    await space.stopWorker()
     try await connection(to: database).write { db in
       try db.execute(sql: """
       DELETE FROM grdb_migrations WHERE identifier IN ('008', '009');

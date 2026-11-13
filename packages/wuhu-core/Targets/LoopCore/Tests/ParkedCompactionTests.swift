@@ -34,8 +34,6 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
-      let created = try await sessions.promptRevision(id)
       let placements = Mutex(0)
       let script = InferenceScript([
         parks(),
@@ -51,14 +49,16 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
         placements.withLock { $0 += 1 }
         return nil
       }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
         await time.advance(by: 3600)
         try await holds("no inference while parked") { script.count == 1 }
         #expect(placements.withLock { $0 } == 0)
         #expect(try await sessions.generationState(id).generation == 0)
-        #expect(try await sessions.promptRevision(id) == created)
+        #expect(try await sessions.promptRevisions(id) == nil)
         guard case .folding? = space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn else { throw UnexpectedCall("a live turn after the park") }
 
         _ = try await space.fs(.shared).write("/AGENTS.md", Data("edited while parked".utf8), ifMatch: nil)
@@ -67,7 +67,7 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
       }
       #expect(placements.withLock { $0 } == 1)
       #expect(try await sessions.generationState(id).generation == 1)
-      #expect(try await sessions.promptRevision(id)! > created!)
+      #expect(try await sessions.promptRevisions(id) == nil)
     }
   }
 
@@ -75,7 +75,6 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         parks(),
         { request in
@@ -85,7 +84,9 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
         },
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
       }
@@ -104,12 +105,13 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let script = InferenceScript([parks()])
+      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
       let bystander = try await sessions.createSession(group: .shared, title: "bystander", kind: .agent, createdBy: "morgan", model: .test)
       let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "morgan")
       let task = try await createRetiredSession(in: space, title: "task", kind: .task, parent: requester, createdBy: "morgan")
-      let script = InferenceScript([parks()])
-      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      try await runService(space, config) { _ in
+      try await runService(service) { _ in
         _ = try await sessions.openRequest(on: task, from: .session(requester), messageID: .init("r1"), text: "ask @\(bystander.rawValue) first")
         try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
         guard case .folding? = space.worker.cell(SessionCell.ID(bystander.rawValue)).turn()?.turn else { throw UnexpectedCall("the park was refused") }
@@ -128,6 +130,9 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let script = InferenceScript([parks()])
+      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
       let bystander = try await sessions.createSession(group: .shared, title: "bystander", kind: .agent, createdBy: "morgan", model: .test)
       let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "morgan")
       let task = try await createRetiredSession(in: space, title: "task", kind: .task, parent: requester, createdBy: "morgan")
@@ -136,9 +141,7 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
         id: UUID(), messageID: .init("r1"), conversationID: .init("dm-requester-task"), sender: Fix.sender,
         timestamp: anchor, kind: .request, requestID: .init("r1"), owesReply: false, content: .init(text: "do it"),
       ))
-      let script = InferenceScript([parks()])
-      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: foreignBrief, to: bystander)
         try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
         guard case .folding? = space.worker.cell(SessionCell.ID(bystander.rawValue)).turn()?.turn else { throw UnexpectedCall("the park was refused") }
@@ -151,7 +154,11 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let script = InferenceScript([parks()])
+      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
       let task = try await createRequestedTask(in: space, title: "fails its request")
+      try await sessions.markInterrupted(task)
       let parent = try #require(try await sessions.record(task).parent)
       let schema = try #require(JSONValue.parse(#"{"type":"object"}"#))
       _ = try await sessions.openRequest(on: task, from: .session(parent), messageID: .init("r1"), text: "answer in JSON", terms: RequestTerms(schema: schema))
@@ -161,10 +168,8 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
         }
       }
       #expect(try sessions.openRequests(task).isEmpty)
-      let script = InferenceScript([parks()])
-      let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      try await runService(space, config) { service in
-        try await sessions.look(task)
+      try await runService(service) { service in
+        try await service.resume(task)
         try await until("the task's park settles") { try await sessions.settledWork(task) && script.count == 1 }
         guard case .folding? = space.worker.cell(SessionCell.ID(task.rawValue)).turn()?.turn else { throw UnexpectedCall("the park was refused") }
       }
@@ -178,10 +183,6 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await kind == .agent
-        ? sessions.createSession(group: .shared, title: "parks owing", kind: kind, createdBy: "morgan", model: .test)
-        : createRequestedTask(in: space, title: "parks owing")
-      let owing: QueueInput? = kind == .agent ? Fix.message("please answer", conversation: id.rawValue, owesReply: true) : nil
       let script = InferenceScript([
         parks("parking without answering"),
         { request in
@@ -194,7 +195,12 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
         { _ in Fix.reply("still owing") },
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await kind == .agent
+        ? sessions.createSession(group: .shared, title: "parks owing", kind: kind, createdBy: "morgan", model: .test)
+        : createRequestedTask(in: space, title: "parks owing")
+      let owing: QueueInput? = kind == .agent ? Fix.message("please answer", conversation: id.rawValue, owesReply: true) : nil
+      try await runService(service) { service in
         if let owing { try await service.enqueue(item: owing, to: id) } else { try await sessions.openParentRequest(on: id) }
         try await until("the refused park's turn goes on and its nag is answered") { try await sessions.settledWork(id) && script.count == 3 }
         #expect(space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn == .idle)
@@ -207,7 +213,6 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         parks(),
         { request in
@@ -217,7 +222,9 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
         },
       ])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the park settles") { try await sessions.settledWork(id) && script.count == 1 }
         _ = try await service.restart(id, executor: nil, note: "Started over.")
@@ -232,7 +239,6 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("parking", calls: [parkingCompact(bookmark: "nowhere")]),
         { request in
@@ -243,7 +249,9 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
           return Fix.reply("staying live")
         },
       ])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let id = try await sessions.createSession(group: .shared, title: "parks", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("wrap up"), to: id)
         try await until("the refusal is answered") { try await sessions.settledWork(id) && script.count == 2 }
         #expect(space.worker.cell(SessionCell.ID(id.rawValue)).turn()?.turn == .idle)

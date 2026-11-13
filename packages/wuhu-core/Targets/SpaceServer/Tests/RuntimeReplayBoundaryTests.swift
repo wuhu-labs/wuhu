@@ -5,6 +5,7 @@ import Fetch
 import Foundation
 import InferenceKit
 import JSONValue
+import LoopCore
 import ModelProviders
 import SessionDomain
 import struct SpaceContract.SessionCreateOutput

@@ -20,8 +20,9 @@ struct HumanAgentDMToolTests {
   @Test func removedUserArgumentIsRefusedRatherThanSilentlyPostingIntoTheBox() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space, name: "a")
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: session)
       for user: JSONValue in ["carol", .null] {
         let result = try await world.run("send_message", .object(["message": "lost", "user": user]))
         #expect(try failureMessage(result) == refusal)
@@ -46,13 +47,14 @@ struct HumanAgentDMToolTests {
   @Test func aPersonPersonDMIdIsAlsoATypedRefusalForASession() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space, name: "a")
       try await space.registerPeople(["carol", "dave"])
       let dm = try await space.sessions.post(
         .dm(with: "dave"), messageID: .init("human-post"), sender: Sender(id: "carol", timeZone: .gmt),
         content: .init(text: "hello"),
       )
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: session)
       let result = try await world.run("send_message", .object([
         "message": "lost", "conversation": .string(dm.message.conversation.rawValue),
       ]))
@@ -67,6 +69,7 @@ struct HumanAgentDMToolTests {
   @Test func anOldHumanSessionDMIdIsATypedRefusal() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space, name: "a")
       try await space.registerPeople(["carol"])
       let dm = try await space.sessions.createConversation(members: ["carol"], in: .shared)
@@ -78,7 +81,7 @@ struct HumanAgentDMToolTests {
         try db.execute(sql: "UPDATE conversations SET kind = 'dm_user' WHERE id = ?", arguments: [dm.rawValue])
         try db.execute(sql: "INSERT INTO conversation_members (conversation_id, member, member_kind, joined_at) VALUES (?, ?, 'session', '2026-01-01T00:00:00.000Z')", arguments: [dm.rawValue, session.rawValue])
       }
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: session)
       let result = try await world.run("send_message", .object(["message": "lost", "conversation": .string(dm.rawValue)]))
       #expect(try failureMessage(result) == refusal)
       #expect(try await space.sessions.messages(conversation: dm).isEmpty)

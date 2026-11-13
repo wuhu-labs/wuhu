@@ -1,3 +1,4 @@
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -170,33 +171,8 @@ private func sessionRouter(
     case .webSocket, .boundedWebSocket: notForSessions()
     }
   }
-  // The tool call a request runs for is its idempotency key: a call that
-  // already ran gets its first answer again, not a second run. A request
-  // without one (the CLI from an exec) runs every time. The hub's verbs own
-  // this themselves, each recording its answer in the write that makes its
-  // effect (or making the effect by an id derived from the call); only the
-  // file tools are replayed here, from the API's recorded answer.
   let callID: @Sendable (Request) -> ToolCallID = { request in
     request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:)) ?? ToolCallID("wst_\(uuid().uuidString.lowercased())")
-  }
-  // The recorded answer stands only for the request it answered: a repeat of
-  // the tool call that asks something else is a conflict.
-  let answeredOther: @Sendable (ToolCallID, APIReceipt) -> Response = { toolCall, receipt in
-    errorResponse(.conflict, code: "conflict", message: "tool call \(toolCall.rawValue) was already answered for \(receipt.request ?? "another request")")
-  }
-  let receipted: @Sendable (Request, String, @Sendable () async throws -> Response) async throws -> Response = { request, identity, body in
-    let toolCall = request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:))
-    if let toolCall, let receipt = try await store.apiReceipt(principal().session, toolCallID: toolCall) {
-      if let recorded = receipt.request, recorded != identity { return answeredOther(toolCall, receipt) }
-      return jsonResponse(JSONValue.parse(receipt.body) ?? .null, status: Status(code: receipt.status))
-    }
-    let response = try await body()
-    guard let toolCall, 200 ..< 300 ~= response.status.code else { return response }
-    let answer = String(decoding: try await response.data(), as: UTF8.self)
-    try await store.recordAPIReceipt(
-      principal().session, toolCallID: toolCall, APIReceipt(status: response.status.code, body: answer, request: identity),
-    )
-    return jsonResponse(JSONValue.parse(answer) ?? .null, status: response.status)
   }
   // A session verb runs on the hub as the session, and answers as the tool
   // would: a typed failure is a 422 carrying its code.
@@ -275,26 +251,7 @@ private func sessionRouter(
     if let address, let refused = await foreignHomeRefusal([address], space: space) {
       return refused
     }
-    return try await receipted(request, "PUT \(address ?? request.url.path)") {
-      try await MachineSeam.$caller.withValue(principal().session) { try await forward(request, parameters) }
-    }
-  }
-  // The answer recorded for the client's tool call: a worker whose call is a
-  // replay learns its write already happened before paying for what precedes it.
-  router.get("/v1/receipt") { request, _ in
-    guard let toolCall = request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:)) else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "a receipt is read with the \(ToolCallHeader.name) header")
-    }
-    guard let receipt = try await store.apiReceipt(principal().session, toolCallID: toolCall) else {
-      return errorResponse(.notFound, code: "notFound", message: "no answer recorded for tool call \(toolCall.rawValue)")
-    }
-    // `?address=` asks for the write of that address and nothing else.
-    if let address = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "address" })?.value,
-       receipt.request != "PUT \(address)"
-    {
-      return answeredOther(toolCall, receipt)
-    }
-    return jsonResponse(JSONValue.parse(receipt.body) ?? .null, status: Status(code: receipt.status))
+    return try await MachineSeam.$caller.withValue(principal().session) { try await forward(request, parameters) }
   }
   // The caller's prompt for its generation, rendered by the first read.
   router.get("/v1/prompt") { _, _ in
@@ -353,21 +310,19 @@ private func sessionRouter(
     if let refused = await foreignHomeRefusal(writtenAddresses(name, input, fields: fields), space: space) {
       return refused
     }
-    return try await receipted(request, "POST /v1/tools/\(name)") {
-      do {
-        let context = SpaceToolContext(
-          space: space, machines: machines, principal: Principal(actor: .session(principal().session), group: principal().group),
-        )
-        // A machine the tool reaches sees the session as its caller.
-        let output = try await MachineSeam.$caller.withValue(principal().session) { try await spaceTool.run(context, input: input) }
-        return jsonResponse(output)
-      } catch let error as ToolRunError {
-        switch error {
-        case .undecodableInput:
-          return jsonResponse(error.payload, status: .badRequest)
-        case .failed:
-          return jsonResponse(error.payload, status: .unprocessableContent)
-        }
+    do {
+      let context = SpaceToolContext(
+        space: space, machines: machines, principal: Principal(actor: .session(principal().session), group: principal().group),
+      )
+      // A machine the tool reaches sees the session as its caller.
+      let output = try await MachineSeam.$caller.withValue(principal().session) { try await spaceTool.run(context, input: input) }
+      return jsonResponse(output)
+    } catch let error as ToolRunError {
+      switch error {
+      case .undecodableInput:
+        return jsonResponse(error.payload, status: .badRequest)
+      case .failed:
+        return jsonResponse(error.payload, status: .unprocessableContent)
       }
     }
   }
@@ -423,7 +378,7 @@ private func sessionRouter(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a device-command body: \(error)")
     }
     let payload = try await answered {
-      try await owner.manipulateUI(principal().session, callID(request), ManipulateUIArguments(device: device, payload: input.payload))
+      try await owner.manipulateUI(principal().session, ManipulateUIArguments(device: device, payload: input.payload))
     }
     guard case let .manipulateUI(issued) = payload else { return hubRefusal(payload) }
     return try Response.json(DeviceCommandOutput(n: Int(issued.n)))
@@ -445,12 +400,12 @@ private func sessionRouter(
     case let (observe?, nil):
       payload = try await answered {
         let arming = try await owner.arming(session, call, ObserveArguments(sql: observe.sql, url: observe.url, throttleSeconds: observe.throttleSeconds, handler: input.handler, name: input.name))
-        return try await execution.arm(session, arming, answering: call)
+        return try await execution.arm(session, arming)
       }
     case let (nil, timer?):
       payload = try await answered {
         let arming = try owner.arming(call, TimerArguments(message: timer.message, inSeconds: timer.inSeconds, cron: timer.cron, handler: input.handler, name: input.name))
-        return try await execution.arm(session, arming, answering: call)
+        return try await execution.arm(session, arming)
       }
     default:
       return errorResponse(.badRequest, code: "invalidArgument", message: "a subscription is exactly one of observe and timer")
@@ -462,8 +417,7 @@ private func sessionRouter(
     guard let id = parameters["id"], !id.isEmpty else {
       return errorResponse(.notFound, code: "notFound", message: "unknown subscription")
     }
-    let (session, call) = (principal().session, callID(request))
-    let payload = try await answered { try await execution.disarm(session, SubscriptionID(id), answering: call) }
+    let payload = try await answered { try await execution.disarm(principal().session, SubscriptionID(id)) }
     guard let output = subscriptionOutput(payload) else { return hubRefusal(payload) }
     return try Response.json(output)
   }

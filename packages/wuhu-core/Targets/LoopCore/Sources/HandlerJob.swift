@@ -34,12 +34,13 @@ struct HandlerJob {
     let client = ctx.dependency(LoopClient.self)
     let params = ctx.params
     let outcome = try await ctx.effect { try await client.fire(params) }
-    let answer = HandlerAnswer(firing: params.firing, path: params.path, marker: params.marker, fireTime: params.fireTime, outcome: outcome)
+    let answer = HandlerAnswer(subscription: params.subscription, firing: params.firing, path: params.path, marker: params.marker, fireTime: params.fireTime, outcome: outcome)
     return .done(sending: .fired(id, answer), to: params.cell.recipient)
   }
 }
 
 struct HandlerAnswer: Codable, Sendable {
+  let subscription: SubscriptionID
   let firing: UUID
   let path: String
   let marker: String?

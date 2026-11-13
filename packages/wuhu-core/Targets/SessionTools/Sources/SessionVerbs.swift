@@ -19,17 +19,12 @@ import SessionDomain
 import SpaceContract
 import SpaceCore
 
-// A create that left a session behind unfinished (its template not cloned,
-// its brief not handed over): the id is the session, and a retry of the same
-// call finishes it.
+// Creation committed before its template or brief failed.
 struct IncompleteCreate: Error {
   let id: String
   let message: String
 }
 
-// The session verbs, run in the worker as plain calls on main's API. Every
-// call names the tool call it runs for, so main answers a retry with the first
-// result: the message, request, session or slot is made once.
 extension ToolExecutor {
   func sendMessage(_ actor: ScriptActor, _ call: String, _ arguments: SendMessageArguments, user: JSONValue? = nil) async throws -> ToolResultPayload {
     var body: OrderedDictionary<String, JSONValue> = ["message": .string(arguments.message)]

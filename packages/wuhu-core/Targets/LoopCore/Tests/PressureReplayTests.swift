@@ -22,7 +22,6 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "SSE pressure", kind: .agent, createdBy: "morgan", model: .test)
       let endpoint: any ModelEndpoint
       switch dialect {
       case "responses": endpoint = OpenAIGPTEndpoint(model: "test", apiKey: "offline")
@@ -48,12 +47,14 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
       }
       let config = makeConfig(inference: { request in
-        let executor = InferenceExecutor(session: sid, model: model, systemPrompt: "offline", tools: [], mediaResolver: ReplayImageResolver())
+        let executor = InferenceExecutor(session: request.sessionID, model: model, systemPrompt: "offline", tools: [], mediaResolver: ReplayImageResolver())
         let completed = try await executor.run(attemptID: request.attemptID, lines: request.lines)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { _ in commits.withLock { $0 += 1 } })
       })
       try await withDependencies { $0.fetch = fetch } operation: {
-        try await runService(space, config) { service in
+        let service = SessionExecution(space: space, loopConfig: config)
+        let sid = try await sessions.createSession(group: .shared, title: "SSE pressure", kind: .agent, createdBy: "morgan", model: .test)
+        try await runService(service) { service in
           for round in 0 ..< 3 {
             var input = Fix.message("round \(round)", message: "m\(round)")
             if image, round == 0, case var .message(message) = input {
@@ -81,10 +82,9 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "pressure replay", kind: .agent, createdBy: "morgan", model: .test)
       let registry = ResponsesSocketRegistry()
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
-      let model = try await ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "verified-offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
+      let catalog = ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "verified-offline") })
       let bodies = Box<[JSONValue]>([])
       let commits = Box<[AssistantEntry]>([])
       let dials = Box(0)
@@ -107,6 +107,8 @@ import WuhuAI
         }, close: { _ in stream.continuation.finish() }, abort: { stream.continuation.finish() })
       }
       var config = makeConfig(executeTool: { _ in .failure(.init(message: "lookup complete")) }, inference: { request in
+        let sid = request.sessionID
+        let model = try await catalog.resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
         // The real notification is already durable before anything reaches the provider.
         #expect(try await sessions.lines(sid) == request.lines)
         let lease = try await registry.acquire(session: sid, model: model)
@@ -120,8 +122,10 @@ import WuhuAI
         })
       })
       config.invalidateInference = { await registry.invalidate($0) }
-      try await withDependencies { $0[WebSocketConnector.self] = connector } operation: {
-        try await runService(space, config) { service in
+      let sid = try await withDependencies { $0[WebSocketConnector.self] = connector } operation: {
+        let service = SessionExecution(space: space, loopConfig: config)
+        let sid = try await sessions.createSession(group: .shared, title: "pressure replay", kind: .agent, createdBy: "morgan", model: .test)
+        try await runService(service) { service in
           var input = Fix.message("go")
           if image, case var .message(message) = input {
             message.content.attachments = [.image(path: "/picture.png", mimeType: "image/png", size: 3)]
@@ -131,6 +135,7 @@ import WuhuAI
           try await until("four commits") { commits.value.count == 4 }
           try await until("settled") { try await sessions.settledWork(sid) }
         }
+        return sid
       }
       #expect(dials.value == 2)
       let requests = bodies.value

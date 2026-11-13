@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import JSONValue
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -18,6 +19,7 @@ import enum Wuwei.Value
     init(tasks count: Int = 1) async throws {
       rig = try MovingClockSpace()
       parent = try await rig.store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
+      try await rig.store.markInterrupted(parent)
       var tasks: [SessionID] = []
       for n in 0 ..< count {
         tasks.append(try await rig.store.createSession(
@@ -36,7 +38,7 @@ import enum Wuwei.Value
 
     /// The request's row, as the space's cell reads it.
     func row(_ id: String) -> RequestRow? {
-      store.space.request(RequestID(id))
+      store.spaceCell.request(RequestID(id))
     }
 
     func status(_ id: String) -> String? { row(id)?.status }

@@ -159,14 +159,11 @@ public enum SessionStoreError: Error, Equatable, Sendable {
   case mayNotArchive(String, actor: String)
 }
 
-public struct ForeignReceipt: Error, Equatable, Sendable {
-  public var toolCallID: ToolCallID
-}
-
 public struct SessionStore: Sendable {
+  public let space: Space
   let taskScope: TaskScope
   let writer: any DatabaseWriter
-  let blobs: BlobStore
+  let bucket: Bucket
   let dateGen: DateGenerator
   let runtime: SpaceRuntime
   let rng: WithRandomNumberGenerator
@@ -174,7 +171,7 @@ public struct SessionStore: Sendable {
 
 extension Space {
   public nonisolated var sessions: SessionStore {
-    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, runtime: runtime, rng: rng)
+    SessionStore(space: self, taskScope: taskScope, writer: writer, bucket: bucket, dateGen: dateGen, runtime: runtime, rng: rng)
   }
 }
 
@@ -241,48 +238,6 @@ extension SessionStore {
       let runtime = try Sessions.runtime(key, in: db)
       return Int(try Sessions.queueHead(key, tail: runtime.queueTail, at: now, in: db))
     }
-  }
-
-  public func receipt(_ holder: Caller, toolCallID: ToolCallID) async throws -> ToolResultPayload? {
-    let key = holder.receiptHolder
-    return try await writer.read { db in
-      try Sessions.receipt(key, toolCallID: toolCallID.rawValue, in: db)
-    }
-  }
-
-  /// The API's first successful answer to the session's tool call, if one
-  /// was recorded.
-  public func apiReceipt(_ id: SessionID, toolCallID: ToolCallID) async throws -> APIReceipt? {
-    let key = id.rawValue
-    return try await writer.read { db in
-      try Sessions.apiReceipt(key, toolCallID: toolCallID.rawValue, in: db)
-    }
-  }
-
-  // The first recorded answer is authoritative; a crash-retry that re-records
-  // must not overwrite it.
-  public func recordAPIReceipt(_ id: SessionID, toolCallID: ToolCallID, _ receipt: APIReceipt) async throws {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      try Sessions.recordAPIReceipt(key, toolCallID: toolCallID.rawValue, receipt, now: now, in: db)
-    }
-  }
-}
-
-/// A `/v1/tools/<name>` or `PUT /v1/f/*` response as the session's tool call
-/// got it: its status and JSON body, answered again to a repeat of the same
-/// call. `request` is what was answered (the verb and the address written),
-/// so a repeat that asks something else is refused, not answered.
-public struct APIReceipt: Hashable, Sendable {
-  public let status: Int
-  public let body: String
-  public let request: String?
-
-  public init(status: Int, body: String, request: String? = nil) {
-    self.status = status
-    self.body = body
-    self.request = request
   }
 }
 

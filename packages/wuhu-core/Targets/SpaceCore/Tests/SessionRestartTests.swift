@@ -2,6 +2,7 @@ import Dependencies
 import DeterministicDependencies
 import Foundation
 import GRDB
+@testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -41,18 +42,20 @@ import Testing
       )
       try await store.put(id, input: SessionFix.message("queued"))
       try await store.markErrored(id, message: "boom")
+      try await store.deliverMail()
       try await store.markInterrupted(id)
 
       _ = try await store.restart(id)
 
       let hydration = try await store.hydrate(id)
-      #expect(try await store.undrainedInputs(id).count == 1)
-      #expect(hydration.queueHead > hydration.queueTail)
+      #expect(try await store.undrainedInputs(id).isEmpty)
+      #expect(hydration.queueHead == hydration.queueTail)
+      #expect(try await store.transcriptLines(id).map(\.key).contains("message:m1"))
       #expect(hydration.record.work == .hasWork)
       #expect(hydration.record.errorMessage == nil)
       #expect(hydration.record.hold == .normal)
       #expect(try await store.armedSubscriptions(id).count == 1)
-      #expect(try await store.rows { try $0.armedSlots(id).slots[.init("timer.t1")] } == .timer(.oneShot(fixedDate)))
+      #expect(try await store.armedSubscriptions(id).first?.slot.kind == .timer(.oneShot(fixedDate), message: "wake"))
     }
   }
 
@@ -68,11 +71,11 @@ import Testing
       #expect(try await store.undrainedInputs(task).count == 1)
       _ = try await store.restart(task)
       let hydration = try await store.hydrate(task)
-      #expect(try await store.undrainedInputs(task).count == 1)
-      #expect(hydration.queueHead > hydration.queueTail)
+      #expect(try await store.undrainedInputs(task).isEmpty)
+      #expect(hydration.queueHead == hydration.queueTail)
       #expect(try store.openRequests(task).map(\.id) == [.init("r1")])
       let drained = try await store.drainQueue(task)
-      #expect(drained.items.count == 1)
+      #expect(drained.items.isEmpty)
       #expect(try await store.transcriptLines(task).last?.key == "message:queued")
       _ = try await store.report(task, request: .init("r1"), kind: .final, messageID: .init("f1"), text: "done")
       #expect(try store.openRequests(task).isEmpty)
@@ -95,7 +98,8 @@ import Testing
         try await store.put(id, input: SessionFix.message("two")) == 2,
         "preserved rows keep ids monotonic under a live daemon cursor",
       )
-      #expect(try await store.undrainedInputs(id).count == 2)
+      #expect(try await store.undrainedInputs(id).count == 1)
+      #expect(try await store.transcriptLines(id).map(\.key).contains("message:m1"))
     }
   }
 
@@ -105,12 +109,13 @@ import Testing
       let id = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let observation = try await store.armSubscription(id, slot: .init(id: .init("obs.keep"), kind: .observe(sql: "SELECT 1", throttleSeconds: 30)), marker: "old snapshot")
       try await store.markErrored(id, message: "boom")
+      try await store.deliverMail()
       _ = try await store.restart(id)
       let hydration = try await store.hydrate(id)
       #expect(hydration.record.work == .noWork)
       #expect(hydration.record.errorMessage == nil)
       #expect(try await store.armedSubscriptions(id) == [observation])
-      #expect(try await store.rows { try $0.armedSlots(id).slots } == [.init("obs.keep"): .observe(sql: "SELECT 1")])
+      #expect(try await store.armedSubscriptions(id).first?.slot.kind == .observe(sql: "SELECT 1", throttleSeconds: 30))
     }
   }
 
@@ -124,27 +129,21 @@ import Testing
       try await store.put(id, input: first)
       try await store.put(id, input: bad)
       try await store.put(id, input: last)
-      try await store.writer.write { db in
-        try db.execute(sql: "UPDATE session_queue SET payload = '{}' WHERE session_id = ? AND id = 2", arguments: [id.rawValue])
-      }
+      try await store.space.plant("UPDATE session_queue SET payload = '{}' WHERE session_id = ? AND id = 2", arguments: [id.rawValue])
       try await store.markErrored(id, message: "unreadable queue")
+      try await store.deliverMail()
       _ = try await store.restart(id, note: "Started over.")
       let hydration = try await store.hydrate(id)
       let undrained = try await store.undrainedInputs(id)
-      #expect(undrained.map(\.input) == [first, last])
-      #expect(undrained.map(\.id) == [4, 5])
-      #expect(hydration.queueTail == 3)
+      #expect(undrained.isEmpty)
+      #expect(hydration.queueTail == 5)
       #expect(hydration.record.errorMessage == nil)
       #expect(hydration.record.work == .hasWork)
       #expect(try await store.generationState(id).note == "Started over.\nDropped 1 queued input(s) that could not be read.")
       #expect(try await store.put(id, input: first) == 4)
       #expect(try await store.put(id, input: last) == 5)
-      #expect(try await store.drainQueue(id).items == [first.transcriptItem, last.transcriptItem])
+      #expect(try await store.transcriptLines(id).map(\.key).filter { $0.hasPrefix("message:") } == ["message:first", "message:last"])
       #expect(try await store.drainQueue(id).items.isEmpty)
-      let unreadable = try await store.writer.read { db in
-        try String.fetchOne(db, sql: "SELECT payload FROM session_queue WHERE session_id = ? AND id = 2", arguments: [id.rawValue])
-      }
-      #expect(unreadable == "{}")
     }
   }
 
@@ -154,10 +153,9 @@ import Testing
       let store = try makeSpace().sessions
       let id = try await store.createSession(group: .shared, title: "date recovery", kind: .agent, createdBy: "morgan", model: .test)
       try await store.put(id, input: SessionFix.message("bad date"))
-      try await store.writer.write { db in
-        try db.execute(sql: "UPDATE session_queue SET \(column) = 'oops' WHERE session_id = ?", arguments: [id.rawValue])
-      }
+      try await store.space.plant("UPDATE session_queue SET \(column) = 'oops' WHERE session_id = ?", arguments: [id.rawValue])
       try await store.markErrored(id, message: "invalid date")
+      try await store.deliverMail()
       _ = try await store.restart(id)
       let hydration = try await store.hydrate(id)
       #expect(hydration.queueHead == hydration.queueTail)

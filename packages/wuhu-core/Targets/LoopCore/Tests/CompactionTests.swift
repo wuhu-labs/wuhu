@@ -33,7 +33,6 @@ private func compactCall(
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "compact misuse", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("compact", calls: [call]),
         { request in
@@ -45,7 +44,9 @@ private func compactCall(
           return Fix.reply("continued after refusal")
         },
       ])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let id = try await sessions.createSession(group: .shared, title: "compact misuse", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("compact refusal is followed by another inference") { try await sessions.settledWork(id) && script.count == 2 }
       }
@@ -58,7 +59,6 @@ private func compactCall(
   func aBookmarkInTheCompactReplyIsRefusedBeforeFoldingOrParking(park: Bool) async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let id = try await space.sessions.createSession(group: .shared, title: "same-reply bookmark", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("bookmark then compact", calls: [
           .init(id: "bookmark", name: "bookmark", arguments: .object(["name": .string("cut")])),
@@ -75,7 +75,9 @@ private func compactCall(
       let preparations = Box(0)
       var config = makeConfig(inference: { try await script($0) })
       config.prepareCompaction = { _, _, _ in preparations.withLock { $0 += 1 }; return nil }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await space.sessions.createSession(group: .shared, title: "same-reply bookmark", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("the compact refusal is written") {
           let errored = try await space.sessions.record(id).work == .errored
@@ -97,9 +99,10 @@ private func compactCall(
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.replying("big turn", tokens: 900), Fix.replying("fresh start", tokens: 100)])
-      try await runService(space, makeConfig(inference: { try await script($0) }, budget: tightBudget)) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }, budget: tightBudget))
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh turn landed") { try await sessions.settledWork(sid) && script.count == 2 }
       }
@@ -119,9 +122,10 @@ private func compactCall(
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.replying("big turn", tokens: 900), Fix.replying("the prompt alone is as big", tokens: 900)])
-      try await runService(space, makeConfig(inference: { try await script($0) }, budget: tightBudget)) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }, budget: tightBudget))
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("errored") { try await sessions.record(sid).work == .errored }
       }
@@ -135,7 +139,6 @@ private func compactCall(
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
         Fix.failing(.contextTooLong),
@@ -143,7 +146,9 @@ private func compactCall(
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         // The clock never advances: any backoff would hang this convergence.
         try await until("settled") { try await sessions.settledWork(sid) }
@@ -160,7 +165,6 @@ private func compactCall(
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
         Fix.replying("marking", calls: [.init(id: "call_0", name: "bookmark", arguments: .object(["name": .string("b1")]))]),
@@ -170,7 +174,9 @@ private func compactCall(
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("explore"), to: sid)
         try await until("explored") {
           guard script.count >= 2 else { return false }

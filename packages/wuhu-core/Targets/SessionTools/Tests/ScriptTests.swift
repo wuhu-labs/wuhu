@@ -6,7 +6,11 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import JSONValue
 @testable import LoopCore
@@ -58,20 +62,31 @@ import struct WuhuAI.ToolCall
       }
     }
     try await withRig(space: space, fetch: githubStub) { rig in
-      try await rig.children(of: rig.session, [
+      let children = try await rig.children(of: rig.session, [
         ("Port QuickJS kit", "claude-opus-5-5"),
         ("Review the gater", "gpt-5.6-sol"),
         ("Flaky CI sweep", "claude-opus-5-5"),
         ("Old migration", "claude-opus-5-5"),
       ])
-      try await rig.apply("sample.sql")
+      for child in children.prefix(2) {
+        try await rig.space.worker.call(SessionCell.ID(child.rawValue)) { cell in
+          try cell.rows.show(child, owed: .inference)
+        }
+      }
+      try await rig.space.sessions.markErrored(children[2], message: "inference failed: overloaded")
+      for (child, hours) in zip(children, [1.0, 2.0, 3.0, 30.0]) {
+        try await rig.activity(child, hoursAgo: hours)
+      }
       try await rig.run("sample", ["wait_seconds": 60])
 
       try await until("the watch list is read") { watchQueries.value > 0 }
-      try await rig.apply("sample-done.sql")
+      let quickjs = children[0]
+      try await rig.space.worker.call(SessionCell.ID(quickjs.rawValue)) { cell in
+        try cell.rows.show(quickjs, owed: .noRun)
+      }
       try await rig.time.wake("the watch's poll", after: 61.234)
       try await rig.messages(1)
-      try await rig.apply("sample-failed.sql")
+      try await rig.space.sessions.markErrored(children[1], message: "killed: out of context")
       try await rig.time.wake("the watch's next poll", after: 61.234)
       try await rig.messages(3)
       try await rig.released()
@@ -176,13 +191,11 @@ import struct WuhuAI.ToolCall
 
   @Test func sessionModuleCancels() async throws {
     try await withRig { rig in
-      let worker = try await firingWorker(Hub(space: rig.space))
       _ = try await rig.payload(["message": "x", "in_seconds": 600], tool: "timer")
       try await rig.run("session-cancel")
       try await rig.released()
       rig.probe("armed: \(try await rig.space.sessions.armedSubscriptions(rig.session).map(\.slot.id.rawValue))")
       try rig.expect("session-cancel")
-      await worker.shutdown()
     }
   }
 
@@ -832,7 +845,9 @@ final class ScriptRig: Sendable {
   }
 
   func delivered() async throws -> [String] {
-    try await space.sessions.deliverMail()
+    try await until("the rig's session takes its mail") {
+      !space.worker.hasMail(for: SessionCell.ID(self.session.rawValue).recipient)
+    }
     return try await space.sessions.undrainedInputs(session).compactMap { entry in
       guard case let .notification(notification) = entry.input, notification.kind == .script else { return nil }
       return notification.content.text
@@ -869,23 +884,28 @@ final class ScriptRig: Sendable {
     try await until("the execution is released") { running().isEmpty }
   }
 
-  func children(of parent: SessionID, _ specs: [(title: String, model: String)]) async throws {
+  func children(of parent: SessionID, _ specs: [(title: String, model: String)]) async throws -> [SessionID] {
+    var children: [SessionID] = []
     for spec in specs {
       let provider = spec.model.hasPrefix("claude") ? "claude" : "codex"
-      try await space.sessions.createSession(
+      children.append(try await space.sessions.createSession(
         group: .shared,
         title: spec.title,
         kind: .task,
         parent: parent,
         createdBy: "morgan",
         executor: .kernel(.init(provider: provider, model: spec.model, effort: "high")),
-      )
+      ))
     }
+    return children
   }
 
-  func apply(_ name: String) async throws {
-    let sql = try fixture(name)
-    try await space.writer.write { try $0.execute(sql: sql) }
+  func activity(_ session: SessionID, hoursAgo: Double) async throws {
+    // The sample queries against JavaScript Date.now(), not the fixture clock.
+    let at = SQLiteDateFormat.string(from: Date().addingTimeInterval(-hoursAgo * 3600))
+    try await space.worker.call(SessionCell.ID(session.rawValue)) { cell in
+      try cell.db.execute(ScriptActivityRow.where { $0.id.eq(session.rawValue) }.update { $0.lastActivityAt = #bind(at) })
+    }
   }
 
   func expect(_ name: String) throws {
@@ -994,46 +1014,42 @@ func withRig(
       if let fetch { $0.fetch = fetch }
     } operation: {
       let space = try space()
+      let scripts = Scripts(limits: limits)
+      let access = InferenceAccess(credentials: credentials)
+      let loop = try await ToolFixture(space: space, access: access, scripts: scripts)
       if group != .shared {
         try await space.writer.write { db in
           try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
         }
       }
       var session = try await makeSession(space, group: group)
+      try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.interrupt() }
       if task || childAgent {
         session = try await space.sessions.createSession(
           group: group, title: "child", kind: task ? .task : .agent, parent: session, createdBy: session.rawValue,
           executor: .kernel(.init(provider: "deepseek", model: "deepseek-v4-pro", effort: "high")),
         )
+        try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.interrupt() }
       }
       let folder = try scratchURL("script-secrets")
       defer { try? FileManager.default.removeItem(at: folder) }
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
-      let main = Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute)
-      let scripts = Scripts(limits: limits)
+      let main = loop.hub { Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute) }
       let origin = contentHost.map { _ in "https://space.test" }
-      // With a machine world, the executor's main answers `/v1/exec*` from the scripted machine.
-      let executor = if let world {
-        try await world.execs.executor(
-          owner: main, access: .init(credentials: credentials),
+      if let world {
+        _ = try await world.execs.executor(
+          owner: main, loop: loop, access: access,
           origin: origin, contentHostPattern: contentHost, secrets: stores, identity: identity,
         )
       } else {
-        try await SessionRuntime.toolExecutor(
-          owner: main, hub: machineHub, access: .init(credentials: credentials),
+        _ = try await loop.executor(
+          owner: main, hub: machineHub, access: access,
           origin: origin, contentHostPattern: contentHost, secrets: stores, identity: identity,
         )
       }
-      let worker = SessionExecution(connection: executor.main, credential: executor.credential, access: executor.access, space: space, scripts: scripts) { tools in
-        LoopConfig(
-          executeTool: { try await tools.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
-          inference: { _ in throw Mismatch("the script rig session must stay held") },
-          budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
-        )
-      }
+      let worker = loop.execution
       worker.start()
-      try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.interrupt() }
       let rig = try ScriptRig(
         space: space, main: main, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: worker.tools, worker: worker,
       )
@@ -1080,4 +1096,10 @@ private func normalizingExecIDs(_ text: String) -> String {
     }
   }
   return normalized
+}
+
+@Table("sessions")
+private struct ScriptActivityRow {
+  let id: String
+  @Column("last_activity_at") var lastActivityAt: String
 }

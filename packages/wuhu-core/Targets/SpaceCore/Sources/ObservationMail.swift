@@ -121,19 +121,3 @@ extension GroupAccess {
     return try ReadScope(acting: principal.group, readable: access.readable(by: principal.actor, acting: principal.group, rows: rows), viewer: viewer, member: principal.member)
   }
 }
-
-enum ObserverLook: Codable {
-  case look
-}
-
-extension SubscriptionOwner {
-  func look(_ subscription: SubscriptionID, runtime: SpaceRuntime, in db: GRDB.Database) throws {
-    let key = switch self {
-    case let .session(id): "session:\(id.rawValue):\(subscription.rawValue)"
-    case let .group(id): "group:\(id.rawValue):\(subscription.rawValue)"
-    }
-    let recipient = Recipient<ObserverLook>(kind: "ObserverCell", key: key)
-    try recipient.post(.look, on: db.sqliteConnection!)
-    db.afterNextTransaction { _ in runtime.poke(recipient) }
-  }
-}

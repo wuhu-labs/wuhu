@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Foundation
 import GRDB
 import Logging
+import LoopCore
 import NIOCore
 import Scratch
 import SessionDomain
@@ -159,6 +160,7 @@ import WebPush
         model: ModelSpecifier(provider: "testing", model: "test-model", effort: "medium"),
       )
       try await space.sessions.markErrored(worker, message: "boom")
+      try await space.sessions.deliverMail(worker)
     }
     let errored = try #require(try await space.sessions.inbox("owner").only)
     #expect(try await NotificationOrigin(errored, space: space) == .session("worker"))
@@ -223,6 +225,7 @@ func notificationSpace(endpoints: [String], space: Space) async throws -> (space
   try await withDependencies {
     $0.date = .constant(fixedDate)
   } operation: {
+    _ = try await SessionToolFixture(space: space)
     let account = try await space.addAccount(kind: .human, name: nil)
     let key = try await space.addKey(
       testPubkey("push-device"),
@@ -235,6 +238,8 @@ func notificationSpace(endpoints: [String], space: Space) async throws -> (space
     let model = ModelSpecifier(provider: "testing", model: "test-model", effort: "medium")
     let owner = try await space.sessions.createSession(group: .shared, title: "owner", kind: .agent, createdBy: persona.name, model: model)
     let helper = try await space.sessions.createSession(group: .shared, title: "helper", kind: .agent, createdBy: persona.name, model: model)
+    try await space.sessions.markInterrupted(owner)
+    try await space.sessions.markInterrupted(helper)
     _ = try await space.sessions.post(
       .box(owner),
       messageID: MessageID("question"),

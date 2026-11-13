@@ -4,6 +4,7 @@ import Dependencies
 #else
   import Foundation
 #endif
+@testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import WuhuAI
@@ -14,7 +15,7 @@ extension SessionStore {
   }
 
   func appendTestLines(_ id: SessionID, _ lines: [TranscriptLine]) async throws {
-    _ = try await rows { try $0.append(id, lines: lines) }
+    _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.append(id, lines: lines) }
   }
 
   func appendReply(_ id: SessionID, attemptID: UUID = UUID(), message: AssistantMessage, metadata: AssistantMessageMetadata) async throws {
@@ -32,7 +33,7 @@ extension SessionStore {
       TranscriptItem.notification(SystemNotification(id: UUID(), timestamp: head.timestamp, kind: .context, subscriptionID: ModelRouteTransition.source, content: .init(text: $0))).lines(session: id)
     } ?? []
     let opening = head
-    let generation = try await rows { try $0.writeGeneration(id, head: opening, kept: transition?.carriesTail == false ? nil : kept, after: after, transition: transition) }
+    let generation = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.writeGeneration(id, head: opening, kept: transition?.carriesTail == false ? nil : kept, after: after, transition: transition) }
     return try await testLines(id, generation: generation)
   }
 }

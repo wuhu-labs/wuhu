@@ -2,16 +2,22 @@ import func MainHub.renderedRows
 import struct MainHub.ToolProblem
 import SessionDomain
 import SessionTools
+import struct SpaceContract.PromptSession
 import struct SpaceCore.ArmedSubscription
 import enum SpaceCore.ObservationMail
 import struct SpaceCore.ObservationSlot
 import enum SpaceCore.Observed
+import struct SpaceCore.PendingPrompt
+import struct SpaceCore.PersonCell
+import struct SpaceCore.PromptOpening
 import struct SpaceCore.Rows
+import struct SpaceCore.SessionCreation
 import struct SpaceCore.SessionHydration
 import enum SpaceCore.SessionMail
 import struct SpaceCore.SessionPut
 import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionRows
+import struct SpaceCore.SessionStore
 import StructuredQueries
 import enum WuhuAI.ContentBlock
 import enum WuhuAI.InferenceError
@@ -63,10 +69,39 @@ struct SessionCell {
     try advance()
   }
 
-  mutating func rewatch() throws {
-    for watched in try rows.plainSQLObservations(id.session) {
-      ctx.send(.watch(watched.watch(recipient: id.recipient.retyped())), to: ObservationMail.recipient)
-    }
+  mutating func create(_ creation: SessionCreation, allocation: Int64, at: Date, head: GenerationHead?) throws {
+    try SessionCreation.write(creation, id: id.session, allocation: allocation, at: at, head: head, in: &db)
+    try writeModelRoute(creation.modelRoute)
+    if let parent = creation.parent { ctx.send(SessionCell.ID(parent.rawValue)).watchChildren(at) }
+  }
+
+  mutating func invalidatePromptRevision() throws {
+    try invalidatePrompt()
+  }
+
+  mutating func setInferencePrompt(_ pending: PendingPrompt) throws {
+    try acceptPendingPrompt(pending)
+  }
+
+  mutating func storeInferencePrompt(for pending: PendingPrompt, rendered: String, opening: PromptOpening?, session: PromptSession) throws {
+    try acceptPromptRendering(for: pending, rendered: rendered, opening: opening, session: session)
+  }
+
+  mutating func establishInferenceModelRoute(_ route: SessionModelRoute) throws {
+    try acceptInferenceModelRoute(route)
+  }
+
+  mutating func updateInferenceModelRouteFailure(expectedEpoch: String, failure: ModelRouteFailure?) throws {
+    try acceptInferenceModelRouteFailure(expectedEpoch: expectedEpoch, failure: failure)
+  }
+
+  mutating func watchChildren(_ now: Date) throws {
+    try armChildren(now)
+  }
+
+  mutating func markErrored(_ message: String) throws {
+    let note = try SessionCreation.markErrored(id.session, message: message, at: now(), in: &db)
+    ctx.send(PersonCell.ID("owner")).notify("owner", note)
   }
 
   /// A delayed input came due, a parked model's reminder, or a warming wake.
@@ -91,8 +126,8 @@ struct SessionCell {
   /// The warming wake, once due: a ping at the last reply plus the interval. A ping is an ordinary inference, unless the schedule ran out or nothing is left to warm — then warming ends.
   private mutating func ping() throws {
     guard let warming = turn()?.warming else { return }
-    let now = client.now()
-    let dueNow = client.dueNow()
+    let now = now()
+    let dueNow = dueNow()
     let replied = Date(timeIntervalSinceReferenceDate: warming.repliedAt)
     guard dueNow >= replied.addingTimeInterval(Double(warming.schedule.intervalSeconds)) else { return }
     let session = try load()
@@ -114,7 +149,7 @@ struct SessionCell {
   private func parkWake() throws -> Date? {
     let session = try load()
     guard !session.stopped, working(session) == nil, session.queueHead == session.queueTail, session.turn.turn == .idle else { return nil }
-    return session.nags.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow())
+    return session.nags.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: dueNow())
   }
 
   /// Stops the job the session works on and nothing else: main has marked the session errored.
@@ -265,8 +300,8 @@ struct SessionCell {
     case let .reply(entry, fullness, warming):
       let unfitReply = try fullness >= client.config.thresholds.hard && !rows.droppable(id.session)
       var appended: [TranscriptItem] = [.assistant(entry)]
-      let now = client.now()
-      if entry.toolCalls.isEmpty, let nag = session.nags.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: client.dueNow()) {
+      let now = now()
+      if entry.toolCalls.isEmpty, let nag = session.nags.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: dueNow()) {
         appended.append(.notification(nag.notification(id: client.uuid(), at: now)))
       }
       try append(session, appended) {
@@ -276,7 +311,7 @@ struct SessionCell {
         $0.input(appended.count - 1)
       }
       if unfitReply {
-        try rows.markErrored(id.session, message: unfit(fullness))
+        try markErrored(unfit(fullness))
         return
       }
       if fullness >= client.config.thresholds.hard, entry.toolCalls.isEmpty {
@@ -288,7 +323,7 @@ struct SessionCell {
     case let .full(fullness):
       if fullness >= client.config.thresholds.hard {
         guard try rows.droppable(id.session) else {
-          try rows.markErrored(id.session, message: unfit(fullness))
+          try markErrored(unfit(fullness))
           return
         }
         start(session.slot.compaction, .pointer)
@@ -296,7 +331,7 @@ struct SessionCell {
       }
       try append(session, [.notification(.init(
         id: client.uuid(),
-        timestamp: client.now(),
+        timestamp: now(),
         kind: .context,
         subscriptionID: SubscriptionID("context-pressure"),
         content: .init(text: """
@@ -308,14 +343,14 @@ struct SessionCell {
       ))]) { $0.input(1) }
     case .contextTooLong:
       guard try rows.droppable(id.session) else {
-        try rows.markErrored(id.session, message: String(describing: InferenceError.contextTooLong))
+        try markErrored(String(describing: InferenceError.contextTooLong))
         return
       }
       start(session.slot.compaction, .pointer)
       return
     case let .requestTooLarge(limit, failure):
       guard try rows.droppable(id.session) else {
-        try rows.markErrored(id.session, message: limit.map { String(describing: InferenceError.requestTooLargeAfterCompaction(limitBytes: $0)) } ?? failure)
+        try markErrored(limit.map { String(describing: InferenceError.requestTooLargeAfterCompaction(limitBytes: $0)) } ?? failure)
         return
       }
       start(session.slot.compaction, .pointer)
@@ -325,10 +360,10 @@ struct SessionCell {
       return
     case let .roster(notice):
       try append(session, [.notification(.init(
-        id: client.uuid(), timestamp: client.now(), kind: .context, subscriptionID: ToolRosterChanged.source, content: .init(text: notice),
+        id: client.uuid(), timestamp: now(), kind: .context, subscriptionID: ToolRosterChanged.source, content: .init(text: notice),
       ))]) { $0.input(1) }
     case let .parked(failure):
-      try rows.markErrored(id.session, message: failure)
+      try markErrored(failure)
       return
     case .pingFailed:
       var turn = session.turn
@@ -364,7 +399,7 @@ struct SessionCell {
 
   mutating func scriptPosted(_ handle: String, _ text: String) throws {
     guard try rows.hydrate(id.session).record.lifecycle == .live else { return }
-    let notice = SystemNotification(id: client.uuid(), timestamp: client.now(), kind: .script, subscriptionID: .script(String(handle.dropFirst("script.".count))), content: .init(text: text))
+    let notice = SystemNotification(id: client.uuid(), timestamp: now(), kind: .script, subscriptionID: .script(String(handle.dropFirst("script.".count))), content: .init(text: text))
     try put(SessionPut(.notification(notice)))
   }
 
@@ -386,7 +421,7 @@ struct SessionCell {
     case .folded(var head, let kept, let transition, let call):
       head.snapshot.subscriptions = try armedSlots()
       let closing = call.flatMap { call in
-        session.turn.turn == .folding(call: call) ? nil : ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary)))
+        session.turn.turn == .folding(call: call) ? nil : ToolResultItem(id: client.uuid(), timestamp: now(), provenance: .toolCall(call), payload: .compact(.init(summary: head.summary)))
       }
       let after = transition?.notice.map { noticeLines($0, source: ModelRouteTransition.source) } ?? []
       try roll(session, head: head, kept: kept, portable: transition?.binding != nil, closing: closing.map { TranscriptItem.toolResult($0).lines(session: id.session) } ?? [], after: after, transition: transition)
@@ -397,7 +432,7 @@ struct SessionCell {
       head.snapshot.subscriptions = try armedSlots()
       try roll(session, head: head, kept: kept, portable: true, after: after, binding: binding)
     case let .failed(message):
-      try rows.markErrored(id.session, message: message)
+      try markErrored(message)
       return
     }
     try advance()
@@ -421,7 +456,7 @@ struct SessionCell {
 
   private mutating func convertLegacy(_ session: SessionState, answering: Bool = false) throws -> Bool {
     guard session.legacy else { return false }
-    if !session.stopped, try answering || session.queueHead > session.queueTail || session.turn.owed != .noRun || session.turn.turn.isFolding || session.turn.turn == .converting || working(session) != nil || session.nags.nag(task: session.isTask, openRequests: rows.openRequests(id.session), armedWake: armedWake(), now: client.dueNow()) != nil {
+    if !session.stopped, try answering || session.queueHead > session.queueTail || session.turn.owed != .noRun || session.turn.turn.isFolding || session.turn.turn == .converting || working(session) != nil || session.nags.nag(task: session.isTask, openRequests: rows.openRequests(id.session), armedWake: armedWake(), now: dueNow()) != nil {
       if turn() == nil { try write(session.turn) }
       var turn = self.turn()!
       if turn.turn != .converting {
@@ -460,8 +495,8 @@ struct SessionCell {
     // ran (created, restarted) is inert. What is left is a park wake (`nextWake`).
     guard turn.turn == .idle else { return false }
     let openRequests = try rows.openRequests(id.session)
-    let now = client.now()
-    if let nag = session.nags.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: client.dueNow()) {
+    let now = now()
+    if let nag = session.nags.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: dueNow()) {
       try append(session, [.notification(nag.notification(id: client.uuid(), at: now))]) { $0.input(1) }
       return true
     }
@@ -474,7 +509,7 @@ struct SessionCell {
     case .bookmark:
       do {
         let arguments = try decodeArguments(BookmarkArguments.self, from: call)
-        try append(session, [.bookmark(BookmarkMarker(id: client.uuid(), timestamp: client.now(), name: arguments.name, toolCallID: callID))]) { $0.answer(callID) }
+        try append(session, [.bookmark(BookmarkMarker(id: client.uuid(), timestamp: now(), name: arguments.name, toolCallID: callID))]) { $0.answer(callID) }
       } catch {
         try writeToolResult(session, .toolCall(callID), .failure(.init(message: "invalid bookmark arguments: \(error)")))
       }
@@ -589,8 +624,8 @@ struct SessionCell {
   private mutating func writeToolResult(_ session: SessionState, _ provenance: ToolResultItem.Provenance, _ payload: ToolResultPayload, context: ScopeContext? = nil) throws {
     // The backstop, not the budget: whatever the tool layer missed must not
     // enter the transcript unclamped.
-    var items: [TranscriptItem] = [.toolResult(ToolResultItem(id: client.uuid(), timestamp: client.now(), provenance: provenance, payload: payload.clamped()))]
-    if let context { items.append(.notification(context.notice(id: client.uuid(), at: client.now()))) }
+    var items: [TranscriptItem] = [.toolResult(ToolResultItem(id: client.uuid(), timestamp: now(), provenance: provenance, payload: payload.clamped()))]
+    if let context { items.append(.notification(context.notice(id: client.uuid(), at: now()))) }
     try append(session, items) { turn in
       switch (provenance, payload) {
       case let (.toolCall(call), .compact): turn.park(call)
@@ -672,7 +707,7 @@ struct SessionCell {
   }
 
   private func noticeLines(_ text: String, source: SubscriptionID) -> [TranscriptLine] {
-    TranscriptItem.notification(.init(id: client.uuid(), timestamp: client.now(), kind: .context, subscriptionID: source, content: .init(text: text))).lines(session: id.session)
+    TranscriptItem.notification(.init(id: client.uuid(), timestamp: now(), kind: .context, subscriptionID: source, content: .init(text: text))).lines(session: id.session)
   }
 
   private mutating func write(_ turn: SessionTurn) throws {
@@ -687,7 +722,15 @@ struct SessionCell {
   }
 
   var rows: SessionRows {
-    SessionRows(host: db.host, store: client.store)
+    SessionRows(host: db.host, store: ctx.dependency(SessionStore.self))
+  }
+
+  func now() -> Date {
+    Date(ctx.now)
+  }
+
+  func dueNow() -> Date {
+    Date(timeIntervalSince1970: (Double(ctx.now.milliseconds) + 0.5) / 1000)
   }
 
   var client: LoopClient {

@@ -96,7 +96,8 @@ struct ConversationCell {
     if !missed.isEmpty { socket.send(missed) }
   }
 
-  mutating func post(_ post: Post) throws -> MessageDelivery {
+  mutating func post(_ post: Post, storing blobs: [Blob] = []) throws -> MessageDelivery {
+    for blob in blobs { try Bucket.put(blob, in: &db) }
     if case let .open(requester, task, _, _, _)? = post.request, let id = post.requestID { try mayOpen(id, on: task, from: requester) }
     let poster = poster(of: post)
     let conversation = try admit(post, poster: poster)

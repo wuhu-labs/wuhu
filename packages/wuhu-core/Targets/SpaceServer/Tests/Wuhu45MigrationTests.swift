@@ -104,9 +104,9 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_api_receipts", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines"]
+    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines", "bucket_objects"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
-    let dropped: Set = ["session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs"]
+    let dropped: Set = ["session_receipts", "session_api_receipts", "session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs", "blobs", "blob_objects"]
     let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)
     let expectedKeys = Set(expected.keys).subtracting(later)
     #expect(
@@ -116,7 +116,7 @@ import Testing
     // `groups`, `accounts`, `machines`, `messages` and `sessions` are reshaped
     // by the next migrations; the reopened comparison below pins their columns.
     for (table, lines) in expected.sorted(by: { $0.key < $1.key })
-      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles"].contains(table)
+      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles", "revisions"].contains(table)
     {
       #expect(migrated[table] == lines.filter { line in
         !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)
@@ -213,7 +213,7 @@ import Testing
     let input = folder.appending(path: "wuhu45.sql")
     try script.write(to: input, atomically: true, encoding: .utf8)
     let process = Process()
-    process.executableURL = try #require(sqlite3)
+    process.executableURL = Self.sqlite3
     process.arguments = [file.path]
     process.standardInput = try FileHandle(forReadingFrom: input)
     process.standardOutput = FileHandle.nullDevice
@@ -262,7 +262,7 @@ import Testing
       INSERT INTO fs_heads (grp, path, parent_path, kind, blob_hash, size, line_count, etag, rev, mtime) VALUES
         ('shared', '/missing.md', '/', 'file', '\(String(repeating: "f", count: 64))', 1, 1, 'e1', 1, '2026-01-01T00:00:00.000Z'),
         ('shared', '/unreadable.md', '/', 'file', '\(String(repeating: "e", count: 64))', 1, 1, 'e2', 1, '2026-01-01T00:00:00.000Z');
-      INSERT INTO blob_objects (hash, object_key, size, line_count) VALUES
+      INSERT INTO bucket_objects (hash, object_key, size, line_count) VALUES
         ('\(String(repeating: "e", count: 64))', 'blobs/ee/ee/\(String(repeating: "e", count: 64))', 1, 1);
       INSERT INTO docs (grp, path, title) VALUES ('shared', '/missing.md', 'stale');
       """)

@@ -277,11 +277,11 @@ struct DocumentMergeTests {
     #expect(await old.next() == .control(.ack(count: 1)))
     await first.stopWorker()
     var next = try await DocumentClient.join(second, plan, peer: "2")
-    let before = try await second.currentRevision()
+    let before = try await second.currentRevision(in: .shared)
     gate.release.yield(())
     let wrote = try await writing.value
     #expect(wrote == before + 1)
-    #expect(try await second.currentRevision() == wrote)
+    #expect(try await second.currentRevision(in: .shared) == wrote)
     guard case let .frame(.update(update)) = await next.next() else { Issue.record("no relay on next worker"); return }
     try next.replica.importUpdate(Data(update))
     #expect(next.replica.text == "# B\n\ntwo\n")

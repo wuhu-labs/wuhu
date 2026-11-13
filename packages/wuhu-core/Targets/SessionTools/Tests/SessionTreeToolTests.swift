@@ -1,5 +1,10 @@
 import DeterministicDependencies
-import Foundation
+import LoopCore
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import class MainHub.Hub
 import SessionDomain
@@ -10,10 +15,10 @@ import SpaceContract
 import Testing
 import struct WuhuAI.ToolArguments
 
-private func creating(_ space: Space) async throws -> ToolExecutor {
-  try await SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+private func creating(_ loop: ToolFixture) async throws -> ToolExecutor {
+  try await loop.executor(owner: loop.hub { Hub(space: loop.space, resolveModelExecutor: { provider, model, effort in
     .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
-  }))
+  }) })
 }
 
 private func created(_ payload: ToolResultPayload) throws -> CreateSessionResult {
@@ -37,12 +42,13 @@ struct SessionTreeToolTests {
   @Test func topLevelCreationResolvesCurrentAndRetiredGroupAliases() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let account = try await space.addAccount(kind: .human, name: "Morgan")
       let group = try await space.createGroup(alias: "research", owner: account.id)
       try await space.setGrant(.group, "shared", role: .admin, in: group, by: .anonymous, acting: group)
       try await space.renameGroup(group, alias: "science", by: .shared(.anonymous))
       let parent = try await makeSession(space, name: "parent")
-      var world = ToolWorld(executor: try await creating(space), session: parent)
+      var world = ToolWorld(executor: try await creating(loop), session: parent)
       for spelling in ["research", "science", group.rawValue] {
         let outcome = try created(try await world.run("create_session", .object([
           "title": "worker", "kind": "agent", "top_level": true, "group": .string(spelling),
@@ -55,8 +61,9 @@ struct SessionTreeToolTests {
   @Test func createSessionRejectsAnUnknownExecutorAsTypedFailure() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let parent = try await makeSession(space, name: "parent")
-      var world = ToolWorld(executor: try await creating(space), session: parent)
+      var world = ToolWorld(executor: try await creating(loop), session: parent)
       func refused(_ arguments: JSONValue) async throws -> ToolFailure {
         guard case let .failure(error) = try await world.run("create_session", ToolArguments(arguments)) else {
           throw Mismatch("an unknown executor created a session")
@@ -76,8 +83,9 @@ struct SessionTreeToolTests {
   @Test func anAgentChildHasABoxAndAnswersItsParentsRequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let parent = try await makeSession(space, name: "parent")
-      var world = ToolWorld(executor: try await creating(space), session: parent)
+      var world = ToolWorld(executor: try await creating(loop), session: parent)
 
       let child = try created(try await world.run("create_session", .object([
         "title": "researcher", "kind": "agent", "expects_reply": .bool(true), "message": "look into it",
@@ -89,7 +97,7 @@ struct SessionTreeToolTests {
       let request = try #require(child.requestID)
       _ = try await space.sessions.drainQueue(child.sessionID)
 
-      var childWorld = ToolWorld(executor: try await creating(space), session: child.sessionID)
+      var childWorld = ToolWorld(executor: try await creating(loop), session: child.sessionID)
       let report = try await childWorld.run("report", .object([
         "request_id": .string(request.rawValue), "kind": "final", "content": "found it",
       ]))
@@ -100,8 +108,9 @@ struct SessionTreeToolTests {
   @Test func aSchemaGuardsARequestsFinal() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let parent = try await makeSession(space, name: "parent")
-      var world = ToolWorld(executor: try await creating(space), session: parent)
+      var world = ToolWorld(executor: try await creating(loop), session: parent)
       let brief: ToolArguments = .object([
         "title": "reviewer", "expects_reply": .bool(true), "message": "review #7",
         "request": .object([
@@ -112,7 +121,7 @@ struct SessionTreeToolTests {
       let first = try created(try await world.run("create_session", brief))
       let request = try #require(first.requestID)
       _ = try await space.sessions.drainQueue(first.sessionID)
-      var child = ToolWorld(executor: try await creating(space), session: first.sessionID)
+      var child = ToolWorld(executor: try await creating(loop), session: first.sessionID)
       let refused = try await child.run("report", .object(["request_id": .string(request.rawValue), "kind": "final", "content": "lgtm"]))
       #expect(try failureMessage(refused).contains("2 more refusals fail the request"))
       let report = try await child.run("report", .object([
@@ -127,10 +136,11 @@ struct SessionTreeToolTests {
   @Test func anAgentTemplateMakesAnAgentAndAnExplicitKindWins() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/templates/scribe/template.json", Data(#"{"kind":"agent"}"#.utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/templates/scribe/AGENTS.md", Data("take notes".utf8), ifMatch: nil)
       let parent = try await makeSession(space, name: "parent")
-      var world = ToolWorld(executor: try await creating(space), session: parent)
+      var world = ToolWorld(executor: try await creating(loop), session: parent)
 
       let scribe = try created(try await world.run("create_session", .object(["title": "scribe", "template": "scribe"])))
       #expect(try await space.sessions.record(scribe.sessionID).kind == .agent)
@@ -149,8 +159,9 @@ struct SessionTreeToolTests {
   @Test func aTopLevelAgentHasNoParentAndItsBriefArrivesAsADM() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let researcher = try await makeSession(space, name: "researcher")
-      var world = ToolWorld(executor: try await creating(space), session: researcher)
+      var world = ToolWorld(executor: try await creating(loop), session: researcher)
 
       let infra = try created(try await world.run("create_session", .object([
         "title": "Wuhu Infra", "top_level": .bool(true), "message": "your brief",
@@ -177,7 +188,7 @@ struct SessionTreeToolTests {
       #expect(try failureMessage(task).contains("a top-level session is an agent"))
 
       let worker = try created(try await world.run("create_session", .object(["title": "worker"])))
-      var workerWorld = ToolWorld(executor: try await creating(space), session: worker.sessionID)
+      var workerWorld = ToolWorld(executor: try await creating(loop), session: worker.sessionID)
       let fromTask = try await workerWorld.run("create_session", .object(["title": "x", "top_level": .bool(true)]))
       #expect(try failureMessage(fromTask).contains("only an agent may create a top-level session"))
     }
@@ -186,13 +197,14 @@ struct SessionTreeToolTests {
   @Test func aChildTakesItsCreatorsGroupAndOnlyATopLevelAgentNamesOne() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let alice = try await plainGroup(space, "alice")
       let bob = try await plainGroup(space, "bob")
       // A session places a top-level agent outside its group only where its
       // group administers; shared is open but alice writes there, not admin.
       try await space.setGrant(.group, alice.rawValue, role: .admin, in: .shared, by: .anonymous, acting: .shared)
       let agent = try await makeSession(space, name: "agent", group: alice)
-      var world = ToolWorld(executor: try await creating(space), session: agent)
+      var world = ToolWorld(executor: try await creating(loop), session: agent)
 
       let child = try created(try await world.run("create_session", .object(["title": "child"])))
       #expect(try await space.sessions.record(child.sessionID).group == alice)
@@ -212,21 +224,18 @@ struct SessionTreeToolTests {
     }
   }
 
-  @Test func aMessageWithoutARequestReachesTheChildAsADMAndARetryDoesNotRepeatIt() async throws {
+  @Test func aMessageWithoutARequestReachesTheChildAsADM() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let parent = try await makeSession(space, name: "parent")
-      var world = ToolWorld(executor: try await creating(space), session: parent)
+      var world = ToolWorld(executor: try await creating(loop), session: parent)
 
       let first = try created(try await world.run(
         "create_session", .object(["title": "  primed  ", "message": "context for a human"]), id: "call-1",
       ))
       #expect(first.title == "primed")
       #expect(try await space.sessions.record(first.sessionID).title == "primed")
-      let replay = try created(try await world.run(
-        "create_session", .object(["title": "primed", "message": "context for a human"]), id: "call-1",
-      ))
-      #expect(replay.sessionID == first.sessionID)
       let messages = try await directMessages(space, to: first.sessionID)
       #expect(messages.map(\.content.text) == ["context for a human"])
       #expect(messages.map(\.kind) == [.message])
@@ -239,46 +248,15 @@ struct SessionTreeToolTests {
   @Test func aSessionBelowLevelSixteenIsRefused() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var level = try await makeSession(space, name: "root")
       for depth in 2 ... SessionStore.depthLimit {
-        var world = ToolWorld(executor: try await creating(space), session: level)
+        var world = ToolWorld(executor: try await creating(loop), session: level)
         level = try created(try await world.run("create_session", .object(["title": .string("level \(depth)")]))).sessionID
       }
-      var deepest = ToolWorld(executor: try await creating(space), session: level)
+      var deepest = ToolWorld(executor: try await creating(loop), session: level)
       let refused = try await deepest.run("create_session", .object(["title": "too deep"]))
       #expect(try failureMessage(refused).contains("deeper than 16 levels"))
-    }
-  }
-
-  @Test func aFailedCloneNamesTheNewSessionAndARetryOfTheCallFinishesIt() async throws {
-    try await withToolDeps { _ in
-      let space = try Space.inMemory()
-      _ = try await space.fs(.shared).write("/templates/coder/template.json", Data(#"{"kind":"task"}"#.utf8), ifMatch: nil)
-      _ = try await space.fs(.shared).write("/templates/coder/AGENTS.md", Data("write code".utf8), ifMatch: nil)
-      let parent = try await makeSession(space, name: "parent")
-      var world = ToolWorld(executor: try await creating(space), session: parent)
-      let arguments: ToolArguments = .object([
-        "title": "coder", "template": "coder", "expects_reply": .bool(true), "message": "go",
-      ])
-
-      await space.failTemplateClones("the disk is full")
-      let failed = try failureMessage(try await world.run("create_session", arguments, id: "call-1"))
-      let half = try created(try #require(try await space.sessions.receipt(.session(parent), toolCallID: ToolCallID("call-1"))))
-      #expect(failed == "create_session: session \(half.sessionID.rawValue) was created, but internal: the disk is full")
-      #expect(half.cloneOwed == true)
-      #expect(try await directMessages(space, to: half.sessionID).isEmpty, "no brief before the home is ready")
-
-      let again = try failureMessage(try await world.retry("create_session", arguments, id: "call-1"))
-      #expect(again == failed)
-
-      await space.failTemplateClones(nil)
-      let finished = try created(try await world.retry("create_session", arguments, id: "call-1"))
-      #expect(finished.sessionID == half.sessionID)
-      #expect(finished.requestID != nil)
-      let home = SessionHome.path(of: half.sessionID) + "/AGENTS.md"
-      #expect(try await space.fs(.shared).read(home).1 == Data("write code".utf8))
-      #expect(try created(try #require(try await space.sessions.receipt(.session(parent), toolCallID: ToolCallID("call-1")))).cloneOwed == nil)
-      #expect(try await directMessages(space, to: half.sessionID).count == 1)
     }
   }
 }

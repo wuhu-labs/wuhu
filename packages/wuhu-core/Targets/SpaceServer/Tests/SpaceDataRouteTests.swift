@@ -442,16 +442,23 @@ import Testing
   // drops before any event resumes from there; file events follow unchanged.
   @Test func watchBatchOptInKeepsWholeRevisionsAndReplaysAfterTheCursor() async throws {
     let r = try await rig()
+    for index in 0 ..< 4 {
+      try await run(r, .shared, "write", ["path": "/unrelated.md", "content": .string(String(index))])
+    }
+    let prefix = "wuhu://\(r.aliceGroup.rawValue).localspace"
+    let glob = prefix + "/notes/**"
     for name in ["a", "b", "c"] {
-      try await run(r, .shared, "write", ["path": .string("/notes/\(name).md"), "content": .string(name)])
+      try await run(r, r.aliceGroup, "write", ["path": .string("/notes/\(name).md"), "content": .string(name)])
     }
     let alices = try await cookie(r, r.alice, .shared)
-    let watch = try await get(r, Self.sharedHost, "/_/space/watch", ["glob": "/notes/**", "batch": "1"], cookie: alices)
+    let watch = try await get(r, Self.sharedHost, "/_/space/watch", ["glob": glob, "batch": "1"], cookie: alices)
     var frames = watch.sse().makeAsyncIterator()
     let opening = try #require(try await frames.next())
     #expect(opening.event == "head")
     let head = try #require(JSONValue.parse(opening.data)?.object?["rev"]?.intValue)
-    try await run(r, .shared, "rm", ["path": "/notes"])
+    try #require(head == (try await r.harness.space.currentRevision(in: r.aliceGroup)))
+    #expect(try await r.harness.space.currentRevision(in: .shared) > head)
+    try await run(r, r.aliceGroup, "rm", ["path": "/notes"])
     let frame = try #require(try await frames.next())
     try #require(frame.event == "revision")
     let revision = try JSONValueDecoder().decode(RevisionEvents.self, from: #require(JSONValue.parse(frame.data)))
@@ -460,8 +467,8 @@ import Testing
     #expect(Set(revision.events.compactMap { event -> String? in
       guard case let .delete(path, rev) = event, rev == revision.rev else { return nil }
       return path
-    }) == Set(["/notes/a.md", "/notes/b.md", "/notes/c.md"]))
-    let replay = try await get(r, Self.sharedHost, "/_/space/watch", ["glob": "/notes/**", "from": String(head), "batch": "1"], cookie: alices)
+    }) == Set(["/notes/a.md", "/notes/b.md", "/notes/c.md"].map { prefix + $0 }))
+    let replay = try await get(r, Self.sharedHost, "/_/space/watch", ["glob": glob, "from": String(head), "batch": "1"], cookie: alices)
     var replayFrames = replay.sse().makeAsyncIterator()
     let replayed = try #require(try await replayFrames.next())
     #expect(replayed == frame)

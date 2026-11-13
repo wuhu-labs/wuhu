@@ -99,7 +99,7 @@ import Testing
       "/note.md", bytes("hi"), ifMatch: nil,
     )
     let fileRev = Rev(Int(String(decoding: token.bytes, as: UTF8.self))!)
-    let found = try await space.attributions(of: [plain.rev, byPage.rev, fileRev])
+    let found = try await space.attributions(of: [plain.rev, byPage.rev, fileRev].map { (.shared, $0) })[.shared] ?? [:]
     #expect(found == [
       byPage.rev: RevisionAttribution(actor: "ada", via: "/board.html"),
       fileRev: RevisionAttribution(actor: nil, via: "/p.html"),

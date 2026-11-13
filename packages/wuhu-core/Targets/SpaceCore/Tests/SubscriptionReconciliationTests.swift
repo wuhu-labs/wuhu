@@ -4,6 +4,7 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
+@testable import LoopCore
 import Scratch
 import SessionDomain
 @testable import SpaceCore
@@ -15,7 +16,7 @@ import Testing
     let folder = try ScratchFolder("unfired-subscription-grace")
     let file = folder.url.appending(path: "space.sqlite")
     try await withSessionDeps {
-      let space = try Space.open(file: file)
+      let space = registerSessionExecution(try Space.open(file: file))
       let id = try await ObserverRowsTests().owner(space.sessions)
       let slot = try await space.sessions.armSubscription(id, slot: .init(
         id: .init("timer"), kind: .timer(.oneShot(fixedDate.addingTimeInterval(60)), message: "tick"),
@@ -23,31 +24,14 @@ import Testing
       ), nextFireAt: fixedDate.addingTimeInterval(60))
       _ = try await space.sessions.archive(id, grace: .seconds(100))
       #expect(try await space.sessions.armedSubscriptions(id) == [slot])
-      let reopened = try Space.open(file: file)
+      await space.stopWorker()
+      let reopened = registerSessionExecution(try Space.open(file: file))
       #expect(try await reopened.sessions.armedSubscriptions(id) == [slot])
       try await reopened.sessions.unarchive(id)
       #expect(try await reopened.sessions.armedSubscriptions(id) == [slot])
       #expect(try await reopened.sessions.undrainedInputs(id).isEmpty)
       try await reopened.close()
       try await space.close()
-    }
-  }
-
-  @Test func anArchivedSessionsPlainQueryEndsSilentlyWhenItsRowsChange() async throws {
-    try await withSessionDeps {
-      let store = try makeSpace().sessions
-      let id = try await ObserverRowsTests().owner(store)
-      let slot = try await store.armSubscription(id, slot: .init(id: .init("watch"), kind: .observe(sql: "SELECT 1", throttleSeconds: 0)), marker: "A")
-      func observed(_ marker: String) async throws -> Observed.Outcome {
-        try await store.rows { try $0.observed(id, slot.slot.id, token: observationToken(slot), .change(text: marker, marker: marker)) }
-      }
-      #expect(try await observed("B") == .stands)
-      _ = try await store.archive(id, grace: .seconds(100))
-      #expect(try await observed("C") == .ended)
-      #expect(try await observed("D") == .ignored)
-      try await store.unarchive(id)
-      #expect(try await store.armedSubscriptions(id).isEmpty)
-      #expect(try await store.undrainedInputs(id).count == 1)
     }
   }
 
@@ -59,9 +43,11 @@ import Testing
       _ = try await store.armSubscription(id, slot: .init(id: plain, kind: .timer(.cron("* * * * *"), message: "tick")), nextFireAt: fixedDate)
       _ = try await store.armSubscription(id, slot: .init(id: quiet, kind: .timer(.cron("* * * * *"), message: "tick"), handler: "/timer.js"), nextFireAt: fixedDate)
       _ = try await store.armSubscription(id, slot: .init(id: observer, kind: .observe(sql: "SELECT 1", throttleSeconds: 30), handler: "/observe.js"))
-      let armed = try await store.rows { try $0.armedSlots(id) }
-      #expect(armed.slots == [plain: .timer(.cron("* * * * *")), quiet: .timer(.cron("* * * * *")), observer: .observe(sql: "SELECT 1")])
-      #expect(armed.handlers == [quiet, observer])
+      let armed = try await store.armedSubscriptions(id)
+      #expect(Dictionary(uniqueKeysWithValues: armed.map { ($0.slot.id, $0.slot.kind) }) == [
+        plain: .timer(.cron("* * * * *"), message: "tick"), quiet: .timer(.cron("* * * * *"), message: "tick"), observer: .observe(sql: "SELECT 1", throttleSeconds: 30),
+      ])
+      #expect(Set(armed.filter { $0.slot.handler != nil }.map(\.slot.id)) == [quiet, observer])
     }
   }
 }

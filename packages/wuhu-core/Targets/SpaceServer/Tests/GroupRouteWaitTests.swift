@@ -69,6 +69,7 @@ extension GroupSwitchingTests {
       }
       let reset = resetAhead ? Date().addingTimeInterval(7800) : nil
       #expect(try await recordRouteFailure(InferenceError.rateLimited(retryAt: reset), session: id, store: owner.space.sessions, catalog: catalog)?.retryAt == reset)
+      try await owner.space.sessions.deliverMail(id)
       let ready = catalog
       let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "folded", snapshot: .init(), runningWork: [])
       let tokens = head.lines(session: id).estimatedContextTokens(images: .claude)

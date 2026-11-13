@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import struct SpaceFS.SpacePath

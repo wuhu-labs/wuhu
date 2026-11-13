@@ -5,7 +5,9 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import LoopCore
 import class MainHub.Hub
+import struct MainHub.SessionEffects
 import SessionDomain
 import SessionTools
 import struct SpaceContract.GroupID
@@ -57,13 +59,14 @@ private func requestBody(_ lines: [TranscriptLine], resolver: (any MediaResolver
   @Test func `a stored reference and a legacy inline image render the same request`() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      let fixture = try await SessionToolFixture(space: space)
       let session = try await fixtureSession(space)
       let hash = try await space.storeImage(pngBytes)
 
       let legacy = try await requestBody(imageRead(ImageContent(mimeType: "image/png", data: pngBytes)), resolver: nil)
       let referenced = try await requestBody(
         imageRead(ImageContent(mimeType: "image/png", source: .blob(hash), byteCount: pngBytes.count)),
-        resolver: try await mediaResolver(space, session: session),
+        resolver: try await mediaResolver(space, fixture: fixture, session: session),
       )
 
       #expect(legacy == referenced)
@@ -119,12 +122,13 @@ private func requestBody(_ lines: [TranscriptLine], resolver: (any MediaResolver
   @Test func `a reference we own that cannot be read fails the turn rather than dropping the image`() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      let fixture = try await SessionToolFixture(space: space)
       let session = try await fixtureSession(space)
       let missing = ImageContent(mimeType: "image/png", source: .blob(String(repeating: "0", count: 64)), byteCount: 11)
       await #expect(throws: (any Error).self) {
         let context = Context(systemPrompt: "sys", messages: imageRead(missing).map(\.message))
         _ = try await endpoint
-          .withMediaResolver(try await mediaResolver(space, session: session))
+          .withMediaResolver(try await mediaResolver(space, fixture: fixture, session: session))
           .withFetch(FetchClient { _ in throw RequestInterrupted() })
           .inference(context: context)
           .collect()
@@ -135,7 +139,8 @@ private func requestBody(_ lines: [TranscriptLine], resolver: (any MediaResolver
   @Test func `a reference nobody owns is left for another resolver`() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
-      let resolver = try await mediaResolver(space, session: try await fixtureSession(space))
+      let fixture = try await SessionToolFixture(space: space)
+      let resolver = try await mediaResolver(space, fixture: fixture, session: try await fixtureSession(space))
       let resolved = try await resolver.resolve(MediaContent(url: URL(string: "https://example.com/a.png")!, mimeType: "image/png"))
       #expect(resolved == nil)
     }
@@ -148,6 +153,10 @@ private func fixtureSession(_ space: Space) async throws -> SessionID {
   )
 }
 
-private func mediaResolver(_ space: Space, session: SessionID) async throws -> any MediaResolver {
-  try await SessionRuntime.toolExecutor(owner: Hub(space: space)).mediaResolver(session)
+private func mediaResolver(_ space: Space, fixture: SessionToolFixture, session: SessionID) async throws -> any MediaResolver {
+  let owner = withDependencies {
+    $0[SessionEffects.self] = fixture.execution.sessionEffects
+  } operation: { Hub(space: space) }
+  SessionRuntime.bindMain(owner: owner, execution: fixture.execution, tokens: fixture.tokens, connection: fixture.connection)
+  return fixture.execution.tools.mediaResolver(session)
 }

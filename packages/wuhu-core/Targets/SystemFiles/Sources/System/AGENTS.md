@@ -51,7 +51,7 @@ Working logs, drafts, candidates, test tables, scripts and handler modules are y
 ## Files and revisions
 
 - Paths are keys: writing `/a/b/c.md` creates the whole path; directories are implicit, there is no mkdir.
-- Absolute paths (`/notes/plan.md`), in your group; another group's are written in full, `wuhu://<group>.localspace/notes/plan.md`, and resolve only when your group reads that group. Every mutation commits to one global revision journal: a single monotonically increasing rev for the whole space, covering files and tables uniformly. History never rewinds.
+- Absolute paths (`/notes/plan.md`), in your group; another group's are written in full, `wuhu://<group>.localspace/notes/plan.md`, and resolve only when your group reads that group. Every group has its own revision journal: mutations mint a monotonically increasing rev in the group they write, covering files and tables uniformly; a revision is meaningful only with its group. History never rewinds.
 - Read before you overwrite: writes are guarded by the revision you last read, so races fail loudly instead of clobbering.
 - Paths must not contain `@`, `%`, `#`, `?`, control characters, or `.`/`..` components. `/_/` is system-owned: session homes live under `/_/sessions/`, machine notes under `/_/machines/<name>/`, and message attachments are write-once under `/_/conversations/<id>/attachments/YYYY/MM/DD/HHmmssZ/`. Nothing else under `/_/` is writable.
 - `wuhu://system/` is not in the space: it holds this file (`wuhu://system/AGENTS.md`) and the system skills (`wuhu://system/skills/<name>/SKILL.md`), ships with the server, and is read-only. read, grep and find take it; a `run_script` module imports from it as `wuhu://system/skills/<name>/<file>.js`.

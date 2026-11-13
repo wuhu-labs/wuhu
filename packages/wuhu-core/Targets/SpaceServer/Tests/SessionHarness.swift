@@ -8,6 +8,7 @@ import InferenceKit
 import JSONValue
 import LoopCore
 import class MainHub.Hub
+import struct MainHub.SessionEffects
 import Serve
 import ServeRouting
 import ServeTesting
@@ -101,15 +102,19 @@ struct SessionHarness {
     )
     let access = InferenceAccess(credentials: credentials)
     let catalog = groupCatalog(space: space, access: access)
-    let owner = Hub(
-      space: space, secrets: secrets,
-      machines: machineSeam(hub: hub),
-      resolveModelExecutor: modelExecutorResolver(space: space),
-      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
-      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
-    )
     let connection = MainConnection()
     let worker = SessionExecution(connection: connection, credential: { try await tokens.sessionToken($0) }, access: access, space: space) { _ in config }
+    let owner = withDependencies {
+      $0[SessionEffects.self] = worker.sessionEffects
+    } operation: {
+      Hub(
+        space: space, secrets: secrets,
+        machines: machineSeam(hub: hub),
+        resolveModelExecutor: modelExecutorResolver(space: space),
+        resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+        prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
+      )
+    }
     runtime = SessionRuntime(execution: worker, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,

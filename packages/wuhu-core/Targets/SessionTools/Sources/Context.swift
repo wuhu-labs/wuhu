@@ -84,7 +84,7 @@ extension ToolExecutor {
     let instructions = ContextInstructions(
       read: { await files.readIfPresent($0) },
       names: { await files.directoryNames(in: $0) },
-      renderer: InstructionRenderer(session: promptSession, rev: nil) { name, input throws(InstructionSourceFailure) in
+      renderer: InstructionRenderer(session: promptSession, revision: { _ in nil }) { name, input throws(InstructionSourceFailure) in
         try await files.tool(name, input)
       },
     )

@@ -138,7 +138,7 @@ import Testing
         return try SocketAddress(ipAddress: "127.0.0.1", port: 1)
       })
     }
-    try await withDependencies {
+    await withDependencies {
       $0.continuousClock = clock
       $0.scriptHop = hop
     } operation: {
@@ -169,7 +169,7 @@ import Testing
       headers[.location] = "/after-expiry"
       return Response(status: .temporaryRedirect, headers: headers)
     }
-    try await withDependencies {
+    await withDependencies {
       $0.continuousClock = clock
       $0.scriptHop = hop
     } operation: {

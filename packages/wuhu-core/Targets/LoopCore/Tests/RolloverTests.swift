@@ -12,6 +12,26 @@ import Testing
 import WuhuAI
 import Wuwei
 
+private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool) async throws -> String {
+  let plant = try DatabaseQueue(path: file.path, configuration: Space.makeConfiguration(journalMode: .default))
+  let address = try await plant.write { db in
+    let stored = try String.fetchOne(db, sql: "SELECT address FROM wuwei_job WHERE address LIKE ? AND phase = 'live'", arguments: ["InferenceJob/\(sid.rawValue):%"])
+    let address = try #require(stored)
+    try db.execute(sql: "UPDATE wuwei_job SET params = CAST(json_remove(CAST(params AS TEXT), '$.ping') AS BLOB) WHERE address = ?", arguments: [address])
+    if held { try db.execute(sql: "UPDATE sessions SET hold = 'interrupted' WHERE id = ?", arguments: [sid.rawValue]) }
+    try db.execute(sql: """
+    ALTER TABLE wuwei_job DROP COLUMN creator;
+    ALTER TABLE wuwei_mail DROP COLUMN lifecycle;
+    DELETE FROM grdb_migrations WHERE identifier = '040';
+    """)
+    #expect(try db.columns(in: "wuwei_job").allSatisfy { $0.name != "creator" })
+    #expect(try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations WHERE identifier = '040'") == nil)
+    return address
+  }
+  try plant.close()
+  return address
+}
+
 /// Two workers on one store, as two server processes on one database while a release rolls.
 @Suite struct RolloverTests {
   private func rolling(_ body: (_ old: Space, _ new: Space, TimeControl) async throws -> Void) async throws {
@@ -41,7 +61,6 @@ import Wuwei
 
   @Test func `overlapping stops cannot release a replacement worker`() async throws {
     try await rolling { old, _, _ in
-      let sid = try await old.sessions.createSession(group: .shared, title: "before", kind: .agent, createdBy: "morgan", model: .test)
       let cleanup = Latch()
       let cleaning = Box(false)
       let script = InferenceScript([{ _ in
@@ -52,6 +71,7 @@ import Wuwei
       }, Fix.replying("resumed")])
       let config = makeConfig(inference: { try await script($0) })
       let execution = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "before", kind: .agent, createdBy: "morgan", model: .test)
       execution.start()
       try await execution.enqueue(item: Fix.message("hello"), to: sid)
       try await until("the request starts") { script.count == 1 }
@@ -93,9 +113,9 @@ import Wuwei
 
   @Test func `a quiesced worker keeps the session lease until its final release`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "before", kind: .agent, createdBy: "morgan", model: .test)
       let config = makeConfig()
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "before", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
       let cell = SessionCell.ID(sid.rawValue)
       first.start()
@@ -133,13 +153,13 @@ import Wuwei
 
   @Test func `a retry delay survives the roll and the new worker waits out the rest of it`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.failing(.rateLimited(retryAt: anchor.addingTimeInterval(600))),
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -164,7 +184,6 @@ import Wuwei
 
   @Test func `a turn waiting on its model moves to the worker that starts beside it`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         { _ in
           await Latch().wait(unless: { Task.isCancelled })
@@ -174,6 +193,7 @@ import Wuwei
       ])
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -197,7 +217,6 @@ import Wuwei
       let folder = try ScratchFolder("rollover-pre040")
       let file = folder.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         { _ in
           await Latch().wait(unless: { Task.isCancelled })
@@ -207,25 +226,13 @@ import Wuwei
       ])
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       first.start()
       try await first.enqueue(item: Fix.message("hello"), to: sid)
       try await until("the old worker's inference starts") { script.count == 1 }
       await first.shutdown()
 
-      let address = try await old.writer.write { db in
-        let stored = try String.fetchOne(db, sql: "SELECT address FROM wuwei_job WHERE address LIKE ? AND phase = 'live'", arguments: ["InferenceJob/\(sid.rawValue):%"])
-        let address = try #require(stored)
-        try db.execute(sql: "UPDATE wuwei_job SET params = CAST(json_remove(CAST(params AS TEXT), '$.ping') AS BLOB) WHERE address = ?", arguments: [address])
-        if held { try db.execute(sql: "UPDATE sessions SET hold = 'interrupted' WHERE id = ?", arguments: [sid.rawValue]) }
-        try db.execute(sql: """
-        ALTER TABLE wuwei_job DROP COLUMN creator;
-        ALTER TABLE wuwei_mail DROP COLUMN lifecycle;
-        DELETE FROM grdb_migrations WHERE identifier = '040';
-        """)
-        #expect(try db.columns(in: "wuwei_job").allSatisfy { $0.name != "creator" })
-        #expect(try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier DESC LIMIT 1") == "044")
-        return address
-      }
+      let address = try await plantDev38Inference(file, session: sid, held: held)
       try await old.close()
       let new = try Space.open(file: file)
       #expect(try await new.writer.read { db in
@@ -255,9 +262,7 @@ import Wuwei
       }
       #expect(script.count == 2)
       #expect(try await new.sessions.lines(sid).assistantLines.map(\.text) == ["done"])
-      #expect(try await new.writer.read { db in
-        try Int.fetchOne(db, sql: "SELECT step_try FROM session_runtime WHERE session_id = ?", arguments: [sid.rawValue]) == 1
-      })
+      #expect(try await new.sessions.hydrate(sid).stepTry == 1)
       #expect(try await new.writer.read { db in
         try String.fetchOne(db, sql: "SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) == "done"
       })
@@ -269,7 +274,6 @@ import Wuwei
   @Test(arguments: [false, true])
   func `stale and unrelated lost jobs do not interrupt the current inference`(stale: Bool) async throws {
     try await rolling { space, _, _ in
-      let sid = try await space.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         { _ in
           await Latch().wait(unless: { Task.isCancelled })
@@ -277,14 +281,13 @@ import Wuwei
         },
       ])
       let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await space.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       execution.start()
       try await execution.enqueue(item: Fix.message("hello"), to: sid)
       try await until("the current inference starts") { script.count == 1 }
       let job = stale ? "InferenceJob/\(sid.rawValue):0:0:99" : "ToolCallJob/\(sid.rawValue):0:0"
       try await space.worker.call(SessionCell.ID(sid.rawValue)) { try $0.lost(job) }
-      #expect(try await space.writer.read { db in
-        try Int.fetchOne(db, sql: "SELECT step_try FROM session_runtime WHERE session_id = ?", arguments: [sid.rawValue]) == 0
-      })
+      #expect(try await space.sessions.hydrate(sid).stepTry == 0)
       #expect(try await space.sessions.record(sid).hold == .normal)
       #expect(script.count == 1)
       await execution.shutdown()
@@ -293,7 +296,6 @@ import Wuwei
 
   @Test func `a tool call cancelled at the quiesce answers the restart failure and the turn goes on`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("looking", calls: [.init(id: "call_0", name: "test_tool", arguments: .object([:]))]),
         Fix.replying("done"),
@@ -305,6 +307,7 @@ import Wuwei
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -328,7 +331,6 @@ import Wuwei
 
   @Test func `a tool call that finishes at the quiesce answers its own result`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("looking", calls: [.init(id: "call_0", name: "test_tool", arguments: .object([:]))]),
         Fix.replying("done"),
@@ -345,6 +347,7 @@ import Wuwei
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -376,7 +379,6 @@ import Wuwei
       let crashed = try ScratchFolder("crashed")
       let copy = crashed.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let held = Held()
       let exec = ExecScript { _ in
         await held.wait()
@@ -388,6 +390,7 @@ import Wuwei
       ])
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       first.start()
       try await first.enqueue(item: Fix.message("hello"), to: sid)
       try await until("the call runs") { exec.calls.value.count == 1 }
@@ -418,7 +421,6 @@ import Wuwei
 
   @Test func `mail sent through the new worker reaches a turn the old one still holds`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("looking", calls: [.init(id: "call_0", name: "test_tool", arguments: .object([:]))]),
         Fix.replying("done"),
@@ -432,6 +434,7 @@ import Wuwei
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -488,7 +491,6 @@ import Wuwei
 
   @Test func `an interrupt through the new worker stops the old worker's call without running it again`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("looking", calls: [.init(id: "call_0", name: "test_tool", arguments: .object([:]))]),
       ])
@@ -500,6 +502,7 @@ import Wuwei
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -520,7 +523,6 @@ import Wuwei
 
   @Test func `a compaction in flight at the roll is made by the worker that takes over`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("folding", calls: [.init(id: "call_c", name: "compact", arguments: .object(["summary": .string("what happened")]))]),
         Fix.replying("on with it"),
@@ -539,6 +541,7 @@ import Wuwei
         return []
       }
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -559,7 +562,6 @@ import Wuwei
 
   @Test func `a warming ping in flight at the roll is spent once and made by the worker that takes over`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "warm", kind: .agent, createdBy: "morgan", model: .test)
       let schedule = WarmingSchedule(intervalSeconds: 10, lifetimeSeconds: 1000, maxPings: 1)
       let gate = Latch()
       let script = InferenceScript([
@@ -573,6 +575,7 @@ import Wuwei
       ])
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "warm", kind: .agent, createdBy: "morgan", model: .test)
       let second = SessionExecution(space: new, loopConfig: config)
 
       first.start()
@@ -602,8 +605,6 @@ import Wuwei
 
   @Test func `a legacy conversion held at the roll opens one line generation`() async throws {
     try await rolling { old, new, time in
-      let sid = try await old.sessions.createSession(group: .shared, title: "legacy roll", kind: .agent, createdBy: "morgan", model: .test)
-      try await seedLegacyGeneration(old, sid)
       let asked = Box(0)
       let script = InferenceScript([Fix.replying("continued")])
       var config = makeConfig(inference: { request in
@@ -620,6 +621,8 @@ import Wuwei
         return []
       }
       let first = SessionExecution(space: old, loopConfig: config)
+      let sid = try await old.sessions.createSession(group: .shared, title: "legacy roll", kind: .agent, createdBy: "morgan", model: .test)
+      try await seedLegacyGeneration(old, sid)
       let second = SessionExecution(space: new, loopConfig: config)
       first.start()
       try await first.enqueue(item: Fix.message("continue"), to: sid)

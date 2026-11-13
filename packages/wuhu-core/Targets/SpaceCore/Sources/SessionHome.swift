@@ -120,8 +120,9 @@ extension Space {
   // No ancestor's home is read: what a parent passes down goes in the brief
   // or a template. With a revision, every scope reads as of it (the frozen
   // prompt); revision 0 is the empty space before its first write.
-  public func sessionHome(_ session: SessionID, at rev: Int? = nil) async throws -> SessionHome {
+  public func sessionHome(_ session: SessionID, at revs: [String: Int]? = nil) async throws -> SessionHome {
     let group = try await sessions.record(session).group
+    let rev = revs.map { $0[group.rawValue]! }
     let path = SessionHome.path(of: session)
     return SessionHome(
       path: path,

@@ -11,10 +11,6 @@ import SpaceCore
 import SpaceTools
 
 extension Hub {
-  // One creation path for create_session, wuhu:session and a page. A replay of the same (caller, call id) returns the first
-  // session. It clones the template only if the first call never finished
-  // cloning it, and hands over the message only if it was never handed over,
-  // so a retry finishes a half-made session or fails the same way again.
   nonisolated public func createSession(
     _ caller: Caller,
     _ callID: ToolCallID,
@@ -72,8 +68,6 @@ extension Hub {
     }
     let topLevel = creator == nil || order.topLevel == true
     let parent = topLevel ? nil : creator?.id
-    let recorded = try await store.receipt(caller, toolCallID: callID)
-    let replayed = recorded != nil
     var params = SessionCreationParams(
       executor: order.executor,
       modelGroup: order.modelGroup,
@@ -108,15 +102,11 @@ extension Hub {
           throw ToolProblem("a top-level session has no parent to report to; expects_reply is refused")
         }
       }
-      if case let .createSession(first)? = recorded {
-        executor = try await store.record(first.sessionID).executor
-      } else {
-        guard let resolveModelExecutor else {
-          throw ToolProblem("creating sessions is not available on this server")
-        }
-        if let creator { params = params.merged(over: try await callerDefaults(creator.id, params: params)) }
-        executor = try await SessionExecutor.resolve(params, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup)
+      guard let resolveModelExecutor else {
+        throw ToolProblem("creating sessions is not available on this server")
       }
+      if let creator { params = params.merged(over: try await callerDefaults(creator.id, params: params)) }
+      executor = try await SessionExecutor.resolve(params, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup)
     } catch let problem as ToolProblem {
       throw problem
     } catch let error as ExecutorUnavailableError {
@@ -143,23 +133,14 @@ extension Hub {
       if case .groupForbidden = error { throw ToolProblem(renderedFailure(Wire.failure(error)), code: "groupForbidden") }
       throw ToolProblem(renderedFailure(Wire.failure(error)))
     }
-    let cloneOwed: Bool = if case let .createSession(first)? = recorded {
-      first.cloneOwed == true
-    } else {
-      !replayed && template != nil
-    }
-    let messageID = MessageID(UUID.deterministic("request", caller.receiptHolder, callID.rawValue).uuidString.lowercased())
+    let messageID = MessageID(UUID.deterministic("request", caller.messageNamespace, callID.rawValue).uuidString.lowercased())
     // A child answers its parent; a person's agent answers the person.
     let requester: Caller = parent.map(Caller.session) ?? caller
     let id: SessionID
+    let route: SessionModelRoute?
     do {
-      let route: SessionModelRoute?
-      if case let .createSession(first)? = recorded {
-        route = try await store.modelRoute(first.sessionID)
-      } else {
-        route = try await prepareModelRoute?(executor, .create)
-      }
-      id = try await store.createSession(
+      route = try await prepareModelRoute?(executor, .create)
+      id = try await sessionEffects.create(SessionCreation(
         group: group,
         title: title,
         kind: kind,
@@ -168,17 +149,11 @@ extension Hub {
         createdBy: caller.name,
         executor: executor,
         snapshot: .init(),
-        receipt: (holder: caller, callID: callID),
-        cloneOwed: template != nil,
         modelRoute: route,
         observer: caller.observer,
-      )
+      ))
     } catch let refusal as ObserverRefusal {
       throw ToolProblem(refusal.description, code: refusal.code)
-    } catch let foreign as ForeignReceipt {
-      throw ToolProblem(
-        "tool call \(foreign.toolCallID.rawValue) already holds a receipt from another tool; no session was created",
-      )
     } catch let error as SessionStoreError {
       throw problem(error)
     } catch let error as CatalogError {
@@ -186,9 +161,9 @@ extension Hub {
     }
     var spawned = Spawned(id: id, title: title)
     do {
-      if let template, cloneOwed {
+      if let template {
         try await space.applySessionTemplate(template, to: id)
-        try await store.settleClone(caller, toolCallID: callID)
+        try await sessionEffects.invalidatePromptRevision(id)
       }
       if let message = order.message {
         if expectsReply {
@@ -200,10 +175,6 @@ extension Hub {
           _ = try await deliver(target, as: caller, messageID: messageID, text: message, replyTarget: nil, uploads: [])
         }
       }
-      // A replay answers what the first call made, request included.
-      if replayed, spawned.requestID == nil {
-        spawned.requestID = store.message(messageID)?.requestID
-      }
     } catch is CancellationError {
       throw CancellationError()
     } catch let problem as ToolProblem {
@@ -213,9 +184,9 @@ extension Hub {
     } catch {
       spawned.unfinished = renderedFailure(Wire.failure(error))
     }
-    if case let .modelGroup(group, _) = try await store.record(id).executor {
+    if case let .modelGroup(group, _) = executor {
       spawned.modelGroup = group
-      if let route = try await store.modelRoute(id) {
+      if let route {
         spawned.member = route.member
         spawned.provider = route.specifier.provider
         spawned.model = route.specifier.model

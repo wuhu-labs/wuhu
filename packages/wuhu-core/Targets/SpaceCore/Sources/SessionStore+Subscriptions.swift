@@ -1,14 +1,10 @@
-import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
-import StructuredQueries
-import struct Wuwei.Recipient
 
 struct ObservationProgress: Hashable, Sendable, Codable {
   var incarnation: UUID
@@ -106,118 +102,39 @@ public enum ObserverRefusal: Error, Equatable, Sendable, CustomStringConvertible
     case let .nameTaken(name): "observer \(name) is armed in this group; cancel it first"
     case .handlerRequired: "a group observer runs a handler: name its module"
     case let .unknownObserver(name): "no observer \(name) in this group"
-    case let .atCap(name, cap): "observer \(name) created \(cap) sessions in the last hour and is paused; arm it again to resume"
+    case let .atCap(name, cap): "observer \(name) admitted \(cap) session creations in the last hour and is paused; arm it again to resume"
     case let .paused(name): "observer \(name) is paused; arm it again to resume"
     }
   }
 }
 
 extension SessionStore {
-  // Re-arming an existing subscription id is a crash-retry: the original slot
-  // (and its firing progress) stands, and the returned record is the stored
-  // slot's truth, never an echo of the new arguments.
-  @discardableResult
-  public func armSubscription(
-    _ id: SessionID,
-    slot: SubscriptionSlot,
-    name: String? = nil,
-    nextFireAt: Date? = nil,
-    marker: String? = nil,
-  ) async throws -> ArmedSubscription {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    @Dependency(\.uuid) var uuid
-    let prepared = prepared(slot, uuid: { uuid() })
-    return try await writer.write { db in
-      try self.armSubscription(key, slot: prepared, name: name, nextFireAt: nextFireAt, marker: marker, now: now, in: db)
-    }
-  }
-
-  /// Arms a group's observer under its name. A paused observer of that name
-  /// is armed again with these terms; an armed one refuses.
-  @discardableResult
-  public func armObserver(
-    _ group: GroupID,
-    _ terms: ObserverTerms,
-    slot: SubscriptionSlot,
-    nextFireAt: Date? = nil,
-    marker: String? = nil,
-  ) async throws -> ArmedSubscription {
-    guard slot.handler != nil else { throw ObserverRefusal.handlerRequired }
-    let owner = SubscriptionOwner.group(group)
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    @Dependency(\.uuid) var uuid
-    let prepared = prepared(slot, uuid: { uuid() })
-    return try await writer.write { db in
-      guard try Self.actingGroup(of: owner, in: db) != nil else { throw SpaceError.groupForbidden(group.rawValue) }
-      if let standing = try SubscriptionRow.of(owner).where({ $0.name.eq(terms.name) }).fetchOne(db) {
-        guard standing.status == SubscriptionStatus.paused.rawValue else { throw ObserverRefusal.nameTaken(terms.name) }
-        try SubscriptionRow.delete(owner, standing.subscriptionID, in: db)
-        try owner.look(SubscriptionID(standing.subscriptionID), runtime: self.runtime, in: db)
-      }
-      let row = SubscriptionRow(
-        ownerKind: owner.kind, owner: owner.key, subscriptionID: prepared.id.rawValue, name: terms.name,
-        sessionsPerHour: terms.sessionsPerHour, payload: try Sessions.encode(prepared),
-        nextFireAt: nextFireAt.map(SQLiteDateFormat.string(from:)), marker: marker, lastFiredAt: nil, armedAt: now,
-      )
-      try SubscriptionRow.insert { row }.execute(db)
-      try owner.look(prepared.id, runtime: self.runtime, in: db)
-      return try self.armedSubscription(row)
-    }
-  }
-
-  /// Ends a group's observer, named; what it made stands.
-  @discardableResult
-  public func cancelObserver(_ group: GroupID, name: String) async throws -> ArmedSubscription {
-    let owner = SubscriptionOwner.group(group)
-    return try await writer.write { db in
-      guard let row = try SubscriptionRow.of(owner).where({ $0.name.eq(name) }).fetchOne(db) else {
-        throw ObserverRefusal.unknownObserver(name)
-      }
-      try SubscriptionRow.delete(owner, row.subscriptionID, in: db)
-      try owner.look(SubscriptionID(row.subscriptionID), runtime: self.runtime, in: db)
-      return try self.armedSubscription(row)
-    }
-  }
-
   public func observers(_ group: GroupID) async throws -> [ArmedSubscription] {
-    try await writer.read { db in
-      try SubscriptionRow.of(.group(group)).order { $0.name }.fetchAll(db).map(self.armedSubscription)
-    }
+    try space.cell.observers(group)
   }
 
-  // Whether an observer's firing may create one more session, in the write
-  // that creates it. At its hourly cap the observer pauses, the refusal its
-  // last error; the refusal is returned so the pause commits.
-  static func admit(_ observer: Observer, now: Date, runtime: SpaceRuntime, in db: Database) throws -> ObserverRefusal? {
-    guard let row = try SubscriptionRow.of(.group(observer.group)).where({ $0.name.eq(observer.name) }).fetchOne(db),
-          let cap = row.sessionsPerHour
-    else { return .unknownObserver(observer.name) }
-    guard row.status == SubscriptionStatus.armed.rawValue else { return .paused(observer.name) }
-    let since = SQLiteDateFormat.string(from: now.addingTimeInterval(-3600))
-    let made = try Int.fetchOne(
-      db, sql: "SELECT count(*) FROM sessions WHERE created_by = ? AND created_at > ?", arguments: [observer.member, since],
-    ) ?? 0
-    guard made >= cap else { return nil }
-    let refusal = ObserverRefusal.atCap(name: observer.name, sessionsPerHour: cap)
-    try pause(row, error: refusal.description, in: db)
-    try row.subscriptionOwner.look(SubscriptionID(row.subscriptionID), runtime: runtime, in: db)
-    return refusal
+  public func armedSubscriptions() async throws -> [ArmedSubscription] {
+    try space.cell.armedSubscriptions()
   }
 
-  static func pause(_ row: SubscriptionRow, error: String, in db: Database) throws {
-    var row = row
-    var slot = try Sessions.decode(SubscriptionSlot.self, from: row.payload)
-    slot.lastError = error
-    row.payload = try Sessions.encode(slot)
-    row.status = SubscriptionStatus.paused.rawValue
-    try SubscriptionRow.save(row, in: db)
-  }
-
-  // The slot as it is stored: an observation gets its incarnation, a handler
-  // a fresh one. A request's deadline slot needs neither.
   func prepared(_ slot: SubscriptionSlot, uuid: () -> UUID) -> SubscriptionSlot {
-    var inserted = slot
+    slot.prepared(uuid: uuid)
+  }
+
+  func armedSubscription(_ row: SubscriptionRow) throws -> ArmedSubscription {
+    try ArmedSubscription(row: row)
+  }
+}
+
+extension SubscriptionSlot {
+  public static func children(_ parent: SessionID, at now: Date) -> Self {
+    var slot = Self(id: childrenID, kind: .children)
+    slot.observationProgress = ObservationProgress(incarnation: UUID.deterministic("children", parent.rawValue, SQLiteDateFormat.string(from: now)), deliverySequence: 0)
+    return slot
+  }
+
+  public func prepared(uuid: () -> UUID) -> SubscriptionSlot {
+    var inserted = self
     if inserted.kind.observes, inserted.observationProgress == nil {
       inserted.observationProgress = ObservationProgress(incarnation: uuid(), deliverySequence: 0)
     }
@@ -228,86 +145,12 @@ extension SessionStore {
     }
     return inserted
   }
+}
 
-  @discardableResult
-  func armSubscription(
-    _ key: String,
-    slot: SubscriptionSlot,
-    name: String? = nil,
-    nextFireAt: Date?,
-    marker: String?,
-    now: String,
-    in db: Database,
-  ) throws -> ArmedSubscription {
-    _ = try Sessions.record(key, in: db)
-    let payload = try Sessions.encode(slot)
-    try SubscriptionRow.insert {
-      SubscriptionRow(
-        ownerKind: SubscriptionOwner.session(SessionID(key)).kind, owner: key, subscriptionID: slot.id.rawValue,
-        name: name ?? slot.handler.map(handlerName), payload: payload,
-        nextFireAt: nextFireAt.map(SQLiteDateFormat.string(from:)), marker: marker,
-        lastFiredAt: nil, armedAt: now,
-      )
-    } onConflict: { ($0.ownerKind, $0.owner, $0.subscriptionID) }.execute(db)
-    let row = try SubscriptionRow.find(key, slot.id.rawValue, in: db)
-    guard let row else { preconditionFailure("an armed slot must exist after its insert") }
-    return try armedSubscription(row)
-  }
-
-  /// Arms `parent`'s children slot unless it stands; a new incarnation each
-  /// time, so a firing of an earlier one cannot deliver into it.
-  static func watchChildren(_ parent: SessionID, now: String, runtime: SpaceRuntime, in db: Database) throws {
-    var slot = SubscriptionSlot(id: SubscriptionSlot.childrenID, kind: .children)
-    slot.observationProgress = ObservationProgress(incarnation: UUID.deterministic("children", parent.rawValue, now), deliverySequence: 0)
-    let row = SubscriptionRow(
-      ownerKind: SubscriptionOwner.session(parent).kind, owner: parent.rawValue, subscriptionID: slot.id.rawValue,
-      name: nil, payload: try Sessions.encode(slot), nextFireAt: nil, marker: nil, lastFiredAt: nil, armedAt: now,
-    )
-    try SubscriptionRow.insert { row } onConflict: { ($0.ownerKind, $0.owner, $0.subscriptionID) }.execute(db)
-    let armed = try storelessArmedChildren(parent, in: db)
-    try ObservationMail.recipient.post(.watch(armed.watch(recipient: Recipient<ObservationReply>(kind: "SessionCell", key: parent.rawValue))), on: db.sqliteConnection!)
-    db.afterNextTransaction { _ in runtime.poke(ObservationMail.recipient) }
-  }
-
-  private static func storelessArmedChildren(_ parent: SessionID, in db: Database) throws -> ArmedSubscription {
-    let row = try SubscriptionRow.find(parent.rawValue, SubscriptionSlot.childrenID.rawValue, in: db)!
-    return ArmedSubscription(owner: .session(parent), status: .armed, slot: try Sessions.decode(SubscriptionSlot.self, from: row.payload), marker: row.marker, armedAt: try SQLiteDateFormat.date(from: row.armedAt))
-  }
-
-  /// Ends `parent`'s children slot once no live child is left.
-  static func unwatchChildren(_ parent: SessionID, runtime: SpaceRuntime, in db: Database) throws {
-    let live = try Int.fetchOne(db, sql: "SELECT count(*) FROM sessions WHERE parent = ? AND lifecycle = 'live'", arguments: [parent.rawValue]) ?? 0
-    guard live == 0 else { return }
-    try deleteSubscription(parent.rawValue, SubscriptionSlot.childrenID, in: db)
-    db.afterNextTransaction { _ in runtime.poke(ObservationMail.recipient) }
-  }
-
-  static func deleteSubscription(_ key: String, _ subscriptionID: SubscriptionID, in db: Database) throws {
-    if subscriptionID == SubscriptionSlot.childrenID, let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) {
-      let slot = try Sessions.decode(SubscriptionSlot.self, from: row.payload)
-      let watched = ObservationSlot(owner: .session(SessionID(key)), subscription: subscriptionID, incarnation: slot.observationProgress!.incarnation)
-      try ObservationMail.recipient.post(.unwatch(watched), on: db.sqliteConnection!)
-    }
-    try SubscriptionRow.delete(.session(SessionID(key)), subscriptionID.rawValue, in: db)
-  }
-
-  public func armedSubscriptions() async throws -> [ArmedSubscription] {
-    try await writer.read { db in
-      try SubscriptionRow.order { ($0.ownerKind, $0.owner, $0.subscriptionID) }.fetchAll(db).map(armedSubscription)
-    }
-  }
-
-  /// What the session armed itself; its children watch is not listed.
-  public func armedSubscriptions(_ id: SessionID) async throws -> [ArmedSubscription] {
-    try await writer.read { db in
-      try SubscriptionRow.of(.session(id)).where { $0.subscriptionID.neq(SubscriptionSlot.childrenID.rawValue) }
-        .order { $0.subscriptionID }.fetchAll(db).map(armedSubscription)
-    }
-  }
-
-  func armedSubscription(_ row: SubscriptionRow) throws -> ArmedSubscription {
+extension ArmedSubscription {
+  public init(row: SubscriptionRow) throws {
     guard let status = SubscriptionStatus(rawValue: row.status) else { preconditionFailure("subscription_slots.status is checked: \(row.status)") }
-    return ArmedSubscription(
+    self.init(
       owner: row.subscriptionOwner,
       name: row.name,
       status: status,

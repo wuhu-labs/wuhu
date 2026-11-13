@@ -1,71 +1,64 @@
-import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import GRDB
+@testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import Wuwei
 
-/// Session writes the cell makes, as fixtures: a test sets a session's state with them directly.
 extension SessionStore {
   @discardableResult
   func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await rows { try $0.drainQueue(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.drainQueue(id) }
   }
 
   @discardableResult
   func archive(_ id: SessionID, grace: Duration) async throws -> Date {
-    try await rows {
-      return try $0.archive(id, grace: grace)
-    }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.archive(grace) }
+    guard case let .archived(expires) = try await record(id).lifecycle else { preconditionFailure("archive commits its lifecycle") }
+    return expires
   }
 
-  /// The cell's write of an input, for a test that runs no worker.
   func put(_ id: SessionID, input: QueueInput) async throws {
-    try await rows { try $0.put(id, SessionPut(input)) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.put(id, SessionPut(input)) }
   }
 
-  /// A person's inbox once their cell has taken the mail on its way.
   func inbox(_ recipient: String) async throws -> [NotificationRecord] {
-    _ = runtime.worker()
-    runtime.poke(person: recipient)
-    while try await writer.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["PersonCell/" + (runtime.worker().cell(SpaceCell.ID("space")).personCell(recipient)?.key ?? recipient)])! }) {
-      await Task.yield()
-    }
+    let worker = space.worker
+    guard let id = spaceCell.personCell(recipient) else { return [] }
+    worker.poke(id.recipient)
+    while worker.hasMail(for: id.recipient) { await Task.yield() }
+    try await worker.call(id) { _ in () }
     return notifications(recipient: recipient)
   }
 
-  /// What the session cells do with the mail main posted, for a test that runs no worker.
   func deliverMail() async throws {
-    try await rows { rows in
-      let prefix = SessionMail.kind + "/"
-      for row in try Row.fetchAll(rows.db, sql: "SELECT id, recipient, payload FROM wuwei_mail WHERE recipient LIKE ? ORDER BY id", arguments: [prefix + "%"]) {
-        let id = SessionID(String((row["recipient"] as String).dropFirst(prefix.count)))
-        switch try? JSONDecoder().decode(SessionMail.self, from: row["payload"] as Data) {
-        case let .put(put): try rows.put(id, put)
-        case let .clear(topic): try rows.clear(id, topic: topic)
-        default: continue
-        }
-        try rows.db.execute(sql: "DELETE FROM wuwei_mail WHERE id = ?", arguments: [row["id"] as Int64])
+    let worker = space.worker
+    for group in try await space.groups() {
+      let sessions = try await space.query("SELECT id FROM sessions", as: .init(actor: .anonymous, group: group.id))
+      for row in sessions.rows {
+        guard case let .text(session) = row[0] else { preconditionFailure("session ids are text") }
+        let id = SessionCell.ID(session)
+        worker.poke(id.recipient)
+        while worker.hasMail(for: id.recipient) { await Task.yield() }
+        try await worker.call(id) { _ in () }
       }
     }
   }
 
   func markInterrupted(_ id: SessionID) async throws {
-    try await rows { try $0.markInterrupted(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.interrupt() }
   }
 
   @discardableResult
   func restart(_ id: SessionID, executor: SessionExecutor? = nil, note: String? = nil, modelRoute: SessionModelRoute? = nil, runningWork: [String] = []) async throws -> SessionRestart {
-    @Dependency(\.uuid) var uuid
-    let head = uuid()
-    let restart = try await rows { try $0.restart(id, executor: executor, note: note, modelRoute: modelRoute, runningWork: runningWork, uuid: { head }) }
-    return restart
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.restart(executor, modelRoute, note, runningWork) }
+    return try await SessionRestart(generation: generation(id), executor: record(id).executor)
   }
 
   func unarchive(_ id: SessionID) async throws {
-    try await rows { try $0.unarchive(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.unarchive() }
   }
 }

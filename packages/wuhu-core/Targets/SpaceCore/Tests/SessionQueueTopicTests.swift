@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+@testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -22,6 +23,7 @@ import Testing
     let rig = try MovingClockSpace()
     let store = rig.store
     let id = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "morgan", model: .test)
+    try await store.markInterrupted(id)
     try await store.put(id, input: notice("later"), due: fixedDate.addingTimeInterval(60))
     try await store.put(id, input: notice("now"))
     #expect(try await texts(store, id) == ["now"])
@@ -37,6 +39,7 @@ import Testing
     let rig = try MovingClockSpace()
     let store = rig.store
     let id = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "morgan", model: .test)
+    try await store.markInterrupted(id)
     try await store.put(id, input: notice("first"), topic: "quiet")
     try await store.put(id, input: notice("other"))
     try await store.put(id, input: notice("second"), topic: "quiet")
@@ -57,11 +60,11 @@ import Testing
     try await rig.space.registerPerson("carol")
     let store = rig.store
     let owner = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "morgan", model: .test)
+    try await store.markInterrupted(owner)
     let peer = try await store.createSession(group: .shared, title: "b", kind: .agent, createdBy: "morgan", model: .test)
     func deadline() async throws -> Date? {
       try await store.deliverMail()
-      let now = SQLiteDateFormat.string(from: store.dateGen.now)
-      return try await store.writer.read { db in try Sessions.yieldDeadline(owner.rawValue, at: now, in: db) }
+      return try await rig.space.worker.call(SessionCell.ID(owner.rawValue)) { try $0.rows.yieldDeadline(owner) }
     }
     #expect(try await deadline() == nil)
 

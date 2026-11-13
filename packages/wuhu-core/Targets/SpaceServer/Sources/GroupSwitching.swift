@@ -180,7 +180,7 @@ func recordRouteFailure(_ error: any Error, session: SessionID, store: SessionSt
   }
   let old = route.failure
   let failure = ModelRouteFailure(reason: reason, firstFailureAt: old?.firstFailureAt ?? now, retryAt: retryAt, consecutiveFailures: (old?.consecutiveFailures ?? 0) + 1, source: source, code: code, lastFailureAt: now)
-  try await store.updateModelRouteFailure(session, expectedEpoch: route.epoch, failure: failure)
+  try await store.updateInferenceModelRouteFailure(session, expectedEpoch: route.epoch, failure: failure)
   return failure
 }
 

@@ -22,18 +22,18 @@ extension Space {
     let templatePath = try await MachineFolders.stored(templatePath, mutating: false, in: runtime)
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let now = dateGen.now
-    let text = try await blobs.read(writer) { db, cache in
+    let hash = try await writer.read { db -> String in
       guard let head = try Substrate.head(templatePath, group: templateGroup, in: db), head.kind == "file", let hash = head.blobHash else {
         throw SpaceError.notFound(templatePath.rawValue)
       }
-      guard let text = String(bytes: try cache.blob(of: hash, in: db).content, encoding: .utf8) else {
-        throw SpaceError.templateInvalid(templatePath.rawValue)
-      }
-      return text
+      return hash
+    }
+    guard let text = String(bytes: try await bucket.bytes(hash), encoding: .utf8) else {
+      throw SpaceError.templateInvalid(templatePath.rawValue)
     }
     guard let template = DocumentTemplate(markdown: text, at: templatePath) else { throw SpaceError.templateInvalid(templatePath.rawValue) }
     let content = Array(template.instance.utf8)
-    let blob = try await blobs.stage(content)
+    let blob = try await bucket.stage(content)
     let (created, written): (SpacePath, Bool) = try await writer.write { db in
       let directory = try MachineFolders.stored(destination ?? templatePath.parent, mutating: true, in: db)
       let files = try FSHeadRow.where {
@@ -47,7 +47,8 @@ extension Space {
         throw SpaceError.alreadyExists(target.rawValue)
       }
       guard !target.isLive else { return (target, false) }
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
+      try InterimBlob.record(blob, in: db)
       try Substrate.writeFile(target, group: group, blob: blob, rev: rev, mtime: mtime, in: db)
       return (target, true)
     }
@@ -90,7 +91,7 @@ extension Space {
     let files = try await writer.read { db in try FSHeadRow.where { $0.grp.eq(GroupID.shared.rawValue) && $0.kind.eq("file") }.fetchAll(db) }
     for head in files {
       guard let hash = head.blobHash else { continue }
-      let content = try await blobs.read(writer) { db, cache in try cache.blob(of: hash, in: db).content }
+      let content = try await bucket.bytes(hash)
       try Self.writeFile(Data(content), to: url, relative: head.path, manager: manager)
     }
 

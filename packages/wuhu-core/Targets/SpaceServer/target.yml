@@ -69,6 +69,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - StructuredQueries
     - ContentLane
     - DeterministicDependencies
     - MainHub

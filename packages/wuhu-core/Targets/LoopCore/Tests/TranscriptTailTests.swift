@@ -34,15 +34,15 @@ import struct WuhuAI.ToolCall
 
   /// Stores the prompt as main does during the generation's first inference.
   private static func storePrompt(_ store: SessionStore, _ id: SessionID) async throws {
-    guard case let .pending(pending) = try await store.activatePrompt(id) else { return }
-    _ = try await store.storePrompt(id, for: pending, "the prompt", tools: [], session: PromptSession(try await store.record(id)))
+    guard case let .pending(pending) = try await store.promptForInference(id) else { return }
+    _ = try await store.storeInferencePrompt(id, for: pending, "the prompt", tools: [], session: PromptSession(try await store.record(id)))
+    await store.noMail(id)
   }
 
   @Test func `a tail hears the generation, then each line in the order it was sent`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await created(space)
       let repo = "machines://m1/repo"
       let script = InferenceScript([
         Fix.replying("reading", calls: [
@@ -58,7 +58,9 @@ import struct WuhuAI.ToolCall
         return ToolOutcome(payload: payload, context: ScopeContext(folders: [repo: repo], deliveredContext: nil, text: "repo manual"))
       }
 
-      try await runService(space, config) { service in
+      let execution = SessionExecution(space: space, loopConfig: config)
+      let sid = try await created(space)
+      try await runService(execution) { service in
         var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         let frame = await tail.next().map(Heard.init)
         #expect(frame == .reset(0, []))
@@ -85,13 +87,14 @@ import struct WuhuAI.ToolCall
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await created(space)
       let script = InferenceScript([Fix.replying("first"), Fix.replying("second")])
       let config = makeConfig(inference: { request in
-        try await Self.storePrompt(sessions, sid)
+        try await Self.storePrompt(sessions, request.sessionID)
         return try await script(request)
       })
-      try await runService(space, config) { service in
+      let execution = SessionExecution(space: space, loopConfig: config)
+      let sid = try await created(space)
+      try await runService(execution) { service in
         var live = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         var frame = await live.next().map(Heard.init)
         #expect(frame == .reset(0, []))
@@ -125,8 +128,9 @@ import struct WuhuAI.ToolCall
   @Test func `a new generation resets the tail`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
+      let execution = SessionExecution(space: space, loopConfig: makeConfig())
       let sid = try await created(space)
-      try await runService(space, makeConfig()) { service in
+      try await runService(execution) { service in
         var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         var frame = await tail.next().map(Heard.init)
         #expect(frame == .reset(0, []))
@@ -161,10 +165,11 @@ import struct WuhuAI.ToolCall
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await created(space)
       let compact = ToolCall(id: "call_c", name: "compact", arguments: .object(["summary": .string("kept the notes")]))
       let script = InferenceScript([Fix.replying("folding", calls: [compact]), Fix.replying("fresh start")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await created(space)
+      try await runService(execution) { service in
         var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         #expect(await tail.next().map(Heard.init) == .reset(0, []))
         try await service.enqueue(item: Fix.message("go"), to: sid)
@@ -185,9 +190,10 @@ import struct WuhuAI.ToolCall
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await created(space)
       let script = InferenceScript([Fix.replying("first"), Fix.replying("second")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await created(space)
+      try await runService(execution) { service in
         var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         #expect(await tail.next().map(Heard.init) == .reset(0, []))
 
@@ -214,9 +220,10 @@ import struct WuhuAI.ToolCall
       let space = try Space.inMemory()
       let owner = try await space.addAccount(kind: .human, name: "alice")
       let group = try await space.createGroup(alias: "plans", owner: owner.id)
-      let sid = try await created(space, in: group)
       let script = InferenceScript([Fix.replying("first")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await created(space, in: group)
+      try await runService(execution) { service in
         var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         let frame = await tail.next().map(Heard.init)
         #expect(frame == .reset(0, []))

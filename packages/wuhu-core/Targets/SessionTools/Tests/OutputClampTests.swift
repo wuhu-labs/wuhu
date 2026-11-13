@@ -1,5 +1,9 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import MachineChannel
 import class MainHub.Hub
@@ -13,9 +17,10 @@ import Testing
   @Test func bigFileReadClampsWithAContinuationNotice() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let content = (1 ... 3000).map { "line-\($0)" }.joined(separator: "\n")
       _ = try await space.fs(.shared).write("/big.txt", Data(content.utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .read(first) = try await world.run("read", .object(["path": "/big.txt"])) else {
         throw Mismatch("read failed")
@@ -34,9 +39,10 @@ import Testing
   @Test func explicitLineWindowReadsExactly() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let content = (1 ... 20).map { "line-\($0)" }.joined(separator: "\n")
       _ = try await space.fs(.shared).write("/small.txt", Data(content.utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .read(window) = try await world.run(
         "read", .object(["path": "/small.txt", "lines": "5-8"]),
@@ -54,8 +60,9 @@ import Testing
   @Test func binaryFilesAreRefusedNotMojibaked() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/blob.dat", Data([0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0x00, 0xC3]), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       let refused = try await world.run("read", .object(["path": "/blob.dat"]))
       #expect(try failureMessage(refused).contains("not UTF-8 text"))
@@ -67,9 +74,10 @@ import Testing
   @Test func longMatchedLinesAreShortened() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let minified = "needle " + String(repeating: "a", count: 700)
       _ = try await space.fs(.shared).write("/bundle.js", Data(minified.utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       guard case let .grep(result) = try await world.run(
         "grep", .object(["pattern": "needle", "path": "/"]),

@@ -2,6 +2,7 @@ import Clocks
 import ControlledTime
 import Dependencies
 import Foundation
+import GRDB
 import JSONValue
 import Logging
 @testable import LoopCore
@@ -105,12 +106,15 @@ func createRetiredSession(
     group: .shared, title: title, kind: kind, parent: parent, createdBy: createdBy, executor: .kernel(.test),
   )
   let retired = SessionExecutor.retired(kind: executorKind)
-  try await space.writer.write { db in
+  let path = await space.writer.path
+  let plant = try DatabaseQueue(path: path, configuration: Space.makeConfiguration(journalMode: .default))
+  try await plant.write { db in
     try db.execute(
       sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?",
       arguments: [retired.kind, retired.configJSON, id.rawValue],
     )
   }
+  try plant.close()
   return id
 }
 
@@ -254,6 +258,14 @@ func makeConfig(
   )
 }
 
+func makeConfig(
+  executeInvocation: @escaping @Sendable (ToolInvocation) async throws -> ToolResultPayload,
+  inference: @escaping @Sendable (InferenceRequest) async throws -> InferenceReply = { _ in throw UnexpectedCall("inference") },
+  budget: ContextBudget = .init(maxInput: 1_001_000, maxOutput: 1000),
+) -> LoopConfig {
+  LoopConfig(executeTool: { ToolOutcome(payload: try await executeInvocation($0)) }, inference: inference, budget: { _ in budget })
+}
+
 // MARK: - Fixtures
 
 enum Fix {
@@ -307,10 +319,8 @@ enum Fix {
 extension SessionStore {
   /// Nothing to do, and no mail on its way to the session's cell.
   func settledWork(_ id: SessionID) async throws -> Bool {
-    try await writer.read { db in
-      try Sessions.record(id.rawValue, in: db).work == .noWork
-        && Bool.fetchOne(db, sql: "SELECT NOT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["\(SessionMail.kind)/\(id.rawValue)"])!
-    }
+    let cell = SessionCell.ID(id.rawValue)
+    return try space.worker.cell(cell).creationRecord().work == .noWork && !space.worker.hasMail(for: cell.recipient)
   }
 }
 
@@ -343,13 +353,13 @@ extension SessionExecution {
 // A tool's arm and cancel, as the gate makes them once main has checked the call.
 extension Space {
   @discardableResult
-  func arm(_ session: SessionID, _ slot: SubscriptionSlot, nextFireAt: Date? = nil, answering call: String) async throws -> ToolResultPayload {
-    try await worker.call(SessionCell.ID(session.rawValue)) { try $0.arm(Arming(slot, nextFireAt: nextFireAt), answering: ToolCallID(call)) }
+  func arm(_ session: SessionID, _ slot: SubscriptionSlot, nextFireAt: Date? = nil) async throws -> ToolResultPayload {
+    try await worker.call(SessionCell.ID(session.rawValue)) { try $0.arm(Arming(slot, nextFireAt: nextFireAt)) }
   }
 
   @discardableResult
-  func disarm(_ session: SessionID, _ subscription: SubscriptionID, answering call: String) async throws -> ToolResultPayload? {
-    try await worker.call(SessionCell.ID(session.rawValue)) { try $0.disarm(subscription, answering: ToolCallID(call)) }
+  func disarm(_ session: SessionID, _ subscription: SubscriptionID) async throws -> ToolResultPayload? {
+    try await worker.call(SessionCell.ID(session.rawValue)) { try $0.disarm(subscription) }
   }
 }
 

@@ -3,6 +3,7 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import LoopCore
 import SessionDomain
 import SpaceCore
 import Synchronization
@@ -90,6 +91,7 @@ private func renderedRequestBody(_ store: SessionStore, _ session: SessionID) as
   @Test func `a stored tool call renders the bytes the model emitted, every time`() async throws {
     let message = try await streamedToolCall()
     let space = try Space.inMemory()
+    _ = try await SessionToolFixture(space: space)
     let session = try await space.sessions.createSession(
       group: .shared,
       title: "caller",

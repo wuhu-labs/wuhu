@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
+@testable import LoopCore
 import SessionDomain
 import struct SpaceContract.PromptSession
 @testable import SpaceCore
@@ -17,55 +18,59 @@ import WuhuAI
   }
 
   @discardableResult private func storePrompt(_ store: SessionStore, _ id: SessionID, _ prompt: String = "the prompt") async throws -> String {
-    guard case let .pending(pending) = try await store.activatePrompt(id) else { throw LinesUnexpected() }
+    guard case let .pending(pending) = try await store.promptForInference(id) else { throw LinesUnexpected() }
     let opening = pending.opening ? PromptOpening(group: "the group's", session: "the session's") : nil
-    return try await store.storePrompt(id, for: pending, prompt, opening: opening, tools: Self.tools, session: PromptSession(try await store.record(id))).rendered
+    let stored = try await store.storeInferencePrompt(id, for: pending, prompt, opening: opening, tools: Self.tools, session: PromptSession(try await store.record(id)))
+    await store.noMail(id)
+    return stored.rendered
   }
 
   @Test func theOpeningIsStoredAsLinesOneAndTwoAndReadBack() async throws {
-    try await withSessionDeps {
-      let space = try makeSpace()
+    try await withSessionHandlerDeps {
+      let space = try makeHandlerSpace()
       let store = space.sessions
       let session = PromptSession(try await store.record(try await created(space)))
 
       let both = try await created(space)
-      guard case let .pending(pending) = try await store.activatePrompt(both) else { throw LinesUnexpected() }
+      guard case let .pending(pending) = try await store.promptForInference(both) else { throw LinesUnexpected() }
       #expect(pending.opening)
-      let stored = try await store.storePrompt(both, for: pending, "system", opening: .init(group: "group text", session: "session text"), tools: [], session: session)
+      let stored = try await store.storeInferencePrompt(both, for: pending, "system", opening: .init(group: "group text", session: "session text"), tools: [], session: session)
+      await store.noMail(both)
       #expect(stored.opening == ["group text", "session text"])
-      #expect(try await store.activatePrompt(both) == .rendered(stored))
+      #expect(try await store.promptForInference(both) == .rendered(stored))
       let lines = try await store.lines(both, generation: 0)
       #expect(lines.map(\.position) == [0, 1, 2, 3] && lines.map(\.role) == [.system, .user, .user, .user])
 
       let groupless = try await created(space)
-      guard case let .pending(next) = try await store.activatePrompt(groupless) else { throw LinesUnexpected() }
-      let alone = try await store.storePrompt(groupless, for: next, "system", opening: .init(group: "", session: "session text"), tools: [], session: session)
+      guard case let .pending(next) = try await store.promptForInference(groupless) else { throw LinesUnexpected() }
+      let alone = try await store.storeInferencePrompt(groupless, for: next, "system", opening: .init(group: "", session: "session text"), tools: [], session: session)
+      await store.noMail(groupless)
       #expect(alone.opening == ["session text"])
-      #expect(try await store.activatePrompt(groupless) == .rendered(alone))
+      #expect(try await store.promptForInference(groupless) == .rendered(alone))
       #expect(try await store.lines(groupless, generation: 0).map(\.position) == [0, 2, 3], "a group without instructions has no line 1")
 
       // A generation opened before the opening had positions: its transcript starts at 1.
       let older = try await created(space)
-      try await space.writer.write { db in
-        try db.execute(sql: #"UPDATE "session_lines" SET position = 1 WHERE session_id = ?"#, arguments: [older.rawValue])
-      }
-      guard case let .pending(whole) = try await store.activatePrompt(older) else { throw LinesUnexpected() }
+      try await space.plantHandlerRows(#"UPDATE "session_lines" SET position = 1 WHERE session_id = ?"#, arguments: [older.rawValue])
+      guard case let .pending(whole) = try await store.promptForInference(older) else { throw LinesUnexpected() }
       #expect(!whole.opening)
-      #expect(try await store.storePrompt(older, for: whole, "everything", tools: [], session: session).opening.isEmpty)
+      #expect(try await store.storeInferencePrompt(older, for: whole, "everything", tools: [], session: session).opening.isEmpty)
+      await store.noMail(older)
       #expect(try await store.lines(older, generation: 0).map(\.position) == [0, 1])
     }
   }
 
   @Test func theTranscriptFilesRenderTheLines() async throws {
-    try await withSessionDeps {
-      let space = try makeSpace()
+    try await withSessionHandlerDeps {
+      let space = try makeHandlerSpace()
       let store = space.sessions
       let id = try await created(space)
       let rendered = try await storePrompt(store, id)
-      _ = try await store.rows { rows in
+      _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { cell in
+        let rows = cell.rows
         try rows.append(id, lines: [
-          TranscriptLine(at: fixedDate, key: "direct:hello", message: .user(.init(content: [.text("hello\nthere")]))),
-          TranscriptLine(at: fixedDate, key: "attempt:hello", message: .assistant(.init(content: [.text("hi")])), meta: .init(stopReason: .stop, usage: .init(inputTokens: 5, outputTokens: 5, totalTokens: 100))),
+          TranscriptLine(at: handlerDate, key: "direct:hello", message: .user(.init(content: [.text("hello\nthere")]))),
+          TranscriptLine(at: handlerDate, key: "attempt:hello", message: .assistant(.init(content: [.text("hi")])), meta: .init(stopReason: .stop, usage: .init(inputTokens: 5, outputTokens: 5, totalTokens: 100))),
         ])
       }
       let files = space.sessionTranscripts(in: .shared)

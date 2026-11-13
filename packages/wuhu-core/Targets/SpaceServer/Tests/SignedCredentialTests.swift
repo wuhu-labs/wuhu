@@ -4,6 +4,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import JSONValue
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -33,6 +34,8 @@ import Testing
         let first = IdentityController.configure(space: old, origin: nil, keys: keys, fetch: fetch)
         let second = IdentityController.configure(space: new, origin: nil, keys: keys, fetch: fetch)
         try await first.initialize(identity: ServerIdentity.generate())
+        _ = try await SessionToolFixture(space: old, tokens: ExecTokens(spaceURL: "http://lan", identity: first))
+        _ = try await SessionToolFixture(space: new, tokens: ExecTokens(spaceURL: "http://lan", identity: second))
         old.worker.start()
         let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
         let session = try await old.sessions.createSession(group: .shared, title: "rollover", kind: .agent, createdBy: "owner", executor: model)
@@ -68,7 +71,7 @@ import Testing
       try await withDependencies { $0.date = DateGenerator { now.withLock { $0 } } } operation: {
         let t = try await SessionGateTests().tree()
         let record = try #require(try await t.harness.space.execRecord(t.exec))
-        let executor = SessionRuntime.toolExecutor(owner: t.harness.runtime.owner, tokens: t.tokens, hub: t.harness.hub)
+        let executor = SessionRuntime.toolExecutor(owner: t.harness.runtime.owner, execution: t.harness.runtime.execution, tokens: t.tokens, hub: t.harness.hub)
         let client = executor.client(t.parent)
         let _: JSONValue = try await client.api(.get, "/v1/machine")
         now.withLock { $0 = $0.addingTimeInterval(301) }

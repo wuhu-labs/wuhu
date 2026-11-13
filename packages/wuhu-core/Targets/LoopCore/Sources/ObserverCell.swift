@@ -2,16 +2,25 @@ import JSONValue
 import func MainHub.handlerInput
 import SessionDomain
 import struct SpaceContract.GroupID
+import struct SpaceCore.ArmedSubscription
 import struct SpaceCore.Arming
+import struct SpaceCore.GroupCell
 import enum SpaceCore.ObservationMail
 import enum SpaceCore.ObservationReply
 import struct SpaceCore.ObservationSlot
 import enum SpaceCore.ObserverAdvance
+import enum SpaceCore.ObserverRefusal
 import struct SpaceCore.ObserverRows
 import struct SpaceCore.ObserverSlot
+import struct SpaceCore.ObserverTerms
 import struct SpaceCore.Rows
 import struct SpaceCore.SessionPut
+import struct SpaceCore.SessionStore
+import enum SpaceCore.SpaceError
 import enum SpaceCore.SubscriptionOwner
+import struct SpaceCore.SubscriptionRow
+import struct SpaceCore.SubscriptionSlot
+import enum SpaceCore.SubscriptionStatus
 import StructuredQueries
 import Wuwei
 import WuweiQueries
@@ -21,12 +30,72 @@ import WuweiQueries
   import Foundation
 #endif
 
-/// A handler slot as a cell, a session's or a group's observer alike: its state is its `subscription_slots` row, which a session's observer writes from its arming to its end; it tells the session when the slot is gone. What comes (rows the observation job mails, an event from its stream job, its timer coming due) waits on the slot until a firing takes it; one handler job runs at a time, the input is taken only when a firing ends well, and a failed one is retried, backing off from 1 s to 5 min. Its key is `<owner kind>:<owner>:<subscription>`.
+/// A session's handler slot, or a group's named observer. A firing takes pending input only on success; failures back off from one second to five minutes.
 @Cell
 struct ObserverCell {
   static let schema = [
     "CREATE TABLE observer_watched (\(ownerColumn), slot TEXT NOT NULL, UNIQUE (owner))",
+    "CREATE TABLE observer_identity (\(ownerColumn), subscription TEXT NOT NULL, UNIQUE (owner))",
+    "CREATE TABLE observer_admissions (\(ownerColumn), admitted_at REAL NOT NULL)",
   ]
+  mutating func arm(_ terms: ObserverTerms, slot: SubscriptionSlot, nextFireAt: Date? = nil, marker: String? = nil) throws -> ArmedSubscription {
+    guard case let .group(group) = owner else { preconditionFailure("a group arms a named observer") }
+    precondition(terms.name == id.subscription.rawValue)
+    guard slot.handler != nil else { throw ObserverRefusal.handlerRequired }
+    guard ctx.cell(GroupCell.ID(group.rawValue)).record() != nil else { throw SpaceError.groupForbidden(group.rawValue) }
+    if let standing = groupRow {
+      guard standing.status == SubscriptionStatus.paused.rawValue else { throw ObserverRefusal.nameTaken(terms.name) }
+      stopStream()
+      try db.execute(SubscriptionRow.of(owner).where { $0.name.eq(terms.name) }.delete())
+    }
+    let row = try SubscriptionRow(owner: owner, slot: slot.prepared(uuid: client.uuid), name: terms.name, sessionsPerHour: terms.sessionsPerHour, nextFireAt: nextFireAt, marker: marker, armedAt: client.now())
+    try db.execute(ObserverIdentity.delete())
+    try db.execute(ObserverIdentity.insert { ObserverIdentity(subscription: slot.id.rawValue) })
+    try db.execute(SubscriptionRow.insert { row })
+    try look()
+    return try ArmedSubscription(row: row)
+  }
+
+  mutating func cancelObserver() throws -> ArmedSubscription {
+    guard let row = groupRow else { throw ObserverRefusal.unknownObserver(id.subscription.rawValue) }
+    let armed = try ArmedSubscription(row: row)
+    try db.execute(SubscriptionRow.of(owner).where { $0.name.eq(id.subscription.rawValue) }.delete())
+    stopStream()
+    try reconcile()
+    return armed
+  }
+
+  mutating func admit() throws -> ObserverRefusal? {
+    guard let row = groupRow else { return .unknownObserver(id.subscription.rawValue) }
+    let name = row.name!
+    guard row.status == SubscriptionStatus.armed.rawValue else { return .paused(name) }
+    let now = client.now().timeIntervalSince1970
+    try db.execute(ObserverAdmission.where { $0.admittedAt.lte(now - 3600) }.delete())
+    let cap = row.sessionsPerHour!
+    let made = db.rows(ObserverAdmission.all.asSelect().count()).first!
+    if made >= cap {
+      let refusal = ObserverRefusal.atCap(name: name, sessionsPerHour: cap)
+      var slot = try ArmedSubscription(row: row).slot
+      slot.lastError = refusal.description
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = .sortedKeys
+      let payload = String(decoding: try encoder.encode(slot), as: UTF8.self)
+      try db.execute(SubscriptionRow.of(owner).where { $0.name.eq(name) }.update {
+        $0.payload = #bind(payload)
+        $0.status = #bind(SubscriptionStatus.paused.rawValue)
+      })
+      try look()
+      return refusal
+    }
+    try db.execute(ObserverAdmission.insert { ObserverAdmission(admittedAt: now) })
+    return nil
+  }
+
+  private var groupRow: SubscriptionRow? {
+    precondition(owner.group != nil)
+    return db.rows(SubscriptionRow.of(owner).where { $0.name.eq(id.subscription.rawValue) }).first
+  }
+
   /// Its session armed it.
   mutating func arm(_ arming: Arming) throws {
     guard case let .session(session) = owner else { return }
@@ -64,7 +133,7 @@ struct ObserverCell {
   }
 
   func nextWake() -> Instant? {
-    guard let slot = try! rows.slot(owner, subscription), slot.subscription.status == .armed, slot.firing == nil,
+    guard let slot = try! currentSlot(), slot.subscription.status == .armed, slot.firing == nil,
           let due = due(slot)
     else { return nil }
     return Instant(milliseconds: Int64((due.timeIntervalSince1970 * 1000).rounded(.up)))
@@ -90,6 +159,7 @@ struct ObserverCell {
   }
 
   mutating func fired(_ job: HandlerJob.ID, _ answer: HandlerAnswer) throws {
+    let subscription = answer.subscription
     let slot = try rows.slot(owner, subscription)
     let kind = slot?.subscription.slot.kind
     var advance = ObserverAdvance.taken(marker: answer.marker)
@@ -186,7 +256,7 @@ struct ObserverCell {
 
   private mutating func reconcile() throws {
     let previous = db.rows(ObserverWatched.all).first
-    let slot = try rows.slot(owner, subscription)?.subscription
+    let slot = try currentSlot()?.subscription
     let next: ObservationSlot? = if let slot, slot.status == .armed, case .observe = slot.slot.kind { slot.observationSlot } else { nil }
     let payload = next?.key
     if previous?.slot == payload { return }
@@ -201,12 +271,28 @@ struct ObserverCell {
     }
   }
 
+  private func currentSlot() throws -> ObserverSlot? {
+    if owner.group != nil {
+      guard let row = groupRow else { return nil }
+      return try rows.slot(owner, SubscriptionID(row.subscriptionID))
+    }
+    return try rows.slot(owner, id.subscription)
+  }
+
   private var owner: SubscriptionOwner { id.owner }
-  private var subscription: SubscriptionID { id.subscription }
-  private var streamJob: StreamJob.ID { .init(id.key) }
+  private var subscription: SubscriptionID {
+    switch owner {
+    case .session: id.subscription
+    case .group: SubscriptionID(db.rows(ObserverIdentity.all).first!.subscription)
+    }
+  }
+
+  private var streamJob: StreamJob.ID {
+    .init(owner.group == nil ? id.key : "\(id.key):\(subscription.rawValue)")
+  }
 
   private var rows: ObserverRows {
-    ObserverRows(host: db.host, store: client.store)
+    ObserverRows(host: db.host, store: ctx.dependency(SessionStore.self))
   }
 
   private var client: LoopClient {
@@ -235,4 +321,14 @@ extension Address where Target == ObserverCell {
 @Table("observer_watched")
 private struct ObserverWatched: Owned {
   let slot: String
+}
+
+@Table("observer_identity")
+private struct ObserverIdentity: Owned {
+  let subscription: String
+}
+
+@Table("observer_admissions")
+private struct ObserverAdmission: Owned {
+  @Column("admitted_at") let admittedAt: Double
 }

@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
+import LoopCore
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -98,14 +99,12 @@ import Testing
     await settle()
     #expect(deleted.map(\.kind) == [.delete] && deleted.map(\.path) == ["/readme.md"])
     #expect(written.map(\.path).last == "/docs/readme.md" && written.last?.kind == .write)
-    #expect(Set((deleted + written).map(\.rev)).count == 1)
     #expect(try await space.fs(Self.alice).read("/docs/readme.md").1 == bytes("# Readme\n"))
     #expect((try? await space.fs(.shared).read("/readme.md")) == nil)
     #expect(try await space.history(path("/readme.md"), in: .shared).last?.2 == .delete)
     #expect(try await space.history(path("/docs/readme.md"), in: Self.alice).count == 1)
-    let minted = try #require(deleted.first?.rev)
-    let acting = try await space.writer.read { db in try String.fetchOne(db, sql: "SELECT grp FROM revisions WHERE rev = ?", arguments: [minted]) }
-    #expect(acting == "alice")
+    #expect(try await space.currentRevision(in: .shared) == deleted.last?.rev)
+    #expect(try await space.currentRevision(in: Self.alice) == written.last?.rev)
   }
 
   @Test func aTableMovedAcrossGroupsTakesItsRows() async throws {
@@ -157,11 +156,11 @@ import Testing
 
   @Test func aRowWithoutAGroupIsRefused() async throws {
     let space = try makeSpace()
-    for table in ["sessions", "revisions", "conversations", "notifications", "machines", "join_tokens"] {
+    for table in ["sessions", "revisions", "conversations", "machines", "join_tokens"] {
       await #expect {
         try await space.writer.write { db in try db.execute(sql: "INSERT INTO \(table) DEFAULT VALUES") }
       } throws: { error in
-        (error as? DatabaseError)?.message == "grp required: \(table)"
+        (error as? DatabaseError)?.message == (table == "revisions" ? "NOT NULL constraint failed: revisions.grp" : "grp required: \(table)")
       }
     }
   }

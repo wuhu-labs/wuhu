@@ -18,11 +18,11 @@ import WuhuAI
   @Test func archiveResolvesTheUnansweredScriptBeforeResume() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       let effects = Box(0)
       let call = ToolCall(id: "script-call", name: "run_script", arguments: .object(["source": "import {query} from 'wuhu:space'; await query('SELECT 1'); await sleep(100000); result('late')"]))
       let inference = InferenceScript([Fix.replying("run", calls: [call]), Fix.replying("next model step")])
       let service = SessionExecution(connection: scriptConnection(query: { effects.withLock { $0 += 1 } }), credential: { _ in "test" }, space: space) { _ in makeConfig(inference: { try await inference($0) }) }
+      let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       service.start()
       try await service.enqueue(item: Fix.message("run"), to: session)
       try await until("the script's side effect") { effects.value == 1 }
@@ -54,7 +54,6 @@ import WuhuAI
   @Test func handleMintingSkipsAnEndedJobsHandle() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       let choices = Box<[UUID]>([])
       @Dependency(\.uuid) var uuid
       let fallback = uuid
@@ -63,6 +62,7 @@ import WuhuAI
       } operation: {
         let starts = Box(0)
         let service = SessionExecution(connection: scriptConnection(starts), credential: { _ in "test" }, space: space) { _ in makeConfig() }
+        let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
         service.start()
         let cell = SessionCell.ID(session.rawValue)
         try await space.worker.call(cell) { try $0.interrupt() }
@@ -89,11 +89,11 @@ import WuhuAI
   @Test(arguments: ["[]", "{", "{}", "{\"source\":42}"]) func malformedArgumentsKeepTheirToolWrapper(_ arguments: String) async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       let call = ToolCall(id: "invalid", name: "run_script", arguments: .init(emitted: arguments))
       let inference = InferenceScript([Fix.replying("run", calls: [call]), Fix.replying("done")])
       let starts = Box(0)
       let service = SessionExecution(connection: scriptConnection(starts), credential: { _ in "test" }, space: space) { _ in makeConfig(inference: { try await inference($0) }) }
+      let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       service.start()
       try await service.enqueue(item: Fix.message("run"), to: session)
       try await until("the argument failure") { try await space.sessions.transcriptLines(session).contains { $0.role == .toolResult } }

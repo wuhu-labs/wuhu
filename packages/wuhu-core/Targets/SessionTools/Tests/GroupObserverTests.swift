@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -21,7 +22,9 @@ import Testing
   @Test func observerActsAsItsGroupStampsWhatItMakesAndRetriesTheSameFireTime() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
+      try await space.sessions.markInterrupted(session)
       let alice = try await space.addAccount(kind: .human, name: "alice")
       let foreign = try await space.createGroup(alias: "research", owner: alice.id)
       #expect(try await space.writes(.shared, in: foreign))
@@ -39,11 +42,11 @@ import Testing
         return null;
       };
       """.utf8), ifMatch: nil)
-      let owner = Hub(space: space, resolveModelExecutor: { provider, model, effort in
+      let owner = loop.hub { Hub(space: space, resolveModelExecutor: { provider, model, effort in
         .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
-      })
+      }) }
       let principal = try await space.principal(of: session)
-      try await withHandlerFiring(space, owner: owner) { _, owner in
+      try await withHandlerFiring(loop, owner: owner) { _, owner in
         let armed = try await owner.armObserver(.shared, ObserverInput(
           name: "triage", handler: "/triage.js", observe: nil, timer: ObserverTimerInput(inSeconds: 10, cron: nil), sessionsPerHour: nil,
         ))
@@ -82,7 +85,9 @@ import Testing
   @Test func everyWriteAHandlerMakesIsAttributedToItsFiring() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
+      try await space.sessions.markInterrupted(session)
       _ = try await space.fs(.shared).write("/N.md", Data("---\ntemplate: {\"strategy\":\"incr\",\"prefix\":\"N\",\"pad\":3}\n---\nn".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/writes.js", Data("""
       import { writeText, writeBytes, createTable, tableSchema, alterTable, mutateRows, readAttributes, patchAttributes, instantiateTemplate, checkout, move, remove } from 'wuhu:space';
@@ -101,8 +106,8 @@ import Testing
         return null;
       };
       """.utf8), ifMatch: nil)
-      let before = try await space.currentRevision()
-      try await withHandlerFiring(space) { _, owner in
+      let before = try await space.currentRevision(in: .shared)
+      try await withHandlerFiring(loop) { _, owner in
         _ = try await owner.armObserver(.shared, ObserverInput(
           name: "writes", handler: "/writes.js", observe: nil, timer: ObserverTimerInput(inSeconds: 1, cron: nil), sessionsPerHour: nil,
         ))
@@ -111,12 +116,12 @@ import Testing
         }
         let firing = try await space.query("SELECT outcome, error, effects FROM subscription_firings", as: space.principal(of: session)).rows
         #expect(firing.first?[0] == .text("ok"), "\(firing)")
-        let after = try await space.currentRevision()
+        let after = try await space.currentRevision(in: .shared)
         #expect(after - before == 10)
         guard case let .text(raw)? = firing.first?[2], let revisions = JSONValue.parse(raw)?.object?["revisions"]?.array else {
           Issue.record("the firing logs its revisions"); return
         }
-        #expect(Set(revisions.compactMap(\.stringValue)) == Set((before + 1 ... after).map(String.init)))
+        #expect(Set(revisions.compactMap(\.stringValue)) == Set((before + 1 ... after).map { "shared/\($0)" }))
       }
     }
   }
@@ -124,10 +129,11 @@ import Testing
   @Test func observationThatTurnsInvalidPausesTheObserverWithItsError() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/watch.js", Data("export default () => {};".utf8), ifMatch: nil)
       let gone = try SpacePath(validating: "/gone.table")
       _ = try await space.createTable(gone, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
-      try await withHandlerFiring(space) { _, owner in
+      try await withHandlerFiring(loop) { _, owner in
         _ = try await owner.armObserver(.shared, ObserverInput(
           name: "watch", handler: "/watch.js", observe: SubscriptionObserveInput(sql: "SELECT * FROM \"/gone.table\"", throttleSeconds: nil), timer: nil, sessionsPerHour: nil,
         ))

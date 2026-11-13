@@ -33,7 +33,7 @@
     "tool/cte" : "200\n{\"columns\":[\"n\"],\"rows\":[[1],[2],[3]]}",
     "tool/error-column" : "422\n{\"code\":\"internal\",\"message\":\"SQLite error 1: no such column: nope - while executing `SELECT nope FROM docs`\"}",
     "tool/error-forbidden" : "422\n{\"code\":\"invalidArgument\",\"message\":\"table not queryable: fs_heads\"}",
-    "tool/error-forbidden-many" : "422\n{\"code\":\"invalidArgument\",\"message\":\"table not queryable: blobs, fs_heads\"}",
+    "tool/error-forbidden-many" : "422\n{\"code\":\"invalidArgument\",\"message\":\"table not queryable: bucket_objects, fs_heads\"}",
     "tool/error-master" : "422\n{\"code\":\"invalidArgument\",\"message\":\"table not queryable: sqlite_master\"}",
     "tool/error-pragma" : "422\n{\"code\":\"invalidArgument\",\"message\":\"queryNotReadOnly\"}",
     "tool/error-syntax" : "422\n{\"code\":\"invalidArgument\",\"message\":\"queryNotReadOnly\"}",

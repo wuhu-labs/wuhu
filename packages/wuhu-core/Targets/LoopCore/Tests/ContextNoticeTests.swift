@@ -19,7 +19,6 @@ import struct WuhuAI.ToolCall
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let repo = "machines://m1/repo"
       let script = InferenceScript([
         Fix.replying("reading", calls: [
@@ -37,7 +36,7 @@ import struct WuhuAI.ToolCall
         let payload = ToolResultPayload.read(.init(path: repo, revision: .journal(1), content: call.id))
         guard call.arguments == .object(["path": .string(repo + "/a")]) else {
           do {
-            #expect(try await sessions.lines(sid).allSatisfy { $0.key != LineKey.scope }, "the notice remains held while another call is pending")
+            #expect(try await sessions.lines(invocation.sessionID).allSatisfy { $0.key != LineKey.scope }, "the notice remains held while another call is pending")
           } catch { Issue.record(error) }
           return ToolOutcome(payload: payload)
         }
@@ -47,7 +46,9 @@ import struct WuhuAI.ToolCall
         )
       }
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("second assistant reply") {
           try await sessions.lines(sid).assistantLines.count == 2
@@ -74,7 +75,6 @@ import struct WuhuAI.ToolCall
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let repo = "machines://m1/repo"
       func read(_ file: String) -> ToolCall {
         ToolCall(id: "call_" + file, name: "read", arguments: .object(["path": .string(repo + "/" + file)]))
@@ -100,7 +100,9 @@ import struct WuhuAI.ToolCall
 
       let folded = Box<ToolExecutionState?>(nil)
       let restarted = Box<ToolExecutionState?>(nil)
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 5 }
         let tools = try space.worker.cell(SessionCell.ID(sid.rawValue)).shown()

@@ -11,29 +11,33 @@ import SessionDomain
 import Testing
 
 func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
-  try await space.writer.write { db in
+  let path = await space.writer.path
+  let plant = try DatabaseQueue(path: path, configuration: Space.makeConfiguration(journalMode: .default))
+  try await plant.write { db in
     try db.execute(sql: "INSERT INTO session_contents VALUES (?, 'old-item', ?)", arguments: [session.rawValue, #"{"assistant":{"_0":{"content":"frozen legacy bytes"}}}"#])
     try db.execute(sql: "INSERT INTO session_pointers VALUES (?, 0, 0, 'old-item')", arguments: [session.rawValue])
   }
+  try plant.close()
 }
 
 @Suite struct LegacyLinesTests {
   @Test func firstInputConvertsPointersOnceAndThenRunsOnLines() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let id = try await space.sessions.createSession(group: .shared, title: "legacy", kind: .agent, createdBy: "morgan", model: .test)
-      try await seedLegacyGeneration(space, id)
       let script = InferenceScript([
         { request in
           #expect(request.generation == 1)
-          #expect(request.lines.contains { $0.key == "head:summary" && $0.text.contains("session_legacy_items WHERE session_id = '\(id.rawValue)'") })
+          #expect(request.lines.contains { $0.key == "head:summary" && $0.text.contains("session_legacy_items WHERE session_id = '\(request.sessionID.rawValue)'") })
           #expect(request.lines.contains { $0.key == "message:m1" && $0.text.hasSuffix("\n\ncontinue") })
           #expect(!request.lines.contains { $0.text.contains("frozen legacy bytes") })
           return Fix.reply("continued")
         },
         Fix.replying("still working"),
       ])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let id = try await space.sessions.createSession(group: .shared, title: "legacy", kind: .agent, createdBy: "morgan", model: .test)
+      try await seedLegacyGeneration(space, id)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("continue"), to: id)
         try await until("legacy conversion and first reply") { try await space.sessions.settledWork(id) && script.count == 1 }
         try await service.enqueue(item: Fix.message("again", message: "m2"), to: id)
@@ -49,8 +53,6 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
   func jobsFromAnOldLegacySlotFinishWithoutInferringAndTriggerOneConversion(compaction: Bool) async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let id = try await space.sessions.createSession(group: .shared, title: "legacy in flight", kind: .agent, createdBy: "morgan", model: .test)
-      try await seedLegacyGeneration(space, id)
       let prepared = Box(0)
       let script = InferenceScript([Fix.replying("recovered")])
       var config = makeConfig(inference: { request in
@@ -59,7 +61,10 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
         return try await script(request)
       })
       config.prepareCompaction = { _, _, _ in prepared.withLock { $0 += 1 }; return nil }
-      try await runService(space, config) { _ in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await space.sessions.createSession(group: .shared, title: "legacy in flight", kind: .agent, createdBy: "morgan", model: .test)
+      try await seedLegacyGeneration(space, id)
+      try await runService(service) { _ in
         let slot = Slot(session: id, generation: 0, position: 7, stepTry: 0)
         try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.installTurn(position: 7) }
         if compaction {
@@ -84,10 +89,11 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
   @Test func anOldCompactionAnswerAtTheLegacyRowSlotIsDroppedBeforeConversion() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
+      let script = InferenceScript([Fix.replying("converted")])
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
       let id = try await space.sessions.createSession(group: .shared, title: "old answer", kind: .agent, createdBy: "morgan", model: .test)
       try await seedLegacyGeneration(space, id)
-      let script = InferenceScript([Fix.replying("converted")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { _ in
+      try await runService(service) { _ in
         try await space.worker.call(SessionCell.ID(id.rawValue)) { cell in
           try cell.installTurn(position: 7)
           try cell.compacted(Slot(session: id, generation: 0, position: 7, stepTry: 0).compaction, .failed("stale compaction failure"))
@@ -104,14 +110,14 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
       let folder = try ScratchFolder("legacy-idle-pointer")
       let file = folder.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
-      let id = try await old.sessions.createSession(group: .shared, title: "idle legacy pointer", kind: .agent, createdBy: "morgan", model: .test)
-      try await seedLegacyGeneration(old, id)
       let script = InferenceScript([Fix.replying("converted")])
       let config = makeConfig(inference: { request in
         #expect(request.generation == 1)
         return try await script(request)
       })
       let first = SessionExecution(space: old, loopConfig: config)
+      let id = try await old.sessions.createSession(group: .shared, title: "idle legacy pointer", kind: .agent, createdBy: "morgan", model: .test)
+      try await seedLegacyGeneration(old, id)
       first.start()
       try await old.worker.call(SessionCell.ID(id.rawValue)) { try $0.installTurn(position: 7, turn: .idle) }
       await first.shutdown()
@@ -147,10 +153,6 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
   @Test func anIdleLegacySessionConvertsWhenItsOwedReplyNagIsDue() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let id = try await space.sessions.createSession(group: .shared, title: "legacy nag", kind: .agent, createdBy: "morgan", model: .test)
-      try await seedLegacyGeneration(space, id)
-      let conversation = ConversationID(id.rawValue)
-      let nags = NagState(settle: .init(owed: [conversation: .owed]))
       let script = InferenceScript([
         Fix.replying("converted"),
         { request in
@@ -160,8 +162,13 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
         },
         Fix.replying("done"),
       ])
-      let config = makeConfig(executeTool: { _ in .sendMessage(.init(messageID: .init("reply"), conversationID: conversation, n: 1)) }, inference: { try await script($0) })
-      try await runService(space, config) { _ in
+      let config = makeConfig(executeInvocation: { invocation in .sendMessage(.init(messageID: .init("reply"), conversationID: .init(invocation.sessionID.rawValue), n: 1)) }, inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await space.sessions.createSession(group: .shared, title: "legacy nag", kind: .agent, createdBy: "morgan", model: .test)
+      try await seedLegacyGeneration(space, id)
+      let conversation = ConversationID(id.rawValue)
+      let nags = NagState(settle: .init(owed: [conversation: .owed]))
+      try await runService(service) { _ in
         try await space.worker.call(SessionCell.ID(id.rawValue)) { cell in
           try cell.installTurn(position: 7, turn: .idle, nags: nags)
           try cell.wake()
@@ -176,9 +183,10 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
   @Test func completedCompactionWhoseAnswerWasLostRecoversThroughInterruptAndStartOver() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let id = try await space.sessions.createSession(group: .shared, title: "lost compaction answer", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.replying("fresh work")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let id = try await space.sessions.createSession(group: .shared, title: "lost compaction answer", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.installTurn(position: 7) }
         let address = Slot(session: id, generation: 0, position: 7, stepTry: 0).compaction.description
         let params = try JSONEncoder().encode(CompactionJob.Params(session: id, generation: 0, position: 7, kind: .pointer))

@@ -11,11 +11,12 @@ import Testing
   @Test func aPathResolvesAMachineNameAndKeepsTheIdInTheAddress() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let mini = try await space.addMachine(name: "mac_mini")
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
         session: try await makeSession(space),
       )
 
@@ -28,11 +29,12 @@ import Testing
   @Test func aRenamedMachineAnswersToBothItsNewAndOldNames() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let mini = try await space.addMachine(name: "mac_mini")
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
         session: try await makeSession(space),
       )
 
@@ -52,8 +54,9 @@ import Testing
   @Test func anUnknownMachineNameIsAToolFailureRatherThanAParseError() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
         session: try await makeSession(space),
       )
 
@@ -68,10 +71,11 @@ import Testing
   @Test func theRosterNamesTheBoxBeforeItsId() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let mini = try await space.addMachine(name: "mac_mini")
       let anonymous = try await space.addMachine(name: nil)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
         session: try await makeSession(space),
       )
 

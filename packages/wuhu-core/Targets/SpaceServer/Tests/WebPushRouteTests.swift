@@ -5,6 +5,7 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -19,6 +20,7 @@ import Testing
 
   init() async throws {
     harness = try Harness(dev: false, webPushApplicationServerKey: applicationServerKey)
+    _ = try await SessionToolFixture(space: harness.space)
     identity = try await harness.space.identity().rawValue
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     self.account = account.id
@@ -99,6 +101,7 @@ import Testing
     let persona = try #require(try await harness.space.persona(account: account))
     let model = ModelSpecifier(provider: "testing", model: "test-model", effort: "medium")
     let owner = try await harness.space.sessions.createSession(group: .shared, title: "owner", kind: .agent, createdBy: persona.name, model: model)
+    try await harness.space.sessions.markInterrupted(owner)
     _ = try await harness.space.sessions.post(
       .box(owner),
       messageID: MessageID("question"),

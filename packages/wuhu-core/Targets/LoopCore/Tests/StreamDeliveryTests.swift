@@ -96,7 +96,7 @@ private func deliveryWorker(
   })
   space.worker.register(.job(StreamJob.self))
   space.worker.register(.cell(StreamReceiver.self))
-  space.worker.register(.cell(ObserverCell.self))
+  registerSessionCells(in: space)
   space.worker.register(.job(HandlerJob.self))
 }
 
@@ -182,7 +182,9 @@ extension StreamDeliveryTests {
       let file = folder.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
       let new = try Space.open(file: file)
+      let seeding = SessionExecution(space: old, loopConfig: makeConfig())
       let session = try await old.sessions.createSession(group: .shared, title: "stream", kind: .agent, createdBy: "owner", model: .test)
+      await seeding.shutdown()
       let events = EventServer()
       let fired = Box<[String]>([])
       let gate = Latch()

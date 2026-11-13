@@ -43,9 +43,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let flips = WorkFlips(sid)
-      sessions.writer.add(transactionObserver: flips)
 
       let tail = Box<[TranscriptLine]>([])
       let stored = Box<SessionHydration?>(nil)
@@ -54,19 +51,23 @@ private final class WorkFlips: TransactionObserver, Sendable {
         Fix.replying("thinking out loud"),
         { request in
           tail.withLock { $0 = Array(request.lines.suffix(2)) }
-          let hydration = try await sessions.hydrate(sid)
+          let hydration = try await sessions.hydrate(request.sessionID)
           stored.withLock { $0 = hydration }
-          let last = try await sessions.lines(sid).last
+          let last = try await sessions.lines(request.sessionID).last
           storedTail.withLock { $0 = last }
           return Fix.reply("answering", calls: [Self.call("send_message", "c-1")])
         },
         Fix.replying("all done"),
       ])
       let config = makeConfig(
-        executeTool: { _ in .sendMessage(.init(messageID: .init("a1"), conversationID: .init(sid.rawValue), n: 1)) },
+        executeInvocation: { invocation in .sendMessage(.init(messageID: .init("a1"), conversationID: .init(invocation.sessionID.rawValue), n: 1)) },
         inference: { try await script($0) },
       )
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let flips = WorkFlips(sid)
+      sessions.writer.add(transactionObserver: flips)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
         try await until("the exchange settles") { try await sessions.settledWork(sid) && script.count == 3 }
         try await holds("the wrap-up to be the last word") { script.count == 3 }
@@ -89,7 +90,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await createRequestedTask(in: space, title: "t")
       let script = InferenceScript([
         Fix.replying("done?"),
         Fix.replying("still thinking"),
@@ -97,10 +97,12 @@ private final class WorkFlips: TransactionObserver, Sendable {
         Fix.replying("reported"),
       ])
       let config = makeConfig(
-        executeTool: { _ in try await sessions.reportFinal(sid) },
+        executeInvocation: { invocation in try await sessions.reportFinal(invocation.sessionID) },
         inference: { try await script($0) },
       )
-      try await runService(space, config) { _ in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await createRequestedTask(in: space, title: "t")
+      try await runService(service) { _ in
         try await sessions.openParentRequest(on: sid)
         try await until("the first reminder is answered") { try await sessions.settledWork(sid) && script.count == 2 }
         try await holds("the next one waits a minute") { script.count == 2 }
@@ -124,14 +126,15 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await createRequestedTask(in: space, title: "t")
       let script = InferenceScript([
         Fix.replying("marking", calls: [.init(id: "c-b", name: "bookmark", arguments: .object(["name": .string("b")]))]),
         Fix.replying("done?"),
         Fix.replying("folding", calls: [.init(id: "c-f", name: "compact", arguments: .object(kept ? ["summary": .string("s"), "bookmark": .string("b")] : ["summary": .string("s")]))]),
         Fix.replying("after the fold"),
       ])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { _ in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await createRequestedTask(in: space, title: "t")
+      try await runService(service) { _ in
         try await sessions.openParentRequest(on: sid)
         let steps = 4
         try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == steps }
@@ -150,13 +153,14 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("folding", calls: [.init(id: "c-f", name: "compact", arguments: .object(["summary": .string("s")]))]),
         Fix.replying("after the fold"),
         Fix.replying("reminded"),
       ])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
         try await until("the new generation stops") { try await sessions.settledWork(sid) && script.count == 3 }
       }
@@ -168,13 +172,14 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("thinking"),
         Fix.replying("reminded"),
         Fix.replying("started over"),
       ])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
         try await until("the agent stops, reminded") { try await sessions.settledWork(sid) && script.count == 2 }
         let nags = try #require(space.worker.cell(SessionCell.ID(sid.rawValue)).turn()?.nags)
@@ -196,18 +201,19 @@ private final class WorkFlips: TransactionObserver, Sendable {
       try await withKernelDeps { time in
         let space = try Space.inMemory()
         let sessions = space.sessions
-        let sid = try await createRequestedTask(in: space, title: "t")
         let script = InferenceScript([
           Fix.replying("arming", calls: [Self.call("wake", "c-1")]),
           Fix.replying("waiting"),
         ])
-        let config = makeConfig(executeTool: { _ in
+        let config = makeConfig(executeInvocation: { invocation in
           if case let .timer(timer) = wake {
-            try await space.arm(sid, .init(id: timer.subscriptionID, kind: .timer(timer.schedule, message: timer.message)), nextFireAt: anchor.addingTimeInterval(3600), answering: "c-1")
+            try await space.arm(invocation.sessionID, .init(id: timer.subscriptionID, kind: .timer(timer.schedule, message: timer.message)), nextFireAt: anchor.addingTimeInterval(3600))
           }
           return wake
         }, inference: { try await script($0) })
-        try await runService(space, config) { _ in
+        let service = SessionExecution(space: space, loopConfig: config)
+        let sid = try await createRequestedTask(in: space, title: "t")
+        try await runService(service) { _ in
           try await sessions.openParentRequest(on: sid)
           try await until("it parks") { try await sessions.settledWork(sid) && script.count == 2 }
           await time.advance(by: 900)
@@ -222,7 +228,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await createRequestedTask(in: space, title: "quiet timer")
       let timerID = SubscriptionID("timer.quiet")
       let schedule = TimerSchedule.oneShot(anchor.addingTimeInterval(3600))
       let script = InferenceScript([
@@ -233,10 +238,12 @@ private final class WorkFlips: TransactionObserver, Sendable {
           return Fix.reply("park reminder received")
         },
       ])
-      let config = makeConfig(executeTool: { _ in
-        try await space.arm(sid, .init(id: timerID, kind: .timer(schedule, message: "unused"), handler: "/quiet.js"), nextFireAt: anchor.addingTimeInterval(3600), answering: "quiet")
+      let config = makeConfig(executeInvocation: { invocation in
+        try await space.arm(invocation.sessionID, .init(id: timerID, kind: .timer(schedule, message: "unused"), handler: "/quiet.js"), nextFireAt: anchor.addingTimeInterval(3600))
       }, inference: { try await script($0) })
-      try await runService(space, config) { _ in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await createRequestedTask(in: space, title: "quiet timer")
+      try await runService(service) { _ in
         try await sessions.openParentRequest(on: sid)
         try await until("handler timer does not suppress park reminder") {
           guard script.count == 3 else { return false }
@@ -252,7 +259,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await createRequestedTask(in: space, title: "t")
       let started = Box(false)
       let afterExec = Box<Int?>(nil)
       let script = InferenceScript([
@@ -272,7 +278,9 @@ private final class WorkFlips: TransactionObserver, Sendable {
         },
         inference: { try await script($0) },
       )
-      try await runService(space, config) { _ in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await createRequestedTask(in: space, title: "t")
+      try await runService(service) { _ in
         try await sessions.openParentRequest(on: sid)
         try await until("the exec runs") { started.value }
         try await time.asleep("the exec", dueIn: 600)
@@ -291,10 +299,11 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let first = InferenceScript([Fix.replying("parking"), Fix.replying("waiting")])
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await first($0) }))
       let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let sid = try await sessions.createSession(group: .shared, title: "parked", kind: kind, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      let first = InferenceScript([Fix.replying("parking"), Fix.replying("waiting")])
-      try await runService(space, makeConfig(inference: { try await first($0) })) { _ in
+      try await runService(service) { _ in
         _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it")
         try await until("first parent parks") { try await sessions.settledWork(sid) && first.count == 2 }
         try await time.asleep("first parent reminder", dueIn: 60)
@@ -314,10 +323,11 @@ private final class WorkFlips: TransactionObserver, Sendable {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let first = InferenceScript([Fix.replying("stopped"), Fix.replying("waiting")])
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await first($0) }))
       let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
-      let first = InferenceScript([Fix.replying("stopped"), Fix.replying("waiting")])
-      try await runService(space, makeConfig(inference: { try await first($0) })) { service in
+      try await runService(service) { service in
         _ = try await sessions.openRequest(on: sid, from: .session(parent), messageID: .init("r1"), text: "do it")
         try await until("the task stops, reminded") { try await sessions.settledWork(sid) && first.count == 2 }
         _ = try await service.restart(sid, executor: nil, note: nil)

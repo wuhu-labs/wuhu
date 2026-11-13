@@ -16,7 +16,7 @@ public actor Space {
   nonisolated let taskScope: TaskScope
   let writer: any DatabaseWriter
   let reads: ReadPool
-  let blobs: BlobStore
+  let bucket: Bucket
   let observations: ObservationSources
   let runtime: SpaceRuntime
   let dateGen: DateGenerator
@@ -44,8 +44,6 @@ public actor Space {
     self.taskScope = taskScope
     self.writer = writer
     self.reads = ReadPool(path: writer.path, catalog: catalog, trace: trace)
-    let blobs = BlobStore(objects: objects)
-    self.blobs = blobs
     self.dateGen = date
     self.clock = clock
     let changes = ChangeSource()
@@ -66,7 +64,9 @@ public actor Space {
       ),
     )
     self.runtime = runtime
-    self.documents = DocumentHub(runtime: runtime, rows: DocumentRows(writer: writer, blobs: blobs), peer: peer)
+    let bucket = Bucket(runtime: runtime, objects: objects)
+    self.bucket = bucket
+    self.documents = DocumentHub(runtime: runtime, rows: DocumentRows(writer: writer, bucket: bucket), peer: peer)
     self.rng = rng
     self.log = log
   }
@@ -132,19 +132,19 @@ public actor Space {
     precondition(listingLimit == nil || listingLimit! > 0)
     precondition(listingByteLimit == nil || listingByteLimit! > 0)
     let base: any SpaceVFS = if let rev {
-      HistoricalFS(group: group, writer: writer, blobs: blobs, ceiling: Int64(rev.value), listingLimit: listingLimit, listingByteLimit: listingByteLimit)
+      HistoricalFS(group: group, writer: writer, bucket: bucket, ceiling: Int64(rev.value), listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     } else {
       live(group, acting: acting ?? group, attribution: attribution, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     }
     return AttachmentFolders(
       base: MachineFolders(base: base, runtime: runtime, group: group, listingLimit: listingLimit, listingByteLimit: listingByteLimit),
-      runtime: runtime, writer: writer, blobs: blobs, group: group,
+      runtime: runtime, writer: writer, bucket: bucket, group: group,
     )
   }
 
   func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) -> LiveFS {
     LiveFS(
-      group: group, acting: acting, writer: writer, blobs: blobs, dateGen: dateGen, documents: documents, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
+      group: group, acting: acting, writer: writer, bucket: bucket, dateGen: dateGen, documents: documents, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
     )
   }
 }

@@ -36,11 +36,6 @@ import WuhuAI
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let created = try await row(space, sid)
-      #expect(created.run == "no_run")
-      await time.advance(by: 60)
-
       let script = InferenceScript([
         Fix.replying("looking", calls: [.init(id: "call_0", name: "test_tool", arguments: .object(["command": .string("find ~")]))]),
         Fix.replying("found it"),
@@ -54,7 +49,12 @@ import WuhuAI
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
       var waiting: RunRow?
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      let created = try await row(space, sid)
+      #expect(created.run == "no_run")
+      await time.advance(by: 60)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("find the script"), to: sid)
         try await until("exec engaged") { exec.calls.value.count == 1 }
         let inTool = try await row(space, sid)
@@ -91,11 +91,12 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.hanging, Fix.hanging])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("inference engaged") { script.count == 1 }
         let thinking = try await row(space, sid)

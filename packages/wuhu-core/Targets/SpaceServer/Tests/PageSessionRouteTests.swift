@@ -4,6 +4,7 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore

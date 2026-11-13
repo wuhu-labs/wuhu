@@ -215,7 +215,7 @@ import Testing
     let gate = StatementGate(sql: "FROM fs_versions")
     var configuration = Space.makeConfiguration()
     configuration.prepareDatabase { db in db.trace(options: .statement) { gate.trace($0) } }
-    let space = try Space(writer: try DatabaseQueue(path: file.path, configuration: configuration))
+    let space = try Space(writer: try DatabasePool(path: file.path, configuration: configuration))
     defer { gate.release() }
     let vault = try await makeVault(space)
     let principal = Principal(actor: .anonymous, group: .shared)
@@ -227,22 +227,8 @@ import Testing
     _ = try await space.fs(vault).write("/watched.md", bytes("w"), ifMatch: nil)
     await gate.reached()
     // Between the two reads: the reader loses the group, and a file is written that it may no longer see.
-    let other = try DatabaseQueue(path: file.path, configuration: {
-      var configuration = Configuration()
-      configuration.busyMode = .timeout(5)
-      return configuration
-    }())
-    try await other.write { db in
-      try db.execute(
-        sql: "DELETE FROM group_roles WHERE grp = ? AND source_group = ?",
-        arguments: [vault.rawValue, GroupID.shared.rawValue],
-      )
-      try db.execute(sql: "INSERT INTO revisions (mtime, grp) VALUES ('2026-01-01T00:00:00.000Z', ?)", arguments: [vault.rawValue])
-      try db.execute(
-        sql: "INSERT INTO fs_versions (grp, path, rev, kind, blob_hash, op, aux) VALUES (?, '/leaked.md', ?, 'file', 'deadbeef', 'write', NULL)",
-        arguments: [vault.rawValue, db.lastInsertedRowID],
-      )
-    }
+    try await space.removeGrant(.group, GroupID.shared.rawValue, in: vault, by: .anonymous, acting: vault)
+    _ = try await space.fs(vault).write("/leaked.md", bytes("leak"), ifMatch: nil)
     gate.release()
     // A local write wakes the watch, which now reads the planted revocation and ends: nothing written after it is news to the reader.
     _ = try await space.fs(vault).write("/marker.md", bytes("m"), ifMatch: nil)

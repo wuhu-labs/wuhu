@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import LoopCore
 import struct SessionDomain.ModelSpecifier
 import enum SessionDomain.SessionExecutor
 import struct SessionDomain.SessionID

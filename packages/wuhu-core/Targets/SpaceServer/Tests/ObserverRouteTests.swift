@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import LoopCore
 import MachineContract
 import struct MainHub.TerminalRun
 import SessionDomain

@@ -1,6 +1,14 @@
+import protocol Clocks.NonsendingClock
+import ControlledTime
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
+import LoopCore
+import SessionTools
 import SpaceContract
 import SpaceCore
 import SpaceTools
@@ -8,14 +16,42 @@ import Testing
 
 let fixedDate = Date(timeIntervalSince1970: 1_700_000_000)
 
-func makeContext() throws -> SpaceToolContext {
+func makeContext(clock: any NonsendingClock<Duration> = ContinuousClock()) throws -> SpaceToolContext {
   try withDependencies {
     $0.date = .constant(fixedDate)
-    $0.continuousClock = ContinuousClock()
+    $0.continuousClock = clock
   } operation: {
     SpaceToolContext(space: try Space.inMemory(), principal: .shared(.anonymous))
   }
 }
+
+func withSessionContext(_ body: (SpaceToolContext) async throws -> Void) async throws {
+  try await withDependencies {
+    $0.installTimeControl(anchor: fixedDate)
+  } operation: {
+    @Dependency(\.continuousClock) var clock
+    let context = try makeContext(clock: clock)
+    let execution = SessionExecution(
+      connection: MainConnection(), credential: { _ in throw MainUnavailable() }, space: context.space,
+      loopConfig: { _ in
+        LoopConfig(
+          executeTool: { _ in throw UnexpectedSessionFixtureWork() },
+          inference: { _ in throw UnexpectedSessionFixtureWork() },
+          budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
+        )
+      },
+    )
+    do {
+      try await body(context)
+    } catch {
+      await execution.shutdown()
+      throw error
+    }
+    await execution.shutdown()
+  }
+}
+
+private struct UnexpectedSessionFixtureWork: Error {}
 
 func tool(_ name: String) -> SpaceTool {
   SpaceToolbox.all.first { $0.name == name }!

@@ -25,11 +25,11 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "lifecycle", kind: .agent, createdBy: "morgan", model: .test)
       let invalidated = Box<[SessionID]>([])
       var config = makeConfig(inference: { _ in Fix.reply("done") })
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
       let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "lifecycle", kind: .agent, createdBy: "morgan", model: .test)
       try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("settled") { try await sessions.settledWork(sid) }
@@ -48,13 +48,14 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "compaction", kind: .agent, createdBy: "morgan", model: .test)
       let compact = ToolCall(id: "call_compact", name: "compact", arguments: .object(["summary": .string("folded")]))
       let script = InferenceScript([pointer ? Fix.replying("large", tokens: 900) : Fix.replying("folding", calls: [compact]), Fix.replying("fresh", tokens: 100)])
       let invalidated = Box<[SessionID]>([])
       var config = makeConfig(inference: { try await script($0) }, budget: .init(maxInput: 1100, maxOutput: 100))
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "compaction", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh committed turn") { guard script.count == 2 else { return false }; return try await sessions.settledWork(sid) }
         #expect(invalidated.value == [sid])
@@ -72,10 +73,9 @@ import WuhuAI
       let key = try await space.addKey(pubkey, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
       let persona = try await space.adoptPersona(key: key).name
       _ = try await space.setUserProfile(principal: persona, handle: "old_handle", displayName: nil)
-      let sid = try await sessions.createSession(group: .shared, title: "socket acceptance", kind: .agent, createdBy: persona, model: .test)
       let registry = ResponsesSocketRegistry()
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
-      let resolved = try await ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "verified-offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
+      let catalog = ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "verified-offline") })
       let (client, server) = WebSocket.pair()
       let inbound = AsyncThrowingStream<WebSocketEvent, any Error>.makeStream()
       let bodies = Box<[JSONValue]>([])
@@ -95,6 +95,8 @@ import WuhuAI
         executions.withLock { $0.append(call.id) }
         return .failure(.init(message: "lookup complete"))
       }, inference: { request in
+        let sid = request.sessionID
+        let resolved = try await catalog.resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
         let lease = try await registry.acquire(session: sid, model: resolved)
         let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline acceptance", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object"), "properties": .object([:])]))], webSocket: lease.session)
         let completed = try await executor.run(attemptID: request.attemptID, lines: request.lines)
@@ -109,6 +111,8 @@ import WuhuAI
       })
       config.invalidateInference = { await registry.invalidate($0) }
       try await withDependencies { $0[WebSocketConnector.self] = connector } operation: {
+        let service = SessionExecution(space: space, loopConfig: config)
+        let sid = try await sessions.createSession(group: .shared, title: "socket acceptance", kind: .agent, createdBy: persona, model: .test)
         try await withThrowingTaskGroup(of: Void.self) { group in
           group.addTask {
             for await message in client.inbound {
@@ -144,7 +148,7 @@ import WuhuAI
             }
           }
           do {
-            try await runService(space, config) { service in
+            try await runService(service) { service in
               try await service.enqueue(item: Fix.message("use lookup", sender: Sender(id: persona, timeZone: .gmt)), to: sid)
               try await until("two committed turns") { commits.withLock { $0.count } == 2 }
               try await until("settled") { try await sessions.settledWork(sid) }

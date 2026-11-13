@@ -1,4 +1,5 @@
 import struct Credentials.SpaceSecretStores
+import Dependencies
 import Fetch
 import Synchronization
 #if canImport(FoundationEssentials)
@@ -20,6 +21,7 @@ import struct WuhuAI.ToolCall
 
 public actor Hub {
   nonisolated public let space: Space
+  nonisolated let sessionEffects: SessionEffects
   nonisolated let secrets: SpaceSecretStores?
   nonisolated public let machines: MachineSeam?
   nonisolated let resolveModelExecutor: (@Sendable (_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor)?
@@ -34,6 +36,8 @@ public actor Hub {
     resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
     prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
   ) {
+    @Dependency(SessionEffects.self) var sessionEffects
+    self.sessionEffects = sessionEffects
     self.space = space
     self.secrets = secrets
     self.machines = machines

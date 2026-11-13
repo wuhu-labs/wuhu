@@ -14,12 +14,7 @@ There is no privileged side channel.
 
 ## The filesystem and the revision journal
 
-A space looks like a filesystem: absolute paths (`/notes/plan.md`), files,
-directories, and tables. Paths are keys — writing `/a/b/c.md` creates the
-whole path; directories are implicit, there is no mkdir. Every mutation
-(write, edit, move, delete, table op)
-commits to **one global revision journal** — a single monotonically increasing
-`rev` counter for the whole space, covering files and tables uniformly.
+A space looks like a filesystem: absolute paths (`/notes/plan.md`), files, directories, and tables. Paths are keys — writing `/a/b/c.md` creates the whole path; directories are implicit, there is no mkdir. Every group has its own revision journal: mutations (write, edit, move, delete, table op) mint a monotonically increasing `rev` in the group they write. Historical reads and cursors interpret a revision within that group.
 
 - `wuhu history /path` lists the revisions that touched a path.
 - `wuhu read /path --rev N` and `wuhu ls /dir --rev N` read historical views.

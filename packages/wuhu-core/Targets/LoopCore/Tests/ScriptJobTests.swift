@@ -62,7 +62,7 @@ func scriptConnection(_ starts: Box<Int> = Box(0), query: @escaping @Sendable ()
     switch request.url.path {
     case "/v1/context":
       starts.withLock { $0 += 1 }
-      return try Response.json(JSONValue.object(["group": "shared", "rev": 0]))
+      return try Response.json(JSONValue.object(["group": "shared", "revs": ["shared": 0]]))
     case "/v1/groups": return try Response.json(JSONValue.array([]))
     case "/v1/tools/query":
       await query()
@@ -98,10 +98,10 @@ func scriptMail(_ space: Space, _ session: SessionID) async throws -> [SessionCe
   @Test func `the session creates the script job directly and forgets its last mail`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       let call = ToolCall(id: "call", name: "run_script", arguments: .object(["source": "result('first')"]))
       let inference = InferenceScript([Fix.replying("run", calls: [call]), Fix.replying("done")])
       let service = SessionExecution(connection: scriptConnection(), credential: { _ in "test" }, space: space) { _ in makeConfig(inference: { try await inference($0) }) }
+      let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       service.start()
       try await service.enqueue(item: Fix.message("run"), to: session)
       try await until("one tool result and terminal script membership") {

@@ -14,7 +14,6 @@ import WuhuAI
   @Test func replayBoundaryCarriesOnlyAPortableRecentTailAndPointer() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let id = try await space.sessions.createSession(group: .shared, title: "handoff", kind: .agent, createdBy: "morgan", model: .test)
       let binding = ReplayBinding(identity: "new-account", epoch: "new-epoch")
       let script = InferenceScript([
         { _ in
@@ -44,7 +43,9 @@ import WuhuAI
         },
       ])
       let config = makeConfig(executeTool: { _ in .read(.init(path: "/a", revision: .journal(1), content: "receipt")) }, inference: { try await script($0) })
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await space.sessions.createSession(group: .shared, title: "handoff", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message(String(repeating: "old context ", count: 4000)), to: id)
         try await until("the original tool turn settles") { try await space.sessions.settledWork(id) && script.count == 2 }
         try await service.enqueue(item: Fix.message("continue", message: "m2"), to: id)
@@ -60,7 +61,6 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let old = SessionModelRoute(group: nil, member: nil, specifier: .test, bindingFingerprint: "old", epoch: "old", reason: .create, placedAt: anchor, evidence: [])
-      let id = try await space.sessions.createSession(group: .shared, title: "placement carry", kind: .agent, createdBy: "morgan", executor: .kernel(.test), modelRoute: old)
       let script = InferenceScript([
         Fix.replying("marking", calls: [.init(id: "bookmark", name: "bookmark", arguments: .object(["name": .string("keep")]))]),
         { _ in
@@ -85,7 +85,9 @@ import WuhuAI
         if replacement { next.epoch = "new" }
         return ModelRouteTransition(expectedEpoch: old.epoch, route: next, binding: replacement ? .init(identity: "new-account", epoch: "new") : nil, carriesTail: carriesTail)
       }
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let id = try await space.sessions.createSession(group: .shared, title: "placement carry", kind: .agent, createdBy: "morgan", executor: .kernel(.test), modelRoute: old)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("the placement carries its selected line form") { try await space.sessions.settledWork(id) && script.count == 4 }
       }

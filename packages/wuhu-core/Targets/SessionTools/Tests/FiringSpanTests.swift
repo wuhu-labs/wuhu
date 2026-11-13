@@ -20,10 +20,12 @@ import Tracing
   try await withDependencies { $0.tracer = tracer } operation: {
     try await withToolDeps { time in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
+      try await space.sessions.markInterrupted(session)
       _ = try await space.fs(.shared).write("/tick.js", Data("export default async ({ wake }) => { wake('secret wake') }".utf8), ifMatch: nil)
       var noticed: [SystemNotification] = []
-      try await withHandlerFiring(space) { worker, _ in
+      try await withHandlerFiring(loop) { worker, _ in
         var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "secret tick", "in_seconds": 1, "handler": "/tick.js"]))
         await time.advance(by: 2)

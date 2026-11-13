@@ -15,7 +15,7 @@ extension SpaceToolbox {
     }
     let page = try await context.space.history(target.path, in: target.group, after: input.after, limit: limit + 1)
     let entries = Array(page.prefix(limit))
-    let attributions = try await context.space.attributions(of: entries.map(\.0))
+    let attributions = try await context.space.attributions(of: entries.map { (target.group, $0.0) })[target.group] ?? [:]
     let payload = entries.map { rev, date, change in
       let (kind, to, fromRev): (ChangeKind, String?, Int?) = switch change {
       case .write: (.write, nil, nil)

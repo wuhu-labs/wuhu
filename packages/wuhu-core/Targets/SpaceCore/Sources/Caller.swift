@@ -18,10 +18,8 @@ public enum Caller: Hashable, Sendable {
     }
   }
 
-  /// Where its receipts and derived message ids live. A person's are theirs
-  /// in its group only, so a key they used from another group never replays
-  /// here.
-  public var receiptHolder: String {
+  /// A person's derived message ids are scoped to their acting group.
+  public var messageNamespace: String {
     switch self {
     case let .session(id): id.rawValue
     case let .person(person): "\(person.persona) in \(person.group.rawValue)"
@@ -60,7 +58,7 @@ public enum Caller: Hashable, Sendable {
 }
 
 /// A group observer's handler firing, acting as its group.
-public struct Observer: Hashable, Sendable {
+public struct Observer: Hashable, Sendable, Codable {
   public let group: GroupID
   public let name: String
   /// Nil outside a firing: the observation query that decides one.

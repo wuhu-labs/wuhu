@@ -16,7 +16,6 @@ import WuhuAI
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
         Fix.failing(.transient(status: 503, body: nil)),
@@ -24,7 +23,9 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
@@ -54,7 +55,6 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
         Fix.replying("running exec", calls: [.init(id: "call_0", name: "test_tool", arguments: .object([:]))]),
@@ -67,7 +67,9 @@ import WuhuAI
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("run it"), to: sid)
         try await until("executor engaged") { exec.calls.value.count == 1 }
 
@@ -98,7 +100,6 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
         Fix.hanging,
@@ -106,7 +107,9 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt in flight") { script.count == 1 }
 

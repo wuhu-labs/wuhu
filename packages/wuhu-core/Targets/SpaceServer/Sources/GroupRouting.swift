@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import LoopCore
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials

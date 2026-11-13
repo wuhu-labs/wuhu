@@ -120,9 +120,6 @@ extension Space {
         }
       }
     }
-    // The clone lands after the session row, so the prompt revision stamped
-    // at creation predates it; the cloned home belongs in the first prompt.
-    try await sessions.advancePromptRevision(session)
   }
 }
 

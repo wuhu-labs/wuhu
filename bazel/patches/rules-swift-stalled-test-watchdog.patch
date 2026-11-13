@@ -18,7 +18,7 @@
      {
        guard case .object(let record) = recordJSON,
          case .string("event") = record["kind"],
-@@ -236,6 +245,100 @@ public final class SwiftTestingRunner: Sendable {
+@@ -236,6 +245,109 @@ public final class SwiftTestingRunner: Sendable {
    }
  }
  
@@ -34,8 +34,13 @@
 +    var reported: Bool
 +  }
 +
-+  /// How long a test runs before it is named.
-+  private static let limit: Swift.Duration = .seconds(60)
++  private static let limit: Swift.Duration? = {
++    guard let value = ProcessInfo.processInfo.environment["TEST_TIMEOUT"],
++      let timeout = Double(value)
++    else { return .seconds(60) }
++    guard timeout > 20 else { return nil }
++    return .seconds(max(5, min(60, timeout - 15)))
++  }()
 +
 +  /// How often the running tests are checked against the limit.
 +  private static let interval: Swift.Duration = .seconds(5)
@@ -77,6 +82,7 @@
 +  }
 +
 +  func start() {
++    guard Self.limit != nil else { return }
 +    let thread = Thread { [self] in
 +      while !stopped.value {
 +        Thread.sleep(forTimeInterval: Self.seconds(Self.interval))
@@ -92,16 +98,19 @@
 +  }
 +
 +  private func report() {
++    guard let limit = Self.limit else { return }
 +    let now = ContinuousClock.now
 +    let stalled: [(String, Swift.Duration)] = running.withLock { running in
-+      var stalled: [(String, Swift.Duration)] = []
-+      for (testID, test) in running where !test.reported {
++      guard running.values.contains(where: {
++        !$0.reported && $0.startedAt.duration(to: now) >= limit
++      }) else { return [] }
++      var snapshot: [(String, Swift.Duration)] = []
++      for (testID, test) in running {
 +        let elapsed = test.startedAt.duration(to: now)
-+        guard elapsed >= Self.limit else { continue }
-+        running[testID]?.reported = true
-+        stalled.append((testID, elapsed))
++        if elapsed >= limit { running[testID]?.reported = true }
++        snapshot.append((testID, elapsed))
 +      }
-+      return stalled
++      return snapshot
 +    }
 +    for (testID, elapsed) in stalled.sorted(by: { $0.0 < $1.0 }) {
 +      let seconds = Int(Self.seconds(elapsed))
@@ -119,7 +128,7 @@
  /// Represents an instant in time that is encoded as part of a test event.
  ///
  /// The instant is encoded as a double representing the number of seconds retrieved from
-@@ -285,7 +388,8 @@ private struct SwiftTestingEntryPoint {
+@@ -285,7 +397,8 @@ private struct SwiftTestingEntryPoint {
    /// Calls the entry point with the given configuration JSON and returns an asynchronous stream of
    /// the JSON records that the framework produces as a response.
    func callAsFunction(
@@ -129,7 +138,7 @@
    ) async throws -> AsyncThrowingStream<JSON, Error> {
      // Since `withUnsafeBytes` is not `async`, we have to copy the data out into a separate
      // buffer and then invoke the entry point.
-@@ -312,6 +416,7 @@ private struct SwiftTestingEntryPoint {
+@@ -312,6 +425,7 @@ private struct SwiftTestingEntryPoint {
          let data = Data(bytes: recordJSONBytes.baseAddress!, count: recordJSONBytes.count)
          do {
            let json = try JSON(byDecoding: data)

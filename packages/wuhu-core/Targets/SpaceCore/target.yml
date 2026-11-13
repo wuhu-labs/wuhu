@@ -49,6 +49,8 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - SessionTools
+    - LoopCore
     - Wuwei
     - Fetch
     - OperationRuntime

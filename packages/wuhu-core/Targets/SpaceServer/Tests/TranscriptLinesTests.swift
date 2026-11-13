@@ -3,6 +3,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import LoopCore
 import SessionDomain
 import struct SpaceContract.PromptSession
 import struct SpaceCore.PendingPrompt
@@ -28,9 +29,10 @@ import WuhuAI
           assembledModels: models, credentialResolver: .bound { provider in .init(credential: .apiKey("key-" + provider), identityEpoch: provider) },
         )
         let id = try await harness.createSession()
-        guard case let .pending(pending) = try await harness.store.activatePrompt(id) else { Issue.record("expected a pending prompt"); return }
+        guard case let .pending(pending) = try await harness.store.promptForInference(id) else { Issue.record("expected a pending prompt"); return }
         let older = Tool(name: "only", description: "the one tool an older binary had", parameters: .object(["type": "object"]))
-        _ = try await harness.store.storePrompt(id, for: pending, "rendered by an older binary", tools: [older], session: PromptSession(try await harness.store.record(id)))
+        _ = try await harness.store.storeInferencePrompt(id, for: pending, "rendered by an older binary", tools: [older], session: PromptSession(try await harness.store.record(id)))
+        try await harness.store.deliverMail(id)
         try await harness.running {
           try await harness.deliver("hello", to: id)
           try await until("the request answered") { try await harness.store.settledWork(id) && !sent.withLock { $0 }.isEmpty }

@@ -42,9 +42,7 @@ extension Armed {
 }
 
 extension SessionCell {
-  /// Arms a slot for a tool call of the session's. The call's answer is recorded in the step that arms, so a call that already ran, or runs twice at once, arms once and gets the one answer, whether the slot still stands or has since ended.
-  mutating func arm(_ arming: Arming, answering call: ToolCallID) throws -> ToolResultPayload {
-    if let recorded = try rows.receipt(id.session, call) { return recorded }
+  mutating func arm(_ arming: Arming) throws -> ToolResultPayload {
     let slot = arming.slot
     if slot.handler != nil {
       ctx.send(ObserverCell.ID(.session(id.session), slot.id)).arm(arming)
@@ -62,14 +60,12 @@ extension SessionCell {
       let armed = try Armed(slot.id, subscription, handler: slot.handler != nil)
       try db.execute(Armed.insert { armed })
     }
-    try rows.record(arming.answer, answering: call, of: id.session)
     ctx.send(id).look()
     return arming.answer
   }
 
-  /// Ends a slot of the session's for a call of its own: its tool's, or a script's. Only its own slots are looked up, so another session's id is as unknown as a made-up one, and so is the children watch the server keeps for it. Nothing remembers a slot past its end: one that ended (a fired one-shot, a second cancel) reads like one that never was: nil, which writes nothing and records no answer. A handler slot's firing in progress runs on.
-  mutating func disarm(_ subscription: SubscriptionID, answering call: ToolCallID) throws -> ToolResultPayload? {
-    if let recorded = try rows.receipt(id.session, call) { return recorded }
+  /// Ends a slot of the session's for a call of its own: its tool's, or a script's. Only its own slots are looked up, so another session's id is as unknown as a made-up one, and so is the children watch the server keeps for it. Nothing remembers a slot past its end: one that ended (a fired one-shot, a second cancel) reads like one that never was: nil. A handler slot's firing in progress runs on.
+  mutating func disarm(_ subscription: SubscriptionID) throws -> ToolResultPayload? {
     if !keepsArmed { try fillArmed() }
     guard let armed = db.rows(Armed.where { $0.subscription.eq(subscription.rawValue) }).first else { return nil }
     let payload: ToolResultPayload
@@ -89,7 +85,6 @@ extension SessionCell {
       payload = if case .timer = slot { .cancelTimer(.init(subscriptionID: subscription)) } else { .cancelObservation(.init(subscriptionID: subscription)) }
     }
     try forget(subscription)
-    try rows.record(payload, answering: call, of: id.session)
     ctx.send(id).look()
     return payload
   }

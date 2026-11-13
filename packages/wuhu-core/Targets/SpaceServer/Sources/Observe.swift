@@ -80,7 +80,7 @@ func watchResponse(space: Space, glob: String, from rawFrom: String?, principal:
     after = from
   } else {
     do {
-      after = Rev(try await space.currentRevision())
+      after = Rev(try await space.currentRevision(in: watched.group))
     } catch {
       return jsonResponse(Wire.failure(error).payload, status: .internalServerError)
     }

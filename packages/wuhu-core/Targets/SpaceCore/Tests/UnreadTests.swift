@@ -2,6 +2,7 @@ import Clocks
 import Dependencies
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -62,6 +63,7 @@ struct UnreadTests {
       try await store.put(box, input: SessionFix.message("do it"))
       _ = try await store.drainQueue(box)
       try await store.markErrored(box, message: "provider exploded")
+      try await store.deliverMail()
 
       let kinds = try await store.inbox("owner").map(\.kind)
       #expect(kinds == [.sessionErrored])

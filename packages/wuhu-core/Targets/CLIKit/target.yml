@@ -46,6 +46,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - Wuwei
     - ControlledTime
     - DeterministicDependencies
     - MainHub

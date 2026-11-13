@@ -10,12 +10,13 @@ import Testing
   @Test func rosterCarriesIdAliasAndAttachState() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let mini = try await space.addMachine(name: "mac_mini")
       let builder = try await space.addMachine(name: "ci_box")
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [mini.id] }
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
         session: try await makeSession(space),
       )
 
@@ -36,9 +37,10 @@ import Testing
   @Test func unnamedMachinesRenderAsIdAndStateOnly() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let anonymous = try await space.addMachine(name: nil)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
         session: try await makeSession(space),
       )
 
@@ -53,8 +55,9 @@ import Testing
   @Test func anEmptySpaceSaysSoRatherThanReturningNothing() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
         session: try await makeSession(space),
       )
 
@@ -69,8 +72,9 @@ import Testing
   @Test func aServerWithoutAMachineBackendRefuses() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.addMachine(name: "mac_mini")
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       let message = try failureMessage(try await world.run("machines", .object([:])))
       #expect(message.contains("no machine backend"))

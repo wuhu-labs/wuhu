@@ -13,9 +13,10 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let service = SessionExecution(space: space, loopConfig: makeConfig())
       let sid = try await createRetiredSession(in: space, title: "retired", createdBy: "owner")
       try await sessions.enqueue(sid, input: Fix.message("queued"))
-      try await runService(space, makeConfig()) { service in
+      try await runService(service) { service in
         try await service.archive(sid)
         try await until("archived") { try await sessions.record(sid).lifecycle != .live }
         #expect(try await sessions.record(sid).hold == .normal)
@@ -28,12 +29,12 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await createRetiredSession(in: space, title: "c", createdBy: "morgan")
-      try await sessions.enqueue(sid, input: Fix.message("pre-boot backlog"))
-
       let script = InferenceScript([])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await createRetiredSession(in: space, title: "c", createdBy: "morgan")
+      try await sessions.enqueue(sid, input: Fix.message("pre-boot backlog"))
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("post-boot work", message: "m2"), to: sid)
         try await sessions.look(sid)
         try await holds("the leftover session is untouched by the kernel loop") {
@@ -48,8 +49,9 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let service = SessionExecution(space: space, loopConfig: makeConfig())
       let sid = try await createRetiredSession(in: space, title: "c", createdBy: "morgan")
-      try await runService(space, makeConfig()) { service in
+      try await runService(service) { service in
         try await service.interrupt(sid)
         #expect(try await sessions.record(sid).hold == .normal)
         await #expect(throws: ExecutorUnavailableError()) { try await service.resume(sid) }
@@ -66,8 +68,9 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let service = SessionExecution(space: space, loopConfig: makeConfig())
       let sid = try await createRetiredSession(in: space, title: "c", createdBy: "morgan")
-      try await runService(space, makeConfig()) { service in
+      try await runService(service) { service in
         try await service.archive(sid)
         try await until("archived") { try await sessions.record(sid).lifecycle != .live }
         await #expect(throws: ExecutorUnavailableError()) { try await service.unarchive(sid) }

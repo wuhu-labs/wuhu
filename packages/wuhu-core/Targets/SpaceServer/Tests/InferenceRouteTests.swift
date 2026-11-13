@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Foundation
 import InferenceKit
 import JSONValue
+import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -121,6 +122,7 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
   @Test func anInferenceIsRecordedOncePerAttempt() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let session = try await space.sessions.createSession(
         group: .shared, title: "worker", kind: .agent, createdBy: "fixture", model: .init(provider: "offline", model: "small", effort: "low"),
       )

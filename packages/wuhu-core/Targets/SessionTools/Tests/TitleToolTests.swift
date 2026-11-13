@@ -1,5 +1,9 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import class MainHub.Hub
 import SessionDomain
@@ -12,8 +16,9 @@ import Testing
   @Test func aSessionRenamesItself() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space, name: "I don't know")
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: session)
 
       guard case let .setTitle(result) = try await world.run(
         "set_title", .object(["title": "  Nightly release watch  "]),
@@ -27,8 +32,9 @@ import Testing
   @Test func aTitleIsOneNonEmptyLineWithinTheCap() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space, name: "keep me")
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: session)
 
       for refused in ["", "   ", "two\nlines", String(repeating: "x", count: SessionStore.titleLimit + 1)] {
         let message = try failureMessage(try await world.run("set_title", .object(["title": .string(refused)])))

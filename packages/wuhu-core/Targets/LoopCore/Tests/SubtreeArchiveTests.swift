@@ -13,6 +13,7 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: Fix.hanging))
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let child = try await sessions.createSession(
         group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test),
@@ -26,7 +27,7 @@ import Testing
       let topLevel = try await sessions.createSession(group: .shared, title: "top level", kind: .agent, createdBy: child.rawValue, model: .test)
       try await sessions.enqueue(leaf, input: Fix.message("queued"))
       try await sessions.enqueue(sibling, input: Fix.message("queued", message: "sibling"))
-      try await runService(space, makeConfig(inference: Fix.hanging)) { service in
+      try await runService(service) { service in
         do {
           try await service.archive(root)
           Issue.record("busy subtree was archived")
@@ -53,9 +54,6 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
-      let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
-      let leaf = try await sessions.createSession(group: .shared, title: "running leaf", kind: .task, parent: child, createdBy: child.rawValue, executor: .kernel(.test))
       let entered = Box(false)
       let gate = Latch()
       let config = makeConfig(inference: { _ in
@@ -64,7 +62,11 @@ import Testing
         try Task.checkCancellation()
         throw UnexpectedCall("inference survived interruption")
       })
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
+      let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
+      let leaf = try await sessions.createSession(group: .shared, title: "running leaf", kind: .task, parent: child, createdBy: child.rawValue, executor: .kernel(.test))
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("start"), to: leaf)
         try await until("leaf running") { entered.value }
         await #expect(throws: SubtreeArchiveBusy(sessions: [ArchiveBusySession(id: leaf, title: "running leaf")])) {
@@ -84,6 +86,7 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let service = SessionExecution(space: space, loopConfig: makeConfig())
       let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "owner")
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .task, parent: requester, createdBy: requester.rawValue, executor: .kernel(.test))
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
@@ -93,7 +96,6 @@ import Testing
       let childDelivery = try await sessions.openRequest(on: child, from: .session(root), messageID: childRequest, text: "work")
       try await sessions.markInterrupted(root)
       try await sessions.markInterrupted(child)
-      let service = SessionExecution(space: space, loopConfig: makeConfig())
       service.start()
       do {
         try await service.archive(root, force: true)
@@ -128,11 +130,11 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let service = SessionExecution(space: space, loopConfig: makeConfig())
       let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "owner")
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: requester, createdBy: requester.rawValue, executor: .kernel(.test))
       let delivery = try await sessions.openRequest(on: child, from: .session(requester), messageID: MessageID("r1"), text: "work")
       try await sessions.markInterrupted(child)
-      let service = SessionExecution(space: space, loopConfig: makeConfig())
       service.start()
       do {
         try await service.archive(child)
@@ -154,11 +156,12 @@ extension SubtreeArchiveTests {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: Fix.hanging))
       let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "owner", model: .test)
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: parent, createdBy: parent.rawValue, executor: .kernel(.test))
       _ = try await sessions.openRequest(on: child, from: .session(parent), messageID: MessageID("r1"), text: "work")
       try await sessions.markInterrupted(child)
-      try await runService(space, makeConfig(inference: Fix.hanging)) { service in
+      try await runService(service) { service in
         try await service.archive(parent)
         try await until("both archived") {
           for id in [parent, child] where try await !sessions.record(id).lifecycle.isArchived { return false }

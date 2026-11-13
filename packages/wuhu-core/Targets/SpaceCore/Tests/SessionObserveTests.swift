@@ -2,6 +2,7 @@ import Clocks
 import Dependencies
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -21,7 +22,7 @@ struct SessionObserveTests {
 
   @Test func sessionInternalTablesStayHidden() async throws {
     let space = try makeSpace()
-    for table in ["session_queue", "session_contents", "session_pointers", "session_receipts", "session_runtime"] {
+    for table in ["session_queue", "session_contents", "session_pointers", "session_runtime"] {
       await #expect(throws: SpaceError.self) {
         _ = try await space.query("SELECT * FROM \(table)")
       }

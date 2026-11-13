@@ -2,6 +2,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import Foundation
+import LoopCore
 @testable import MainHub
 import SessionTools
 import SpaceCore
@@ -22,6 +23,7 @@ import Testing
       $0.scriptHop = hop
     } operation: {
       let space = try Space.inMemory()
+      _ = try await SessionToolFixture(space: space)
       let session = try await space.sessions.createSession(group: .shared, title: "s", kind: .agent, createdBy: "tester", model: .init(provider: "test", model: "test", effort: "high"))
       let sources = EventSources.signed(by: identity.controller, in: space)
       let url = try #require(URL(string: "https://feed.test:8443/events?topic=a"))

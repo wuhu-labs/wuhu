@@ -232,14 +232,14 @@ extension Space {
         try await documents.checkpoint(under: notes, in: current)
       }
       do {
-        return try await blobs.write(
-          writer,
-          prefetching: { db in
-            guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else { return [] }
-            return try Substrate.descendantHeads(of: notes, group: GroupID(rawValue: row.grp), in: db)
-              .compactMap { $0.kind == "file" ? $0.blobHash : nil }
-          },
-        ) { db, cache in
+        let external = try await writer.read { db -> [String] in
+          guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else { return [] }
+          let hashes = try Substrate.descendantHeads(of: notes, group: GroupID(rawValue: row.grp), in: db)
+            .compactMap { $0.kind == "file" ? $0.blobHash : nil }
+          return try InterimBlob.external(hashes, in: db)
+        }
+        let contents = try await bucket.contents(of: external)
+        return try await writer.write { db in
           guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
             throw SpaceError.notFound(id.rawValue)
           }
@@ -256,12 +256,13 @@ extension Space {
           let record = Self.machineRecord(from: movedRow)
           guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return record }
           let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
+          let sourceRev = try Substrate.mintRevision(mtime: mtime, group: from, in: db)
           try Substrate.ensureAncestorDirectories(notes, group: group, rev: rev, mtime: mtime, in: db)
           for node in try Substrate.descendantHeads(of: notes, group: from, in: db).reversed() {
             let path = try SpacePath(validating: node.path)
             if let existing = try Substrate.head(path, group: group, in: db) {
               if existing.kind == "directory", node.kind == "directory" {
-                try LiveFS.tombstone(path: node.path, group: from, rev: rev, op: .delete, in: db)
+                try LiveFS.tombstone(path: node.path, group: from, rev: sourceRev, op: .delete, in: db)
                 continue
               }
               let displaced = existing.kind == "directory" ? try Substrate.descendantHeads(of: path, group: group, in: db) : [existing]
@@ -270,9 +271,9 @@ extension Space {
               }
             }
             if node.kind == "table" {
-              try Tables.reparent(from: path, in: from, to: path, in: group, rev: rev, in: db)
+              try Tables.reparent(from: path, in: from, to: path, in: group, rev: rev, sourceRev: sourceRev, in: db)
             }
-            try LiveFS.tombstone(path: node.path, group: from, rev: rev, op: .delete, in: db)
+            try LiveFS.tombstone(path: node.path, group: from, rev: sourceRev, op: .delete, in: db)
             try Substrate.appendVersion(group: group, path: node.path, rev: rev, kind: node.kind, blobHash: node.blobHash, op: .write, in: db)
             try Substrate.upsertHead(
               FSHeadRow(
@@ -282,14 +283,15 @@ extension Space {
               in: db,
             )
             if node.kind == "file", let hash = node.blobHash {
-              try Induction.index(path: path, group: group, content: try cache.blob(of: hash, in: db).content, in: db)
+              let content = try InterimBlob.inlineBytes(hash, in: db) ?? contents.bytes(of: hash)
+              try Induction.index(path: path, group: group, content: content, in: db)
             }
           }
-          try self.documents.removed(under: notes, in: from, rev: rev, on: db)
+          try self.documents.removed(under: notes, in: from, rev: sourceRev, on: db)
           try self.documents.removed(under: notes, in: group, rev: rev, on: db)
           return record
         }
-      } catch is DocumentEdited {
+      } catch is DocumentEdited, is BlobContents.Missing {
         tries += 1
         if tries == 3 { throw SpaceError.liveBusy(notes.rawValue) }
       }

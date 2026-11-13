@@ -152,7 +152,7 @@ enum Tables {
   // `rev` and closes the source's, so the source path's history still replays
   // for a later checkout.
   static func reparent(
-    from src: SpacePath, in srcGroup: GroupID, to dst: SpacePath, in dstGroup: GroupID, rev: Int64, in db: Database,
+    from src: SpacePath, in srcGroup: GroupID, to dst: SpacePath, in dstGroup: GroupID, rev: Int64, sourceRev: Int64, in db: Database,
   ) throws {
     let header = try currentHeader(src, group: srcGroup, in: db)
     try db.execute(sql: "ALTER TABLE \(quoted(srcGroup, src)) RENAME TO \(quoted(dstGroup, dst))")
@@ -173,7 +173,7 @@ enum Tables {
     )
     try db.execute(
       sql: "UPDATE table_rows SET deleted_rev = ? WHERE grp = ? AND path = ? AND deleted_rev IS NULL",
-      arguments: [rev, srcGroup.rawValue, src.rawValue],
+      arguments: [sourceRev, srcGroup.rawValue, src.rawValue],
     )
     try syncSequence(dst, group: dstGroup, in: db)
   }

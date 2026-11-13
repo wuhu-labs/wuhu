@@ -8,9 +8,11 @@ import FetchAsyncHTTPClient
 import Foundation
 import HTTPTypes
 import JSONValue
+import LoopCore
 import func MainHub.fetchOrigin
 import class MainHub.Hub
 import struct MainHub.ScriptRun
+import struct MainHub.SessionEffects
 import OrderedCollections
 import ServeNIO
 import SessionDomain
@@ -295,10 +297,14 @@ func withIdentityScript(
       if let hop { $0.scriptHop = hop }
     } operation: {
       let space = try Space.inMemory()
+      let fixture = try await SessionToolFixture(space: space)
       let session = try await space.sessions.createSession(group: .shared, title: "fetch test", kind: .agent, createdBy: "tester", model: .init(provider: "test", model: "test", effort: "high"))
-      let owner = Hub(space: space)
+      let owner = withDependencies {
+        $0[SessionEffects.self] = fixture.execution.sessionEffects
+      } operation: { Hub(space: space) }
       let scripts = Scripts()
-      let rig = IdentityScriptRig(space: space, session: session, executor: try await SessionRuntime.toolExecutor(owner: owner, identity: identity), scripts: scripts)
+      SessionRuntime.bindMain(owner: owner, execution: fixture.execution, tokens: fixture.tokens, connection: fixture.connection, identity: identity)
+      let rig = IdentityScriptRig(space: space, session: session, executor: fixture.execution.tools, scripts: scripts)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await whenCancelled { await scripts.close() } }
         defer { group.cancelAll() }

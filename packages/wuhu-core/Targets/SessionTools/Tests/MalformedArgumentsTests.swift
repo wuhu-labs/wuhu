@@ -10,8 +10,9 @@ import struct WuhuAI.ToolArguments
   @Test func truncatedArgumentsAreRefusedAsNotJSONAndNeverRun() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space, name: "Before")
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: session)
 
       let message = try failureMessage(try await world.run("set_title", ToolArguments(emitted: #"{"title":"Nightly"#)))
 

@@ -228,7 +228,7 @@ import Testing
   @Test func historyAndCheckoutCoverTables() async throws {
     let space = try makeSpace()
     _ = try await space.writeText("/before.md", "x")
-    let revBeforeCreate = Rev(try await space.currentRevision())
+    let revBeforeCreate = Rev(try await space.currentRevision(in: .shared))
 
     let table = try path("/data/log.table")
     _ = try await space.createTable(table, header: TableHeader(columns: [TableColumn(name: "n", type: .integer)]), in: .shared, acting: .shared)
@@ -245,7 +245,7 @@ import Testing
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
-    let revBefore = try await space.currentRevision()
+    let revBefore = try await space.currentRevision(in: .shared)
     let (minted, _) = try await space.checkout(table, rev: revOneRow, in: .shared, acting: .shared)
     #expect(minted.value == revBefore + 1)
 
@@ -271,12 +271,12 @@ import Testing
   @Test func checkoutOfNeverExistingPathIsNotFoundAndMintsNoRevision() async throws {
     let space = try makeSpace()
     _ = try await space.writeText("/f.md", "x")
-    let before = try await space.currentRevision()
+    let before = try await space.currentRevision(in: .shared)
 
     await #expect(throws: SpaceError.notFound("/never.md")) {
       _ = try await space.checkout(try path("/never.md"), rev: Rev(before), in: .shared, acting: .shared)
     }
-    #expect(try await space.currentRevision() == before)
+    #expect(try await space.currentRevision(in: .shared) == before)
     #expect(try await space.history(try path("/never.md"), in: .shared).isEmpty)
   }
 }

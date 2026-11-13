@@ -16,7 +16,6 @@ import WuhuAI
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("on it", calls: [ToolCall(id: "call_0", name: "test_tool", arguments: .object(["command": .string("make")]))]),
         Fix.replying("done"),
@@ -29,7 +28,9 @@ import WuhuAI
         return ToolOutcome(payload: .exec(.init(output: yielded ? "yielded" : "finished", exitCode: 0)))
       }
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("build"), to: sid)
         await started.wait()
         let turn = try #require(space.worker.cell(SessionCell.ID(sid.rawValue)).turn())

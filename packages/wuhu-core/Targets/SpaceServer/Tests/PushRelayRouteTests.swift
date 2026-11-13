@@ -5,6 +5,7 @@ import Fetch
 import Foundation
 import HTTPTypes
 import Logging
+import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -19,6 +20,7 @@ import Testing
 
   init() async throws {
     harness = try Harness(dev: false)
+    _ = try await SessionToolFixture(space: harness.space)
     identity = try await harness.space.identity().rawValue
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     self.account = account.id
@@ -84,6 +86,7 @@ import Testing
     #expect(try await request("/v1/push-relay/grant", method: .put, body: grant).status == .noContent)
     #expect(try await harness.space.duePushRelayDeliveries(at: fixedDate).isEmpty)
 
+    _ = try await SessionToolFixture(space: harness.space)
     try await notifyPersona(thread: "second")
     let resumed = try #require(try await harness.space.duePushRelayDeliveries(at: fixedDate).only)
     #expect(resumed.notification.n > first.notification.n)
@@ -199,6 +202,7 @@ import Testing
       group: .shared,
       title: "owner \(thread)", kind: .agent, createdBy: persona.name, model: model,
     )
+    try await harness.space.sessions.markInterrupted(owner)
     _ = try await harness.space.sessions.post(
       .box(owner),
       messageID: MessageID("question-\(thread)"),

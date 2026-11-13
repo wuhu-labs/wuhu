@@ -98,7 +98,7 @@ import Testing
       liveToken = try await space.writeText("/same.md", "content")
     }
     _ = try await space.writeText("/other.md", "unrelated")
-    let revBefore = try await space.currentRevision()
+    let revBefore = try await space.currentRevision(in: .shared)
     let historyBefore = try await space.history(path("/same.md"), in: .shared)
     let stream = try await space.observeFS(glob: "**", group: .shared).mutations
     var events = stream.makeAsyncIterator()
@@ -113,7 +113,7 @@ import Testing
 
     #expect(rev == Rev(liveToken.rev!))
     #expect(token == liveToken)
-    #expect(try await space.currentRevision() == revBefore)
+    #expect(try await space.currentRevision(in: .shared) == revBefore)
     let historyAfter = try await space.history(path("/same.md"), in: .shared)
     #expect(historyAfter.map(\.0) == historyBefore.map(\.0))
     #expect(historyAfter.map(\.2) == historyBefore.map(\.2))
@@ -130,7 +130,7 @@ import Testing
   @Test func checkoutRestoringNonexistenceRecordsCheckoutProvenance() async throws {
     let space = try makeSpace()
     _ = try await space.writeText("/other.md", "x")
-    let before = Rev(try await space.currentRevision())
+    let before = Rev(try await space.currentRevision(in: .shared))
     _ = try await space.writeText("/late.md", "born after")
 
     _ = try await space.checkout(path("/late.md"), rev: before, in: .shared, acting: .shared)
@@ -141,7 +141,7 @@ import Testing
   @Test func historicalViewsRejectUnknownRevisions() async throws {
     let space = try makeSpace()
     _ = try await space.writeText("/a.md", "x")
-    let bogus = Rev(try await space.currentRevision() + 99)
+    let bogus = Rev(try await space.currentRevision(in: .shared) + 99)
 
     await #expect(throws: SpaceError.invalidRevision(bogus.value)) {
       _ = try await space.fs(.shared, at: bogus).read("/a.md")
@@ -204,9 +204,9 @@ import Testing
   @Test func noChangeWriteMintsNoRevisionAndReturnsSameToken() async throws {
     let space = try makeSpace()
     let token1 = try await space.writeText("/same.md", "content")
-    let revBefore = try await space.currentRevision()
+    let revBefore = try await space.currentRevision(in: .shared)
     let token2 = try await space.writeText("/same.md", "content")
-    let revAfter = try await space.currentRevision()
+    let revAfter = try await space.currentRevision(in: .shared)
 
     #expect(token1 == token2)
     #expect(revBefore == revAfter)

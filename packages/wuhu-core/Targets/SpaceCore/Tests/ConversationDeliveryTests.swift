@@ -1,6 +1,7 @@
 import Dependencies
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Synchronization
@@ -31,7 +32,7 @@ final class MovingClockSpace: Sendable {
       $0.date = DateGenerator { clock.now }
       $0.uuid = .incrementing
     } operation: {
-      try Space.inMemory()
+      registerSessionExecution(try Space.inMemory())
     }
   }
 

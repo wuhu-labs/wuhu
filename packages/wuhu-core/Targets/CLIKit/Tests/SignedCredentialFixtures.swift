@@ -3,35 +3,23 @@
 #else
   import Foundation
 #endif
-import struct Credentials.SpaceSecretStores
 import Fetch
-import InferenceKit
 import MachineContract
-import class MainHub.Hub
 import SessionDomain
-import SessionTools
 import SpaceCore
 @testable import SpaceServer
+import Synchronization
 
 func testTokens(space: Space, spaceURL: String = "http://main") async throws -> ExecTokens {
   let key = try ServerIdentity(rawKey: Data(repeating: 1, count: 32))
-  let keys = IdentityKeys(load: { kid in precondition(kid == key.kid); return key }, store: { stored in precondition(stored.kid == key.kid) })
+  let stored = Mutex([key.kid: key])
+  let keys = IdentityKeys(load: { kid in stored.withLock { $0[kid]! } }, store: { key in stored.withLock { $0[key.kid] = key } })
   var identity = IdentityController(space: space, origin: "https://space.test", keys: keys)
   if identity.state == nil {
     identity = IdentityController.configure(space: space, origin: "https://space.test", keys: keys, fetch: FetchClient { _ in Response(status: .forbidden) })
     try await identity.initialize(identity: key)
   }
   return ExecTokens(spaceURL: spaceURL, identity: identity)
-}
-
-extension SessionRuntime {
-  static func toolExecutor(
-    owner: Hub, hub: MachineHub? = nil, access: InferenceAccess = InferenceAccess(),
-    origin: String? = nil, contentHostPattern: String? = nil, secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
-  ) async throws -> ToolExecutor {
-    let tokens = try await testTokens(space: owner.space)
-    return toolExecutor(owner: owner, tokens: tokens, hub: hub, access: access, origin: origin, contentHostPattern: contentHostPattern, secrets: secrets, identity: identity)
-  }
 }
 
 extension ExecTokens {

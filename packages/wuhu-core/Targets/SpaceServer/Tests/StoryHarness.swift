@@ -87,16 +87,10 @@ final class Story: Sendable {
     self.hub = hub
     let usage = UsageBoard()
     let catalog = groupCatalog(space: space, access: InferenceAccess())
-    let owner = Hub(
-      space: space, machines: machineSeam(hub: hub),
-      resolveModelExecutor: modelExecutorResolver(space: space),
-      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
-      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
-    )
     // The worker reaches main's API, which is built after it, through `connection`, bound once both exist.
     let connection = MainConnection()
     let model = model
-    execution = SessionExecution(
+    let execution = SessionExecution(
       connection: connection, credential: { [tokens] in try await tokens.sessionToken($0) }, space: space,
     ) { executor in
       LoopConfig(
@@ -109,6 +103,17 @@ final class Story: Sendable {
           )
         },
         budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
+      )
+    }
+    self.execution = execution
+    let owner = withDependencies {
+      $0[SessionEffects.self] = execution.sessionEffects
+    } operation: {
+      Hub(
+        space: space, machines: machineSeam(hub: hub),
+        resolveModelExecutor: modelExecutorResolver(space: space),
+        resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+        prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
       )
     }
     let runtime = SessionRuntime(execution: execution, owner: owner, tokens: tokens, connection: MainConnection())

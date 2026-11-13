@@ -5,14 +5,14 @@ import Crypto
   import Foundation
 #endif
 import GRDB
-import KeelObjectStore
 import struct SpaceContract.GroupID
 import SpaceFS
 import StructuredQueries
 
 @Table("revision_actors")
 struct RevisionActorRow {
-  @Column("rev", primaryKey: true) var rev: Int64
+  @Column("grp") var grp: String
+  @Column("rev") var rev: Int64
   @Column("actor") var actor: String?
   @Column("via") var via: String
 }
@@ -28,68 +28,24 @@ enum Substrate {
   static func mintRevision(
     mtime: String, group: GroupID, attribution: RevisionAttribution? = nil, in db: Database,
   ) throws -> Int64 {
-    try db.execute(sql: "INSERT INTO revisions (mtime, grp) VALUES (?, ?)", arguments: [mtime, group.rawValue])
-    let rev = db.lastInsertedRowID
+    let rev = try maxRevision(group, in: db) + 1
+    try RevisionRow.insert { RevisionRow(rev: rev, mtime: mtime, grp: group.rawValue) }.execute(db)
     if let attribution {
-      try RevisionActorRow.insert { RevisionActorRow(rev: rev, actor: attribution.actor, via: attribution.via) }.execute(db)
+      try RevisionActorRow.insert { RevisionActorRow(grp: group.rawValue, rev: rev, actor: attribution.actor, via: attribution.via) }.execute(db)
     }
     return rev
   }
 
-  static func maxRevision(in db: Database) throws -> Int64 {
-    try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(rev), 0) FROM revisions") ?? 0
+  static func maxRevision(_ group: GroupID, in db: Database) throws -> Int64 {
+    try RevisionRow.where { $0.grp.eq(group.rawValue) }.select { $0.rev.max() }.fetchOne(db)! ?? 0
   }
 
-  static func revisionExists(_ rev: Int64, in db: Database) throws -> Bool {
-    try Int64.fetchOne(db, sql: "SELECT 1 FROM revisions WHERE rev = ?", arguments: [rev]) != nil
+  static func revisionExists(_ rev: Int64, group: GroupID, in db: Database) throws -> Bool {
+    try rev >= 1 && rev <= maxRevision(group, in: db)
   }
 
   static func blobHash(_ content: [UInt8]) -> String {
     hexEncoded(SHA256.hash(data: Data(content)))
-  }
-
-  static func record(_ blob: Blob, in db: Database) throws {
-    guard let key = blob.externalKey else {
-      guard try BlobRow.where({ $0.hash.eq(blob.hash) }).select({ $0.hash }).fetchOne(db) == nil else { return }
-      try BlobRow.insert { BlobRow(hash: blob.hash, content: blob.content) }.execute(db)
-      return
-    }
-    guard try BlobObjectRow.where({ $0.hash.eq(blob.hash) }).select({ $0.hash }).fetchOne(db) == nil else { return }
-    try BlobObjectRow.insert {
-      BlobObjectRow(
-        hash: blob.hash,
-        objectKey: key.raw,
-        size: Int64(blob.content.count),
-        lineCount: lineCount(blob.content).map(Int64.init),
-      )
-    }.execute(db)
-  }
-
-  static func externalKey(_ hash: String, in db: Database) throws -> ObjectKey? {
-    guard let raw = try BlobObjectRow.where({ $0.hash.eq(hash) }).select({ $0.objectKey }).fetchOne(db) else {
-      return nil
-    }
-    return try ObjectKey(raw)
-  }
-
-  static func storedBlob(_ hash: String, in db: Database) throws -> StoredBlob {
-    if let key = try externalKey(hash, in: db) {
-      return .external(key)
-    }
-    guard let content = try BlobRow.where({ $0.hash.eq(hash) }).select({ $0.content }).fetchOne(db) else {
-      throw SpaceError.notFound(hash)
-    }
-    return .inline(content)
-  }
-
-  static func measure(_ hash: String, in db: Database) throws -> (size: Int64, lineCount: Int64?) {
-    if let row = try BlobObjectRow.where({ $0.hash.eq(hash) }).fetchOne(db) {
-      return (row.size, row.lineCount)
-    }
-    guard let content = try BlobRow.where({ $0.hash.eq(hash) }).select({ $0.content }).fetchOne(db) else {
-      throw SpaceError.notFound(hash)
-    }
-    return (Int64(content.count), lineCount(content).map(Int64.init))
   }
 
   static func etag(for hash: String) -> String {
@@ -166,7 +122,6 @@ enum Substrate {
     in db: Database,
   ) throws {
     try ensureAncestorDirectories(path, group: group, rev: rev, mtime: mtime, in: db)
-    try record(blob, in: db)
     try appendVersion(group: group, path: path.rawValue, rev: rev, kind: "file", blobHash: blob.hash, op: op, aux: aux, in: db)
     try upsertHead(
       FSHeadRow(

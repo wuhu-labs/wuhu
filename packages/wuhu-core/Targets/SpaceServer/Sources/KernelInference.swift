@@ -83,7 +83,7 @@ func kernelInference(
             placedAt: date.now,
             evidence: [],
           )
-          route = try await store.establishModelRoute(request.sessionID, route: prepared)
+          route = try await store.establishInferenceModelRoute(request.sessionID, route: prepared)
         } else {
           route = held!
         }
@@ -147,7 +147,7 @@ func kernelInference(
       )
       span.set(.finishReason, completed.metadata.stopReason.rawValue)
       if let held = try await store.modelRoute(request.sessionID), held.failure != nil {
-        try await store.updateModelRouteFailure(request.sessionID, expectedEpoch: held.epoch, failure: nil)
+        try await store.updateInferenceModelRouteFailure(request.sessionID, expectedEpoch: held.epoch, failure: nil)
       }
       if let lease { await sockets.release(session: request.sessionID, lease: lease.lease) }
       let warming = warmingSchedule(

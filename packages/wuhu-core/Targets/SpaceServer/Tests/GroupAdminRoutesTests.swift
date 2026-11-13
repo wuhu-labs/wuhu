@@ -2,6 +2,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import LoopCore
 import ServeTesting
 import SessionDomain
 import SpaceContract

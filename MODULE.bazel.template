@@ -14,10 +14,6 @@ bazel_dep(name = "rules_swift", version = "3.6.1", repo_name = "build_bazel_rule
 bazel_dep(name = "rules_swift_package_manager", version = "1.17.1")
 bazel_dep(name = "swiftlint", version = "0.65.1")
 
-# SwiftLint builds its own SwiftSyntax, separate from ours (bazel/swiftlint).
-swiftlint_extra_rules = use_extension("@swiftlint//bazel:extensions.bzl", "extra_rules")
-swiftlint_extra_rules.setup(srcs = "//bazel/swiftlint:ExtraRules.swift")
-
 single_version_override(
     module_name = "rules_apple",
     patch_strip = 1,
@@ -47,7 +43,8 @@ single_version_override(
 # verbosity environment variable, so that one configuration key is the only knob there is.
 # Quiet, a run killed at Bazel's test timeout names no test at all: the runner reads the event
 # stream only after the run returns. The stalled-test watchdog reads it live and prints a
-# `STALLED:` line naming every test still running after 60 seconds. Upstream reads `--test_filter`
+# `STALLED:` line naming every running test after TEST_TIMEOUT minus 15 seconds (at most 60;
+# disabled at 20 seconds or less). Without TEST_TIMEOUT it uses 60 seconds. Upstream reads `--test_filter`
 # as one unanchored regex (`Suite/a()` also selects `Suite/ab()`); the filter patch gives it the
 # identifier-list grammar the macOS bundle runner hands to xcodebuild, so one filter means the
 # same on every host lane. Symbol graph extraction takes the toolchain's flags only; the

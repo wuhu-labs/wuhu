@@ -17,7 +17,7 @@ import StructuredQueries
 
 extension Space {
   /// With `replacing`, an existing file at `destination` is replaced in the same revision; any other existing entry still refuses the move.
-  /// Across groups the move is a delete in `group` and a create in `destinationGroup`, in one revision recorded for `acting`.
+  /// Across groups the move is a delete in `group` and a create in `destinationGroup`, in one transaction, minting a revision in each written group.
   public func move(
     _ path: String, in group: GroupID, to destination: String, in destinationGroup: GroupID, replacing: Bool, acting: GroupID,
     attribution: RevisionAttribution? = nil,
@@ -42,14 +42,14 @@ extension Space {
       guard let head = try Substrate.head(path, group: group, in: db) else { throw SpaceError.notFound(path.rawValue) }
       guard head.kind == "directory" else { throw SpaceError.notADirectory(path.rawValue) }
       guard try FSHeadRow.where({ $0.grp.eq(group.rawValue) && $0.parentPath.eq(path.rawValue) }).fetchCount(db) == 0 else { return false }
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
       try LiveFS.tombstone(path: path.rawValue, group: group, rev: rev, op: .delete, in: db)
       return true
     }
   }
 
-  public func currentRevision() async throws -> Int {
-    try await writer.read { db in Int(try Substrate.maxRevision(in: db)) }
+  public func currentRevision(in group: GroupID) async throws -> Int {
+    try await writer.read { db in Int(try Substrate.maxRevision(group, in: db)) }
   }
 
   public func history(_ path: SpacePath, in group: GroupID, after: Int? = nil, limit: Int? = nil) async throws -> [(Rev, Date, Change)] {
@@ -59,7 +59,7 @@ extension Space {
         .where { $0.grp.eq(group.rawValue) && $0.path.eq(path.rawValue) && $0.rev.gt(Int64(after ?? 0)) }
         .order { $0.rev }
         .limit(limit ?? Int.max)
-        .join(RevisionRow.all) { $0.rev.eq($1.rev) }
+        .join(RevisionRow.all) { $0.grp.eq($1.grp) && $0.rev.eq($1.rev) }
         .select { JournalEntry.Columns(rev: $0.rev, mtime: $1.mtime, op: $0.op, aux: $0.aux) }
         .fetchAll(db)
       return rows.map { row in
@@ -76,16 +76,17 @@ extension Space {
     }
   }
 
-  /// The viewer and page behind each of `revs` a page wrote; other revisions are absent.
-  public func attributions(of revs: [Rev]) async throws -> [Rev: RevisionAttribution] {
-    guard !revs.isEmpty else { return [:] }
+  public func attributions(of revisions: [(GroupID, Rev)]) async throws -> [GroupID: [Rev: RevisionAttribution]] {
+    let grouped = Dictionary(grouping: revisions, by: \.0)
     return try await writer.read { db in
-      var found: [Rev: RevisionAttribution] = [:]
-      let keys = revs.map { Int64($0.value) }
-      for start in stride(from: 0, to: keys.count, by: 500) {
-        let chunk = Array(keys[start ..< min(start + 500, keys.count)])
-        for row in try RevisionActorRow.where({ $0.rev.in(chunk) }).fetchAll(db) {
-          found[Rev(Int(row.rev))] = RevisionAttribution(actor: row.actor, via: row.via)
+      var found: [GroupID: [Rev: RevisionAttribution]] = [:]
+      for (group, revisions) in grouped {
+        let keys = revisions.map { Int64($0.1.value) }
+        for start in stride(from: 0, to: keys.count, by: 500) {
+          let chunk = Array(keys[start ..< min(start + 500, keys.count)])
+          for row in try RevisionActorRow.where({ $0.grp.eq(group.rawValue) && $0.rev.in(chunk) }).fetchAll(db) {
+            found[group, default: [:]][Rev(Int(row.rev))] = RevisionAttribution(actor: row.actor, via: row.via)
+          }
         }
       }
       return found
@@ -105,9 +106,10 @@ extension Space {
       return (Rev(Int(rev)), VersionToken(rev: Int(rev)))
     }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    return try await blobs.write(writer) { db, cache in
+    let restored: Blob? = try await restoredBlob(path, rev: target, in: group)
+    return try await writer.write { db in
       let ceiling = Int64(target.value)
-      guard try Substrate.revisionExists(ceiling, in: db) else { throw SpaceError.invalidRevision(target.value) }
+      guard try Substrate.revisionExists(ceiling, group: group, in: db) else { throw SpaceError.invalidRevision(target.value) }
       let resolved = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: ceiling, in: db)
       if let resolved, resolved.kind == "directory" { throw SpaceError.notAFile(path.rawValue) }
       let liveHead = try Substrate.head(path, group: group, in: db)
@@ -118,15 +120,15 @@ extension Space {
         try self.documents.removed(under: path, in: group, rev: liveHead.rev, on: db)
         return (Rev(Int(liveHead.rev)), VersionToken(rev: Int(liveHead.rev)))
       }
-      let newRev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
+      let newRev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
       let token = VersionToken(rev: Int(newRev))
       let fromRev = String(target.value)
       switch resolved?.kind {
       case "file":
         if liveHead?.kind == "table" { try Tables.retire(path, group: group, rev: newRev, in: db) }
-        let hash = resolved!.blobHash!
+        // The bytes of the very version this step resolves: versions do not change under a ceiling.
         try Substrate.writeFile(
-          path, group: group, blob: try cache.blob(of: hash, in: db),
+          path, group: group, blob: restored!,
           rev: newRev, mtime: mtime, op: .checkout, aux: fromRev, in: db,
         )
       case "table":
@@ -142,12 +144,28 @@ extension Space {
 
   /// The text a live file had at `rev`, which its live node merges in; nil when it had none.
   private func restoredLive(_ path: SpacePath, rev target: Rev, in group: GroupID) async throws -> Data? {
-    try await blobs.read(writer) { db, cache in
-      let ceiling = Int64(target.value)
-      guard try Substrate.revisionExists(ceiling, in: db) else { throw SpaceError.invalidRevision(target.value) }
+    let ceiling = Int64(target.value)
+    let hash = try await writer.read { db -> String? in
+      guard try Substrate.revisionExists(ceiling, group: group, in: db) else { throw SpaceError.invalidRevision(target.value) }
       guard let resolved = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: ceiling, in: db) else { return nil }
       guard resolved.kind == "file", let hash = resolved.blobHash else { throw SpaceError.notAFile(path.rawValue) }
-      return Data(try cache.blob(of: hash, in: db).content)
+      return hash
     }
+    guard let hash else { return nil }
+    return Data(try await bucket.bytes(hash))
+  }
+
+  /// The bytes a file had at `rev`, which restoring it writes again; nil when `rev` holds no file there.
+  private func restoredBlob(_ path: SpacePath, rev target: Rev, in group: GroupID) async throws -> Blob? {
+    let ceiling = Int64(target.value)
+    let hash = try await writer.read { db -> String? in
+      guard try Substrate.revisionExists(ceiling, group: group, in: db) else { throw SpaceError.invalidRevision(target.value) }
+      guard let resolved = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: ceiling, in: db),
+            resolved.kind == "file", let hash = resolved.blobHash
+      else { return nil }
+      return hash
+    }
+    guard let hash else { return nil }
+    return try await bucket.blob(hash)
   }
 }

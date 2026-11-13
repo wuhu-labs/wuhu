@@ -35,15 +35,6 @@ public struct Arming: Hashable, Codable, Sendable {
 }
 
 extension SessionRows {
-  /// The answer the session's tool call already has.
-  public func receipt(_ id: SessionID, _ call: ToolCallID) throws -> ToolResultPayload? {
-    try Sessions.receipt(id.rawValue, toolCallID: call.rawValue, in: db)
-  }
-
-  public func record(_ payload: ToolResultPayload, answering call: ToolCallID, of id: SessionID) throws {
-    try ToolReceipt(session: id, callID: call, payload: payload).record(now: now, in: db)
-  }
-
   /// A plain slot of the session's own: a timer is its first firing on the session's queue, a query a row of `subscription_slots`. A plain stream is not armed here (the session's cell runs it as a job), and a handler slot is its observer's (`ObserverRows.arm`).
   public func arm(_ id: SessionID, _ arming: Arming, uuid: () -> UUID) throws {
     precondition(arming.slot.handler == nil, "a handler slot is armed by its observer")

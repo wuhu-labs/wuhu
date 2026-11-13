@@ -14,7 +14,6 @@ import QuickJSKit
 import SpaceClient
 import struct SpaceContract.GroupDetail
 import struct SpaceContract.GroupID
-import struct SpaceContract.GroupSummary
 import SpaceCore
 import SpaceTools
 import SystemFiles
@@ -25,22 +24,21 @@ let scriptModuleLimit = 256
 struct ScriptContext: Decodable, Sendable {
   let session: String?
   let group: String
-  let rev: Int
+  let revs: [String: Int]
 }
 
 /// The space as one execution's modules see it: every space module is as of
-/// `revision`, from the acting group or one it reads.
+/// `revisions`, from the acting group or one it reads.
 struct ScriptModuleSnapshot: Sendable {
-  let revision: Int
+  let revisions: [String: Int]
   let acting: GroupID
   let readable: Set<GroupID>
 
   static func load(_ client: SpaceClient) async throws -> ScriptModuleSnapshot {
     let context: ScriptContext = try await client.api(.get, "/v1/context")
-    let groups: [GroupSummary] = try await client.api(.get, "/v1/groups")
     return ScriptModuleSnapshot(
-      revision: context.rev, acting: GroupID(rawValue: context.group),
-      readable: Set(groups.filter { $0.readable == true }.map { GroupID(rawValue: $0.id) }),
+      revisions: context.revs, acting: GroupID(rawValue: context.group),
+      readable: Set(context.revs.keys.map { GroupID(rawValue: $0) }),
     )
   }
 }
@@ -79,9 +77,11 @@ func scriptModules(client: SpaceClient, snapshot: ScriptModuleSnapshot, typedErr
             shown = String(name.dropFirst(scriptModuleScheme.count))
             group = snapshot.acting
           }
-          guard snapshot.readable.contains(group), snapshot.revision != 0 else { throw SpaceError.notFound(shown) }
+          guard snapshot.readable.contains(group) else { throw SpaceError.notFound(shown) }
+          let revision = snapshot.revisions[group.rawValue]!
+          guard revision != 0 else { throw SpaceError.notFound(shown) }
           do {
-            data = try await client.file(shown, rev: snapshot.revision, limit: scriptModuleBytes).data
+            data = try await client.file(shown, rev: revision, limit: scriptModuleBytes).data
           } catch let failure as SpaceClient.ToolFailure {
             guard failure.error.code == .byteLimitExceeded else {
               throw ScriptError(typedErrors ? "\(failure.error.code.rawValue): \(failure.error.message)" : failure.error.message)

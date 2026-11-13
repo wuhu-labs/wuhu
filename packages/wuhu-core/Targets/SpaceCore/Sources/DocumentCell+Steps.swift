@@ -109,7 +109,11 @@ extension DocumentCell {
       try clear()
       return (document, replica)
     }
-    guard let bytes = try DocumentRows.inlineText(head.hash, in: host) ?? text else { throw DocumentGone() }
+    let inline: Data? = switch try Bucket.stored(head.hash, in: db) {
+    case let .inline(content): Data(content)
+    case .external: nil
+    }
+    guard let bytes = inline ?? text else { throw DocumentGone() }
     do {
       guard let string = String(validating: bytes, as: UTF8.self) else {
         throw SpaceError.liveSyntax(path: path.rawValue, line: nil, reason: notUTF8)
@@ -197,8 +201,11 @@ extension DocumentCell {
     relaying update: Data? = nil, except skipped: Int? = nil,
   ) throws -> Int64 {
     let snapshot = Array(try! replica.snapshot())
+    let content = Array(replica.text.utf8)
+    let blob = Blob(hash: Substrate.blobHash(content), content: content, externalKey: nil)
+    try Bucket.put(blob, in: &db)
     let rev = try DocumentRows.commit(
-      path, group, acting: acting, attribution: attribution, text: replica.text, expecting: document.fileRev, checkout: checkout,
+      path, group, acting: acting, attribution: attribution, blob: blob, expecting: document.fileRev, checkout: checkout,
       mtime: documents.mtime(), in: host,
     )
     document.fileRev = rev

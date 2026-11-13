@@ -24,15 +24,15 @@ import WuhuAI
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.rateLimited(retryAt: anchor.addingTimeInterval(600))),
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.asleep("retry-after", dueIn: 600)
@@ -52,8 +52,6 @@ import WuhuAI
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let weekly = anchor.addingTimeInterval(5 * 3600)
       let script = InferenceScript([
         Fix.failing(.rateLimited(retryAt: weekly)),
@@ -62,7 +60,9 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("capped wait 1", after: retryAtCeiling)
@@ -84,14 +84,14 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let stale = anchor.addingTimeInterval(-60)
       let rounds = 4
       let script = InferenceScript(
         Array(repeating: Fix.failing(.rateLimited(retryAt: stale)), count: rounds) + [Fix.replying("done")],
       )
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
@@ -99,7 +99,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -126,8 +126,6 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.rateLimited(retryAt: nil)),
         Fix.failing(.rateLimited(retryAt: anchor.addingTimeInterval(900))),
@@ -135,13 +133,15 @@ import WuhuAI
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
       let first = 1 * Double.random(in: 0 ... 1, using: &rng)
       let third = 4 * Double.random(in: 0 ... 1, using: &rng)
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("backoff 1", after: first)
@@ -163,15 +163,15 @@ import WuhuAI
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.rateLimited(retryAt: anchor.addingTimeInterval(retryAtCeiling))),
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.asleep("retry-after", dueIn: retryAtCeiling)
@@ -194,11 +194,9 @@ import WuhuAI
     try await withKernelDeps { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let document = ModelsDocument(providers: ["offline": .init(dialect: .anthropic, baseURL: URL(string: "https://example.test/v1")!, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
-      let resolved = try await ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "retry-fixture") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
-      let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [])
+      let catalog = ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "retry-fixture") })
 
       let calls = Box(0)
       let provider = FetchClient { _ in
@@ -209,14 +207,19 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(textSSE.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
+        let sid = request.sessionID
+        let resolved = try await catalog.resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
+        let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [])
         let completed = try await executor.run(attemptID: request.attemptID, lines: request.lines)
         return InferenceReply(message: completed.message, metadata: completed.metadata)
       }
       let script = InferenceScript([step, step])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await withDependencies { $0.fetch = provider } operation: {
-        try await runService(space, config) { service in
+      let sid = try await withDependencies { $0.fetch = provider } operation: {
+        let service = SessionExecution(space: space, loopConfig: config)
+        let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+        try await runService(service) { service in
           try await service.enqueue(item: Fix.message("hello"), to: sid)
           try await until("throttled") { script.count == 1 }
           try await time.asleep("retry-after", dueIn: 1800)
@@ -225,8 +228,9 @@ import WuhuAI
           await time.advance(by: 1)
           try await until("settled") { try await sessions.settledWork(sid) }
         }
-      }
 
+        return sid
+      }
       #expect(calls.value == 2)
       let entries = try await sessions.lines(sid).assistantLines
       #expect(entries.count == 1)

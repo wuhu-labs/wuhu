@@ -10,10 +10,7 @@ public struct ManipulateUIArguments: Decodable, Sendable {
 }
 
 extension Hub {
-  // The answer is looked up and recorded in the write that issues the
-  // command: a retry of the call, or a twin of it running at once, drives
-  // the device once.
-  nonisolated public func manipulateUI(_ session: SessionID, _ callID: ToolCallID, _ arguments: ManipulateUIArguments) async throws -> ToolResultPayload {
+  nonisolated public func manipulateUI(_ session: SessionID, _ arguments: ManipulateUIArguments) async throws -> ToolResultPayload {
     guard case .object = arguments.payload else {
       throw ToolProblem("manipulate_ui: payload is a JSON object, e.g. {\"sidebar\": \"everything\"}")
     }
@@ -24,12 +21,12 @@ extension Hub {
       throw ToolProblem("manipulate_ui is for top-level agents; a task or child agent may not drive a device")
     }
     do {
-      return try await space.issueDeviceCommand(
+      let n = try await space.issueDeviceCommand(
         device: arguments.device,
         payload: arguments.payload.jsonString(),
-        issuedBy: session,
-        answering: callID,
+        issuedBy: session.rawValue,
       )
+      return .manipulateUI(.init(device: arguments.device, n: n))
     } catch let SpaceError.unknownDevice(device) {
       throw ToolProblem("unknown device: \(device); list them with query: SELECT id, name, kind, machine_id FROM devices")
     }

@@ -1,5 +1,10 @@
 import DeterministicDependencies
-import Foundation
+import LoopCore
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import JSONValue
 import class MainHub.Hub
@@ -19,6 +24,7 @@ import struct WuhuAI.ToolArguments
 @Suite(.deterministicDependencies) struct GroupToolTests {
   struct Rig {
     let space: Space
+    let loop: ToolFixture
     let executor: ToolExecutor
     let p: SessionID
     let s: SessionID
@@ -30,6 +36,7 @@ import struct WuhuAI.ToolArguments
 
   func makeRig() async throws -> Rig {
     let space = try Space.inMemory()
+    let loop = try await ToolFixture(space: space)
     try await space.writer.write { db in
       for group in [Self.alice, Self.bob] {
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
@@ -37,7 +44,8 @@ import struct WuhuAI.ToolArguments
     }
     return Rig(
       space: space,
-      executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)),
+      loop: loop,
+      executor: try await loop.executor(owner: loop.hub { Hub(space: space) }),
       p: try await makeSession(space, name: "P", group: Self.alice),
       s: try await makeSession(space, name: "S"),
       b: try await makeSession(space, name: "B", group: Self.bob),
@@ -96,6 +104,7 @@ import struct WuhuAI.ToolArguments
   @Test func aDMsMemberReadsItsAttachmentsInAGroupItDoesNotRead() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
+      try await rig.space.sessions.markInterrupted(rig.s)
       _ = try await write(rig, as: rig.p, "/note.md")
       var p = ToolWorld(executor: rig.executor, session: rig.p)
       let sent = try await p.run("send_message", .object([
@@ -157,7 +166,7 @@ import struct WuhuAI.ToolArguments
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [hers.id] }
       machineFS.put("/x.txt", "hi", mtime: 1)
-      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space, machines: machineFS.seam))
+      let executor = try await rig.loop.executor(owner: rig.loop.hub { Hub(space: rig.space, machines: machineFS.seam) })
 
       func roster(_ session: SessionID) async throws -> [String] {
         var world = ToolWorld(executor: executor, session: session)
@@ -183,7 +192,7 @@ import struct WuhuAI.ToolArguments
   @Test func archiveIsForTheSessionItsCreatorAndAdminsButForceCannotArchiveSelf() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
-      let executor = try await SessionRuntime.toolExecutor(owner: Hub(space: rig.space))
+      let executor = try await rig.loop.executor(owner: rig.loop.hub { Hub(space: rig.space) })
       let st = try await task(rig, of: rig.s, in: .shared)
       let other = try await makeSession(rig.space, name: "S2")
       let theirs = try await task(rig, of: other, in: .shared)

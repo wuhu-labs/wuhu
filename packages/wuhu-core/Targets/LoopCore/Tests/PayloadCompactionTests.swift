@@ -22,9 +22,10 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "oversize", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.failing(payloadError), Fix.failing(payloadError), Fix.replying("must not run")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await sessions.createSession(group: .shared, title: "oversize", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("one gigantic item"), to: sid)
         try await until("payload permanently errored") { try await sessions.record(sid).work == .errored }
       }
@@ -40,9 +41,10 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "mixed payload", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.failing(payloadError), Fix.failing(.contextTooLong)])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await sessions.createSession(group: .shared, title: "mixed payload", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("mixed payload errored") { try await sessions.record(sid).work == .errored }
       }
@@ -56,9 +58,10 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "payload reset", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([Fix.failing(payloadError), Fix.replying("first"), Fix.failing(payloadError), Fix.replying("second")])
-      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+      let sid = try await sessions.createSession(group: .shared, title: "payload reset", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         for round in 0 ..< 2 {
           try await service.enqueue(item: Fix.message("round \(round)"), to: sid)
           try await until("settled \(round)") { guard script.count == (round + 1) * 2 else { return false }; return try await sessions.settledWork(sid) }
@@ -73,7 +76,6 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "socket payload", kind: .agent, createdBy: "morgan", model: .test)
       let socket = ResponsesWebSocketSession()
       let endpoint = OpenAIGPTEndpoint(model: "test", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline")
       let dials = Box(0)
@@ -101,15 +103,18 @@ private let compactedPayloadError = InferenceError.requestTooLargeAfterCompactio
         invalidations.withLock { $0 += 1 }
         await socket.invalidate()
       }
-      try await withDependencies {
+      let sid = try await withDependencies {
         $0[WebSocketConnector.self] = connector
         $0.fetch = FetchClient { _ in Issue.record("SSE fallback"); throw FetchError.unimplemented }
       } operation: {
-        try await runService(space, config) { service in
+        let service = SessionExecution(space: space, loopConfig: config)
+        let sid = try await sessions.createSession(group: .shared, title: "socket payload", kind: .agent, createdBy: "morgan", model: .test)
+        try await runService(service) { service in
           try await service.enqueue(item: Fix.message("hello"), to: sid)
           try await until("fresh reply committed") { guard commits.value == 1 else { return false }; return try await sessions.settledWork(sid) }
           #expect(invalidations.value == 1)
         }
+        return sid
       }
       #expect(dials.value == 2)
       #expect(try await sessions.generationState(sid).generation == 1)

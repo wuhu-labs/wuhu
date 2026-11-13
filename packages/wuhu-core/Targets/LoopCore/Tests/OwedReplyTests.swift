@@ -15,8 +15,6 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let nagSeen = Box<[TranscriptLine]>([])
       let script = InferenceScript([
         Fix.replying("thinking out loud"),
@@ -27,7 +25,9 @@ import WuhuAI
         Fix.replying("all done"),
       ])
       let config = makeConfig(
-        executeTool: { call in
+        executeInvocation: { invocation in
+          let call = invocation.call
+          let sid = invocation.sessionID
           guard call.name == "send_message" else { throw UnexpectedCall("executeTool(\(call.name))") }
           let delivery = try await sessions.post(
             .box(sid),
@@ -45,7 +45,9 @@ import WuhuAI
         inference: { try await script($0) },
       )
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(
           item: Fix.message("please review", conversation: sid.rawValue, owesReply: true),
           to: sid,

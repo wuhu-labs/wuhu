@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+@testable import LoopCore
 import Scratch
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -31,7 +32,7 @@ import Testing
     ]
     #expect(try await space.query("SELECT * FROM inferences ORDER BY id").rows == expected)
     _ = try await space.sessions.restart(session)
-    _ = try await space.sessions.rows { try $0.writeGeneration(session, head: .init(id: UUID(), timestamp: fixedDate, summary: "compact", snapshot: .init(), runningWork: [])) }
+    _ = try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.rows.writeGeneration(session, head: .init(id: UUID(), timestamp: fixedDate, summary: "compact", snapshot: .init(), runningWork: [])) }
     _ = try await space.sessions.archive(session, grace: .seconds(0))
     #expect(try await space.query("SELECT * FROM inferences ORDER BY id").rows == expected)
     #expect(try await space.query("SELECT sum(input), sum(cache_read), sum(output), sum(reasoning) FROM inferences JOIN sessions ON session = sessions.id WHERE sessions.tags LIKE '%coder%'").rows == [[.integer(30), .integer(200), .integer(80), .integer(60)]])

@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -101,14 +102,15 @@ import Testing
   @Test func `a parent watches its children while one is live`() async throws {
     let pair = try await Pair()
     let watched = {
-      try await pair.rig.space.writer.read { db in try SubscriptionRow.of(.session(pair.parent)).fetchAll(db).map(\.subscriptionID) }
+      try await pair.store.deliverMail()
+      return try pair.rig.space.cell.armedSubscriptions().filter { $0.owner == .session(pair.parent) }.map(\.slot.id.rawValue)
     }
     #expect(try await watched() == [SubscriptionSlot.childrenID.rawValue])
 
-    _ = try await pair.store.rows { try $0.archive(pair.task, grace: .seconds(60)) }
+    _ = try await pair.store.archive(pair.task, grace: .seconds(60))
     #expect(try await watched().isEmpty)
 
-    try await pair.store.rows { try $0.unarchive(pair.task) }
+    try await pair.store.unarchive(pair.task)
     #expect(try await watched() == [SubscriptionSlot.childrenID.rawValue])
   }
 }

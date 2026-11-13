@@ -68,11 +68,11 @@ struct RequestRow {
 extension SessionStore {
   /// The requests `requester` opened that still wait on their final, oldest first.
   public func awaitedRequests(_ requester: SessionID) -> [AwaitedRequest] {
-    space.awaitedRequests(of: requester.rawValue)
+    spaceCell.awaitedRequests(of: requester.rawValue)
   }
 
   public func openRequests(_ id: SessionID) throws -> [OpenRequest] {
-    try space.openRequests(of: id.rawValue)
+    try spaceCell.openRequests(of: id.rawValue)
   }
 
   /// Opens a request on a child, or, for a person, on the top-level agent their page created, in its box. The conversation checks who asks and writes the row with the message.

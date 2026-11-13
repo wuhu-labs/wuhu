@@ -6,11 +6,12 @@ import Scratch
 @testable import SpaceCore
 import SpaceFS
 import Testing
+import Wuwei
 
 @Suite(.deterministicDependencies)
-struct BlobStoreTests {
+struct BucketTests {
   private func folder() throws -> URL {
-    let url = try scratchURL("blobs")
+    let url = try scratchURL("bucket")
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
   }
@@ -23,9 +24,8 @@ struct BlobStoreTests {
     FileSystemObjectStore(root: folder.appendingPathComponent("objects"))
   }
 
-  private func stored(_ content: String, in space: Space) async throws -> StoredBlob {
-    let hash = Substrate.blobHash(Array(content.utf8))
-    return try await space.writer.read { db in try Substrate.storedBlob(hash, in: db) }
+  private func stored(_ content: String, in space: Space) async throws -> Blob {
+    try await space.bucket.blob(Substrate.blobHash(Array(content.utf8)))
   }
 
   private func filler(_ count: Int, _ seed: String = "x") -> String {
@@ -41,10 +41,7 @@ struct BlobStoreTests {
     _ = try await space.writeText("/notes/small.md", content)
 
     #expect(try await space.readText("/notes/small.md") == content)
-    guard case .inline = try await stored(content, in: space) else {
-      Issue.record("small content should stay inline")
-      return
-    }
+    #expect(try await stored(content, in: space).externalKey == nil, "small content should stay inline")
     #expect(try await objects(folder).list(ListQuery()).entries.isEmpty)
     try await space.close()
   }
@@ -54,16 +51,13 @@ struct BlobStoreTests {
     defer { try? FileManager.default.removeItem(at: folder) }
     let space = try open(folder)
 
-    let content = filler(BlobStore.inlineThreshold + 1)
+    let content = filler(Bucket.inlineThreshold + 1)
     _ = try await space.writeText("/big.bin", content)
 
     #expect(try await space.readText("/big.bin") == content)
 
     let hash = Substrate.blobHash(Array(content.utf8))
-    guard case let .external(key) = try await stored(content, in: space) else {
-      Issue.record("large content should externalize")
-      return
-    }
+    let key = try #require(try await stored(content, in: space).externalKey)
     #expect(key.raw == "blobs/\(hash.prefix(2))/\(hash.dropFirst(2).prefix(2))/\(hash)")
     #expect(try await objects(folder).getBytes(key) == Data(content.utf8))
     try await space.close()
@@ -74,19 +68,13 @@ struct BlobStoreTests {
     defer { try? FileManager.default.removeItem(at: folder) }
     let space = try open(folder)
 
-    let atThreshold = filler(BlobStore.inlineThreshold, "b")
-    let overThreshold = filler(BlobStore.inlineThreshold + 1, "c")
+    let atThreshold = filler(Bucket.inlineThreshold, "b")
+    let overThreshold = filler(Bucket.inlineThreshold + 1, "c")
     _ = try await space.writeText("/at.bin", atThreshold)
     _ = try await space.writeText("/over.bin", overThreshold)
 
-    guard case .inline = try await stored(atThreshold, in: space) else {
-      Issue.record("content at the threshold should stay inline")
-      return
-    }
-    guard case .external = try await stored(overThreshold, in: space) else {
-      Issue.record("content past the threshold should externalize")
-      return
-    }
+    #expect(try await stored(atThreshold, in: space).externalKey == nil, "content at the threshold should stay inline")
+    #expect(try await stored(overThreshold, in: space).externalKey != nil, "content past the threshold should externalize")
     #expect(try await space.readText("/at.bin") == atThreshold)
     #expect(try await space.readText("/over.bin") == overThreshold)
     try await space.close()
@@ -98,20 +86,16 @@ struct BlobStoreTests {
     let space = try open(folder)
 
     let small = filler(64, "s")
-    let large = filler(BlobStore.inlineThreshold + 1, "l")
+    let large = filler(Bucket.inlineThreshold + 1, "l")
     for path in ["/one.md", "/two.md"] { _ = try await space.writeText(path, small) }
     for path in ["/one.bin", "/two.bin"] { _ = try await space.writeText(path, large) }
 
+    let cell = space.worker.cell(SpaceCell.ID("space"))
     let smallHash = Substrate.blobHash(Array(small.utf8))
     let largeHash = Substrate.blobHash(Array(large.utf8))
-    let (inlineRows, externalRows) = try await space.writer.read { db in
-      (
-        try BlobRow.where { $0.hash.eq(smallHash) }.fetchAll(db).count,
-        try BlobObjectRow.where { $0.hash.eq(largeHash) }.fetchAll(db).count,
-      )
-    }
-    #expect(inlineRows == 1)
-    #expect(externalRows == 1)
+    #expect(cell.bucket(smallHash)?.content == Array(small.utf8))
+    #expect(cell.bucket(largeHash)?.content == nil)
+    #expect(cell.bucket(largeHash)?.size == Int64(large.utf8.count))
     #expect(try await objects(folder).list(ListQuery()).entries.count == 1)
     try await space.close()
   }
@@ -121,8 +105,8 @@ struct BlobStoreTests {
     defer { try? FileManager.default.removeItem(at: folder) }
     let space = try open(folder)
 
-    let first = filler(BlobStore.inlineThreshold + 1, "1")
-    let second = filler(BlobStore.inlineThreshold + 2, "2")
+    let first = filler(Bucket.inlineThreshold + 1, "1")
+    let second = filler(Bucket.inlineThreshold + 2, "2")
     let token = try await space.writeText("/history.bin", first)
     _ = try await space.writeText("/history.bin", second)
 
@@ -135,7 +119,7 @@ struct BlobStoreTests {
     try await space.close()
   }
 
-  @Test(arguments: [1024, BlobStore.inlineThreshold + 1])
+  @Test(arguments: [1024, Bucket.inlineThreshold + 1])
   func aReaderReadsRangesOfTheFileAsItWasOpened(_ size: Int) async throws {
     let folder = try folder()
     defer { try? FileManager.default.removeItem(at: folder) }

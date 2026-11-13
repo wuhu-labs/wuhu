@@ -1,5 +1,6 @@
 import Fetch
 import JSONValue
+import LoopCore
 import struct MainHub.CreateSessionArguments
 import class MainHub.Hub
 import struct MainHub.IncompleteSession

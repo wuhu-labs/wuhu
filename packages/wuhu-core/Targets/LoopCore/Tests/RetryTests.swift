@@ -23,8 +23,6 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.transient(status: 503, body: nil)),
         Fix.failing(.rateLimited(retryAt: nil)),
@@ -32,6 +30,8 @@ import WuhuAI
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       // The same jitter stream the kernel consumes: base 1s, x2, cap 60s,
       // full jitter via the injected generator. createSession's allocation
@@ -42,7 +42,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
 
         for (index, delay) in delays.enumerated() {
@@ -80,14 +80,14 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.invalidInput(status: 400, body: "bad request")),
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(space, config) { service in
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("errored") { try await sessions.record(sid).work == .errored }
       }
@@ -103,8 +103,6 @@ import WuhuAI
     try await withKernelDeps(seed: 21) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.transient(status: 503, body: nil)),
         Fix.failing(.transient(status: 503, body: nil)),
@@ -113,6 +111,8 @@ import WuhuAI
         Fix.replying("second"),
       ])
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 21)
       mirrorAllocationDraws(&rng)
@@ -121,7 +121,7 @@ import WuhuAI
       // so the second work item's single failure backs off at 1s again.
       let delays: [Double] = [1 * jitters[0], 2 * jitters[1], 1 * jitters[2]]
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("one"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("backoff 1", after: delays[0])
@@ -148,14 +148,14 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.transport(.idleTimeout)),
         Fix.failing(.transport(.idleTimeout)),
         Fix.failing(.transport(.idleTimeout)),
       ])
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
@@ -163,7 +163,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -184,8 +184,6 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.transport(.idleTimeout)),
         Fix.failing(.transient(status: 503, body: nil)),
@@ -193,6 +191,8 @@ import WuhuAI
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
@@ -200,7 +200,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -223,14 +223,14 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.throwing(FetchError.transportFailure(kind: .connectTimeout)),
         Fix.throwing(FetchError.transportFailure(kind: .connectionClosed)),
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
@@ -238,7 +238,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -256,8 +256,6 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript([
         Fix.failing(.transport(.connectTimeout)),
         Fix.failing(.transport(.connectTimeout)),
@@ -265,6 +263,8 @@ import WuhuAI
         Fix.replying("done"),
       ])
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
@@ -272,7 +272,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -290,12 +290,12 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let script = InferenceScript(
         Array(repeating: Fix.failing(.transient(status: 503, body: "upstream down")), count: 9),
       )
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
@@ -303,7 +303,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -327,13 +327,13 @@ import WuhuAI
       try await withKernelDeps(seed: 7) { time in
         let space = try Space.inMemory()
         let sessions = space.sessions
-        let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
         let rounds = boundedFailureLimit * 2
         let script = InferenceScript(
           Array(repeating: Fix.failing(outage), count: rounds) + [Fix.replying("back online")],
         )
         let config = makeConfig(inference: { try await script($0) })
+        let service = SessionExecution(space: space, loopConfig: config)
+        let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
         var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
         mirrorAllocationDraws(&rng)
@@ -341,7 +341,7 @@ import WuhuAI
           min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
         }
 
-        try await runService(space, config) { service in
+        try await runService(service) { service in
           try await service.enqueue(item: Fix.message("hello"), to: sid)
           for (index, delay) in delays.enumerated() {
             try await until("\(outage) attempt \(index + 1)") { script.count == index + 1 }
@@ -360,10 +360,8 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let document = ModelsDocument(providers: ["gateway": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
-      let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "gateway", model: "test", effort: "low"), session: sid)
-      let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [])
+      let catalog = ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") })
       let rounds = boundedFailureLimit * 2
       let requests = Box(0)
       let gateway = FetchClient { _ in
@@ -371,6 +369,9 @@ import WuhuAI
         return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
       }
       let step: InferenceScript.Step = { request in
+        let sid = request.sessionID
+        let resolved = try await catalog.resolve(.init(provider: "gateway", model: "test", effort: "low"), session: sid)
+        let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [])
         let result = try await executor.run(attemptID: request.attemptID, lines: request.lines)
         return InferenceReply(message: result.message, metadata: result.metadata, committed: { _ in })
       }
@@ -382,8 +383,10 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await withDependencies { $0.fetch = gateway } operation: {
-        try await runService(space, makeConfig(inference: { try await script($0) })) { service in
+      let sid = try await withDependencies { $0.fetch = gateway } operation: {
+        let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
+        let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+        try await runService(service) { service in
           try await service.enqueue(item: Fix.message("hello"), to: sid)
           for (index, delay) in delays.enumerated() {
             try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -392,8 +395,9 @@ import WuhuAI
           try await until("recovered") { script.count == rounds + 1 }
           try await until("settled") { try await sessions.settledWork(sid) }
         }
-      }
 
+        return sid
+      }
       #expect(try await sessions.record(sid).work != .errored)
       #expect(try await sessions.lines(sid).assistantLines.map(\.text) == ["back online"])
     }
@@ -406,13 +410,13 @@ import WuhuAI
     try await withKernelDeps(seed: 7) { time in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-
       let leading = Array(repeating: Fix.failing(.rateLimited(retryAt: nil)), count: boundedFailureLimit)
       let script = InferenceScript(
         leading + Array(repeating: Fix.failing(.transient(status: 503, body: "still bad")), count: boundedFailureLimit),
       )
       let config = makeConfig(inference: { try await script($0) })
+      let service = SessionExecution(space: space, loopConfig: config)
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
@@ -421,7 +425,7 @@ import WuhuAI
         min(backoffCeiling, pow(Double(2), Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(space, config) { service in
+      try await runService(service) { service in
         try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }

@@ -5,10 +5,13 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import Fetch
 import FileSearch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
-import struct LoopCore.LoopConfig
-import struct LoopCore.SessionExecution
+import LoopCore
 import MachineChannel
 import struct MachineContract.Ack
 import struct MachineContract.Base64Data
@@ -26,7 +29,9 @@ import struct MachineContract.MachineID
 import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
+import struct MainHub.EventSources
 import class MainHub.Hub
+import struct MainHub.SessionEffects
 import OperationProtocol
 import Serve
 import struct ServerTelemetry.TraceParent
@@ -142,6 +147,55 @@ extension TimeControl {
   }
 }
 
+struct ToolFixture: Sendable {
+  let space: Space
+  let execution: SessionExecution
+  let connection: MainConnection
+  let tokens: ExecTokens
+
+  init(space: Space, access: InferenceAccess = .init(), scripts: Scripts? = nil, sources: EventSources = .unavailable) async throws {
+    self.space = space
+    let tokens = try await testTokens(space: space)
+    self.tokens = tokens
+    let connection = MainConnection()
+    self.connection = connection
+    execution = SessionExecution(
+      connection: connection, credential: { try await tokens.sessionToken($0) }, access: access, space: space, scripts: scripts,
+      observerRun: { observer, _, body in
+        let token = tokens.scriptToken(.observer(observer))
+        defer { tokens.revokeScript(token) }
+        return try await body(token)
+      },
+    ) { tools in
+      LoopConfig(
+        executeTool: { try await tools.execute(session: $0.sessionID, call: $0.call, state: $0.state) },
+        inference: { _ in throw Mismatch("unexpected inference in a tool-only fixture") },
+        budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
+        sources: sources,
+      )
+    }
+  }
+
+  func hub(_ build: () throws -> Hub) rethrows -> Hub {
+    try withDependencies {
+      $0[SessionEffects.self] = execution.sessionEffects
+    } operation: {
+      try build()
+    }
+  }
+
+  func executor(
+    owner: Hub, hub: MachineHub? = nil, access: InferenceAccess = .init(),
+    origin: String? = nil, contentHostPattern: String? = nil, secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
+  ) async throws -> ToolExecutor {
+    SessionRuntime.bindMain(
+      owner: owner, execution: execution, tokens: tokens, connection: connection, hub: hub,
+      origin: origin, contentHostPattern: contentHostPattern, credentials: access.credentials, secrets: secrets, identity: identity,
+    )
+    return ToolExecutor(main: connection, credential: { try await tokens.sessionToken($0) }, access: access)
+  }
+}
+
 func makeSession(_ space: Space, name: String = "test", group: GroupID = .shared) async throws -> SessionID {
   let id = try await space.sessions.createSession(
     group: group,
@@ -161,9 +215,6 @@ struct ToolWorld {
   var state = ToolExecutionState()
   var delivered: ScopeContext?
   private var mintedCalls = 0
-  // A kernel never reuses a tool call id within a session, and main answers a
-  // repeated id with its first result: implicit ids are unique per world, and
-  // a retry names its call explicitly.
   private let minting = String(UUID().uuidString.lowercased().prefix(8))
 
   init(executor: ToolExecutor, session: SessionID) {
@@ -198,19 +249,6 @@ struct ToolWorld {
       state.apply(delivered: .notification(delivered.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
     }
     return outcome.payload
-  }
-
-  // A crash-retry: the kernel never committed the first result, so the retry
-  // dispatches against the OLD state under the SAME kernel tool call id.
-  func retry(
-    _ name: String,
-    _ arguments: ToolArguments,
-    id: String,
-  ) async throws -> ToolResultPayload {
-    try await execute(
-      session, ToolCall(id: id, name: name, arguments: arguments),
-      state,
-    ).payload
   }
 }
 
@@ -441,31 +479,31 @@ final class ScriptedExecMachine: Sendable {
   }
 
   func executor(
-    owner: MainHub.Hub, reachable: Bool = true, scripts: Scripts? = nil,
+    owner: MainHub.Hub, loop: ToolFixture, reachable: Bool = true, scripts: Scripts? = nil,
     access: InferenceAccess = InferenceAccess(), origin: String? = nil, contentHostPattern: String? = nil,
     secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
   ) async throws -> ToolExecutor {
-    let tokens = try await testTokens(space: owner.space, spaceURL: "http://main")
-    let connection = MainConnection()
+    let tokens = loop.tokens
+    let connection = loop.connection
     let executor = ToolExecutor(main: connection, credential: {
       guard reachable else { throw MainUnavailable() }
       return try await tokens.sessionToken($0)
     }, access: access)
     bind(
-      connection, owner: owner, tokens: tokens, reachable: reachable, access: access,
+      connection, owner: owner, execution: loop.execution, tokens: tokens, reachable: reachable, access: access,
       origin: origin, contentHostPattern: contentHostPattern, secrets: secrets, identity: identity,
     )
     return executor
   }
 
   private func bind(
-    _ connection: MainConnection, owner: MainHub.Hub, tokens: ExecTokens, reachable: Bool = true, access: InferenceAccess = InferenceAccess(),
+    _ connection: MainConnection, owner: MainHub.Hub, execution: SessionExecution, tokens: ExecTokens, reachable: Bool = true, access: InferenceAccess = InferenceAccess(),
     origin: String? = nil, contentHostPattern: String? = nil, secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
   ) {
     let space = owner.space
     self.space.withLock { $0 = space }
     let fallback = FetchClient.inProcess(SessionRuntime.bindMain(
-      owner: owner, tokens: tokens, connection: connection,
+      owner: owner, execution: execution, tokens: tokens, connection: connection,
       origin: origin, contentHostPattern: contentHostPattern, credentials: access.credentials, secrets: secrets, identity: identity,
     ))
     connection.bind(FetchClient { [self] request in

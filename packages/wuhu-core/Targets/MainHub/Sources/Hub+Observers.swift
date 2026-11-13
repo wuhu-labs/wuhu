@@ -21,17 +21,17 @@ extension Hub {
     case let (observe?, nil):
       let source = try SubscriptionArming.observedSource(sql: observe.sql, url: observe.url)
       let (kind, marker) = try await observation(source, throttle: try SubscriptionArming.observationThrottle(observe.throttleSeconds), as: observer.principal)
-      return try await store.armObserver(
+      return try await sessionEffects.armObserver(
         group, terms,
-        slot: .init(id: SubscriptionID("obs.\(uuid().uuidString.lowercased())"), kind: kind, handler: handler),
-        marker: marker,
+        .init(id: SubscriptionID("obs.\(uuid().uuidString.lowercased())"), kind: kind, handler: handler),
+        nil, marker,
       )
     case let (nil, timer?):
       let (schedule, nextFireAt) = try SubscriptionArming.timerSchedule(inSeconds: timer.inSeconds, cron: timer.cron, now: date.now)
-      return try await store.armObserver(
+      return try await sessionEffects.armObserver(
         group, terms,
-        slot: .init(id: SubscriptionID("timer.\(uuid().uuidString.lowercased())"), kind: .timer(schedule, message: ""), handler: handler),
-        nextFireAt: nextFireAt,
+        .init(id: SubscriptionID("timer.\(uuid().uuidString.lowercased())"), kind: .timer(schedule, message: ""), handler: handler),
+        nextFireAt, nil,
       )
     default:
       throw ArmingProblem("an observer is exactly one of observe and timer")
@@ -39,10 +39,10 @@ extension Hub {
   }
 
   nonisolated public func cancelObserver(_ group: GroupID, name: String) async throws -> ArmedSubscription {
-    try await store.cancelObserver(group, name: name)
+    try await sessionEffects.cancelObserver(group, name)
   }
 
   nonisolated public func observers(_ group: GroupID) async throws -> [ArmedSubscription] {
-    try await store.observers(group)
+    try await sessionEffects.observers(group)
   }
 }

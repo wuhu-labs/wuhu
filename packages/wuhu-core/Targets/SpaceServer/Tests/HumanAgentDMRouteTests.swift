@@ -88,9 +88,9 @@ import struct WuhuAI.ToolCall
       let t = try await SessionGateTests().tree()
       let person = try await t.harness.adoptPersona()
       // The identity hop lands on the harness as the parent's own bearer.
-      let owner = Hub(space: t.harness.space)
+      let owner = t.harness.runtime.owner
       let scripts = Scripts()
-      let executor = try await SessionRuntime.toolExecutor(owner: owner, identity: try await testIdentity().controller)
+      let executor = try await SessionRuntime.toolExecutor(owner: owner, execution: t.harness.runtime.execution, identity: try await testIdentity().controller)
       try await withDependencies {
         $0.scriptHop = FetchClient { request in
           #expect(request.headers[.authorization]?.hasPrefix("Bearer ") == true)

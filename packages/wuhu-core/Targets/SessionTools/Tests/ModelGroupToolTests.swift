@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import LoopCore
 @testable import MainHub
 import class MainHub.Hub
 @testable import SessionTools
@@ -27,19 +28,20 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
   @Test func childrenInheritRequestedGroupAndExplicitTargetsReplaceTemplates() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let parent = try await space.sessions.createSession(
         group: .shared, title: "group parent", kind: .agent, createdBy: "owner",
         executor: .modelGroup(id: "work", effort: "high"),
         modelRoute: testModelGroupRoute(.modelGroup(id: "work", effort: "high")),
       )
       let targets = Box<[String]>([])
-      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+      let tools = try await loop.executor(owner: loop.hub { Hub(space: space, resolveModelExecutor: { provider, model, effort in
         targets.withLock { $0.append("\(provider)/\(model)") }
         return .kernel(.init(provider: provider, model: model, effort: effort ?? "low"))
       }, resolveModelGroup: { id, effort in
         targets.withLock { $0.append(id) }
         return .modelGroup(id: id, effort: effort ?? "low")
-      }, prepareModelRoute: { executor, reason in testModelGroupRoute(executor, reason: reason) }))
+      }, prepareModelRoute: { executor, reason in testModelGroupRoute(executor, reason: reason) }) })
       _ = try await space.fs(.shared).write("/templates/concrete/template.json", Data(#"{"provider":"p","model":"m","effort":"low"}"#.utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/templates/group/template.json", Data(#"{"modelGroup":"template-group","effort":"low"}"#.utf8), ifMatch: nil)
       var world = ToolWorld(executor: tools, session: parent)
@@ -61,9 +63,10 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
     }
   }
 
-  @Test func groupCreationStoresPreparedRouteAndReplayDoesNotResolveOrPlaceAgain() async throws {
+  @Test func groupCreationStoresPreparedRoute() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       let parent = try await makeSession(space)
       let placements = Box<[ModelPlacementReason]>([])
       let resolutions = Box(0)
@@ -71,7 +74,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
         group: "work", member: "first", specifier: .init(provider: "p", model: "m", effort: "high"),
         bindingFingerprint: "binding", epoch: "epoch", reason: .create, placedAt: Date(timeIntervalSince1970: 1), evidence: [],
       )
-      let owner = Hub(
+      let owner = loop.hub { Hub(
         space: space,
         resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") },
         resolveModelGroup: { id, _ in
@@ -80,8 +83,8 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
           return .modelGroup(id: id, effort: "high")
         },
         prepareModelRoute: { _, reason in placements.withLock { $0.append(reason) }; return route },
-      )
-      let tools = try await SessionRuntime.toolExecutor(owner: owner)
+      ) }
+      let tools = try await loop.executor(owner: owner)
       var world = ToolWorld(executor: tools, session: parent)
       guard case let .createSession(first) = try await world.run("create_session", .object(["title": "routed", "modelGroup": "work"]), id: "create-routed") else {
         Issue.record("expected created session"); return
@@ -90,10 +93,6 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
       #expect(first.member == "first")
       #expect(first.provider == "p" && first.model == "m")
       #expect(try await space.sessions.modelRoute(first.sessionID) == route)
-      guard case let .createSession(replayed) = try await world.run("create_session", .object(["title": "routed", "modelGroup": "work"]), id: "create-routed") else {
-        Issue.record("expected replayed session"); return
-      }
-      #expect(first.sessionID == replayed.sessionID)
       #expect(placements.value == [.create])
       #expect(resolutions.value == 1)
     }
@@ -102,7 +101,8 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
   @Test func groupCatalogFailuresRetainMachineReadableCodes() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let tools = try await SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") }, resolveModelGroup: { id, _ in throw CatalogError.unknownGroup(id) }))
+      let loop = try await ToolFixture(space: space)
+      let tools = try await loop.executor(owner: loop.hub { Hub(space: space, resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") }, resolveModelGroup: { id, _ in throw CatalogError.unknownGroup(id) }) })
       var world = ToolWorld(executor: tools, session: try await makeSession(space))
       guard case let .failure(error) = try await world.run("create_session", .object(["title": "bad group", "modelGroup": "absent"])) else {
         Issue.record("expected group failure"); return
@@ -111,8 +111,10 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
     }
   }
 
-  @Test func invalidStoredGroupBindingRetainsMachineReadableCode() throws {
-    let owner = Hub(space: try Space.inMemory())
+  @Test func invalidStoredGroupBindingRetainsMachineReadableCode() async throws {
+    let space = try Space.inMemory()
+    let loop = try await ToolFixture(space: space)
+    let owner = loop.hub { Hub(space: space) }
     let failure = owner.problem(.modelRouteInvalid(group: "work", member: "initial"))
     #expect(failure.code == "modelRouteInvalid")
     #expect(failure.message.contains("work") && failure.message.contains("initial"))
@@ -121,8 +123,9 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
   @Test func templateDiscoveryIncludesGroupIntent() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
+      let loop = try await ToolFixture(space: space)
       _ = try await space.fs(.shared).write("/templates/group/template.json", Data(#"{"modelGroup":"work","effort":"high"}"#.utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
       guard case let .templates(result) = try await world.run("templates", .object([:])) else {
         Issue.record("expected templates"); return
       }

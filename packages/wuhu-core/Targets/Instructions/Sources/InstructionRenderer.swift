@@ -28,15 +28,14 @@ public struct InstructionRenderer: Sendable {
   public typealias Tool = @Sendable (_ name: String, _ input: JSONValue) async throws(InstructionSourceFailure) -> JSONValue
 
   public let session: PromptSession
-  /// The revision space partials are read at; nil reads the latest.
-  let rev: Int?
+  let revision: @Sendable (String) async throws(InstructionSourceFailure) -> Int?
   let tool: Tool
 
   static let partialDepth = 8
 
-  public init(session: PromptSession, rev: Int?, tool: @escaping Tool) {
+  public init(session: PromptSession, revision: @escaping @Sendable (String) async throws(InstructionSourceFailure) -> Int?, tool: @escaping Tool) {
     self.session = session
-    self.rev = rev
+    self.revision = revision
     self.tool = tool
   }
 
@@ -87,7 +86,7 @@ public struct InstructionRenderer: Sendable {
   private func read(_ address: String) async throws(InstructionSourceFailure) -> String {
     var input: OrderedDictionary<String, JSONValue> = ["path": .string(address)]
     let space = address.hasPrefix("/") || (address.hasPrefix("wuhu://") && !address.hasPrefix("wuhu://system/"))
-    if let rev, space { input["rev"] = .integer(rev) }
+    if space, let rev = try await revision(address) { input["rev"] = .integer(rev) }
     guard case let .object(output) = try await tool("read", .object(input)), case let .string(content)? = output["content"] else {
       throw InstructionSourceFailure("\(address) is not a text file")
     }

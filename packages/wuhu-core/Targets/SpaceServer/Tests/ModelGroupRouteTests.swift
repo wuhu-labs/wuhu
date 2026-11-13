@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Foundation
 import InferenceKit
 import JSONValue
+import LoopCore
 import ModelProviders
 import enum ProviderCapabilities.PlanUsage
 import SessionDomain

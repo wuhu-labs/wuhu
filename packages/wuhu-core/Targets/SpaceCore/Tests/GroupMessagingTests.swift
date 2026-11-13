@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import LoopCore
 import SessionDomain
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -29,6 +30,8 @@ import Testing
     }
     let p = try await space.sessions.createSession(group: Self.alice, title: "P", kind: .agent, createdBy: "owner", model: .test)
     let s = try await space.sessions.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", model: .test)
+    try await space.sessions.markInterrupted(p)
+    try await space.sessions.markInterrupted(s)
     return Rig(space: space, p: p, s: s)
   }
 
@@ -270,6 +273,7 @@ import Testing
     let mPersona = m.id.rawValue
     let alPersona = person.id.rawValue
     let s2 = try await rig.store.createSession(group: .shared, title: "S2", kind: .agent, createdBy: "owner", model: .test)
+    try await rig.store.markInterrupted(s2)
     let own = try await rig.store.createSession(group: Self.alice, title: "C", kind: .agent, createdBy: rig.p.rawValue, model: .test)
 
     _ = try await rig.store.post(

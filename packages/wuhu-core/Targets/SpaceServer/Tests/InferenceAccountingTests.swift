@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -18,6 +19,7 @@ import WuhuAI
 
   @Test func kernelMetricWritesNormalizedRowAndUnchangedJSONLine() async throws {
     let space = try Space.inMemory()
+    _ = try await SessionToolFixture(space: space)
     let session = try await space.sessions.createSession(group: .shared, title: "kernel", kind: .agent, createdBy: "owner", model: model)
     let folder = try ScratchFolder("inference-accounting")
     let logger = Logger(label: "test.inferences")

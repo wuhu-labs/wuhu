@@ -75,42 +75,12 @@ extension Sessions {
     try encode(["rendered": rendered])
   }
 
-  static func writePreamble(_ key: String, generation: Int64, rendered: String, opening: PromptOpening?, at: Date, in db: Database) throws {
-    guard try opening != nil || lastLine(key, generation: generation, in: db) != nil else { return }
-    let row = SessionLineRow(
-      sessionID: key, generation: generation, position: 0, at: SQLiteDateFormat.string(from: at),
-      role: TranscriptLine.Role.system.rawValue, key: "system", message: try preambleLine(rendered: rendered), meta: nil,
-    )
-    try SessionLineRow.insert { row } onConflict: { ($0.sessionID, $0.generation, $0.position) }.execute(db)
-    guard let opening else { return }
-    for (offset, text) in [opening.group, opening.session].enumerated() where !text.isEmpty {
-      let line = TranscriptLine(at: at, key: openingKeys[offset], message: .user(.init(content: [.text(text)])))
-      try insertLine(key, generation: generation, position: Int64(offset + 1), line: line, in: db)
-    }
-  }
-
   /// The keys of positions 1 and 2: the group's instructions, then the session's own.
   static let openingKeys = ["group", "session"]
-
-  /// Whether the generation leaves positions 1 and 2 to the opening: one opened before they existed starts its transcript at 1.
-  static func keepsOpening(_ key: String, generation: Int64, in db: Database) throws -> Bool {
-    try firstTranscriptLine(key, generation: generation, in: db).map { $0 == Int64(openingKeys.count + 1) } ?? !isLegacy(key, generation: generation, in: db)
-  }
 
   private static func firstTranscriptLine(_ key: String, generation: Int64, in db: Database) throws -> Int64? {
     try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) && $0.position.gt(Int64(0)) && !$0.key.in(openingKeys) }
       .order { $0.position.asc() }.limit(1).select(\.position).fetchOne(db)
-  }
-
-  /// The opening's texts as stored, in position order; a generation that kept no room for it has none.
-  static func opening(_ key: String, generation: Int64, in db: Database) throws -> [String] {
-    try SessionLineRow.where { $0.sessionID.eq(key) && $0.generation.eq(generation) && $0.key.in(openingKeys) && $0.position.lte(Int64(openingKeys.count)) }
-      .order { $0.position.asc() }.select(\.message).fetchAll(db).map { message in
-        guard case let .user(user) = try decode(Message.self, from: message), case let .text(text)? = user.content.first else {
-          preconditionFailure("an opening line is one user-role text")
-        }
-        return text.text
-      }
   }
 
   private static func lastLine(_ key: String, generation: Int64, in db: Database) throws -> Int64? {

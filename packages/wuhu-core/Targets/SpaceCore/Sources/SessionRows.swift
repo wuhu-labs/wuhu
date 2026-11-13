@@ -161,7 +161,7 @@ public struct SessionRows {
     if let transition { try Sessions.commitRouteTransition(key, transition: transition, in: db) }
     try Sessions.openGeneration(key, generation: generation + 1, in: db)
     try Sessions.appendLines(key, generation: generation + 1, lines + after, in: db)
-    try SessionPrompts.advance(key, in: db)
+    try SessionPrompts.invalidate(key, in: db)
     return Int(generation) + 1
   }
 
@@ -187,31 +187,6 @@ public struct SessionRows {
     if record.work == .errored {
       try db.execute(sql: "UPDATE sessions SET work = 'no_work' WHERE id = ?", arguments: [key])
     }
-  }
-
-  public func markErrored(_ id: SessionID, message: String) throws {
-    let key = id.rawValue
-    let now = now
-    let record: SessionRecord?
-    do {
-      record = try Sessions.record(key, in: db)
-    } catch where isUnreadableSessionData(error) {
-      record = nil
-    }
-    try db.execute(
-      sql: """
-      UPDATE sessions SET work = 'errored', error_message = ?, last_activity_at = ?,
-          run_state = 'no_run', run_progress_at = NULL
-      WHERE id = ?
-      """,
-      arguments: [message, now, key],
-    )
-    let said = try record.flatMap { _ in
-      try Sessions.transcriptLines(key, generation: try Sessions.runtime(key, in: db).generation, in: db).last { $0.role == .assistant }?.line().message.text
-    }
-    try Notifications.fireErrored(key, error: message, said: said, now: now, in: db)
-    let runtime = store.runtime
-    db.afterNextTransaction { _ in runtime.poke(person: Notifications.ownerRecipient) }
   }
 
   /// `title` is already usable (``SessionStore/usableTitle(_:)``).
@@ -258,11 +233,5 @@ public struct SessionRows {
     if let parent = record.parent, try Sessions.record(parent.rawValue, in: db).lifecycle == .live {
       try SessionStore.watchChildren(parent, now: SQLiteDateFormat.string(from: nowDate), runtime: store.runtime, in: db)
     }
-  }
-}
-
-extension SessionStore {
-  func rows<T: Sendable>(_ body: @escaping @Sendable (SessionRows) throws -> T) async throws -> T {
-    try await writer.write { db in try body(SessionRows(db: db, store: self)) }
   }
 }

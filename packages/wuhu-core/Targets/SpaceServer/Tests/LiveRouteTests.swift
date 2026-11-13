@@ -1,6 +1,7 @@
 import ControlledTime
 import Dependencies
 import Fetch
+import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -59,6 +60,7 @@ struct LiveRouteTests {
     let harness = try Harness()
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let (reader, owner) = try await withSessionDeps {
+      _ = try await SessionToolFixture(space: harness.space)
       let reader = try await harness.space.sessions.createSession(group: .shared, title: "reader", kind: .task, createdBy: "owner", executor: model)
       let owner = try await harness.space.sessions.createSession(group: .shared, title: "owner", kind: .task, createdBy: "owner", executor: model)
       return (reader, owner)

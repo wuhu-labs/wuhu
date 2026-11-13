@@ -463,16 +463,10 @@ public struct CreateSessionResult: Hashable, Sendable, Codable {
   public var sessionID: SessionID
   public var title: String
   public var requestID: RequestID?
-  // Only on the receipt recorded with the new session: true while its
-  // template's files are still owed to its home, so a replay of the same call
-  // clones them instead of answering with a half-made session.
-  public var cloneOwed: Bool?
-
-  public init(sessionID: SessionID, title: String, requestID: RequestID? = nil, cloneOwed: Bool? = nil, modelGroup: String? = nil, member: String? = nil, provider: String? = nil, model: String? = nil) {
+  public init(sessionID: SessionID, title: String, requestID: RequestID? = nil, modelGroup: String? = nil, member: String? = nil, provider: String? = nil, model: String? = nil) {
     self.sessionID = sessionID
     self.title = title
     self.requestID = requestID
-    self.cloneOwed = cloneOwed
     self.modelGroup = modelGroup
     self.member = member
     self.provider = provider

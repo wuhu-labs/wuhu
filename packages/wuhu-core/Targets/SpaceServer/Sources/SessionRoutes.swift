@@ -95,6 +95,7 @@ func addSessionRoutes(
       if let template {
         do {
           try await space.applySessionTemplate(template, to: id)
+          try await store.invalidatePromptRevision(id)
         } catch {
           return errorResponse(
             .internalServerError,
@@ -371,7 +372,7 @@ func addSessionRoutes(
     if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
     do {
       // What the session's prompt holds, in its order, as of its prompt revision.
-      let home = try await space.sessionHome(id, at: try await store.promptRevision(id))
+      let home = try await space.sessionHome(id, at: try await store.promptRevisions(id))
       let layers = [SystemFiles.instructions, home.groupLayer, SystemFiles.session, home.home]
       let listed = InstructionScope.listings(layers, for: PromptSession(try await store.record(id))).joined()
       return try Response.json(SessionHomeOutput(

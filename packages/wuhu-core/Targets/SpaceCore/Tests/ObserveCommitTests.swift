@@ -8,7 +8,7 @@ import Testing
   @Test func recursiveDeleteIsOneFilteredCommitLiveAndReplayed() async throws {
     let space = try makeSpace()
     for name in ["a", "b", "c"] { _ = try await space.writeText("/dir/\(name).md", name) }
-    let start = try await space.currentRevision()
+    let start = try await space.currentRevision(in: .shared)
     let stream = try await space.observeFS(glob: "/dir/**", group: .shared)
     try await space.fs(.shared).delete("/dir", ifMatch: nil)
     var live = stream.makeAsyncIterator()
@@ -32,7 +32,7 @@ import Testing
     for index in 1 ... 200 {
       _ = try await space.writeText("/file\(index)", "content")
     }
-    #expect(try await space.currentRevision() == 200)
+    #expect(try await space.currentRevision(in: .shared) == 200)
     var iterator = stalled.makeAsyncIterator()
     for index in 1 ... 200 {
       let commit = try #require(await iterator.next())
@@ -62,7 +62,7 @@ import Testing
     for race in 0 ..< 100 {
       for name in ["a", "b", "c"] { _ = try await space.writeText("/dir\(race)/\(name)", name) }
     }
-    let start = try await space.currentRevision()
+    let start = try await space.currentRevision(in: .shared)
     let stream = try await space.observeFS(glob: "**", group: .shared)
     let commits = Collector<FSCommit>()
     let consumer = Task { for await commit in stream { await commits.append(commit) } }
@@ -89,7 +89,7 @@ import Testing
     for race in 0 ..< 100 {
       for name in ["a", "b", "c"] { _ = try await space.writeText("/dir\(race)/\(name)", name) }
     }
-    let start = try await space.currentRevision()
+    let start = try await space.currentRevision(in: .shared)
     let writes = Task {
       for race in 0 ..< 100 { try await space.fs(.shared).delete("/dir\(race)", ifMatch: nil) }
     }
