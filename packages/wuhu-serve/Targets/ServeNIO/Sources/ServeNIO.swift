@@ -32,6 +32,42 @@ public struct ServeNIOConnectionContext: Sendable {
   }
 }
 
+/// What the graceful wait knows about a request it leaves to the shutdown. Only the requests it
+/// tracks are listed: a streaming response whose handler already returned, an upgraded socket and
+/// the HTTP/2 parent connection (which serves no request itself) are not.
+public struct ServeNIOInFlightRequest: Sendable, Equatable {
+  public enum Activity: String, Sendable {
+    /// The head is read and the body is still arriving.
+    case receivingRequest
+    /// The head is read and the response has not finished: the handler runs, or its buffered
+    /// response is still being written (possibly blocked on the client). ServeNIO does not track
+    /// a response's start, so a slow backend and a slow client look the same here.
+    case awaitingResponse
+  }
+
+  public var method: String
+  public var path: String
+  public var version: String
+  public var age: Duration
+  public var activity: Activity
+
+  public init(method: String, path: String, version: String, age: Duration, activity: Activity) {
+    self.method = method
+    self.path = path
+    self.version = version
+    self.age = age
+    self.activity = activity
+  }
+}
+
+/// How the graceful wait ended: the requests answered, the bound ran out on them, or the wait
+/// itself was cancelled.
+public enum ServeNIOGracefulDrainOutcome: Sendable {
+  case drained(after: Duration)
+  case boundExpired(ending: [ServeNIOInFlightRequest])
+  case cancelled(after: Duration, leaving: [ServeNIOInFlightRequest])
+}
+
 public struct ServeNIOHooks: Sendable {
   public var onDidBind: @Sendable (SocketAddress) -> Void
   public var onStartupFailure: @Sendable (any Error) -> Void
@@ -40,6 +76,7 @@ public struct ServeNIOHooks: Sendable {
   public var onDidAcceptConnection: @Sendable (ServeNIOConnectionContext) -> Void
   public var onConnectionError: @Sendable (ServeNIOConnectionContext, any Error) -> Void
   public var onHandlerError: @Sendable (ServeNIOConnectionContext, any Error) -> Void
+  public var onGracefulDrain: @Sendable (ServeNIOGracefulDrainOutcome) -> Void
 
   public init(
     onDidBind: @escaping @Sendable (SocketAddress) -> Void = { _ in },
@@ -49,6 +86,7 @@ public struct ServeNIOHooks: Sendable {
     onDidAcceptConnection: @escaping @Sendable (ServeNIOConnectionContext) -> Void = { _ in },
     onConnectionError: @escaping @Sendable (ServeNIOConnectionContext, any Error) -> Void = { _, _ in },
     onHandlerError: @escaping @Sendable (ServeNIOConnectionContext, any Error) -> Void = { _, _ in },
+    onGracefulDrain: @escaping @Sendable (ServeNIOGracefulDrainOutcome) -> Void = { _ in },
   ) {
     self.onDidBind = onDidBind
     self.onStartupFailure = onStartupFailure
@@ -57,6 +95,7 @@ public struct ServeNIOHooks: Sendable {
     self.onDidAcceptConnection = onDidAcceptConnection
     self.onConnectionError = onConnectionError
     self.onHandlerError = onHandlerError
+    self.onGracefulDrain = onGracefulDrain
   }
 }
 
@@ -276,20 +315,36 @@ public final class ServeNIOServer: @unchecked Sendable {
   /// set; past it they are ended with the streams, sockets and idle connections
   /// below, as they were before a graceful drain existed.
   private func waitForRequestsToFinish() async {
+    let started = NIODeadline.now()
     guard let drain = self.drain else {
       await self.state.waitForRequestsToFinish()
+      self.hooks.onGracefulDrain(.drained(after: elapsed(since: started)))
       return
     }
-    await withTaskGroup(of: Void.self) { group in
+    let expired = await withTaskGroup(of: Bool.self) { group in
       group.addTask {
         await self.state.waitForRequestsToFinish()
+        return false
       }
       group.addTask {
-        try? await drain.wait(drain.timeout)
+        do { try await drain.wait(drain.timeout) } catch { return false }
+        return true
       }
-      await group.next()
+      let expired = await group.next()!
       group.cancelAll()
+      return expired
     }
+    if Task.isCancelled {
+      self.hooks.onGracefulDrain(.cancelled(after: elapsed(since: started), leaving: self.state.inFlightRequests()))
+    } else if expired {
+      self.hooks.onGracefulDrain(.boundExpired(ending: self.state.inFlightRequests()))
+    } else {
+      self.hooks.onGracefulDrain(.drained(after: elapsed(since: started)))
+    }
+  }
+
+  private func elapsed(since start: NIODeadline) -> Duration {
+    .nanoseconds(max(0, (NIODeadline.now() - start).nanoseconds))
   }
 
   /// The largest last stream ID, so every stream already open still gets its
@@ -516,9 +571,25 @@ final class ServeNIOServerState: @unchecked Sendable {
     let continuation: CheckedContinuation<Void, Never>
   }
 
+  private struct ServedRequest {
+    let method: String
+    let path: String
+    let version: String
+    let startedAt: NIODeadline
+
+    func inFlight(activity: ServeNIOInFlightRequest.Activity) -> ServeNIOInFlightRequest {
+      ServeNIOInFlightRequest(
+        method: method, path: path, version: version,
+        age: .nanoseconds(max(0, (NIODeadline.now() - startedAt).nanoseconds)),
+        activity: activity,
+      )
+    }
+  }
+
   private struct ActiveConnection {
     let channel: ChannelBox
     let activity: ConnectionActivity
+    var served: ServedRequest?
     var task: Task<Void, Never>?
     var channelClosed = false
     var taskCompleted = false
@@ -595,6 +666,24 @@ final class ServeNIOServerState: @unchecked Sendable {
     self.withLock { $0.connections[id]?.http2Connection = true }
   }
 
+  /// The head a connection is serving, kept for the per-request lines a drain bound reports.
+  func requestBegan(id: Int, method: String, path: String, version: String) {
+    self.withLock { state in
+      state.connections[id]?.served = ServedRequest(method: method, path: path, version: version, startedAt: .now())
+    }
+  }
+
+  /// The requests the drain still waits on, each with what the connection knows about it.
+  func inFlightRequests() -> [ServeNIOInFlightRequest] {
+    self.withLock { state in
+      state.connections.values.compactMap { connection in
+        guard Self.isRequestInFlight(connection), let served = connection.served else { return nil }
+        let activity: ServeNIOInFlightRequest.Activity = connection.activity.phase == .receivingRequest ? .receivingRequest : .awaitingResponse
+        return served.inFlight(activity: activity)
+      }
+    }
+  }
+
   /// Admits a request the connection holds: refused once the drain has begun,
   /// so no handler starts behind the shutdown wait. Whatever stream the
   /// connection wrote before has ended.
@@ -623,6 +712,7 @@ final class ServeNIOServerState: @unchecked Sendable {
   func requestDidPark(id: Int, generation: Int) {
     let requestWaiters = self.withLock { state -> [CheckedContinuation<Void, Never>] in
       state.connections[id]?.activity.parkIfCurrent(generation: generation)
+      if state.connections[id]?.activity.phase == .idle { state.connections[id]?.served = nil }
       return self.takeRequestWaitersIfNeeded(state: &state)
     }
     self.resume(requestWaiters)
@@ -1108,6 +1198,12 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
       try self.validateHeadLimits(head)
       let (request, bodyBuffer) = try self.makeRequest(from: head, channel: context.channel)
       let generation = self.activity.beginRequest()
+      self.serverState.requestBegan(
+        id: self.connectionID,
+        method: head.method.rawValue,
+        path: request.url.path,
+        version: head.version.major == 2 ? "HTTP/2" : "HTTP/\(head.version.major).\(head.version.minor)",
+      )
       self.currentBody = bodyBuffer
       self.requestsContinuation.yield(
         InboundRequest(

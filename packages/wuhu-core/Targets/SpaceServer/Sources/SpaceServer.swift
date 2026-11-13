@@ -438,6 +438,30 @@ public enum SpaceServer {
     // requests already running five seconds, then ends them with the streams.
     @Dependency(\.continuousClock) var drainClock
     options.gracefulDrain = .init(timeout: .seconds(5)) { try await drainClock.sleep(for: $0) }
+    var hooks = hooks
+    let upstreamDrain = hooks.onGracefulDrain
+    hooks.onGracefulDrain = { outcome in
+      upstreamDrain(outcome)
+      switch outcome {
+      case let .drained(after):
+        logger.notice("graceful drain ended", metadata: ["duration_ms": "\(after.milliseconds)"])
+      case let .cancelled(after, leaving):
+        logger.warning("graceful drain wait cancelled", metadata: [
+          "duration_ms": "\(after.milliseconds)",
+          "remaining": "\(leaving.count)",
+        ])
+      case let .boundExpired(ending):
+        for request in ending {
+          logger.warning("graceful drain reached its bound: ending a request", metadata: [
+            "method": "\(request.method)",
+            "path": "\(request.path)",
+            "version": "\(request.version)",
+            "age_ms": "\(request.age.milliseconds)",
+            "activity": "\(request.activity.rawValue)",
+          ])
+        }
+      }
+    }
     let api: ServeNIOServer
     do {
       api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
@@ -620,5 +644,12 @@ func inProcessDial(api: @escaping UpgradingHandler, hub: MachineHub) -> @Sendabl
     case .boundedWebSocket:
       throw SpaceClient.DialRefusal(status: 422, body: Array(#"{"code":"unsupported","message":"exec requires a frame WebSocket transport"}"#.utf8))
     }
+  }
+}
+
+extension Duration {
+  fileprivate var milliseconds: Int64 {
+    let parts = self.components
+    return parts.seconds * 1000 + Int64(parts.attoseconds / 1_000_000_000_000_000)
   }
 }

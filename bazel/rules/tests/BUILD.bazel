@@ -10,7 +10,10 @@ platform_floor_tests(name = "platform-floor-test")
 
 wuhu_swift_test(
     name = "runner-test",
-    srcs = ["RunnerTests.swift"],
+    srcs = [
+        "ExitTestChildTests.swift",
+        "RunnerTests.swift",
+    ],
     deps = [
         "//packages/wuhu-test-support:TestRunner",
         "@swiftpkg_swift_issue_reporting//:IssueReportingTestSupport",
