@@ -28,7 +28,7 @@ import Testing
     try await database.write { db in
       try Self.create036Fixture(in: db)
       try LegacyMachineSchema.create(in: db)
-      try Migration011.apply(db)
+      try Migration011.apply(.init(db))
       try db.execute(sql: """
       INSERT INTO machine_v2_operations VALUES
         ('opaque', 'shared', 'script', 'read', 'box', 'c1', 'digest', 1, 'opaque-sealed-record', 1, 1024, 'now'),
@@ -48,7 +48,7 @@ import Testing
     }
     let before = try await snapshot(database, columns: columns)
     let originalShape = try MigrationTests.schemaShape(database)
-    try await database.write { db in try Migration038.apply(db) }
+    try await database.write { db in try Migration038.apply(.init(db)) }
     #expect(try await snapshot(database, columns: columns) == before)
     let upgradedShape = try MigrationTests.schemaShape(database)
     #expect(Set(upgradedShape.tables.keys) == Set(tables))

@@ -26,7 +26,7 @@ import Testing
       title: "coder", kind: .task, parent: parent, createdBy: parent.rawValue,
       executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
     )
-    return Tree(harness: harness, parent: parent, task: task, person: try await harness.adoptPersona())
+    return Tree(harness: harness, parent: parent, task: task, person: try await harness.space.ensureDevPerson().persona)
   }
 
   func code(_ response: Response) async throws -> String? {

@@ -13,7 +13,7 @@ import Testing
   ])
 
   @Test func configuredDiscoveryAndCodableCompatibility() async throws {
-    let h = try Harness(dev: false, aiDisclosure: disclosure)
+    let h = try await Harness(dev: false, aiDisclosure: disclosure)
     let response = try await h.api(Request(url: URL(string: "https://localhost/v1/server")!))
     #expect(response.status == .ok)
     let data = Data(try await response.text().utf8)
@@ -26,7 +26,7 @@ import Testing
   }
 
   @Test func unconfiguredDiscoveryIsByteIdentical() async throws {
-    let h = try Harness(dev: false, origin: "https://space.test")
+    let h = try await Harness(dev: false, origin: "https://space.test")
     let identity = try await h.space.identity().rawValue
     let response = try await h.api(Request(url: URL(string: "https://space.test/v1/server")!))
     #expect(try await response.text() == "{\"space\":\"\(identity)\",\"origin\":\"https://space.test\",\"contentBase\":\"space.test\",\"features\":[\"groups\",\"observe-batch\",\"watch-batch\"],\"group\":\"shared\",\"now\":1700000000.0}")

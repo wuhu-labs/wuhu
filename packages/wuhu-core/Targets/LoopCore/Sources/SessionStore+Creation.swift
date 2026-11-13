@@ -77,9 +77,9 @@ extension SessionStore {
     case let .page(page):
       label = page.path.rawValue
       allowed = false
-    case .anonymous:
-      label = "anonymous"
-      allowed = true
+    case .publicReader:
+      label = "public reader"
+      allowed = false
     }
     guard allowed else { throw SessionStoreError.mayNotArchive(target.rawValue, actor: label) }
   }

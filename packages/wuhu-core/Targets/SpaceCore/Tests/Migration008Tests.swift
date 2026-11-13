@@ -9,12 +9,8 @@ import Testing
 // A space from before migration 008: request state lived on messages
 // (`deadline_at`) and in the fold of finals, with no `requests` table.
 @Suite(.deterministicDependencies) struct Migration008Tests {
-  /// The space and every second connection of a test wait for each other: a memory database's readers hold transactions its writer meets.
   private func memoryConfiguration() -> Configuration {
-    var configuration = Configuration()
-    configuration.foreignKeysEnabled = true
-    configuration.busyMode = .timeout(5)
-    return configuration
+    Space.makeConfiguration(journalMode: .default)
   }
 
   private func database() throws -> DatabaseQueue {
@@ -99,7 +95,7 @@ import Testing
     let backfill = try await connection(to: database).writeWithoutTransaction { db in
       var backfill: Migration008.Backfill?
       try db.inTransaction {
-        backfill = try Migration008.run(db)
+        backfill = try Migration008.run(.init(db))
         return .rollback
       }
       return backfill

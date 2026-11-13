@@ -117,6 +117,7 @@ data: {}
       #expect(bodies.value[1].object?["output_config"]?.object?["effort"] == .string("low"))
       #expect(bodies.value[1].object?["output_config"]?.object?["format"]?.object?["schema"]?.object?["required"] == .array([.string("relevant")]))
       #expect(bodies.value[1].object?["system"] == .string("Return JSON"))
+      try await rig.deliverInferences()
       let records = try #require(try await rig.evaluate(#"import {query} from 'wuhu:space'; result(await query('SELECT * FROM "wuhu://*.localspace/inferences"'))"#).array)
       #expect(records.count == 2)
       for record in records {
@@ -144,6 +145,7 @@ data: {}
       try await rig.write("/models.json", completionModels)
       #expect(try await rig.evaluate(#"import { complete } from 'wuhu:ai'; try { await complete('hello',{model:'offline/small'}) } catch(e) { result([e.name,e.code]) }"#) == .array([.string("CompletionError"), .string("inferenceFailed")]))
       #expect(calls.value == 1)
+      try await rig.deliverInferences()
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
       #expect(record.object?["session"]?.stringValue == rig.session.rawValue)
       #expect(record.object?["outcome"]?.stringValue == "httpError")
@@ -221,6 +223,7 @@ data: {}
       }, oidcBindingIdentity: { _, _ in "completion-oidc-fixture" }))
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       #expect(try await tools.complete(.session(rig.session), request) == #"{"relevant":true}"#)
+      try await rig.deliverInferences()
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT session, provider, input, outcome FROM inferences'))[0])"#)
       #expect(record == .object(["session": .string(rig.session.rawValue), "provider": .string("offline"), "input": .integer(10), "outcome": .string("ok")]))
     }
@@ -244,6 +247,7 @@ data: {}
     try await withRig(fetch: fetch, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }) { rig in
       try await rig.write("/models.json", completionModels)
       #expect(try await rig.evaluate(#"import {complete} from 'wuhu:ai'; try { await complete('hello',{model:'offline/small',schema:{type:'object'}}) } catch(e) { result(e.code) }"#) == .string("inferenceFailed"))
+      try await rig.deliverInferences()
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
       #expect(record.object?["outcome"] == .string("httpError"))
       #expect(record.object?["error"] == .string("malformedModelMessage"))
@@ -258,6 +262,7 @@ data: {}
       let tools = ToolExecutor(main: rig.worker.tools.main, credential: rig.worker.tools.credential, access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       await #expect(throws: CancellationError.self) { try await tools.complete(.session(rig.session), request) }
+      try await rig.deliverInferences()
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
       #expect(record.object?["outcome"] == .string("cancelled"))
       #expect(record.object?["session"] == .string(rig.session.rawValue))
@@ -287,6 +292,7 @@ data: {}
       let seen = try #require(JSONValue.parse(result.wakes.last ?? "")?.object)
       #expect(seen["session"] == .string(rig.session.rawValue))
       #expect(seen["text"] == .string(#"{"relevant":true}"#))
+      try await rig.deliverInferences()
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
       #expect(record.object?["session"] == .string(rig.session.rawValue))
       #expect(record.object?["model"] == .string("small"))

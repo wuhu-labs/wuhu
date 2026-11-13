@@ -1,6 +1,10 @@
 import ControlledTime
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import JSONValue
 @testable import LoopCore
@@ -123,7 +127,7 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
       second.start()
       await first.quiesce()
 
-      _ = try await second.retitle(sid, to: "after")
+      try await second.interrupt(sid)
       for _ in 0 ..< 15 {
         await time.advance(by: 1)
         let renewedPast = (old.worker.scheduler.now + .seconds(9)).milliseconds
@@ -135,17 +139,23 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
         }
       }
       #expect(new.worker.hasMail(for: cell.recipient))
-      #expect(try await new.sessions.record(sid).title == "before")
-      await #expect(throws: Evicted.self) {
-        try await new.worker.call(cell) { _ in true }
+      #expect(try await new.sessions.record(sid).hold == .normal)
+      let called = Box(false)
+      let held = Task {
+        let value = try await new.worker.call(cell) { _ in true }
+        called.withLock { $0 = true }
+        return value
       }
+      try await holds("the call waits for the quiesced holder to release") { !called.value }
 
       await first.shutdown()
       await time.advance(by: 2)
       try await until("the new worker takes the released session and its mail") {
-        try await new.sessions.record(sid).title == "after"
+        try await new.sessions.record(sid).hold == .interrupted
       }
       #expect(!new.worker.hasMail(for: cell.recipient))
+      #expect(try await held.value)
+      #expect(called.value)
       #expect(try await new.worker.call(cell) { _ in true })
       await second.shutdown()
     }
@@ -473,19 +483,13 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
     try await until("the held turn settles") {
       if try await old.sessions.settledWork(sid) { return true }
       if advanced < scans, time.sleeping(dueIn: 1) > 0, clock.now - last > .milliseconds(100),
-         try await pendingSessionMail(sid, old)
+         old.worker.hasMail(for: SessionCell.ID(sid.rawValue).recipient)
       {
         await time.advance(by: 1)
         advanced += 1
         last = clock.now
       }
       return false
-    }
-  }
-
-  private func pendingSessionMail(_ sid: SessionID, _ space: Space) async throws -> Bool {
-    try await space.writer.read { db in
-      try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["\(SessionMail.kind)/\(sid.rawValue)"]) ?? false
     }
   }
 

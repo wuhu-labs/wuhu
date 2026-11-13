@@ -13,6 +13,7 @@ struct PersonaRow {
   var pubkey: String
   @Column("account_id") var accountID: String
   @Column("created_at") var createdAt: String
+  var owner: String
 
   var record: PersonaRecord { PersonaRecord(name: name, key: pubkey, account: AccountID(rawValue: accountID)) }
 }
@@ -50,7 +51,7 @@ extension PersonCell {
   mutating func adoptPersona(key: KeyRecord, allocation: Int64, name: String, at now: Date) throws -> PersonaRecord {
     if let existing = persona() { return existing }
     try requireAccount()
-    let row = PersonaRow(name: name, allocation: allocation, pubkey: key.pubkey, accountID: id.key, createdAt: SQLiteDateFormat.string(from: now))
+    let row = PersonaRow(name: name, allocation: allocation, pubkey: key.pubkey, accountID: id.key, createdAt: SQLiteDateFormat.string(from: now), owner: id.key)
     try db.execute(PersonaRow.insert { row })
     return row.record
   }

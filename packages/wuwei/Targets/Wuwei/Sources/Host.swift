@@ -88,6 +88,7 @@ final class Incarnation {
   }
 
   private var open: Open?
+  private var reading: ReadSpan?
   private var callFailure: (any Error)?
   private var joinedStep = false
   private var stretch: (any SharedTransaction)? {
@@ -136,7 +137,7 @@ final class Incarnation {
     self.lifecycle = lifecycle
     if worker.store.file != nil {
       let store = worker.store
-      let file = PageFile(pageCount: pageCount, writable: true) { try store.page(lease.id, $0) }
+      let file = PageFile(pageCount: pageCount, writable: true) { try store.stepPage(lease.id, $0) }
       tables = try .layered(file, Connection(file: file, owner: key))
     } else {
       tables = .shared
@@ -148,9 +149,9 @@ final class Incarnation {
     writes.append(write)
   }
 
-  /// A closure inside a job's `start` can leave the lane with the job's context and the compiler says nothing (swift#87503): a write from there traps rather than corrupt the incarnation.
+  /// A closure inside a job's `start` can leave the lane with the job's context and the compiler says nothing (swift#87503): accessing the live context from there traps rather than corrupt the incarnation.
   private func onLane() {
-    host?.preconditionIsolated("\(address) wrote off its lane")
+    host?.preconditionIsolated("\(address) accessed its live context off its lane")
   }
 
   func output(_ output: Output) {
@@ -166,27 +167,58 @@ final class Incarnation {
     }
   }
 
-  var hostConnection: AnyObject? {
-    connection?.host
+  private var readSpan: ReadSpan {
+    if let reading { return reading }
+    let span = ReadSpan(worker.store)
+    reading = span
+    return span
   }
 
-  /// A read as `owner` on the shared step open now, `nil` when none is: a read handle taken inside a step reads here, since the outer store's reader would wait on the write this step holds.
-  func readOpen(as owner: String, _ sql: String, _ arguments: [Value]) -> [Row]? {
-    guard case .shared = tables else { return nil }
-    do { return try accessOpen(as: owner) { $0.read(sql, arguments) } }
-    catch { preconditionFailure("\(sql): \(error)") }
+  func prepare<Target: Addressable>(_ type: Target.Type) {
+    onLane()
+    if case .shared = tables, open != nil {
+      worker.store.prepare(kind: type.kind, schema: type.schema, owned: type.owned, within: self)
+    } else {
+      readSpan.prepare(type)
+    }
+  }
+
+  private func finishReading() {
+    reading?.close()
+    reading = nil
+  }
+
+  func read(_ target: ReadTarget, _ sql: String, _ arguments: [Value]) -> [Row] {
+    onLane()
+    if case .shared = tables {
+      do {
+        if let rows = try accessOpen(as: target.owner, { $0.read(sql, arguments) }) { return rows }
+      } catch { preconditionFailure("\(sql): \(error)") }
+    } else if target.address == address {
+      return connection!.read(sql, arguments)
+    }
+    return readSpan.read(target, sql, arguments)
+  }
+
+  func readOuter(_ sql: String, _ arguments: [Value]) -> [Row] {
+    onLane()
+    if case .shared = tables {
+      do {
+        if let rows = try accessOpen({ $0.read(sql, arguments) }) { return rows }
+      } catch { preconditionFailure("\(sql): \(error)") }
+    }
+    return readSpan.rows(sql, arguments)
   }
 
   func accessOpen<T: Sendable>(as owner: String? = nil, _ body: @Sendable (Connection) throws -> T) throws -> T? {
     if let stretch {
-      let database = worker.store.database
       let owner = owner ?? key
       do {
-        return try stretch.access { handle, host in
-          try OuterStore.borrow(database, handle: handle, host: host, owner: owner, body)
+        return try stretch.access { handle in
+          try OuterStore.borrow(handle: handle, owner: owner, body)
         }
       } catch {
-        let active = try stretch.access { handle, _ in Connection(borrowing: handle).inTransaction }
+        let active = try stretch.access { handle in Connection(borrowing: handle).inTransaction }
         guard active else {
           fail(TransactionEnded(cause: error))
           throw Evicted(address: address)
@@ -204,10 +236,11 @@ final class Incarnation {
   }
 
   func read(_ sql: String, _ arguments: [Value]) -> [Row] {
+    onLane()
     if let connection { return connection.read(sql, arguments) }
     do {
       if let rows = try accessOpen({ $0.read(sql, arguments) }) { return rows }
-      return try worker.store.read(owner: key) { $0.read(sql, arguments) }
+      return readSpan.rows(sql, arguments, owner: key)
     } catch { preconditionFailure("\(sql): \(error)") }
   }
 
@@ -217,6 +250,7 @@ final class Incarnation {
     if let connection { return connection.write(sql, arguments) }
     do {
       if stretch == nil {
+        finishReading()
         Lane.preconditionNoWriter("begin another writer transaction")
         open = .stretch(try worker.store.database.begin())
         Lane.beganWriter()
@@ -229,6 +263,7 @@ final class Incarnation {
   }
 
   func returned() {
+    finishReading()
     guard let transaction = stretch else { return }
     let epoch = Epoch(address: address, lease: lease, number: sealed + 1, pages: [:], pageCount: 0, writes: writes)
     let store = worker.store
@@ -236,8 +271,8 @@ final class Incarnation {
     let duration = worker.options.leaseDuration
     let owner = key
     do {
-      try transaction.access { handle, host in
-        try OuterStore.borrow(store.database, handle: handle, host: host, owner: owner) { db in
+      try transaction.access { handle in
+        try OuterStore.borrow(handle: handle, owner: owner) { db in
           precondition(db.inTransaction, "a job stretch lost its transaction before committing staged work")
           try store.commit(epoch, on: db, now: now, leaseDuration: duration)
         }
@@ -263,6 +298,8 @@ final class Incarnation {
   func step<T>(_ body: () throws -> T) throws -> T {
     onLane()
     guard !dead else { throw Evicted(address: address) }
+    finishReading()
+    defer { finishReading() }
     let staged = writes.count
     guard case .shared = tables else {
       do {

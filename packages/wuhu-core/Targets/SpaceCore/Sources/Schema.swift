@@ -20,7 +20,7 @@ struct FSVersionRow {
 }
 
 @Table("fs_heads")
-struct FSHeadRow {
+struct FSHeadRow: Codable, Sendable {
   @Column("grp") var grp: String
   @Column("path") var path: String
   @Column("parent_path") var parentPath: String
@@ -34,7 +34,7 @@ struct FSHeadRow {
 }
 
 @Table("docs")
-struct DocRow {
+struct DocRow: Codable, Sendable {
   @Column("grp") var grp: String
   @Column("path") var path: String
   @Column("title") var title: String
@@ -43,7 +43,7 @@ struct DocRow {
 }
 
 @Table("links")
-struct LinkRow {
+struct LinkRow: Codable, Sendable {
   @Column("grp") var grp: String
   @Column("src") var src: String
   @Column("dst_grp") var dstGroup: String
@@ -51,7 +51,7 @@ struct LinkRow {
 }
 
 @Table("doc_custom_attrs")
-struct DocCustomAttrRow {
+struct DocCustomAttrRow: Codable, Sendable {
   @Column("grp") var grp: String
   @Column("path") var path: String
   @Column("name") var name: String
@@ -88,7 +88,6 @@ struct TableRowRow {
 struct MachineRow {
   @Column("id", primaryKey: true) var id: String
   @Column("account_id") var accountID: String
-  @Column("name") var name: String?
   @Column("created_at") var createdAt: String
   @Column("grp") var grp: String
   @Column("scope") var scope: String

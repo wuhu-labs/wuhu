@@ -13,17 +13,17 @@ import StructuredQueries
 extension SessionStore {
   @discardableResult
   func archive(_ id: SessionID, grace: Duration) async throws -> Date {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.archive(id, grace: grace) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.archive(id, grace: grace) }
   }
 
   /// The cell's write of an input, which leaves the cell where it is: a test drains it by hand.
   func put(_ id: SessionID, input: QueueInput) async throws {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.put(id, SessionPut(input)) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.put(id, SessionPut(input)) }
   }
 
   @discardableResult
   func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.drainQueue(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.drainQueue(id) }
   }
 
   /// Returns once every person's cell has taken the mail on its way: what a push outbox reads is then there.
@@ -60,8 +60,11 @@ extension SessionStore {
   }
 
   /// Nothing to do, and no mail on its way to the session's cell.
+  ///
+  /// Mail first: a cell takes a mail row and writes what it causes in one step, so no mail seen means the work read next is the work that mail left.
   func settledWork(_ id: SessionID) async throws -> Bool {
-    try await record(id).work == .noWork && !space.worker.hasMail(for: SessionCell.ID(id.rawValue).recipient)
+    guard !space.worker.hasMail(for: SessionCell.ID(id.rawValue).recipient) else { return false }
+    return try await record(id).work == .noWork
   }
 
   /// Every input the session was sent, seen by its model or not, once its cell, which a worker runs, has taken its mail.
@@ -73,18 +76,18 @@ extension SessionStore {
   }
 
   func markInterrupted(_ id: SessionID) async throws {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.markInterrupted(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.markInterrupted(id) }
   }
 
   func markResumed(_ id: SessionID) async throws {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.markResumed(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.markResumed(id) }
   }
 
   @discardableResult
   func restart(_ id: SessionID, executor: SessionExecutor? = nil, note: String? = nil, modelRoute: SessionModelRoute? = nil, runningWork: [String] = []) async throws -> SessionRestart {
     @Dependency(\.uuid) var uuid
     let head = uuid()
-    let restart = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.restart(id, executor: executor, note: note, modelRoute: modelRoute, runningWork: runningWork, uuid: { head }) }
+    let restart = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.restart(id, executor: executor, note: note, modelRoute: modelRoute, runningWork: runningWork, uuid: { head }) }
     let hydration = try await hydrate(id)
     if hydration.queueHead > hydration.queueTail { try await look(id) }
     return restart
@@ -93,12 +96,12 @@ extension SessionStore {
   @discardableResult
   func setTitle(_ id: SessionID, to title: String) async throws -> String {
     let title = try SessionStore.usableTitle(title)
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.retitle(id, title) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.retitle(id, title) }
     return title
   }
 
   func unarchive(_ id: SessionID) async throws {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.unarchive(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.unarchive(id) }
   }
 }
 

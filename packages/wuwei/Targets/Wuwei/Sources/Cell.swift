@@ -64,18 +64,16 @@ public struct CellContext<Target: Cell> {
     reach.worker.dependency(type)
   }
 
-  /// Another cell's durable state, at one snapshot of the outer store. It lags that cell by its open epoch.
   public func cell<Other: Cell>(_ id: Other.ID) -> Other {
-    reach.worker.cell(id, within: reach.within)
+    reach.worker.cell(id, reading: reach.reading)
   }
 
   public func job<Other: Job>(_ id: Other.ID) -> Other {
-    reach.worker.job(id, within: reach.within)
+    reach.worker.job(id, reading: reach.reading)
   }
 
-  /// Whether the job was ever created, at the durable snapshot: one this call creates is not there yet.
   public func exists<Other: Job>(_ id: Other.ID) -> Bool {
-    reach.worker.exists(id, within: reach.within)
+    reach.worker.exists(id, reading: reach.reading)
   }
 
   /// Mail to another cell, durable once this call's epoch is: `ctx.send(id).deposit(42)`.
@@ -122,7 +120,7 @@ struct Reach {
   enum Writer {
     case incarnation(Incarnation)
     case outside
-    case none
+    case read(Reading)
   }
 
   let worker: Worker
@@ -133,9 +131,12 @@ struct Reach {
     return incarnation
   }
 
-  /// The incarnation whose step reads run in, if this is one.
-  var within: Incarnation? {
-    if case let .incarnation(incarnation) = writer { incarnation } else { nil }
+  var reading: Reading {
+    switch writer {
+    case let .incarnation(incarnation): .within(incarnation)
+    case let .read(reading): reading
+    case .outside: preconditionFailure("an outside sender has no read context")
+    }
   }
 
   func outbox<Message>(_ recipient: String) -> Outbox<Message> {
@@ -146,7 +147,7 @@ struct Reach {
     switch writer {
     case let .incarnation(incarnation): incarnation.record(.send(envelope))
     case .outside: worker.post(envelope)
-    case .none: preconditionFailure("a read handle cannot write")
+    case .read: preconditionFailure("a read handle cannot write")
     }
   }
 

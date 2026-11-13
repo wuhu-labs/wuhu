@@ -1,4 +1,6 @@
+import Assertion
 import ContentLane
+import Crypto
 import DeterministicDependencies
 import Fetch
 import FetchSSE
@@ -14,7 +16,7 @@ import Testing
 @Suite(.deterministicDependencies) struct ReadWallTests {
   @Test func anonymousContentReadsAreWalledOutsideDev() async throws {
     let providers = ["kanban.html": Data("<html>kanban</html>".utf8)]
-    let harness = try Harness(dev: false, views: providers)
+    let harness = try await Harness(dev: false, views: providers)
     _ = try await harness.direct("write", .object(["path": "/note.md", "content": "secret"]))
 
     for path in ["/note.md", "/", "/_/query", "/_/observe"] {
@@ -35,7 +37,7 @@ import Testing
   }
 
   @Test func aLiveReadSessionCookieAdmitsContentUntilLogoutOrExpiry() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     _ = try await harness.direct("write", .object(["path": "/note.md", "content": "secret"]))
     let account = try await harness.space.addAccount(kind: .human, name: "reader")
     let token = try await harness.space.createReadSession(account: account.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))
@@ -45,6 +47,25 @@ import Testing
     #expect(try await admitted.text() == "secret")
     // The page worker keys what it keeps by the account the cookie names.
     #expect(admitted.headers[HTTPField.Name("Wuhu-Viewer")!] == account.id.rawValue)
+    let signer = try await harness.space.addAccount(kind: .human, name: "other reader")
+    let key = Curve25519.Signing.PrivateKey()
+    _ = try await harness.space.addKey(key.pubkeyLabel, account: signer.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let identity = try await harness.space.identity().rawValue
+    let assertion = try AssertionClaims(key: key.pubkeyLabel, space: identity, expiresAt: fixedDate.addingTimeInterval(60)).signed(by: key)
+    var bearerOnly = Request(url: URL(string: "http://space/note.md")!)
+    bearerOnly.headers[.authorization] = "Bearer " + assertion.rawValue
+    #expect(try await harness.web(bearerOnly).status == .unauthorized)
+    for bearer in [assertion.rawValue, "stale"] {
+      var request = cookieGet("/note.md", cookie: "wuhu_read=" + token.rawValue)
+      request.headers[.authorization] = "Bearer " + bearer
+      let response = try await harness.web(request)
+      #expect(response.status == .ok)
+      #expect(response.headers[HTTPField.Name("Wuhu-Viewer")!] == account.id.rawValue)
+    }
+    let publicSpace = try await Harness(dev: false, publicRead: true)
+    var publicRead = Request(url: URL(string: "http://space/_/query?sql=SELECT%201")!)
+    publicRead.headers[.authorization] = "Bearer stale"
+    #expect(try await publicSpace.web(publicRead).status == .ok)
     let query = try await harness.web(cookieGet("/_/query?sql=SELECT%201", cookie: "wuhu_read=" + token.rawValue))
     #expect(query.status == .ok)
     #expect(query.headers[HTTPField.Name("Wuhu-Viewer")!] == account.id.rawValue)
@@ -66,7 +87,7 @@ import Testing
   }
 
   @Test func publicReadOpensContentReadsButNeverWrites() async throws {
-    let harness = try Harness(dev: false, publicRead: true)
+    let harness = try await Harness(dev: false, publicRead: true)
     _ = try await harness.direct("write", .object(["path": "/board.md", "content": "public"]))
 
     let content = try await harness.get(harness.web, "/board.md")
@@ -84,7 +105,7 @@ import Testing
   }
 
   @Test func unauthenticatedAPIRouteMatrix() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     let walled: [(HTTPRequest.Method, String)] = [
       (.post, "/v1/tools/read"),
       (.get, "/v1/observe"),
@@ -121,7 +142,7 @@ import Testing
     ]))
     #expect((try await json(shareLogin)).code == "keyInvalid")
     let hub = MachineHub(space: harness.space)
-    let handler = SpaceServer.configuredHandler(space: harness.space, hub: hub, dev: false, listenerRoutes: machineListenerRoutes(space: harness.space, hub: hub))
+    let handler = SpaceServer.configuredHandler(space: harness.space, hub: hub, devPerson: nil, listenerRoutes: machineListenerRoutes(space: harness.space, hub: hub, devPerson: nil))
     var headers = RequestHeaders()
     headers.set("connection", "Upgrade")
     headers.set("upgrade", "websocket")
@@ -138,7 +159,7 @@ import Testing
 
   @Test func theEmbeddedSPAChromeStaysReachableForLogin() async throws {
     let webApp = try #require(WebApp(files: ["index.html": Data("<html>spa</html>".utf8)]))
-    let harness = try Harness(dev: false, webApp: webApp)
+    let harness = try await Harness(dev: false, webApp: webApp)
 
     let enroll = try await harness.get(harness.api, "/_/enroll")
     #expect(enroll.status == .ok)
@@ -153,7 +174,7 @@ import Testing
   }
 
   @Test func devDropsBothWalls() async throws {
-    let harness = try Harness(dev: true)
+    let harness = try await Harness(dev: true)
     _ = try await harness.direct("write", .object(["path": "/note.md", "content": "open"]))
 
     let content = try await harness.get(harness.web, "/note.md")

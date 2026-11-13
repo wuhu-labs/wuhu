@@ -4,13 +4,10 @@
   import Foundation
 #endif
 
-import GRDB
 import GRDBSQLite
 import Logging
 import struct SpaceContract.GroupID
 import StructuredQueriesCore
-
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 private let multipleStatements =
   "Multiple statements found. To execute multiple statements, use Database.execute(sql:) or Database.allStatements(sql:) instead."
@@ -74,7 +71,7 @@ final class ReadConnection {
     guard code == SQLITE_OK, let handle else {
       let message = handle.map { String(cString: sqlite3_errmsg($0)) }
       if let handle { sqlite3_close_v2(handle) }
-      throw DatabaseError(resultCode: ResultCode(rawValue: code), message: message)
+      throw SQLiteFailure(code: code, message: message ?? "open :memory:")
     }
     self.handle = handle
     self.catalog = catalog
@@ -102,7 +99,7 @@ final class ReadConnection {
     sqlite3_create_function_v2(handle, "viewer", 0, SQLITE_UTF8, context, { invocation, _, _ in
       let gate = Unmanaged<Gate>.fromOpaque(sqlite3_user_data(invocation)!).takeUnretainedValue()
       if let viewer = gate.viewer {
-        sqlite3_result_text(invocation, viewer, -1, SQLITE_TRANSIENT)
+        sqlite3_result_text(invocation, viewer, -1, sqliteTransient)
       } else {
         sqlite3_result_null(invocation)
       }
@@ -147,7 +144,7 @@ final class ReadConnection {
     sqlite3_trace_v2(handle, 0, nil, nil)
     let code = sqlite3_close(handle)
     guard code == SQLITE_OK else {
-      throw DatabaseError(resultCode: ResultCode(rawValue: code), message: String(cString: sqlite3_errmsg(handle)))
+      throw SQLiteFailure(code: code, message: String(cString: sqlite3_errmsg(handle)))
     }
     closed = true
   }
@@ -161,7 +158,7 @@ final class ReadConnection {
 
   func run(
     _ sql: String,
-    arguments: [DatabaseValue],
+    arguments: [SQLValue],
     byteLimit: Int?,
     scope: ReadScope,
   ) throws -> (ReadRows, ReadTables) {
@@ -172,7 +169,7 @@ final class ReadConnection {
   }
 
   func run(
-    _ sql: String, arguments: [DatabaseValue],
+    _ sql: String, arguments: [SQLValue],
     resolving scope: (ReadSnapshot) throws -> ReadScope,
   ) throws -> (ReadRows, ReadTables) {
     try transaction(sql, scope: scope) { statement in
@@ -181,7 +178,7 @@ final class ReadConnection {
     }
   }
 
-  private func trustedRows(_ sql: String, arguments: [DatabaseValue]) throws -> ReadRows {
+  private func trustedRows(_ sql: String, arguments: [SQLValue]) throws -> ReadRows {
     var statement: OpaquePointer?
     let code = sqlite3_prepare_v2(handle, sql, -1, &statement, nil)
     guard code == SQLITE_OK, let statement else { throw failure(code, sql: sql) }
@@ -283,7 +280,7 @@ final class ReadConnection {
         throw prepareFailure(failure(code, sql: sql), sql)
       }
       guard let statement else {
-        throw prepareFailure(DatabaseError(resultCode: .SQLITE_ERROR, message: "empty statement", sql: sql), sql)
+        throw prepareFailure(SQLiteFailure(code: SQLITE_ERROR, message: "empty statement", sql: sql), sql)
       }
       do {
         try requireSingleStatement(after: tail, sql: sql)
@@ -301,7 +298,7 @@ final class ReadConnection {
     return try body(statement)
   }
 
-  // As GRDB compiles one statement: whatever follows the first must be empty,
+  // One statement at most: whatever follows the first must be empty,
   // and anything else, compilable or not, is a misuse.
   private func requireSingleStatement(after tail: UnsafePointer<CChar>?, sql: String) throws {
     let saved = gate.flags
@@ -314,7 +311,7 @@ final class ReadConnection {
       if let extra { sqlite3_finalize(extra) }
       guard code == SQLITE_OK, extra == nil, next != current else {
         gate.flags = saved
-        throw prepareFailure(DatabaseError(resultCode: .SQLITE_MISUSE, message: multipleStatements, sql: sql), sql)
+        throw prepareFailure(SQLiteFailure(code: SQLITE_MISUSE, message: multipleStatements, sql: sql), sql)
       }
       rest = next
     }
@@ -323,22 +320,22 @@ final class ReadConnection {
   // The gate's verdict outranks SQLite's own prepare error: a statement that
   // writes, or names a table outside the views, is refused as such even when
   // it is also broken.
-  private func prepareFailure(_ error: DatabaseError, _ sql: String) -> any Error {
-    if gate.wrote || error.message?.hasPrefix("cannot modify ") == true { return ReadError.notReadOnly }
+  private func prepareFailure(_ error: SQLiteFailure, _ sql: String) -> any Error {
+    if gate.wrote || error.message.hasPrefix("cannot modify ") { return ReadError.notReadOnly }
     if let table = SQLText.identifier(in: sql, among: forbiddenTables) { return ReadError.forbidden(table) }
     if !gate.denied.isEmpty { return ReadError.forbidden(gate.deniedList) }
-    if let name = error.message.flatMap(SQLText.unknownRelation) { return ReadError.unknownRelation(name) }
+    if let name = SQLText.unknownRelation(error.message) { return ReadError.unknownRelation(name) }
     return error
   }
 
-  private func rows(_ statement: OpaquePointer, sql: String, arguments: [DatabaseValue], byteLimit: Int?) throws -> ReadRows {
+  private func rows(_ statement: OpaquePointer, sql: String, arguments: [SQLValue], byteLimit: Int?) throws -> ReadRows {
     let count = sqlite3_column_count(statement)
     let columns = (0 ..< count).map { String(cString: sqlite3_column_name(statement, $0)) }
     let decltypes = (0 ..< count).map { sqlite3_column_decltype(statement, $0).map { String(cString: $0) } }
     let statementSQL = String(cString: sqlite3_sql(statement))
     guard Int(sqlite3_bind_parameter_count(statement)) == arguments.count else {
-      throw DatabaseError(
-        resultCode: .SQLITE_MISUSE,
+      throw SQLiteFailure(
+        code: SQLITE_MISUSE,
         message: "wrong number of statement arguments: \(arguments.count)",
         sql: scrubbed(statementSQL),
       )
@@ -350,7 +347,7 @@ final class ReadConnection {
       }
     }
     trace?(sql)
-    var rows: [[DatabaseValue]] = []
+    var rows: [[SQLValue]] = []
     var bytes = 0
     while true {
       let code = sqlite3_step(statement)
@@ -358,7 +355,7 @@ final class ReadConnection {
       guard code == SQLITE_ROW else {
         throw failure(code, sql: statementSQL)
       }
-      let row = (0 ..< count).map { DatabaseValue(sqliteStatement: statement, index: $0) }
+      let row = (0 ..< count).map { SQLValue(sqliteStatement: statement, index: $0) }
       if let byteLimit {
         bytes += row.reduce(0) { $0 + Self.byteCount($1) }
         guard bytes <= byteLimit else { throw ReadError.tooLarge(byteLimit: byteLimit) }
@@ -368,18 +365,18 @@ final class ReadConnection {
     return ReadRows(columns: columns, decltypes: decltypes, rows: rows)
   }
 
-  private static func byteCount(_ value: DatabaseValue) -> Int {
-    switch value.storage {
+  private static func byteCount(_ value: SQLValue) -> Int {
+    switch value {
     case .null: 0
-    case .int64, .double: 8
-    case let .string(text): text.utf8.count
-    case let .blob(data): data.count
+    case .integer, .real: 8
+    case let .text(text): text.utf8.count
+    case let .blob(bytes): bytes.count
     }
   }
 
-  private func failure(_ code: Int32, sql: String) -> DatabaseError {
-    DatabaseError(
-      resultCode: ResultCode(rawValue: code),
+  private func failure(_ code: Int32, sql: String) -> SQLiteFailure {
+    SQLiteFailure(
+      code: code,
       message: scrubbed(String(cString: sqlite3_errmsg(handle))),
       sql: scrubbed(sql),
     )

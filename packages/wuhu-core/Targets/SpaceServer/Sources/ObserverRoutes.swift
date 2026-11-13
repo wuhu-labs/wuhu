@@ -17,9 +17,6 @@ import enum SpaceContract.SubscriptionKindPayload
 import SpaceCore
 import SpaceTools
 
-// A group's observers: write on the group arms and cancels one, read lists
-// them; the --dev seat does all three. An observer's own credential never
-// reaches these routes.
 func addObserverRoutes(
   _ router: inout Router,
   space: Space,
@@ -36,10 +33,8 @@ func addObserverRoutes(
       }
       switch try await principalOf(request) {
       case let .principal(principal):
-        if principal.actor != .anonymous {
-          guard let role = try await space.role(of: principal, in: group), role >= needed else {
-            return errorResponse(.forbidden, code: "forbidden", message: "\(needed.rawValue) on group \(group.rawValue) is needed for its observers")
-          }
+        guard let role = try await space.role(of: principal, in: group), role >= needed else {
+          return errorResponse(.forbidden, code: "forbidden", message: "\(needed.rawValue) on group \(group.rawValue) is needed for its observers")
         }
         do { return try await body(request, parameters, group) }
         catch { return observerErrorResponse(error) }

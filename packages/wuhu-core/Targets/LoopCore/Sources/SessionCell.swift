@@ -16,8 +16,9 @@ import struct SpaceCore.SessionHydration
 import enum SpaceCore.SessionMail
 import struct SpaceCore.SessionPut
 import struct SpaceCore.SessionRecord
-import struct SpaceCore.SessionRows
 import struct SpaceCore.SessionStore
+import struct SpaceCore.SpaceCell
+import struct SpaceCore.SubscriptionSlot
 import StructuredQueries
 import enum WuhuAI.ContentBlock
 import enum WuhuAI.InferenceError
@@ -32,6 +33,7 @@ import Wuwei
 /// A session's durable turn over lines and its owned rows. Each message advances until work needs a job; answers for a slot the turn has left are dropped.
 @Cell
 struct SessionCell {
+  static let owned = ["sessions": "id", "session_runtime": "session_id", "session_queue": "session_id", "session_lines": "session_id", "session_pointers": "session_id", "session_prompts": "session_id", "session_model_routes": "session_id", "session_model_route_history": "session_id"]
   static let kind = SessionMail.kind
   static let schema = [
     "CREATE TABLE session_state (\(ownerColumn), generation INTEGER NOT NULL, position INTEGER NOT NULL, turn TEXT NOT NULL, reestablish TEXT NOT NULL, replied INTEGER NOT NULL, UNIQUE (owner))",
@@ -53,13 +55,13 @@ struct SessionCell {
 
   /// An input for the queue. Looking at it is a step of its own, so the input stays whatever that step meets.
   mutating func put(_ put: SessionPut) throws {
-    try rows.put(id.session, put)
+    try self.put(id.session, put)
     ctx.send(id).look()
   }
 
   /// Takes back the input on `topic` that the model has not seen.
   mutating func clear(_ topic: String) throws {
-    try rows.clear(id.session, topic: topic)
+    try clear(id.session, topic: topic)
     ctx.send(id).look()
   }
 
@@ -96,12 +98,20 @@ struct SessionCell {
   }
 
   mutating func watchChildren(_ now: Date) throws {
+    guard try creationRecord().lifecycle == .live else { return }
     try armChildren(now)
   }
 
+  mutating func reconcileChildren() throws {
+    if SpaceCell.liveChildren(id.session, in: db) == 0 {
+      try retire(id.session, SubscriptionSlot.childrenID)
+    } else {
+      try watchChildren(now())
+    }
+  }
+
   mutating func markErrored(_ message: String) throws {
-    let note = try SessionCreation.markErrored(id.session, message: message, at: now(), in: &db)
-    ctx.send(PersonCell.ID("owner")).notify("owner", note)
+    try SessionCreation.markErrored(id.session, message: message, at: now(), in: &db)
   }
 
   /// A delayed input came due, a parked model's reminder, or a warming wake.
@@ -112,7 +122,7 @@ struct SessionCell {
 
   /// When the next delayed input comes due, a model that stopped with requests open is next reminded of them, or the next ping.
   func nextWake() -> Instant? {
-    guard let due = [try! rows.nextDue(id.session), try! parkWake(), warmingWake()].compactMap(\.self).min() else { return nil }
+    guard let due = [try! nextDue(id.session), try! parkWake(), warmingWake()].compactMap(\.self).min() else { return nil }
     return Instant(milliseconds: Int64((due.timeIntervalSince1970 * 1000).rounded(.up)))
   }
 
@@ -133,7 +143,7 @@ struct SessionCell {
     let session = try load()
     guard dueNow < replied.addingTimeInterval(Double(warming.schedule.lifetimeSeconds)), warming.pings < warming.schedule.maxPings,
           session.record.lifecycle == .live, session.record.hold == .normal, session.record.work == .noWork,
-          working(session) == nil, try rows.lastLineRole(id.session) == .assistant
+          working(session) == nil, try lastLineRole(id.session) == .assistant
     else { return try endWarming(session.turn) }
     try append(session, [.notification(.cacheWarming(id: client.uuid(), at: now))]) { $0.pinged() }
     try advance()
@@ -149,7 +159,7 @@ struct SessionCell {
   private func parkWake() throws -> Date? {
     let session = try load()
     guard !session.stopped, working(session) == nil, session.queueHead == session.queueTail, session.turn.turn == .idle else { return nil }
-    return session.nags.nextTimer(openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: dueNow())
+    return session.nags.nextTimer(openRequests: try openRequests(id.session), armedWake: try armedWake(), now: dueNow())
   }
 
   /// Stops the job the session works on and nothing else: main has marked the session errored.
@@ -158,11 +168,11 @@ struct SessionCell {
   }
 
   mutating func retitle(_ title: String) throws {
-    try rows.retitle(id.session, title)
+    try retitle(id.session, title)
   }
 
   mutating func retag(_ tags: [String]) throws {
-    try rows.retag(id.session, tags)
+    try retag(id.session, tags)
   }
 
   mutating func lost(_ job: String) throws {
@@ -175,15 +185,15 @@ struct SessionCell {
   mutating func interrupt() throws {
     let session = try load()
     guard !session.stopped else { return }
-    try rows.markInterrupted(id.session)
+    try markInterrupted(id.session)
     stop(working(session))
   }
 
   mutating func resume() throws {
     let session = try load()
     guard session.record.hold == .interrupted || session.record.work == .errored else { return }
-    try rows.markResumed(id.session)
-    try rows.show(id.session, owed: session.turn.owed)
+    try markResumed(id.session)
+    try show(id.session, owed: session.turn.owed)
     try advance()
   }
 
@@ -193,20 +203,20 @@ struct SessionCell {
     guard session.record.lifecycle == .live else { return }
     if let work = working(session) {
       stop(work)
-      try rows.markInterrupted(id.session)
+      try markInterrupted(id.session)
     }
     if scriptAt(session.slot.call.key) != nil { try takeToolAnswer(session, .interrupted) }
     for run in scriptRuns() { ctx.send(.cancel, to: run) }
-    for stream in try rows.streams(id.session) {
+    for stream in try streams(id.session) {
       unstream(stream)
       try forget(stream)
     }
-    try rows.archive(id.session, grace: grace)
+    try archive(id.session, grace: grace)
     invalidateInference()
   }
 
   mutating func unarchive() throws {
-    try rows.unarchive(id.session)
+    try unarchive(id.session)
     invalidateInference()
     try advance()
   }
@@ -216,7 +226,7 @@ struct SessionCell {
     if let session = try? load(), !session.stopped, working(session) != nil { return }
     let armed = keepsArmed ? try armedSlots() : nil
     let restart = try client.dependencies.yield {
-      try rows.restart(id.session, executor: executor, note: note, modelRoute: route, runningWork: runningWork, armed: armed, uuid: client.uuid)
+      try restart(id.session, executor: executor, note: note, modelRoute: route, runningWork: runningWork, armed: armed, uuid: client.uuid)
     }
     try write(SessionTurn(generation: restart.generation, position: 1, turn: .inert, reestablish: [], replied: false, nags: turn()?.nags, seen: true, armed: true))
     try db.execute(Seen.delete())
@@ -253,7 +263,7 @@ struct SessionCell {
   }
 
   private mutating func observation(_ watched: ObservationSlot) throws -> ArmedSubscription? {
-    guard let current = try rows.observation(id.session, watched.subscription), current.observationSlot == watched else {
+    guard let current = try observation(id.session, watched.subscription), current.observationSlot == watched else {
       ctx.send(.unwatch(watched), to: ObservationMail.recipient)
       return nil
     }
@@ -261,7 +271,7 @@ struct SessionCell {
   }
 
   private mutating func take(_ watched: ObservationSlot, _ observed: Observed) throws {
-    switch try rows.observed(id.session, watched.subscription, token: watched.incarnation, observed) {
+    switch try self.observed(id.session, watched.subscription, token: watched.incarnation, observed) {
     case .ignored: return
     case .ended:
       ctx.send(.unwatch(watched), to: ObservationMail.recipient)
@@ -282,7 +292,7 @@ struct SessionCell {
       if batch.ending == nil { ctx.send(.stop, to: batch.job) }
       return
     }
-    try rows.observed(id.session, stream: batch.subscription, url: batch.url, text: batch.text, throttle: batch.throttle, ends: batch.ending != nil, uuid: client.uuid)
+    try observed(id.session, stream: batch.subscription, url: batch.url, text: batch.text, throttle: batch.throttle, ends: batch.ending != nil, uuid: client.uuid)
     if batch.ending == nil { ctx.send(.acked, to: batch.job) } else { try forget(batch.subscription) }
     try look()
   }
@@ -298,10 +308,10 @@ struct SessionCell {
     guard session.record.lifecycle == .live, step == session.slot.step else { return }
     switch result.ending {
     case let .reply(entry, fullness, warming):
-      let unfitReply = try fullness >= client.config.thresholds.hard && !rows.droppable(id.session)
+      let unfitReply = try fullness >= client.config.thresholds.hard && !droppable(id.session)
       var appended: [TranscriptItem] = [.assistant(entry)]
       let now = now()
-      if entry.toolCalls.isEmpty, let nag = session.nags.nag(task: session.isTask, openRequests: try rows.openRequests(id.session), armedWake: try armedWake(), now: dueNow()) {
+      if entry.toolCalls.isEmpty, let nag = session.nags.nag(task: session.isTask, openRequests: try openRequests(id.session), armedWake: try armedWake(), now: dueNow()) {
         appended.append(.notification(nag.notification(id: client.uuid(), at: now)))
       }
       try append(session, appended) {
@@ -322,7 +332,7 @@ struct SessionCell {
       break
     case let .full(fullness):
       if fullness >= client.config.thresholds.hard {
-        guard try rows.droppable(id.session) else {
+        guard try droppable(id.session) else {
           try markErrored(unfit(fullness))
           return
         }
@@ -342,14 +352,14 @@ struct SessionCell {
         """),
       ))]) { $0.input(1) }
     case .contextTooLong:
-      guard try rows.droppable(id.session) else {
+      guard try droppable(id.session) else {
         try markErrored(String(describing: InferenceError.contextTooLong))
         return
       }
       start(session.slot.compaction, .pointer)
       return
     case let .requestTooLarge(limit, failure):
-      guard try rows.droppable(id.session) else {
+      guard try droppable(id.session) else {
         try markErrored(limit.map { String(describing: InferenceError.requestTooLargeAfterCompaction(limitBytes: $0)) } ?? failure)
         return
       }
@@ -398,7 +408,7 @@ struct SessionCell {
   }
 
   mutating func scriptPosted(_ handle: String, _ text: String) throws {
-    guard try rows.hydrate(id.session).record.lifecycle == .live else { return }
+    guard try hydrate(id.session).record.lifecycle == .live else { return }
     let notice = SystemNotification(id: client.uuid(), timestamp: now(), kind: .script, subscriptionID: .script(String(handle.dropFirst("script.".count))), content: .init(text: text))
     try put(SessionPut(.notification(notice)))
   }
@@ -456,7 +466,7 @@ struct SessionCell {
 
   private mutating func convertLegacy(_ session: SessionState, answering: Bool = false) throws -> Bool {
     guard session.legacy else { return false }
-    if !session.stopped, try answering || session.queueHead > session.queueTail || session.turn.owed != .noRun || session.turn.turn.isFolding || session.turn.turn == .converting || working(session) != nil || session.nags.nag(task: session.isTask, openRequests: rows.openRequests(id.session), armedWake: armedWake(), now: dueNow()) != nil {
+    if !session.stopped, try answering || session.queueHead > session.queueTail || session.turn.owed != .noRun || session.turn.turn.isFolding || session.turn.turn == .converting || working(session) != nil || session.nags.nag(task: session.isTask, openRequests: openRequests(id.session), armedWake: armedWake(), now: dueNow()) != nil {
       if turn() == nil { try write(session.turn) }
       var turn = self.turn()!
       if turn.turn != .converting {
@@ -479,7 +489,7 @@ struct SessionCell {
     }
     if let call = turn.call { return try run(call, session) }
     if session.queueHead > session.queueTail {
-      let drained = try rows.drainQueue(id.session)
+      let drained = try drainQueue(id.session)
       try move(wrote: drained.items) { $0.input(drained.items.count) }
       return true
     }
@@ -494,7 +504,7 @@ struct SessionCell {
     // Only a model that stopped is asked whether it may; a generation that never
     // ran (created, restarted) is inert. What is left is a park wake (`nextWake`).
     guard turn.turn == .idle else { return false }
-    let openRequests = try rows.openRequests(id.session)
+    let openRequests = try openRequests(id.session)
     let now = now()
     if let nag = session.nags.nag(task: session.isTask, openRequests: openRequests, armedWake: try armedWake(), now: dueNow()) {
       try append(session, [.notification(nag.notification(id: client.uuid(), at: now))]) { $0.input(1) }
@@ -519,7 +529,7 @@ struct SessionCell {
       do {
         arguments = try decodeArguments(CompactArguments.self, from: call)
         if let name = arguments.bookmark {
-          guard let bookmark = session.turn.bookmarks?[name], bookmark < (try rows.lastReplyPosition(id.session))! else { throw BookmarkNotFound(name: name) }
+          guard let bookmark = session.turn.bookmarks?[name], bookmark < (try lastReplyPosition(id.session))! else { throw BookmarkNotFound(name: name) }
         }
       } catch let notFound as BookmarkNotFound {
         try writeToolResult(session, .toolCall(callID), .failure(.init(message: "bookmark \"\(notFound.name)\" not found before this reply; name an earlier bookmark or omit it to fold everything")))
@@ -532,7 +542,7 @@ struct SessionCell {
         start(session.slot.compaction, .fold(callID))
         return false
       }
-      if let refusal = ParkRefusal(session.nags, task: session.isTask, openRequests: try rows.openRequests(id.session)) {
+      if let refusal = ParkRefusal(session.nags, task: session.isTask, openRequests: try openRequests(id.session)) {
         try writeToolResult(session, .toolCall(callID), .failure(.init(message: refusal.description)))
       } else {
         try writeToolResult(session, .toolCall(callID), .compact(.init(summary: arguments.summary)))
@@ -545,8 +555,8 @@ struct SessionCell {
   }
 
   private func load() throws -> SessionState {
-    let hydration = try rows.hydrate(id.session)
-    let turn = try turn() ?? SessionTurn(generation: hydration.generation, position: rows.transcriptLineCount(id.session))
+    let hydration = try hydrate(id.session)
+    let turn = try turn() ?? SessionTurn(generation: hydration.generation, position: transcriptLineCount(id.session))
     return SessionState(hydration, turn: turn)
   }
 
@@ -577,7 +587,7 @@ struct SessionCell {
 
   /// Tells the work at hand when to give the turn back to the input that waits. A compaction never yields.
   private mutating func yield(_ work: Slot.Work) throws {
-    guard let by = try rows.yieldDeadline(id.session) else { return }
+    guard let by = try yieldDeadline(id.session) else { return }
     switch work {
     case let .step(step): ctx.send(.yield(by: by), to: step)
     case let .call(call): ctx.send(.yield(by: by), to: call)
@@ -613,7 +623,7 @@ struct SessionCell {
       return try startScript(call, toolCall, plan)
     }
     let slot = Slot(call)
-    ctx.create(call, params: .init(session: id.session, generation: slot.generation, position: slot.position, call: toolCall, yieldBy: try rows.yieldDeadline(id.session)))
+    ctx.create(call, params: .init(session: id.session, generation: slot.generation, position: slot.position, call: toolCall, yieldBy: try yieldDeadline(id.session)))
   }
 
   private mutating func start(_ compaction: CompactionJob.ID, _ kind: CompactionJob.Kind) {
@@ -641,7 +651,7 @@ struct SessionCell {
     let pending = turn.call != nil
     change(&turn)
     var lines: [TranscriptLine] = []
-    let first = try rows.lineEnd(id.session).position + 1
+    let first = try lineEnd(id.session).position + 1
     for item in items {
       turn.nags!.apply(item)
       if let origin = item.cacheWarmingOrigin { turn.origin = origin }
@@ -662,7 +672,7 @@ struct SessionCell {
       lines += turn.held ?? []
       turn.held = nil
     }
-    try rows.append(id.session, lines: lines)
+    try append(id.session, lines: lines)
     try write(turn)
   }
 
@@ -675,7 +685,7 @@ struct SessionCell {
       if let origin = item.cacheWarmingOrigin { turn.origin = origin }
       if case let .notification(notice) = item, notice.endsSubscription { try forget(notice.subscriptionID) }
     }
-    try see(items, position: try rows.lineEnd(id.session).position)
+    try see(items, position: try lineEnd(id.session).position)
     try write(turn)
   }
 
@@ -691,8 +701,8 @@ struct SessionCell {
   }
 
   private mutating func roll(_ session: SessionState, head: GenerationHead, kept: Range<Int>?, portable: Bool = false, closing: [TranscriptLine] = [], after: [TranscriptLine] = [], transition: ModelRouteTransition? = nil, binding: ReplayBinding? = nil) throws {
-    let generation = try rows.writeGeneration(id.session, closing: closing + (session.turn.held ?? []), head: head, kept: kept, portable: portable, after: after, transition: transition)
-    var turn = SessionTurn(generation: generation, position: try rows.transcriptLineCount(id.session), turn: .model, reestablish: head.reestablishmentCalls, replied: false, nags: session.turn.nags, seen: true, armed: true)
+    let generation = try writeGeneration(id.session, closing: closing + (session.turn.held ?? []), head: head, kept: kept, portable: portable, after: after, transition: transition)
+    var turn = SessionTurn(generation: generation, position: try transcriptLineCount(id.session), turn: .model, reestablish: head.reestablishmentCalls, replied: false, nags: session.turn.nags, seen: true, armed: true)
     turn.binding = binding ?? transition?.binding ?? session.turn.binding
     turn.warming = session.turn.warming
     turn.origin = session.turn.origin
@@ -713,16 +723,12 @@ struct SessionCell {
   private mutating func write(_ turn: SessionTurn) throws {
     try db.execute(SessionTurn.delete())
     try db.execute(SessionTurn.insert { turn })
-    try rows.show(id.session, owed: turn.owed)
+    try show(id.session, owed: turn.owed)
   }
 
   private mutating func invalidateInference() {
     let (session, invalidate) = (id.session, client.config.invalidateInference)
     ctx.emit { await invalidate(session) }
-  }
-
-  var rows: SessionRows {
-    SessionRows(host: db.host, store: ctx.dependency(SessionStore.self))
   }
 
   func now() -> Date {

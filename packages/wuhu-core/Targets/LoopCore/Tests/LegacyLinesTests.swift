@@ -8,16 +8,14 @@ import GRDB
 import Scratch
 import SessionDomain
 @testable import SpaceCore
+import StructuredQueries
 import Testing
 
 func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
-  let path = await space.writer.path
-  let plant = try DatabaseQueue(path: path, configuration: Space.makeConfiguration(journalMode: .default))
-  try await plant.write { db in
-    try db.execute(sql: "INSERT INTO session_contents VALUES (?, 'old-item', ?)", arguments: [session.rawValue, #"{"assistant":{"_0":{"content":"frozen legacy bytes"}}}"#])
-    try db.execute(sql: "INSERT INTO session_pointers VALUES (?, 0, 0, 'old-item')", arguments: [session.rawValue])
+  try await space.worker.call(SessionCell.ID(session.rawValue)) { cell in
+    try cell.db.execute(LegacyContentFixture.insert { LegacyContentFixture(sessionID: session.rawValue, id: "old-item", payload: #"{"assistant":{"_0":{"content":"frozen legacy bytes"}}}"#) })
+    try cell.db.execute(LegacyPointerFixture.insert { LegacyPointerFixture(sessionID: session.rawValue, generation: 0, position: 0, contentID: "old-item") })
   }
-  try plant.close()
 }
 
 @Suite struct LegacyLinesTests {
@@ -44,7 +42,7 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
         try await until("the second reply") { try await space.sessions.settledWork(id) && script.count == 2 }
         #expect(try await space.sessions.generation(id) == 1)
         #expect(try await space.sessions.transcriptLines(id, generation: 0).isEmpty)
-        #expect(try await space.query("SELECT payload FROM session_legacy_items WHERE session_id = ?", arguments: [.string(id.rawValue)], as: .shared(.anonymous)).rows == [[.text(#"{"assistant":{"_0":{"content":"frozen legacy bytes"}}}"#)]])
+        #expect(try await space.query("SELECT payload FROM session_legacy_items WHERE session_id = ?", arguments: [.string(id.rawValue)], as: .shared(.publicReader)).rows == [[.text(#"{"assistant":{"_0":{"content":"frozen legacy bytes"}}}"#)]])
       }
     }
   }
@@ -76,7 +74,7 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
         #expect(prepared.value == 1)
         #expect(try await space.sessions.generation(id) == 1)
         let address = compaction ? slot.compaction.description : slot.step.description
-        #expect(try await space.writer.read { try String.fetchOne($0, sql: "SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) } == "done")
+        #expect(space.sessions.spaceCell.db.rows(LegacyJobFixture.where { $0.address.eq(address) }.select { $0.phase }).first == "done")
         try await space.worker.call(SessionCell.ID(id.rawValue)) { cell in
           try cell.stepped(slot.step, StepResult(ending: .reply(AssistantEntry(Fix.reply("stale").message, id: UUID(), at: anchor, metadata: Fix.reply("stale").metadata, replayBinding: nil, mint: { .init("unused") }), fullness: 0, warming: nil), attempts: 1, waitedMs: 0))
         }
@@ -132,10 +130,8 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
         // One jump is enough for that claim; see `until` on a clock inside a poll.
         await time.advance(by: 2)
         try await until("the rerun pointer's look is consumed") {
-          try await new.writer.read { db in
-            try String.fetchOne(db, sql: "SELECT phase FROM wuwei_job WHERE address = ?", arguments: [slot.compaction.description]) == "done"
-              && !Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["SessionCell/" + id.rawValue])!
-          }
+          let done = new.sessions.spaceCell.db.rows(LegacyJobFixture.where { $0.address.eq(slot.compaction.description) }.select { $0.phase }).first == "done"
+          return done && !new.worker.hasMail(for: SessionCell.ID(id.rawValue).recipient)
         }
         try await until("the idle legacy slot opens its pointer generation") {
           let generation = try await new.sessions.generation(id)
@@ -217,6 +213,27 @@ private extension SessionCell {
     let turn = SessionTurn(generation: 0, position: position, turn: turn, reestablish: [], replied: false, nags: nags, seen: true, armed: true)
     try db.execute(SessionTurn.delete())
     try db.execute(SessionTurn.insert { turn })
-    try rows.show(id.session, owed: turn.owed)
+    try show(id.session, owed: turn.owed)
   }
+}
+
+@Table("session_contents")
+private struct LegacyContentFixture {
+  @Column("session_id") let sessionID: String
+  let id: String
+  let payload: String
+}
+
+@Table("session_pointers")
+private struct LegacyPointerFixture {
+  @Column("session_id") let sessionID: String
+  let generation: Int64
+  let position: Int64
+  @Column("content_id") let contentID: String
+}
+
+@Table("wuwei_job")
+private struct LegacyJobFixture {
+  let address: String
+  let phase: String
 }

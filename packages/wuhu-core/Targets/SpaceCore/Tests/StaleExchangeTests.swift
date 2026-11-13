@@ -39,7 +39,7 @@ import Testing
 
     func compacts(keeping kept: Range<Int>? = nil) async throws {
       let head = GenerationHead(id: UUID(), timestamp: ticker.tick(), summary: "folded", snapshot: .init(), runningWork: [])
-      _ = try await space.worker.call(SessionCell.ID(agent.rawValue)) { try $0.rows.writeGeneration(agent, head: head, kept: kept) }
+      _ = try await space.worker.call(SessionCell.ID(agent.rawValue)) { try $0.writeGeneration(agent, head: head, kept: kept) }
     }
 
     func stored() async throws -> [StoredTranscriptLine] {

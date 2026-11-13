@@ -11,7 +11,7 @@ import Testing
 
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct ApiOriginTests {
   @Test func everyToolIsFaithfulToDirectRun() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/notes/a.md", "content": "foo\nbar [b](/b.md)"]))
     _ = try await harness.direct("write", .object(["path": "/b.md", "content": "target"]))
     _ = try await harness.direct(
@@ -42,7 +42,7 @@ import Testing
   }
 
   @Test func mutatingToolsWorkOverHTTP() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let written = try await harness.call(
       "write", .object(["path": "/a.md", "content": "v1\n[b](/b.md)"]), as: WriteOutput.self,
     )
@@ -90,7 +90,7 @@ import Testing
   }
 
   @Test func tableToolsRouteThroughDottedNames() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let created = try await harness.call(
       "table.create",
       .object(["path": "/t.table", "header": .object(["columns": .array([
@@ -130,7 +130,7 @@ import Testing
       ("https://wuhu.example:5530", "wuhu.example:5530"), ("https://Wuhu.Example", "wuhu.example"),
       ("https://localhost:5530", "localhost:5530"),
     ] {
-      let harness = try Harness(origin: origin)
+      let harness = try await Harness(origin: origin)
       let response = try await harness.get(harness.api, "/v1/server")
       #expect(response.status == .ok)
       let info = try await json(response).object
@@ -154,7 +154,7 @@ import Testing
   }
 
   @Test func serverInfoAdvertisesTheSpaceIdentityAndOrigin() async throws {
-    let harness = try Harness(origin: "https://api.wuhu.example:5530")
+    let harness = try await Harness(origin: "https://api.wuhu.example:5530")
     let response = try await harness.get(harness.api, "/v1/server")
     #expect(response.status == .ok)
     let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
@@ -164,14 +164,14 @@ import Testing
     #expect(response.headers[.date] == "Tue, 14 Nov 2023 22:13:20 GMT")
     #expect(response.headers[.cacheControl] == "no-store")
 
-    let bare = try Harness()
+    let bare = try await Harness()
     let none = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(try await bare.get(bare.api, "/v1/server")))
     #expect(none.space == (try await bare.space.identity().rawValue))
     #expect(none.origin == nil)
   }
 
   @Test func serverInfoStaysPublicBehindTheWall() async throws {
-    let harness = try Harness(dev: false, origin: "https://api.wuhu.example:5530")
+    let harness = try await Harness(dev: false, origin: "https://api.wuhu.example:5530")
     let response = try await harness.get(harness.api, "/v1/server")
     #expect(response.status == .ok)
     let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
@@ -180,7 +180,7 @@ import Testing
   }
 
   @Test func unknownToolIs404() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.post("nope", .object([:]))
     #expect(response.status == .notFound)
     let error = try JSONValueDecoder().decode(ToolError.self, from: try await json(response))
@@ -188,7 +188,7 @@ import Testing
   }
 
   @Test func undecodableBodiesAre400() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let notJSON = try await harness.api(Request(
       url: URL(string: "http://space/v1/tools/read")!,
       method: .post,
@@ -203,7 +203,7 @@ import Testing
   }
 
   @Test func domainFailuresAre422WithToolErrorPayload() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.post("read", .object(["path": "/missing.md"]))
     #expect(response.status.code == 422)
     let error = try JSONValueDecoder().decode(ToolError.self, from: try await json(response))
@@ -221,7 +221,7 @@ import Testing
   }
 
   @Test func unknownRoutesAre404AndMethodsGated() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let missing = try await harness.get(harness.api, "/nope")
     #expect(missing.status == .notFound)
     let wrongMethod = try await harness.get(harness.api, "/v1/tools/read")
@@ -229,7 +229,7 @@ import Testing
   }
 
   @Test func nonDevServerRejectsEverything() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     let response = try await harness.post("read", .object(["path": "/a.md"]))
     #expect(response.status == .unauthorized)
     let error = try JSONValueDecoder().decode(ToolError.self, from: try await json(response))

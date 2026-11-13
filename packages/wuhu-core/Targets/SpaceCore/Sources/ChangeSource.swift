@@ -8,32 +8,17 @@ final class ChangeSource: Sendable {
   }
 
   private struct State {
-    var touched: Set<String> = []
     var subscriptions: [Int: Subscription] = [:]
     var nextSubscription = 0
   }
 
   private let state = Mutex(State())
 
-  /// A statement of the open transaction wrote `table`.
-  func wrote(_ table: String) {
-    state.withLock { _ = $0.touched.insert(table) }
-  }
-
-  /// The open transaction committed. The wakes leave after the lock is released: a yield runs no subscriber code.
-  func committed() {
-    let woken = state.withLock { state -> [AsyncStream<Void>.Continuation] in
-      let touched = state.touched
-      state.touched.removeAll()
-      guard !touched.isEmpty else { return [] }
-      return state.subscriptions.values.filter { !$0.tables.isDisjoint(with: touched) }.map(\.wakes)
+  func publish(_ tables: Set<String>) {
+    let woken = state.withLock { state in
+      state.subscriptions.values.filter { !$0.tables.isDisjoint(with: tables) }.map(\.wakes)
     }
     for wakes in woken { wakes.yield(()) }
-  }
-
-  /// The open transaction rolled back: what it wrote is nobody's news.
-  func rolledBack() {
-    state.withLock { $0.touched.removeAll() }
   }
 
   /// A subscription to `tables`, in the shape ``RegionSource`` has: what wakes it, and what cancels it.

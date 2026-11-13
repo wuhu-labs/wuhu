@@ -76,7 +76,8 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
         #expect(try await space.sessions.armedSubscriptions(session) == before)
         let hydration = try await space.sessions.hydrate(session)
         #expect(hydration.generation == generation + 1)
-        #expect(hydration.record.hold == .interrupted)
+        // Start over starts the new generation's work at once: the interrupt and the fixture's thrown inference race, and either leaves the session stopped.
+        #expect(hydration.record.stopped)
         let delivered = try await space.sessions.transcriptLines(session).filter { $0.key == "message:queued" }
         #expect(delivered.count == 1)
         #expect(try delivered.first?.line().message.text.contains("queued before Start over") == true)
@@ -325,7 +326,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       _ = try await space.createTable(watched, header: header, in: .shared, acting: .shared)
       _ = try await space.createTable(unrelated, header: header, in: .shared, acting: .shared)
       _ = try await space.mutateRows(watched, [.insert([.integer(0)])], in: .shared, acting: .shared)
-      let ids = try await space.query("SELECT id FROM \"/watched.table\"", as: .shared(.anonymous))
+      let ids = try await space.query("SELECT id FROM \"/watched.table\"", as: .shared(.publicReader))
       guard case let .integer(rowID) = ids.rows[0][0] else { throw Mismatch("missing row id") }
 
       let session = try await makeSession(space)

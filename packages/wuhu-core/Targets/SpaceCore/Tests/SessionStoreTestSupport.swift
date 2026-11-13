@@ -4,14 +4,14 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import StructuredQueries
 
 extension SessionStore {
   func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.drainQueue(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.drainQueue(id) }
   }
 
   @discardableResult
@@ -25,9 +25,8 @@ extension SessionStore {
   @discardableResult
   func put(_ id: SessionID, input: QueueInput, topic: String? = nil, due: Date? = nil, throttle: Double? = nil) async throws -> Int {
     try await space.worker.call(SessionCell.ID(id.rawValue)) { cell in
-      let rows = cell.rows
-      try rows.put(id, SessionPut(input, topic: topic, due: due, throttle: throttle))
-      return try Int.fetchOne(rows.db, sql: "SELECT id FROM session_queue WHERE session_id = ? AND input_id = ?", arguments: [id.rawValue, input.id.uuidString.lowercased()])!
+      try cell.put(id, SessionPut(input, topic: topic, due: due, throttle: throttle))
+      return Int(cell.db.rows(SessionQueueRow.where { $0.sessionID.eq(id.rawValue) && $0.inputID.eq(input.id.uuidString.lowercased()) }.select { $0.id }).first!)
     }
   }
 
@@ -44,22 +43,15 @@ extension SessionStore {
   /// How many of `identity`'s notifications from `source` are past its read mark.
   func unreadCount(identity: String, source: String) async throws -> Int {
     _ = try await inbox(identity)
-    return try await writer.read { db in
-      try Int.fetchOne(
-        db,
-        sql: """
-        SELECT COUNT(*) FROM notifications
-        WHERE recipient = ? AND source = ?
-          AND n > COALESCE((SELECT last_read_n FROM watermarks WHERE identity = ? AND source = ?), 0)
-        """,
-        arguments: [identity, source, identity, source],
-      )!
-    }
+    guard let person = spaceCell.personCell(identity) else { return 0 }
+    let db = space.worker.cell(person).db
+    let mark = db.rows(WatermarkRow.where { $0.identity.eq(identity) && $0.source.eq(source) }.select { $0.lastReadN }).first ?? 0
+    return db.rows(NotificationRow.where { $0.recipient.eq(identity) && $0.source.eq(source) && $0.n.gt(mark) }.asSelect().count()).first!
   }
 
   func deliverMail() async throws {
     let worker = space.worker
-    let sessions = try await writer.read { try String.fetchAll($0, sql: "SELECT id FROM sessions") }
+    let sessions = spaceCell.db.rows(SessionDataRow.select { $0.id })
     for session in sessions {
       let id = SessionCell.ID(session)
       worker.poke(id.recipient)

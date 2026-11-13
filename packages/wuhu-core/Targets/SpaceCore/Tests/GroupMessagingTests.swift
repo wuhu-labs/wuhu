@@ -123,7 +123,7 @@ import Testing
     let own = try await rig.store.post(
       .box(rig.p), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: Self.utc),
       content: .init(text: "for you"), uploads: [AttachmentUpload(name: "note.txt", bytes: Array("mine".utf8))],
-      acting: Principal(actor: .anonymous, group: Self.alice),
+      acting: Principal(actor: .person(persona: "carol", account: try #require(try await rig.space.persona(named: "carol")).account), group: Self.alice),
     )
     let path = try #require(own.message.content.attachments.first?.path)
     #expect(path.hasPrefix("/_/conversations/\(rig.p.rawValue)/attachments/"))
@@ -167,7 +167,7 @@ import Testing
     let posted = try await rig.store.post(
       .box(rig.p), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: Self.utc),
       content: .init(text: "for you"), uploads: [AttachmentUpload(name: "note.txt", bytes: Array("mine".utf8))],
-      acting: Principal(actor: .anonymous, group: Self.alice),
+      acting: Principal(actor: .person(persona: "carol", account: try #require(try await rig.space.persona(named: "carol")).account), group: Self.alice),
     )
     let path = try #require(posted.message.content.attachments.first?.path)
     let folder = String(path.dropLast("/note.txt".count))
@@ -196,7 +196,7 @@ import Testing
       _ = try await rig.space.homeGroup(.shared, creator: alice)
     }
     try await rig.space.setGrant(
-      .group, Self.alice.rawValue, role: .admin, in: Self.bob, by: .anonymous, acting: Self.bob,
+      .group, Self.alice.rawValue, role: .admin, in: Self.bob, by: (try await rig.space.ensureDevPerson()).actor, acting: Self.bob,
     )
     #expect(try await rig.space.homeGroup(Self.bob, creator: alice) == Self.bob)
     await #expect(throws: SpaceError.groupForbidden(GroupID.settings.rawValue)) {
@@ -210,12 +210,12 @@ import Testing
   @Test func aPersonPlacesAnAgentOnlyWhereTheyWriteTheirActingGroupIncluded() async throws {
     let rig = try await makeRig()
     let reader = try await rig.space.addAccount(kind: .human, name: "reader").id
-    try await rig.space.setGrant(.account, reader.rawValue, role: .read, in: Self.bob, by: .anonymous, acting: Self.bob)
+    try await rig.space.setGrant(.account, reader.rawValue, role: .read, in: Self.bob, by: (try await rig.space.ensureDevPerson()).actor, acting: Self.bob)
     let person = Principal(actor: .person(persona: "reader", account: reader), group: Self.bob)
     await #expect(throws: SpaceError.groupForbidden(Self.bob.rawValue)) {
       _ = try await rig.space.homeGroup(nil, creator: person)
     }
-    try await rig.space.setGrant(.account, reader.rawValue, role: .write, in: Self.bob, by: .anonymous, acting: Self.bob)
+    try await rig.space.setGrant(.account, reader.rawValue, role: .write, in: Self.bob, by: (try await rig.space.ensureDevPerson()).actor, acting: Self.bob)
     #expect(try await rig.space.homeGroup(nil, creator: person) == Self.bob)
   }
 
@@ -318,11 +318,13 @@ import Testing
   @Test func aPersonSeesTheirDMAndItsNotificationsFromAnyGroup() async throws {
     let rig = try await makeRig()
     try await rig.space.registerPeople(["bobp", "alice-person"])
+    let alice = try #require(try await rig.space.persona(named: "alice-person")).account
+    try await rig.space.setGrant(.account, alice.rawValue, role: .write, in: Self.alice, by: rig.space.ensureDevPerson().actor, acting: Self.alice)
     let persona = "bobp"
     let bob = try #require(try await rig.space.persona(named: persona)).account
     let dm = try await rig.store.post(
       .dm(with: persona), messageID: MessageID("m1"), sender: Sender(id: "alice-person", timeZone: Self.utc),
-      content: .init(text: "hi bob"), acting: Principal(actor: .anonymous, group: Self.alice),
+      content: .init(text: "hi bob"), acting: Principal(actor: .person(persona: "alice-person", account: alice), group: Self.alice),
     )
     #expect(try await rig.store.conversation(dm.message.conversation).group == Self.alice)
     let asBob = Principal(actor: .person(persona: persona, account: bob), group: Self.bob)
@@ -342,7 +344,7 @@ import Testing
     try await rig.space.registerPeople(["alice-person"])
     let dm = try await rig.store.post(
       .dm(with: "carol"), messageID: MessageID("m1"), sender: Sender(id: "alice-person", timeZone: Self.utc),
-      content: .init(text: "from alice"), acting: Principal(actor: .anonymous, group: Self.alice),
+      content: .init(text: "from alice"), acting: Principal(actor: .person(persona: "carol", account: try #require(try await rig.space.persona(named: "carol")).account), group: Self.alice),
     )
     _ = try await rig.store.post(.box(rig.s), messageID: MessageID("m2"), sender: carol, content: .init(text: "joining"))
     _ = try await rig.store.post(

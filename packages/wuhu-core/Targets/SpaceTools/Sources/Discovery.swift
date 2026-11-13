@@ -22,7 +22,7 @@ extension SpaceToolContext {
     ])
   }
 
-  public func discoveryGroups(dev: Bool = false) async throws -> [GroupSummary] {
+  public func discoveryGroups() async throws -> [GroupSummary] {
     let caller = try await discoveryPrincipal()
     let cell = space.cell
     let live = cell.groups().filter { $0.removedAt == nil }
@@ -35,26 +35,16 @@ extension SpaceToolContext {
     case .person:
       member = cell.writable(by: caller)
       readable = cell.readable(by: caller)
-    case .anonymous:
-      let all = dev ? Set(live.map(\.id)) : []
-      member = all
-      readable = all
+    case .publicReader:
+      member = []
+      readable = []
     }
-    // The dev seat acts in every group, so it administers every group too.
-    let administered: Set<GroupID>
-    let named: Bool
-    if case .anonymous = caller.actor {
-      administered = dev ? Set(live.map(\.id)) : []
-      named = dev
-    } else {
-      administered = cell.administered(by: caller)
-      named = true
-    }
+    let administered = cell.administered(by: caller)
     return live
       .filter { $0.id != .settings }
       .map { group in
         GroupSummary(
-          id: group.id.rawValue, name: named ? group.name : nil, member: member.contains(group.id), readable: readable.contains(group.id),
+          id: group.id.rawValue, name: group.name, member: member.contains(group.id), readable: readable.contains(group.id),
           admin: administered.contains(group.id),
         )
       }

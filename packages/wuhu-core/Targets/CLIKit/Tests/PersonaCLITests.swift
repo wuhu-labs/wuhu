@@ -154,7 +154,7 @@ import Testing
     }
   }
 
-  @Test func anAnonymousExplicitTargetNeverBorrowsThePinnedSpacesPersona() async throws {
+  @Test func anUnsignedExplicitTargetNeverBorrowsThePinnedSpacesPersona() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     var oldPersona = ""
@@ -172,7 +172,7 @@ import Testing
       let stderr = await io.stderrText()
       #expect(code == 0, "\(stderr)")
       #expect(await io.stdoutText() == "from B")
-      #expect(stderr == "acting as anonymous (wallet)\n")
+      #expect(stderr == "acting as \(try await destination.ensureDevPerson().persona) (wallet)\n")
       #expect(!stderr.contains(oldPersona))
     }
   }
@@ -257,7 +257,7 @@ import Testing
     }
   }
 
-  @Test func anUnenrolledSeatPinsWithoutAPersona() async throws {
+  @Test func anUnenrolledSeatPinsWithoutAPersonaAndHasNoProfile() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving { server in
@@ -266,6 +266,25 @@ import Testing
       #expect(await rig.run(["use", "127.0.0.1:\(server.port)"], io: io) == 0)
       let line = try #require(await io.stdoutText().split(separator: "\n").first.map(String.init))
       #expect(!line.contains(" as "))
+      let profile = CLIIO()
+      #expect(await rig.run(["user", "profile"], io: profile) == 1)
+      #expect(await profile.stderrText().contains("holds no identity in this space; enroll one with: wuhu login < invite-link"))
+    }
+  }
+
+  @Test func anUnenrolledSeatOnAServerThatSeatsItIsThatPerson() async throws {
+    let rig = try EnrollRig()
+    defer { rig.cleanUp() }
+    try await rig.serving(dev: true) { server in
+      try rig.trust.record(server.fingerprint, forHost: "127.0.0.1:\(server.port)")
+      let persona = try await usePersona(rig, port: server.port)
+      #expect(persona == (try await rig.space.ensureDevPerson().persona))
+      let profile = CLIIO()
+      #expect(await rig.run(["user", "profile"], io: profile) == 0)
+      #expect(await profile.stdoutText() == "@owner \(persona)\n")
+      let opted = CLIIO()
+      #expect(await rig.run(["ls", "/"], io: opted, environment: ["WUHU_EXEC": "1", "WUHU_IDENTITY": "wallet"]) == 0)
+      #expect(await opted.stderrText() == "acting as \(persona) (wallet)\n")
     }
   }
 }

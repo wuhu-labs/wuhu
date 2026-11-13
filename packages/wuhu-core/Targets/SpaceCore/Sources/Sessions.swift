@@ -1,117 +1,40 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SessionDomain
-import struct SpaceContract.GroupID
 import StructuredQueries
-import StructuredQueriesSQLite
+import Wuwei
+import WuweiQueries
 
-enum Sessions {
-  // Foundation emits keyed containers in an order of its own choosing, and not
-  // the same one twice, so stored payloads are sorted into canonical bytes.
-  static func encode(_ value: some Encodable) throws -> String {
+public enum Sessions {
+  public static func encode(_ value: some Encodable) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = .sortedKeys
     return String(decoding: try encoder.encode(value), as: UTF8.self)
   }
 
-  static func decode<T: Decodable>(_ type: T.Type, from payload: String) throws -> T {
+  public static func decode<T: Decodable>(_ type: T.Type, from payload: String) throws -> T {
     try JSONDecoder().decode(type, from: Data(payload.utf8))
   }
 
-  static func exists(_ key: String, in db: Database) throws -> Bool {
-    try String.fetchOne(db, sql: "SELECT id FROM sessions WHERE id = ?", arguments: [key]) != nil
+  public static func runtime(_ key: String, in db: Database) throws -> (generation: Int64, queueTail: Int64, stepTry: Int64) {
+    guard let row = db.rows(SessionRuntimeRow.where { $0.sessionID.eq(key) }).first else { throw SessionStoreError.unknownSession(key) }
+    return (row.generation, row.queueTail, row.stepTry)
   }
 
-  // Nearest first. A parent is fixed at creation and must already exist, so
-  // the walk ends; the bound only catches a hand-edited database.
-  static func ancestors(_ key: String, in db: Database) throws -> [String] {
-    var chain: [String] = []
-    var cursor = try String.fetchOne(db, sql: "SELECT parent FROM sessions WHERE id = ?", arguments: [key])
-    while let parent = cursor {
-      precondition(chain.count < 4096, "session tree cycle above \(key)")
-      chain.append(parent)
-      cursor = try String.fetchOne(db, sql: "SELECT parent FROM sessions WHERE id = ?", arguments: [parent])
-    }
-    return chain
+  public static func record(_ key: String, in db: Database) throws -> SessionRecord {
+    try SessionCreation.record(SessionID(key), in: db)
   }
 
-  static func runtime(_ key: String, in db: Database) throws -> (generation: Int64, queueTail: Int64, stepTry: Int64) {
-    guard let row = try Row.fetchOne(
-      db,
-      sql: "SELECT generation, queue_tail, step_try FROM session_runtime WHERE session_id = ?",
-      arguments: [key],
-    ) else { throw SessionStoreError.unknownSession(key) }
-    return (row["generation"], row["queue_tail"], row["step_try"])
-  }
-
-  static func group(of key: String, in db: Database) throws -> GroupID {
-    GroupID(rawValue: try String.fetchOne(db, sql: "SELECT grp FROM sessions WHERE id = ?", arguments: [key]) ?? GroupID.shared.rawValue)
-  }
-
-  static func record(_ key: String, in db: Database) throws -> SessionRecord {
-    guard let row = try Row.fetchOne(
-      db,
-      sql: """
-      SELECT id, kind, parent, title, tags, created_by, executor, executor_config,
-             created_at, last_activity_at,
-             hold, work, lifecycle, grace_expires_at, error_message, grp
-      FROM sessions WHERE id = ?
-      """,
-      arguments: [key],
-    ) else { throw SessionStoreError.unknownSession(key) }
-    guard let hold = SessionHold(rawValue: row["hold"]), hold != .unknown,
-          let work = SessionWork(rawValue: row["work"]), work != .unknown
-    else { preconditionFailure("Unknown stored session state") }
-    let lifecycle: SessionLifecycle = if row["lifecycle"] as String == "live" {
-      .live
-    } else {
-      .archived(graceExpiresAt: try SQLiteDateFormat.date(from: row["grace_expires_at"]))
-    }
-    var executor = try SessionExecutor(kind: row["executor"], configJSON: row["executor_config"])
-    if case .kernel = executor,
-       let route = try SessionModelRouteRow.where({ $0.sessionID.eq(key) }).fetchOne(db),
-       let group = route.groupID
-    {
-      let pin = try decode(SessionModelRoute.self, from: route.payload)
-      executor = .modelGroup(id: group, effort: pin.specifier.effort)
-    }
-    return SessionRecord(
-      id: SessionID(row["id"] as String),
-      kind: SessionKind(rawValue: row["kind"])!,
-      parent: (row["parent"] as String?).map { SessionID($0) },
-      title: row["title"],
-      tags: try decode([String].self, from: row["tags"]),
-      createdBy: row["created_by"],
-      executor: executor,
-      createdAt: try SQLiteDateFormat.date(from: row["created_at"]),
-      lastActivityAt: try SQLiteDateFormat.date(from: row["last_activity_at"]),
-      hold: hold,
-      work: work,
-      errorMessage: row["error_message"],
-      lifecycle: lifecycle,
-      group: GroupID(rawValue: row["grp"]),
-    )
-  }
-
-  static func openGeneration(_ key: String, generation: Int64, in db: Database) throws {
-    try db.execute(sql: "UPDATE session_runtime SET generation = ? WHERE session_id = ?", arguments: [generation, key])
-  }
-
-  /// An input is due once its `due_at` is not after the time bound to `?`; one without is due at once. Each decision binds one time to every query it makes, so they agree on what is due.
-  static let due = "(due_at IS NULL OR due_at <= ?)"
-
-  /// The due inputs past `tail`, in order.
-  static func undrained(_ key: String, tail: Int64, at clock: String, in db: Database) throws -> [SessionQueueEntry] {
-    try Row.fetchAll(
-      db,
-      sql: "SELECT id, payload FROM session_queue WHERE session_id = ? AND id > ? AND \(due) ORDER BY id",
-      arguments: [key, tail, clock],
-    ).map { row in
-      SessionQueueEntry(id: Int(row["id"] as Int64), input: try decode(QueueInput.self, from: row["payload"]))
+  public static func undrained(_ key: String, tail: Int64, at clock: String, in db: Database) throws -> [SessionQueueEntry] {
+    try db.rows(SessionQueueRow.where { $0.sessionID.eq(key) && $0.id.gt(tail) && ($0.dueAt.is(nil) || $0.dueAt.lte(Optional(clock))) }.order { $0.id }).map {
+      SessionQueueEntry(id: Int($0.id), input: try decode(QueueInput.self, from: $0.payload))
     }
   }
 
-  static func firings(of inputs: [QueueInput], in db: Database) throws -> [String] {
+  public static func firings(of inputs: [QueueInput], in db: Database) throws -> [String] {
     var messages: [String] = []
     var requests: [String] = []
     for input in inputs {
@@ -124,151 +47,22 @@ enum Sessions {
       }
     }
     guard !messages.isEmpty || !requests.isEmpty else { return [] }
-    return try String.fetchAll(
-      db,
-      sql: """
-      SELECT firing FROM messages WHERE firing IS NOT NULL AND id IN (\(databaseQuestionMarks(count: messages.count)))
-      UNION SELECT firing FROM requests WHERE firing IS NOT NULL AND id IN (\(databaseQuestionMarks(count: requests.count)))
+    return db.rows(
+      """
+      SELECT firing FROM messages WHERE firing IS NOT NULL AND id IN (\(messages.map { _ in "?" }.joined(separator: ",")))
+      UNION SELECT firing FROM requests WHERE firing IS NOT NULL AND id IN (\(requests.map { _ in "?" }.joined(separator: ",")))
       ORDER BY firing
       """,
-      arguments: StatementArguments(messages + requests),
-    )
+      (messages + requests).map(Value.text),
+    ).map { $0["firing"].text! }
   }
 
-  /// The last due input, or `tail` when none waits.
-  static func queueHead(_ key: String, tail: Int64, at clock: String, in db: Database) throws -> Int64 {
-    let maxID = try Int64.fetchOne(
-      db,
-      sql: "SELECT MAX(id) FROM session_queue WHERE session_id = ? AND \(due)",
-      arguments: [key, clock],
-    ) ?? 0
-    return max(maxID, tail)
-  }
-
-  /// Moves the inputs past `tail` that are not due yet behind every other, so the due ones drain as one run from `tail`.
-  static func deferNotDue(_ key: String, tail: Int64, at clock: String, in db: Database) throws {
-    let later = try Int64.fetchAll(
-      db,
-      sql: "SELECT id FROM session_queue WHERE session_id = ? AND id > ? AND NOT \(due) ORDER BY id",
-      arguments: [key, tail, clock],
-    )
-    guard !later.isEmpty else { return }
-    var next = try Int64.fetchOne(db, sql: "SELECT MAX(id) FROM session_queue WHERE session_id = ?", arguments: [key])!
-    for id in later {
-      next += 1
-      try db.execute(sql: "UPDATE session_queue SET id = ? WHERE session_id = ? AND id = ?", arguments: [next, key, id])
-    }
-  }
-
-  /// When a new input on `topic` is due: the one it replaces keeps its time,
-  /// else no sooner than `throttle` past the last one the model saw.
-  private static func throttledDue(_ key: String, topic: String, throttle: Double, now: Date, in db: Database) throws -> Date {
-    let tail = try runtime(key, in: db).queueTail
-    let last = try Row.fetchOne(
-      db,
-      sql: "SELECT id, enqueued_at, COALESCE(due_at, enqueued_at) AS due FROM session_queue WHERE session_id = ? AND topic = ? ORDER BY id DESC LIMIT 1",
-      arguments: [key, topic],
-    )
-    guard let last else { return now }
-    let due = try SQLiteDateFormat.date(from: last["due"])
-    guard (last["id"] as Int64) <= tail else { return due }
-    let seen = max(due, try SQLiteDateFormat.date(from: last["enqueued_at"]))
-    return max(now, seen.addingTimeInterval(throttle))
-  }
-
-  static func removeInput(_ key: String, topic: String, in db: Database) throws {
-    let tail = try runtime(key, in: db).queueTail
-    try db.execute(sql: "DELETE FROM session_queue WHERE session_id = ? AND topic = ? AND id > ?", arguments: [key, topic, tail])
-  }
-
-  /// The session cell's write of an input it was sent; one it already has is not queued twice.
-  static func insertInput(_ key: String, _ put: SessionPut, nowDate: Date, in db: Database) throws {
-    let record = try record(key, in: db)
-    let inputID = put.input.id.uuidString.lowercased()
-    guard try Int64.fetchOne(db, sql: "SELECT id FROM session_queue WHERE session_id = ? AND input_id = ?", arguments: [key, inputID]) == nil else { return }
-    let now = SQLiteDateFormat.string(from: nowDate)
-    var due = put.due
-    if let topic = put.topic {
-      if let throttle = put.throttle { due = try throttledDue(key, topic: topic, throttle: throttle, now: nowDate, in: db) }
-      try removeInput(key, topic: topic, in: db)
-    }
-    let next = (try Int64.fetchOne(
-      db,
-      sql: "SELECT MAX(id) FROM session_queue WHERE session_id = ?",
-      arguments: [key],
-    ) ?? 0) + 1
-    let later = due.flatMap { $0 > nowDate ? SQLiteDateFormat.string(from: $0) : nil }
-    try db.execute(
-      sql: "INSERT INTO session_queue (session_id, id, input_id, payload, enqueued_at, topic, due_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      arguments: [key, next, inputID, try encode(put.input.capped()), now, put.topic, later],
-    )
-    if record.work == .noWork, later == nil {
-      try db.execute(
-        sql: "UPDATE sessions SET work = 'has_work', last_activity_at = ? WHERE id = ?",
-        arguments: [now, key],
-      )
-    }
-  }
-
-  static func markHasWork(_ key: String, now: String, in db: Database) throws {
-    try db.execute(
-      sql: "UPDATE sessions SET work = 'has_work', last_activity_at = ? WHERE id = ? AND work = 'no_work'",
-      arguments: [now, key],
-    )
-  }
-
-  // The coarse-transition gate: the induced sessions row is written only when
-  // an axis actually flips, never per item. Besides `work`, the row carries
-  // what the loop is doing (`run_state`): what the cell's turn owes (`owed`),
-  // `inference` when only due input waits, `no_run` otherwise.
-  // `run_progress_at` is when that phase began, and `last_activity_at` moves
-  // with every flip, so a session waiting in a long tool call reads as such
-  // instead of as one that never ran.
-  static func refreshWork(_ key: String, owed: SessionRunState, now: String, in db: Database) throws {
-    let row = try Row.fetchOne(db, sql: "SELECT work, hold, lifecycle FROM sessions WHERE id = ?", arguments: [key])!
-    let current: String = row["work"]
-    let hold: String = row["hold"]
-    let lifecycle: String = row["lifecycle"]
-    guard current != SessionWork.errored.rawValue else { return }
-    let runtime = try runtime(key, in: db)
-    let backlog = try Int.fetchOne(
-      db,
-      sql: "SELECT COUNT(*) FROM session_queue WHERE session_id = ? AND id > ? AND \(due)",
-      arguments: [key, runtime.queueTail, now],
-    )!
-    let derived = (backlog > 0 || owed != .noRun) ? SessionWork.hasWork : SessionWork.noWork
-    let running = hold == SessionHold.normal.rawValue && lifecycle == "live"
-    let run: SessionRunState = if !running {
-      .noRun
-    } else if owed == .noRun, derived == .hasWork {
-      .inference
-    } else {
-      owed
-    }
-    if derived.rawValue != current {
-      try db.execute(
-        sql: "UPDATE sessions SET work = ?, last_activity_at = ? WHERE id = ?",
-        arguments: [derived.rawValue, now, key],
-      )
-    }
-    try setRunState(key, run, now: now, in: db)
-  }
-
-  /// Writes `run_state` only when it changes; a flip stamps
-  /// `run_progress_at` and `last_activity_at`.
-  static func setRunState(_ key: String, _ run: SessionRunState, now: String, in db: Database) throws {
-    try db.execute(
-      sql: """
-      UPDATE sessions SET run_state = ?, run_progress_at = ?, last_activity_at = ?
-      WHERE id = ? AND run_state <> ?
-      """,
-      arguments: [run.rawValue, run == .noRun ? nil : now, now, key, run.rawValue],
-    )
+  public static func queueHead(_ key: String, tail: Int64, at clock: String, in db: Database) -> Int64 {
+    let head = db.rows(SessionQueueRow.where { $0.sessionID.eq(key) && ($0.dueAt.is(nil) || $0.dueAt.lte(Optional(clock))) }.select { $0.id.max() }).first! ?? 0
+    return max(head, tail)
   }
 }
 
-/// What a kernel session's loop is doing, as the `run_state` column of the
-/// induced `sessions` table shows it.
 public enum SessionRunState: String, Sendable {
   case inference
   case tool

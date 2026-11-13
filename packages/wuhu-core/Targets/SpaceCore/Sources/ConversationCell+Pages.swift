@@ -15,7 +15,6 @@ extension ConversationCell {
     return reads(conversation, reader: viewer.member, group: viewer.group)
   }
 
-  /// Box, DM and channel readership for a session id, a persona, or nil (the --dev seat) acting in `group`.
   func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID) -> Bool {
     let isSession = reader.map { session($0) != nil } ?? false
     return conversation.reads(reader, isSession: isSession, group: group) {

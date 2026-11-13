@@ -46,7 +46,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
 
 @Suite(.deterministicDependencies) struct TranscribeRouteTests {
   @Test func aChatGPTLoginTranscribesThroughTheDictationBackend() async throws {
-    let harness = try Harness(credentials: chatGPTLogin)
+    let harness = try await Harness(credentials: chatGPTLogin)
     let (provider, seen) = providerReplying(#"{"text":"hello wuhu","asset_format":"wav"}"#)
 
     let response = try await withDependencies {
@@ -68,7 +68,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func anAPIKeyAloneTranscribesThroughTheOpenAIAudioAPI() async throws {
-    let harness = try Harness(credentials: openAIKey)
+    let harness = try await Harness(credentials: openAIKey)
     try await configure(harness)
     let (provider, seen) = providerReplying(#"{"text":"hi","languages":[{"code":"en"}],"usage":{"seconds":2}}"#)
 
@@ -87,7 +87,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func withoutACredentialTheRouteRefusesAndTheProbeSaysSo() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
 
     let refusal = try await harness.api(transcribeRequest(wavAudio, contentType: "audio/wav"))
     #expect(refusal.status == .serviceUnavailable)
@@ -99,7 +99,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func withoutACredentialTheBodyIsNeverBuffered() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let drained = LockIsolated(false)
     var request = Request(
       url: URL(string: "http://space/v1/transcribe")!,
@@ -117,7 +117,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func anUpstreamRefusalNeverRelaysTheProviderBody() async throws {
-    let harness = try Harness(credentials: chatGPTLogin)
+    let harness = try await Harness(credentials: chatGPTLogin)
     let (provider, _) = providerReplying("upstream said something private", status: .forbidden)
 
     let response = try await withDependencies {
@@ -131,14 +131,14 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func theProbeNamesTheProviderTheRouteWouldUse() async throws {
-    let harness = try Harness(credentials: chatGPTLogin)
+    let harness = try await Harness(credentials: chatGPTLogin)
     let probe = try await harness.get(harness.api, "/v1/transcribe")
     let info = try JSONValueDecoder().decode(TranscriberInfo.self, from: try await json(probe))
     #expect(info == TranscriberInfo(available: true, provider: "codex", model: "chatgpt-transcribe"))
   }
 
   @Test func aNonAudioBodyIsRefusedBeforeAnyProviderCall() async throws {
-    let harness = try Harness(credentials: openAIKey)
+    let harness = try await Harness(credentials: openAIKey)
     try await configure(harness)
     let response = try await harness.api(transcribeRequest(Data("{}".utf8), contentType: "application/json"))
     #expect(response.status == .unsupportedMediaType)
@@ -146,7 +146,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func audioBeyondTheProviderBoundIsRefusedWith413() async throws {
-    let harness = try Harness(credentials: openAIKey)
+    let harness = try await Harness(credentials: openAIKey)
     try await configure(harness)
     let response = try await harness.api(transcribeRequest(
       Data(repeating: 0, count: TranscriptionLimits.maximumBytes + 1),
@@ -157,7 +157,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func anUpstreamRefusalSurfacesAsABadGateway() async throws {
-    let harness = try Harness(credentials: chatGPTLogin)
+    let harness = try await Harness(credentials: chatGPTLogin)
     let (provider, _) = providerReplying("blocked", status: .forbidden)
 
     let response = try await withDependencies {
@@ -172,7 +172,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   // 401 is the caller's own credential: a client signs its person out on it,
   // so the server's provider login failing must never answer one.
   @Test func aProviderAuthFailureIsABadGatewayNotTheCallers401() async throws {
-    let harness = try Harness(credentials: openAIKey)
+    let harness = try await Harness(credentials: openAIKey)
     try await configure(harness)
     let (provider, _) = providerReplying("expired key", status: .unauthorized)
 
@@ -186,7 +186,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   }
 
   @Test func theWallGatesTheRouteOutsideDev() async throws {
-    let harness = try Harness(dev: false, credentials: chatGPTLogin)
+    let harness = try await Harness(dev: false, credentials: chatGPTLogin)
     let post = try await harness.api(transcribeRequest(wavAudio, contentType: "audio/wav"))
     #expect(post.status == .unauthorized)
     let probe = try await harness.get(harness.api, "/v1/transcribe")
@@ -196,7 +196,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
 
 extension TranscribeRouteTests {
   @Test func explicitlyConfiguredOpenAIWinsOverAValidCodexLoginOnExistingEndpoint() async throws {
-    let harness = try Harness(credentials: .init { provider in
+    let harness = try await Harness(credentials: .init { provider in
       provider == "codex" ? .chatGPT(accessToken: "private-token", accountID: "private-account") : .apiKey("private-key")
     })
     try await configure(harness, #"{"transcription":{"active":"openai","providers":{"openai":{"dialect":"openai-audio","baseURL":"https://fake.openai/v1","model":"whisper-1"},"codex":{"dialect":"codex"}}}}"#)
@@ -216,7 +216,7 @@ extension TranscribeRouteTests {
   }
 
   @Test func brokenActiveWithACodexLoginRefusesWithoutBufferingOrFallback() async throws {
-    let harness = try Harness(credentials: chatGPTLogin)
+    let harness = try await Harness(credentials: chatGPTLogin)
     try await configure(harness, #"{"transcription":{"active":"missing","providers":{"codex":{"dialect":"codex"}}}}"#)
     let drained = LockIsolated(false)
     var request = Request(url: URL(string: "http://space/v1/transcribe")!, method: .post, body: .stream(contentType: "audio/wav", replaying: { drained.setValue(true); return AsyncStream<Data> { $0.finish() } }))
@@ -228,7 +228,7 @@ extension TranscribeRouteTests {
   }
 
   @Test func malformedConfigFailsInsteadOfSynthesizingCodex() async throws {
-    let harness = try Harness(credentials: chatGPTLogin)
+    let harness = try await Harness(credentials: chatGPTLogin)
     try await configure(harness, "{malformed")
     let response = try await harness.api(transcribeRequest(wavAudio, contentType: "audio/wav"))
     #expect(response.status == .serviceUnavailable)

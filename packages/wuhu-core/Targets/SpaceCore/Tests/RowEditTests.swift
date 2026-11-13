@@ -112,12 +112,12 @@ import Testing
     _ = try await space.commitRows(table, edits: [.insert(["title": "a", "data": ["blob": "AAE="]])], in: .shared, acting: .shared)
     let rows = try await space.query(
       "SELECT title FROM \"/tasks.table\" WHERE data = ? AND ? AND ? IS NULL", parameters: [["blob": "AAE="], true, .null],
-      as: .shared(.anonymous),
+      as: .shared(.publicReader),
     )
     #expect(rows.rows == [[.text("a")]])
     for bad: JSONValue in [[1], ["json": 1], ["blob": "!"]] {
       await #expect(throws: SpaceError.self) {
-        _ = try await space.query("SELECT ?", parameters: [bad], as: .shared(.anonymous))
+        _ = try await space.query("SELECT ?", parameters: [bad], as: .shared(.publicReader))
       }
     }
   }
@@ -127,7 +127,7 @@ import Testing
     let table = try await makeTable(space)
     let results = Collector<Rows>()
     let stream = try space.observeRows(
-      "SELECT title FROM \"/tasks.table\" WHERE n = ?", parameters: [2], throttle: .zero, as: Principal.shared(.anonymous),
+      "SELECT title FROM \"/tasks.table\" WHERE n = ?", parameters: [2], throttle: .zero, as: Principal.shared(.publicReader),
     )
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
@@ -138,7 +138,7 @@ import Testing
     let expected: [[[Cell]]] = [[], [[.text("two")]]]
     #expect(collected.map(\.rows) == expected)
 
-    let refused = try space.observeRows("SELECT ?", parameters: [[1]], throttle: .zero, as: Principal.shared(.anonymous))
+    let refused = try space.observeRows("SELECT ?", parameters: [[1]], throttle: .zero, as: Principal.shared(.publicReader))
     for try await _ in refused { Issue.record("a refused parameter must not yield") }
   }
 }

@@ -45,7 +45,7 @@ public enum SpaceServer {
     contentHostPattern: String? = nil,
     aiDisclosure: AIDisclosure? = nil,
     fingerprint: String? = nil,
-    dev: Bool,
+    devPerson: ResolvedPerson?,
     version: String = SpaceServer.unstampedVersion,
     webContent: WebContent = WebContent(),
     credentials: CredentialResolver = .environmentOnly,
@@ -59,7 +59,7 @@ public enum SpaceServer {
       contentHostPattern: contentHostPattern,
       aiDisclosure: aiDisclosure,
       fingerprint: fingerprint,
-      dev: dev,
+      devPerson: devPerson,
       version: version,
       webContent: webContent,
       webPushApplicationServerKey: nil,
@@ -79,7 +79,7 @@ public enum SpaceServer {
     aiDisclosure: AIDisclosure? = nil,
     port: Int? = nil,
     fingerprint: String? = nil,
-    dev: Bool,
+    devPerson: ResolvedPerson?,
     publicRead: Bool = false,
     version: String = SpaceServer.unstampedVersion,
     webContent: WebContent = WebContent(),
@@ -105,7 +105,7 @@ public enum SpaceServer {
     }
     @Dependency(\.date) var clock
     let contextOf: @Sendable (Request) async throws -> ToolContextVerdict = { request in
-      switch try await requestPrincipal(request, space: space, date: clock) {
+      switch try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock) {
       case let .principal(principal): .context(SpaceToolContext(space: space, machines: machines, principal: principal))
       case let .refused(response): .refused(response)
       }
@@ -152,9 +152,9 @@ public enum SpaceServer {
       }
     }
     addFileRoutes(&router, compiler: JSXCompiler(), contextOf: contextOf)
-    addLiveRoutes(&router, space: space, keyStreams: keyStreams, dev: dev, contextOf: contextOf)
+    addLiveRoutes(&router, space: space, keyStreams: keyStreams, devPerson: devPerson, contextOf: contextOf)
     router.post("/v1/fetch") { request, _ in
-      switch try await requestPrincipal(request, space: space, date: clock) {
+      switch try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock) {
       case let .principal(principal): await widgetFetchResponse(space: space, principal: principal, proxy: pageFetch, request: request)
       case let .refused(response): response
       }
@@ -162,14 +162,14 @@ public enum SpaceServer {
     addToolRosterRoutes(&router)
     router.get("/v1/observe") { request, _ in
       let principal: Principal
-      switch try await requestPrincipal(request, space: space, date: clock) {
+      switch try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock) {
       case let .principal(resolved): principal = resolved
       case let .refused(response): return response
       }
       return await observeResponse(space: space, url: request.url, principal: principal) {
         @Dependency(\.date) var date
         return try await identityVerdict(
-          queryValues(of: request.url)["identity"], request: request, space: space, dev: dev, now: date.now,
+          queryValues(of: request.url)["identity"], request: request, space: space, devPerson: devPerson, now: date.now,
         )
       }
     }
@@ -194,43 +194,43 @@ public enum SpaceServer {
       return clockReading(jsonResponse(.object(info)), now: now)
     }
     let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
-    addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
-    addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
+    addDiscoveryRoutes(&router, space: space, devPerson: devPerson, contentHost: discoveryContentHost)
+    addIdentityRoutes(&router, space: space, identity: identityController, devPerson: devPerson)
     addIDTokenRoute(&router, space: space, tokens: execTokens ?? sessions?.tokens, identity: identityController)
-    addGroupRoutes(&router, space: space, dev: dev) { request in
-      try await requestPrincipal(request, space: space, date: clock)
+    addGroupRoutes(&router, space: space, devPerson: devPerson) { request in
+      try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
     }
     addMachineRoutes(
       &router, space: space, hub: hub, fingerprint: fingerprint,
     ) { request in
-      try await requestPrincipal(request, space: space, date: clock)
+      try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
     }
-    addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, dev: dev, keyStreams: keyStreams)
-    addAccountRoutes(&router, space: space, dev: dev, keyStreams: keyStreams)
-    addDeviceRoutes(&router, space: space, dev: dev)
-    addUserRoutes(&router, space: space, dev: dev)
+    addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, devPerson: devPerson, keyStreams: keyStreams)
+    addAccountRoutes(&router, space: space, devPerson: devPerson, keyStreams: keyStreams)
+    addDeviceRoutes(&router, space: space, devPerson: devPerson)
+    addUserRoutes(&router, space: space, devPerson: devPerson)
     addProviderRoutes(&router, space: space, usage: sessions?.usage)
     addTranscribeRoutes(&router, space: space, credentials: credentials)
     addCapabilityRoutes(&router, space: space, credentials: credentials)
     addSecretRoutes(&router, space: space, secrets: secrets) { request in
-      try await requestPrincipal(request, space: space, date: clock)
+      try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
     }
     addConversationPageRoutes(&router, space: space) { request in
-      try await requestPrincipal(request, space: space, date: clock)
+      try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
     }
     if let webPushApplicationServerKey {
       addWebPushRoutes(&router, space: space, applicationServerKey: webPushApplicationServerKey)
     }
     addPushRelayRoutes(&router, space: space, allowedHosts: pushRelayHosts(ProcessInfo.processInfo.environment))
     if let sessions {
-      addSessionRoutes(&router, space: space, hub: hub, runtime: sessions, dev: dev) { request in
-        try await requestPrincipal(request, space: space, date: clock)
+      addSessionRoutes(&router, space: space, hub: hub, runtime: sessions, devPerson: devPerson) { request in
+        try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
       }
       addSessionLineRoutes(&router, space: space, runtime: sessions) { request in
-        try await requestPrincipal(request, space: space, date: clock)
+        try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
       }
       addObserverRoutes(&router, space: space, hub: sessions.owner) { request in
-        try await requestPrincipal(request, space: space, date: clock)
+        try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
       }
     }
     if let webApp = webContent.webApp {
@@ -249,28 +249,18 @@ public enum SpaceServer {
       )
     }
     let content = contentHandler(
-      space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, webContent: webContent, pageFetch: pageFetch,
+      space: space, contentHost: contentHost, advertisedOrigin: origin, devPerson: devPerson, publicRead: publicRead, webContent: webContent, pageFetch: pageFetch,
       hub: sessions?.owner,
     )
-    let api: UpgradingHandler = dev ? gated(routed) : gated(walled(routed: routed, space: space, webContent: webContent, keyStreams: keyStreams))
+    let api = gated(walled(routed: routed, space: space, devPerson: devPerson, webContent: webContent, keyStreams: keyStreams))
     // The sessions' tools reach main through this API, in process, as the
     // session whose token they carry.
     sessions?.connection.bind(.inProcess(api), dial: inProcessDial(api: api, hub: hub))
     return hostRouted(contentHost, api: api, content: content)
   }
 
-  private static func walled(routed: @escaping UpgradingHandler, space: Space, webContent: WebContent, keyStreams: KeyStreams) -> UpgradingHandler {
+  private static func walled(routed: @escaping UpgradingHandler, space: Space, devPerson: ResolvedPerson?, webContent: WebContent, keyStreams: KeyStreams) -> UpgradingHandler {
     @Dependency(\.date) var dateGen
-    // The wall. Exceptions carry their own credential and so must precede it:
-    // machine connect and enroll share-login (each with the challenge mint
-    // feeding it) authenticate by a signature over a one-shot challenge,
-    // enroll consume by the join token it is about to burn, and the embedded
-    // SPA's static GETs are trusted product chrome. Server info and the group
-    // list are public discovery — the space id is a claim, not a secret, and a
-    // wallet must read it from an address it cannot yet authenticate through. Everything
-    // else needs a verified assertion. The content origin has its own wall
-    // (readWall in WebOrigin.swift); --public-read opens that one only,
-    // never this one.
     let selfAuthenticating: Set<String> = [
       "/v1/machine-v2/connect", "/v1/machine-v2/challenge", "/v1/machine-v2/enroll",
       "/v1/enroll/consume",
@@ -298,7 +288,13 @@ public enum SpaceServer {
         return try await keyStreams.bind(routed(request), to: credential.key, space: space)
       case let .rejected(response):
         return .response(response)
-      case .anonymous:
+      case .missing:
+        if devPerson != nil {
+          switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
+          case .person: return try await routed(request)
+          case let .refused(response): return .response(response)
+          }
+        }
         return .response(errorResponse(
           .unauthorized,
           code: "unauthorized",
@@ -313,7 +309,7 @@ public enum SpaceServer {
     space: Space,
     contentHost: ContentHost,
     advertisedOrigin: String?,
-    dev: Bool,
+    devPerson: ResolvedPerson?,
     publicRead: Bool,
     webContent: WebContent,
     pageFetch: PageFetchHandler? = nil,
@@ -327,7 +323,7 @@ public enum SpaceServer {
         contentHost: contentHost,
         advertisedOrigin: advertisedOrigin,
         now: dateGen.now,
-        dev: dev,
+        devPerson: devPerson,
         publicRead: publicRead,
         views: webContent.views,
         shell: webContent.scripts.isEmpty ? nil : webContent.scripts,

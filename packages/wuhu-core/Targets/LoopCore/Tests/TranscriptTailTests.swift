@@ -13,7 +13,7 @@ import Testing
 import struct WuhuAI.ToolCall
 
 @Suite(.timeLimit(.minutes(1))) struct TranscriptTailTests {
-  private static let reader = Principal(actor: .anonymous, group: .shared)
+  private static let reader = Principal(actor: .publicReader, group: .shared)
 
   /// A frame by its lines' keys.
   private enum Heard: Equatable {

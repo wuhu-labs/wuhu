@@ -27,7 +27,7 @@ import Testing
 
     #expect(try await space.query(Self.count).rows == [[.integer(1)]])
     #expect(try await space.query("SELECT n FROM \"/t.table\"").rows == [[.integer(1)]])
-    #expect(try await space.validateQuery(Self.count, as: .shared(.anonymous)).names == ["shared:" + table.rawValue])
+    #expect(try await space.validateQuery(Self.count, as: .shared(.publicReader)).names == ["shared:" + table.rawValue])
     await #expect(throws: SpaceError.unknownRelation("main./t.table")) {
       try await space.query("SELECT count(*) FROM main.\"/t.table\"")
     }

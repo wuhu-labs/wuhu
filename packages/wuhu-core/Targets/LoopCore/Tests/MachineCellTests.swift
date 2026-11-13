@@ -148,9 +148,10 @@ import WuweiQueries
       let folder = try ScratchFolder("machine-cell")
       let space = try Space.open(file: folder.url.appending(path: "space.sqlite"))
       _ = setup(space)
+      _ = try await seedBoxKey(space: space, machine: cell.key)
       let exec = MachineExec(id: "deleted", operation: UUID(), createdAt: anchor, group: .shared)
       try await space.worker.call(cell) { try $0.start(exec, finished: recipient) }
-      try await space.worker.call(cell) { try $0.delete() }
+      try await space.worker.call(cell) { try $0.delete(in: .shared) }
       #expect(space.worker.cell(cell).operation(exec.id) == nil)
       #expect(space.worker.cell(cell).presence.state == "deleted")
       let count = try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") }

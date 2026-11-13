@@ -11,8 +11,8 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachine(name: "mac_mini")
-      let builder = try await space.addMachine(name: "ci_box")
+      let mini = try await space.addMachineV2(name: "mac_mini").machine
+      let builder = try await space.addMachineV2(name: "ci_box").machine
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [mini.id] }
       var world = ToolWorld(
@@ -31,24 +31,6 @@ import Testing
       let rendered = ToolResultPayload.machines(result).renderedText
       #expect(rendered.contains("mac_mini \(mini.id.rawValue) attached"))
       #expect(rendered.contains("ci_box \(builder.id.rawValue) detached"))
-    }
-  }
-
-  @Test func unnamedMachinesRenderAsIdAndStateOnly() async throws {
-    try await withToolDeps { _ in
-      let space = try Space.inMemory()
-      let loop = try await ToolFixture(space: space)
-      let anonymous = try await space.addMachine(name: nil)
-      var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
-        session: try await makeSession(space),
-      )
-
-      guard case let .machines(result) = try await world.run("machines", .object([:])) else {
-        throw Mismatch("machines failed")
-      }
-      #expect(result.machines.map(\.name) == [nil])
-      #expect(ToolResultPayload.machines(result).renderedText == "\(anonymous.id.rawValue) detached")
     }
   }
 
@@ -73,7 +55,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      _ = try await space.addMachine(name: "mac_mini")
+      _ = try await space.addMachineV2(name: "mac_mini").machine
       var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       let message = try failureMessage(try await world.run("machines", .object([:])))

@@ -161,8 +161,8 @@ import struct WuhuAI.ToolArguments
   @Test func aMachineIsUsableOnlyFromAGroupThatReadsItsGroup() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
-      let hers = try await rig.space.addMachine(name: "hers", group: Self.alice)
-      _ = try await rig.space.addMachine(name: "common")
+      let hers = try await rig.space.addMachineV2(name: "hers", group: Self.alice).machine
+      _ = try await rig.space.addMachineV2(name: "common").machine
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [hers.id] }
       machineFS.put("/x.txt", "hi", mtime: 1)

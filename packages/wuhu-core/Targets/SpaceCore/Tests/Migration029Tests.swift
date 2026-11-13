@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct Migration029Tests {
   @Test func aJournalledAttachmentBecomesARowOfTheConversationHomedInItsGroup() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-029-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/migration-029-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let original = try Space(writer: database)
     try await database.write { db in
       try db.execute(sql: """
@@ -20,7 +20,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '029';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path))
+    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
     let rows = try await database.read { db in
       try Row.fetchAll(db, sql: "SELECT conversation_id, path, blob, size, created_at FROM attachments").map { row in
         [row[0] as String, row[1] as String, row[2] as String, String(row[3] as Int), row[4] as String]

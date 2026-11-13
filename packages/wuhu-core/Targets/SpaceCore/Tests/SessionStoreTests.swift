@@ -1,11 +1,15 @@
 import Dependencies
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
-import LoopCore
+@testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import StructuredQueries
 import Testing
 
 @Suite(.deterministicDependencies)
@@ -17,12 +21,7 @@ struct SessionStoreTests {
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       try await store.put(sid, input: SessionFix.message("hello"))
 
-      let payloads = try await space.writer.read { db in
-        try String.fetchAll(
-          db,
-          sql: "SELECT payload FROM session_queue",
-        )
-      }
+      let payloads = space.worker.cell(SessionCell.ID(sid.rawValue)).db.rows(SessionQueueRow.where { $0.sessionID.eq(sid.rawValue) }.select { $0.payload })
       #expect(payloads.count == 1)
       for payload in payloads {
         #expect(keysAreSorted(try #require(JSONValue.parse(payload))), "unsorted keys in \(payload)")

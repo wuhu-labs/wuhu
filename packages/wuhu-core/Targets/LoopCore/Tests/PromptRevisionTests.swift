@@ -43,7 +43,7 @@ import Testing
       #expect(try await store.promptRevisions(id) == created)
 
       let head = GenerationHead(id: UUID(), timestamp: handlerDate, summary: "compacted", snapshot: .init(), runningWork: [])
-      _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.writeGeneration(id, head: head) }
+      _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.writeGeneration(id, head: head) }
       let compacted = try await prompt(space, id)
       #expect(compacted.contains("root two") && compacted.contains("home two") && compacted.contains("the two skill"))
       #expect(compacted.contains("the one skill"))
@@ -112,7 +112,7 @@ import Testing
 
       try await edit(space, id, "one")
       let head = GenerationHead(id: UUID(), timestamp: handlerDate, summary: "compacted", snapshot: .init(), runningWork: [])
-      _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.writeGeneration(id, head: head) }
+      _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.writeGeneration(id, head: head) }
       guard case let .pending(next) = try await store.promptForInference(id) else { throw Unexpected() }
       #expect(next.revs["shared"]! > pending.revs["shared"]!)
       #expect(try await store.storeInferencePrompt(id, for: pending, "stale", tools: [], session: session).preamble.system == "stale")

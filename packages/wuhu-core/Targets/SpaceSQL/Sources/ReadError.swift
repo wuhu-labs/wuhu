@@ -1,5 +1,3 @@
-import struct GRDB.DatabaseValue
-
 public enum ReadError: Error, Equatable, Sendable {
   case notReadOnly
   case forbidden(String)
@@ -10,5 +8,5 @@ public enum ReadError: Error, Equatable, Sendable {
 public struct ReadRows: Equatable, Sendable {
   public let columns: [String]
   public let decltypes: [String?]
-  public let rows: [[DatabaseValue]]
+  public let rows: [[SQLValue]]
 }

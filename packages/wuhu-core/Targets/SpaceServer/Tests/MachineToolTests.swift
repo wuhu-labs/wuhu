@@ -24,7 +24,7 @@ import Testing
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct MachineToolTests {
   @Test func fsToolSuiteOverMachinesAgainstARealAgent() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (machine, _) = try await addMachine(server)
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }
@@ -110,7 +110,7 @@ import Testing
 
   @Test func machineAddressesRejectRevisionsLoudly() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (machine, _) = try await addMachine(server)
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }
@@ -133,7 +133,7 @@ import Testing
 
   @Test func detachedMachineFailsUnavailable() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (machine, _) = try await addMachine(server)
 
     let detached = try await failure(server, "read", ["path": .string("machines://\(machine.rawValue)/etc/hosts")])
@@ -147,7 +147,7 @@ import Testing
   // bytes never reach main, and the refusal says how to slice it instead.
   @Test func aFileOverOneReadFrameIsRefusedTyped() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (machine, _) = try await addMachine(server)
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }
@@ -182,7 +182,7 @@ import Testing
     let (record, _) = try await space.addMachineV2(name: "parity_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
     let hub = MachineHub(space: space)
-    let context = SpaceToolContext(space: space, machines: machineSeam(hub: hub), principal: .shared(.anonymous))
+    let context = SpaceToolContext(space: space, machines: machineSeam(hub: hub), principal: .shared(try await space.ensureDevPerson().actor))
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       defer { tasks.cancelAll() }

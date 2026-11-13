@@ -4,7 +4,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct SecretVerbTests {
   @Test func setListRemoveReachTheSpaceStoreAndNeverPrintAValue() async throws {
-    let harness = try MachineCLIHarness()
+    let harness = try await MachineCLIHarness()
     try await harness.runScenario { h in
       let setIO = CLIIO(stdin: "ghp_live_value\n")
       #expect(await h.run(["secret", "set", "GITHUB_TOKEN"], io: setIO) == 0)

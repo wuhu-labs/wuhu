@@ -98,11 +98,11 @@ public struct JobContext<Target: Job> {
   }
 
   public func cell<Other: Cell>(_ id: Other.ID) -> Other {
-    reach.worker.cell(id, within: reach.within)
+    reach.worker.cell(id, reading: reach.reading)
   }
 
   public func job<Other: Job>(_ id: Other.ID) -> Other {
-    reach.worker.job(id, within: reach.within)
+    reach.worker.job(id, reading: reach.reading)
   }
 
   /// Durable once the epoch open now is: the message leaves before any output that follows.

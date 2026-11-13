@@ -142,7 +142,7 @@ final class IdentityHarness: Sendable {
       )
     }
     let runtime = SessionRuntime(execution: worker, owner: owner, metrics: .recording(in: space), tokens: tokens, connection: connection)
-    let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: dev, execTokens: tokens)
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, devPerson: dev ? try await space.ensureDevPerson() : nil, execTokens: tokens)
     worker.start()
     self.serviceTask = Task {
       let (parked, end) = AsyncStream<Void>.makeStream()
@@ -164,7 +164,7 @@ final class IdentityHarness: Sendable {
       title: "coder", kind: .task, parent: self.parent, createdBy: self.parent.rawValue, executor: model,
     )
     self.stranger = try await self.store.createSession(group: .shared, title: "stranger", kind: .agent, createdBy: "owner", executor: model)
-    let machine = try await space.addMachine(name: "box")
+    let machine = try await space.addMachineV2(name: "box").machine
     let exec = try await space.reserveExec(machine: machine.id, caller: self.parent.rawValue)
     let credential = try await tokens.credential(session: self.parent, group: .shared, machine: machine.id, exec: exec.id, timeout: .seconds(60), issuedAt: Date())
     self.token = try #require(credential.object?["token"]?.stringValue)
@@ -252,8 +252,8 @@ final class IdentityHarness: Sendable {
       environment["WUHU_IDENTITY"] = "wallet"
       let wallet = await h.run(["user", "list"], environment: environment)
       #expect(wallet.code == 0, "\(wallet.stderr)")
-      #expect(wallet.stderr == "acting as anonymous (wallet)\n")
-      #expect(wallet.hosts == ["elsewhere.test"], "the wallet chooses the space, not the session URL")
+      #expect(wallet.stderr == "acting as \(try await h.space.ensureDevPerson().persona) (wallet)\n")
+      #expect(wallet.hosts == ["elsewhere.test", "elsewhere.test"], "the wallet chooses the space, not the session URL")
     }
   }
 
@@ -297,8 +297,8 @@ final class IdentityHarness: Sendable {
         currentDirectory: nested.path,
       )
       #expect(await runner.run(arguments: ["ls", "/"]) == 0)
-      #expect(await error.take() == "acting as anonymous (wallet)\n")
-      #expect(h.hosts.list.withLock { $0 } == ["elsewhere.test"])
+      #expect(await error.take() == "acting as \(try await h.space.ensureDevPerson().persona) (wallet)\n")
+      #expect(h.hosts.list.withLock { $0 } == ["elsewhere.test", "elsewhere.test"])
 
       var environment = h.sessionEnvironment
       environment["WUHU_IDENTITY"] = "wallet"
@@ -306,8 +306,8 @@ final class IdentityHarness: Sendable {
       environment["WUHU_SPACE_URL"] = "not a URL"
       let opted = await h.run(["ls", "/"], environment: environment)
       #expect(opted.code == 0, "\(opted.stderr)")
-      #expect(opted.stderr == "acting as anonymous (wallet)\n")
-      #expect(opted.hosts == ["elsewhere.test"])
+      #expect(opted.stderr == "acting as \(try await h.space.ensureDevPerson().persona) (wallet)\n")
+      #expect(opted.hosts == ["elsewhere.test", "elsewhere.test"])
     }
   }
 

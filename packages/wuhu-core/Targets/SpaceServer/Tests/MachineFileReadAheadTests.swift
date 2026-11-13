@@ -4,7 +4,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import JSONValue
 import MachineContract
 import OperationProtocol
@@ -129,11 +128,8 @@ import Wuwei
           #expect(pointer.from == UInt64((index - 1) * frameBytes))
           if index < 3 {
             try await waitForCopyOffer(source, through: (index + 1) * frameBytes, space: client.space)
-            let writer = await client.space.writer
-            let consumed = try await writer.read { db in
-              try Int.fetchOne(db, sql: "SELECT json_extract(offsets, '$.data') FROM machine_file_operations WHERE id = ?", arguments: [source.uuidString.lowercased()])
-            }
-            #expect(consumed == index * frameBytes)
+            let consumed = try #require(testFileOperations(in: client.space).first { $0.row.id == source.uuidString.lowercased() }?.row.offsets["data"])
+            #expect(consumed == UInt64(index * frameBytes))
             #expect(commits.withLock { $0 } == 0)
           }
           if ending == "targetFailure" {
@@ -176,15 +172,14 @@ import Wuwei
 }
 
 private func waitForCopyOffer(_ operation: UUID, through: Int, consumed: Bool = false, space: Space) async throws {
-  let writer = await space.writer
-  let column = consumed ? "offsets" : "offered"
-  let values = ValueObservation.tracking { db in
-    try Int.fetchOne(db, sql: "SELECT json_extract(\(column), '$.data') FROM machine_file_operations WHERE id = ?", arguments: [operation.uuidString.lowercased()])
-  }.values(in: writer, bufferingPolicy: .bufferingNewest(1))
-  for try await value in values {
-    let offset = try #require(value)
-    #expect(offset <= through)
-    if offset == through { return }
+  let watch = await watchSpaceTables(["machine_file_operations"], in: space)
+  defer { watch.cancel() }
+  for await _ in watch.changes {
+    let row = try #require(testFileOperations(in: space).first { $0.row.id == operation.uuidString.lowercased() }?.row)
+    let offset = try #require((consumed ? row.offsets : row.offered)["data"])
+    #expect(offset <= UInt64(through))
+    if offset == UInt64(through) { return }
   }
+  try Task.checkCancellation()
   Issue.record("Copy source observation ended before its expected offset")
 }

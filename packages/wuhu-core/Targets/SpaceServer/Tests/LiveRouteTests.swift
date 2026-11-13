@@ -1,4 +1,6 @@
+import Assertion
 import ControlledTime
+import Crypto
 import Dependencies
 import Fetch
 import LoopCore
@@ -21,14 +23,14 @@ import WmdDocument
 @Suite(.deterministicDependencies)
 struct LiveRouteTests {
   @Test func aSocketSyncsTheDocumentAfterItsHello() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.space.fs(.shared).write("/plan.wmd", Data("# Plan\n\nHello\n".utf8), ifMatch: nil)
     try await dial(harness, "/plan.wmd", create: false) { socket in
       var inbound = socket.inbound.makeAsyncIterator()
       guard case let .welcome(_, name, access, _, rev)? = try await control(inbound.next()) else {
         Issue.record("no welcome"); return
       }
-      #expect(name == "dev" && access == .write && rev != nil)
+      #expect(name == "owner" && access == .write && rev != nil)
       let replica = LiveReplica(.wmd)
       try await socket.send(.binary(LiveFrame.sync(versionVector: Array(replica.versionVector)).bytes))
       guard case let .binary(update)? = await inbound.next(), case let .update(bytes) = try LiveFrame(bytes: update) else {
@@ -43,7 +45,7 @@ struct LiveRouteTests {
   }
 
   @Test func aMissingDocumentOpensOnlyWhenTheHelloAsksToCreateIt() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     try await dial(harness, "/new.wmd", create: false) { socket in
       var inbound = socket.inbound.makeAsyncIterator()
       guard case .error(code: .notFound, _)? = try await control(inbound.next()) else { Issue.record("a visit opened it"); return }
@@ -57,7 +59,7 @@ struct LiveRouteTests {
   }
 
   @Test func aReadOnlyChannelRefusesAnUpdate() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let (reader, owner) = try await withSessionDeps {
       _ = try await SessionToolFixture(space: harness.space)
@@ -74,18 +76,21 @@ struct LiveRouteTests {
   }
 
   @Test func aSocketClosesWhenItsGroupGoesPrivate() async throws {
-    let harness = try Harness()
-    let team = GroupID(rawValue: "team")
-    try await harness.space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at, visibility) VALUES (?, '2026-01-01T00:00:00Z', 'open')", arguments: [team.rawValue])
-    }
+    let harness = try await Harness()
+    let admin = try await harness.space.ensureDevPerson()
+    let team = try await harness.space.createGroup(alias: "team", owner: admin.account)
+    try await harness.space.setVisibility(.open, of: team, by: admin.actor, acting: team)
     _ = try await harness.space.fs(team).write("/plan.wmd", Data("Hello\n".utf8), ifMatch: nil)
-    try await dial(harness, "/plan.wmd?group=team") { socket in
+    let account = try await harness.space.addAccount(kind: .human, name: "reader")
+    let key = Curve25519.Signing.PrivateKey()
+    _ = try await harness.space.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let bearer = try AssertionClaims(key: key.pubkeyLabel, space: try await harness.space.identity().rawValue, expiresAt: fixedDate.addingTimeInterval(3600)).signed(by: key).rawValue
+    try await dial(harness, "/plan.wmd?group=team", bearer: bearer) { socket in
       var inbound = socket.inbound.makeAsyncIterator()
       guard case .welcome(_, _, .write, _, _)? = try await control(inbound.next()) else {
         Issue.record("no writer's welcome"); return
       }
-      try await harness.space.setVisibility(.private, of: team, by: .anonymous, acting: team)
+      try await harness.space.setVisibility(.private, of: team, by: (try await harness.space.ensureDevPerson()).actor, acting: team)
       guard case .error(code: .forbidden, _)? = try await control(inbound.next()) else {
         Issue.record("a socket outlived its read access"); return
       }
@@ -116,7 +121,7 @@ struct LiveRouteTests {
 
   @Test func aSocketWithoutAHelloClosesAtTheDeadline() async throws {
     let clock = VirtualClock()
-    let harness = try Harness(clock: clock)
+    let harness = try await Harness(clock: clock)
     try await dial(harness, "/plan.wmd", hello: false) { socket in
       var inbound = socket.inbound.makeAsyncIterator()
       try await clock.sleeping { $0 == liveHelloDeadline }
@@ -126,7 +131,7 @@ struct LiveRouteTests {
   }
 
   @Test func theLegacyRouteRefusesInTheCodesItsClientsKnow() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.space.fs(.shared).write("/plan.wmd", Data("# Plan\n".utf8), ifMatch: nil)
     _ = try await harness.space.fs(.shared).write("/notes.md", Data("notes\n".utf8), ifMatch: nil)
     try await dial(harness, "/plan.wmd", prefix: "/v1/wmd") { socket in
@@ -157,7 +162,7 @@ struct LiveRouteTests {
 
   private func dial(
     _ harness: Harness, _ path: String, prefix: String = LiveChannel.routePrefix, create: Bool = false, group: String? = nil,
-    hello: Bool = true,
+    hello: Bool = true, bearer: String? = nil,
     _ body: (WebSocket) async throws -> Void,
   ) async throws {
     var headers = RequestHeaders()
@@ -177,7 +182,7 @@ struct LiveRouteTests {
       try await withThrowingDiscardingTaskGroup { tasks in
         tasks.addTask { await serve() }
         if hello {
-          let frame = LiveClientControl.hello(authorization: nil, group: group, peer: "7", create: create ? true : nil)
+          let frame = LiveClientControl.hello(authorization: bearer.map { "Bearer " + $0 }, group: group, peer: "7", create: create ? true : nil)
           try await socket.send(.text(try JSONValueEncoder().encode(frame).jsonString()))
         }
         try await body(socket)

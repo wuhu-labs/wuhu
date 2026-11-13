@@ -1,9 +1,7 @@
-import GRDB
-
 /// A group's current alias lives in the `aliases` namespace alone, where the space cell writes it; the triggers
 /// that copied `groups.alias` into it go with the column.
 enum Migration043 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     DROP TRIGGER IF EXISTS groups_alias_insert;
     DROP TRIGGER IF EXISTS groups_alias_update;

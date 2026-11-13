@@ -10,14 +10,13 @@ import StructuredQueries
 import Wuwei
 import WuweiQueries
 
-// The steps behind `DocumentCell`: the rows a step loads, the replica it rebuilds, and the writes
-// that keep the file one revision behind the frames.
 extension DocumentCell {
   // MARK: The document a step works on
 
   struct Document {
     var history: String
-    /// The revision of the file its snapshot stands for; nil while there is no file.
+    var lineage: Int64
+    /// The latest checkpoint revision acknowledged by FilesCell.
     var fileRev: Int64?
     /// What the snapshot and the log hold; nil while no row is stored.
     var frontier: Data?
@@ -30,10 +29,10 @@ extension DocumentCell {
   }
 
   /// The document a client's frames continue: its rows, which must still be its file's.
-  func withCurrentDocument<T>(_ body: (inout DocumentCell, inout Document, LiveReplica) throws -> T) throws -> T {
+  func withCurrentDocument<T>(_ file: FileDocumentState, _ body: (inout DocumentCell, inout Document, LiveReplica) throws -> T) throws -> T {
     let replicas = documents.replicas
     return try replicas.with(id.key) { slot in
-      guard var document = try storedDocument().document else { throw DocumentGone() }
+      guard var document = try storedDocument(file).document else { throw DocumentGone() }
       let replica = slot.take(document.frontier) { rebuild(document) }
       var cell = self
       let value = try body(&cell, &document, replica)
@@ -46,19 +45,19 @@ extension DocumentCell {
   /// absent or older: a file that is a document opens a history of its own at its revision, one that
   /// is not opens none.
   func withOpenDocument<T>(
-    existing: Bool, keeping keep: Int?, _ body: (inout DocumentCell, inout Document, LiveReplica) throws -> T,
+    file: FileDocumentState, existing: Bool, keeping keep: Int?, _ body: (inout DocumentCell, inout Document, LiveReplica) throws -> T,
   ) throws -> T {
     let replicas = documents.replicas
     return try replicas.with(id.key) { slot in
       var cell = self
-      let stored = try storedDocument()
+      let stored = try storedDocument(file)
       if var document = stored.document {
         let replica = slot.take(document.frontier) { rebuild(document) }
         let value = try body(&cell, &document, replica)
         slot.keep(document.frontier)
         return value
       }
-      let head = try DocumentRows.head(path, group, in: cell.host)
+      let head = try file.file()
       if stored.stored {
         let others = sockets().filter { $0.id != keep }
         for socket in others {
@@ -77,17 +76,17 @@ extension DocumentCell {
   }
 
   /// The stored document, and when it matches its file, the document itself.
-  func storedDocument() throws -> (document: Document?, stored: Bool) {
+  func storedDocument(_ file: FileDocumentState) throws -> (document: Document?, stored: Bool) {
     guard let row = db.rows(DocumentStateRow.all).first else { return (nil, false) }
     guard let snapshot = db.rows(DocumentSnapshotRow.all).first else {
       preconditionFailure("\(id.key) holds state without a snapshot")
     }
     let document = Document(
-      history: row.history, fileRev: row.fileRev, frontier: Data(row.frontier), nextSeq: row.nextSeq, dirtyAt: row.dirtyAt,
+      history: row.history, lineage: db.rows(DocumentLineageRow.all).first!.lineage, fileRev: row.fileRev, frontier: Data(row.frontier), nextSeq: row.nextSeq, dirtyAt: row.dirtyAt,
       snapshot: snapshot.snapshot, notDocument: row.notDocument,
     )
-    guard let head = try DocumentRows.head(path, group, in: host) else { return (document.fileRev == nil ? document : nil, true) }
-    return (document.fileRev == head.rev ? document : nil, true)
+    let lineage = db.rows(DocumentLineageRow.all).first!
+    return (file.isCurrent(lineage.lineage, seedRev: lineage.seedRev) ? document : nil, true)
   }
 
   func rebuild(_ document: Document) -> LiveReplica {
@@ -99,14 +98,16 @@ extension DocumentCell {
     }
   }
 
-  /// The document a file's text makes, its rows written when there is a file. `text` is the bytes a host
+  /// The document a file's text makes, or a new empty lineage when no file exists. `text` is the bytes a host
   /// fetched because they are not inline; a file whose bytes are not inline and were not handed in is one
   /// the cell cannot open now. Every start of a history clears what the path held.
   mutating func seeded(_ head: (rev: Int64, hash: String)?, _ text: Data?) throws -> (Document, LiveReplica) {
     let replica = LiveReplica(format)
-    var document = Document(history: UUID().uuidString, fileRev: head?.rev, frontier: nil, nextSeq: 1, dirtyAt: nil, snapshot: [], notDocument: nil)
+    var document = Document(history: UUID().uuidString, lineage: 0, fileRev: head?.rev, frontier: nil, nextSeq: 1, dirtyAt: nil, snapshot: [], notDocument: nil)
     guard let head else {
-      try clear()
+      document.frontier = replica.frontiers
+      document.snapshot = Array(try! replica.snapshot())
+      try writeSeed(&document, replica)
       return (document, replica)
     }
     let inline: Data? = switch try Bucket.stored(head.hash, in: db) {
@@ -129,12 +130,16 @@ extension DocumentCell {
     }
     document.frontier = replica.frontiers
     document.snapshot = Array(try! replica.snapshot())
-    try writeSeed(document, replica)
+    try writeSeed(&document, replica)
     return (document, replica)
   }
 
-  mutating func writeSeed(_ document: Document, _ replica: LiveReplica) throws {
+  mutating func writeSeed(_ document: inout Document, _ replica: LiveReplica) throws {
+    let lineage = (db.rows(DocumentLineageRow.all).first?.lineage ?? 0) + 1
+    document.lineage = lineage
     try clear()
+    try db.execute(DocumentLineageRow.delete())
+    try db.execute(DocumentLineageRow.insert { DocumentLineageRow(lineage: lineage, seq: 0, seedRev: document.fileRev) })
     try db.execute(
       DocumentStateRow.insert {
         DocumentStateRow(
@@ -154,6 +159,7 @@ extension DocumentCell {
     try db.execute(DocumentSnapshotRow.delete())
     try db.execute(DocumentLogRow.delete())
     try db.execute(DocumentCheckpointRow.delete())
+    try db.execute(DocumentPendingCheckpointRow.delete())
   }
 
   mutating func saveSnapshot(_ snapshot: [UInt8]) throws {
@@ -194,42 +200,40 @@ extension DocumentCell {
     db.rows(DocumentLogRow.all.asSelect().count()).first!
   }
 
-  /// The text as one revision of the file, and the checkpoint the frontiers name it by.
   @discardableResult
   mutating func commit(
     _ document: inout Document, _ replica: LiveReplica, acting: GroupID, attribution: RevisionAttribution?, checkout: Int64? = nil,
-    relaying update: Data? = nil, except skipped: Int? = nil,
-  ) throws -> Int64 {
-    let snapshot = Array(try! replica.snapshot())
-    let content = Array(replica.text.utf8)
+    relaying update: Data? = nil,
+  ) throws -> DocumentCheckpoint {
+    let snapshot = Array(try! replica.snapshot()), content = Array(replica.text.utf8)
     let blob = Blob(hash: Substrate.blobHash(content), content: content, externalKey: nil)
     try Bucket.put(blob, in: &db)
-    let rev = try DocumentRows.commit(
-      path, group, acting: acting, attribution: attribution, blob: blob, expecting: document.fileRev, checkout: checkout,
-      mtime: documents.mtime(), in: host,
-    )
-    document.fileRev = rev
-    document.frontier = replica.frontiers
-    document.snapshot = snapshot
-    document.dirtyAt = nil
-    document.notDocument = nil
-    try db.execute(DocumentStateRow.delete())
+    let lineage = db.rows(DocumentLineageRow.all).first!, seq = lineage.seq + 1
+    try db.execute(DocumentLineageRow.update { $0.seq = #bind(seq) })
+    try db.execute(DocumentPendingCheckpointRow.insert { DocumentPendingCheckpointRow(seq: seq, frontiers: Array(replica.frontiers)) })
+    document.frontier = replica.frontiers; document.snapshot = snapshot; document.dirtyAt = nil; document.notDocument = nil
     try db.execute(DocumentLogRow.delete())
-    try db.execute(
-      DocumentStateRow.insert {
-        DocumentStateRow(
-          history: document.history, fileRev: rev, frontier: Array(replica.frontiers), nextSeq: document.nextSeq, dirtyAt: nil, notDocument: nil,
-        )
-      },
-    )
+    try db.execute(DocumentStateRow.update {
+      $0.frontier = #bind(Array(replica.frontiers)); $0.nextSeq = #bind(document.nextSeq); $0.dirtyAt = #bind(nil); $0.notDocument = #bind(nil)
+    })
     try saveSnapshot(snapshot)
-    // An unchanged text commits at a revision that already has its row, whose frontiers this commit
-    // replaces; every other checkpoint stays, an agent's base revision being one it read before this.
-    try db.execute(DocumentCheckpointRow.where { $0.rev.eq(rev) }.delete())
-    try db.execute(DocumentCheckpointRow.insert { DocumentCheckpointRow(rev: rev, frontiers: Array(replica.frontiers)) })
+    ctx.send(FilesCell.ID(group.rawValue)).checkpoint(path.rawValue, hash: blob.hash, lineage: lineage.lineage, seq: seq, seedRev: lineage.seedRev, attribution: attribution, checkout: checkout)
     if let update { send(.frame(.update(Array(update)))) }
-    send(.control(.checkpoint(rev: Int(rev))), except: skipped)
-    return rev
+    return DocumentCheckpoint(hash: blob.hash, lineage: lineage.lineage, seq: seq, seedRev: lineage.seedRev)
+  }
+
+  mutating func prepareCheckpoint() -> DocumentCheckpoint? {
+    do {
+      let file = ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path)
+      return try withCurrentDocument(file) { cell, document, replica in
+        if document.dirtyAt != nil { return try cell.commit(&document, replica, acting: cell.group, attribution: nil) }
+        let lineage = cell.db.rows(DocumentLineageRow.all).first!
+        guard !cell.db.rows(DocumentPendingCheckpointRow.where { $0.seq.eq(lineage.seq) }).isEmpty else { return nil }
+        return DocumentCheckpoint(hash: Substrate.blobHash(Array(replica.text.utf8)), lineage: lineage.lineage, seq: lineage.seq, seedRev: lineage.seedRev)
+      }
+    } catch is DocumentGone { settleGone(); return nil } catch {
+      preconditionFailure("a checkpoint threw what a checkpoint does not: \(error)")
+    }
   }
 
   /// A step found the file gone: the edits are moot, so nothing stays due (a wake that finds nothing due

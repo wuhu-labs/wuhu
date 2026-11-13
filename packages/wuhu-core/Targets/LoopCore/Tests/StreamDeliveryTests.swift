@@ -94,7 +94,6 @@ private func deliveryWorker(
       handler: handler,
     )
   })
-  space.worker.register(.job(StreamJob.self))
   space.worker.register(.cell(StreamReceiver.self))
   registerSessionCells(in: space)
   space.worker.register(.job(HandlerJob.self))
@@ -223,7 +222,7 @@ extension StreamDeliveryTests {
       events.send("id: 2\ndata: two\n\n", on: 1)
       try await until("the next event fires exactly once") { new.worker.job(job).db.rows(StreamRow.all).first?.lastEventID == "2" }
       #expect(fired.value == ["one", "two"])
-      let firings = try await new.writer.read { try String.fetchAll($0, sql: "SELECT outcome FROM subscription_firings ORDER BY rowid") }
+      let firings = new.worker.cell(cell).db.rows(FiringRow.all.order { _ in #sql("rowid", as: Int64.self) }.select { $0.outcome })
       #expect(firings == ["ok", "ok"])
       await new.stopWorker()
       try await old.close()

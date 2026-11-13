@@ -21,7 +21,7 @@ import SpaceTools
 func spaceDataResponse(
   space: Space,
   caller: WebCaller,
-  dev: Bool,
+  devPerson: ResolvedPerson?,
   publicRead: Bool,
   route: String,
   request: Request,
@@ -30,7 +30,7 @@ func spaceDataResponse(
   switch (route, request.method) {
   case ("query", .get), ("query", .head):
     let viewer: AccountID?
-    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
     case let .refused(wall): return wall
     case let .admitted(account): viewer = account
     }
@@ -47,7 +47,7 @@ func spaceDataResponse(
     }
   case ("observe", .get):
     let viewer: AccountID?
-    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
     case let .refused(wall): return wall
     case let .admitted(account): viewer = account
     }
@@ -62,7 +62,7 @@ func spaceDataResponse(
     ).viewed(by: viewer)
   case ("watch", .get):
     let viewer: AccountID?
-    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
     case let .refused(wall): return wall
     case let .admitted(account): viewer = account
     }
@@ -74,7 +74,7 @@ func spaceDataResponse(
       .viewed(by: viewer)
   case ("attributes", .get), ("attributes", .head):
     let viewer: AccountID?
-    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
     case let .refused(wall): return wall
     case let .admitted(account): viewer = account
     }
@@ -85,7 +85,7 @@ func spaceDataResponse(
     return await toolResponse(context, "attributes.read", input: .object(["path": .string(path)])).viewed(by: viewer)
   case ("find", .get), ("find", .head), ("grep", .get), ("grep", .head):
     let viewer: AccountID?
-    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
     case let .refused(wall): return wall
     case let .admitted(account): viewer = account
     }
@@ -100,7 +100,7 @@ func spaceDataResponse(
     return await toolResponse(context, route, input: input).viewed(by: viewer)
   case ("rows", .post):
     let write: PageWrite
-    switch try await writeAdmission(space: space, caller: caller, dev: dev, request: request) {
+    switch try await writeAdmission(space: space, caller: caller, devPerson: devPerson, request: request) {
     case let .refused(wall): return wall
     case let .admitted(admitted): write = admitted
     }
@@ -117,7 +117,7 @@ func spaceDataResponse(
     }
   case ("attributes", .post):
     let write: PageWrite
-    switch try await writeAdmission(space: space, caller: caller, dev: dev, request: request) {
+    switch try await writeAdmission(space: space, caller: caller, devPerson: devPerson, request: request) {
     case let .refused(wall): return wall
     case let .admitted(admitted): write = admitted
     }
@@ -214,10 +214,7 @@ enum WriteAdmission {
 
 private let maximumPageWriteBytes = 4 << 20
 
-// A write is a JSON POST from the page's own origin, which a form or a
-// cross-site script cannot forge, with a live read session: --public-read
-// admits no visitor to write, and --dev admits its seat.
-func writeAdmission(space: Space, caller: WebCaller, dev: Bool, request: Request) async throws -> WriteAdmission {
+func writeAdmission(space: Space, caller: WebCaller, devPerson: ResolvedPerson?, request: Request) async throws -> WriteAdmission {
   let mediaType = request.headers[.contentType]?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
   guard mediaType == "application/json" else {
     return .refused(errorResponse(.unsupportedMediaType, code: "invalidArgument", message: "page writes take an application/json body"))
@@ -229,14 +226,12 @@ func writeAdmission(space: Space, caller: WebCaller, dev: Bool, request: Request
       .forbidden, code: "crossOrigin", message: "page writes are accepted only from this host's own pages",
     ))
   }
-  let viewer: AccountID?
-  if dev {
-    viewer = nil
-  } else {
-    switch try await cookieAdmission(space: space, group: caller.group, cookies: caller.cookies, request: request) {
-    case let .refused(wall): return .refused(wall)
-    case let .admitted(account): viewer = account
-    }
+  let viewer: AccountID
+  switch try await admission(space: space, group: caller.group, devPerson: devPerson, publicRead: false, cookies: caller.cookies, request: request) {
+  case let .refused(wall): return .refused(wall)
+  case let .admitted(account):
+    guard let account else { preconditionFailure("write admission requires a person") }
+    viewer = account
   }
   let data: Data
   do {

@@ -132,7 +132,8 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
       )
       try await space.recordInference(InferenceRecord(metric))
       try await space.recordInference(InferenceRecord(metric))
-      #expect(try await space.query("SELECT id FROM inferences", as: .shared(.anonymous)).rows == [[.text("attempt-1")]])
+      try await space.deliverInferences(.shared)
+      #expect(try await space.query("SELECT id FROM inferences", as: .shared(.publicReader)).rows == [[.text("attempt-1")]])
     }
   }
 }

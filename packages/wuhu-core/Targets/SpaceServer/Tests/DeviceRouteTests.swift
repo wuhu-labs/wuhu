@@ -16,7 +16,7 @@ import Testing
   let key = Curve25519.Signing.PrivateKey()
 
   init() async throws {
-    harness = try Harness(dev: false)
+    harness = try await Harness(dev: false)
     identity = try await harness.space.identity().rawValue
   }
 
@@ -156,7 +156,7 @@ import Testing
     #expect(issued.n >= 1)
     let rows = try await harness.space.query(
       "SELECT n, payload FROM device_commands WHERE device_id = '\(device.id)'",
-      as: .shared(.anonymous),
+      as: .shared(.publicReader),
     )
     #expect(rows.rows == [[.integer(Int64(issued.n)), .text(#"{"sidebar":"/.sidebars/demo.json"}"#)]])
   }

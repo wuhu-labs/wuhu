@@ -17,7 +17,7 @@ import Testing
 // The shipped compaction over a copy of the pre-groups Backcompat fixture: the
 // same file and steps the rehearsal on a copy of a live space's database runs.
 @Suite(.deterministicDependencies) struct Wuhu45MigrationTests {
-  static let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Backcompat/space.sqlite")
+  static let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Backcompat/pre-ledger.sqlite")
   static let boss = AccountID(rawValue: "ac_b0ss0000")
   static let carol = AccountID(rawValue: "ac_car01000")
 
@@ -98,26 +98,27 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines", "bucket_objects", "person_hidden_sidebars"]
+    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "document_lineage", "document_pending_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines", "bucket_objects", "person_hidden_sidebars"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
     let dropped: Set = ["session_receipts", "session_api_receipts", "session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs", "blobs", "blob_objects"]
+    let addsOwnership: Set = ["accounts", "account_keys", "join_tokens", "read_sessions", "personas", "devices", "join_token_receipts"]
     let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)
     let expectedKeys = Set(expected.keys).subtracting(later)
     #expect(
       migratedKeys == expectedKeys,
       "migrated only: \(migratedKeys.subtracting(expectedKeys).sorted()); fresh only: \(expectedKeys.subtracting(migratedKeys).sorted())",
     )
-    // `groups`, `accounts`, `machines`, `messages` and `sessions` are reshaped
+    // `groups`, `accounts`, `machines`, `messages`, `sessions` and `session_queue` are reshaped
     // by the next migrations; the reopened comparison below pins their columns.
     for (table, lines) in expected.sorted(by: { $0.key < $1.key })
-      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles", "revisions"].contains(table)
+      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles", "revisions", "session_queue"].contains(table)
     {
       #expect(migrated[table] == lines.filter { line in
         !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)
           && !line.contains("_alias_insert") && !line.contains("_alias_update")
           && !line.contains("owner_account")
+          && !(addsOwnership.contains(table) && line.contains("owner"))
           && !(table == "session_runtime" && line.contains("step_try"))
-          && !(table == "session_queue" && (line.contains("topic") || line.contains("due_at")))
       }, "\(table)")
     }
     try await Space.open(file: file).close()
@@ -232,57 +233,6 @@ import Testing
     #expect(try Self.cli(Wuhu45Migration.spliced(for: clean), on: clean, in: folder) == 0)
     #expect(try Wuhu45Migration.isApplied(to: clean))
     try await Space.open(file: clean).close()
-  }
-
-  @Test func theFirstServeReinducesDocumentsAndSkipsUnreadableBlobs() async throws {
-    let folder = try scratch()
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let file = try copy(to: folder)
-    try Wuhu45Migration.apply(to: file)
-    let logs = Warnings()
-    let space = try Space.open(file: file, log: logs.logger)
-    _ = try await space.fs(.shared).write(
-      "/notes/c.md", Data("---\nowner: ann\n---\n# C\n\n[b](wuhu:/notes/b.md) [p](wuhu://alice.localspace/plan.md)\n".utf8),
-      ifMatch: nil,
-    )
-    let raw = try DatabaseQueue(path: file.path)
-    // What an older parser left: no rows for c, a stale row for a doc whose blob is gone, and neither run recorded.
-    try await raw.write { db in
-      try db.execute(sql: """
-      DELETE FROM docs WHERE grp = 'shared' AND path = '/notes/c.md';
-      DELETE FROM links WHERE grp = 'shared' AND src = '/notes/c.md';
-      DELETE FROM doc_custom_attrs WHERE grp = 'shared' AND path = '/notes/c.md';
-      DELETE FROM schema_compactions WHERE name = 'wuhu-45-links';
-      INSERT INTO fs_heads (grp, path, parent_path, kind, blob_hash, size, line_count, etag, rev, mtime) VALUES
-        ('shared', '/missing.md', '/', 'file', '\(String(repeating: "f", count: 64))', 1, 1, 'e1', 1, '2026-01-01T00:00:00.000Z'),
-        ('shared', '/unreadable.md', '/', 'file', '\(String(repeating: "e", count: 64))', 1, 1, 'e2', 1, '2026-01-01T00:00:00.000Z');
-      INSERT INTO bucket_objects (hash, object_key, size, line_count) VALUES
-        ('\(String(repeating: "e", count: 64))', 'blobs/ee/ee/\(String(repeating: "e", count: 64))', 1, 1);
-      INSERT INTO docs (grp, path, title) VALUES ('shared', '/missing.md', 'stale');
-      """)
-    }
-
-    try await space.reindexLinks()
-
-    let rows = try await raw.read { db in
-      try [
-        String.fetchAll(db, sql: "SELECT dst_grp || ' ' || dst FROM links WHERE grp = 'shared' AND src = '/notes/c.md' ORDER BY dst_grp"),
-        String.fetchAll(db, sql: "SELECT name || ' ' || value FROM doc_custom_attrs WHERE grp = 'shared' AND path = '/notes/c.md'"),
-        String.fetchAll(db, sql: "SELECT path || ' ' || title FROM docs WHERE grp = 'shared' AND path IN ('/notes/c.md', '/missing.md') ORDER BY path"),
-        String.fetchAll(db, sql: "SELECT name FROM schema_compactions ORDER BY name"),
-      ]
-    }
-    #expect(rows == [
-      ["alice /plan.md", "shared /notes/b.md"],
-      [#"owner "ann""#],
-      ["/missing.md stale", "/notes/c.md c.md"],
-      ["wuhu-45", "wuhu-45-links"],
-    ])
-    let skipped = logs.messages.filter { $0.contains("shared:") }
-    #expect(skipped.count == 2)
-    #expect(skipped.contains { $0.contains("shared:/missing.md") })
-    #expect(skipped.contains { $0.contains("shared:/unreadable.md") })
-    try await space.close()
   }
 
   static func tables(_ db: Database) throws -> [String] {

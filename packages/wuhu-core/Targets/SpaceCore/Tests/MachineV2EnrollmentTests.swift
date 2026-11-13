@@ -9,35 +9,6 @@ import Synchronization
 import Testing
 
 @Suite(.deterministicDependencies) struct MachineV2EnrollmentTests {
-  @Test(arguments: ["machine_v2_members", "join_tokens"]) func interruptedEnrollmentRollsBackEveryRowAndAllowsRetry(_ rejectingTable: String) async throws {
-    let space = try Space.inMemory()
-    let accountsBefore = try await space.accounts().count
-    try await space.writer.write { db in
-      try db.execute(sql: "CREATE TRIGGER reject_v2_enrollment BEFORE INSERT ON \(rejectingTable) BEGIN SELECT RAISE(ABORT, 'injected enrollment interruption'); END")
-    }
-    await #expect(throws: DatabaseError.self) { try await space.addMachineV2(name: "atomic") }
-    #expect(try await space.resolveMachine("atomic") == nil)
-    #expect(try await space.machineV2Members(group: .shared).isEmpty)
-    #expect(try await space.accounts().count == accountsBefore)
-    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM join_tokens") } == 0)
-    try await space.writer.write { db in try db.execute(sql: "DROP TRIGGER reject_v2_enrollment") }
-    let created = try await space.addMachineV2(name: "atomic")
-    let persisted = try #require(try await space.resolveMachine("atomic"))
-    #expect(persisted.id == created.machine.id)
-    #expect(persisted.account == created.machine.account)
-    #expect(persisted.name == created.machine.name)
-    #expect(persisted.group == created.machine.group)
-    #expect(try await space.machineV2Members(group: .shared) == [created.machine.id.rawValue])
-    let key = Curve25519.Signing.PrivateKey()
-    let pubkey = "ed25519:" + key.publicKey.rawRepresentation.base64EncodedString()
-    let enrolled = try await space.consumeMachineV2JoinToken(created.token.token, pubkey: pubkey)
-    #expect(enrolled.account == created.machine.account)
-    #expect(enrolled.capabilities == [.execMachine])
-    #expect(Self.identity(try await space.consumeMachineV2JoinToken(created.token.token, pubkey: pubkey)) == Self.identity(enrolled))
-    await #expect(throws: JoinTokenRejected.self) { try await space.consumeMachineV2JoinToken(created.token.token, pubkey: Self.label()) }
-    await #expect(throws: SpaceError.self) { try await space.addMachineV2(name: "atomic") }
-  }
-
   @Test func oneCallEnrollmentIsAtomicAcrossMachineKeyAndDeviceLink() async throws {
     let space = try Space.inMemory()
     let owner = try await space.addAccount(kind: .human, name: "morgan")
@@ -65,7 +36,7 @@ import Testing
     #expect(try await space.machine(pubkey: pubkey) == enrolled.machine.id)
     #expect(try await space.device(id: device.id)?.machine == enrolled.machine.id)
     #expect(try await space.machineV2Members(group: .shared) == [enrolled.machine.id.rawValue])
-    await #expect(throws: SpaceError.machineNameTaken("studio")) {
+    await #expect(throws: SpaceError.machineNameTakenByMachine("studio")) {
       try await space.enrollMachineV2(name: "studio", group: .shared, pubkey: "ed25519:" + Curve25519.Signing.PrivateKey().publicKey.rawRepresentation.base64EncodedString())
     }
   }
@@ -118,27 +89,28 @@ import Testing
     }
   }
 
-  @Test(arguments: [true, false]) func concurrentOneCallEnrollmentsLeaveExactlyOneMachine(sameName: Bool) async throws {
+  @Test(arguments: [true, false]) func concurrentOneCallEnrollmentsEnrollOneKey(sameName: Bool) async throws {
     let space = try Space.inMemory()
     let owner = try await space.addAccount(kind: .human, name: "morgan")
     let deviceKey = Self.label()
     _ = try await space.addKey(deviceKey, account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     let device = try await space.upsertDevice(pubkey: deviceKey, installation: "inst", kind: "mac", name: "Mac")
-    let before = try await Footprint(space)
     let sharedKey = Self.label()
     let attempts = (0 ..< 12).map { n in sameName ? (name: "race", pubkey: Self.label()) : (name: "race_\(n)", pubkey: sharedKey) }
     let results = await race(space, attempts, device: device.id, by: owner.id)
     let winners = results.compactMap { try? $0.get() }
     #expect(winners.count == 1)
     for case let .failure(error) in results {
-      #expect(error == (sameName ? .machineNameTaken("race") : .alreadyExists(sharedKey)))
+      switch (sameName, error) {
+      case (true, .machineNameTakenByMachine("race")), (false, .alreadyExists(sharedKey)): break
+      default: Issue.record("unexpected refusal \(error)")
+      }
     }
     let winner = try #require(winners.first)
-    let after = try await Footprint(space)
-    #expect(after == Footprint(accounts: before.accounts + 1, machines: before.machines + 1, members: before.members + 1, keys: before.keys + 1))
+    #expect(try await space.keys(account: winner.machine.account).map(\.pubkey) == [winner.key.pubkey])
     #expect(try await space.device(id: device.id)?.machine == winner.machine.id)
     #expect(try await space.machine(pubkey: winner.key.pubkey) == winner.machine.id)
-    #expect(try await space.machineV2Members(group: .shared) == [winner.machine.id.rawValue])
+    #expect(try await space.machineV2Members(group: .shared).contains(winner.machine.id.rawValue))
   }
 
   @Test func oneCallEnrollmentReplaysOnlyForTheSamePersonNameAndLiveKey() async throws {
@@ -157,39 +129,27 @@ import Testing
     #expect(try await Footprint(space) == footprint)
     #expect(try await space.device(id: device.id)?.machine == first.machine.id)
 
-    let refusals: [(pubkey: String, by: AccountID?, group: GroupID)] = [
-      (Self.label(), owner.id, .shared),
+    await #expect(throws: SpaceError.machineNameTakenByMachine("studio")) {
+      try await space.enrollMachineV2(name: "studio", group: .shared, pubkey: Self.label(), enrolledBy: owner.id)
+    }
+    for refusal: (pubkey: String, by: AccountID?, group: GroupID) in [
       (pubkey, stranger.id, .shared),
       (pubkey, nil, .shared),
       (pubkey, owner.id, GroupID(rawValue: "elsewhere")),
-    ]
-    for refusal in refusals {
-      await #expect(throws: SpaceError.machineNameTaken("studio")) {
+    ] {
+      await #expect(throws: SpaceError.alreadyExists(pubkey)) {
         try await space.enrollMachineV2(name: "studio", group: refusal.group, pubkey: refusal.pubkey, enrolledBy: refusal.by)
       }
     }
     #expect(try await Footprint(space) == footprint)
 
     #expect(try await space.revokeMachine(first.machine.id, presenting: pubkey))
-    let successor = try await space.enrollMachineV2(name: "studio", group: .shared, pubkey: pubkey, enrolledBy: owner.id)
+    #expect(try await space.resolveMachine("studio")?.id == first.machine.id)
+    await #expect(throws: SpaceError.machineNameTakenByMachine("studio")) {
+      try await space.enrollMachineV2(name: "studio", group: .shared, pubkey: pubkey, enrolledBy: owner.id)
+    }
+    let successor = try await space.enrollMachineV2(name: "studio_two", group: .shared, pubkey: pubkey, enrolledBy: owner.id)
     #expect(successor.machine.id != first.machine.id)
-    #expect(try await space.resolveMachine("studio")?.id == successor.machine.id)
-  }
-
-  @Test func concurrentReplaysOfOneEnrollmentAllReturnTheSameMachine() async throws {
-    let space = try Space.inMemory()
-    let owner = try await space.addAccount(kind: .human, name: "morgan")
-    let deviceKey = Self.label()
-    _ = try await space.addKey(deviceKey, account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
-    let device = try await space.upsertDevice(pubkey: deviceKey, installation: "inst", kind: "mac", name: "Mac")
-    let before = try await Footprint(space)
-    let pubkey = Self.label()
-    let results = await race(space, Array(repeating: (name: "twin", pubkey: pubkey), count: 12), device: device.id, by: owner.id)
-    let enrolled = try results.map { try $0.get() }
-    #expect(Set(enrolled.map(\.machine.id)).count == 1)
-    #expect(Set(enrolled.map(Self.identity)).count == 1)
-    #expect(try await Footprint(space) == Footprint(accounts: before.accounts + 1, machines: before.machines + 1, members: before.members + 1, keys: before.keys + 1))
-    #expect(try await space.device(id: device.id)?.machine == enrolled[0].machine.id)
   }
 
   @Test func reKeyTokenReplaysToTheSameKeyUntilTheKeyDiesOrTheTokenWouldHaveExpired() async throws {

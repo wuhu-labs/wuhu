@@ -37,7 +37,7 @@ import Testing
       let forgedGroup = SpaceToolContext(space: rig.space, principal: Principal(actor: .session(rig.session), group: .shared))
       #expect(try await forgedGroup.discoveryContext(contentHost: nil).object?["group"] == "alice")
       let hidden = GroupID(rawValue: "hidden")
-      try await rig.space.setGrant(.group, alice.rawValue, role: .write, in: hidden, by: .anonymous, acting: hidden)
+      try await rig.space.setGrant(.group, alice.rawValue, role: .write, in: hidden, by: (try await rig.space.ensureDevPerson()).actor, acting: hidden)
       let changed = try await rig.evaluate("import {groups} from 'wuhu:space';result((await groups()).find(x=>x.id==='hidden'))")
       #expect(changed == ["id": "hidden", "member": false, "readable": true, "admin": false])
     }
@@ -99,7 +99,7 @@ import Testing
     }) { rig in
       #expect(try await rig.evaluate("import {answer} from 'wuhu://library.localspace/answer.js'; result(answer)") == 42)
       let group = try #require(try await rig.space.resolveGroup("library"))
-      try await rig.space.renameGroup(group, alias: "modules", by: .shared(.anonymous))
+      try await rig.space.renameGroup(group, alias: "modules", by: .shared(try await rig.space.ensureDevPerson().actor))
       for alias in ["library", "modules", group.rawValue] {
         #expect(try await rig.evaluate("import {answer} from 'wuhu://\(alias).localspace/answer.js'; result(answer)") == 42)
       }

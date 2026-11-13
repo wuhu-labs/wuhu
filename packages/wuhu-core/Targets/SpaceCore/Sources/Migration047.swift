@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration047 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     ALTER TABLE user_profiles ADD COLUMN avatar TEXT;
     CREATE TABLE person_hidden_sidebars (

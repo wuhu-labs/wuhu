@@ -4,17 +4,17 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import StructuredQueries
 import Wuwei
 
 /// Session writes the cell makes, as fixtures: a test sets a session's state with them directly.
 extension SessionStore {
   @discardableResult
   func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.drainQueue(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.drainQueue(id) }
   }
 
   func look(_ id: SessionID) async throws {
@@ -23,7 +23,7 @@ extension SessionStore {
 
   /// The cell's write of an input, for a test that drains it by hand.
   func put(_ id: SessionID, input: QueueInput) async throws {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.put(id, SessionPut(input)) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.put(id, SessionPut(input)) }
   }
 
   func noMail(_ id: SessionID) async {
@@ -33,7 +33,7 @@ extension SessionStore {
 
   func deliverMail() async throws {
     let worker = space.worker
-    let sessions = try await writer.read { try String.fetchAll($0, sql: "SELECT id FROM sessions") }
+    let sessions = spaceCell.db.rows(SessionDataRow.select { $0.id })
     for session in sessions {
       let id = SessionCell.ID(session)
       worker.poke(id.recipient)

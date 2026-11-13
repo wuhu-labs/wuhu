@@ -1,16 +1,15 @@
-import GRDB
 import Logging
 
 // Subscriptions get an owner that is a session or a group, a name, a status
 // and a log of their handler firings; what an observer makes records the
 // firing it was made in; an inference may be a group's, with no session.
 enum Migration009 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     let moved = try run(db)
     Logger(label: "wuhu.migration").notice("migration 009: \(moved) session subscriptions moved to subscription_slots")
   }
 
-  static func run(_ db: Database) throws -> Int {
+  static func run(_ db: MigrationDB) throws -> Int {
     try db.execute(sql: """
     CREATE TABLE subscription_slots (
       owner_kind TEXT NOT NULL CHECK (owner_kind IN ('session', 'group')),
@@ -87,7 +86,7 @@ enum Migration009 {
     CREATE INDEX inferences_by_grp_at ON inferences (grp, at);
     """)
     // A session's handler subscription is named after its handler file.
-    let handlers = try Row.fetchAll(db, sql: """
+    let handlers = try db.rows("""
     SELECT owner, subscription_id, json_extract(payload, '$.handler') AS handler FROM subscription_slots
     WHERE json_type(payload, '$.handler') = 'text'
     """)
@@ -98,7 +97,7 @@ enum Migration009 {
         arguments: [handlerName(handler), row["owner"] as String, row["subscription_id"] as String],
       )
     }
-    return try Int.fetchOne(db, sql: "SELECT count(*) FROM subscription_slots")!
+    return try db.int("SELECT count(*) FROM subscription_slots")!
   }
 
   static func handlerName(_ path: String) -> String {

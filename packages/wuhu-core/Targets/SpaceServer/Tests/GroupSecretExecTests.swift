@@ -33,7 +33,7 @@ import Wuwei
     let space = try makeMachineSpace()
     let tokens = try await testTokens(space: space, spaceURL: "https://space.test")
     _ = try await SessionToolFixture(space: space, tokens: tokens)
-    let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens, secrets: stores)
+    let server = try await TestServer(space: space, clock: ContinuousClock(), tokens: tokens, secrets: stores)
     let (machine, _) = try await addMachine(server)
     let session = try await space.sessions.createSession(group: .shared, title: "secrecy", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
     let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
@@ -208,7 +208,7 @@ struct SecretRig: Sendable {
     try await space.writer.write { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2030-01-01T00:00:00.000Z')", arguments: [name])
     }
-    try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: group, by: .anonymous, acting: group)
+    try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: group, by: (try await space.ensureDevPerson()).actor, acting: group)
     return group
   }
 
@@ -240,7 +240,7 @@ func withSecretServer(_ body: (SecretRig) async throws -> Void) async throws {
   defer { scratch.remove() }
   let stores = SpaceSecretStores(configDirectory: scratch.url.appendingPathComponent("config", isDirectory: true), spaceID: "spc_test")
   let space = try makeMachineSpace()
-  let server = TestServer(space: space, clock: ContinuousClock(), secrets: stores)
+  let server = try await TestServer(space: space, clock: ContinuousClock(), secrets: stores)
   try await body(SecretRig(server: server, stores: stores, scratch: scratch))
 }
 

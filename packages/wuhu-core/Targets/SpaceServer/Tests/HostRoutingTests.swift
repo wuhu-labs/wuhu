@@ -24,7 +24,7 @@ import Testing
   func rig(
     dev: Bool = false, publicRead: Bool = false, origin: String? = Self.origin, webApp: WebApp? = nil,
   ) async throws -> Rig {
-    let harness = try Harness(dev: dev, publicRead: publicRead, origin: origin, webApp: webApp)
+    let harness = try await Harness(dev: dev, publicRead: publicRead, origin: origin, webApp: webApp)
     let alice = try await harness.space.addAccount(kind: .human, name: "alice").id
     let rig = Rig(harness: harness, alice: alice, aliceGroup: try await harness.space.privateGroup(account: alice))
     for group in [GroupID.shared, rig.aliceGroup] {

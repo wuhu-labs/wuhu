@@ -16,25 +16,6 @@ struct Blob: Sendable {
   let externalKey: ObjectKey?
 }
 
-/// The bytes a host transaction has at hand, named by the hashes it read: it cannot fetch one itself, so a hash
-/// it needs and does not hold means the world moved since the read, and the attempt runs again.
-struct BlobContents: Sendable {
-  private let loaded: [String: [UInt8]]
-
-  struct Missing: Error {
-    let hash: String
-  }
-
-  init(_ loaded: [String: [UInt8]] = [:]) {
-    self.loaded = loaded
-  }
-
-  func bytes(of hash: String) throws -> [UInt8] {
-    guard let content = loaded[hash] else { throw Missing(hash: hash) }
-    return content
-  }
-}
-
 @Table("bucket_objects")
 struct BucketObjectRow {
   @Column("hash", primaryKey: true) var hash: String
@@ -120,15 +101,6 @@ struct Bucket: Sendable {
   /// `hash`'s bytes, from its row or from the object store.
   func bytes(_ hash: String) async throws -> [UInt8] {
     try await blob(hash).content
-  }
-
-  /// The bytes of each of `hashes`, for a host transaction that has none of its own.
-  func contents(of hashes: [String]) async throws -> BlobContents {
-    var loaded: [String: [UInt8]] = [:]
-    for hash in hashes where loaded[hash] == nil {
-      loaded[hash] = try await bytes(hash)
-    }
-    return BlobContents(loaded)
   }
 
   /// `hash`'s bytes, with the object key of the ones past the inline tier.

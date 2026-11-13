@@ -14,9 +14,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct MigrationTests {
   private func database() throws -> DatabaseQueue {
-    var configuration = Configuration()
-    configuration.foreignKeysEnabled = true
-    configuration.busyMode = .timeout(5)
+    let configuration = Space.makeConfiguration(journalMode: .default)
     return try DatabaseQueue(path: "file:/migration-\(UUID())?vfs=memdb", configuration: configuration)
   }
 
@@ -50,7 +48,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     let logs = RecordedLogs()
-    #expect(throws: DatabaseError.self) { try Space(writer: database, log: logs.logger) }
+    #expect(throws: MigrationFailure.self) { try Space(writer: database, log: logs.logger) }
     #expect(logs.all.last { $0.message.hasPrefix("migration ") }?.message.hasSuffix(": applying") == true)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
@@ -58,7 +56,7 @@ import Testing
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
       try db.execute(sql: "UPDATE exec_jobs SET spec = '{}'")
     }
-    let reopened = try DatabaseQueue(path: database.path)
+    let reopened = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
     let space = try Space(writer: reopened)
     #expect(try await space.accounts().contains { $0.name == "Kept" })
     #expect(try await space.owedExecs().map(\.toolSpec) == ["{}"])
@@ -80,7 +78,9 @@ import Testing
     _ = try await original.createTable(table, header: TableHeader(columns: []), in: .shared, acting: .settings)
     let inserted = try await original.commitRows(table, [.insert([])], in: .shared, acting: .settings)
     let history = try await original.history(file, in: .shared)
-    try await database.write { db in
+    let historical = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
+    try await original.close()
+    try await historical.write { db in
       try db.execute(sql: """
       UPDATE fs_versions SET rev = 9 WHERE grp = 'settings';
       UPDATE fs_heads SET rev = 9 WHERE grp = 'settings';
@@ -96,7 +96,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '046';
       """)
     }
-    let firstConnection = try DatabaseQueue(path: database.path)
+    let firstConnection = try DatabaseQueue(path: historical.path, configuration: Space.makeConfiguration(journalMode: .default))
     let first = try Space(writer: firstConnection)
     #expect(try await first.accounts().contains { $0.name == "Kept" })
     #expect(try await first.currentRevision(in: .shared) == 12)
@@ -111,25 +111,25 @@ import Testing
     let actors = try await first.attributions(of: [(.shared, Rev(1)), (.settings, Rev(9))])
     #expect(actors[.shared]?[Rev(1)] == attribution)
     #expect(actors[.settings]?[Rev(9)]?.via == "page:/foreign.html")
-    #expect(try await database.read { try String.fetchOne($0, sql: "SELECT revs FROM session_prompts WHERE session_id = 'kept-session'") }.map { try JSONDecoder().decode([String: Int].self, from: Data($0.utf8)) } == ["shared": 9, "settings": 9])
+    #expect(try await historical.read { try String.fetchOne($0, sql: "SELECT revs FROM session_prompts WHERE session_id = 'kept-session'") }.map { try JSONDecoder().decode([String: Int].self, from: Data($0.utf8)) } == ["shared": 9, "settings": 9])
     #expect(try await first.fs(.shared).write(file.rawValue, Data("three".utf8), ifMatch: nil).rev == 13)
     #expect(try await first.currentRevision(in: .settings) == 12)
     let owed = try #require(try await first.owedExecs().first)
     #expect(owed.toolSpec == "{}")
     let identity = try await first.identity()
     await first.stopWorker()
-    try await database.write { db in
+    try await historical.write { db in
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
       try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, 'changed')", arguments: [owed.id])
     }
-    let secondConnection = try DatabaseQueue(path: database.path)
+    let secondConnection = try DatabaseQueue(path: historical.path, configuration: Space.makeConfiguration(journalMode: .default))
     let second = try Space(writer: secondConnection)
     #expect(try await second.identity() == identity)
     #expect(try await second.accounts().contains { $0.name == "Kept" })
     #expect(try await second.owedExecs() == [owed])
-    try await original.close()
     try await first.close()
     try await second.close()
+    try historical.close()
   }
 
   @Test func existingForeignKeyViolationsDoNotPreventUpgrade() async throws {
@@ -142,7 +142,7 @@ import Testing
       )
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
-    let connection = try DatabaseQueue(path: database.path)
+    let connection = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
     let upgraded = try Space(writer: connection)
     #expect(try await upgraded.accounts().contains { $0.name == "Kept" })
     #expect(try await upgraded.owedExecs().map(\.toolSpec) == ["{}"])
@@ -188,7 +188,7 @@ import Testing
       INSERT INTO machine_v2_retention VALUES ('exec-op', 'shared', 'exec', '2026-01-01T00:00:00Z'), ('file-op', 'shared', 'read', '2026-01-01T00:00:00Z');
       """)
     }
-    try await database.write { try Migration033.apply($0) }
+    try await database.write { try Migration033.apply(.init($0)) }
     #expect(try await original.accounts().contains { $0.name == "Kept" })
     #expect(try await database.read { try String.fetchAll($0, sql: "SELECT name FROM sqlite_master WHERE name IN ('machine_execs', 'script_execs', 'machine_v2_presence')") } == [])
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM machine_operations") } == 0)
@@ -372,7 +372,7 @@ import Testing
     let database = try database()
     // A space at migration 001, carrying the stores a real old space still had.
     try await database.write { db in
-      try Migration001.apply(db)
+      try Migration001.apply(.init(db))
       try db.execute(sql: """
       CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
       INSERT INTO grdb_migrations VALUES ('001');
@@ -421,7 +421,7 @@ import Testing
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
     let kept = AccountID(rawValue: "ac_kept00001")
-    let reopened = try DatabaseQueue(path: database.path)
+    let reopened = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
     let upgraded = try Space(writer: reopened)
     #expect(try await upgraded.accounts().map(\.kind).sorted { $0.rawValue < $1.rawValue } == [.human, .machine])
     #expect(try await upgraded.accounts().contains { $0.id == kept })
@@ -458,7 +458,8 @@ import Testing
     let original = try Space(writer: database)
     let owner = try await original.addAccount(kind: .human, name: "Morgan").id
     let lab = try await original.createGroup(alias: "lab", owner: owner)
-    let offline = try DatabaseQueue(path: database.path)
+    await original.stopWorker()
+    let offline = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
     try await original.close()
     try await offline.write { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('bare', '2026-01-01T00:00:00.000Z')")
@@ -469,11 +470,11 @@ import Testing
       """)
       try db.execute(sql: "ALTER TABLE aliases DROP COLUMN current")
       try db.execute(sql: "ALTER TABLE groups ADD COLUMN personal_account TEXT")
-      try Migration015.apply(db)
+      try Migration015.apply(.init(db))
       try db.execute(sql: "ALTER TABLE groups DROP COLUMN personal_account")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '043'")
     }
-    let upgraded = try Space(writer: try DatabaseQueue(path: database.path))
+    let upgraded = try Space(writer: try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
     let names = Dictionary(uniqueKeysWithValues: try await upgraded.groups().map { ($0.id, $0.name) })
     #expect(names == [.shared: "Shared", .settings: "settings", lab: "lab", GroupID(rawValue: "bare"): "bare"])
     try await upgraded.close()
@@ -495,8 +496,8 @@ import Testing
     let original = try Space(writer: database)
     try await database.write { db in
       try LegacyMachineSchema.create(in: db)
-      if existingIndexes { try Migration011.apply(db) }
-      try Migration011.apply(db)
+      if existingIndexes { try Migration011.apply(.init(db)) }
+      try Migration011.apply(.init(db))
     }
     #expect(try await database.read { db in
       try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_operations_admission') ORDER BY seqno")

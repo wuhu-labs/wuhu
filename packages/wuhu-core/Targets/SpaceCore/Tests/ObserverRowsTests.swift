@@ -1,6 +1,6 @@
 import Dependencies
 import DeterministicDependencies
-import LoopCore
+@testable import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -36,8 +36,7 @@ import Testing
   func begin(_ store: SessionStore, _ slot: ArmedSubscription, marker: String? = nil) async throws -> Begun {
     @Dependency(\.uuid) var uuid
     let firing = uuid()
-    return try await store.writer.write { db in
-      let rows = ObserverRows(db: db, store: store)
+    return try await store.space.worker.call(ObserverCell.ID(slot.owner, slot.slot.id)) { rows in
       if let marker { try rows.pend(slot.owner, slot.slot.id, .object([:]), marker: marker) }
       let group = try #require(try rows.slot(slot.owner, slot.slot.id)?.group)
       try rows.begin(slot.owner, slot.slot.id, firing: firing, group: group)
@@ -48,8 +47,8 @@ import Testing
   /// Ends a firing as its cell does: a session owner gets the notices it is due.
   @discardableResult
   func finish(_ store: SessionStore, _ begun: Begun, _ outcome: HandlerOutcome, _ advance: ObserverAdvance = .taken(marker: nil)) async throws -> [SystemNotification] {
-    let notices = try await store.writer.write { db in
-      try ObserverRows(db: db, store: store).finish(
+    let notices = try await store.space.worker.call(ObserverCell.ID(begun.owner, begun.id)) { cell in
+      try cell.finish(
         begun.owner, begun.id, firing: begun.firingID, path: "/watch.js", kind: .spaceObservation, outcome: outcome, advance: advance, uuid: { UUID() },
       )
     }
@@ -60,7 +59,7 @@ import Testing
   }
 
   func slot(_ store: SessionStore, _ armed: ArmedSubscription) async throws -> ObserverSlot? {
-    try await store.writer.read { db in try ObserverRows(db: db, store: store).slot(armed.owner, armed.slot.id) }
+    try store.space.worker.cell(ObserverCell.ID(armed.owner, armed.slot.id)).slot(armed.owner, armed.slot.id)
   }
 
   @Test func legacyPayloadDecodesWithoutHandlerFieldsAndArmingRetryKeepsItsTruth() async throws {
@@ -88,7 +87,7 @@ import Testing
       let begun = try await begin(store, armed, marker: "first")
       #expect(try await slot(store, armed)?.firing == begun.firingID)
       #expect(try await slot(store, armed)?.subscription.lastFiredAt == fixedDate)
-      try await store.writer.write { db in try ObserverRows(db: db, store: store).pend(armed.owner, armed.slot.id, .object([:]), marker: "second") }
+      try await store.space.worker.call(ObserverCell.ID(armed.owner, armed.slot.id)) { try $0.pend(armed.owner, armed.slot.id, .object([:]), marker: "second") }
       #expect(try await finish(store, begun, .ok(wakes: ["release"]), .taken(marker: "first")).count == 1)
       let after = try #require(try await slot(store, armed))
       #expect(after.subscription.marker == "first")
@@ -127,7 +126,7 @@ import Testing
       let id = try await owner(store)
       let armed = try await arm(store, id)
       let begun = try await begin(store, armed, marker: "m")
-      try await store.writer.write { try ObserverRows(db: $0, store: store).retire(.session(id), armed.slot.id) }
+      try await store.space.worker.call(ObserverCell.ID(.session(id), armed.slot.id)) { try $0.retire(.session(id), armed.slot.id) }
       try await finish(store, begun, .ok(wakes: ["before", "after"]), .taken(marker: "m"))
       let wakes = try await store.undrainedInputs(id).compactMap { input -> SystemNotification? in
         if case let .notification(notification) = input.input { notification } else { nil }
@@ -151,7 +150,7 @@ import Testing
       #expect(waiting.group == nil)
       #expect(waiting.pendingMarker == "m")
       #expect(try await store.undrainedInputs(id).isEmpty)
-      #expect(try await store.writer.read { db in try String.fetchAll(db, sql: "SELECT outcome FROM subscription_firings") } == ["cancelled"])
+      #expect(try await store.space.query("SELECT outcome FROM subscription_firings", as: store.space.principal(of: id)).rows == [[.text("cancelled")]])
     }
   }
 }

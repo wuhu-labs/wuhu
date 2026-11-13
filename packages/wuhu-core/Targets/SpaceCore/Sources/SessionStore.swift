@@ -177,81 +177,20 @@ extension Space {
 
 extension SessionStore {
   public func record(_ id: SessionID) async throws -> SessionRecord {
-    let key = id.rawValue
-    return try await writer.read { db in
-      try Sessions.record(key, in: db)
-    }
+    try spaceCell.sessionRecord(id)
   }
 
   public func hydrate(_ id: SessionID) async throws -> SessionHydration {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.read { db in try Sessions.hydrate(id.rawValue, at: now, in: db) }
+    try spaceCell.sessionHydration(id, at: dateGen.now)
   }
 
   public func undrainedInputs(_ id: SessionID) async throws -> [SessionQueueEntry] {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.read { db in
-      try Sessions.undrained(key, tail: try Sessions.runtime(key, in: db).queueTail, at: now, in: db)
-    }
-  }
-}
-
-extension Sessions {
-  /// When the work at hand should give the turn back to what waits for the session: each due input it has not seen allows a grace from when it came due, a person's message to the session itself 10 s, anything else 90 s; the session's own context deliveries allow none of their own. Nil while nothing waits.
-  static func yieldDeadline(_ key: String, at now: String, in db: Database) throws -> Date? {
-    var deadline: Date?
-    for row in try Row.fetchAll(
-      db,
-      sql: "SELECT payload, COALESCE(due_at, enqueued_at) AS arrived FROM session_queue WHERE session_id = ? AND id > ? AND \(due) ORDER BY id",
-      arguments: [key, try runtime(key, in: db).queueTail, now],
-    ) {
-      guard let grace = try grace(of: try decode(QueueInput.self, from: row["payload"]), to: key, in: db) else { continue }
-      let end = try SQLiteDateFormat.date(from: row["arrived"]).addingTimeInterval(grace)
-      deadline = min(deadline ?? end, end)
-    }
-    return deadline
-  }
-
-  private static func grace(of input: QueueInput, to session: String, in db: Database) throws -> TimeInterval? {
-    switch input {
-    case let .message(message):
-      guard message.senderSession == nil,
-            let conversation = try Conversations.record(message.conversationID.rawValue, in: db)
-      else { return 90 }
-      switch conversation.kind {
-      case .box: return conversation.ownerSession?.rawValue == session ? 10 : 90
-      case .dmUser: return 10
-      case .users, .dmSession: return 90
-      }
-    case let .notification(notification):
-      return notification.kind == .context ? nil : 90
-    }
+    try spaceCell.sessionInputs(id, at: dateGen.now)
   }
 }
 
 extension SessionStore {
   public func queueHead(_ id: SessionID) async throws -> Int {
-    let key = id.rawValue
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.read { db in
-      let runtime = try Sessions.runtime(key, in: db)
-      return Int(try Sessions.queueHead(key, tail: runtime.queueTail, at: now, in: db))
-    }
-  }
-}
-
-extension Sessions {
-  static func hydrate(_ key: String, at now: String, in db: Database) throws -> SessionHydration {
-    let record = try Sessions.record(key, in: db)
-    let runtime = try Sessions.runtime(key, in: db)
-    return SessionHydration(
-      generation: Int(runtime.generation),
-      record: record,
-      legacy: try !record.executor.isRetired && Sessions.isLegacy(key, generation: runtime.generation, in: db),
-      queueHead: Int(try Sessions.queueHead(key, tail: runtime.queueTail, at: now, in: db)),
-      queueTail: Int(runtime.queueTail),
-      stepTry: Int(runtime.stepTry),
-    )
+    try spaceCell.sessionQueueHead(id, at: dateGen.now)
   }
 }

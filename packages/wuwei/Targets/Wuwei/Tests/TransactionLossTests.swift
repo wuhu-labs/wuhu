@@ -1,3 +1,4 @@
+import GRDBSQLite
 import Synchronization
 import Testing
 @testable import Wuwei
@@ -5,8 +6,6 @@ import Testing
 private final class LossProbe: Sendable {
   let runs = Mutex(0)
   let deaths = Mutex(0)
-  let rerun: @Sendable () -> Void
-  init(rerun: @escaping @Sendable () -> Void) { self.rerun = rerun }
 }
 
 @Job private struct TransactionLossJob {
@@ -25,7 +24,9 @@ private final class LossProbe: Sendable {
     let run = probe.runs.withLock { $0 += 1; return $0 }
     if run == 2 {
       #expect(values() == [0])
-      probe.rerun()
+      let incarnation = db.access.incarnation
+      #expect(incarnation.readOuter("SELECT 1 FROM wuwei_mail WHERE recipient = ?", [.text(Self.recipient.raw)]).isEmpty)
+      #expect(incarnation.readOuter("SELECT phase FROM wuwei_job WHERE address = ?", [.text(id.description)])[0][0] == .text("live"))
       return .done(sending: .add(7), to: Self.recipient)
     }
     #expect(run == 1)
@@ -70,11 +71,7 @@ private func runLoss(shared: Bool, mode: TransactionLossJob.Params, dies: Bool, 
   let node = try world.node("loss", [.job(TransactionLossJob.self)], starts: false)
   let worker = node.worker
   let id = TransactionLossJob.ID("job")
-  let probe = LossProbe(rerun: {
-    #expect(!worker.hasMail(for: TransactionLossJob.recipient))
-    let phase = try! worker.store.read { try $0.rows("SELECT phase FROM wuwei_job WHERE address = ?", .text(id.description))[0][0].text! }
-    #expect(phase == "live")
-  })
+  let probe = LossProbe()
   worker.provide(probe)
   try worker.create(id, params: mode)
   world.run(for: .milliseconds(50))
@@ -131,17 +128,31 @@ private final class BootLossProbe: Sendable {
 
 private final class BootLossDatabase: SharedDatabase {
   let file: FileDatabase
-  let fail = Mutex(true)
-  init(path: String) throws { file = try FileDatabase(path: path, synchronous: false) }
-  func write(_ body: (OpaquePointer, AnyObject?) throws -> Void) throws { try file.write(body) }
-  func read(_ body: (OpaquePointer) throws -> Void) throws { try file.read(body) }
-  func begin() throws -> any SharedTransaction { try file.begin() }
-  func execute(_ sql: String, _: [Value], on _: AnyObject?) throws -> Bool {
-    if sql == "INSERT INTO boot_loss (n) VALUES (9)", fail.withLock({ let first = $0; $0 = false; return first }) {
-      throw SQLiteError(code: 10, message: "injected boot storage failure")
+  init(path: String, code: Int32) throws {
+    file = try FileDatabase(path: path, synchronous: false)
+    try file.write { handle in
+      let failure = Unmanaged.passRetained(BootFailure(code: code)).toOpaque()
+      #expect(sqlite3_create_function_v2(handle, "boot_failure", 0, SQLITE_UTF8, failure, { context, _, _ in
+        let failure = Unmanaged<BootFailure>.fromOpaque(sqlite3_user_data(context)).takeUnretainedValue()
+        if failure.first {
+          failure.first = false
+          sqlite3_result_error_code(context, failure.code)
+        } else {
+          sqlite3_result_int(context, 9)
+        }
+      }, nil, nil, { Unmanaged<BootFailure>.fromOpaque($0!).release() }) == SQLITE_OK)
     }
-    return false
   }
+
+  func write(_ body: (OpaquePointer) throws -> Void) throws { try file.write(body) }
+  func beginRead() throws -> any SharedReadTransaction { try file.beginRead() }
+  func begin() throws -> any SharedTransaction { try file.begin() }
+}
+
+private final class BootFailure {
+  let code: Int32
+  var first = true
+  init(code: Int32) { self.code = code }
 }
 
 @Job private struct BootLossJob {
@@ -149,6 +160,7 @@ private final class BootLossDatabase: SharedDatabase {
     var hydrate: Bool
     var storage: Bool
     var caught: Bool
+    var storageCode: Int32 = SQLITE_FULL
     static var cases: [Self] {
       [false, true].flatMap { hydrate in [false, true].flatMap { storage in [false, true].map { Self(hydrate: hydrate, storage: storage, caught: $0) } } }
     }
@@ -174,10 +186,13 @@ private final class BootLossDatabase: SharedDatabase {
     try ctx.db.execute("INSERT INTO boot_loss (n) VALUES (1)")
     ctx.send(.add(99), to: TransactionLossJob.recipient)
     do {
-      try ctx.db.execute(ctx.params.storage ? "INSERT INTO boot_loss (n) VALUES (9)" : "INSERT OR ROLLBACK INTO boot_loss (n) VALUES (1)")
+      try ctx.db.execute(ctx.params.storage ? "INSERT INTO boot_loss (n) VALUES (8), (boot_failure())" : "INSERT OR ROLLBACK INTO boot_loss (n) VALUES (1)")
       Issue.record("the failing statement returned")
     } catch is Evicted {
       #expect(!ctx.db.access.incarnation.dead)
+      if ctx.params.storage {
+        #expect(try ctx.db.access.incarnation.accessOpen({ sqlite3_get_autocommit($0.handle) }) == (ctx.params.storageCode == SQLITE_FULL ? 0 : 1))
+      }
       guard ctx.params.caught else { throw Evicted(address: ctx.id.description) }
       do {
         try ctx.db.execute("INSERT INTO boot_loss (n) VALUES (2)")
@@ -193,10 +208,12 @@ private final class BootLossDatabase: SharedDatabase {
 }
 
 extension TransactionLossTests {
-  @Test(arguments: BootLossJob.Params.cases)
-  fileprivate func bootStorageFailureReleasesTheWriterBeforeRemovingAndRepoking(params: BootLossJob.Params) throws {
+  @Test(arguments: BootLossJob.Params.cases, [SQLITE_FULL, SQLITE_IOERR])
+  fileprivate func bootStorageFailureReleasesTheWriterBeforeRemovingAndRepoking(params: BootLossJob.Params, storageCode: Int32) throws {
     let world = World(shared: true)
-    let database = try BootLossDatabase(path: world.path)
+    let database = try BootLossDatabase(path: world.path, code: storageCode)
+    var params = params
+    params.storageCode = storageCode
     let worker = Worker(id: "boot-loss", storage: .shared(database), scheduler: world.simulation.spawn(), registrations: [.job(BootLossJob.self)])
     let probe = BootLossProbe()
     worker.provide(probe)

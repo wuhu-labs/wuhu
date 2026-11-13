@@ -27,7 +27,7 @@ import Testing
     let (bearer, key) = try await harness.enrolledBearer()
     let group = GroupID(rawValue: "studio")
     try await harness.space.seedGroup(group, owner: key.account)
-    try await harness.space.setGrant(.account, key.account.rawValue, role: .admin, in: group, by: .anonymous, acting: group)
+    try await harness.space.setGrant(.account, key.account.rawValue, role: .admin, in: group, by: (try await harness.space.ensureDevPerson()).actor, acting: group)
     return World(harness: harness, tokens: tokens, bearer: bearer, account: key.account, group: group)
   }
 

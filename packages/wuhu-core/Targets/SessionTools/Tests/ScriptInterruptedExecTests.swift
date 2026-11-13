@@ -17,7 +17,7 @@ import Testing
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
-      let machine = try await space.addMachine(name: "owner_box").id
+      let machine = try await space.addMachineV2(name: "owner_box").machine.id
       let scripted = ScriptedExecMachine()
       let record = try await space.reserveExec(machine: machine, caller: session.rawValue, toolCall: .init("interrupted"))
       let files = FakeMachineFS().seam

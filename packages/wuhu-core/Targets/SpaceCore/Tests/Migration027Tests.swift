@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct Migration027Tests {
   @Test func aKeyedRequestKeepsItsRowAndLosesKindAndKey() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-027-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/migration-027-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let original = try Space(writer: database)
     try await database.write { db in
       try db.execute(sql: """
@@ -19,7 +19,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '027';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path))
+    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
     let columns = try await database.read { try String.fetchAll($0, sql: "SELECT name FROM pragma_table_info('requests')") }
     #expect(!columns.contains("kind") && !columns.contains("key"))
     #expect(try await database.read { try String.fetchAll($0, sql: "SELECT name FROM pragma_index_list('requests') WHERE name LIKE 'requests_by_k%'") } == [])

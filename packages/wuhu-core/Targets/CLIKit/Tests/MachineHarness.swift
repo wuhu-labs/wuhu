@@ -29,7 +29,7 @@ final class MachineCLIHarness: Sendable {
     get async { await longFetches.count }
   }
 
-  init() throws {
+  init() async throws {
     scratch = try ScratchFolder("m6")
     let root = scratch.url
     home = root.appendingPathComponent("home", isDirectory: true)
@@ -51,7 +51,8 @@ final class MachineCLIHarness: Sendable {
     let hub = MachineHub(space: space, tokens: nil, secrets: stores)
     self.space = space
     self.hub = hub
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, fingerprint: Self.serverFingerprint, dev: true, secrets: stores, listenerRoutes: machineListenerRoutes(space: space, hub: hub, fingerprint: Self.serverFingerprint))
+    let devPerson = try await space.ensureDevPerson()
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, fingerprint: Self.serverFingerprint, devPerson: devPerson, secrets: stores, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson, fingerprint: Self.serverFingerprint))
   }
 
   func runScenario(_ body: @escaping @Sendable (MachineCLIHarness) async throws -> Void) async throws {
@@ -200,14 +201,14 @@ extension MachineCLIHarness {
 }
 
 func machineListenerRoutes(
-  space: Space, hub: MachineHub, version: String = SpaceServer.unstampedVersion,
+  space: Space, hub: MachineHub, devPerson: ResolvedPerson?, version: String = SpaceServer.unstampedVersion,
   fingerprint: String? = nil,
 ) -> Router {
   @Dependency(\.date) var date
   let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
   var router = Router()
   addMachineV2Routes(&router, space: space, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
-    return try await requestPrincipal(request, space: space, date: date)
+    return try await requestPrincipal(request, space: space, devPerson: devPerson, date: date)
   }
   return router
 }

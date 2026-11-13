@@ -2,7 +2,11 @@
 
 ## Slow statements
 
-A slot names itself `read.<n>` to the log the pool was given. SQLite's profile callback on the slot's connection reports every statement it finished; one that ran 100 ms or more becomes a single warning — connection, milliseconds, and the statement as prepared cut at 500 characters, never its bound values (`SlowStatement`). The pool's other connections are the space's: the host writer and the wuwei readers trace their own handles the same way through `Database.traceSlowStatements(on:to:)`.
+A slot names itself `read.<n>` to the log the pool was given. SQLite's profile callback on the slot's connection reports every statement it finished; one that ran 100 ms or more becomes a single warning — connection, milliseconds, and the statement as prepared cut at 500 characters, never its bound values (`SlowStatement`). The pool's other connections are the space's: the host writer and the wuwei readers trace their own handles the same way through `SlowStatement.trace(on:connection:to:)`, which leaves the report in the connection's client data so SQLite releases it when the connection closes.
+
+## Values and errors
+
+`ReadRows.rows`, `ReadPool.run(_:arguments:…)` and `ReadSnapshot` speak `SQLValue`, the sandbox's own five-storage-class value (null, integer, real, text, blob). What SQLite refuses a statement with is a `SQLiteFailure` carrying the extended result code and, as `primary`, the code a caller matches on. Neither type comes from GRDB or Wuwei.
 
 ## Read pool lifetime
 

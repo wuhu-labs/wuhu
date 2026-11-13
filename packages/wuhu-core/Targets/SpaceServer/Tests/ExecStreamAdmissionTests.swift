@@ -34,7 +34,7 @@ import Wuwei
     let wire = AdmissionWire()
     defer { wire.finish() }
     try await withThrowingTaskGroup(of: Void.self) { adapters in
-      adapters.addTask { await ExecSocketLink(space: space, record: record, leg: .anonymous).run(wire.socket(blockAcceptance: true)) }
+      adapters.addTask { await ExecSocketLink(space: space, record: record, leg: .person(try await space.ensureDevPerson().account)).run(wire.socket(blockAcceptance: true)) }
       defer { wire.releaseAcceptance.open(); adapters.cancelAll() }
       var frames = wire.outgoing.stream.makeAsyncIterator()
       #expect(try #require(await frames.next()).opcode == .control)
@@ -68,7 +68,7 @@ import Wuwei
       do {
         try await withMachineBox(space: space, hub: hub, machine: machine, client: FetchClient { try await agent.handler($0) }) {
           try await withThrowingTaskGroup(of: Void.self) { adapters in
-            let bridge = ExecSocketLink(space: space, record: record, leg: .anonymous)
+            let bridge = ExecSocketLink(space: space, record: record, leg: .person(try await space.ensureDevPerson().account))
             adapters.addTask { await bridge.run(first.socket(blockAcceptance: true)) }
             defer { first.releaseAcceptance.open(); adapters.cancelAll() }
             var frames = first.outgoing.stream.makeAsyncIterator()

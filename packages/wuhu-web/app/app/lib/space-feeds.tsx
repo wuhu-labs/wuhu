@@ -44,6 +44,7 @@ import { globSubscription, sqlSubscription } from '~/sdk/subscriptions'
 import { sessionOfAvatarPath } from '~/sdk/avatar'
 import type { Liveness } from '~/sdk/observe'
 import { useViewerCache } from './viewer-cache.ts'
+import type { Viewer } from '~/sdk/viewer'
 
 export function spaceScope(
   device: Pick<EnrolledDevice, 'principal' | 'spaceId'> | null,
@@ -155,9 +156,11 @@ export function useSpaceFeeds(): SpaceFeeds {
 
 export function SpaceFeedsProvider({
   server,
+  viewer,
   children,
 }: {
   server: SpaceServer
+  viewer: Viewer | null | undefined
   children: ReactNode
 }) {
   const [groups, setGroups] = useState<GroupSummary[] | null>(null)
@@ -223,6 +226,7 @@ export function SpaceFeedsProvider({
         />
       ))}
       <DirectoryProvider
+        viewer={viewer}
         contentOrigins={origins}
         sessions={sessions}
         sessionAvatarRevs={avatarRevs}

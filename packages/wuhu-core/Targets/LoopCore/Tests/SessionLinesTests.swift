@@ -67,8 +67,7 @@ import WuhuAI
       let id = try await created(space)
       let rendered = try await storePrompt(store, id)
       _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { cell in
-        let rows = cell.rows
-        try rows.append(id, lines: [
+        try cell.append(id, lines: [
           TranscriptLine(at: handlerDate, key: "direct:hello", message: .user(.init(content: [.text("hello\nthere")]))),
           TranscriptLine(at: handlerDate, key: "attempt:hello", message: .assistant(.init(content: [.text("hi")])), meta: .init(stopReason: .stop, usage: .init(inputTokens: 5, outputTokens: 5, totalTokens: 100))),
         ])
@@ -99,7 +98,7 @@ import WuhuAI
         try await files.write(folder + "/current.jsonl", Data(), ifMatch: nil)
       }
       await #expect(throws: SpaceError.sentViewReadOnly(folder + "/x.md")) {
-        try await space.refuseWrite(SpacePath(validating: folder + "/x.md"), in: .shared, by: .anonymous, acting: .shared)
+        try await space.refuseWrite(SpacePath(validating: folder + "/x.md"), in: .shared, by: (try await space.ensureDevPerson()).actor, acting: .shared)
       }
 
       let sent = RenderedFiles.path(rendered)
@@ -108,7 +107,7 @@ import WuhuAI
       await #expect(throws: SpaceError.notFound(sent)) { try await space.renderedFiles(in: .settings).read(sent) }
       await #expect(throws: SpaceError.notFound("/_/rendered/0000")) { try await space.renderedFiles(in: .shared).read("/_/rendered/0000") }
       await #expect(throws: SpaceError.sentViewReadOnly(sent)) {
-        try await space.refuseWrite(SpacePath(validating: sent), in: .shared, by: .anonymous, acting: .shared)
+        try await space.refuseWrite(SpacePath(validating: sent), in: .shared, by: (try await space.ensureDevPerson()).actor, acting: .shared)
       }
     }
   }

@@ -27,7 +27,7 @@ private let onePixelPNG: [UInt8] = [
 @Suite(.deterministicDependencies(clock: VirtualClock()))
 struct ClientServerFaithfulnessTests {
   @Test func deleteRemovesAMachineByNameThroughTheRealServer() async throws {
-    let harness = try ServerHarness()
+    let harness = try await ServerHarness()
     let machine = try await harness.space.addMachineV2(name: "retired_box").machine
     #expect(await harness.run(["machine", "delete", "retired_box"]) == 0)
     #expect(await harness.stdout.text == "deleted retired_box\n")
@@ -38,7 +38,7 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func modelsListAndUpdateKeepInvalidEntriesAndReportThem() async throws {
-    let harness = try ServerHarness()
+    let harness = try await ServerHarness()
     let provider = #"{"dialect":"responses","baseURL":"https://fixture.test","capacity":{"weekly":2},"models":{"m":{"maxInput":10000,"maxOutput":1000,"efforts":["high"],"defaultEffort":"high"}}}"#
     let models = "{\"broken\":" + provider + "}"
     let groups = #"{"broken-group":{"kind":"group","members":[],"defaultEffort":"high","policy":{"type":"unknown"}}}"#
@@ -58,20 +58,20 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func systemFilesAreDiscoverableThroughTheCLI() async throws {
-    let listing = try ServerHarness()
+    let listing = try await ServerHarness()
     #expect(await listing.run(["ls", "wuhu://system/"]) == 0)
     #expect(await listing.stdout.text.contains("skills"))
-    let finding = try ServerHarness()
+    let finding = try await ServerHarness()
     #expect(await finding.run(["find", "**/SKILL.md", "wuhu://system/"]) == 0)
     #expect(await finding.stdout.text.contains("wuhu://system/skills/space-scripts/SKILL.md"))
-    let searching = try ServerHarness()
+    let searching = try await ServerHarness()
     #expect(await searching.run(["grep", "createTable", "wuhu://system/"]) == 0)
     #expect(await searching.stdout.text.contains("wuhu://system/skills/space-scripts/SKILL.md:"))
     #expect(await searching.stderr.text.isEmpty)
   }
 
   @Test func everyVerbRunsAgainstRealSpaceServer() async throws {
-    let harness = try ServerHarness()
+    let harness = try await ServerHarness()
 
     #expect(await harness.run(["write", "--force", "/a.md", "--body", "hello\nworld"]) == 0)
     #expect(await harness.run(["read", "/a.md"]) == 0)
@@ -96,14 +96,14 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func addressingFormsMatchServerWire() async throws {
-    let harness = try ServerHarness(space: "api.test:5530")
+    let harness = try await ServerHarness(space: "api.test:5530")
     #expect(await harness.run(["write", "--force", "wuhu://api.test:5530/a.md", "--body", "x"]) == 0)
     #expect(await harness.run(["read", "/a.md@1"]) == 0)
     #expect(await harness.stdout.text.contains("x"))
   }
 
   @Test func putAndCatRoundTripBinaryBytesExactly() async throws {
-    let harness = try ServerHarness()
+    let harness = try await ServerHarness()
     #expect(await harness.run(["put", "/logo.png"], stdin: onePixelPNG) == 0)
     #expect(await harness.run(["cat", "/logo.png"]) == 0)
     #expect(await harness.bytes.value == onePixelPNG)
@@ -114,7 +114,7 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func catCountsAsTheReadThatLetsPutOverwrite() async throws {
-    let harness = try ServerHarness()
+    let harness = try await ServerHarness()
     _ = try await harness.space.fs(.shared).write("/logo.png", Data(onePixelPNG), ifMatch: nil)
     #expect(await harness.run(["put", "/logo.png"], stdin: [1]) == 1)
     #expect(await harness.stderr.text.contains("read it first"))
@@ -125,7 +125,7 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func writeTakesBodyAndABareWritePointsAtPut() async throws {
-    let harness = try ServerHarness()
+    let harness = try await ServerHarness()
     #expect(await harness.run(["write", "/notes.md", "--body", "hello"]) == 0)
     #expect(await harness.run(["read", "/notes.md"]) == 0)
     #expect(await harness.stdout.text.contains("hello"))
@@ -135,7 +135,7 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func putMovesFileBytesOnTheUntimedClient() async throws {
-    let harness = try ServerHarness()
+    let harness = try await ServerHarness()
     let timed = await harness.timedRequests
     #expect(await harness.run(["put", "--force", "/blob.bin"], stdin: [1, 2]) == 0)
     #expect(await harness.untimedRequests == 1)
@@ -144,8 +144,8 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func observeQueryOncePersistsBySpaceAndSkipsEqualSnapshots() async throws {
-    let harness = try ServerHarness(space: "space-a")
-    let other = try ServerHarness(space: "space-b")
+    let harness = try await ServerHarness(space: "space-a")
+    let other = try await ServerHarness(space: "space-b")
     let header = "{\"columns\":[{\"name\":\"n\",\"type\":\"integer\"}]}"
     #expect(await harness.run(["table", "create", "/t.table", header]) == 0)
     #expect(await other.run(["table", "create", "/t.table", header]) == 0)
@@ -162,7 +162,7 @@ struct ClientServerFaithfulnessTests {
 
   @Test func observeGlobOncePrintsFirstDeltaWithoutCursor() async throws {
     let (started, continuation) = AsyncStream<Void>.makeStream()
-    let harness = try ServerHarness(onObservationResponse: {
+    let harness = try await ServerHarness(onObservationResponse: {
       continuation.yield(())
       continuation.finish()
     })
@@ -192,7 +192,7 @@ private struct ServerHarness {
     get async { await fetches.untimed }
   }
 
-  init(space: String = "space", onObservationResponse: @escaping @Sendable () -> Void = {}) throws {
+  init(space: String = "space", onObservationResponse: @escaping @Sendable () -> Void = {}) async throws {
     self.temp = try ServerTemp(space: space)
     let (createdSpace, hub) = try withDependencies {
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
@@ -202,7 +202,7 @@ private struct ServerHarness {
       return (space, MachineHub(space: space))
     }
     self.space = createdSpace
-    let handler = SpaceServer.handler(space: createdSpace, hub: hub, dev: true)
+    let handler = SpaceServer.handler(space: createdSpace, hub: hub, devPerson: try await createdSpace.ensureDevPerson())
     let client = ServeTesting.client(upgrading: handler)
     let stdout = ServerSink()
     let stderr = ServerSink()

@@ -1,29 +1,23 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
+import Wuwei
 
 enum CSV {
   static func renderRow(_ fields: [String]) -> String {
     fields.map(escape).joined(separator: ",")
   }
 
-  static func jsonLiteral(from value: DatabaseValue) -> String {
-    switch value.storage {
+  static func jsonLiteral(from value: Value) -> String {
+    switch value {
     case .null: "null"
-    case let .int64(int): String(int)
-    case let .double(double): JSONValue.number(double).jsonString()
-    case let .string(text): JSONValue.string(text).jsonString()
-    case let .blob(data): JSONValue.string(data.base64EncodedString()).jsonString()
-    }
-  }
-
-  static func field(from value: DatabaseValue) -> String {
-    switch value.storage {
-    case .null: ""
-    case let .int64(int): String(int)
-    case let .double(double): String(double)
-    case let .string(text): text
-    case let .blob(data): data.base64EncodedString()
+    case let .integer(int): String(int)
+    case let .real(double): JSONValue.number(double).jsonString()
+    case let .text(text): JSONValue.string(text).jsonString()
+    case let .blob(data): JSONValue.string(Data(data).base64EncodedString()).jsonString()
     }
   }
 

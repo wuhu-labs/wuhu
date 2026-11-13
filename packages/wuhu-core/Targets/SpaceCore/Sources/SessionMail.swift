@@ -3,9 +3,7 @@
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
-import Wuwei
 
 /// An input on its way to a session's queue. One on a `topic` replaces the one on it the model has not seen. It is due at `due`; with a `throttle` instead, no sooner than that long after the model last saw the topic, and a replaced input's time is kept; otherwise at once.
 public struct SessionPut: Hashable, Codable, Sendable {
@@ -30,32 +28,4 @@ public enum SessionMail: Hashable, Codable, Sendable {
   case put(SessionPut)
   /// Takes back the input on the topic that the model has not seen.
   case clear(String)
-}
-
-extension Sessions {
-  /// Main's side of an input: mail to the session's cell, durable with the write in `db`. The cell queues it; whoever commits pokes the cell (`signals.post`), or the worker's scan finds the mail.
-  static func enqueue(_ key: String, input: QueueInput, topic: String? = nil, due: Date? = nil, throttle: Double? = nil, nowDate: Date, in db: GRDB.Database) throws {
-    if case let .archived(graceExpiresAt) = try record(key, in: db).lifecycle, nowDate >= graceExpiresAt {
-      throw SessionStoreError.archiveGraceExpired(key)
-    }
-    try post(.put(SessionPut(input, topic: topic, due: due, throttle: throttle)), to: key, in: db)
-  }
-
-  static func clear(_ key: String, topic: String, in db: GRDB.Database) throws {
-    try post(.clear(topic), to: key, in: db)
-  }
-
-  static func post(_ mail: SessionMail, to key: String, in db: GRDB.Database) throws {
-    try Recipient<SessionMail>(kind: SessionMail.kind, key: key).post(mail, on: db.sqliteConnection!)
-  }
-}
-
-extension SessionRows {
-  public func put(_ id: SessionID, _ put: SessionPut) throws {
-    try Sessions.insertInput(id.rawValue, put, nowDate: store.dateGen.now, in: db)
-  }
-
-  public func clear(_ id: SessionID, topic: String) throws {
-    try Sessions.removeInput(id.rawValue, topic: topic, in: db)
-  }
 }

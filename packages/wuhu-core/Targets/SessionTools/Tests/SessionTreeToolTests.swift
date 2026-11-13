@@ -45,8 +45,8 @@ struct SessionTreeToolTests {
       let loop = try await ToolFixture(space: space)
       let account = try await space.addAccount(kind: .human, name: "Morgan")
       let group = try await space.createGroup(alias: "research", owner: account.id)
-      try await space.setGrant(.group, "shared", role: .admin, in: group, by: .anonymous, acting: group)
-      try await space.renameGroup(group, alias: "science", by: .shared(.anonymous))
+      try await space.setGrant(.group, "shared", role: .admin, in: group, by: (try await space.ensureDevPerson()).actor, acting: group)
+      try await space.renameGroup(group, alias: "science", by: .shared(try await space.ensureDevPerson().actor))
       let parent = try await makeSession(space, name: "parent")
       var world = ToolWorld(executor: try await creating(loop), session: parent)
       for spelling in ["research", "science", group.rawValue] {
@@ -128,7 +128,7 @@ struct SessionTreeToolTests {
         "request_id": .string(request.rawValue), "kind": "final", "content": #"{"verdict":"pass"}"#,
       ]))
       guard case .report = report else { throw Mismatch("expected a report, got \(report)") }
-      let rows = try await space.query("SELECT status, result, fields FROM requests", as: .shared(.anonymous)).rows
+      let rows = try await space.query("SELECT status, result, fields FROM requests", as: .shared(.publicReader)).rows
       #expect(rows == [[.text("done"), .text(#"{"verdict":"pass"}"#), .text(#"{"pr":7}"#)]])
     }
   }
@@ -202,7 +202,7 @@ struct SessionTreeToolTests {
       let bob = try await plainGroup(space, "bob")
       // A session places a top-level agent outside its group only where its
       // group administers; shared is open but alice writes there, not admin.
-      try await space.setGrant(.group, alice.rawValue, role: .admin, in: .shared, by: .anonymous, acting: .shared)
+      try await space.setGrant(.group, alice.rawValue, role: .admin, in: .shared, by: (try await space.ensureDevPerson()).actor, acting: .shared)
       let agent = try await makeSession(space, name: "agent", group: alice)
       var world = ToolWorld(executor: try await creating(loop), session: agent)
 

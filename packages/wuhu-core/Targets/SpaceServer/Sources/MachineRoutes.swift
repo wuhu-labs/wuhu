@@ -103,6 +103,12 @@ func addMachineRoutes(
       )
     } catch let SpaceError.machineNameTaken(name) {
       return errorResponse(.conflict, code: "machineNameTaken", message: "machine name \(name) is already taken")
+    } catch let SpaceError.machineNameTakenByMachine(name) {
+      return errorResponse(
+        .conflict, code: "machineNameTaken",
+        message: "machine name \(name) is already taken by a machine",
+        hint: "delete it to free the name: wuhu machine delete \(name)",
+      )
     }
   }
 
@@ -361,11 +367,7 @@ func machineRegistrationGroup(_ requested: String?, principal: Principal, space:
   } else {
     group = principal.group
   }
-  let admitted: Bool = if case .anonymous = principal.actor {
-    true
-  } else {
-    try await space.role(of: principal, in: group) == .admin
-  }
+  let admitted = try await space.role(of: principal, in: group) == .admin
   guard admitted else {
     return .failure(errorResponse(
       .forbidden, code: "adminRequired", message: "adding a machine needs an admin of group \(group.rawValue)",
@@ -374,9 +376,8 @@ func machineRegistrationGroup(_ requested: String?, principal: Principal, space:
   return .success(group)
 }
 
-// The --dev seat is unrestricted.
 private func admits(_ principal: Principal, of group: GroupID, space: Space) async throws -> Bool {
-  principal.actor == .anonymous ? true : try await space.isAdmin(principal.actor, of: group, acting: principal.group)
+  try await space.isAdmin(principal.actor, of: group, acting: principal.group)
 }
 
 func machineScope(_ raw: String?) -> Admission<ReachScope> {
@@ -389,12 +390,10 @@ func machineScope(_ raw: String?) -> Admission<ReachScope> {
   return .success(scope)
 }
 
-// What can't be undone takes a person: a human admin of the group, or the --dev seat.
 private func humanAdmits(_ principal: Principal, of group: GroupID, space: Space) async throws -> Bool {
   switch principal.actor {
-  case .anonymous: true
   case let .person(_, account): try await space.isHumanAdmin(account, of: group)
-  case .session, .observer, .page: false
+  case .session, .observer, .page, .publicReader: false
   }
 }
 

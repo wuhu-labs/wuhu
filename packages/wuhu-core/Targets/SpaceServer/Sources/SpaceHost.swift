@@ -62,7 +62,6 @@ public actor SpaceHost {
         directory: folder.appendingPathComponent("web-push"),
         contact: URL(string: "https://wuhu.ai")!,
       )
-      try await space.reindexLinks()
       try await provisionEverythingSidebar(space)
       try await space.recordDeployment(deployment)
       if let devImport {
@@ -119,6 +118,7 @@ public actor SpaceHost {
         webPush: .live(manager: webPushManager, logger: logger),
         pushRelay: .live(fetch: fetch),
       )
+      let devPerson = dev ? try await space.ensureDevPerson() : nil
       let keyStreams = KeyStreams()
       @Dependency(\.continuousClock) var releaseClock
       @Dependency(\.date) var date
@@ -126,7 +126,7 @@ public actor SpaceHost {
       var listenerRoutes = Router()
       let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
       addMachineV2Routes(&listenerRoutes, space: space, hub: hub, upgrades: upgrades, fingerprint: deployment.pin) { request in
-        return try await requestPrincipal(request, space: space, date: date)
+        return try await requestPrincipal(request, space: space, devPerson: devPerson, date: date)
       }
       let handler = SpaceServer.configuredHandler(
         space: space,
@@ -137,7 +137,7 @@ public actor SpaceHost {
         aiDisclosure: aiDisclosure,
         port: port,
         fingerprint: deployment.pin,
-        dev: dev,
+        devPerson: devPerson,
         publicRead: publicRead,
         version: version,
         webContent: webContent,

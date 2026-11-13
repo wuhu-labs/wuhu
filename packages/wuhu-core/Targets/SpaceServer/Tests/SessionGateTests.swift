@@ -100,23 +100,22 @@ import Testing
       let t = try await tree()
       let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
       let group = try await t.harness.space.privateGroup(account: account.id)
-      let owner = GroupID(rawValue: "owner")
-      try await t.harness.addGroup(owner)
-      // owner's list admits the reader's group at read only.
-      try await t.harness.space.setGrant(.group, group.rawValue, role: .read, in: owner, by: .anonymous, acting: owner)
+      let owner = try await t.harness.space.createGroup(alias: "table_owner", owner: t.harness.space.ensureDevPerson().account)
+      try await t.harness.space.setVisibility(.private, of: owner, by: t.harness.space.ensureDevPerson().actor, acting: owner)
+      try await t.harness.space.setGrant(.group, group.rawValue, role: .read, in: owner, by: (try await t.harness.space.ensureDevPerson()).actor, acting: owner)
       let reader = try await t.harness.store.createSession(group: group, title: "reader", kind: .agent, createdBy: "reader", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
       let readerBox = (try await t.harness.space.addMachineV2(name: "reader_box", group: group)).machine
       let machine = try #require(try await t.harness.space.resolveMachine(readerBox.id.rawValue, usableFrom: group))
       let exec = try await t.harness.space.reserveExec(machine: machine.id, caller: reader.rawValue)
       let token = try await t.tokens.credential(session: reader, exec: exec.id, timeout: nil, now: Date()).token
-      let path = "wuhu://owner.localspace/.agents/skills/test/data.table"
+      let path = "wuhu://table_owner.localspace/.agents/skills/test/data.table"
       let header: JSONValue = ["columns": [["name": "s", "type": "string"]]]
-      let ownerSeat = SpaceToolContext(space: t.harness.space, principal: Principal(actor: .anonymous, group: owner))
+      let ownerSeat = SpaceToolContext(space: t.harness.space, principal: Principal(actor: try await t.harness.space.ensureDevPerson().actor, group: owner))
       let created = try await SpaceToolbox.all.first { $0.name == "table.create" }!
         .run(ownerSeat, input: ["path": .string(path), "header": header])
       #expect(try await t.harness.post("/v1/tools/table.schema", ["path": .string(path)], bearer: token).status == .ok)
       for (verb, input) in [
-        ("table.create", JSONValue.object(["path": .string("wuhu://owner.localspace/x.table"), "header": header])),
+        ("table.create", JSONValue.object(["path": .string("wuhu://table_owner.localspace/x.table"), "header": header])),
         ("table.alter", JSONValue.object(["path": .string(path), "header": header, "ifMatch": .string(created.object?["token"]?.stringValue ?? "")])),
         ("table.mutate", JSONValue.object(["path": .string(path), "ops": [["kind": "insert", "values": ["injected"]]]])),
       ] {
@@ -501,9 +500,11 @@ extension SessionGateTests {
   @Test func aSessionExecCreatesAndManagesAHumanOnlyChannel() async throws {
     try await withSessionDeps {
       let t = try await tree()
-      let alice = try await t.harness.adoptPersona()
-      let bob = try await t.harness.adoptPersona()
-      let carol = try await t.harness.adoptPersona()
+      let alice = try await t.harness.space.ensureDevPerson().persona
+      let (bobBearer, bobKey) = try await t.harness.enrolledBearer()
+      let bob = try await t.harness.space.adoptPersona(key: bobKey).name
+      let (carolBearer, carolKey) = try await t.harness.enrolledBearer()
+      let carol = try await t.harness.space.adoptPersona(key: carolKey).name
       let output = try await t.harness.call("/v1/conversation", ["members": .array([.string(alice), .string(bob)]), "title": "People"], as: ConversationPostOutput.self, bearer: t.token)
       let id = output.conversationId
       let channel = try await t.harness.store.conversation(ConversationID(id))
@@ -524,12 +525,12 @@ extension SessionGateTests {
       let mention = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "identity": .string(alice), "message": .string("@\(t.parent.rawValue) help")], as: ConversationPostOutput.self)
       #expect(mention.delivered == [t.parent.rawValue])
       _ = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "replyTarget": .string(mention.messageId), "message": "answer"], as: ConversationPostOutput.self, bearer: t.token)
-      let next = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "identity": .string(bob), "message": "next without mention"], as: ConversationPostOutput.self)
+      let next = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "identity": .string(bob), "message": "next without mention"], as: ConversationPostOutput.self, bearer: bobBearer)
       #expect(next.delivered == [t.parent.rawValue])
       #expect(try await t.harness.store.conversation(ConversationID(id)).members.allSatisfy { $0.kind == .user })
-      let strangerPost = try await t.harness.post("/v1/conversation/message", ["conversation": .string(id), "identity": .string(carol), "message": "refused"])
+      let strangerPost = try await t.harness.post("/v1/conversation/message", ["conversation": .string(id), "identity": .string(carol), "message": "refused"], bearer: carolBearer)
       #expect(strangerPost.status == .notFound)
-      #expect(try await t.harness.get("/v1/conversation/\(id)/messages", query: ["identity": carol]).status == .notFound)
+      #expect(try await t.harness.get("/v1/conversation/\(id)/messages", query: ["identity": carol], bearer: carolBearer).status == .notFound)
       let aliceAccount = try #require(try await t.harness.space.persona(named: alice)?.account)
       let (aliceBearer, _) = try await t.harness.enrolledBearer(account: aliceAccount)
       #expect(try await t.harness.get("/v1/conversation/\(id)/messages", bearer: aliceBearer).status == .ok)
@@ -597,8 +598,8 @@ private func toolCalled(
 
 private func pendingTimers(_ harness: SessionHarness, _ session: SessionID) async throws -> [String] {
   _ = try await harness.store.sent(session)
-  let cell = harness.space.worker.cell(SessionCell.ID(session.rawValue))
   let tail = try await harness.store.hydrate(session).queueTail
+  let cell = harness.space.worker.cell(SessionCell.ID(session.rawValue))
   return cell.db.rows(
     SessionFixtureQueue.where { $0.sessionID.eq(session.rawValue) && $0.id.gt(Int64(tail)) }.order { $0.id },
   ).compactMap(\.topic).filter { $0.hasPrefix("timer.") }

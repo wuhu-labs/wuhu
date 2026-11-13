@@ -12,9 +12,9 @@ import Testing
 // edge justifies.
 @Suite(.deterministicDependencies) struct SettingsMigrationTests {
   @Test func upgradeCopiesCatalogsAndDeletesTheEmptyLegacyGroup() async throws {
-    let database = try DatabaseQueue(path: "file:/settings-migration-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/settings-migration-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     try await database.write { db in
-      try Migration001.apply(db)
+      try Migration001.apply(.init(db))
       try db.execute(sql: """
       CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
       INSERT INTO grdb_migrations VALUES ('001');

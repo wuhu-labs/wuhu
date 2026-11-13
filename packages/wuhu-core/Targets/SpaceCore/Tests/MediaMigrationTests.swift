@@ -1,15 +1,16 @@
 import DeterministicDependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 @testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct MediaMigrationTests {
-  /// A space's own timeout: a cell's step commits against the readers the space keeps open.
   private func queue(_ path: String) throws -> DatabaseQueue {
-    var configuration = Configuration()
-    configuration.busyMode = .timeout(5)
-    return try DatabaseQueue(path: path, configuration: configuration)
+    try DatabaseQueue(path: path, configuration: Space.makeConfiguration(journalMode: .default))
   }
 
   @Test func upgradeDropsBlobOwnershipAndPreservesBlobBytes() async throws {

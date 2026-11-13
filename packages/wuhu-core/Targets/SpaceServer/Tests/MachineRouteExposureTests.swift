@@ -36,7 +36,7 @@ import Testing
       method: .post,
       body: try .json(input),
     ))
-    #expect(response.status == .notFound)
+    #expect(response.status == .unauthorized)
     #expect(try await space.resolveMachine("must_not_enroll") == nil)
     try await space.close()
   }

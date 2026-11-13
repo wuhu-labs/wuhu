@@ -1,3 +1,8 @@
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct SpaceContract.GroupID
 import StructuredQueries
 import Wuwei
@@ -13,10 +18,13 @@ public struct PersonNote: Hashable, Codable, Sendable {
   public var createdAt: String
 }
 
-/// An account: a person’s, a machine’s or the space’s. The literal `owner` has only an inbox, with no account.
 @Cell
 public struct PersonCell {
-  public static let owned = ["notifications": "owner_account", "watermarks": "owner_account", "user_profiles": "owner_account", "person_hidden_sidebars": "owner_account"]
+  public static let owned = [
+    "notifications": "owner_account", "watermarks": "owner_account", "user_profiles": "owner_account", "person_hidden_sidebars": "owner_account",
+    "accounts": "owner", "account_keys": "owner", "read_sessions": "owner", "join_tokens": "owner", "join_token_receipts": "owner",
+    "personas": "owner", "devices": "owner", "device_commands": "owner_account",
+  ]
 
   public func notifications(after n: Int64 = 0) -> [NotificationRecord] {
     db.rows(NotificationRow.where { $0.ownerAccount.eq(id.key) && $0.n > n }.order(by: \.n)).map(NotificationRecord.init(row:))
@@ -43,6 +51,34 @@ public struct PersonCell {
       $0.lastReadN = $1.lastReadN
     })
     return newest
+  }
+
+  /// The machine account's birth, if absent, then the mail that hands the machine its row: one step, so the row's
+  /// account reference always names an account that exists.
+  public mutating func machineAccount(_ claim: MachineClaim) throws {
+    precondition(claim.account.rawValue == id.key)
+    if db.rows(PersonAccountRow.where { $0.id.eq(id.key) }).isEmpty {
+      try db.execute(PersonAccountRow.insert {
+        PersonAccountRow(id: id.key, kind: AccountKind.machine.rawValue, name: nil, guest: false, createdAt: claim.created, removedAt: nil, owner: id.key)
+      })
+    }
+    ctx.send(MachineCell.ID(claim.id.rawValue)).create(claim)
+  }
+
+  /// The account's last step: its devices, their commands and message links, its personas and its credentials go, and
+  /// the account stays as a tombstone, which every read treats as gone.
+  public mutating func removeMachineAccount(at now: Date) throws {
+    try requireAccount()
+    // Credentials first: a push registration's key reference cascades and its persona one does not.
+    _ = try purgeCredentials()
+    let devices = db.rows(DeviceRow.where { $0.accountID.eq(id.key) }.select(\.id))
+    if !devices.isEmpty {
+      try db.execute(MessageDeviceRow.where { $0.deviceID.in(devices) }.delete())
+      try db.execute(DeviceCommandRow.where { $0.deviceID.in(devices) }.delete())
+      try db.execute(DeviceRow.where { $0.accountID.eq(id.key) }.delete())
+    }
+    try db.execute(PersonaRow.where { $0.accountID.eq(id.key) }.delete())
+    try db.execute(PersonAccountRow.where { $0.id.eq(id.key) }.update { $0.removedAt = #bind(SQLiteDateFormat.string(from: now)) })
   }
 }
 

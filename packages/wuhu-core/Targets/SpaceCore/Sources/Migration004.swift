@@ -1,10 +1,8 @@
-import GRDB
-
 /// Access: open and private groups, the one account/group → group → role table
 /// that replaces group edges and the read closure, the secrets and machines
 /// switches, and guests. Self-contained by rule: raw SQL and local code.
 enum Migration004 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     ALTER TABLE accounts ADD COLUMN guest INTEGER NOT NULL DEFAULT 0 CHECK (guest IN (0, 1));
     ALTER TABLE groups ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('open', 'private'));

@@ -43,7 +43,7 @@ import Wuwei
       outgoing.continuation.finish()
       closed.open()
     })
-    let bridge = ExecSocketLink(space: space, record: record, leg: .anonymous)
+    let bridge = ExecSocketLink(space: space, record: record, leg: .person(try await space.ensureDevPerson().account))
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await bridge.run(socket) }
       defer { incoming.continuation.finish(); tasks.cancelAll() }

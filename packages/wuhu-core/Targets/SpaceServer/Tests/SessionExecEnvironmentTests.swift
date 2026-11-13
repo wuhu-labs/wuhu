@@ -24,7 +24,7 @@ import Testing
     let space = try makeMachineSpace()
     let tokens = try await testTokens(space: space, spaceURL: "https://space.test:5530")
     _ = try await SessionToolFixture(space: space, tokens: tokens)
-    let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
+    let server = try await TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
     let (machine, _) = try await addMachine(server)
     let sessionID = try await makeEnvironmentSession(space)
     let forged = StringMap(["WUHU_EXEC": "0", "WUHU_TOKEN": "forged", "WUHU_SPACE_URL": "https://elsewhere"])
@@ -60,7 +60,7 @@ import Testing
     let space = try makeMachineSpace()
     let tokens = try await testTokens(space: space, spaceURL: "https://space.test:5530")
     _ = try await SessionToolFixture(space: space, tokens: tokens)
-    let server = TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
+    let server = try await TestServer(space: space, clock: ContinuousClock(), tokens: tokens)
     let (machine, _) = try await addMachine(server)
     let sessionID = try await makeEnvironmentSession(space)
 

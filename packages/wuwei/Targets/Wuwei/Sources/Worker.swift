@@ -55,6 +55,14 @@ public final class Worker: Sendable {
     var scanning = false
     var quiescence: Task<Void, Never>?
     var quiesced = false
+    var holds: [UInt64: (address: String, wake: AsyncStream<Void>.Continuation)] = [:]
+    var nextHold: UInt64 = 0
+  }
+
+  private enum Hosting: Sendable {
+    case live(Host)
+    case draining
+    case unavailable
   }
 
   private struct Sockets {
@@ -154,63 +162,84 @@ public final class Worker: Sendable {
 
   /// Whether `id` was ever created: running, hibernating or done.
   public func exists<J: Job>(_ id: J.ID) -> Bool {
-    exists(id, within: nil)
+    exists(id, reading: .span(ReadSpan(store)))
   }
 
-  func exists<J: Job>(_ id: J.ID, within incarnation: Incarnation?) -> Bool {
-    let sql = "SELECT 1 FROM wuwei_job WHERE address = ?"
-    if let rows = incarnation?.readOpen(as: id.key, sql, [.text(id.description)]) { return !rows.isEmpty }
-    do { return try store.read { try !$0.rows(sql, .text(id.description)).isEmpty } } catch { preconditionFailure("could not read \(id): \(error)") }
+  func exists<J: Job>(_ id: J.ID, reading: Reading) -> Bool {
+    !reading.rows("SELECT 1 FROM wuwei_job WHERE address = ?", [.text(id.description)]).isEmpty
   }
 
-  /// A read handle: the cell's durable state. Layered, it reads one snapshot of the outer store, held for as long as the handle lives, and what the cell's open epoch holds is not there yet. Shared, every read is a fresh one.
+  /// Closes the shared snapshot when the synchronous scope returns; reads through escaped handles trap.
+  public func read<Value>(_ body: (Reader) throws -> Value) rethrows -> Value {
+    Lane.preconditionNoRead()
+    let span = ReadSpan(store)
+    defer { span.close() }
+    return try body(Reader(worker: self, span: span))
+  }
+
   public func cell<C: Cell>(_ id: C.ID) -> C {
-    cell(id, within: nil)
+    cell(id, reading: .span(ReadSpan(store)))
   }
 
-  func cell<C: Cell>(_ id: C.ID, within incarnation: Incarnation?) -> C {
-    C(_context: CellContext(id: id, db: Database(access: reading(id, within: incarnation)), reach: Reach(worker: self, writer: .none)))
+  func cell<C: Cell>(_ id: C.ID, reading: Reading) -> C {
+    reading.prepare(C.self)
+    return C(_context: CellContext(id: id, db: Database(access: .reading(reading, ReadTarget(id))), reach: Reach(worker: self, writer: .read(reading))))
   }
 
-  /// A read handle on a job, as ``cell(_:)`` is on a cell. It has the job's database only: no params, no in-memory state.
   public func job<J: Job>(_ id: J.ID) -> J {
-    job(id, within: nil)
+    job(id, reading: .span(ReadSpan(store)))
   }
 
-  func job<J: Job>(_ id: J.ID, within incarnation: Incarnation?) -> J {
-    J(_context: JobContext(id: id, db: JobDatabase(access: reading(id, within: incarnation)), reach: Reach(worker: self, writer: .none), live: nil))
+  func job<J: Job>(_ id: J.ID, reading: Reading) -> J {
+    reading.prepare(J.self)
+    return J(_context: JobContext(id: id, db: JobDatabase(access: .reading(reading, ReadTarget(id))), reach: Reach(worker: self, writer: .read(reading)), live: nil))
   }
 
-  /// Layered, an addressable's durable database at one snapshot, its schema applied to this copy alone, so an addressable that never booted reads as a fresh one.
-  private func reading<Target: Addressable>(_ address: Address<Target>, within incarnation: Incarnation?) -> Access {
-    guard let file = store.file else {
-      store.prepare(kind: Target.kind, schema: Target.schema, owned: Target.owned, within: incarnation)
-      return .shared(store, owner: address.key, within: incarnation)
-    }
-    do {
-      let outer = try Connection(path: file.path, flags: SQLITE_OPEN_READONLY)
-      try outer.execute("BEGIN")
-      let row = try outer.rows("SELECT id, page_count FROM wuwei_addressable WHERE address = ?", .text(address.description)).first
-      let id = row?["id"].integer ?? 0
-      let pages = PageFile(pageCount: UInt32(row?["page_count"].integer ?? 0), writable: true) { try outer.page(id, $0) }
-      let db = try Connection(file: pages, owner: address.key)
-      migrate(db, Target.schema)
-      return .copy(db)
-    } catch {
-      preconditionFailure("could not read \(address): \(error)")
-    }
-  }
-
-  /// A call to a cell from outside any addressable: `body` runs on the cell's owner as one durable step, and its value comes back once that step is durable. What `body` throws rolls the step back and is thrown here. Nothing about a call is durable. It throws `Evicted` when the cell is not this worker's to host or its incarnation died first: the step may have landed then, so what a caller repeats must be safe to repeat.
+  /// A call to a cell from outside any addressable: `body` runs on the cell's owner as one durable step, and its value comes back once that step is durable. What `body` throws rolls the step back and is thrown here. Nothing about a call is durable. A draining holder makes the call wait for a claim; a serving holder refuses it with `Evicted`, as does this worker quiescing or an incarnation dying: the step may have landed then, so what a caller repeats must be safe to repeat.
   public func call<C: Cell, Value: Sendable>(_ id: C.ID, _ body: @Sendable (inout C) throws -> Value) async throws -> Value {
     let address = id.description
-    while let host = host(address) {
+    while true {
+      let host = try await callHost(address)
       let answer: Result<Value?, any Error> = await host.run { incarnation in
         do { return .success(try await incarnation.answer(C.self, body)) } catch { return .failure(error) }
       }
       if let value = try answer.get() { return value }
     }
-    throw Evicted(address: address)
+  }
+
+  private func callHost(_ address: String) async throws -> Host {
+    switch hosting(address) {
+    case let .live(host): return host
+    case .unavailable: throw Evicted(address: address)
+    case .draining: break
+    }
+    let (stream, wake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    let (token, startsScan) = try hosts.withLock { hosts in
+      guard hosts.claiming else { throw Evicted(address: address) }
+      hosts.nextHold += 1
+      hosts.holds[hosts.nextHold] = (address, wake)
+      let startsScan = !hosts.scanning
+      hosts.scanning = true
+      return (hosts.nextHold, startsScan)
+    }
+    defer {
+      hosts.withLock { $0.holds[token] = nil }
+      wake.finish()
+    }
+    if startsScan { scan() }
+    var iterator = stream.makeAsyncIterator()
+    while true {
+      try Task.checkCancellation()
+      switch hosting(address) {
+      case let .live(host): return host
+      case .unavailable: throw Evicted(address: address)
+      case .draining:
+        guard await iterator.next() != nil else {
+          try Task.checkCancellation()
+          throw Evicted(address: address)
+        }
+      }
+    }
   }
 
   /// Takes a socket to a cell. `nil` when the cell is not this worker's to host: it lives elsewhere, or this worker does not register its kind. The cell hears `attached` first; `output` runs on the cell's lane, in order, and must not block.
@@ -267,6 +296,13 @@ public final class Worker: Sendable {
       if let task = hosts.quiescence { return task }
       store.holdLeases()
       hosts.claiming = false
+      do {
+        try store.write { try $0.execute("UPDATE wuwei_addressable SET draining = 1 WHERE holder = ? AND expires_at > ?", .text(id), .integer(scheduler.now.milliseconds)) }
+      } catch {
+        preconditionFailure("could not mark the leases of \(id) draining: \(error)")
+      }
+      for hold in hosts.holds.values { hold.wake.finish() }
+      hosts.holds = [:]
       let startsMaintenance = !hosts.scanning
       hosts.scanning = true
       let live = Array(hosts.live.values)
@@ -310,23 +346,38 @@ public final class Worker: Sendable {
 
   /// Makes sure the addressable is alive here if it can be, and has it look at its mail. Lossy: if someone else holds it, nothing happens, and that worker's scan finds the mail.
   func poke(_ address: String) {
+    wakeHeldCalls(at: address)
     if let host = host(address) { task { await host.pull() } }
+  }
+
+  private func wakeHeldCalls(at address: String? = nil) {
+    let wakes = hosts.withLock { hosts in
+      hosts.holds.values.filter { address == nil || $0.address == address }.map(\.wake)
+    }
+    for wake in wakes { wake.yield() }
   }
 
   /// The live host of an address here, claiming its lease if it is free.
   private func host(_ address: String) -> Host? {
-    guard let slash = address.firstIndex(of: "/"), let registration = registrations.withLock({ $0[String(address[..<slash])] }) else { return nil }
+    if case let .live(host) = hosting(address) { host } else { nil }
+  }
+
+  private func hosting(_ address: String) -> Hosting {
+    guard let slash = address.firstIndex(of: "/"), let registration = registrations.withLock({ $0[String(address[..<slash])] }) else { return .unavailable }
     return hosts.withLock { hosts in
-      guard hosts.claiming else { return nil }
-      if let live = hosts.live[address] { return live }
+      guard hosts.claiming else { return .unavailable }
+      if let live = hosts.live[address] { return .live(live) }
       do {
-        guard let claim = try claim(address, key: String(address[address.index(after: slash)...]), isJob: registration.isJob) else { return nil }
+        guard let claim = try claim(address, key: String(address[address.index(after: slash)...]), isJob: registration.isJob) else {
+          let draining = try store.read { try $0.rows("SELECT draining FROM wuwei_addressable WHERE address = ?", .text(address)).first?["draining"].integer == 1 }
+          return draining ? .draining : .unavailable
+        }
         let host = try registration.host(self, claim)
         hosts.live[address] = host
-        return host
+        return .live(host)
       } catch {
         log.error("could not host \(address): \(error)")
-        return nil
+        return .unavailable
       }
     }
   }
@@ -369,7 +420,7 @@ public final class Worker: Sendable {
       let claimed = try db.rows(
         """
         INSERT INTO wuwei_addressable (address, holder, fence, expires_at) VALUES (?, ?, 1, ?)
-        ON CONFLICT (address) DO UPDATE SET holder = excluded.holder, fence = fence + 1, expires_at = excluded.expires_at
+        ON CONFLICT (address) DO UPDATE SET holder = excluded.holder, fence = fence + 1, expires_at = excluded.expires_at, draining = 0
         WHERE expires_at <= ? OR holder = excluded.holder
         RETURNING id, fence, page_count, wake_at
         """,
@@ -395,6 +446,7 @@ public final class Worker: Sendable {
             .integer((now + options.leaseDuration).milliseconds), .text(id), .integer(now.milliseconds),
           )
         }
+        wakeHeldCalls()
         guard hosts.withLock({ $0.claiming && $0.started }) else { return true }
         let due = try store.read { db in
           try db.rows("SELECT DISTINCT recipient AS address FROM wuwei_mail") + db.rows(

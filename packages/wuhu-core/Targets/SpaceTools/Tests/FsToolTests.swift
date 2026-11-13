@@ -8,7 +8,7 @@ import Testing
 
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct FsToolTests {
   @Test func rootListingHidesTheSystemFolderUnlessAsked() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/_/sessions/brave-fox/AGENTS.md", "mine", context)
     _ = try await seedFile("/users/x/avatar.png", "png", context)
     _ = try await seedFile("/notes/a.md", "x", context)
@@ -23,7 +23,7 @@ import Testing
   }
 
   @Test func writeReadRoundTrip() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let written = try await seedFile("/notes/a.md", "hello\nworld", context)
     let read = try await run("read", .object(["path": "/notes/a.md"]), context, as: ReadOutput.self)
     #expect(read.content == "hello\nworld")
@@ -32,7 +32,7 @@ import Testing
   }
 
   @Test func readSupportsLinesAndRev() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "one\ntwo\nthree", context)
     _ = try await seedFile("/a.md", "changed", context)
 
@@ -49,7 +49,7 @@ import Testing
   }
 
   @Test func resolverAddressing() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     // A context without a machine seam (client-side toolbox use) refuses
     // machines:// addresses instead of walking the space.
     let machines = await failure("read", .object(["path": "machines://mc_00000000/a.md"]), context)
@@ -68,7 +68,7 @@ import Testing
   }
 
   @Test func theSystemHostReadsSearchesAndRefusesWrites() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let read = try await run("read", .object(["path": "wuhu://system/AGENTS.md"]), context, as: ReadOutput.self)
     #expect(read.content.hasPrefix("# Working in a Wuhu space"))
     let listed = try await run("ls", .object(["path": "wuhu://system/skills"]), context, as: ListOutput.self)
@@ -101,7 +101,7 @@ import Testing
   }
 
   @Test func writeStaleTokenConflictsWithHint() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "v1", context)
     _ = try await seedFile("/a.md", "v2", context)
 
@@ -117,7 +117,7 @@ import Testing
   }
 
   @Test func editAppliesSequentially() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "alpha\nbeta\ngamma", context)
     let edited = try await run(
       "edit",
@@ -134,7 +134,7 @@ import Testing
   }
 
   @Test func editAmbiguousMatchHintCarriesLineNumbers() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "alpha\nbeta\nalpha", context)
     let ambiguous = await failure(
       "edit", .object(["path": "/a.md", "edits": .array([.object(["old": "alpha", "new": "x"])])]), context,
@@ -149,7 +149,7 @@ import Testing
   }
 
   @Test func editAmbiguousMatchHintCountsOverlappingAndAdjacentMatches() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "a\n\n\n\n\n\nb\nxyxxyx\n", context)
 
     // Six newlines: two three-line needles that do not overlap, four that do.
@@ -175,7 +175,7 @@ import Testing
   }
 
   @Test func editStaleIfMatchConflicts() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "v1", context)
     _ = try await seedFile("/a.md", "v2", context)
     let stale = await failure(
@@ -192,7 +192,7 @@ import Testing
   }
 
   @Test func syncSavesAgainstTheLoadedRevision() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "one\ntwo\n", context)
     let synced = try await run(
       "sync",
@@ -209,7 +209,7 @@ import Testing
   }
 
   @Test func syncMergesNonoverlappingChanges() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "one\ntwo\nthree\n", context)
     _ = try await seedFile("/a.md", "ONE\ntwo\nthree\n", context)
     let synced = try await run(
@@ -227,7 +227,7 @@ import Testing
   }
 
   @Test func syncReturnsOverlappingChangesWithoutWriting() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "one\ntwo\n", context)
     let remote = try await seedFile("/a.md", "remote\ntwo\n", context)
     let synced = try await run(
@@ -241,7 +241,7 @@ import Testing
   }
 
   @Test func syncDeduplicatesTheSameConcurrentChange() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "one\ntwo\n", context)
     let remote = try await seedFile("/a.md", "ONE\ntwo\n", context)
     let synced = try await run(
@@ -254,7 +254,7 @@ import Testing
   }
 
   @Test func syncMergesInsertionsAtOppositeEnds() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "one\ntwo", context)
     _ = try await seedFile("/a.md", "zero\none\ntwo", context)
     let synced = try await run(
@@ -271,7 +271,7 @@ import Testing
   }
 
   @Test func syncRejectsATokenFromAnotherFile() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "one", context)
     let other = try await seedFile("/b.md", "two", context)
     let rejected = await failure(
@@ -288,7 +288,7 @@ import Testing
   }
 
   @Test func rmReturnsRevisionAndDeletes() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let written = try await seedFile("/a.md", "x", context)
     let removed = try await run("rm", .object(["path": "/a.md"]), context, as: RevisionOutput.self)
     #expect(removed.rev > written.rev!)
@@ -297,7 +297,7 @@ import Testing
   }
 
   @Test func mvReportsDanglingInboundLinks() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "see [b](/b.md)", context)
     _ = try await seedFile("/b.md", "target", context)
 
@@ -315,7 +315,7 @@ import Testing
   }
 
   @Test func readSupportsAtRevAddresses() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "v1", context)
     _ = try await seedFile("/a.md", "v2", context)
     let old = try await run("read", .object(["path": .string("/a.md@\(first.rev!)")]), context, as: ReadOutput.self)
@@ -323,7 +323,7 @@ import Testing
   }
 
   @Test func historicalReadsRejectUnknownRevisions() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "x", context)
 
     let viaField = await failure("read", .object(["path": "/a.md", "rev": 999]), context)
@@ -337,14 +337,14 @@ import Testing
   }
 
   @Test func checkoutOfNeverExistedPathIsNotFound() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "x", context)
     let missing = await failure("checkout", .object(["path": "/never.md", "rev": 1]), context)
     #expect({ if case .failed(code: .notFound, _, _, _) = missing { true } else { false } }())
   }
 
   @Test func rmRemovesDirectorySubtree() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/d/x.md", "x", context)
     _ = try await seedFile("/d/sub/y.md", "y", context)
 
@@ -357,7 +357,7 @@ import Testing
   }
 
   @Test func mvRelocatesDirectorySubtree() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/d/x.md", "x", context)
     _ = try await seedFile("/link.md", "[l](/d/x.md)", context)
 
@@ -368,7 +368,7 @@ import Testing
   }
 
   @Test func mvDanglingScanDoesNotTreatUnderscoreAsWildcard() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/s1.md", "[l](/a_b.md)", context)
     _ = try await seedFile("/s2.md", "[l](/axb.md)", context)
     _ = try await seedFile("/a_b.md", "target", context)
@@ -385,7 +385,7 @@ import Testing
   }
 
   @Test func mvRefusesAnExistingDestinationUnlessReplacing() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "new", context)
     _ = try await seedFile("/b.md", "old", context)
     let last = try await seedFile("/d/x.md", "x", context)
@@ -405,7 +405,7 @@ import Testing
   }
 
   @Test func mvRejectsAtRevDestination() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "x", context)
     let rejected = await failure("mv", .object(["from": "/a.md", "to": "/b.md@3"]), context)
     #expect({ if case .failed(code: .invalidPath, _, _, _) = rejected { true } else { false } }())
@@ -414,7 +414,7 @@ import Testing
   }
 
   @Test func lsAndStatProjectEntries() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/notes/a.md", "one\ntwo", context)
     _ = try await seedFile("/notes/b.md", "x", context)
 
@@ -434,7 +434,7 @@ import Testing
   }
 
   @Test func statNamesTheLayoutAndTitleAnHTMLPageDeclares() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/story.html", "<!doctype html><html><head><meta charset=utf-8>\n<TITLE>\n  Loki &amp; me &#8250; six months\n</TITLE><META name='wuhu-layout' Content=\"immersive\"></head><body></body></html>", context)
     _ = try await seedFile("/plain.html", "<html><head><title>x</title></head><body><meta name=wuhu-layout content=immersive></body></html>", context)
     _ = try await seedFile("/odd.html", "<head><meta name=\"wuhu-layout\" content=\"wide\"></head>", context)
@@ -449,7 +449,7 @@ import Testing
   }
 
   @Test func lsCarriesTheCommittedRev() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/notes/a.md", "one", context)
     let listed = try await run("ls", .object(["path": "/notes"]), context, as: ListOutput.self)
     #expect(listed.rev == first.rev)
@@ -466,7 +466,7 @@ import Testing
   }
 
   @Test func lsRevIsConsistentWithTheListingUnderConcurrentWrites() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/race/seed.md", "x", context)
     let writes = Task {
       for index in 1 ... 30 {

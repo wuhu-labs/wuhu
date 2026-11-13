@@ -4,12 +4,12 @@
   import Foundation
 #endif
 import Crypto
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceSQL
 import StructuredQueries
 import Wuwei
+import WuweiQueries
 
 public struct ObservationSlot: Hashable, Codable, Sendable {
   public let owner: SubscriptionOwner
@@ -79,23 +79,6 @@ extension ArmedSubscription {
     case let .group(group): .observer(group: group, name: name!)
     }
     return ObservationWatch(slot: observationSlot, statement: sql, principal: principal, recipient: recipient, marker: baseline)
-  }
-}
-
-extension SessionRows {
-  public func plainSQLObservations(_ id: SessionID) throws -> [ArmedSubscription] {
-    try SubscriptionRow.of(.session(id)).where { $0.status.eq(SubscriptionStatus.armed.rawValue) }.fetchAll(db)
-      .map(store.armedSubscription).filter {
-        guard $0.slot.handler == nil else { return false }
-        switch $0.slot.kind {
-        case .observe, .children: return true
-        case .timer, .stream: return false
-        }
-      }
-  }
-
-  public func observation(_ id: SessionID, _ subscription: SubscriptionID) throws -> ArmedSubscription? {
-    try SubscriptionRow.find(id.rawValue, subscription.rawValue, in: db).map(store.armedSubscription)
   }
 }
 

@@ -152,7 +152,7 @@ private final class SessionCLIHarness: Sendable {
       )
     }
     let runtime = SessionRuntime(execution: worker, owner: owner, tokens: tokens, connection: connection)
-    let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
+    let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, devPerson: try await space.ensureDevPerson())
     worker.start()
     serviceTask = Task {
       let (parked, end) = AsyncStream<Void>.makeStream()
@@ -227,7 +227,7 @@ private func until(
 }
 
 @Suite(.deterministicDependencies) struct SessionCLITests {
-  @Test func sendFromAnUnenrolledSeatPostsAsTheOwnerInItsZone() async throws {
+  @Test func anUnsignedDevSendPostsAsTheDevPersonInItsZone() async throws {
     try await withSessionDeps {
       let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "ok"))]) }
       let id = try await harness.createSession()
@@ -235,7 +235,8 @@ private func until(
       #expect(await harness.run(["send", id, "please look"]) == 0)
       #expect(await harness.stdout.text.contains("posted "))
       let message = try #require(try await harness.store.messages(conversation: ConversationID(id)).last)
-      #expect(message.sender.id == "owner")
+      let person = try await harness.space.ensureDevPerson()
+      #expect(message.sender.id == person.persona)
       #expect(message.sender.timeZone.identifier == TimeZone.current.identifier)
     }
   }
@@ -375,21 +376,28 @@ private func until(
 
   @Test func inboxPrintsAboveTheCursorAndAdvances() async throws {
     try await withSessionDeps {
-      let harness = try await SessionCLIHarness { _ in
-        Issue.record("inbox must not invoke inference")
-        return reply([])
-      }
+      let steps = Steps([
+        { request in
+          let message = try #require(deliveredMessageIDs(in: request.lines).first)
+          return reply([.toolCall(ToolCall(
+            id: "inbox_reply", name: "send_message",
+            arguments: .object(["message": .string("ready for review"), "reply_target": .string(message)]),
+          ))])
+        },
+        { _ in reply([.text(.init(text: "done"))]) },
+      ])
+      let harness = try await SessionCLIHarness { try await steps.next($0) }
       let id = try await harness.createSession()
-      try await harness.store.markErrored(SessionID(id), message: "provider exploded")
-      // The note is mail to the owner's cell, which takes it a moment after the commit.
-      harness.space.worker.poke(PersonCell.ID("owner").recipient)
-      while harness.store.notifications(recipient: "owner").isEmpty { await Task.yield() }
+      #expect(await harness.run(["send", id, "review this", "--wait", "--timeout", "30"]) == 0)
+      let person = try await harness.space.ensureDevPerson()
+      try await until("the dev person receives the reply notice") {
+        !harness.store.notifications(recipient: person.persona).isEmpty
+      }
 
       let before = await harness.stdout.text
       #expect(await harness.run(["inbox"]) == 0)
       let first = await harness.stdout.text
-      #expect(String(first.dropFirst(before.count)).contains("errored"))
-      #expect(String(first.dropFirst(before.count)).contains("provider exploded"))
+      #expect(String(first.dropFirst(before.count)).contains("ready for review"))
 
       #expect(await harness.run(["inbox"]) == 0)
       let second = await harness.stdout.text

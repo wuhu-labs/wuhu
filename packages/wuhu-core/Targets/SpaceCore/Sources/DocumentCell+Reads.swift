@@ -16,24 +16,10 @@ extension FSHeadRow {
   }
 }
 
-// What a host action asks of a document that one statement answers: its file, its state row and when
-// it fell behind. What a merge needs of the state, snapshot, log and checkpoints together is a host
-// read (`DocumentRows.material`), because those must agree and a read handle is a snapshot per
-// statement.
 extension DocumentCell {
   struct Checkpoint: Sendable {
     let rev: Int64
     let frontiers: Data
-  }
-
-  /// The file's revision and hash, with its text when the bytes are inline; nil when the file is gone.
-  func file() throws -> (rev: Int64, text: Data?, hash: String)? {
-    guard let head = db.rows(FSHeadRow.at(path, in: group)).first else { return nil }
-    guard head.kind == "file", let hash = head.blobHash else { throw SpaceError.notAFile(path.rawValue) }
-    switch try Bucket.stored(hash, in: db) {
-    case let .inline(content): return (head.rev, Data(content), hash)
-    case .external: return (head.rev, nil, hash)
-    }
   }
 
   /// The revision the document's state row says its file has.
@@ -43,7 +29,9 @@ extension DocumentCell {
 
   /// Whether the document holds edits its file lacks.
   func dirty() -> Bool {
-    db.rows(DocumentStateRow.all).first?.dirtyAt != nil
+    if db.rows(DocumentStateRow.all).first?.dirtyAt != nil { return true }
+    guard let lineage = db.rows(DocumentLineageRow.all).first else { return false }
+    return !db.rows(DocumentPendingCheckpointRow.where { $0.seq.eq(lineage.seq) }).isEmpty
   }
 
   /// The state row: its history, the file revision it stands at, when it fell behind, and its frontier.
@@ -61,5 +49,31 @@ extension DocumentCell {
   /// How many snapshot rows it holds: at most one, and one whenever it holds a state.
   func snapshotCount() -> Int {
     db.rows(DocumentSnapshotRow.all.asSelect().count()).first!
+  }
+
+  func material(_ file: FileDocumentState, base: DocumentBase, createOnly: Bool) throws -> DocumentMaterial {
+    if let head = file.head, head.kind != "file" { throw SpaceError.notAFile(path.rawValue) }
+    if createOnly, file.head != nil { throw SpaceError.alreadyExists(path.rawValue) }
+    if let row = db.rows(DocumentStateRow.all).first, let lineage = db.rows(DocumentLineageRow.all).first,
+       file.isCurrent(lineage.lineage, seedRev: lineage.seedRev)
+    {
+      let snapshot = db.rows(DocumentSnapshotRow.all).first!
+      let frontiers = try base.frontiers(path, rev: file.head?.rev, notDocument: row.notDocument) { rev in
+        if let checkpoint = db.rows(DocumentCheckpointRow.where { $0.rev.eq(rev) }).first { return Data(checkpoint.frontiers) }
+        if let landed = file.checkpoint, landed.lineage == lineage.lineage, landed.rev == rev,
+           let pending = db.rows(DocumentPendingCheckpointRow.where { $0.seq.eq(landed.seq) }).first { return Data(pending.frontiers) }
+        throw SpaceError.versionMismatch(path.rawValue)
+      }
+      return DocumentMaterial(
+        history: row.history,
+        fileRev: file.head?.rev,
+        snapshot: Data(snapshot.snapshot),
+        updates: db.rows(DocumentLogRow.all.order { $0.seq }).map { Data($0.bytes) },
+        base: frontiers,
+        notDocument: row.notDocument,
+      )
+    }
+    guard let head = file.head else { return DocumentMaterial() }
+    return DocumentMaterial(fileRev: head.rev, hash: head.blobHash!)
   }
 }

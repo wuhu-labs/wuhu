@@ -18,7 +18,7 @@ extension SessionCell {
     while ctx.exists(scriptID(handle))
     let membership = SessionScript(handle: handle, slot: slot.key)
     try db.execute(SessionScript.insert { membership })
-    ctx.create(scriptID(handle), params: .init(session: id.session, handle: handle, slot: slot, call: call, plan: plan, yieldBy: try rows.yieldDeadline(id.session)))
+    ctx.create(scriptID(handle), params: .init(session: id.session, handle: handle, slot: slot, call: call, plan: plan, yieldBy: try yieldDeadline(id.session)))
   }
 
   func scriptAt(_ slot: String) -> ScriptJob.ID? {

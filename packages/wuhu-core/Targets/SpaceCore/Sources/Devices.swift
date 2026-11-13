@@ -20,6 +20,7 @@ struct DeviceRow {
   @Column("machine_id") var machineID: String?
   @Column("created_at") var createdAt: String
   @Column("last_seen_at") var lastSeenAt: String
+  var owner: String
 }
 
 @Table("device_commands")
@@ -110,6 +111,14 @@ extension SpaceCell {
   func devices() -> [DeviceRecord] { db.rows(DeviceRow.order { $0.id }).map(\.record) }
   func device(id: String) -> DeviceRecord? { db.rows(DeviceRow.where { $0.id.eq(id) }).first?.record }
   func device(pubkey: String) -> DeviceRecord? { db.rows(DeviceRow.where { $0.pubkey.eq(pubkey) }).first?.record }
+
+  /// The accounts whose devices name `machine`: deleting the machine needs every one of them detached first.
+  func deviceAccounts(machine: MachineID) -> [AccountID] {
+    var seen: Set<String> = []
+    return db.rows(DeviceRow.where { $0.machineID.eq(machine.rawValue) }.order { $0.id }.select(\.accountID)).compactMap {
+      seen.insert($0).inserted ? AccountID(rawValue: $0) : nil
+    }
+  }
 }
 
 extension PersonCell {
@@ -120,7 +129,7 @@ extension PersonCell {
     let holder = ctx.cell(SpaceCell.ID("space")).device(pubkey: pubkey)
     guard holder == nil || holder?.id == existing?.id else { throw SpaceError.alreadyExists(pubkey) }
     let stamp = SQLiteDateFormat.string(from: now)
-    var row = existing ?? DeviceRow(id: allocated, accountID: id.key, pubkey: pubkey, installation: installation, kind: kind.rawValue, name: name, machineID: nil, createdAt: stamp, lastSeenAt: stamp)
+    var row = existing ?? DeviceRow(id: allocated, accountID: id.key, pubkey: pubkey, installation: installation, kind: kind.rawValue, name: name, machineID: nil, createdAt: stamp, lastSeenAt: stamp, owner: id.key)
     row.pubkey = pubkey
     row.kind = kind.rawValue
     row.name = name

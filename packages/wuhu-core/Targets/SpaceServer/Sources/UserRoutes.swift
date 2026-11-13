@@ -11,12 +11,12 @@ import ServeRouting
 import SpaceContract
 import SpaceCore
 
-func addUserRoutes(_ router: inout Router, space: Space, dev: Bool) {
-  addUserSettingsRoutes(&router, space: space, dev: dev)
+func addUserRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPerson?) {
+  addUserSettingsRoutes(&router, space: space, devPerson: devPerson)
   @Dependency(\.date) var dateGen
 
   router.get("/v1/users") { request, _ in
-    switch try await identityVerdict(nil, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case .identity:
@@ -41,7 +41,7 @@ func addUserRoutes(_ router: inout Router, space: Space, dev: Bool) {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a user-profile body: \(error)")
     }
     let principal: String
-    switch try await identityVerdict(nil, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): principal = resolved
     case let .refused(response): return response
     }

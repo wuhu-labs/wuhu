@@ -10,7 +10,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct Migration025Tests {
   @Test func deadKindsLeaveWhatTheCodeReads() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-025-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/migration-025-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let original = try Space(writer: database)
     let failed = #"{"notification":{"_0":{"kind":"childFailed"}}}"#
     let deadline = #"{"notification":{"_0":{"kind":"requestDeadline"}}}"#
@@ -25,7 +25,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '025';
       """, arguments: [failed, deadline, head, deadline])
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path))
+    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
     #expect(try await database.read { db in
       try String.fetchAll(db, sql: "SELECT json_extract(payload, '$.notification._0.kind') FROM session_contents WHERE id <> 'head' UNION ALL SELECT json_extract(payload, '$.notification._0.kind') FROM session_queue")
     } == ["requestStall", "requestStall", "requestStall"])

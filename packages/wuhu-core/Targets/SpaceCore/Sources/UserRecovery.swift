@@ -24,13 +24,7 @@ public enum UserRecovery {
     // The first admin needs no admin to appoint it: a space without one makes
     // the next offline add the admin, which also recovers an adminless space.
     let isAdmin = admin ? true : !(try await space.hasAdminAccount())
-    let record: AccountRecord
-    do {
-      record = try await space.addAccount(kind: .human, name: name, admin: isAdmin)
-    } catch let SpaceError.reservedAccountName(name) {
-      throw UserRecoveryError(message: "\(name) is reserved: unenrolled --dev seats act as the owner principal")
-    }
-    return record
+    return try await space.addAccount(kind: .human, name: name, admin: isAdmin)
   }
 
   public static func reset(folder: URL, account: String) async throws -> String {

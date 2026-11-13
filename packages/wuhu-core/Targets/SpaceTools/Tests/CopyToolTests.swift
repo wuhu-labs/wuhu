@@ -30,8 +30,8 @@ let copyMachine = MachineID(rawValue: "mc_00000000")
 let zeroHash = String(repeating: "0", count: 64)
 
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct CopyToolTests {
-  func context(_ seam: MachineSeam) throws -> SpaceToolContext {
-    let plain = try makeContext()
+  func context(_ seam: MachineSeam) async throws -> SpaceToolContext {
+    let plain = try await makeContext()
     return SpaceToolContext(space: plain.space, machines: seam, principal: plain.principal)
   }
 
@@ -42,7 +42,7 @@ let zeroHash = String(repeating: "0", count: 64)
 
   @Test func aSpaceFileGoesToAMachineAsItsBytes() async throws {
     let asked = Asked()
-    let context = try context(copySeam(asked) { source, target in
+    let context = try await context(copySeam(asked) { source, target in
       #expect(target == .machine(copyMachine, path: "/srv/a.md", replace: false))
       return CopyReceipt(bytes: 5, sha256: zeroHash, landing: .machine(token: "machine-token"))
     })
@@ -54,7 +54,7 @@ let zeroHash = String(repeating: "0", count: 64)
 
   @Test func aMachineFileLandsInTheSpaceCreatedThenOnlyReplacedWithOverwrite() async throws {
     let content = Mutex("first")
-    let context = try context(copySeam { source, target in
+    let context = try await context(copySeam { source, target in
       #expect(source == .machine(copyMachine, path: "/log.txt"))
       #expect(target == .caller(limit: 64 << 20))
       let bytes = Array(content.withLock { $0 }.utf8)
@@ -73,7 +73,7 @@ let zeroHash = String(repeating: "0", count: 64)
 
   @Test func spaceToSpaceIsRefusedAndNeverAsksTheSeam() async throws {
     let asked = Asked()
-    let context = try context(copySeam(asked) { _, _ in throw CopyRefusal.sourceChanged })
+    let context = try await context(copySeam(asked) { _, _ in throw CopyRefusal.sourceChanged })
     _ = try await seedFile("/a.md", "hello", context)
     #expect(code(await failure("copy", ["from": "/a.md", "to": "/b.md"], context)) == .unsupported)
     #expect(asked.sources.withLock { $0 }.isEmpty)
@@ -88,7 +88,7 @@ let zeroHash = String(repeating: "0", count: 64)
   ])
   func eachRefusalAnswersItsCode(_ refusal: CopyRefusal, _ expected: ErrorCode) async throws {
     let asked = Asked()
-    let context = try context(copySeam(asked) { _, _ in throw refusal })
+    let context = try await context(copySeam(asked) { _, _ in throw refusal })
     let error = await failure("copy", ["from": "machines://mc_00000000/a", "to": "machines://mc_00000000/b", "overwrite": true], context)
     #expect(asked.sources.withLock { $0.count } == 1)
     #expect(code(error) == expected)
@@ -99,7 +99,7 @@ let zeroHash = String(repeating: "0", count: 64)
   func lossWithoutOverwriteIsUnknownAndNeverRepeated(_ ends: (Bool, Bool), _ unknown: Bool) async throws {
     let (spaceSource, spaceTarget) = ends
     let asked = Asked()
-    let context = try context(copySeam(asked) { _, _ in
+    let context = try await context(copySeam(asked) { _, _ in
       if unknown { throw MachineFileFailure.outcomeUnknown }
       throw MachineFileFailure.rangeLost(offset: 0)
     })
@@ -121,7 +121,7 @@ let zeroHash = String(repeating: "0", count: 64)
   func overwriteRestartsTheWholeCopyOnceIncludingSpaceLanding(_ spaceTarget: Bool, _ unknown: Bool) async throws {
     let asked = Asked()
     let attempts = Mutex(0)
-    let context = try context(copySeam(asked) { source, target in
+    let context = try await context(copySeam(asked) { source, target in
       #expect(source == .machine(copyMachine, path: "/source"))
       let attempt = attempts.withLock { $0 += 1; return $0 }
       if attempt == 1 {
@@ -139,7 +139,7 @@ let zeroHash = String(repeating: "0", count: 64)
   }
 
   @Test(arguments: [false, true]) func overwriteRematerializesTheSpaceSourceAfterLoss(_ unknown: Bool) async throws {
-    let plain = try makeContext()
+    let plain = try await makeContext()
     _ = try await seedFile("/source", "old", plain)
     let asked = Asked()
     let seam = copySeam(asked) { source, _ in
@@ -160,7 +160,7 @@ let zeroHash = String(repeating: "0", count: 64)
   func overwriteHasOneSharedLossBudget(_ firstUnknown: Bool, _ secondUnknown: Bool) async throws {
     let asked = Asked()
     let attempts = Mutex(0)
-    let context = try context(copySeam(asked) { _, _ in
+    let context = try await context(copySeam(asked) { _, _ in
       let attempt = attempts.withLock { $0 += 1; return $0 }
       if attempt == 1 ? firstUnknown : secondUnknown { throw MachineFileFailure.outcomeUnknown }
       throw MachineFileFailure.rangeLost(offset: 3)
@@ -180,7 +180,7 @@ let zeroHash = String(repeating: "0", count: 64)
       paused.continuation.finish()
     }
     let asked = Asked()
-    let context = try context(copySeam(asked) { _, target in
+    let context = try await context(copySeam(asked) { _, target in
       #expect(target == .machine(copyMachine, path: "/target", replace: overwrite))
       entered.continuation.yield(())
       var iterator = paused.stream.makeAsyncIterator()
@@ -211,7 +211,7 @@ let zeroHash = String(repeating: "0", count: 64)
       entered.continuation.finish()
       paused.continuation.finish()
     }
-    let context = try context(copySeam { _, _ in
+    let context = try await context(copySeam { _, _ in
       entered.continuation.yield(())
       var iterator = paused.stream.makeAsyncIterator()
       _ = await iterator.next()

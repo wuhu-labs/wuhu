@@ -21,38 +21,38 @@ public enum TranscriptTail: Socket {
 
 extension SessionCell {
   func catchUp(_ socket: SocketHandle<TranscriptTail>) throws {
-    guard let record = try? rows.record(id.session), reads(record, socket.opening.viewer) else { return socket.close() }
-    let end = try rows.lineEnd(id.session)
+    guard let record = try? record(id.session), reads(record, socket.opening.viewer) else { return socket.close() }
+    let end = try lineEnd(id.session)
     guard let after = socket.opening.after, after.generation == end.generation else {
-      return socket.send(.reset(generation: end.generation, lines: try rows.lines(id.session, generation: end.generation, after: -1)))
+      return socket.send(.reset(generation: end.generation, lines: try lines(id.session, generation: end.generation, after: -1)))
     }
-    let lines = try rows.lines(id.session, generation: end.generation, after: after.position, prompt: true)
+    let lines = try lines(id.session, generation: end.generation, after: after.position, prompt: true)
     if !lines.isEmpty { socket.send(.lines(generation: end.generation, lines)) }
   }
 
   /// Every step ends by sending the lines it wrote, whichever handler wrote them.
   mutating func around(_ call: (inout Self) throws -> Void) throws {
     guard !ctx.sockets(of: TranscriptTail.self).isEmpty else { return try call(&self) }
-    let mark = try rows.lineEnd(id.session)
+    let mark = try lineEnd(id.session)
     try call(&self)
-    let end = try rows.lineEnd(id.session)
+    let end = try lineEnd(id.session)
     if end.generation != mark.generation {
-      try publish(.reset(generation: end.generation, lines: rows.lines(id.session, generation: end.generation, after: -1)))
+      try publish(.reset(generation: end.generation, lines: lines(id.session, generation: end.generation, after: -1)))
     } else if end.position > mark.position {
-      try publish(.lines(generation: end.generation, rows.lines(id.session, generation: end.generation, after: mark.position)))
+      try publish(.lines(generation: end.generation, lines(id.session, generation: end.generation, after: mark.position)))
     }
   }
 
   /// Main stores the prompt into the first positions during an inference, outside the cell's calls: each step's outcome until the generation's first reply sends the prompt lines again.
   func sendPrompt() throws {
     guard !ctx.sockets(of: TranscriptTail.self).isEmpty else { return }
-    let end = try rows.lineEnd(id.session)
-    let lines = try rows.lines(id.session, generation: end.generation, after: .max, prompt: true)
+    let end = try lineEnd(id.session)
+    let lines = try lines(id.session, generation: end.generation, after: .max, prompt: true)
     if !lines.isEmpty { try publish(.lines(generation: end.generation, lines)) }
   }
 
   private func publish(_ frame: TranscriptTail.Outgoing) throws {
-    let record = try rows.record(id.session)
+    let record = try record(id.session)
     for socket in ctx.sockets(of: TranscriptTail.self) {
       if reads(record, socket.opening.viewer) { socket.send(frame) } else { socket.close() }
     }

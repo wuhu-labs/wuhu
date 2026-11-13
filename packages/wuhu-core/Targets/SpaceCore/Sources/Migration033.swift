@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration033 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     DELETE FROM machine_v2_operations WHERE owner_scope LIKE 'exec/%';
     DELETE FROM machine_v2_retention WHERE id NOT IN (SELECT id FROM machine_v2_operations);

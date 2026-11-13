@@ -16,12 +16,13 @@ import Testing
 
 let fixedDate = Date(timeIntervalSince1970: 1_700_000_000)
 
-func makeContext(clock: any NonsendingClock<Duration> = ContinuousClock()) throws -> SpaceToolContext {
-  try withDependencies {
+func makeContext(clock: any NonsendingClock<Duration> = ContinuousClock()) async throws -> SpaceToolContext {
+  try await withDependencies {
     $0.date = .constant(fixedDate)
     $0.continuousClock = clock
   } operation: {
-    SpaceToolContext(space: try Space.inMemory(), principal: .shared(.anonymous))
+    let space = try Space.inMemory()
+    return SpaceToolContext(space: space, principal: .shared(try await space.ensureDevPerson().actor))
   }
 }
 
@@ -30,7 +31,7 @@ func withSessionContext(_ body: (SpaceToolContext) async throws -> Void) async t
     $0.installTimeControl(anchor: fixedDate)
   } operation: {
     @Dependency(\.continuousClock) var clock
-    let context = try makeContext(clock: clock)
+    let context = try await makeContext(clock: clock)
     let execution = SessionExecution(
       connection: MainConnection(), credential: { _ in throw MainUnavailable() }, space: context.space,
       loopConfig: { _ in

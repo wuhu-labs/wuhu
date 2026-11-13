@@ -12,11 +12,11 @@ import ServeRouting
 import struct SpaceContract.SidebarVisibilityInput
 import SpaceCore
 
-func addUserSettingsRoutes(_ router: inout Router, space: Space, dev: Bool) {
+func addUserSettingsRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPerson?) {
   @Dependency(\.date) var dateGen
 
   router.get("/v1/user/:person/avatar") { request, parameters in
-    switch try await identityVerdict(nil, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response): return response
     case .identity: return try await userAvatarResponse(space: space, person: parameters["person"]!, request: request)
     }
@@ -24,7 +24,7 @@ func addUserSettingsRoutes(_ router: inout Router, space: Space, dev: Bool) {
 
   router.put("/v1/user/me/avatar") { request, _ in
     let principal: String
-    switch try await identityVerdict(nil, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): principal = resolved
     case let .refused(response): return response
     }
@@ -45,7 +45,7 @@ func addUserSettingsRoutes(_ router: inout Router, space: Space, dev: Bool) {
 
   router.delete("/v1/user/me/avatar") { request, _ in
     let principal: String
-    switch try await identityVerdict(nil, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): principal = resolved
     case let .refused(response): return response
     }
@@ -57,7 +57,7 @@ func addUserSettingsRoutes(_ router: inout Router, space: Space, dev: Bool) {
 
   router.get("/v1/user/me/settings") { request, _ in
     let principal: String
-    switch try await identityVerdict(nil, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): principal = resolved
     case let .refused(response): return response
     }
@@ -67,7 +67,7 @@ func addUserSettingsRoutes(_ router: inout Router, space: Space, dev: Bool) {
 
   router.put("/v1/user/me/settings/sidebar") { request, _ in
     let principal: String
-    switch try await identityVerdict(nil, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): principal = resolved
     case let .refused(response): return response
     }

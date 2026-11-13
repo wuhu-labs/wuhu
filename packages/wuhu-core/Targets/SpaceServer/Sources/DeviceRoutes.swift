@@ -12,7 +12,7 @@ import ServeRouting
 import SpaceContract
 import SpaceCore
 
-func addDeviceRoutes(_ router: inout Router, space: Space, dev: Bool) {
+func addDeviceRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPerson?) {
   @Dependency(\.date) var dateGen
 
   // Registration is the app's every-connect call, authenticated by the device
@@ -58,7 +58,7 @@ func addDeviceRoutes(_ router: inout Router, space: Space, dev: Bool) {
       return unknownDevice(parameters)
     }
     let actor: ManagementActor
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .actor(resolved): actor = resolved
     case let .refused(response): return response
     }
@@ -87,16 +87,9 @@ func addDeviceRoutes(_ router: inout Router, space: Space, dev: Bool) {
     let input = try await request.json(DeviceCommandInput.self)
     guard let id = parameters["id"] else { return unknownDevice(parameters) }
     let issuer: String
-    switch try await bearerVerdict(request: request, space: space, now: dateGen.now) {
-    case let .verified(credential):
-      issuer = credential.key.account.rawValue
-    case let .rejected(response):
-      return response
-    case .anonymous:
-      guard dev else {
-        return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
-      }
-      issuer = "owner"
+    switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
+    case let .person(person): issuer = person.account.rawValue
+    case let .refused(response): return response
     }
     do {
       let n = try await space.issueDeviceCommand(

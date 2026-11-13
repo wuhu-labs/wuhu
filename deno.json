@@ -470,6 +470,34 @@
       "tools": [
         "swiftformat"
       ]
+    },
+    "public-export-check": {
+      "platforms": [
+        "linux"
+      ],
+      "inputs": [
+        "packages/**",
+        "products/wuhu/public/**",
+        ".bazelrc",
+        ".bazelversion",
+        ".gitignore",
+        ".swiftformat",
+        ".swiftlint.yml",
+        "BUILD.bazel",
+        "MODULE.bazel.template",
+        "REPO.bazel",
+        "tools/bazel",
+        "tools/workspace-status.sh",
+        "bazel/**",
+        "tools/contract-ts/**",
+        "tools/iconamoon/**",
+        "tools/lib/**",
+        "tools/manifest-gen/**",
+        "tools/quickjs-wasm/**",
+        "tools/public/*.ts",
+        "tools/public/subset.json",
+        "tools/check/lfs.ts"
+      ]
     }
   },
   "tools": {

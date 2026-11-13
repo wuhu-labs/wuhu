@@ -192,14 +192,18 @@ public enum Wire {
         message: "query result exceeds \(byteLimit >> 20) MB",
         hint: "narrow the query: select fewer columns, filter, or add a LIMIT",
       )
-    case let .reservedAccountName(name):
-      .failed(code: .invalidArgument, message: "reserved account name: \(name)", hint: nil)
     case let .lastAdmin(account):
       .failed(code: .conflict, message: "\(account) is the last admin; the space must keep one", hint: nil)
     case let .handleTaken(handle):
       .failed(code: .conflict, message: "handle @\(handle) is already taken", hint: nil)
     case let .machineNameTaken(name):
       .failed(code: .conflict, message: "machine name \(name) is already taken", hint: nil)
+    case let .machineNameTakenByMachine(name):
+      .failed(
+        code: .conflict,
+        message: "machine name \(name) is already taken by a machine",
+        hint: "delete it to free the name: wuhu machine delete \(name)",
+      )
     case let .unknownDevice(device):
       .failed(code: .notFound, message: "unknown device: \(device)", hint: "list them with: SELECT id, name, kind, machine_id FROM devices")
     case let .needsMigration(compaction):

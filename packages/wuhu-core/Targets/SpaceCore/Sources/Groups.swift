@@ -14,7 +14,7 @@ public enum Actor: Hashable, Sendable {
   /// not its root.
   case observer(Observer)
   case page(Page)
-  case anonymous
+  case publicReader
 }
 
 /// Who acts, and in which group: a session's own group, a person's chosen one.
@@ -31,19 +31,15 @@ public struct Principal: Hashable, Sendable {
     Principal(actor: actor, group: .shared)
   }
 
-  /// The actor as conversations name their members; nil for the --dev seat
-  /// and a page, which is no member.
   public var member: String? {
     switch actor {
     case let .session(id): id.rawValue
     case let .person(persona, _): persona
     case let .observer(observer): observer.member
-    case .page, .anonymous: nil
+    case .page, .publicReader: nil
     }
   }
 
-  /// The same person speaking as `persona`, one of its account's, verified by
-  /// the caller; a session or the --dev seat is unchanged.
   public func speaking(as persona: String) -> Principal {
     guard case let .person(_, account) = actor else { return self }
     return Principal(actor: .person(persona: persona, account: account), group: group)
@@ -148,9 +144,7 @@ extension Space {
     try await worker.call(GroupCell.ID(group.rawValue)) { try $0.setSecretsScope(scope) }
   }
 
-  /// The --dev seat is the caller's to admit, as it always was.
   func requireAdmin(_ actor: Actor, of group: GroupID, acting: GroupID) throws {
-    if case .anonymous = actor { return }
     guard cell(of: group).role(of: actor, acting: acting) == .admin else { throw SpaceError.groupForbidden(group.rawValue) }
   }
 }

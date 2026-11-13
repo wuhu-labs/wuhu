@@ -24,7 +24,7 @@ import Testing
   @Test func onlyLiveHumanMembersCanOwnGroups() async throws {
     let space = try makeSpace()
     let guest = try await space.addAccount(kind: .human, name: "Guest", guest: true)
-    let machine = try await space.addMachine(name: "box")
+    let machine = try await space.addMachineV2(name: "box").machine
     for owner in [guest.id, machine.account, AccountID(rawValue: "missing")] {
       await #expect(throws: AliasError.memberRequired) { try await space.createGroup(alias: "research", owner: owner) }
     }
@@ -54,7 +54,7 @@ import Testing
     let space = try makeSpace()
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     let group = try await space.createGroup(alias: "research", owner: owner.id)
-    await #expect(throws: SpaceError.machineNameTaken("research")) { try await space.addMachine(name: "research") }
+    await #expect(throws: SpaceError.machineNameTaken("research")) { try await space.addMachineV2(name: "research").machine }
     try await space.registerPerson("person")
     await #expect(throws: SpaceError.handleTaken("research")) {
       try await space.setUserProfile(principal: "person", handle: "research", displayName: nil)
@@ -66,7 +66,7 @@ import Testing
     await #expect(throws: AliasError.taken("research")) { try await space.createGroup(alias: "research", owner: owner.id) }
     _ = try await space.setUserProfile(principal: "person", handle: "reader", displayName: nil)
     await #expect(throws: AliasError.taken("reader")) { try await space.createGroup(alias: "reader", owner: owner.id) }
-    _ = try await space.addMachine(name: "work_box")
+    _ = try await space.addMachineV2(name: "work_box").machine
     await #expect(throws: AliasError.taken("work_box")) { try await space.createGroup(alias: "work_box", owner: owner.id) }
     await #expect(throws: AliasError.invalid("with-hyphens")) { try await space.createGroup(alias: "with-hyphens", owner: owner.id) }
     await #expect(throws: AliasError.taken("reader")) { try await space.renameGroup(group, alias: "reader", by: principal) }
@@ -77,7 +77,7 @@ import Testing
     let space = try makeSpace()
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     await #expect(throws: AliasError.taken("shared")) { try await space.createGroup(alias: "shared", owner: owner.id) }
-    await #expect(throws: SpaceError.machineNameTaken("settings")) { try await space.addMachine(name: "settings") }
+    await #expect(throws: SpaceError.machineNameTaken("settings")) { try await space.addMachineV2(name: "settings").machine }
     try await space.registerPerson("reader")
     await #expect(throws: SpaceError.handleTaken("settings")) {
       try await space.setUserProfile(principal: "reader", handle: "settings", displayName: nil)
@@ -87,10 +87,10 @@ import Testing
   @Test func legacyNamesWinOverDerivedAliasesAndSuffixesRespectTheGrammar() throws {
     let database = try DatabaseQueue()
     try database.write { db in
-      try Migration001.apply(db)
-      try Migration002.apply(db)
-      try Migration003.apply(db)
-      try Migration004.apply(db)
+      try Migration001.apply(.init(db))
+      try Migration002.apply(.init(db))
+      try Migration003.apply(.init(db))
+      try Migration004.apply(.init(db))
       let long = String(repeating: "a", count: 31)
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, created_at) VALUES ('live', 'machine', '2030-01-01'), ('dead', 'machine', '2030-01-01'), ('odd', 'machine', '2030-01-01');
@@ -99,7 +99,7 @@ import Testing
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_old', 'dead', 'work-box', '2030-01-01', 'shared'), ('mc_live', 'live', 'work_box', '2030-01-02', 'shared'), ('mc_odd', 'odd', 'My Laptop (old)', '2030-01-01', 'shared');
       INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('live_key', 'live', 'exec_machine', '2030-01-01');
       """)
-      try Migration006.apply(db)
+      try Migration006.apply(.init(db))
       #expect(try String.fetchOne(db, sql: "SELECT handle FROM user_profiles WHERE principal = 'owner'") == "team_space")
       #expect(try String.fetchOne(db, sql: "SELECT alias FROM groups WHERE id = 'team-space'") == "team_space_1")
       #expect(try String.fetchOne(db, sql: "SELECT name FROM machines WHERE id = 'mc_live'") == "work_box_1")
@@ -114,18 +114,18 @@ import Testing
   @Test func liveMachineNamesTakePrecedenceOverPersonHandles() throws {
     let database = try DatabaseQueue()
     try database.write { db in
-      try Migration001.apply(db)
-      try Migration002.apply(db)
-      try Migration003.apply(db)
-      try Migration004.apply(db)
-      try Migration005.apply(db)
+      try Migration001.apply(.init(db))
+      try Migration002.apply(.init(db))
+      try Migration003.apply(.init(db))
+      try Migration004.apply(.init(db))
+      try Migration005.apply(.init(db))
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, name, created_at) VALUES ('box', 'machine', 'studio', '2030-01-01');
       INSERT INTO user_profiles (principal, handle, updated_at) VALUES ('owner', 'studio', '2030-01-01');
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_box', 'box', 'studio', '2030-01-01', 'shared');
       INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('live_key', 'box', 'exec_machine', '2030-01-01');
       """)
-      try Migration006.apply(db)
+      try Migration006.apply(.init(db))
       #expect(try String.fetchOne(db, sql: "SELECT name FROM machines WHERE id = 'mc_box'") == "studio")
       #expect(try String.fetchOne(db, sql: "SELECT name FROM accounts WHERE id = 'box'") == "studio")
       #expect(try String.fetchOne(db, sql: "SELECT handle FROM user_profiles WHERE principal = 'owner'") == "studio_1")
@@ -138,17 +138,17 @@ import Testing
   @Test func migrationNormalizesAndDisambiguatesRealLegacyLabels() throws {
     let database = try DatabaseQueue()
     try database.write { db in
-      try Migration001.apply(db)
-      try Migration002.apply(db)
-      try Migration003.apply(db)
-      try Migration004.apply(db)
+      try Migration001.apply(.init(db))
+      try Migration002.apply(.init(db))
+      try Migration003.apply(.init(db))
+      try Migration004.apply(.init(db))
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, name, created_at) VALUES ('human', 'human', 'Human', '2030-01-01'), ('box', 'machine', 'Box', '2030-01-01'), ('other_box', 'machine', 'Other', '2030-01-01'), ('third_box', 'machine', 'Third', '2030-01-01');
       INSERT INTO groups (id, created_at, personal_account) VALUES ('personal', '2030-01-01', 'human'), ('team', '2030-01-01', NULL);
       INSERT INTO user_profiles (principal, handle, updated_at) VALUES ('person', 'team', '2030-01-01');
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_one', 'box', 'team', '2030-01-01', 'shared'), ('mc_two', 'other_box', 'box-a', '2030-01-01', 'shared'), ('mc_three', 'third_box', 'box_a', '2030-01-01', 'shared');
       """)
-      try Migration006.apply(db)
+      try Migration006.apply(.init(db))
       #expect(try String.fetchOne(db, sql: "SELECT alias FROM groups WHERE id = 'shared'") == "shared")
       #expect(try String.fetchOne(db, sql: "SELECT alias FROM groups WHERE id = 'personal'") == nil)
       #expect(try String.fetchOne(db, sql: "SELECT handle FROM user_profiles WHERE principal = 'person'") == "team_1")

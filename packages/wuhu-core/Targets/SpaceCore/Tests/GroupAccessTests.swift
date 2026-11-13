@@ -22,7 +22,7 @@ import Testing
     let space = try await space()
     let member = try await space.addAccount(kind: .human, name: "member")
     let guest = try await space.addAccount(kind: .human, name: "guest", guest: true)
-    try await space.setVisibility(.open, of: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setVisibility(.open, of: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     #expect(try await space.role(of: .person(persona: "member", account: member.id), in: Self.team, acting: .shared) == .write)
     #expect(try await space.role(of: .person(persona: "guest", account: guest.id), in: Self.team, acting: Self.team) == nil)
     let session = try await space.sessions.createSession(group: Self.studio, title: "s", kind: .agent, createdBy: "owner", model: .test)
@@ -34,8 +34,8 @@ import Testing
     let reader = try await space.addAccount(kind: .human, name: "reader")
     let readerGroup = try await space.privateGroup(account: reader.id)
     let writer = try await space.sessions.createSession(group: Self.studio, title: "w", kind: .agent, createdBy: "owner", model: .test)
-    try await space.setGrant(.account, reader.id.rawValue, role: .read, in: Self.team, by: .anonymous, acting: Self.team)
-    try await space.setGrant(.group, Self.studio.rawValue, role: .write, in: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setGrant(.account, reader.id.rawValue, role: .read, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
+    try await space.setGrant(.group, Self.studio.rawValue, role: .write, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     #expect(try await space.role(of: .person(persona: "reader", account: reader.id), in: Self.team, acting: readerGroup) == .read)
     #expect(try await space.role(of: .session(writer), in: Self.team, acting: Self.studio) == .write)
     #expect(try await space.role(of: .person(persona: "reader", account: reader.id), in: Self.team, acting: Self.team) == .read)
@@ -51,9 +51,9 @@ import Testing
     let space = try await space()
     let reader = try await space.addAccount(kind: .human, name: "reader")
     let readerGroup = try await space.privateGroup(account: reader.id)
-    try await space.setGrant(.account, reader.id.rawValue, role: .read, in: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setGrant(.account, reader.id.rawValue, role: .read, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     let principal = Principal(actor: .person(persona: "reader", account: reader.id), group: readerGroup)
-    let team = space.cell(of: Self.team)
+    var team: GroupCell { space.cell(of: Self.team) }
     #expect(team.grants().contains(GroupGrant(subject: .account, id: reader.id.rawValue, role: .read)))
     #expect(try await space.role(of: principal, in: Self.team) != nil)
     #expect(team.role(of: principal.actor, acting: principal.group) == (try await space.role(of: principal, in: Self.team)))
@@ -94,7 +94,7 @@ import Testing
   @Test func aGuestsReachIsItsListAlone() async throws {
     let space = try await space()
     let guest = try await space.addAccount(kind: .human, name: "guest", guest: true)
-    try await space.setGrant(.account, guest.id.rawValue, role: .write, in: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setGrant(.account, guest.id.rawValue, role: .write, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     let principal = Principal(actor: .person(persona: "guest", account: guest.id), group: Self.team)
     #expect(try await space.reads(for: principal) == [Self.team, .settings])
     #expect(try await space.role(of: principal, in: .shared) == nil)
@@ -129,16 +129,16 @@ import Testing
 
   @Test func aMachineOpensToItsOwnerGroupOrToEveryGroupThatWritesIt() async throws {
     let space = try await space()
-    let machine = try await space.addMachine(name: "box", group: Self.team)
+    let machine = try await space.addMachineV2(name: "box", group: Self.team).machine
     #expect(machine.scope == .owner)
     // studio reads team's list but writes nothing there.
-    try await space.setGrant(.group, Self.studio.rawValue, role: .read, in: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setGrant(.group, Self.studio.rawValue, role: .read, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     #expect(try await space.resolveMachine("box", usableFrom: Self.studio) == nil)
     #expect(try await space.resolveMachine("box", usableFrom: Self.team) != nil)
     _ = try await space.setMachineScope(machine.id, scope: .reachable)
     // Reading the owner group is still not using its machines.
     #expect(try await space.resolveMachine("box", usableFrom: Self.studio) == nil)
-    try await space.setGrant(.group, Self.studio.rawValue, role: .write, in: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setGrant(.group, Self.studio.rawValue, role: .write, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     #expect(try await space.resolveMachine("box", usableFrom: Self.studio) != nil)
     #expect(try await space.resolveMachine("box", usableFrom: .shared) == nil)
     #expect(try await space.machines(usableFrom: Self.studio).map(\.id) == [machine.id])
@@ -147,9 +147,9 @@ import Testing
 
   @Test func aSecretsSwitchOpensTheStoreToEveryGroupThatWritesIt() async throws {
     let space = try await space()
-    try await space.setGrant(.group, Self.studio.rawValue, role: .read, in: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setGrant(.group, Self.studio.rawValue, role: .read, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     #expect(try await space.group(Self.team)?.secretsScope == .owner)
-    try await space.setSecretsScope(.reachable, of: Self.team, by: .anonymous, acting: Self.team)
+    try await space.setSecretsScope(.reachable, of: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
     #expect(try await space.group(Self.team)?.secretsScope == .reachable)
   }
 }

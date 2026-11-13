@@ -33,8 +33,9 @@ import WuhuAI
     )
     await sink.record(metric)
     await writer.close()
+    try await space.deliverInferences(.shared)
     #expect(try String(contentsOf: folder.url.appending(path: "logs/inference.jsonl"), encoding: .utf8) == metric.jsonLine())
-    #expect(try await space.query("SELECT provider, model, served_model, input, cache_read, cache_write, output, reasoning, duration_ms, ttft_ms FROM inferences", as: .shared(.anonymous)).rows == [
+    #expect(try await space.query("SELECT provider, model, served_model, input, cache_read, cache_write, output, reasoning, duration_ms, ttft_ms FROM inferences", as: .shared(.publicReader)).rows == [
       [.text("codex"), .text("configured"), .text("api-served"), .integer(1745), .integer(222_976), .integer(0), .integer(1000), .integer(750), .integer(1200), .integer(80)],
     ])
   }

@@ -111,7 +111,7 @@ import enum WuhuAI.InferenceError
     let space = try makeMachineSpace()
     let controller = IdentityController.configure(space: space, origin: origin, keys: fs.identityKeys, fetch: FetchClient { _ in Response(status: .forbidden) })
     try await controller.initialize(identity: identity)
-    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, dev: false, identityController: controller)
+    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, devPerson: nil, identityController: controller)
     let client = ServeTesting.client(upgrading: handler)
     let discovery = try await client(Request(url: URL(string: origin + "/.well-known/openid-configuration")!))
     #expect(discovery.status == .ok)
@@ -139,7 +139,7 @@ import enum WuhuAI.InferenceError
   }
 
   @Test func noOriginNeverUsesRequestHost() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     for path in ["/.well-known/openid-configuration", "/.well-known/jwks.json"] {
       let response = try await harness.api(Request(url: URL(string: "https://attacker.test" + path)!))
       #expect(response.status == .unprocessableContent)

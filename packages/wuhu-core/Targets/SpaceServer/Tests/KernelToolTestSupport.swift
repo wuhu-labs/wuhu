@@ -35,7 +35,7 @@ func callResult(
   if tool == "run_script" {
     let cell = SessionCell.ID(session)
     try await harness.space.worker.call(cell) { cell in
-      let hydration = try cell.rows.hydrate(id)
+      let hydration = try cell.hydrate(id)
       var turn = cell.turn() ?? SessionTurn(generation: hydration.generation, position: 1)
       turn.position += 1
       turn.turn = .tools(calls: [call])

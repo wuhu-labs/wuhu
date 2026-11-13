@@ -176,7 +176,7 @@ struct EnrollmentTests {
     await #expect(throws: JoinTokenRejected()) { _ = try await space.consumeJoinToken(minted.token, pubkey: testPubkey("pk")) }
     #expect(space.cell.db.rows(#sql("SELECT COUNT(*) FROM join_token_receipts", as: Int.self)).first! == 0)
 
-    let machine = try await space.addMachine(name: "box", group: .shared)
+    let machine = try await space.addMachineV2(name: "box", group: .shared).machine
     let rekey = try await space.mintJoinToken(account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600)
     let machineSecret = rekey.token.rawValue
     _ = try await space.consumeJoinToken(rekey.token, pubkey: testPubkey("box"))

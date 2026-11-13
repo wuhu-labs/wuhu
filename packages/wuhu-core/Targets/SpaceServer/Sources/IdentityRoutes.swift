@@ -18,11 +18,11 @@ private struct IdentitySetInput: Decodable {
   var remove: Bool?
 }
 
-func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityController?, dev: Bool) {
+func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityController?, devPerson: ResolvedPerson?) {
   @Dependency(\.date) var date
   for path in ["/v1/identity", "/v1/identity/issuer-for"] {
     router.get(path) { request, _ in
-      switch try await requestPrincipal(request, space: space, date: date) {
+      switch try await requestPrincipal(request, space: space, devPerson: devPerson, date: date) {
       case .principal: break
       case let .refused(response): return response
       }
@@ -38,7 +38,7 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
   }
   router.post("/v1/identity/register-new") { request, _ in
     guard SessionPrincipal.current == nil else { return adminRequired("replacing the directory issuer") }
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: date.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: date.now) {
     case let .refused(response): return response
     case let .actor(actor):
       guard actor.isAdmin else { return adminRequired("replacing the directory issuer") }
@@ -51,7 +51,7 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
   }
   router.post("/v1/identity/rotate") { request, _ in
     guard SessionPrincipal.current == nil else { return adminRequired("rotating the server key") }
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: date.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: date.now) {
     case let .refused(response): return response
     case let .actor(actor):
       guard actor.isAdmin else { return adminRequired("rotating the server key") }
@@ -64,7 +64,7 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
   }
   router.put("/v1/identity") { request, _ in
     guard SessionPrincipal.current == nil else { return adminRequired("changing the server issuer") }
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: date.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: date.now) {
     case let .refused(response): return response
     case let .actor(actor):
       guard actor.isAdmin else { return adminRequired("changing the server issuer") }

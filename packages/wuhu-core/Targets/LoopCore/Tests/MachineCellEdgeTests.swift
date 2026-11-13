@@ -254,8 +254,9 @@ extension MachineCellTests {
         try await space.worker.call(cell) { try $0.start(exec, finished: recipient) }
       }
       try await described(peer, space)
-      try await until("one pending start is refused") {
-        space.worker.cell(cell).db.rows(MachineOperation.all).filter { $0.diagnostic?.code == .capacityExceeded }.count == 1
+      try await until("one pending start is refused and the other reaches the tunnel") {
+        let refused = space.worker.cell(cell).db.rows(MachineOperation.all).filter { $0.diagnostic?.code == .capacityExceeded }.count == 1
+        return refused && requests.value.contains { if case .start = $0.exchange { true } else { false } }
       }
       #expect(requests.value.filter { if case .start = $0.exchange { true } else { false } }.count == 1)
       peer.close()

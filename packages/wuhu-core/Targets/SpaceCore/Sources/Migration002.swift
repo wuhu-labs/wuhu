@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration002 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     // The removed executors' tables go before the accounts: `contractors`
     // names an account without a cascade, so an account delete behind a table
     // that still holds rows would fail the foreign-key check.
@@ -13,7 +11,7 @@ enum Migration002 {
   }
 
   /// A contractor account was a credential for a wrapper process: it owned keys and group membership and nothing else. Every row that names it goes first, so the delete does not lean on cascades an old database may not have.
-  private static func deleteContractorAccounts(_ db: Database) throws {
+  private static func deleteContractorAccounts(_ db: MigrationDB) throws {
     let contractors = "SELECT id FROM accounts WHERE kind = 'contractor'"
     let contractorKeys = "SELECT pubkey FROM account_keys WHERE account_id IN (\(contractors)) OR (' ' || capabilities || ' ') LIKE '% contractor %'"
     let contractorDevices = "SELECT id FROM devices WHERE account_id IN (\(contractors))"

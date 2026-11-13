@@ -31,7 +31,7 @@ import Testing
   }
 
   func rig(publicRead: Bool = false) async throws -> Rig {
-    let harness = try Harness(dev: false, publicRead: publicRead, origin: Self.origin)
+    let harness = try await Harness(dev: false, publicRead: publicRead, origin: Self.origin)
     let alice = try await harness.space.addAccount(kind: .human, name: "alice").id
     let bob = try await harness.space.addAccount(kind: .human, name: "bob").id
     let rig = Rig(
@@ -46,7 +46,7 @@ import Testing
   }
 
   func put(_ rig: Rig, _ group: GroupID, _ path: String, _ content: String) async throws {
-    let context = SpaceToolContext(space: rig.harness.space, principal: Principal(actor: .anonymous, group: group))
+    let context = SpaceToolContext(space: rig.harness.space, principal: Principal(actor: .person(persona: "fixture", account: group == rig.bobGroup ? rig.bob : rig.alice), group: group))
     _ = try await SpaceToolbox.all.first { $0.name == "write" }!
       .run(context, input: .object(["path": .string(path), "content": .string(content)]))
   }
@@ -76,7 +76,7 @@ import Testing
 
   @Test(arguments: ["{group}.space.test", "{group}--tenant.space.test"])
   func aliasesReachTheSameGroupAndOldHostsRedirectWithoutChangingThePath(pattern: String) async throws {
-    let h = try Harness(dev: true, origin: Self.origin, contentHostPattern: pattern)
+    let h = try await Harness(dev: true, origin: Self.origin, contentHostPattern: pattern)
     let owner = try await h.space.addAccount(kind: .human, name: "Morgan")
     let group = try await h.space.createGroup(alias: "research_notes", owner: owner.id)
     _ = try await h.space.fs(group).write("/plan.md", Data("research".utf8), ifMatch: nil)
@@ -97,7 +97,7 @@ import Testing
   }
 
   @Test func retiredHostRedirectsBeforeTheBrowserMintsItsCurrentHostOnlyCookie() async throws {
-    let h = try Harness(dev: false, origin: Self.origin, contentHostPattern: "{group}--tenant.space.test")
+    let h = try await Harness(dev: false, origin: Self.origin, contentHostPattern: "{group}--tenant.space.test")
     let owner = try await h.space.addAccount(kind: .human, name: "Morgan")
     let group = try await h.space.createGroup(alias: "research", owner: owner.id)
     let principal = Principal(actor: .person(persona: "reader", account: owner.id), group: group)

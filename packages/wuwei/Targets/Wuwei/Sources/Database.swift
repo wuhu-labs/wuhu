@@ -1,3 +1,4 @@
+import Dispatch
 import GRDBSQLite
 
 public enum Value: Sendable, Hashable {
@@ -88,11 +89,6 @@ public struct Database {
     try execute(sql, arguments)
   }
 
-  /// On the shared backend, the host program's object for the connection this call writes on, as its ``SharedDatabase`` passed it; `nil` on the layered backend. What the call writes through it commits and rolls back with the call.
-  public var host: AnyObject? {
-    access.incarnation.hostConnection
-  }
-
   public mutating func execute(_ sql: String, _ arguments: [Value]) throws(ConstraintViolation) {
     switch access.write(sql, arguments) {
     case .success: return
@@ -137,10 +133,7 @@ public struct JobDatabase {
 enum Access {
   /// The live incarnation, the only writer.
   case live(Incarnation)
-  /// A layered read handle's own copy of the database.
-  case copy(Connection)
-  /// A shared read handle: each statement is a fresh read, on the step open in `within` if there is one.
-  case shared(OuterStore, owner: String, within: Incarnation?)
+  case reading(Reading, ReadTarget)
 
   var incarnation: Incarnation {
     guard case let .live(incarnation) = self else { preconditionFailure("a read handle cannot write") }
@@ -150,10 +143,7 @@ enum Access {
   func read(_ sql: String, _ arguments: [Value]) -> [Row] {
     switch self {
     case let .live(incarnation): return incarnation.read(sql, arguments)
-    case let .copy(connection): return connection.read(sql, arguments)
-    case let .shared(store, owner, within):
-      if let rows = within?.readOpen(as: owner, sql, arguments) { return rows }
-      do { return try store.read(owner: owner) { $0.read(sql, arguments) } } catch { preconditionFailure("\(sql): \(error)") }
+    case let .reading(reading, target): return reading.read(target, sql, arguments)
     }
   }
 
@@ -185,7 +175,7 @@ extension Connection {
   func write(_ sql: String, _ arguments: [Value]) -> Result<Void, WriteFailure> {
     let wasInTransaction = inTransaction
     do {
-      if try hostWrite?(sql, arguments) != true { _ = try rows(sql, arguments) }
+      _ = try rows(sql, arguments)
       return .success(())
     } catch let error as TransactionEnded {
       return .failure(.storage(error))
@@ -205,10 +195,6 @@ extension Connection {
 final class Connection {
   let handle: OpaquePointer
   private let owned: Bool
-  /// The host program's object for a borrowed writer, on the shared backend.
-  var host: AnyObject?
-  /// How the host program runs an addressable's write on a borrowed writer; true when it did.
-  var hostWrite: ((String, [Value]) throws -> Bool)?
 
   init(path: String, flags: Int32, vfs: String? = nil) throws {
     var handle: OpaquePointer?
@@ -231,6 +217,7 @@ final class Connection {
   }
 
   static func prepare(_ handle: OpaquePointer) throws {
+    _disableDoubleQuotedStringLiterals(handle)
     let owner = Unmanaged.passRetained(Owner()).toOpaque()
     sqlite3_set_clientdata(handle, ownerSlot, owner) { Unmanaged<Owner>.fromOpaque($0!).release() }
     let code = sqlite3_create_function_v2(handle, "cell", 0, SQLITE_UTF8, owner, { context, _, _ in
@@ -241,6 +228,32 @@ final class Connection {
       }
     }, nil, nil, nil)
     guard code == SQLITE_OK else { throw SQLiteError(code: code, message: String(cString: sqlite3_errmsg(handle))) }
+  }
+
+  private var profile: ((String, Double) -> Void)?
+  private var busyDeadline: UInt64 = 0
+
+  func setBusyHandler() {
+    precondition(owned, "only a runtime-owned connection replaces its busy handler")
+    sqlite3_busy_handler(handle, { context, count in
+      let connection = Unmanaged<Connection>.fromOpaque(context!).takeUnretainedValue()
+      let now = DispatchTime.now().uptimeNanoseconds
+      if count == 0 { connection.busyDeadline = now + 5_000_000_000 }
+      guard now < connection.busyDeadline else { return 0 }
+      _ = sqlite3_sleep(1)
+      return DispatchTime.now().uptimeNanoseconds < connection.busyDeadline ? 1 : 0
+    }, Unmanaged.passUnretained(self).toOpaque())
+  }
+
+  func trace(_ profile: @escaping (String, Double) -> Void) {
+    self.profile = profile
+    sqlite3_trace_v2(handle, UInt32(SQLITE_TRACE_PROFILE), { _, context, statement, elapsed in
+      let connection = Unmanaged<Connection>.fromOpaque(context!).takeUnretainedValue()
+      let sql = String(cString: sqlite3_sql(OpaquePointer(statement!)))
+      let milliseconds = Double(elapsed!.load(as: UInt64.self)) / 1_000_000
+      connection.profile!(sql, milliseconds)
+      return 0
+    }, Unmanaged.passUnretained(self).toOpaque())
   }
 
   var inTransaction: Bool { sqlite3_get_autocommit(handle) == 0 }

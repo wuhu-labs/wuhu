@@ -117,7 +117,8 @@ final class Story: Sendable {
       )
     }
     let runtime = SessionRuntime(execution: execution, owner: owner, tokens: tokens, connection: MainConnection())
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
+    let devPerson = try await space.ensureDevPerson()
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, devPerson: devPerson, execTokens: tokens, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     api = ServeTesting.client(upgrading: handler)
     connection.bind(api, dial: inProcessDial(api: handler, hub: hub))
     (jobs, host) = AsyncStream.makeStream()

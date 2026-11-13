@@ -142,7 +142,6 @@ private struct SilentExec: OperationKind {
     try await withExecFixture { space, hub, session, minted, seen in
       let person = ExecLeg.person(AccountID(rawValue: "ac_person1"))
       #expect(await hub.admitsCaller(minted, leg: person) == false)
-      #expect(await hub.admitsCaller(minted, leg: .anonymous) == false)
       #expect(await hub.admitsCaller(minted, leg: .session(session)))
       let (personServer, personClient) = WebSocket.pair()
       await hub.runCallerSession(minted, socket: personServer, leg: person)
@@ -167,7 +166,6 @@ private struct SilentExec: OperationKind {
 
       let person = ExecLeg.person(AccountID(rawValue: "ac_person1"))
       #expect(await hub.admitsCaller(minted, leg: person) == false)
-      #expect(await hub.admitsCaller(minted, leg: .anonymous) == false)
       let (personServer, personClient) = WebSocket.pair()
       await hub.runCallerSession(minted, socket: personServer, leg: person)
       var personInbound = personClient.inbound.makeAsyncIterator()

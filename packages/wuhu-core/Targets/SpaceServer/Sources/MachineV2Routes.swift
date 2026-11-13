@@ -26,8 +26,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     let enrolledBy: AccountID?
     switch principal.actor {
     case let .person(_, account): enrolledBy = account
-    case .anonymous: enrolledBy = nil
-    case .session, .observer, .page:
+    case .session, .observer, .page, .publicReader:
       guard input.device == nil else {
         return errorResponse(.forbidden, code: "forbidden", message: "Only a person links a machine to a device")
       }
@@ -43,6 +42,12 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
       return try Response.json(EnrollConsumeOutput(account: enrolled.key.account.rawValue, capabilities: enrolled.key.capabilities.map(\.rawValue).sorted(), machine: enrolled.machine.id.rawValue, machineName: enrolled.machine.name))
     } catch let SpaceError.machineNameTaken(name) {
       return errorResponse(.conflict, code: "machineNameTaken", message: "Machine name \(name) is already taken")
+    } catch let SpaceError.machineNameTakenByMachine(name) {
+      return errorResponse(
+        .conflict, code: "machineNameTaken",
+        message: "Machine name \(name) is already taken by a machine",
+        hint: "delete it to free the name: wuhu machine delete \(name)",
+      )
     } catch SpaceError.malformedPubkey {
       return errorResponse(.badRequest, code: "invalidArgument", message: "Malformed machine public key")
     } catch SpaceError.alreadyExists {
@@ -87,6 +92,12 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
       return try Response.json(MachineAddOutput(id: machine.id, token: token.token.rawValue, fingerprint: fingerprint, group: machine.group.rawValue))
     } catch let SpaceError.machineNameTaken(name) {
       return errorResponse(.conflict, code: "machineNameTaken", message: "Machine name \(name) is already taken")
+    } catch let SpaceError.machineNameTakenByMachine(name) {
+      return errorResponse(
+        .conflict, code: "machineNameTaken",
+        message: "Machine name \(name) is already taken by a machine",
+        hint: "delete it to free the name: wuhu machine delete \(name)",
+      )
     }
   }
 

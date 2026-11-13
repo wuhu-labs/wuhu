@@ -12,11 +12,11 @@ import SpaceCore
 
 /// `/_/space/session` and `/_/space/message`: a page's `createSession` and
 /// `sendMessage`, as the person viewing it; the hub holds the page's bound.
-func pageSessionResponse(space: Space, caller: WebCaller, dev: Bool, hub: Hub?, request: Request) async throws -> Response {
+func pageSessionResponse(space: Space, caller: WebCaller, devPerson: ResolvedPerson?, hub: Hub?, request: Request) async throws -> Response {
   guard request.method == .post else { return plainStatus(.methodNotAllowed) }
   guard let hub else { return errorResponse(.notFound, code: "notFound", message: "this server runs no sessions") }
   let write: PageWrite
-  switch try await writeAdmission(space: space, caller: caller, dev: dev, request: request) {
+  switch try await writeAdmission(space: space, caller: caller, devPerson: devPerson, request: request) {
   case let .refused(wall): return wall
   case let .admitted(admitted): write = admitted
   }

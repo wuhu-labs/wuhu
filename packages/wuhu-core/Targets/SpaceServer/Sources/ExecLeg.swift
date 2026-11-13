@@ -12,21 +12,18 @@ extension Space {
   }
 }
 
-/// Who is on an exec's caller socket: a session, a person (any persona of one account), an observer (by its member), or the --dev seat.
 public enum ExecLeg: Hashable, Sendable {
   case session(SessionID)
   case person(AccountID)
   case observer(String)
-  case anonymous
 
   /// Nil for a page, which attaches to no exec.
   public init?(_ actor: SpaceCore.Actor) {
     switch actor {
     case let .session(id): self = .session(id)
     case let .person(_, account): self = .person(account)
-    case .anonymous: self = .anonymous
     case let .observer(observer): self = .observer(observer.member)
-    case .page: return nil
+    case .page, .publicReader: return nil
     }
   }
 

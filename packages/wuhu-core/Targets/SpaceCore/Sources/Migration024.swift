@@ -1,9 +1,7 @@
-import GRDB
-
 // A handler slot is an observer cell's state: the input no firing has taken
 // yet waits on the slot, and the firing in progress is the cell's.
 enum Migration024 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     ALTER TABLE subscription_slots ADD COLUMN pending TEXT;
     ALTER TABLE subscription_slots ADD COLUMN pending_marker TEXT;

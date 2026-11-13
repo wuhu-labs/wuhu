@@ -11,11 +11,11 @@ import ServeRouting
 import SpaceContract
 import SpaceCore
 
-func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStreams: KeyStreams) {
+func addAccountRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPerson?, keyStreams: KeyStreams) {
   @Dependency(\.date) var dateGen
 
   router.post("/v1/accounts") { request, _ in
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(actor):
@@ -23,28 +23,20 @@ func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStream
         return adminRequired("creating an account")
       }
       let input = try await request.json(AccountCreateInput.self)
-      do {
-        let record = try await space.addAccount(
-          kind: .human, name: input.name, admin: input.admin ?? false, guest: input.guest ?? false,
-        )
-        return try Response.json(accountPayload(record))
-      } catch let SpaceError.reservedAccountName(name) {
-        return errorResponse(
-          .badRequest,
-          code: "reservedAccountName",
-          message: "\(name) is reserved: unenrolled --dev seats act as the owner principal",
-        )
-      }
+      let record = try await space.addAccount(
+        kind: .human, name: input.name, admin: input.admin ?? false, guest: input.guest ?? false,
+      )
+      return try Response.json(accountPayload(record))
     }
   }
 
   router.get("/v1/accounts") { request, _ in
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(actor):
       // Every member reads the roster; the payload carries no key, token or invite state.
-      if case let .account(record) = actor, record.guest {
+      if actor.record.guest {
         return errorResponse(.forbidden, code: "memberRequired", message: "listing accounts requires a space member, not a guest")
       }
       let records = try await space.accounts()
@@ -54,7 +46,7 @@ func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStream
 
   router.delete("/v1/accounts/:id") { request, parameters in
     guard let id = validAccountID(parameters) else { return malformedAccountID(parameters) }
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(actor):
@@ -84,7 +76,7 @@ func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStream
 
   router.post("/v1/accounts/:id/admin") { request, parameters in
     guard let id = validAccountID(parameters) else { return malformedAccountID(parameters) }
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(actor):

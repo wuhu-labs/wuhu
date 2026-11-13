@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration044 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     for (table, principal) in [("notifications", "recipient"), ("watermarks", "identity"), ("user_profiles", "principal"), ("web_push_subscriptions", "recipient"), ("push_relay_grants", "recipient")] {
       try db.execute(sql: "ALTER TABLE \(table) ADD COLUMN owner_account TEXT NOT NULL DEFAULT ''")
       try db.execute(sql: "UPDATE \(table) SET owner_account = COALESCE((SELECT account_id FROM personas WHERE name = \(table).\(principal)), \(principal))")

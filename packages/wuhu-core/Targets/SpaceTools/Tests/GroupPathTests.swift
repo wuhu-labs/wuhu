@@ -17,15 +17,14 @@ import Testing
   }
 
   func rig() async throws -> Rig {
-    let base = try makeContext()
+    let base = try await makeContext()
     let account = try await base.space.addAccount(kind: .human, name: "alice")
-    let group = GroupID(rawValue: "alice")
-    try await base.space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00Z')")
-    }
-    try await base.space.setGrant(.account, account.id.rawValue, role: .admin, in: group, by: .anonymous, acting: group)
+    let group = try await base.space.createGroup(alias: "alice", owner: account.id)
+    try await base.space.setVisibility(.private, of: group, by: .person(persona: "alice", account: account.id), acting: group)
+    let reader = try await base.space.addAccount(kind: .human, name: "shared reader")
+    let shared = SpaceToolContext(space: base.space, principal: .shared(.person(persona: "reader", account: reader.id)))
     let alice = SpaceToolContext(space: base.space, principal: Principal(actor: .person(persona: group.rawValue, account: account.id), group: group))
-    return Rig(shared: base, alice: alice, group: group)
+    return Rig(shared: shared, alice: alice, group: group)
   }
 
   func notFound(_ name: String, _ input: JSONValue, _ context: SpaceToolContext) async -> Bool {

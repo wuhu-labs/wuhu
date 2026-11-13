@@ -17,15 +17,32 @@ struct AuthStoreTests {
     #expect(Set(listed.map(\.id)) == [first.id, second.id])
   }
 
-  @Test func ownerIsAReservedAccountNameInAnyCasing() async throws {
+  @Test func devOwnerIsAnOrdinaryPersistentAdmin() async throws {
     let space = try makeSpace()
-    for name in ["owner", "Owner", "OWNER", "oWnEr"] {
-      await #expect(throws: SpaceError.reservedAccountName(name)) {
-        _ = try await space.addAccount(kind: .human, name: name)
-      }
-    }
-    _ = try await space.addAccount(kind: .human, name: "owner-adjacent")
-    #expect(try await space.accounts().count == 1)
+    let first = try await space.ensureDevPerson()
+    #expect(first.persona.split(separator: "-").count == 3)
+    #expect(first.persona != "owner")
+    #expect(try await space.account(first.account)?.isAdmin == true)
+    #expect(try await space.keys(account: first.account).isEmpty)
+    #expect(try await space.userProfile(handle: "owner")?.principal == first.persona)
+    _ = try await space.setUserProfile(principal: first.persona, handle: "renamed", displayName: "Owner")
+    _ = try await space.addAccount(kind: .human, name: "another admin", admin: true)
+    _ = try await space.setAdmin(first.account, admin: false)
+    let again = try await space.ensureDevPerson()
+    #expect(again.account == first.account)
+    #expect(again.persona == first.persona)
+    #expect(try await space.account(first.account)?.isAdmin == true)
+    _ = try await space.removeAccount(first.account)
+    await #expect(throws: DevPersonError.ownerHandleUnavailable(kind: "removed person")) { try await space.ensureDevPerson() }
+
+    let accountSpace = try makeSpace()
+    let account = try await accountSpace.addAccount(kind: .human, name: "existing")
+    _ = try await accountSpace.setUserProfile(principal: account.id.rawValue, handle: "owner", displayName: nil)
+    let existing = try await accountSpace.ensureDevPerson()
+    #expect(existing.account == account.id)
+    #expect(existing.persona == account.id.rawValue)
+    #expect(try await accountSpace.account(account.id)?.isAdmin == true)
+    #expect(try await accountSpace.keys(account: account.id).isEmpty)
   }
 
   @Test func accountRoundTrips() async throws {

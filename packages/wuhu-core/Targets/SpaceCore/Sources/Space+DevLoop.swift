@@ -4,12 +4,9 @@
   import Foundation
 #endif
 import struct DocIndex.DocumentTemplate
-import GRDB
 import JSONValue
 import struct SpaceContract.GroupID
 import SpaceFS
-import StructuredQueries
-import StructuredQueriesSQLite
 
 extension Space {
   /// With no `destination`, the instance lands next to its template, in the template's group.
@@ -22,35 +19,16 @@ extension Space {
     let templatePath = try await MachineFolders.stored(templatePath, mutating: false, in: runtime)
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let now = dateGen.now
-    let hash = try await writer.read { db -> String in
-      guard let head = try Substrate.head(templatePath, group: templateGroup, in: db), head.kind == "file", let hash = head.blobHash else {
-        throw SpaceError.notFound(templatePath.rawValue)
-      }
-      return hash
-    }
+    let hash = try worker.cell(FilesCell.ID(templateGroup.rawValue)).fileContents(templatePath).hash
     guard let text = String(bytes: try await bucket.bytes(hash), encoding: .utf8) else {
       throw SpaceError.templateInvalid(templatePath.rawValue)
     }
     guard let template = DocumentTemplate(markdown: text, at: templatePath) else { throw SpaceError.templateInvalid(templatePath.rawValue) }
     let content = Array(template.instance.utf8)
     let blob = try await bucket.stage(content)
-    let (created, written): (SpacePath, Bool) = try await writer.write { db in
-      let directory = try MachineFolders.stored(destination ?? templatePath.parent, mutating: true, in: db)
-      let files = try FSHeadRow.where {
-        $0.grp.eq(group.rawValue) && $0.parentPath.eq(directory.rawValue) && $0.kind.eq("file")
-      }.fetchAll(db).map { SpacePath.lastComponent(of: $0.path) }
-      let name = template.name(among: files, at: now, in: .current)
-      let target = try SpacePath(validating: directory.isRoot ? "/\(name)" : "\(directory.rawValue)/\(name)")
-      if try target.isReserved || Substrate.head(target, group: group, in: db) != nil
-        || Substrate.tableExists(target, group: group, in: db)
-      {
-        throw SpaceError.alreadyExists(target.rawValue)
-      }
-      guard !target.isLive else { return (target, false) }
-      let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
-      try InterimBlob.record(blob, in: db)
-      try Substrate.writeFile(target, group: group, blob: blob, rev: rev, mtime: mtime, in: db)
-      return (target, true)
+    let directory = try await MachineFolders.stored(destination ?? templatePath.parent, mutating: true, in: runtime)
+    let (created, written) = try await worker.call(FilesCell.ID(group.rawValue)) {
+      try $0.instantiate(template, in: directory, blob: blob, now: now, mtime: mtime, attribution: attribution)
     }
     if !written {
       _ = try await documents.write(
@@ -88,18 +66,16 @@ extension Space {
     let manager = FileManager.default
     try manager.createDirectory(at: url, withIntermediateDirectories: true)
 
-    let files = try await writer.read { db in try FSHeadRow.where { $0.grp.eq(GroupID.shared.rawValue) && $0.kind.eq("file") }.fetchAll(db) }
+    let files = worker.cell(FilesCell.ID(GroupID.shared.rawValue)).fileHeads()
     for head in files {
-      guard let hash = head.blobHash else { continue }
+      let hash = head.blobHash!
       let content = try await bucket.bytes(hash)
       try Self.writeFile(Data(content), to: url, relative: head.path, manager: manager)
     }
 
-    let tables = try await writer.read { db in
-      try String.fetchAll(db, sql: "SELECT path FROM tables WHERE grp = ? ORDER BY path", arguments: [GroupID.shared.rawValue])
-    }
+    let tables = worker.cell(FilesCell.ID(GroupID.shared.rawValue)).tablePaths()
     for table in tables {
-      let csv = try await Self.renderTableCSV(try SpacePath(validating: table), writer: writer)
+      let csv = try renderTableCSV(try SpacePath(validating: table))
       try Self.writeFile(Data(csv.utf8), to: url, relative: table, manager: manager)
     }
   }
@@ -170,26 +146,15 @@ extension Space {
     }
   }
 
-  private static func renderTableCSV(_ path: SpacePath, writer: any DatabaseWriter) async throws -> String {
-    try await writer.read { db in
-      let header = try Tables.currentHeader(path, group: .shared, in: db)
-      var lines = [CSV.renderRow(header.columns.map { "\($0.name):\(csvTypeName($0.type))" })]
-      if !header.columns.isEmpty {
-        let columnList = header.columns.map { Cells.quote($0.name) }.joined(separator: ", ")
-        let dataRows = try Row.fetchAll(
-          db,
-          sql: "SELECT \(columnList) FROM \(Tables.quoted(.shared, path)) ORDER BY \"id\"",
-        )
-        for row in dataRows {
-          lines.append(CSV.renderRow(header.columns.indices.map { index in
-            let value: DatabaseValue = row[index]
-            // A json column already stores the canonical JSON literal.
-            if header.columns[index].type == .json, case let .string(stored) = value.storage { return stored }
-            return CSV.jsonLiteral(from: value)
-          }))
-        }
-      }
-      return lines.joined(separator: "\n") + "\n"
+  private func renderTableCSV(_ path: SpacePath) throws -> String {
+    let (header, rows) = try worker.cell(FilesCell.ID(GroupID.shared.rawValue)).exportTable(path)
+    var lines = [CSV.renderRow(header.columns.map { "\($0.name):\(Self.csvTypeName($0.type))" })]
+    for row in rows {
+      lines.append(CSV.renderRow(header.columns.indices.map { index in
+        if header.columns[index].type == .json, case let .text(stored) = row[index] { return stored }
+        return CSV.jsonLiteral(from: row[index])
+      }))
     }
+    return lines.joined(separator: "\n") + "\n"
   }
 }

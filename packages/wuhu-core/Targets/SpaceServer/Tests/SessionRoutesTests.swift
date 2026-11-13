@@ -35,7 +35,7 @@ import Testing
       let record = try await harness.store.record(SessionID(created.id))
       #expect(record.title == "worker")
       #expect(record.tags == ["a"])
-      #expect(record.createdBy == "owner")
+      #expect(record.createdBy == (try await harness.space.ensureDevPerson()).persona)
       #expect(record.executor == .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")))
     }
   }
@@ -97,8 +97,9 @@ import Testing
       let id = try await harness.createSession()
       let key = id.rawValue
 
-      let alice = try await harness.adoptPersona()
-      let bob = try await harness.adoptPersona()
+      let alice = try await harness.space.ensureDevPerson().persona
+      let (bobBearer, bobKey) = try await harness.enrolledBearer()
+      let bob = try await harness.space.adoptPersona(key: bobKey).name
       let head = try await harness.call(
         "/v1/conversation/message",
         .object(["message": "first", "session": .string(key), "identity": .string(alice), "timezone": "Europe/Paris"]),
@@ -114,7 +115,7 @@ import Testing
       let threadReply = try await harness.call(
         "/v1/conversation/message",
         .object(["message": "third", "replyTarget": .string(head.messageId), "session": .string(key), "identity": .string(bob)]),
-        as: ConversationPostOutput.self,
+        as: ConversationPostOutput.self, bearer: bobBearer,
       )
       #expect(threadReply.conversationId == head.conversationId)
 
@@ -154,8 +155,9 @@ import Testing
       let id = try await harness.createSession()
       let key = id.rawValue
 
-      let alice = try await harness.adoptPersona()
-      let bob = try await harness.adoptPersona()
+      let alice = try await harness.space.ensureDevPerson().persona
+      let (bobBearer, bobKey) = try await harness.enrolledBearer()
+      let bob = try await harness.space.adoptPersona(key: bobKey).name
       let head = try await harness.call(
         "/v1/conversation/message",
         .object(["message": "question", "session": .string(key), "identity": .string(alice)]),
@@ -164,7 +166,7 @@ import Testing
       _ = try await harness.call(
         "/v1/conversation/message",
         .object(["message": "answer", "replyTarget": .string(head.messageId), "session": .string(key), "identity": .string(bob)]),
-        as: ConversationPostOutput.self,
+        as: ConversationPostOutput.self, bearer: bobBearer,
       )
 
       try await harness.store.inboxesSettled()
@@ -232,7 +234,7 @@ import Testing
       // The owner principal needs no persona, spelled out or implied.
       let owner = try await harness.call(
         "/v1/conversation/message",
-        .object(["message": "mine", "session": .string(key), "identity": "owner"]),
+        .object(["message": "mine", "session": .string(key), "identity": .string(try await harness.space.ensureDevPerson().persona)]),
         as: ConversationPostOutput.self,
       )
       #expect(owner.conversationId == key)
@@ -266,12 +268,12 @@ import Testing
         let response = try await harness.post(path, .object(fields), bearer: bearer)
         #expect(response.status == .forbidden, "\(path)")
         let error = try await json(response)
-        #expect(error.object?["code"]?.stringValue == "ownerIdentityWalled", "\(path)")
+        #expect(error.object?["code"]?.stringValue == "unknownIdentity", "\(path)")
       }
       let notifications = try await harness.get("/v1/notifications", query: ["identity": "owner"], bearer: bearer)
       #expect(notifications.status == .forbidden)
       let error = try await json(notifications)
-      #expect(error.object?["code"]?.stringValue == "ownerIdentityWalled")
+      #expect(error.object?["code"]?.stringValue == "unknownIdentity")
 
       let posted = try await harness.call(
         "/v1/conversation/message",

@@ -28,7 +28,7 @@ import struct Wuwei.Database
     try ctx.db.execute(ScriptRow.insert { row })
   }
 
-  mutating func start() async throws -> Outcome {
+  nonisolated(nonsending) mutating func start() async throws -> Outcome {
     do { try await ctx.sleep(for: .seconds(1000)) } catch is CancellationError {}
     return .notDone
   }

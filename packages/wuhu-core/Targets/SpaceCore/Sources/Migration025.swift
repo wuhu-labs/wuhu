@@ -1,10 +1,8 @@
-import GRDB
-
 // Kinds the code no longer knows leave what it reads: inbox rows move aside,
 // a transcript's dead notices take the kind that always read the same way,
 // and a generation head forgets its deadline subscriptions.
 enum Migration025 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE notifications_retired AS SELECT * FROM notifications WHERE kind IN ('request_deadline', 'child_failed');
     DELETE FROM notifications WHERE kind IN ('request_deadline', 'child_failed');

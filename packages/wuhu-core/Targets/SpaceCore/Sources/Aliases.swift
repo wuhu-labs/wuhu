@@ -15,7 +15,7 @@ struct AliasRow {
   @Column(primaryKey: true) var name: String
   var kind: AliasKind
   var target: String
-  /// Whether this spelling is its record's current name. Groups and people keep it here; machines keep their current name in their own row.
+  /// Whether this spelling is its record's current name. Every kind keeps it here, in the row it marks `current`.
   var current: Bool = false
 }
 
@@ -28,32 +28,6 @@ public enum AliasError: Error, Equatable, Sendable {
 enum Aliases {
   static func target(_ spelling: String, kind: AliasKind, in db: Database) throws -> String? {
     try AliasRow.where { $0.name.eq(spelling.lowercased()) && $0.kind.eq(kind) }.select(\.target).fetchOne(db)
-  }
-
-  static func resolvePerson(_ spelling: String, in db: Database) throws -> String? {
-    let id = try target(spelling, kind: .person, in: db) ?? spelling
-    if try PersonaRow.find(id).select(\.name).fetchOne(db) != nil { return id }
-    return try AliasRow.where { $0.kind.eq(AliasKind.person) && $0.current && $0.target.eq(id) }.select(\.target).fetchOne(db)
-  }
-
-  static func requireFree(_ name: String, kind: AliasKind, target: String?, group: GroupID? = nil, in db: Database) throws {
-    if let row = try GroupRow.where({ $0.id.eq(name) }).fetchOne(db), kind != .group || row.id != target {
-      throw AliasError.taken(name)
-    }
-    guard let alias = try AliasRow.where({ $0.name.eq(name) }).fetchOne(db), alias.kind != kind || alias.target != target else { return }
-    if kind == .machine, alias.kind == .machine, let group,
-       let machine = try MachineRow.where({ $0.id.eq(alias.target) }).fetchOne(db), machine.grp == group.rawValue,
-       try !Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM account_keys WHERE account_id = ? UNION ALL SELECT 1 FROM join_tokens WHERE account_id = ?)", arguments: [machine.accountID, machine.accountID])!
-    { return }
-    throw AliasError.taken(name)
-  }
-
-  static func claimMachine(_ name: String, target: String, group: GroupID, in db: Database) throws {
-    try requireFree(name, kind: .machine, target: target, group: group, in: db)
-    guard let previous = try AliasRow.where({ $0.name.eq(name) }).fetchOne(db), previous.target != target else { return }
-    try AliasRow.where { $0.kind.eq(AliasKind.machine) && $0.target.eq(previous.target) }.update { $0.target = #bind(target) }.execute(db)
-    try MachineRow.where { $0.id.eq(previous.target) }.update { $0.name = #bind(nil) }.execute(db)
-    try db.execute(sql: "UPDATE accounts SET name = NULL WHERE id = (SELECT account_id FROM machines WHERE id = ?)", arguments: [previous.target])
   }
 }
 

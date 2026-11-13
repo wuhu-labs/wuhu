@@ -100,7 +100,7 @@ private func requestBody(_ lines: [TranscriptLine], resolver: (any MediaResolver
             content: .init(text: "see image", attachments: [.image(path: "wuhu://\(group.rawValue).localspace/image.png", mimeType: "image/png", size: pngBytes.count)]),
           ))
           try await harness.store.appendTestLines(session, message.lines(session: session))
-          try await harness.space.setVisibility(.private, of: group, by: .anonymous, acting: group)
+          try await harness.space.setVisibility(.private, of: group, by: (try await harness.space.ensureDevPerson()).actor, acting: group)
           #expect(try await !harness.space.reads(.shared).contains(group))
         } else {
           let hash = try await harness.space.storeImage(pngBytes)

@@ -1,6 +1,8 @@
+import struct MachineContract.MachineID
 import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationSnapshot
+import struct SpaceContract.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries
@@ -20,7 +22,45 @@ public struct MachineCell {
     "CREATE INDEX machine_operations_live_script ON machine_operations(caller, script) WHERE state != 'retired'",
   ]
 
-  public static let owned = ["machine_presence": "owner", "machine_descriptions": "owner", "machine_operations": "owner", "machine_file_operations": "owner"]
+  public static let owned = ["machine_presence": "owner", "machine_descriptions": "owner", "machine_operations": "owner", "machine_file_operations": "owner", "machines": "id", "machine_v2_members": "machine_id"]
+
+  /// Writes the machine's row and its v2 membership, the claim's one home: the claim mails this and its caller calls it,
+  /// both arrivals are real, and the second finds the row.
+  public mutating func create(_ claim: MachineClaim) throws {
+    precondition(claim.id.rawValue == id.key)
+    if db.rows(MachinePresence.all).first?.state == "deleted" { return }
+    if db.rows(MachineRow.where { $0.id.eq(id.key) }).isEmpty {
+      try db.execute(MachineRow.insert {
+        MachineRow(
+          id: claim.id.rawValue, accountID: claim.account.rawValue, createdAt: claim.created, grp: claim.group.rawValue,
+          scope: claim.scope.rawValue,
+        )
+      })
+    }
+    if db.rows(MachineV2MemberRow.where { $0.machineID.eq(id.key) }).isEmpty {
+      try db.execute(MachineV2MemberRow.insert {
+        MachineV2MemberRow(machineID: claim.id.rawValue, grp: claim.group.rawValue, createdAt: claim.created)
+      })
+    }
+  }
+
+  public mutating func scope(_ scope: ReachScope) throws {
+    guard var row = db.rows(MachineRow.where { $0.id.eq(id.key) }).first else { throw SpaceError.notFound(id.key) }
+    row.scope = scope.rawValue
+    try db.execute(MachineRow.update(row))
+  }
+
+  public mutating func move(from: GroupID, to: GroupID) throws {
+    guard var row = db.rows(MachineRow.where { $0.id.eq(id.key) }).first, row.grp == `from`.rawValue else {
+      throw SpaceError.notFound(id.key)
+    }
+    row.grp = to.rawValue
+    try db.execute(MachineRow.update(row))
+    guard var member = db.rows(MachineV2MemberRow.where { $0.machineID.eq(id.key) }).first else { throw SpaceError.notFound(id.key) }
+    member.grp = to.rawValue
+    try db.execute(MachineV2MemberRow.update(member))
+    if from != to { ctx.send(FilesCell.ID(from.rawValue)).moveMachineNotes(id.key, to: to) }
+  }
 
   public mutating func reserve(_ request: MachineExec) throws -> String {
     let p = try ensurePresence()
@@ -112,7 +152,12 @@ public struct MachineCell {
     for socket in ctx.sockets(of: FileBulk.self) { socket.close() }
   }
 
-  public mutating func delete() throws {
+  /// The machine's last step: `group` is the one its caller authorized against, and a machine that has left it is no
+  /// machine of that group's to delete.
+  public mutating func delete(in group: GroupID) throws {
+    guard let row = db.rows(MachineRow.where { $0.id.eq(id.key) }).first, row.grp == group.rawValue else {
+      throw SpaceError.notFound(id.key)
+    }
     var p = try ensurePresence()
     for var row in db.rows(MachineOperation.live) {
       try finish(&row, error: deleted)
@@ -125,6 +170,11 @@ public struct MachineCell {
     try save(p)
     for socket in ctx.sockets(of: BoxSocket.self) { socket.close() }
     for socket in ctx.sockets(of: ExecStream.self) { socket.close() }
+    try db.execute(MachineV2MemberRow.where { $0.machineID.eq(id.key) }.delete())
+    try db.execute(MachineRow.where { $0.id.eq(id.key) }.delete())
+    ctx.send(FilesCell.ID(group.rawValue)).deleteMachineNotes(id.key)
+    ctx.send(SpaceCell.ID("space")).freeMachine(MachineID(rawValue: id.key))
+    ctx.send(PersonCell.ID(row.accountID)).removeMachineAccount(at: Date(timeIntervalSince1970: Double(now) / 1000))
   }
 
   public mutating func attached(_ socket: SocketHandle<BoxSocket>) throws { try attachBox(socket) }

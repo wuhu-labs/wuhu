@@ -19,7 +19,7 @@ import Testing
   }
 
   @Test func upgradeDropsCommandsOnceAndPreservesAllLegacyRows() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-032-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/migration-032-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let original = try Space(writer: database)
     let payload = #"{"assistant":{"_0":{"content":"old"}}}"#
     try await database.write { db in
@@ -32,8 +32,8 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '032';
       """, arguments: [payload])
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path))
-    let reopened = try Space(writer: DatabaseQueue(path: database.path))
+    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
+    let reopened = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
     #expect(try await database.read { db in
       try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE name IN ('session_commands', 'session_legacy_items')")
     }.isEmpty)

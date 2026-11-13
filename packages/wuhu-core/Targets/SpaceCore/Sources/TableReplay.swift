@@ -1,5 +1,3 @@
-import Foundation
-import GRDB
 import JSONValue
 import struct SpaceContract.GroupID
 import SpaceFS
@@ -8,7 +6,7 @@ import SpaceFS
 // column dropped and later re-added comes back NULL for rows written before the
 // drop — exactly what the live ALTER TABLE sequence produced.
 enum TableReplay {
-  struct ReplayedRow {
+  struct ReplayedRow: Sendable {
     let id: Int64
     let cells: [String: JSONValue]
   }
@@ -27,27 +25,12 @@ enum TableReplay {
     }
   }
 
-  static func state(_ path: SpacePath, group: GroupID, ceiling: Int64, in db: Database) throws -> (TableHeader, [ReplayedRow]) {
+  static func state(_ path: SpacePath, ceiling: Int64, schemas: [TableSchemaVersionRow], journal: [TableRowRow]) throws -> (TableHeader, [ReplayedRow]) {
     var events: [(rev: Int64, event: Event)] = []
-    let schemas = try Row.fetchAll(
-      db,
-      sql: "SELECT rev, header_json FROM table_schema_versions WHERE grp = ? AND path = ? AND rev <= ? ORDER BY rev",
-      arguments: [group.rawValue, path.rawValue, ceiling],
-    )
-    for row in schemas {
-      events.append((row["rev"], .schema(try Tables.decodeHeader(row["header_json"]))))
-    }
-    let journal = try Row.fetchAll(
-      db,
-      sql: "SELECT row_id, created_rev, deleted_rev, payload FROM table_rows WHERE grp = ? AND path = ? AND created_rev <= ?",
-      arguments: [group.rawValue, path.rawValue, ceiling],
-    )
+    for row in schemas { events.append((row.rev, .schema(try Tables.decodeHeader(row.headerJSON)))) }
     for row in journal {
-      let id: Int64 = row["row_id"]
-      events.append((row["created_rev"], .insert(id, row["payload"])))
-      if let deleted: Int64 = row["deleted_rev"], deleted <= ceiling {
-        events.append((deleted, .close(id)))
-      }
+      events.append((row.createdRev, .insert(row.rowID, row.payload)))
+      if let deleted = row.deletedRev, deleted <= ceiling { events.append((deleted, .close(row.rowID))) }
     }
     guard !schemas.isEmpty else { throw SpaceError.notATable(path.rawValue) }
     events.sort { ($0.rev, $0.event.order) < ($1.rev, $1.event.order) }

@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import struct SpaceContract.UserProfileInput
 import SpaceCore
 import Testing
 
@@ -12,7 +13,7 @@ import Testing
   let identity: String
 
   init() async throws {
-    harness = try Harness(dev: false)
+    harness = try await Harness(dev: false)
     identity = try await harness.space.identity().rawValue
   }
 
@@ -192,9 +193,9 @@ import Testing
     #expect(try await harness.space.memberGroups(of: accountID).isEmpty)
     #expect(try await !harness.space.isHumanAdmin(accountID, of: .shared))
 
-    let reserved = try await send(.post, "/v1/accounts", body: .object(["name": .string("Owner")]), key: root.key)
-    #expect(reserved.status == .badRequest)
-    #expect((try await json(reserved)).stringValue(at: "code") == "reservedAccountName")
+    let ordinaryOwner = try await send(.post, "/v1/accounts", body: .object(["name": .string("Owner")]), key: root.key)
+    #expect(ordinaryOwner.status == .ok)
+    #expect((try await json(ordinaryOwner)).stringValue(at: "name") == "Owner")
 
     let roster = try await send(.get, "/v1/accounts", key: root.key)
     #expect(roster.status == .ok)
@@ -266,8 +267,29 @@ import Testing
     #expect((try await json(refused)).stringValue(at: "hint")?.contains("machine revoke") == true)
   }
 
-  @Test func theDevSeatActsAsAdminAndHasNoAccountOfItsOwn() async throws {
-    let dev = try Harness(dev: true)
+  @Test func theDevPersonHasOrdinaryAccountIdentityAndSettings() async throws {
+    let dev = try await Harness(dev: true)
+    let person = try await dev.space.ensureDevPerson()
+    let mint = try await dev.api(Request(url: URL(string: "http://space/v1/persona")!, method: .post))
+    #expect((try await json(mint)).stringValue(at: "persona") == person.persona)
+    let settings = try await dev.get(dev.api, "/v1/user/me/settings")
+    #expect(settings.status == .ok)
+    let profile = try await dev.api(Request(url: URL(string: "http://space/v1/user/me/profile")!, method: .put, body: try .json(UserProfileInput(handle: "renamed_owner", displayName: "Dev Owner"))))
+    #expect(profile.status == .ok)
+    let avatarBytes = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==")!
+    let avatar = try await dev.api(Request(url: URL(string: "http://space/v1/user/me/avatar")!, method: .put, body: .bytes(avatarBytes, contentType: "image/png")))
+    #expect(avatar.status == .noContent)
+    let image = try await dev.get(dev.api, "/v1/user/\(person.persona)/avatar")
+    #expect(image.status == .ok)
+    #expect(try await image.data() == avatarBytes)
+    #expect((try await json(profile)).stringValue(at: "id") == person.persona)
+    var invalid = Request(url: URL(string: "http://space/v1/persona")!, method: .post)
+    invalid.headers[.authorization] = "Bearer invalid"
+    #expect(try await dev.api(invalid).status == .unauthorized)
+    var invalidMetadata = Request(url: URL(string: "http://space/v1/providers")!)
+    invalidMetadata.headers[.authorization] = "Bearer invalid"
+    #expect(try await dev.api(invalidMetadata).status == .unauthorized)
+    #expect(try await dev.get(dev.api, "/v1/providers").status == .ok)
     let created = try await dev.api(Request(
       url: URL(string: "http://space/v1/accounts")!,
       method: .post,
@@ -280,7 +302,8 @@ import Testing
     #expect(listed.status == .ok)
 
     let unaddressed = try await dev.get(dev.api, "/v1/keys")
-    #expect(unaddressed.status == .badRequest)
+    #expect(unaddressed.status == .ok)
+    #expect((try await json(unaddressed)).arrayValue(at: "keys") == [])
   }
 }
 

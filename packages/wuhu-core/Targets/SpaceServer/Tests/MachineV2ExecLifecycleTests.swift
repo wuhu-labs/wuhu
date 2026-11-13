@@ -272,7 +272,7 @@ private struct Rig {
   @Test func deleteEndsAnOpenExecCallerAndDropsDurableOperationState() async throws {
     let rig = try await Rig()
     let hub = MachineHub(space: rig.space)
-    let handler = SpaceServer.configuredHandler(space: rig.space, hub: hub, dev: true)
+    let handler = SpaceServer.configuredHandler(space: rig.space, hub: hub, devPerson: try await rig.space.ensureDevPerson())
     let minted = try await rig.space.reserveExec(machine: rig.machine.id)
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["gate", "a", "b"]))

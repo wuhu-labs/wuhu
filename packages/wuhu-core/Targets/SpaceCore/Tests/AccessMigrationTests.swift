@@ -10,9 +10,9 @@ import Testing
 // closure, the admin rows and personal groups become one access table.
 @Suite(.deterministicDependencies) struct AccessMigrationTests {
   func migrated() throws -> DatabaseQueue {
-    let database = try DatabaseQueue(path: "file:/access-migration-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/access-migration-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     try database.write { db in
-      try Migration001.apply(db)
+      try Migration001.apply(.init(db))
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, name, created_at) VALUES
         ('person', 'human', 'Person', '2026-01-01T00:00:00Z'),
@@ -38,8 +38,8 @@ import Testing
         ('personal', 'ops', 'read', '2026-01-01T00:00:00Z', NULL);
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_box', 'machine', 'box', '2026-01-01T00:00:00Z', 'shared');
       """)
-      try Migration003.apply(db)
-      try Migration004.apply(db)
+      try Migration003.apply(.init(db))
+      try Migration004.apply(.init(db))
       // A space that opens this file finds every migration applied.
       try db.execute(sql: """
       CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);

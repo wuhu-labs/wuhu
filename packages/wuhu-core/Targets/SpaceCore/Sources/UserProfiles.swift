@@ -20,7 +20,12 @@ public struct UserProfile: Equatable, Sendable {
 extension Space {
   public func setUserProfile(principal: String, handle: String, displayName: String?) async throws -> UserProfile {
     guard let normalized = Handle.normalized(handle) else { throw SpaceError.invalidHandle(handle) }
-    guard let owner = cell.personCell(principal), let account = worker.cell(owner).account(), account.removedAt == nil else { throw SpaceError.notFound(principal) }
+    let owner = try worker.read { reader in
+      guard let owner = reader.cell(SpaceCell.ID("space")).personCell(principal),
+            let account = reader.cell(owner).account(), account.removedAt == nil
+      else { throw SpaceError.notFound(principal) }
+      return owner
+    }
     do { try await worker.call(SpaceCell.ID("space")) { try $0.renamePerson(principal, handle: normalized) } }
     catch AliasError.taken { throw SpaceError.handleTaken(normalized) }
     _ = try await worker.call(owner) { try $0.setDisplayName(principal, displayName: displayName) }

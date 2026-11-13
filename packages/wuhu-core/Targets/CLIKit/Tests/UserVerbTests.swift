@@ -53,13 +53,13 @@ struct UserVerbTests {
     try await space.close()
   }
 
-  @Test func addRefusesTheReservedOwnerName() async throws {
+  @Test func addAcceptsOwnerAsAnOrdinaryAccountName() async throws {
     let harness = try RecoveryHarness()
     let code = await harness.run(["user", "add", "--space", harness.folder.path, "--name", "Owner"])
-    #expect(code == 1)
-    #expect(await harness.stderr.text.contains("Owner is reserved"))
+    #expect(code == 0)
+    #expect(await harness.stderr.text.isEmpty)
     let space = try harness.openSpace()
-    #expect(try await space.accounts().isEmpty)
+    #expect(try await space.accounts().map(\.name) == ["Owner"])
     try await space.close()
   }
 

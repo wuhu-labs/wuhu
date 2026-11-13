@@ -9,15 +9,15 @@ import Testing
 import WebBundle
 
 @Suite(.deterministicDependencies) struct WebBundleTests {
-  private func client() throws -> FetchClient {
+  private func client() async throws -> FetchClient {
     let space = try Space.inMemory()
     return ServeTesting.client(upgrading: SpaceServer.handler(
-      space: space, hub: MachineHub(space: space), dev: true, webContent: try WebBundle.load(),
+      space: space, hub: MachineHub(space: space), devPerson: try await space.ensureDevPerson(), webContent: try WebBundle.load(),
     ))
   }
 
   @Test func shellSDKIsBundledNoCacheAndHeadHasTheServedLength() async throws {
-    let web = try client()
+    let web = try await client()
     let script = try await web(Request(url: URL(string: "https://shared.localhost/_/shell.js")!))
     #expect(script.status == .ok)
     #expect(script.headers[.contentType] == "text/javascript; charset=utf-8")
@@ -42,7 +42,7 @@ import WebBundle
   }
 
   @Test func pageDeviceModuleIsServedNoCache() async throws {
-    let web = try client()
+    let web = try await client()
     let response = try await web(Request(url: URL(string: "https://shared.localhost/_/device.js")!))
     #expect(response.status == .ok)
     #expect(response.headers[.contentType] == "text/javascript; charset=utf-8")
@@ -51,7 +51,7 @@ import WebBundle
   }
 
   @Test func thePageWorkerAndItsModulesAreServedNoCacheWithRootScope() async throws {
-    let web = try client()
+    let web = try await client()
     let worker = try await web(Request(url: URL(string: "https://shared.localhost/_/worker.js")!))
     #expect(worker.status == .ok)
     #expect(worker.headers[.contentType] == "text/javascript; charset=utf-8")

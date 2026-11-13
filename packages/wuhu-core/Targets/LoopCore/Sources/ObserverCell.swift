@@ -10,7 +10,6 @@ import enum SpaceCore.ObservationReply
 import struct SpaceCore.ObservationSlot
 import enum SpaceCore.ObserverAdvance
 import enum SpaceCore.ObserverRefusal
-import struct SpaceCore.ObserverRows
 import struct SpaceCore.ObserverSlot
 import struct SpaceCore.ObserverTerms
 import struct SpaceCore.Rows
@@ -60,6 +59,7 @@ struct ObserverCell {
     guard let row = groupRow else { throw ObserverRefusal.unknownObserver(id.subscription.rawValue) }
     let armed = try ArmedSubscription(row: row)
     try db.execute(SubscriptionRow.of(owner).where { $0.name.eq(id.subscription.rawValue) }.delete())
+    try pruneFirings(owner)
     stopStream()
     try reconcile()
     return armed
@@ -99,20 +99,20 @@ struct ObserverCell {
   /// Its session armed it.
   mutating func arm(_ arming: Arming) throws {
     guard case let .session(session) = owner else { return }
-    try rows.arm(session, arming, uuid: client.uuid)
+    try arm(session, arming, uuid: client.uuid)
     try look()
   }
 
   /// Its session's `cancel`: a firing in progress runs on.
   mutating func cancel() throws {
-    try rows.retire(owner, subscription)
+    try retire(owner, subscription)
     stopStream()
     try reconcile()
   }
 
   /// Its query can no longer run.
   mutating func failed(_ watched: ObservationSlot, _ reason: String) throws {
-    guard try rows.slot(owner, subscription)?.subscription.observationSlot == watched else { return }
+    guard try slot(owner, subscription)?.subscription.observationSlot == watched else { return }
     let text = owner.session == nil ? "observation query failed: \(reason)" : "observation \(subscription.rawValue) failed and was cancelled: \(reason)"
     try end(text)
   }
@@ -120,7 +120,7 @@ struct ObserverCell {
   /// Reconciles the slot and fires what is due.
   mutating func look() throws {
     try reconcile()
-    guard let slot = try rows.slot(owner, subscription), slot.subscription.status == .armed else { return stopStream() }
+    guard let slot = try slot(owner, subscription), slot.subscription.status == .armed else { return stopStream() }
     if case let .stream(url, throttle) = slot.subscription.slot.kind {
       ctx.create(streamJob, params: .init(dialer: owner, session: nil, subscription: subscription, url: url, throttle: throttle, owner: id.recipient.retyped()))
     }
@@ -141,26 +141,26 @@ struct ObserverCell {
 
   /// The query's rows changed: they replace whatever waits.
   mutating func observed(_ watched: ObservationSlot, _ snapshot: Rows, _ marker: String) throws {
-    guard let slot = try rows.slot(owner, subscription), slot.subscription.observationSlot == watched,
+    guard let slot = try slot(owner, subscription), slot.subscription.observationSlot == watched,
           slot.subscription.marker != marker, slot.pendingMarker != marker else { return }
-    try rows.pend(owner, subscription, handlerInput(snapshot), marker: marker)
+    try pend(owner, subscription, handlerInput(snapshot), marker: marker)
     try look()
   }
 
   /// One event, acked once a firing takes it; or the stream's end.
   mutating func streamed(_ batch: StreamBatch) throws {
-    guard batch.job == streamJob, let slot = try rows.slot(owner, subscription), slot.subscription.status == .armed else {
+    guard batch.job == streamJob, let slot = try slot(owner, subscription), slot.subscription.status == .armed else {
       if batch.ending == nil { ctx.send(.stop, to: batch.job) }
       return
     }
     if let ending = batch.ending { return try end(ending) }
-    try rows.pend(owner, subscription, batch.event!.handlerInput, marker: nil)
+    try pend(owner, subscription, batch.event!.handlerInput, marker: nil)
     try look()
   }
 
   mutating func fired(_ job: HandlerJob.ID, _ answer: HandlerAnswer) throws {
     let subscription = answer.subscription
-    let slot = try rows.slot(owner, subscription)
+    let slot = try slot(owner, subscription)
     let kind = slot?.subscription.slot.kind
     var advance = ObserverAdvance.taken(marker: answer.marker)
     if case let .timer(schedule, _)? = kind {
@@ -172,12 +172,12 @@ struct ObserverCell {
         advance = (try? CronSchedule.parse(expression).next(after: after)).map(ObserverAdvance.reschedule) ?? .retire
       }
     }
-    tell(try rows.finish(
+    tell(try finish(
       owner, subscription, firing: answer.firing, path: answer.path, kind: answer.fireTime == nil ? .spaceObservation : .timer,
       outcome: answer.outcome, advance: advance, uuid: client.uuid,
     ))
     if case .stream? = kind, case .ok = answer.outcome, slot?.firing == answer.firing { ctx.send(.acked, to: streamJob) }
-    if slot != nil, try rows.slot(owner, subscription) == nil { ended() }
+    if slot != nil, try self.slot(owner, subscription) == nil { ended() }
     try look()
   }
 
@@ -185,13 +185,13 @@ struct ObserverCell {
   private mutating func fire(_ slot: ObserverSlot) throws {
     guard slot.firing == nil, let input = input(slot), let due = due(slot), due <= client.dueNow() else { return }
     guard let group = slot.group else {
-      try rows.retire(owner, subscription)
+      try retire(owner, subscription)
       ended()
       try reconcile()
       return stopStream()
     }
     let firing = client.uuid()
-    try rows.begin(owner, subscription, firing: firing, group: group)
+    try begin(owner, subscription, firing: firing, group: group)
     ctx.create(HandlerJob.ID("\(id.key):\(firing.uuidString.lowercased())"), params: .init(
       cell: id, owner: owner, subscription: subscription, name: slot.subscription.name, group: group, firing: firing,
       path: slot.subscription.slot.handler!, input: input.json, marker: input.marker, fireTime: input.fireTime,
@@ -238,7 +238,7 @@ struct ObserverCell {
   }
 
   private mutating func end(_ reason: String) throws {
-    if let notice = try rows.end(owner, subscription, reason: reason, uuid: client.uuid) { tell([notice]) }
+    if let notice = try end(owner, subscription, reason: reason, uuid: client.uuid) { tell([notice]) }
     try reconcile()
     ended()
   }
@@ -274,9 +274,9 @@ struct ObserverCell {
   private func currentSlot() throws -> ObserverSlot? {
     if owner.group != nil {
       guard let row = groupRow else { return nil }
-      return try rows.slot(owner, SubscriptionID(row.subscriptionID))
+      return try slot(owner, SubscriptionID(row.subscriptionID))
     }
-    return try rows.slot(owner, id.subscription)
+    return try slot(owner, id.subscription)
   }
 
   private var owner: SubscriptionOwner { id.owner }
@@ -289,10 +289,6 @@ struct ObserverCell {
 
   private var streamJob: StreamJob.ID {
     .init(owner.group == nil ? id.key : "\(id.key):\(subscription.rawValue)")
-  }
-
-  private var rows: ObserverRows {
-    ObserverRows(host: db.host, store: ctx.dependency(SessionStore.self))
   }
 
   private var client: LoopClient {

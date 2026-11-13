@@ -109,13 +109,14 @@ struct EnrollRig {
     let space = space ?? self.space
     let identity = try TLSIdentity.selfSigned(hosts: hosts)
     let fingerprint = try identity.fingerprint()
-    let handler = withDependencies {
+    let handler = try await withDependencies {
       $0.date = self.clock.generator
       $0.continuousClock = ContinuousClock()
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 43))
     } operation: {
       let hub = MachineHub(space: space)
-      return SpaceServer.configuredHandler(space: space, hub: hub, origin: origin, fingerprint: fingerprint, dev: dev, listenerRoutes: machineListenerRoutes(space: space, hub: hub, fingerprint: fingerprint))
+      let devPerson = dev ? try await space.ensureDevPerson() : nil
+      return SpaceServer.configuredHandler(space: space, hub: hub, origin: origin, fingerprint: fingerprint, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson, fingerprint: fingerprint))
     }
     let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity, upgrading: handler)
     do {

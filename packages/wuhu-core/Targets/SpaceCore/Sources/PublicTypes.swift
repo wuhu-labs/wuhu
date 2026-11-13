@@ -102,10 +102,7 @@ public struct RowCommit: Equatable, Sendable {
   }
 }
 
-/// Who a revision acts for when a page or an observer wrote it: the viewer
-/// (nil for the --dev seat) and the page's path in its group, or the observer
-/// and `firing:<id>`.
-public struct RevisionAttribution: Equatable, Sendable {
+public struct RevisionAttribution: Codable, Equatable, Sendable {
   public let actor: String?
   public let via: String
 
@@ -119,7 +116,7 @@ public struct RevisionAttribution: Equatable, Sendable {
     self.init(actor: observer.member, via: Self.firingVia(firing))
   }
 
-  static func firingVia(_ firing: String) -> String { "firing:\(firing)" }
+  public static func firingVia(_ firing: String) -> String { "firing:\(firing)" }
 }
 
 public enum Cell: Equatable, Sendable, Codable {
@@ -166,7 +163,6 @@ public enum SpaceError: Error, Equatable, Sendable {
   case invalidTableHeader(String)
   case invalidCellValue(String)
   case reservedTablePath(String)
-  case reservedAccountName(String)
   case lastAdmin(String)
   case readOnlyView(String)
   /// A write, move or remove under `wuhu://system/`, which ships in the binary.
@@ -186,6 +182,8 @@ public enum SpaceError: Error, Equatable, Sendable {
   case handleTaken(String)
   case invalidMachineName(String)
   case machineNameTaken(String)
+  /// The name is held by a machine; deleting that machine frees it.
+  case machineNameTakenByMachine(String)
   case unknownDevice(String)
   case invalidDeviceKind(String)
   /// The refusal's reason, naming the device name.

@@ -6,12 +6,15 @@ import Dispatch
   import Foundation
 #endif
 import GRDB
+import GRDBSQLite
 import Scratch
 @testable import SpaceCore
+import StructuredQueries
 import Synchronization
 import Testing
 import Wuwei
 import struct Wuwei.Database
+import WuweiQueries
 
 private final class TransactionSignals: Sendable {
   let holder = DispatchSemaphore(value: 0)
@@ -33,15 +36,12 @@ private struct WatchedDatabase: SharedDatabase {
     return try base.begin()
   }
 
-  func write(_ body: (OpaquePointer, AnyObject?) throws -> Void) throws {
+  func write(_ body: (OpaquePointer) throws -> Void) throws {
     if signals.watching.withLock({ $0 }) { signals.events.continuation.yield("write") }
     try base.write(body)
   }
 
-  func read(_ body: (OpaquePointer) throws -> Void) throws { try base.read(body) }
-  func execute(_ sql: String, _ arguments: [Value], on host: AnyObject?) throws -> Bool {
-    try base.execute(sql, arguments, on: host)
-  }
+  func beginRead() throws -> any SharedReadTransaction { try base.beginRead() }
 }
 
 @Cell private struct TransactionCell {
@@ -95,7 +95,13 @@ private final class TransactionPokes: TransactionObserver, Sendable {
     let signals = TransactionSignals()
     defer { signals.events.continuation.finish() }
     let writer = await space.writer
-    let database = WatchedDatabase(base: try WuweiDatabase(writer: writer), signals: signals)
+    let changes = ChangeSource()
+    let (jobChanges, jobWake) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let (outerChanges, outerWake) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let stopJob = changes.subscribe(["transaction_job"], jobWake)
+    let stopOuter = changes.subscribe(["wuwei_job"], outerWake)
+    defer { stopJob(); stopOuter() }
+    let database = WatchedDatabase(base: try WuweiDatabase(writer: writer, changes: changes), signals: signals)
     let worker = Worker(id: "transactions", storage: .shared(database), scheduler: LiveScheduler(), registrations: [.job(TransactionJob.self), .cell(TransactionCell.self)])
     worker.provide(signals)
     let cell = TransactionCell.ID("cell")
@@ -121,9 +127,13 @@ private final class TransactionPokes: TransactionObserver, Sendable {
     worker.release()
     #expect(signals.completed.withLock { $0 } == ["holder", "other"])
     #expect(observer.commits.withLock { $0 } > 0)
-    let numbers = try await space.writer.read { try Int.fetchAll($0, sql: "SELECT n FROM transaction_job ORDER BY n") }
+    let numbers = worker.job(TransactionJob.ID("holder")).db.rows(TransactionValue.order(by: \.n)).map(\.n)
     #expect(numbers == [1, 2, 4])
-    try database.base.close()
+    var jobWakes = jobChanges.makeAsyncIterator()
+    var outerWakes = outerChanges.makeAsyncIterator()
+    #expect(await jobWakes.next() != nil)
+    #expect(await outerWakes.next() != nil)
+    database.base.close()
     try await space.close()
   }
 }
@@ -139,25 +149,50 @@ private final class CommitRefusal: TransactionObserver, Sendable {
 }
 
 extension JobTransactionTests {
-  @Test func aFailedCommitAndARollbackBothReleaseTheWriter() throws {
+  @Test func aFailedCommitAndARollbackBothReleaseTheWriter() async throws {
     let folder = try ScratchFolder("job-commit-failure")
     let writer = try DatabaseQueue(path: folder.url.appending(path: "space.sqlite").path)
-    let database = try WuweiDatabase(writer: writer)
-    try writer.write { try $0.execute(sql: "CREATE TABLE probe (n INTEGER)") }
+    let changes = ChangeSource()
+    let database = try WuweiDatabase(writer: writer, changes: changes)
+    let (wakes, wake) = AsyncStream<Void>.makeStream()
+    let stop = changes.subscribe(["probe"], wake)
+    defer { stop() }
+    try database.write { handle in
+      #expect(sqlite3_exec(handle, "CREATE TABLE probe (n INTEGER)", nil, nil, nil) == SQLITE_OK)
+    }
     let refusal = CommitRefusal()
     writer.add(transactionObserver: refusal)
     let failed = try database.begin()
-    try failed.access { _, host in _ = try database.execute("INSERT INTO probe VALUES (1)", [], on: host) }
+    try failed.access { handle in
+      #expect(sqlite3_exec(handle, "INSERT INTO probe VALUES (1)", nil, nil, nil) == SQLITE_OK)
+    }
     #expect(throws: RefusedCommit.self) { try failed.commit() }
     writer.remove(transactionObserver: refusal)
     let rollback = try database.begin()
-    try rollback.access { _, host in _ = try database.execute("INSERT INTO probe VALUES (2)", [], on: host) }
+    try rollback.access { handle in
+      #expect(sqlite3_exec(handle, "INSERT INTO probe VALUES (2)", nil, nil, nil) == SQLITE_OK)
+    }
     rollback.rollback()
     let success = try database.begin()
-    try success.access { _, host in _ = try database.execute("INSERT INTO probe VALUES (3)", [], on: host) }
+    try success.access { handle in
+      #expect(sqlite3_exec(handle, "INSERT INTO probe VALUES (3)", nil, nil, nil) == SQLITE_OK)
+    }
     try success.commit()
-    #expect(try writer.read { try Int.fetchAll($0, sql: "SELECT n FROM probe") } == [3])
-    try database.close()
+    let kept = try database.beginRead().access { handle in
+      var statement: OpaquePointer?
+      #expect(sqlite3_prepare_v2(handle, "SELECT n FROM probe", -1, &statement, nil) == SQLITE_OK)
+      defer { sqlite3_finalize(statement) }
+      #expect(sqlite3_step(statement) == SQLITE_ROW)
+      let value = sqlite3_column_int64(statement, 0)
+      #expect(sqlite3_step(statement) == SQLITE_DONE)
+      return value
+    }
+    #expect(kept == 3)
+    wake.finish()
+    var publications = 0
+    for await _ in wakes { publications += 1 }
+    #expect(publications == 1)
+    database.close()
     try writer.close()
   }
 
@@ -167,6 +202,12 @@ extension JobTransactionTests {
     let database = try WuweiDatabase(writer: writer)
     try writer.close()
     #expect(throws: DatabaseError.self) { _ = try database.begin() }
-    try database.close()
+    database.close()
   }
+}
+
+@Table("transaction_job")
+private struct TransactionValue {
+  let owner: String
+  let n: Int64
 }

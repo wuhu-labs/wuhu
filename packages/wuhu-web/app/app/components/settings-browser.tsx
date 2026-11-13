@@ -6,8 +6,8 @@ import {
 } from '~/lib/composer'
 import { WebPushControl } from './web-push-control'
 
-// Choices this browser keeps for itself.
-export function BrowserCard() {
+// Choices this browser keeps for itself. Notifications need its own key.
+export function BrowserCard({ enrolled }: { enrolled: boolean }) {
   const key = useSendKey()
   return (
     <section className='wuhu-card wuhu-settings-card'>
@@ -27,7 +27,7 @@ export function BrowserCard() {
           ))}
         </select>
       </label>
-      <WebPushControl />
+      {enrolled && <WebPushControl />}
     </section>
   )
 }

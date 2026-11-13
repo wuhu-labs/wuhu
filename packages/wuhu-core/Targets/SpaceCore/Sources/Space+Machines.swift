@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import GRDB
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
 import struct SessionDomain.SessionID
@@ -12,7 +11,6 @@ import struct SpaceContract.GroupID
 import func SpaceContract.normalizedLabel
 import SpaceFS
 import StructuredQueries
-import StructuredQueriesSQLite
 
 public struct MachineRecord: Equatable, Sendable {
   public let id: MachineID
@@ -96,63 +94,20 @@ public struct ExecRecord: Equatable, Sendable, Codable {
 }
 
 extension Space {
-  /// A machine enrolled by a person joins that person's group; `shared` holds
-  /// every machine from before groups.
-  public func addMachine(name: String?, group: GroupID = .shared, scope: ReachScope = .owner) async throws -> MachineRecord {
-    let requested = try name.map { try Self.requireMachineName($0) }
-    let id = MachineID(rawValue: "mc_" + randomSuffix(MachineID.suffixLength))
-    let account = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
-    let createdAt = dateGen.now
-    let stored = SQLiteDateFormat.string(from: createdAt)
-    try await writer.write { db in
-      if let requested { try Self.requireMachineNameFree(requested, for: id, group: group, in: db) }
-      try db.execute(
-        sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES (?, ?, ?, ?)",
-        arguments: [account.rawValue, AccountKind.machine.rawValue, requested, stored],
-      )
-      try MachineRow.insert {
-        MachineRow(
-          id: id.rawValue, accountID: account.rawValue, name: requested, createdAt: stored, grp: group.rawValue,
-          scope: scope.rawValue,
-        )
-      }.execute(db)
-    }
-    return MachineRecord(id: id, account: account, name: requested, createdAt: createdAt, group: group, scope: scope)
-  }
-
   public func renameMachine(_ id: MachineID, name: String) async throws -> MachineRecord {
     let requested = try Self.requireMachineName(name)
-    return try await writer.write { db in
-      guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
-        throw SpaceError.notFound(id.rawValue)
-      }
-      try Self.requireMachineNameFree(requested, for: id, group: GroupID(rawValue: row.grp), in: db)
-      return try Self.storeMachineName(requested, on: row, in: db)
-    }
+    guard let record = try await machine(id) else { throw SpaceError.notFound(id.rawValue) }
+    _ = try await worker.call(SpaceCell.ID("space")) { try $0.renameMachine(id, name: requested) }
+    return MachineRecord(id: record.id, account: record.account, name: requested, createdAt: record.createdAt, group: record.group, scope: record.scope)
   }
 
   // The default a joining box asks for: its hostname, suffixed until free, so a
-  // second laptop called "mini" joins as "mini-2" instead of failing the join.
+  // second laptop called "mini" joins as "mini_2" instead of failing the join.
   public func claimMachineName(_ id: MachineID, preferred: String) async throws -> MachineRecord {
     let base = try Self.requireMachineName(preferred)
-    return try await writer.write { db in
-      guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
-        throw SpaceError.notFound(id.rawValue)
-      }
-      var candidate = base
-      var ordinal = 1
-      while true {
-        do {
-          try Self.requireMachineNameFree(candidate, for: id, group: GroupID(rawValue: row.grp), in: db)
-          break
-        } catch SpaceError.machineNameTaken {
-          ordinal += 1
-          let suffix = "_\(ordinal)"
-          candidate = String(base.prefix(63 - suffix.count)) + suffix
-        }
-      }
-      return try Self.storeMachineName(candidate, on: row, in: db)
-    }
+    guard let record = try await machine(id) else { throw SpaceError.notFound(id.rawValue) }
+    let name = try await worker.call(SpaceCell.ID("space")) { try $0.claimMachineName(id, preferred: base) }
+    return MachineRecord(id: record.id, account: record.account, name: name, createdAt: record.createdAt, group: record.group, scope: record.scope)
   }
 
   public func machine(_ id: MachineID) async throws -> MachineRecord? {
@@ -210,102 +165,22 @@ extension Space {
   /// Switches who may use a machine: its own group, or every group that can
   /// reach that one.
   public func setMachineScope(_ id: MachineID, scope: ReachScope) async throws -> MachineRecord {
-    try await writer.write { db in
-      guard var row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
-        throw SpaceError.notFound(id.rawValue)
-      }
-      row.scope = scope.rawValue
-      try MachineRow.update(row).execute(db)
-      return Self.machineRecord(from: row)
-    }
+    guard let record = try await machine(id) else { throw SpaceError.notFound(id.rawValue) }
+    _ = try await worker.call(MachineCell.ID(id.rawValue)) { try $0.scope(scope) }
+    return MachineRecord(id: record.id, account: record.account, name: record.name, createdAt: record.createdAt, group: record.group, scope: scope)
   }
 
-  /// Hands the machine to `group`. Its notes live with its current group, so
-  /// they move into `group`'s tree in the same transaction and revision; a
-  /// note already stored there under the same path gives way to the moved one.
   public func moveMachine(_ id: MachineID, to group: GroupID) async throws -> MachineRecord {
     let notes = try SpacePath(validating: "/_/machines/\(id.rawValue)")
-    let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    var tries = 0
-    while true {
-      if let current = worker.cell(MachineCell.ID(id.rawValue)).record()?.group {
-        try await documents.checkpoint(under: notes, in: current)
-      }
-      do {
-        let external = try await writer.read { db -> [String] in
-          guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else { return [] }
-          let hashes = try Substrate.descendantHeads(of: notes, group: GroupID(rawValue: row.grp), in: db)
-            .compactMap { $0.kind == "file" ? $0.blobHash : nil }
-          return try InterimBlob.external(hashes, in: db)
-        }
-        let contents = try await bucket.contents(of: external)
-        return try await writer.write { db in
-          guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
-            throw SpaceError.notFound(id.rawValue)
-          }
-          let from = GroupID(rawValue: row.grp)
-          try DocumentRows.requireCommitted(from, under: notes, in: db)
-          let movedRow = MachineRow(
-            id: row.id, accountID: row.accountID, name: row.name, createdAt: row.createdAt, grp: group.rawValue, scope: row.scope,
-          )
-          try MachineRow.update(movedRow).execute(db)
-          if var member = try MachineV2MemberRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) {
-            member.grp = group.rawValue
-            try MachineV2MemberRow.update(member).execute(db)
-          }
-          let record = Self.machineRecord(from: movedRow)
-          guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return record }
-          let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
-          let sourceRev = try Substrate.mintRevision(mtime: mtime, group: from, in: db)
-          try Substrate.ensureAncestorDirectories(notes, group: group, rev: rev, mtime: mtime, in: db)
-          for node in try Substrate.descendantHeads(of: notes, group: from, in: db).reversed() {
-            let path = try SpacePath(validating: node.path)
-            if let existing = try Substrate.head(path, group: group, in: db) {
-              if existing.kind == "directory", node.kind == "directory" {
-                try LiveFS.tombstone(path: node.path, group: from, rev: sourceRev, op: .delete, in: db)
-                continue
-              }
-              let displaced = existing.kind == "directory" ? try Substrate.descendantHeads(of: path, group: group, in: db) : [existing]
-              for stale in displaced {
-                try LiveFS.remove(stale, group: group, rev: rev, op: .delete, in: db)
-              }
-            }
-            if node.kind == "table" {
-              try Tables.reparent(from: path, in: from, to: path, in: group, rev: rev, sourceRev: sourceRev, in: db)
-            }
-            try LiveFS.tombstone(path: node.path, group: from, rev: sourceRev, op: .delete, in: db)
-            try Substrate.appendVersion(group: group, path: node.path, rev: rev, kind: node.kind, blobHash: node.blobHash, op: .write, in: db)
-            try Substrate.upsertHead(
-              FSHeadRow(
-                grp: group.rawValue, path: node.path, parentPath: path.parent.rawValue, kind: node.kind,
-                blobHash: node.blobHash, size: node.size, lineCount: node.lineCount, etag: node.etag, rev: rev, mtime: mtime,
-              ),
-              in: db,
-            )
-            if node.kind == "file", let hash = node.blobHash {
-              let content = try InterimBlob.inlineBytes(hash, in: db) ?? contents.bytes(of: hash)
-              try Induction.index(path: path, group: group, content: content, in: db)
-            }
-          }
-          try self.documents.removed(under: notes, in: from, rev: sourceRev, on: db)
-          try self.documents.removed(under: notes, in: group, rev: rev, on: db)
-          return record
-        }
-      } catch is DocumentEdited, is BlobContents.Missing {
-        tries += 1
-        if tries == 3 { throw SpaceError.liveBusy(notes.rawValue) }
-      }
-    }
+    guard let record = try await machine(id) else { throw SpaceError.notFound(id.rawValue) }
+    let from = record.group
+    try await documents.checkpoint(under: notes, in: from)
+    try await worker.call(MachineCell.ID(id.rawValue)) { try $0.move(from: from, to: group) }
+    return MachineRecord(id: record.id, account: record.account, name: record.name, createdAt: record.createdAt, group: group, scope: record.scope)
   }
 
   func randomSuffix(_ count: Int) -> String {
     randomAlphanumericSuffix(count, rng: rng)
-  }
-
-  private static func requireMachine(_ id: MachineID, in db: Database) throws {
-    guard try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) != nil else {
-      throw SpaceError.notFound(id.rawValue)
-    }
   }
 
   private static func requireMachineName(_ raw: String) throws -> String {
@@ -313,25 +188,11 @@ extension Space {
     return normalized
   }
 
-  static func requireMachineNameFree(_ name: String, for id: MachineID, group: GroupID, in db: Database) throws {
-    do { try Aliases.claimMachine(name, target: id.rawValue, group: group, in: db) }
-    catch AliasError.taken { throw SpaceError.machineNameTaken(name) }
-  }
-
-  private static func storeMachineName(_ name: String, on row: MachineRow, in db: Database) throws -> MachineRecord {
-    let renamed = MachineRow(
-      id: row.id, accountID: row.accountID, name: name, createdAt: row.createdAt, grp: row.grp, scope: row.scope,
-    )
-    try MachineRow.update(renamed).execute(db)
-    try db.execute(sql: "UPDATE accounts SET name = ? WHERE id = ?", arguments: [name, row.accountID])
-    return machineRecord(from: renamed)
-  }
-
-  static func machineRecord(from row: MachineRow) -> MachineRecord {
+  static func machineRecord(from row: MachineRow, name: String?) -> MachineRecord {
     MachineRecord(
       id: MachineID(rawValue: row.id),
       account: AccountID(rawValue: row.accountID),
-      name: row.name,
+      name: name,
       createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
       group: GroupID(rawValue: row.grp),
       scope: ReachScope(rawValue: row.scope) ?? .owner,

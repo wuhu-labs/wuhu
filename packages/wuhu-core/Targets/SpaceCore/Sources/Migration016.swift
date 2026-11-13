@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration016 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE usage_window_resets (
       provider TEXT NOT NULL,

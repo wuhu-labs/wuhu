@@ -26,7 +26,7 @@ public struct SpaceIdentity: Hashable, Sendable {
 enum SpaceMeta {
   static let memorySchema: Result<DatabaseQueue, any Error> = Result {
     let queue = try DatabaseQueue()
-    try Migrations.apply(to: queue, log: Logger(label: "wuhu.migration") { _ in SwiftLogNoOpLogHandler() }, date: .constant(Date(timeIntervalSince1970: 0)))
+    try migrate(queue, log: Logger(label: "wuhu.migration") { _ in SwiftLogNoOpLogHandler() }, date: .constant(Date(timeIntervalSince1970: 0)))
     return queue
   }
 
@@ -38,21 +38,20 @@ enum SpaceMeta {
         throw SpaceIdentityError.mismatch(expected: identity.rawValue, actual: actual)
       }
     }
-    try Migrations.apply(to: queue, log: log, date: date)
+    try migrate(queue, log: log, date: date)
     try queue.write { db in
       try seedIfAbsent(in: db, identity: identity)
     }
   }
 
-  static func hasCompaction(_ name: String, in db: Database) throws -> Bool {
-    try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM schema_compactions WHERE name = ?)", arguments: [name]) ?? false
-  }
-
-  static func recordCompaction(_ name: String, in db: Database) throws {
-    try db.execute(
-      sql: "INSERT OR IGNORE INTO schema_compactions (name, applied_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-      arguments: [name],
-    )
+  /// Migrations run on the writer's own connection, in no surrounding transaction: each migration is one.
+  private static func migrate(_ queue: any DatabaseWriter, log: Logger, date: DateGenerator) throws {
+    try queue.barrierWriteWithoutTransaction { db in
+      guard let sqliteConnection = db.sqliteConnection else { preconditionFailure("a GRDB connection always has a SQLite handle") }
+      try Migrations.apply(handle: sqliteConnection, log: log, date: date)
+      // The bodies changed the schema through the raw handle, of which GRDB's own statement cache knows nothing.
+      db.clearSchemaCache()
+    }
   }
 
   // Default ids use system entropy, never the injected RNG stream that belongs
@@ -119,7 +118,7 @@ extension SpaceCell {
       $0.origin = $1.origin
       $0.tlsFingerprint = $1.tlsFingerprint
     })
-    try db.execute(DeploymentCertificateRow.delete())
+    try db.execute(DeploymentCertificateRow.where { _ in true }.delete())
     guard let certificate = record.certificate else { return }
     try db.execute(DeploymentCertificateRow.insert {
       DeploymentCertificateRow(id: 1, tlsFingerprint: record.tlsFingerprint, generated: certificate == .generated)

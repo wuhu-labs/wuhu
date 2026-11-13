@@ -16,7 +16,7 @@ import Testing
 @Suite(.deterministicDependencies) struct MachineAdminTests {
   @Test func machineListAndStatusReportV2Presence() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (id, _) = try await addMachine(server)
 
     let before = try await server.http(.get, "/v1/machine").json([MachineStatus].self)
@@ -59,7 +59,7 @@ import Testing
 
   @Test func aMachineReportsTheDeviceLinkedToIt() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (id, _) = try await addMachine(server)
     #expect(try await server.http(.get, "/v1/machine/box/status").json(MachineStatus.self).device == nil)
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
@@ -73,7 +73,7 @@ import Testing
 
   @Test func machineNamesNormalizeAndResolveAcrossRenames() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let id = try await enroll(server, name: "Mini")
     #expect(try await space.machine(id)?.name == "mini")
 
@@ -98,7 +98,7 @@ import Testing
 
   @Test func adminRevokesAV2EnrolledMachineByNameOrID() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (id, key) = try await addMachine(server)
     #expect(try await space.machine(pubkey: key.pubkeyLabel) == id)
 
@@ -112,9 +112,9 @@ import Testing
 
   @Test func nonDevGateRejectsUnauthenticatedMachineAdministration() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
+    let server = try await TestServer(space: space, clock: ContinuousClock())
     let (id, key) = try await addMachine(server)
-    let walled = TestServer(space: space, clock: ContinuousClock(), dev: false)
+    let walled = try await TestServer(space: space, clock: ContinuousClock(), dev: false)
 
     #expect(try await walled.http(.get, "/v1/machine").status == .unauthorized)
     #expect(try await walled.http(.get, "/v1/machine/\(id.rawValue)/status").status == .unauthorized)

@@ -16,7 +16,7 @@ wuhu use localhost:5599
 ```
 
 Creates `./.wuhu/config.json` in the **current directory**, never in an
-ancestor's `.wuhu`; other verbs find the wallet by walking up. After pinning, bare paths like `/notes/plan.md` go to that space.
+ancestor's `.wuhu`; other verbs find the wallet by walking up. It prints `pinned … as <persona>` when the server names you: by your enrolled key, or with no key when the server seats unsigned requests as a person (`--dev`). After pinning, bare paths like `/notes/plan.md` go to that space.
 `~/.wuhu` is never a wallet; there is no home fallback. Any verb also accepts
 full addresses without a pin: a file's share link `https://host:port/path`, or its
 `wuhu://host:port/path` twin. `path@rev` reads a
@@ -46,7 +46,7 @@ without groups fails.
 
 An exec a session runs (its `exec` tool, or a `run_script` spawn) carries `WUHU_EXEC=1`, `WUHU_TOKEN` and `WUHU_SPACE_URL`, set by the server. There `wuhu` acts as **that session on that space**: no wallet, no pin, no device key is read, so a cwd pinned to another space does not matter. It keeps the session's rules — its own home only under `/_/sessions/` (for `write`, `edit`, `rm`, `mv`, `put`, `checkout`, `table`, and `new`, whose instance lands in its `in` folder or next to the template), `session archive|interrupt|resume|unarchive|tags` on itself and its descendants (`archive` and `unarchive` also on a session it created and, for a top-level agent, on any session of its group), `session create` makes a child task (`--kind agent` a child agent, `--top-level` a top-level agent, agents only), `session request <child> <message> [--stall S]` opens a request, `send` DMs as the session (no `--wait`, no `--attach`), `exec`/`ps`/`kill` see only its own execs. Other verbs refused locally by the CLI fail with `not available to a session; set WUHU_IDENTITY=wallet to act as the wallet's owner`; a missing or rejected token is an error, never a quiet fallback to the wallet. You act in your session's group: `--group` and `WUHU_GROUP` are refused unless you opt into the wallet.
 
-Set `WUHU_IDENTITY=wallet` in exec's `env` to use the wallet found from cwd up, as its owner on its pinned space, ignoring the session token and URL. Use it for another space, or for verbs only the wallet's owner has when that person asked for it. The CLI prints `acting as <persona> (wallet)` on stderr (`anonymous` for a request without wallet credentials, `the local user` for local-only commands). Wallet mode honors the normal group selection: `--group` beats `WUHU_GROUP`, which beats the wallet's configured group. The announcement uses the command's actual target, not an old pin; repinning to a new space does not look up the old space's persona. Wallet or identity errors fail, never fall back to the session.
+Set `WUHU_IDENTITY=wallet` in exec's `env` to use the wallet found from cwd up, as its owner on its pinned space, ignoring the session token and URL. Use it for another space, or for verbs only the wallet's owner has when that person asked for it. The CLI prints `acting as <persona> (wallet)` on stderr (without wallet credentials, the persona of whoever the server seats unsigned requests as, such as a `--dev` server's owner, else `anonymous`; `the local user` for local-only commands). Wallet mode honors the normal group selection: `--group` beats `WUHU_GROUP`, which beats the wallet's configured group. The announcement uses the command's actual target, not an old pin; repinning to a new space does not look up the old space's persona. Wallet or identity errors fail, never fall back to the session.
 
 `wuhu id-token --audience <origin> [--json]` prints a 60-second OIDC token for this exec (claims `space`, `group`, `session`, `machine`, `exec`; `sub` is `<group>/<session>`) for a service that trusts this space's issuer, such as the build pool. It presents the exec's signed `WUHU_TOKEN` at `<WUHU_SPACE_URL>/v1/id-token`, for an external HTTP(S) audience, and fails outside a session's exec.
 
@@ -258,7 +258,7 @@ wuhu machine-v2 run <id>             # foreground instead of the service
 wuhu machine list                   # <name|-> <id> <attached|detached>
 wuhu machine name <machine> <name>  # rename; the mc_ id never moves
 wuhu machine rotate|revoke <machine>
-wuhu machine delete <machine>       # human group admin: remove identity, credentials, v2 state and notes; free names
+wuhu machine delete <machine>       # human group admin: remove identity, credentials, v2 state and notes; the only way to free its names
 wuhu machine move <machine> --group <group>   # needs an admin of both groups
 wuhu exec --cwd machines://<machine>/tmp [--secret ENV=NAME] [--timeout S] [--max-output N] -- ls -la
 wuhu ps
@@ -269,7 +269,7 @@ wuhu secret list|remove [NAME]
 
 A machine belongs to one group: `machine-v2 add --name N` puts it in your acting group without an explicit group flag; `machine-v2 add --name N --group G` (or global `--group G machine-v2 add --name N`) sets only the registration target, needs an admin of G but not membership (`403 adminRequired`, `404 unknownGroup`), and verifies the server echoed G (otherwise fails with an upgrade/move hint). Environment and folder groups do not set the target. Only sessions and people acting in a group that reads the machine's group see or use it. `machine move` hands it to another group (`--group shared` makes it usable from every group that reads shared). Secrets are per group too: `wuhu secret …` works on the acting group's. To name another, `--group` is the global flag, before the verb: `wuhu --group <g> secret …` (`wuhu secret set N --group <g>` is a usage error). A session's exec acts in its session's group unless `WUHU_IDENTITY=wallet` opts into the wallet, which selects the group the same way. Setting needs an admin of the group, removing a human admin. `exec --secret ENV=NAME` takes NAME from the group the machine belongs to, not the one you act in: the value rides the exec start, the machine masks it as `***`, and a name that group lacks fails before anything runs (`wuhu: no secret NAME in group G`, exit 127). Machines keep no secrets of their own.
 
-`<machine>` is the machine's name or its `mc_` id for shared record/admin verbs and machine paths, `exec --cwd` included. Choose the name at registration with `machine-v2 add --name N`; rename with `machine name`. Enrollment and service state live under `~/.wuhu/machine-v2/<id>/`. Legacy `machine add`, `machine join` and `machine run` are removed; register and enroll with `machine-v2`, not a fallback transport.
+`<machine>` is the machine's name or its `mc_` id for shared record/admin verbs and machine paths, `exec --cwd` included. Choose the name at registration with `machine-v2 add --name N`; rename with `machine name`. A revoked machine keeps every name it ever had, so a fresh registration under the same name (a wiped box whose old registration cannot be re-keyed) needs `machine delete <name>` first — `machine-v2 add` then answers `machineNameTaken` with that hint, and `machine rotate` is the path that keeps the id, name and notes. Enrollment and service state live under `~/.wuhu/machine-v2/<id>/`. Legacy `machine add`, `machine join` and `machine run` are removed; register and enroll with `machine-v2`, not a fallback transport.
 
 `exec` runs argv directly (no shell) and is pipe-clean: command stdout/stderr
 map byte-exactly to local stdout/stderr, diagnostics go to stderr. Exit codes
@@ -347,15 +347,7 @@ wuhu inbox
 - `models` discovers concrete providers/models from `wuhu://settings.localspace/models.json` and groups from `wuhu://settings.localspace/model-groups.json`. `--json` returns `{providers, groups}` keyed by catalog IDs. A missing group file means no groups; malformed catalogs and provider/group ID collisions are errors. `models update` writes only provider defaults, never the group file. A seed provider colliding with a declared group ID fails before either file is changed.
 - `session list` queries `sessions` with a left join to scoped `session_model_routes`, including requested_model_group from the route’s group_id, active_provider, active_model and model_route_phase. Stored executor_config is always concrete provider/model/effort; group intent lives in the additive route row. Concrete sessions without a route keep their provider/model from executor_config. `session inspect <id>` prints structured JSON with requestedTarget, active provider/model and route placement reason/evidence and recorded decisions. Query or observe the same scoped projections for dashboards.
 - `archive` takes the entire descendant subtree, leaves first and root last. Without `--force`, it checks every node and refuses without archiving anything if one is busy, listing every busy id and title. `--force` first interrupts busy nodes, then archives them all and closes open requests with a final-kind “archived before reporting” message to each requester. Separately created top-level agents stay live. `unarchive` restores only one session and works only inside the ~24 h grace window.
-- `inbox` prints notifications above this wallet's cursor, then advances the
-  cursor — a second call prints nothing until something new arrives. One
-  inbox and one cursor span all your groups, so switching `--group` replays
-  nothing; each line names its group (`[12] group ops · message from …`), and
-  a sender from outside the conversation's group shows theirs. Sender
-  identity is the account's persona, which the server derives from the
-  enrolled key on every request (unenrolled seats act as the owner): after
-  `key revoke` the key is refused, and a re-enrolled key acts as its new
-  account.
+- `inbox` prints notifications above this wallet's cursor, then advances the cursor — a second call prints nothing until something new arrives. One inbox and one cursor span all your groups, so switching `--group` replays nothing; each line names its group (`[12] group ops · message from …`), and a sender from outside the conversation's group shows theirs. Sender identity is the account's persona, which the server derives from the enrolled key on every request; unsigned requests to a `--dev` server use its ordinary owner account. After `key revoke` the key is refused, and a re-enrolled key acts as its new account.
 
 ## Skills
 

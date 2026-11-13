@@ -49,9 +49,9 @@ extension SessionCell {
     } else if case let .stream(url, throttle) = slot.kind {
       ctx.create(streamJob(slot.id), params: .init(dialer: .session(id.session), session: id.session, subscription: slot.id, url: url, throttle: throttle, owner: id.recipient.retyped()))
     } else {
-      try rows.arm(id.session, arming, uuid: client.uuid)
+      try arm(id.session, arming, uuid: client.uuid)
       if case .observe = slot.kind {
-        let watched = try rows.observation(id.session, slot.id)!
+        let watched = try observation(id.session, slot.id)!
         ctx.send(.watch(watched.watch(recipient: id.recipient.retyped())), to: ObservationMail.recipient)
       }
     }
@@ -71,11 +71,11 @@ extension SessionCell {
     let payload: ToolResultPayload
     switch (try armed.decoded(), armed.handler) {
     case (.timer, false):
-      try rows.clear(id.session, topic: subscription.rawValue)
+      try clear(id.session, topic: subscription.rawValue)
       payload = .cancelTimer(.init(subscriptionID: subscription))
     case (.observe, false):
-      if let watched = try rows.observation(id.session, subscription) { ctx.send(.unwatch(watched.observationSlot), to: ObservationMail.recipient) }
-      try rows.retire(id.session, subscription)
+      if let watched = try observation(id.session, subscription) { ctx.send(.unwatch(watched.observationSlot), to: ObservationMail.recipient) }
+      try retire(id.session, subscription)
       payload = .cancelObservation(.init(subscriptionID: subscription))
     case (.stream, false):
       unstream(subscription)
@@ -115,9 +115,8 @@ extension SessionCell {
     try db.rows(Armed.all).contains { try $0.wakesModel }
   }
 
-  /// Lists what the stores hold and the cell has not listed, for a session from before the cell kept the rows.
   mutating func fillArmed() throws {
-    let held = try rows.armedSlots(id.session)
+    let held = try armedSlots(id.session)
     let listed = Set(db.rows(Armed.all).map(\.id))
     for (slot, subscription) in held.slots where !listed.contains(slot) {
       let armed = try Armed(slot, subscription, handler: held.handlers.contains(slot))

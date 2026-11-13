@@ -191,7 +191,7 @@ private final class ExecStartCommits: TransactionObserver, Sendable {
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
       let session = try await old.sessions.createSession(group: .shared, title: "exec", kind: .agent, createdBy: "owner", model: .test)
-      let machine = try await old.addMachine(name: "rollbox")
+      let machine = try await old.addMachineV2(name: "rollbox").machine
       let commits = ExecStartCommits(machine: machine.id.rawValue)
       let second = SessionExecution(space: new, loopConfig: config)
       first.start()
@@ -273,7 +273,7 @@ extension MachineExecRolloverTests {
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
       let session = try await old.sessions.createSession(group: .shared, title: "deadline", kind: .agent, createdBy: "owner", model: .test)
-      let machine = try await old.addMachine(name: "deadlinebox")
+      let machine = try await old.addMachineV2(name: "deadlinebox").machine
       let second = SessionExecution(space: new, loopConfig: config)
       first.start()
       let requests = Box<[BoxSocket.Outgoing]>([])
@@ -356,7 +356,7 @@ extension MachineExecRolloverTests {
       let script = InferenceScript([Fix.replying("running", calls: [call]), Fix.replying("noted"), Fix.replying("ended")])
       let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
       let session = try await space.sessions.createSession(group: .shared, title: "exec", kind: .agent, createdBy: "owner", model: .test)
-      let machine = try await space.addMachine(name: "jobbox")
+      let machine = try await space.addMachineV2(name: "jobbox").machine
       service.start()
       let requests = Box<[BoxSocket.Outgoing]>([])
       let peer = try await attach(space, machine: machine.id.rawValue, requests: requests)
@@ -421,7 +421,7 @@ extension MachineExecRolloverTests {
       let session = try await old.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       await seeding.shutdown()
       old.worker.start()
-      let machine = try await old.addMachine(name: "scriptbox")
+      let machine = try await old.addMachineV2(name: "scriptbox").machine
       let cell = MachineCell.ID(machine.id.rawValue)
       let requests = Box<[BoxSocket.Outgoing]>([])
       let peer = try await attach(old, machine: machine.id.rawValue, requests: requests)

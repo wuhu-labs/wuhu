@@ -61,7 +61,7 @@ import Testing
       #expect(second.reason == .startOver)
       #expect(second.epoch != first.epoch)
       #expect(restarted.generation == 1)
-      let rows = try await harness.space.query("SELECT member_id, provider FROM session_model_routes", as: .shared(.anonymous))
+      let rows = try await harness.space.query("SELECT member_id, provider FROM session_model_routes", as: .shared(.publicReader))
       #expect(rows.rows.count == 1)
     }
   }
@@ -112,7 +112,7 @@ import Testing
       #expect(response.status.code == 422)
       let body = try await response.text()
       #expect(body.contains("member b"))
-      #expect(try await harness.space.query("SELECT id FROM sessions", as: .shared(.anonymous)).rows.isEmpty)
+      #expect(try await harness.space.query("SELECT id FROM sessions", as: .shared(.publicReader)).rows.isEmpty)
     }
   }
 

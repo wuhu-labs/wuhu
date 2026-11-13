@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct Migration031Tests {
   @Test func theJournalForgetsAttachmentsAndKeepsTheirRowsAndRevisions() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-031-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/migration-031-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let original = try Space(writer: database)
     try await database.write { db in
       try db.execute(sql: """
@@ -25,7 +25,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '031';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path))
+    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
     let left = try await database.read { db in
       try ["fs_heads", "fs_versions", "docs", "attachments"].map { try String.fetchAll(db, sql: "SELECT path FROM \($0) WHERE path LIKE '/_/conv%' OR path LIKE '/notes/%' ORDER BY path") }
         + [try String.fetchAll(db, sql: "SELECT CAST(rev AS TEXT) FROM revisions WHERE rev > 900 ORDER BY rev")]

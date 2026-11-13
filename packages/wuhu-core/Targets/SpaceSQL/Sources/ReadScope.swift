@@ -8,7 +8,7 @@ public struct ReadScope: Hashable, Sendable {
   public let viewer: String?
   /// Who reads, as conversations name members: a session id or a persona.
   /// It adds the conversations it is in and the notifications addressed to
-  /// it, and narrows `watermarks` to its own; nil (the --dev seat) adds and
+  /// it, and narrows `watermarks` to its own; nil adds and
   /// narrows nothing.
   public let member: String?
 

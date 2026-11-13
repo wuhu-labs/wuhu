@@ -9,7 +9,7 @@ import Testing
 @Suite(.deterministicDependencies) struct UserRoutesTests {
   @Test func settingAHandleRefusesJunkAndCollisions() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness()
+      let harness = try await SessionHarness(dev: false)
       let (bearer, key) = try await harness.enrolledBearer()
       _ = try await harness.space.adoptPersona(key: key)
 
@@ -31,7 +31,7 @@ import Testing
 
   @Test func theDirectoryListsEveryPersonaAndEveryProfiledPrincipal() async throws {
     try await withSessionDeps {
-      let harness = try await SessionHarness()
+      let harness = try await SessionHarness(dev: false)
       let (bearer, key) = try await harness.enrolledBearer()
       let person = try await harness.space.adoptPersona(key: key).name
       let alice = try await harness.adoptPersona()
@@ -40,7 +40,7 @@ import Testing
       _ = try await harness.put("/v1/user/me/profile", .object(["handle": "owner"]), bearer: bearer)
 
       let users = try JSONValueDecoder().decode(
-        UsersOutput.self, from: try await json(try await harness.get("/v1/users")),
+        UsersOutput.self, from: try await json(try await harness.get("/v1/users", bearer: bearer)),
       ).users
       #expect(users.count == 3)
       #expect(users.first { $0.id == alice }?.handle == "alice")
@@ -53,7 +53,7 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await harness.createSession()
-      let alice = try await harness.adoptPersona()
+      let alice = try await harness.space.ensureDevPerson().persona
       _ = try await harness.space.setUserProfile(principal: alice, handle: "alice", displayName: nil)
 
       _ = try await harness.call(
@@ -86,7 +86,7 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await harness.createSession()
-      let alice = try await harness.adoptPersona()
+      let alice = try await harness.space.ensureDevPerson().persona
       _ = try await harness.space.setUserProfile(principal: alice, handle: "alice", displayName: nil)
       _ = try await harness.call(
         "/v1/conversation/message",

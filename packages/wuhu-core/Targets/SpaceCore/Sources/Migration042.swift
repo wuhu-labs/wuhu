@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration042 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     DELETE FROM session_model_routes
     WHERE group_id IS NULL AND EXISTS (

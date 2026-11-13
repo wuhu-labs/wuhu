@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration014 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE wmd_snapshots (
       grp TEXT NOT NULL,

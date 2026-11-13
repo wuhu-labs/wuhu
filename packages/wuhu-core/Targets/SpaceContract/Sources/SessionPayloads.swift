@@ -1,9 +1,6 @@
 import Contract
 import JSONValue
 
-// The wire meaning of an absent identity field: the space owner principal.
-public let ownerIdentity: String = "owner"
-
 // Every provider runs in the kernel. kind may come from the
 // template; without either a human's request is refused. From a session's
 // exec it creates that session's child the way create_session does: kind

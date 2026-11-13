@@ -47,12 +47,6 @@ enum Notifications {
     var text: String
   }
 
-  struct ErroredPayload: Codable {
-    var sessionID: String
-    var error: String
-    var message: String?
-  }
-
   static func conversationPayload(
     messageID: MessageID,
     conversation: ConversationID,
@@ -68,10 +62,6 @@ enum Notifications {
       text: text,
     ))
   }
-
-  // The distinguished owner principal (SpaceContract's ownerIdentity on the
-  // wire).
-  static let ownerRecipient = "owner"
 }
 
 extension SessionStore {

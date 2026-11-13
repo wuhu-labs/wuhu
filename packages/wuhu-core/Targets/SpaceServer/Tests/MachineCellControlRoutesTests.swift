@@ -1,3 +1,4 @@
+import Assertion
 import Crypto
 import Dependencies
 import DeterministicDependencies
@@ -22,28 +23,24 @@ import Wuwei
 
 @Suite(.deterministicDependencies) struct MachineCellControlRoutesTests {
   @Test(arguments: ["revoke", "rotate", "selfRevoke"])
-  func credentialResetOnAnotherWorkerClosesTheOwningBox(action: String) async throws {
-    let folder = try ScratchFolder("machine-cross-worker-revoke")
-    defer { folder.remove() }
-    let file = folder.url.appendingPathComponent("space.sqlite")
-    let owner = try Space.open(file: file)
+  func credentialResetClosesTheOwningBox(action: String) async throws {
+    let space = try Space.inMemory()
     let key = Curve25519.Signing.PrivateKey()
-    let enrolled = try await owner.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel)
+    let enrolled = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel)
     let machine = enrolled.machine.id
     let id = MachineCell.ID(machine.rawValue)
-    let opened = Gate(), closed = Gate()
+    let closed = Gate()
     let closes = Mutex(0)
-    let socket = try #require(owner.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: key.pubkeyLabel, streams: 32)) {
+    let socket = try #require(space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: key.pubkeyLabel, streams: 32)) {
       switch $0 {
-      case .frame: opened.open()
+      case .frame: break
       case .closed: closes.withLock { $0 += 1 }; closed.open()
       }
     })
     defer { socket.close() }
-    await opened.wait()
-    let other = try Space.open(file: file)
-    let hub = MachineHub(space: other)
-    let handler = SpaceServer.configuredHandler(space: other, hub: hub, dev: true, listenerRoutes: machineListenerRoutes(space: other, hub: hub))
+    let hub = MachineHub(space: space)
+    let devPerson = try await space.ensureDevPerson()
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     let request: Request
     if action == "selfRevoke" {
       request = try await MachineV2TunnelTests().signed(handler, "/v1/machine-v2/\(machine.rawValue)/revoke", key: key, machine: machine)
@@ -52,95 +49,15 @@ import Wuwei
     }
     guard case let .response(response) = try await handler(request) else { Issue.record("control must be HTTP"); return }
     #expect(response.status == .ok)
-    #expect(try await other.machine(pubkey: key.pubkeyLabel) == nil)
-    #expect(owner.worker.hasMail(for: id.recipient))
-    owner.worker.start()
-    try await until("the owning worker closes the revoked box", timeout: .seconds(4)) { closed.isOpen }
+    #expect(try await space.machine(pubkey: key.pubkeyLabel) == nil)
+    space.worker.start()
+    try await until("the revoked box closes", timeout: .seconds(4)) { closed.isOpen }
     do {
-      try await MachineHub(space: owner).authorize(.init(pubkey: key.pubkeyLabel, machines: [machine.rawValue]))
+      try await MachineHub(space: space).authorize(.init(pubkey: key.pubkeyLabel, machines: [machine.rawValue]))
       Issue.record("redial with the purged key was authorized")
     } catch let error as OperationError { #expect(error.code == .machineNotAuthorized) }
-    other.worker.start()
-    await owner.worker.quiesce()
-    owner.worker.release()
-    await other.worker.quiesce()
-    #expect(!other.worker.hasMail(for: id.recipient))
+    try await until("the close mail is consumed", timeout: .seconds(4)) { !space.worker.hasMail(for: id.recipient) }
     #expect(closes.withLock { $0 } == 1)
-    try await other.close()
-    try await owner.close()
-  }
-
-  @Test(arguments: [false, true])
-  func capturedConnectionRejectsStartWithRevocationMailStillPending(file: Bool) async throws {
-    let folder = try ScratchFolder("machine-captured-connection")
-    defer { folder.remove() }
-    let database = folder.url.appendingPathComponent("space.sqlite")
-    let space = try Space.open(file: database)
-    let key = Curve25519.Signing.PrivateKey()
-    let machine = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).machine
-    let id = MachineCell.ID(machine.id.rawValue)
-    let hub = MachineHub(space: space)
-    let starts = Mutex(0)
-    let link = try #require(await hub.boxLink(.init(pubkey: key.pubkeyLabel, machines: [machine.id.rawValue]), streams: 32))
-    let other = try Space.open(file: database)
-    let ended = Gate()
-    let instance = UUID()
-    let client = FetchClient { request in
-      var response: Response
-      if request.method == .get, !request.url.path.contains("/operations/") {
-        response = try Response.json(MachineDescription(instance: instance, acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec, ComputerKindSchemas.stat]))
-      } else {
-        starts.withLock { $0 += 1 }
-        response = try Response.json(ErrorEnvelope(.init(.unknownOperation)), status: .notFound)
-      }
-      response.headers[.init("X-Wuhu-Request-ID")!] = request.headers["X-Wuhu-Request-ID"]
-      response.headers[.init("X-Wuhu-Correlation-ID")!] = request.headers["X-Wuhu-Correlation-ID"]
-      response.headers[.init("X-Wuhu-Agent-Instance")!] = instance.uuidString
-      return response
-    }
-    try await withThrowingTaskGroup(of: Void.self) { tasks in
-      tasks.addTask { await link.run(client: client); ended.open() }
-      defer { link.close(); tasks.cancelAll() }
-      try await until("the captured connection commits its description", timeout: .seconds(4)) {
-        try await space.machineDescription(machine.id) != nil
-      }
-      let captured = try #require(space.worker.cell(id).box?.id)
-      // The cold writer posts real mail; the owner has no scan running to deliver it.
-      _ = try await other.resetCredentials(account: machine.account)
-      #expect(try await space.machine(pubkey: key.pubkeyLabel) == nil)
-      #expect(space.worker.hasMail(for: id.recipient))
-      #expect(space.worker.cell(id).box?.id == captured)
-      if file {
-        let client = MachineFileClient(space: space, machine: machine.id, caller: nil)
-        do {
-          _ = try await client.call(.init(kind: "stat.v1", input: ["path": "/must-not-start"]))
-          Issue.record("File START used the captured purged key")
-        } catch let error as OperationError {
-          #expect(error.code == .machineNotAuthorized)
-        }
-      } else {
-        let record = try await space.reserveExec(machine: machine.id)
-        var exec = try #require(try await space.execRequest(record.id))
-        exec.argv = ["must-not-start"]
-        let exits = AsyncStream<ExecFinished>.makeStream()
-        let stream = try #require(space.worker.attach(ExecStream.self, to: id, opening: .init(exec: exec, nonce: UUID())) {
-          if case let .frame(.exit(exit)) = $0 { exits.continuation.yield(exit) }
-        })
-        defer { stream.close(); exits.continuation.finish() }
-        var iterator = exits.stream.makeAsyncIterator()
-        let exit = try #require(await iterator.next())
-        #expect(exit.error?.code == .machineNotAuthorized)
-      }
-      #expect(starts.withLock { $0 } == 0)
-      #expect(space.worker.cell(id).box?.id == captured)
-      #expect(space.worker.hasMail(for: id.recipient))
-      #expect(!ended.isOpen)
-      space.worker.poke(id.recipient)
-      await ended.wait()
-      #expect(space.worker.cell(id).box == nil)
-      #expect(!space.worker.hasMail(for: id.recipient))
-    }
-    try await other.close()
     try await space.close()
   }
 
@@ -163,7 +80,7 @@ import Wuwei
       defer { box.close(); incoming.continuation.finish(); tasks.cancelAll() }
       await receiving.wait()
       do {
-        let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true)
+        let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: try await space.ensureDevPerson())
         let request = Request(url: URL(string: "https://space.test/v1/machine/\(machine.id.rawValue)/revoke")!, method: .post)
         guard case let .response(response) = try await handler(request) else { Issue.record("Revoke must be HTTP"); return }
         #expect(response.status == .ok)
@@ -181,6 +98,7 @@ import Wuwei
     let key = Curve25519.Signing.PrivateKey()
     let machine = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).machine
     let id = MachineCell.ID(machine.id.rawValue)
+    await space.stopWorker()
     let writer = await space.writer
     let database = try WuweiDatabase(writer: writer)
     let scheduler = HeldBoxAttachmentScheduler()
@@ -212,7 +130,7 @@ import Wuwei
       tasks.addTask { await hub.run(credential, transport: transport, boxLink: box); ended.open() }
       defer { scheduler.releaseHeldTasks(); box.close(); incoming.continuation.finish(); tasks.cancelAll() }
       await receiving.wait()
-      let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true)
+      let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: try await space.ensureDevPerson())
       let request = Request(url: URL(string: "https://space.test/v1/machine/\(machine.id.rawValue)/revoke")!, method: .post)
       guard case let .response(response) = try await handler(request) else { Issue.record("Revoke must be HTTP"); return }
       #expect(response.status == .ok)
@@ -243,7 +161,7 @@ import Wuwei
     await worker.quiesce()
     worker.release()
     await scheduler.drain()
-    try database.close()
+    database.close()
     try await space.close()
   }
 
@@ -254,37 +172,23 @@ import Wuwei
     let owner = try Space.open(file: file)
     let machine = try await owner.addMachineV2(name: "box").machine.id
     let exec = try await owner.reserveExec(machine: machine)
+    let account = try await owner.addAccount(kind: .human, name: "operator", admin: true)
+    let key = Curve25519.Signing.PrivateKey()
+    let credential = try await owner.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    _ = try await owner.adoptPersona(key: credential)
+    let identity = try await owner.identity().rawValue
+    let assertion = try AssertionClaims(key: key.pubkeyLabel, space: identity, expiresAt: Date().addingTimeInterval(3600)).signed(by: key)
     let other = try Space.open(file: file)
-    let server = TestServer(space: other, clock: ContinuousClock())
-    let response = try await server.http(.post, "/v1/exec/\(exec.id.rawValue)/kill")
+    let server = try await TestServer(space: other, clock: ContinuousClock(), dev: false)
+    var request = Request(url: URL(string: "http://space/v1/exec/\(exec.id.rawValue)/kill")!, method: .post)
+    request.headers[.authorization] = "Bearer " + assertion.rawValue
+    let response = try await server.api(request)
     #expect(response.status == .ok)
     owner.worker.start()
     try await until("the owning worker applies stop mail", timeout: .seconds(4)) {
       try await owner.execRecord(exec.id)?.terminal != nil
     }
     #expect(try await owner.execRecord(exec.id)?.terminal == .cancelled)
-    try await other.close()
-    try await owner.close()
-  }
-
-  @Test func deleteOnNonhostingWorkerCommitsAndDeliversToTheOwner() async throws {
-    let folder = try ScratchFolder("machine-cross-worker-delete")
-    defer { folder.remove() }
-    let file = folder.url.appendingPathComponent("space.sqlite")
-    let owner = try Space.open(file: file)
-    let machine = try await owner.addMachineV2(name: "box").machine.id
-    _ = try await owner.reserveExec(machine: machine)
-    let other = try Space.open(file: file)
-    let server = TestServer(space: other, clock: ContinuousClock())
-    let response = try await server.http(.delete, "/v1/machine/\(machine.rawValue)")
-    #expect(response.status == .ok)
-    #expect(try await owner.machine(machine) == nil)
-    #expect(owner.worker.hasMail(for: MachineCell.ID(machine.rawValue).recipient))
-    owner.worker.start()
-    try await until("the owning worker delivers deletion", timeout: .seconds(4)) {
-      owner.worker.cell(MachineCell.ID(machine.rawValue)).presence.state == "deleted"
-    }
-    #expect(!owner.worker.hasMail(for: MachineCell.ID(machine.rawValue).recipient))
     try await other.close()
     try await owner.close()
   }

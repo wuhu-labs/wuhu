@@ -35,8 +35,8 @@ extension ConversationCell {
   /// The groups the poster reads: its account's entries and its acting group's reach.
   func readable(by poster: Poster) -> Set<GroupID> {
     switch poster.actor {
-    case .anonymous:
-      return space.reach(of: poster.group)
+    case .publicReader:
+      return []
     case let actor?:
       return space.readable(by: Principal(actor: actor, group: poster.group))
     case nil:
@@ -48,8 +48,8 @@ extension ConversationCell {
   func isAdmin(_ poster: Poster, of group: GroupID) -> Bool {
     let cell: GroupCell = ctx.cell(GroupCell.ID(group.rawValue))
     switch poster.actor {
-    case .anonymous:
-      return true
+    case .publicReader:
+      return false
     case let actor?:
       return cell.role(of: actor, acting: poster.group) == .admin
     case nil:

@@ -1,18 +1,13 @@
-import enum Assertion.VerifyingKey
 import Crypto
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import GRDB
 import struct SpaceContract.GroupID
-import StructuredQueries
-import StructuredQueriesSQLite
 
 extension Space {
   public func addAccount(kind: AccountKind, name: String?, admin: Bool = false, guest: Bool = false) async throws -> AccountRecord {
-    if let name, name.lowercased() == Notifications.ownerRecipient { throw SpaceError.reservedAccountName(name) }
     if (admin || guest), kind != .human { throw SpaceError.notAPerson(name ?? kind.rawValue) }
     if admin, guest { throw SpaceError.notAPerson(name ?? kind.rawValue) }
     let id = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
@@ -78,80 +73,6 @@ extension Space {
 
   public func resetCredentials(account: AccountID) async throws -> (keys: Int, readSessions: Int) {
     return try await worker.call(PersonCell.ID(account.rawValue)) { try $0.resetCredentials() }
-  }
-
-  static func purgeCredentials(account: AccountID, in db: Database) throws -> (keys: Int, readSessions: Int) {
-    try db.execute(sql: "DELETE FROM account_keys WHERE account_id = ?", arguments: [account.rawValue])
-    let keys = db.changesCount
-    try db.execute(sql: "DELETE FROM read_sessions WHERE account_id = ?", arguments: [account.rawValue])
-    let readSessions = db.changesCount
-    try db.execute(sql: "DELETE FROM join_tokens WHERE account_id = ?", arguments: [account.rawValue])
-    return (keys, readSessions)
-  }
-
-  static func insertKey(
-    _ pubkey: String,
-    account: AccountID,
-    capabilities: Set<KeyCapability>,
-    createdBy: AccountID?,
-    createdAt: Date,
-    expiresAt: Date?,
-    in db: Database,
-  ) throws -> KeyRecord {
-    // Signature gates parse this column as a VerifyingKey; a label the parser
-    // rejects must never become a row.
-    guard VerifyingKey(label: pubkey) != nil else {
-      throw SpaceError.malformedPubkey(pubkey)
-    }
-    guard try Row.fetchOne(db, sql: "SELECT 1 FROM account_keys WHERE pubkey = ?", arguments: [pubkey]) == nil else {
-      throw SpaceError.alreadyExists(pubkey)
-    }
-    try db.execute(
-      sql: "INSERT INTO account_keys (pubkey, account_id, capabilities, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-      arguments: [
-        pubkey,
-        account.rawValue,
-        stored(capabilities),
-        createdBy?.rawValue,
-        SQLiteDateFormat.string(from: createdAt),
-        expiresAt.map(SQLiteDateFormat.string(from:)),
-      ],
-    )
-    return KeyRecord(
-      pubkey: pubkey,
-      account: account,
-      capabilities: capabilities,
-      createdBy: createdBy,
-      createdAt: createdAt,
-      expiresAt: expiresAt,
-    )
-  }
-
-  struct CorruptCredentialRow: Error {
-    let stored: String
-  }
-
-  // A removed account is gone for every credential-granting path.
-  static func requireAccount(_ id: AccountID, in db: Database) throws {
-    guard try Row.fetchOne(
-      db, sql: "SELECT 1 FROM accounts WHERE id = ? AND removed_at IS NULL", arguments: [id.rawValue],
-    ) != nil else {
-      throw SpaceError.notFound(id.rawValue)
-    }
-  }
-
-  static func keyRecord(from row: Row) throws -> KeyRecord {
-    guard let capabilities = capabilitySet(row["capabilities"]) else {
-      throw CorruptCredentialRow(stored: row["capabilities"])
-    }
-    return KeyRecord(
-      pubkey: row["pubkey"],
-      account: AccountID(rawValue: row["account_id"]),
-      capabilities: capabilities,
-      createdBy: (row["created_by"] as String?).map(AccountID.init(rawValue:)),
-      createdAt: (try? SQLiteDateFormat.date(from: row["created_at"])) ?? Date(timeIntervalSince1970: 0),
-      expiresAt: try (row["expires_at"] as String?).map(SQLiteDateFormat.date(from:)),
-    )
   }
 
   static func isLive(_ expiresAt: Date?, at now: Date) -> Bool {

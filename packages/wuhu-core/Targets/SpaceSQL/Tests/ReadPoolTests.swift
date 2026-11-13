@@ -15,7 +15,7 @@ import Testing
     let connection = try ReadConnection(path: file.path, catalog: Self.hiding)
     var statement: OpaquePointer?
     #expect(sqlite3_prepare_v2(connection.handle, "SELECT 1", -1, &statement, nil) == SQLITE_OK)
-    #expect(throws: DatabaseError.self) { try connection.close() }
+    #expect(throws: SQLiteFailure.self) { try connection.close() }
     #expect(sqlite3_finalize(statement) == SQLITE_OK)
     try connection.close()
     try connection.close()
@@ -46,8 +46,8 @@ import Testing
     _ = try await column(pool, "SELECT id FROM sessions")
     try await pool.close()
     try await pool.close()
-    await #expect(throws: DatabaseError.self) { _ = try await column(pool, "SELECT id FROM sessions") }
-    await #expect(throws: DatabaseError.self) { _ = try await pool.tables("SELECT id FROM sessions", scope: .shared()) }
+    await #expect(throws: SQLiteFailure.self) { _ = try await column(pool, "SELECT id FROM sessions") }
+    await #expect(throws: SQLiteFailure.self) { _ = try await pool.tables("SELECT id FROM sessions", scope: .shared()) }
   }
 
   @Test func cancellingAMemoryReaderLetsTheWaitingWriterCommit() async throws {
@@ -139,8 +139,8 @@ import Testing
     let pool = ReadPool(path: file.path, capacity: 1, catalog: Self.hiding)
 
     await refused(pool, "SELECT count(*) FROM other", .forbidden("other"))
-    await #expect(throws: DatabaseError.self) { _ = try await pool.run("SELECT 1; SELECT 2", scope: .shared()) }
-    await #expect(throws: DatabaseError.self) { _ = try await pool.run("SELECT json_extract('{', '$')", scope: .shared()) }
+    await #expect(throws: SQLiteFailure.self) { _ = try await pool.run("SELECT 1; SELECT 2", scope: .shared()) }
+    await #expect(throws: SQLiteFailure.self) { _ = try await pool.run("SELECT json_extract('{', '$')", scope: .shared()) }
     #expect(try await column(pool, "SELECT count(*) FROM sessions") == ["1"])
   }
 
@@ -169,9 +169,9 @@ import Testing
     let file = try Fixture()
     let pool = ReadPool(path: file.path)
 
-    let (rows, _) = try await pool.run("SELECT ?, ?", arguments: [1.databaseValue, "x".databaseValue], scope: .shared())
-    #expect(rows.rows == [[1.databaseValue, "x".databaseValue]])
-    await #expect(throws: DatabaseError.self) { _ = try await pool.run("SELECT ?", scope: .shared()) }
+    let (rows, _) = try await pool.run("SELECT ?, ?", arguments: [.integer(1), .text("x")], scope: .shared())
+    #expect(rows.rows == [[.integer(1), .text("x")]])
+    await #expect(throws: SQLiteFailure.self) { _ = try await pool.run("SELECT ?", scope: .shared()) }
     await #expect(throws: ReadError.tooLarge(byteLimit: 10)) {
       _ = try await pool.run("SELECT 'abcdef' UNION ALL SELECT 'ghijkl'", byteLimit: 10, scope: .shared())
     }

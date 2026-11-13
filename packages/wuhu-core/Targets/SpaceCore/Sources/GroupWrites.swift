@@ -16,8 +16,6 @@ extension Space {
     GroupWrites.isInstructions(path)
   }
 
-  /// Writing a group's file takes a write role in it; the settings group takes
-  /// a space admin. The --dev seat is unrestricted; nobody writes a session transcript or a rendered file.
   public func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, acting: GroupID) async throws {
     if SessionTranscripts.contains(path.rawValue) || RenderedFiles.contains(path.rawValue) { throw SpaceError.sentViewReadOnly(path.rawValue) }
     try cell(of: group).refusesWrite(path, by: actor, acting: acting)
@@ -33,8 +31,8 @@ extension Space {
     let requested = requested ?? creator.group
     guard try await groupExists(requested) else { throw SpaceError.groupForbidden(requested.rawValue) }
     let admitted: Bool = switch creator.actor {
-    case .anonymous:
-      true
+    case .publicReader:
+      false
     case .person:
       try await role(of: creator, in: requested).map { $0 >= .write } == true
     case .session where requested == creator.group:

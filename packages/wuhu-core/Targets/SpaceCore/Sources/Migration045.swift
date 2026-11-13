@@ -1,10 +1,8 @@
-import GRDB
-
 /// The bucket: one row per hash, inline bytes or an object key, grow-only. It replaces `blobs` and
 /// `blob_objects`, which held the two cases apart; an inline row keeps its line count unrecorded, counted
 /// from its bytes when asked.
 enum Migration045 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE "bucket_objects" (
       "hash" TEXT NOT NULL PRIMARY KEY,

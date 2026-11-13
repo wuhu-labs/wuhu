@@ -4,7 +4,6 @@
   import Foundation
 #endif
 import Dependencies
-import GRDB
 import JSONValue
 @testable import LoopCore
 import SessionDomain
@@ -45,7 +44,7 @@ import WuhuAI
       #expect(effects.value == 1)
       answers = try await space.sessions.transcriptLines(session).filter { $0.role == .toolResult }
       #expect(answers.count == 1)
-      #expect(try await space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM script_runs") } == 1)
+      #expect(space.sessions.spaceCell.db.rows(ScriptRunFixture.all.count()).first! == 1)
       await service.shutdown()
       try await space.close()
     }
@@ -108,7 +107,7 @@ import WuhuAI
       }
       #expect(starts.value == 0)
       #expect(space.worker.cell(SessionCell.ID(session.rawValue)).runningScripts().isEmpty)
-      #expect(try await space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM script_runs") } == 0)
+      #expect(space.sessions.spaceCell.db.rows(ScriptRunFixture.all.count()).first! == 0)
       await service.shutdown()
       try await space.close()
     }
@@ -118,7 +117,7 @@ import WuhuAI
 private func launchHeldScript(_ space: Space, _ session: SessionID, _ name: String) async throws -> ScriptJob.ID {
   let call = ToolCall(id: name, name: "run_script", arguments: .object(["source": "result('done')"]))
   return try await space.worker.call(SessionCell.ID(session.rawValue)) { cell in
-    let hydration = try cell.rows.hydrate(session)
+    let hydration = try cell.hydrate(session)
     var turn = cell.turn() ?? SessionTurn(generation: hydration.generation, position: 1)
     turn.position += 1
     turn.turn = .tools(calls: [call])
@@ -130,4 +129,9 @@ private func launchHeldScript(_ space: Space, _ session: SessionID, _ name: Stri
     try cell.startScript(slot.call, call, ScriptPlan(call))
     return cell.scriptAt(slot.call.key)!
   }
+}
+
+@Table("script_runs")
+private struct ScriptRunFixture {
+  let owner: String
 }

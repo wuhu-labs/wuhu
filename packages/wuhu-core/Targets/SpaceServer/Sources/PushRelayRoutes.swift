@@ -41,7 +41,7 @@ func addPushRelayRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "invalid push-relay grant")
     }
     switch try await personaCredentialVerdict(nil, request: request, space: space, now: date.now) {
-    case .anonymous:
+    case .missing:
       return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
     case let .refused(response):
       return response
@@ -69,7 +69,7 @@ func addPushRelayRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a push-relay deletion body: \(error)")
     }
     switch try await personaCredentialVerdict(nil, request: request, space: space, now: date.now) {
-    case .anonymous:
+    case .missing:
       return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
     case let .refused(response):
       return response

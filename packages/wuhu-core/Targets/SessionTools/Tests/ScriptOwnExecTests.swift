@@ -1,6 +1,5 @@
 import Crypto
 import DeterministicDependencies
-import GRDB
 import JSONValue
 @testable import SessionTools
 @testable import SpaceCore
@@ -26,13 +25,14 @@ import Testing
         let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec(\(JSONValue.string(own.id.rawValue).jsonString()));result('allowed')}catch(e){result(e.code)}")
         #expect(result == "allowed")
         let ownID = own.id.rawValue
-        let writer = await rig.space.writer
-        let states = ValueObservation.tracking { db in
-          try String.fetchOne(db, sql: "SELECT state FROM machine_operations WHERE id = ?", arguments: [ownID])
-        }.values(in: writer, bufferingPolicy: .bufferingNewest(1))
-        for try await state in states {
-          if state == "retired" { break }
+        let (changes, wake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        let stopWatching = await rig.space.observations.regions(["machine_operations"], wake)
+        defer { stopWatching() }
+        wake.yield(())
+        for await _ in changes {
+          if rig.space.worker.cell(MachineCell.ID(machine.rawValue)).operation(ownID)?.terminal != nil { break }
         }
+        try Task.checkCancellation()
         #expect(try await rig.space.execRecord(own.id)?.terminal == .cancelled)
       }
       await hub.callerScope.close()

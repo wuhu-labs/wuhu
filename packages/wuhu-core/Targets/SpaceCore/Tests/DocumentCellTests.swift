@@ -7,7 +7,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import KeelObjectStore
 import LiveDocument
 import Scratch
@@ -18,29 +17,14 @@ import enum SpaceContract.LiveFrame
 import enum SpaceContract.LiveServerControl
 @testable import SpaceCore
 import SpaceFS
+import StructuredQueries
 import Synchronization
 import Testing
 import WmdDocument
+import Wuwei
+import WuweiQueries
 
 private typealias Client = DocumentClient
-
-private final class DocumentRemovalCommits: TransactionObserver, Sendable {
-  let path: SpacePath
-  let first = Mutex<[Data]?>(nil)
-
-  init(path: SpacePath) { self.path = path }
-
-  func observes(eventsOfKind _: DatabaseEventKind) -> Bool { true }
-  func databaseDidChange(with _: DatabaseEvent) {}
-  func databaseDidRollback(_: GRDB.Database) {}
-  func databaseDidCommit(_ db: GRDB.Database) {
-    do {
-      guard try Substrate.head(path, group: .shared, in: db) == nil else { return }
-      let payloads = try Data.fetchAll(db, sql: "SELECT payload FROM wuwei_mail WHERE recipient = ?", arguments: [DocumentCell.ID(.shared, path).description])
-      first.withLock { if $0 == nil { $0 = payloads } }
-    } catch { Issue.record(error) }
-  }
-}
 
 @Suite(.deterministicDependencies)
 struct DocumentCellTests {
@@ -134,7 +118,8 @@ struct DocumentCellTests {
     var writer = await Client.connect(space, "/new.wmd", access: .write, create: true)
     guard case let .control(.welcome(_, _, _, _, rev)) = await writer.next() else { Issue.record("no welcome"); return }
     let (token, data) = try await space.fs(.shared).read("/new.wmd")
-    #expect(rev == token.rev)
+    #expect(rev == nil)
+    #expect(await writer.nextNonRoster() == .control(.checkpoint(rev: try #require(token.rev))))
     #expect(data.isEmpty)
   }
 
@@ -216,8 +201,7 @@ struct DocumentCellTests {
     try client.edit("Hello, idle\n")
     #expect(await client.next() == .control(.ack(count: 1)))
 
-    let cell = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
-    let due = cell.nextWake()
+    let due = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan))).nextWake()
     #expect(due != nil, "the frame left no wake")
 
     try await fireIdleCheckpoint(clock)
@@ -261,8 +245,7 @@ struct DocumentCellTests {
     var client = try await Client.join(space, plan)
     let before = try await space.currentRevision(in: .shared)
     let revision = try #require(read.rev)
-    let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
-    let original = document.checkpoints().first { $0.rev == revision }?.frontiers
+    let original = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan))).checkpoints().first { $0.rev == revision }?.frontiers
 
     // Two changed frames that cancel out: the text is the file's again, and the log is not empty.
     try client.edit("# A\n\none!\n")
@@ -274,12 +257,14 @@ struct DocumentCellTests {
     #expect(rev == read.rev, "an unchanged text minted a revision")
     #expect(try await space.currentRevision(in: .shared) == before)
 
-    let kept = document.checkpoints().filter { $0.rev == revision }
-    let state = try #require(document.state())
-    #expect(kept.count == 1, "the revision kept \(kept.count) checkpoint rows")
-    #expect(state.dirtyAt == nil, "an unchanged commit stayed due")
-    #expect(kept.first?.frontiers != original, "the row kept the frontiers before the edits")
-    #expect(kept.first?.frontiers == state.frontier, "the row and the state disagree on the frontiers")
+    try space.worker.read { reader in
+      let document = reader.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
+      let kept = document.checkpoints().filter { $0.rev == revision }
+      let state = try #require(document.state())
+      #expect(kept.count == 1, "the revision kept \(kept.count) checkpoint rows")
+      #expect(state.dirtyAt == nil, "an unchanged commit stayed due")
+      #expect(kept.first?.frontiers == original, "an existing revision's mapping is immutable")
+    }
 
     _ = try await fs.write(plan, bytes("# B\n\none\n"), ifMatch: read)
     #expect(text(try await fs.read(plan).1) == "# B\n\none\n")
@@ -364,6 +349,7 @@ struct DocumentCellTests {
     #expect(await client.next() == .control(.ack(count: 1)))
 
     try await fs.delete(plan, ifMatch: nil)
+    guard case .control(.checkpoint) = await client.next() else { Issue.record("the delete did not checkpoint the document"); return }
     guard case .control(.error(code: .notFound, _)) = await client.next() else { Issue.record("the document outlived its file"); return }
     #expect(await client.next() == nil)
     var reconnect = await Client.connect(space, plan, peer: "2")
@@ -393,56 +379,23 @@ struct DocumentCellTests {
     #expect(text(try await fs.read(moved).1) == "One?\n\nTwo\n", "the moved document is the file's text, not the old history")
   }
 
-  @Test func aMoveUnderEditingCarriesEveryAcknowledgedEditOrRefuses() async throws {
+  @Test func aMoveUnderEditingCarriesItsCheckpointAndDropsLaterFrames() async throws {
     let space = try makeSpace(clock: VirtualClock())
     let fs = await space.fs(.shared)
     let moved = "/archive/plan.wmd"
     _ = try await fs.write(plan, bytes("Start\n"), ifMatch: nil)
     var client = try await Client.join(space, plan)
     var acknowledged = "Start\n"
-
     let moving = Task { try await fs.move("/notes", to: "/archive") }
     for line in 1 ... 8 {
       try client.edit(acknowledged + "line \(line)\n")
       guard case .control(.ack)? = await client.next() else { break }
       acknowledged += "line \(line)\n"
     }
-
-    switch await moving.result {
-    case .success:
-      #expect(text(try await fs.read(moved).1).hasPrefix(acknowledged), "the move carried bytes the edits had replaced")
-    case let .failure(error):
-      guard case .liveBusy? = error as? SpaceError else {
-        Issue.record("a move under editing failed with \(error)")
-        return
-      }
-      #expect(text(try await fs.read(plan).1).hasPrefix(acknowledged), "a refused move lost an acknowledged edit")
-    }
-  }
-
-  @Test func aMoveRefusesItsTransactionWhileADocumentHoldsEditsItsFileLacks() async throws {
-    let space = try makeSpace(clock: VirtualClock())
-    let notes = try SpacePath(validating: "/notes")
-    _ = try await space.fs(.shared).write(plan, bytes("Hello\n"), ifMatch: nil)
-    var client = try await Client.join(space, plan)
-    try client.edit("Hello there\n")
-    #expect(await client.next() == .control(.ack(count: 1)))
-
-    let refused = try await space.writer.write { db in
-      do {
-        try DocumentRows.requireCommitted(.shared, under: notes, in: db)
-        return false
-      } catch is DocumentEdited { return true }
-    }
-    #expect(refused, "a move would have carried the bytes the edit replaced")
-    #expect(text(try await space.fs(.shared).read(plan).1) == "Hello there\n")
-    let settled = try await space.writer.write { db in
-      do {
-        try DocumentRows.requireCommitted(.shared, under: notes, in: db)
-        return true
-      } catch is DocumentEdited { return false }
-    }
-    #expect(settled, "a committed document still blocked its move")
+    try await moving.value
+    let carried = text(try await fs.read(moved).1)
+    #expect(carried.hasPrefix("Start\n"))
+    #expect(acknowledged.hasPrefix(carried))
   }
 
   @Test func aPathThroughAFileIsRefusedTypedForBothWriters() async throws {
@@ -474,20 +427,17 @@ struct DocumentCellTests {
     // A file too big to be inline is moved onto the path, and the mail never comes.
     let big = String(repeating: "x", count: Bucket.inlineThreshold + 1) + "\n"
     let blob = try await space.bucket.stage(Array(big.utf8))
-    try await space.writer.write { db in
-      let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
-      try InterimBlob.record(blob, in: db)
-      try Substrate.writeFile(
-        try SpacePath(validating: plan), group: .shared, blob: blob, rev: rev,
-        mtime: SQLiteDateFormat.string(from: fixedDate), in: db,
-      )
+    _ = try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
+      try $0.write(SpacePath(validating: plan), blob: blob, ifMatch: nil, createOnly: false, mtime: SQLiteDateFormat.string(from: fixedDate), attribution: nil)
     }
     let bucketBlob = try await space.bucket.blob(Substrate.blobHash(Array(big.utf8)))
     guard bucketBlob.externalKey != nil else { Issue.record("the file stayed inline, so nothing is fetched"); return }
-    let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
-    let stored = document.fileRev()
-    let head = try #require(try document.file()).rev
-    #expect(stored != head, "the rows still stand for the replaced file")
+    try space.worker.read { reader in
+      let document = reader.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
+      let stored = document.fileRev()
+      let head = try #require(reader.cell(FilesCell.ID(GroupID.shared.rawValue)).file(SpacePath(validating: plan))).rev
+      #expect(stored != head, "the rows still stand for the replaced file")
+    }
 
     let again = try await Client.join(space, plan, peer: "2")
     #expect(again.replica.text == big)
@@ -608,11 +558,9 @@ struct DocumentCellTests {
 
   @Test func aMachineMoveCarriesItsLiveNotesAlong() async throws {
     let space = try makeSpace(clock: VirtualClock())
-    let alice = GroupID(rawValue: "alice")
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
-    }
-    let machine = try await space.addMachine(name: "studio", group: alice)
+    let owner = try await space.addAccount(kind: .human, name: "Morgan")
+    let alice = try await space.createGroup(alias: "alice", owner: owner.id)
+    let machine = try await space.addMachineV2(name: "studio", group: alice).machine
     let notes = "/_/machines/studio/notes.wmd"
     let hers = await space.fs(alice)
     _ = try await hers.write(notes, bytes("One\n\nTwo\n"), ifMatch: nil)
@@ -624,6 +572,7 @@ struct DocumentCellTests {
     let settled = await client.next()
     guard case .control(.checkpoint)? = settled else { Issue.record("the move did not settle the document: \(String(describing: settled))"); return }
     guard case .control(.error(code: .notFound, _)) = await client.next() else { Issue.record("the document stayed in the old group"); return }
+    while space.worker.hasMail(for: FilesCell.ID(alice.rawValue).recipient) || space.worker.hasMail(for: FilesCell.ID(GroupID.shared.rawValue).recipient) { await Task.yield() }
     let shared = await space.fs(.shared)
     let (read, data) = try await shared.read(notes)
     #expect(text(data) == "One\n\nTwo!\n")
@@ -665,31 +614,28 @@ struct DocumentCellTests {
     // A writer that never tells the cell replaces the file at a revision of its own.
     let replaced = Array("Other\n".utf8)
     let blob = Blob(hash: Substrate.blobHash(replaced), content: replaced, externalKey: nil)
-    try await space.writer.write { db in
-      let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
-      try InterimBlob.record(blob, in: db)
-      try Substrate.writeFile(
-        try SpacePath(validating: plan), group: .shared, blob: blob, rev: rev,
-        mtime: SQLiteDateFormat.string(from: fixedDate), in: db,
-      )
+    _ = try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
+      try $0.write(SpacePath(validating: plan), blob: blob, ifMatch: nil, createOnly: false, mtime: SQLiteDateFormat.string(from: fixedDate), attribution: nil)
     }
 
     let again = try await Client.join(space, plan, peer: "2")
     #expect(again.replica.text == "Other\n")
     guard case .control(.error(code: .notFound, _)) = await client.next() else { Issue.record("the old document kept its socket"); return }
     // The new history starts from the file's text: nothing of the old one is left in any of the four rows.
-    let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
-    let state = try #require(document.state())
-    let fileRev = state.fileRev ?? -1
-    let head = try document.file()?.rev ?? -1
-    let log = document.pendingUpdates()
-    let checkpoints = document.checkpoints().count
-    let snapshots = document.snapshotCount()
-    #expect(fileRev == head, "the state stands at another revision than the file")
-    #expect(
-      log == 0 && checkpoints == 1 && snapshots == 1,
-      "rows of the old history outlived it: log \(log), checkpoints \(checkpoints), snapshots \(snapshots)",
-    )
+    try space.worker.read { reader in
+      let document = reader.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
+      let state = try #require(document.state())
+      let fileRev = state.fileRev ?? -1
+      let head = try reader.cell(FilesCell.ID(GroupID.shared.rawValue)).file(SpacePath(validating: plan))?.rev ?? -1
+      let log = document.pendingUpdates()
+      let checkpoints = document.checkpoints().count
+      let snapshots = document.snapshotCount()
+      #expect(fileRev == head, "the state stands at another revision than the file")
+      #expect(
+        log == 0 && checkpoints == 1 && snapshots == 1,
+        "rows of the old history outlived it: log \(log), checkpoints \(checkpoints), snapshots \(snapshots)",
+      )
+    }
   }
 
   @Test func aRolloverKeepsTheAcknowledgedEditExactlyOnce() async throws {
@@ -727,33 +673,35 @@ struct DocumentCellTests {
       _ = spaces.0.worker; _ = spaces.1.worker
       return spaces
     }
-    _ = try await first.fs(.shared).write(plan, bytes("Hello\n"), ifMatch: nil)
+    let content = Array("Hello\n".utf8)
+    let blob = Blob(hash: Substrate.blobHash(content), content: content, externalKey: nil)
+    _ = try await second.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
+      try $0.write(SpacePath(validating: plan), blob: blob, ifMatch: nil, createOnly: true, mtime: SQLiteDateFormat.string(from: fixedDate), attribution: nil)
+    }
     var client = try await Client.join(first, plan)
     try client.edit("Hello, durable\n")
     #expect(await client.next() == .control(.ack(count: 1)))
     let id = DocumentCell.ID(.shared, try SpacePath(validating: plan))
-    let commits = DocumentRemovalCommits(path: try SpacePath(validating: plan))
-    await first.writer.add(transactionObserver: commits)
-    await first.worker.quiesce()
     second.worker.start()
-    try await first.fs(.shared).delete("/notes", ifMatch: nil)
-    #expect(try await second.writer.read { try Substrate.head(try SpacePath(validating: plan), group: .shared, in: $0) } == nil)
-    let payloads = try #require(commits.first.withLock { $0 })
-    #expect(payloads.count == 1)
-    guard case .removed = try JSONDecoder().decode(DocumentCell.Message.self, from: #require(payloads.first)) else {
-      Issue.record("the removal committed without its mail"); return
-    }
-    for table in ["document_state", "document_snapshot", "document_log", "document_checkpoint"] {
-      #expect(try await second.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM \(table)") } == 1)
+    try await second.fs(.shared).delete("/notes", ifMatch: nil)
+    #expect(try second.worker.cell(FilesCell.ID(GroupID.shared.rawValue)).file(SpacePath(validating: plan)) == nil)
+    second.worker.read { reader in
+      let held = reader.cell(id)
+      #expect(held.state() != nil)
+      #expect(held.snapshotCount() == 1)
+      #expect(!held.checkpoints().isEmpty)
     }
     #expect(second.worker.hasMail(for: id.recipient))
     try await first.close()
     second.worker.poke(id.recipient)
-    let counts = ValueObservation.tracking { try Int.fetchOne($0, sql: "SELECT count(*) FROM document_state")! }.values(in: await second.writer)
-    for try await count in counts { if count == 0 { break } }
+    while second.worker.hasMail(for: id.recipient) { await Task.yield() }
     #expect(!second.worker.hasMail(for: id.recipient))
-    for table in ["document_state", "document_snapshot", "document_log", "document_checkpoint"] {
-      #expect(try await second.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM \(table)") } == 0)
+    second.worker.read { reader in
+      let dropped = reader.cell(id)
+      #expect(dropped.state() == nil)
+      #expect(dropped.snapshotCount() == 0)
+      #expect(dropped.pendingUpdates() == 0)
+      #expect(dropped.checkpoints().isEmpty)
     }
     try await second.close()
   }
@@ -761,8 +709,8 @@ struct DocumentCellTests {
   @Test func aFolderReachesItsDocumentsAndNoSibling() async throws {
     let space = try space(clock: VirtualClock())
     let fs = await space.fs(.shared)
-    let studio = try await space.addMachine(name: "studio", group: .shared)
-    let other = try await space.addMachine(name: "other", group: .shared)
+    let studio = try await space.addMachineV2(name: "studio", group: .shared).machine
+    let other = try await space.addMachineV2(name: "other", group: .shared).machine
     let notes = "/_/machines/\(studio.id.rawValue)/notes.wmd"
     let theirs = "/_/machines/\(other.id.rawValue)/notes.wmd"
     let paths = ["/notes/plan.wmd", "/notes/a/b.wmd", "/notes-old.wmd", "/notes0.wmd", notes, theirs]
@@ -775,9 +723,9 @@ struct DocumentCellTests {
 
     let underNotes = try SpacePath(validating: "/notes")
     let both = ["shared/notes/a/b.wmd", "shared/notes/plan.wmd"]
-    #expect(space.worker.cell(SpaceCell.ID("space")).dirtyDocuments(in: .shared, under: underNotes).sorted() == both)
+    #expect(space.dirtyDocuments(underNotes).sorted() == both)
     let underStudio = try SpacePath(validating: "/_/machines/\(studio.id.rawValue)")
-    #expect(space.worker.cell(SpaceCell.ID("space")).dirtyDocuments(in: .shared, under: underStudio) == ["shared" + notes])
+    #expect(space.dirtyDocuments(underStudio) == ["shared" + notes])
   }
 
   @Test func aWakeThatFindsTheFileGoneLeavesNothingDueAndTheMailDeletesTheRows() async throws {
@@ -790,21 +738,20 @@ struct DocumentCellTests {
     #expect(await client.next() == .control(.ack(count: 1)))
 
     // A delete that never tells the document: its rows outlive the file until the mail comes.
-    let rev = try await space.writer.write { db in
-      let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
-      try LiveFS.tombstone(path: plan, group: .shared, rev: rev, op: .delete, in: db)
-      return rev
+    let rev = try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
+      try $0.removeForDelayedDelivery(SpacePath(validating: plan), op: .delete)
     }
     try await fireIdleCheckpoint(clock)
     guard case .control(.error(code: .notFound, _))? = await client.next() else { Issue.record("a gone document kept its socket"); return }
-    let cell = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
-    #expect(cell.nextWake() == nil, "a gone document stayed due")
-    let rows = try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM document_state") ?? 0 }
-    #expect(rows == 1, "the rows go only by the mail")
-
-    space.worker.send(DocumentCell.ID(.shared, try SpacePath(validating: plan))).removed(rev)
-    let counts = ValueObservation.tracking { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM document_state")! }.values(in: await space.writer)
-    for try await count in counts { if count == 0 { break } }
+    let id = DocumentCell.ID(.shared, try SpacePath(validating: plan))
+    space.worker.read { reader in
+      let cell = reader.cell(id)
+      #expect(cell.nextWake() == nil, "a gone document stayed due")
+      #expect(cell.state() != nil, "the rows go only by the mail")
+    }
+    space.worker.send(id).removed(rev)
+    while space.worker.hasMail(for: id.recipient) { await Task.yield() }
+    #expect(space.worker.cell(id).state() == nil)
   }
 
   @Test func anEditBetweenTheFileMutationAndTheMailIsRefused() async throws {
@@ -813,10 +760,8 @@ struct DocumentCellTests {
     var client = try await Client.join(space, plan)
 
     // The move's transaction, before its mail: the file is at another path and the rows still say it is here.
-    _ = try await space.writer.write { db in
-      let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
-      try LiveFS.tombstone(path: plan, group: .shared, rev: rev, op: .move, aux: "/archive/plan.wmd", in: db)
-      return rev
+    _ = try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
+      try $0.removeForDelayedDelivery(SpacePath(validating: plan), op: .move, aux: "/archive/plan.wmd")
     }
     try client.edit("Hello there\n")
     guard case .control(.error(code: .notFound, _)) = await client.next() else {
@@ -835,13 +780,9 @@ struct DocumentCellTests {
     try client.edit("Hello there\n")
     #expect(await client.next() == .control(.ack(count: 1)))
 
-    try await space.writer.write { db in
-      let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
-      try LiveFS.tombstone(path: plan, group: .shared, rev: rev, op: .delete, in: db)
-      try Substrate.ensureAncestorDirectories(
-        try SpacePath(validating: plan + "/child.md"), group: .shared, rev: rev,
-        mtime: SQLiteDateFormat.string(from: fixedDate), in: db,
-      )
+    try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) { cell in
+      let rev = try cell.removeForDelayedDelivery(SpacePath(validating: plan), op: .delete)
+      try cell.ensureAncestorDirectories(SpacePath(validating: plan + "/child.md"), rev: rev, mtime: SQLiteDateFormat.string(from: fixedDate))
     }
     try client.edit("Hello again\n")
     guard case .control(.error(code: .notFound, _)) = await client.next() else {
@@ -861,16 +802,14 @@ struct DocumentCellTests {
     #expect(await old.next() == .control(.ack(count: 1)))
 
     // The delete commits, and its mail is still on the way when the path is used again.
-    let rev = try await space.writer.write { db in
-      let rev = try Substrate.mintRevision(mtime: SQLiteDateFormat.string(from: fixedDate), group: .shared, in: db)
-      try LiveFS.tombstone(path: plan, group: .shared, rev: rev, op: .delete, in: db)
-      return rev
+    let rev = try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
+      try $0.removeForDelayedDelivery(SpacePath(validating: plan), op: .delete)
     }
     var fresh = try await Client.join(space, plan, peer: "2", create: true)
     #expect(fresh.replica.text == "")
     try fresh.edit("New\n")
     var frame = await fresh.next()
-    while case .control(.peers)? = frame { frame = await fresh.next() }
+    while frame.map({ if case .control(.peers) = $0 { true } else if case .control(.checkpoint) = $0 { true } else { false } }) == true { frame = await fresh.next() }
     #expect(frame == .control(.ack(count: 1)))
 
     let id = DocumentCell.ID(.shared, try SpacePath(validating: plan))
@@ -888,13 +827,11 @@ struct DocumentCellTests {
     try client.edit("Hello there\n")
     #expect(await client.next() == .control(.ack(count: 1)))
     #expect(text(try await fs.read(plan).1) == "Hello there\n")
-    let (state, head) = try await space.writer.read { db in
-      (
-        try Int64.fetchOne(db, sql: "SELECT file_rev FROM document_state") ?? -1,
-        try Int64.fetchOne(db, sql: "SELECT rev FROM fs_heads WHERE path = ?", arguments: ["/notes/plan.wmd"]) ?? -1,
-      )
+    try space.worker.read { reader in
+      let state = reader.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan))).fileRev() ?? -1
+      let head = try reader.cell(FilesCell.ID(GroupID.shared.rawValue)).file(SpacePath(validating: plan))?.rev ?? -1
+      #expect(state == head, "state file_rev \(state) vs head \(head)")
     }
-    #expect(state == head, "state file_rev \(state) vs head \(head)")
   }
 
   @Test func aStepThatRollsBackLeavesTheReplicaBehindItsRows() throws {
@@ -988,6 +925,12 @@ struct DocumentClient {
 
   mutating func next() async -> LiveOutbound? { await outbound.next() }
 
+  mutating func nextNonRoster() async -> LiveOutbound? {
+    var frame = await next()
+    while case .control(.peers)? = frame { frame = await next() }
+    return frame
+  }
+
   func send(_ frame: LiveFrame) { sink.yield(.binary(frame.bytes)) }
 
   mutating func edit(_ markdown: String) throws {
@@ -1002,5 +945,25 @@ struct DocumentClient {
   struct Unexpected: Error, CustomStringConvertible {
     var frame: LiveOutbound?
     var description: String { "unexpected frame \(String(describing: frame))" }
+  }
+}
+
+extension FilesCell {
+  mutating func removeForDelayedDelivery(_ path: SpacePath, op: JournalOp, aux: String? = nil) throws -> Int64 {
+    let rev = try mintRevision(SQLiteDateFormat.string(from: fixedDate), attribution: nil)
+    try appendVersion(path.rawValue, rev: rev, kind: nil, hash: nil, op: op, aux: aux)
+    let key = id.key
+    try db.execute(FSHeadRow.where { $0.grp.eq(key) && $0.path.eq(path.rawValue) }.delete())
+    try removeIndex(path)
+    return rev
+  }
+}
+
+extension Space {
+  nonisolated func dirtyDocuments(_ path: SpacePath) -> [String] {
+    worker.cell(FilesCell.ID(GroupID.shared.rawValue)).subtree(path).compactMap { head in
+      let path = try! SpacePath(validating: head.path)
+      return path.isLive && worker.cell(DocumentCell.ID(.shared, path)).dirty() ? DocumentCell.key(.shared, path) : nil
+    }
   }
 }

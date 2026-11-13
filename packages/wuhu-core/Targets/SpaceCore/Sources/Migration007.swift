@@ -1,12 +1,10 @@
-import GRDB
-
 // A session's prompt is rendered once per generation and stored: the
 // generation and the revision it reads files at, and once rendered, its text
 // and the session its templates saw. Older binaries never stored the text, so
 // sessions mid-generation at the 007 upgrade re-render once; after it, an
 // upgrade never re-renders a stored prompt.
 enum Migration007 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE "session_prompts" (
       "session_id" TEXT NOT NULL PRIMARY KEY,

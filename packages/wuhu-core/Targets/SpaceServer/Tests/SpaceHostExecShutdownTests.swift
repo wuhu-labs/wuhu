@@ -32,7 +32,7 @@ import struct WuhuAI.ToolCall
       } operation: {
         let space = try makeMachineSpace()
         _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
-        let server = TestServer(space: space, clock: ContinuousClock())
+        let server = try await TestServer(space: space, clock: ContinuousClock())
         let (machine, _) = try await addMachine(server)
         let side = ShutdownProcessSide()
         defer { side.release.open() }
@@ -47,7 +47,7 @@ import struct WuhuAI.ToolCall
           return response
         }
         let runtime = await SessionRuntime.assemble(space: space, hub: server.hub, credentials: .init { _ in .apiKey("test-key") }, tokens: try await testTokens(space: space))
-        _ = SpaceServer.handler(space: space, hub: server.hub, sessions: runtime, dev: true)
+        _ = SpaceServer.handler(space: space, hub: server.hub, sessions: runtime, devPerson: try await space.ensureDevPerson())
         runtime.execution.start()
         let session = try await space.sessions.createSession(
           group: .shared, title: "owed end", kind: .agent, createdBy: "owner",

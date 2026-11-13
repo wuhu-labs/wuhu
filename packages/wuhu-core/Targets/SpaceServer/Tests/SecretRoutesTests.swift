@@ -39,7 +39,7 @@ import Testing
     }
     try await withSessionDeps {
       let space = try Space.inMemory()
-      let api = ServeTesting.client(upgrading: SpaceServer.handler(space: space, hub: MachineHub(space: space), dev: true))
+      let api = ServeTesting.client(upgrading: SpaceServer.handler(space: space, hub: MachineHub(space: space), devPerson: try await space.ensureDevPerson()))
       #expect(try await api(Request(url: URL(string: "http://space/v1/secret")!)).status == .serviceUnavailable)
     }
   }
@@ -55,7 +55,7 @@ private func withSecretsClient(_ body: (SecretsClient, SpaceSecrets) async throw
   try await withSessionDeps {
     let space = try Space.inMemory()
     let api = ServeTesting.client(upgrading: SpaceServer.handler(
-      space: space, hub: MachineHub(space: space), dev: true, secrets: stores,
+      space: space, hub: MachineHub(space: space), devPerson: try await space.ensureDevPerson(), secrets: stores,
     ))
     try await body({ method, path, json in
       var request = Request(url: URL(string: "http://space\(path)")!, method: method)

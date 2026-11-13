@@ -1,27 +1,16 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import struct OrderedCollections.OrderedDictionary
 import struct SpaceFS.SpacePath
+import SpaceSQL
 
 enum Cells {
-  static func binding(_ value: JSONValue, type: TableColumn.ColumnType) throws -> DatabaseValue {
-    if type == .blob, case let .string(text) = value {
-      guard let data = Data(base64Encoded: text) else {
-        throw SpaceError.invalidCellValue("blob cell expects base64, got \(text)")
-      }
-      return data.databaseValue
-    }
-    // A json column stores the canonical serialization for every value (a JSON
-    // string "x" is stored as "\"x\"", not "x") so rehydration is a plain parse.
-    if type == .json, value != .null {
-      return value.jsonString(sortedKeys: true).databaseValue
-    }
-    return parameter(value)
-  }
-
   /// A bound query parameter from its wire form: a scalar or `{"blob": base64}`.
-  static func typedParameter(_ value: JSONValue, index: Int) throws -> DatabaseValue {
+  static func typedParameter(_ value: JSONValue, index: Int) throws -> SQLValue {
     switch value {
     case .null, .bool, .integer, .number, .string:
       return parameter(value)
@@ -30,7 +19,7 @@ enum Cells {
         guard let data = Data(base64Encoded: text) else {
           throw SpaceError.invalidCellValue("parameter \(index + 1): blob expects base64")
         }
-        return data.databaseValue
+        return .blob(Array(data))
       }
       throw SpaceError.invalidCellValue("parameter \(index + 1): expected a scalar or {\"blob\": base64}")
     case .array:
@@ -75,24 +64,24 @@ enum Cells {
     return fits
   }
 
-  static func parameter(_ value: JSONValue) -> DatabaseValue {
+  static func parameter(_ value: JSONValue) -> SQLValue {
     switch value {
     case .null: .null
-    case let .bool(flag): Int64(flag ? 1 : 0).databaseValue
-    case let .integer(int): Int64(int).databaseValue
-    case let .number(double): double.databaseValue
-    case let .string(text): text.databaseValue
-    case .array, .object: value.jsonString(sortedKeys: true).databaseValue
+    case let .bool(flag): .integer(flag ? 1 : 0)
+    case let .integer(int): .integer(Int64(int))
+    case let .number(double): .real(double)
+    case let .string(text): .text(text)
+    case .array, .object: .text(value.jsonString(sortedKeys: true))
     }
   }
 
-  static func cell(from value: DatabaseValue) -> Cell {
-    switch value.storage {
+  static func cell(from value: SQLValue) -> Cell {
+    switch value {
     case .null: .null
-    case let .int64(int): .integer(int)
-    case let .double(double): .real(double)
-    case let .string(text): .text(text)
-    case let .blob(data): .blob(Array(data))
+    case let .integer(int): .integer(int)
+    case let .real(double): .real(double)
+    case let .text(text): .text(text)
+    case let .blob(bytes): .blob(bytes)
     }
   }
 

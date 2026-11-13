@@ -1,5 +1,6 @@
 import Dependencies
 import TaskLifetime
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -34,7 +35,8 @@ public actor Space {
     log: Logger = Logger(label: "wuhu.space"),
     catalog: ViewCatalog = .groups,
     trace: (@Sendable (String) -> Void)? = nil,
-    regions: (@Sendable (any DatabaseWriter) -> RegionSource)? = nil,
+    regions: (@Sendable (@escaping RegionSource) -> RegionSource)? = nil,
+    fileReads: @escaping @Sendable (Worker) -> FileWatchReads = { FileWatchReads(worker: $0) },
   ) throws {
     @Dependency(\.date) var date
     try SpaceMeta.prepare(writer, identity: identity, log: log, date: date)
@@ -47,27 +49,27 @@ public actor Space {
     self.dateGen = date
     self.clock = clock
     let changes = ChangeSource()
-    writer.add(transactionObserver: ChangeSourceFeeder(changes), extent: .databaseLifetime)
+    let subscribe: RegionSource = { tables, wakes in changes.subscribe(tables, wakes) }
     self.observations = ObservationSources(
-      writer: writer, reads: reads, clock: clock,
-      regions: regions.map { $0(writer) } ?? { tables, wakes in changes.subscribe(tables, wakes) },
+      reads: reads, clock: clock,
+      regions: regions.map { $0(subscribe) } ?? subscribe,
     )
     let replicas = DocumentReplicas()
     let peers = rng
     let peer: @Sendable () -> UInt64 = { peers { UInt64.random(in: 1 ... UInt64(Int64.max), using: &$0) } }
     let runtime = SpaceRuntime(
-      writer: writer, observations: observations,
+      writer: writer, changes: changes, observations: observations,
       documents: Documents(
         replicas: replicas,
         peer: peer,
         mtime: { SQLiteDateFormat.string(from: date.now) },
       ),
-      log: log,
+      log: log, fileReads: fileReads,
     )
     self.runtime = runtime
     let bucket = Bucket(runtime: runtime, objects: objects)
     self.bucket = bucket
-    self.documents = DocumentHub(runtime: runtime, rows: DocumentRows(writer: writer, bucket: bucket), peer: peer)
+    self.documents = DocumentHub(runtime: runtime, bucket: bucket, peer: peer)
     self.rng = rng
     self.log = log
   }
@@ -79,7 +81,7 @@ public actor Space {
     var failure: (any Error)?
     do { try await reads.close() } catch { failure = error }
     await runtime.stop()
-    do { try runtime.close() } catch { if failure == nil { failure = error } }
+    runtime.close()
     do { try writer.close() } catch { if failure == nil { failure = error } }
     if let failure { throw failure }
   }
@@ -93,7 +95,7 @@ public actor Space {
     var configuration = makeConfiguration()
     configuration.prepareDatabase {
       try $0.execute(sql: PageCache.pragmas(cacheKiB: PageCache.writerKiB))
-      $0.traceSlowStatements(on: "writer", to: log)
+      SlowStatement.trace(on: $0.sqliteConnection!, connection: "writer", to: log)
     }
     let queue = try DatabaseQueue(path: file.path, configuration: configuration)
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
@@ -110,11 +112,12 @@ public actor Space {
     log: Logger = Logger(label: "wuhu.space"),
     catalog: ViewCatalog = .groups,
     trace: (@Sendable (String) -> Void)? = nil,
-    regions: (@Sendable (any DatabaseWriter) -> RegionSource)? = nil,
+    regions: (@Sendable (@escaping RegionSource) -> RegionSource)? = nil,
+    fileReads: @escaping @Sendable (Worker) -> FileWatchReads = { FileWatchReads(worker: $0) },
   ) throws -> Space {
     let queue = try DatabaseQueue(path: "file:/space-\(UUID())?vfs=memdb", configuration: configuration)
     try SpaceMeta.memorySchema.get().backup(to: queue)
-    return try Space(writer: queue, objects: objects, log: log, catalog: catalog, trace: trace, regions: regions)
+    return try Space(writer: queue, objects: objects, log: log, catalog: catalog, trace: trace, regions: regions, fileReads: fileReads)
   }
 
   static func makeConfiguration(journalMode: Configuration.JournalModeConfiguration = .wal) -> Configuration {
@@ -126,17 +129,13 @@ public actor Space {
     return config
   }
 
-  /// `group`'s files, live or as of `rev`. A mutation's revision is recorded
-  /// for `acting`, the actor's group, which is `group` unless it writes into
-  /// another group it reads.
-  /// `attribution` is recorded with each revision a live write mints.
   public func fs(
     _ group: GroupID, at rev: Rev? = nil, acting: GroupID? = nil, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil,
   ) -> any SpaceVFS {
     precondition(listingLimit == nil || listingLimit! > 0)
     precondition(listingByteLimit == nil || listingByteLimit! > 0)
     let base: any SpaceVFS = if let rev {
-      HistoricalFS(group: group, writer: writer, bucket: bucket, ceiling: Int64(rev.value), listingLimit: listingLimit, listingByteLimit: listingByteLimit)
+      HistoricalFS(group: group, runtime: runtime, bucket: bucket, ceiling: Int64(rev.value), listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     } else {
       live(group, acting: acting ?? group, attribution: attribution, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     }
@@ -148,7 +147,7 @@ public actor Space {
 
   func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) -> LiveFS {
     LiveFS(
-      group: group, acting: acting, writer: writer, bucket: bucket, dateGen: dateGen, documents: documents, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
+      group: group, acting: acting, runtime: runtime, bucket: bucket, dateGen: dateGen, documents: documents, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
     )
   }
 }

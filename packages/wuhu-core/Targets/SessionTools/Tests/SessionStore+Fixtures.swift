@@ -11,7 +11,7 @@ import Wuwei
 extension SessionStore {
   @discardableResult
   func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.drainQueue(id) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.drainQueue(id) }
   }
 
   @discardableResult
@@ -22,7 +22,7 @@ extension SessionStore {
   }
 
   func put(_ id: SessionID, input: QueueInput) async throws {
-    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.put(id, SessionPut(input)) }
+    try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.put(id, SessionPut(input)) }
   }
 
   func inbox(_ recipient: String) async throws -> [NotificationRecord] {
@@ -37,7 +37,7 @@ extension SessionStore {
   func deliverMail() async throws {
     let worker = space.worker
     for group in try await space.groups() {
-      let sessions = try await space.query("SELECT id FROM sessions", as: .init(actor: .anonymous, group: group.id))
+      let sessions = try await space.query("SELECT id FROM sessions", as: .init(actor: .publicReader, group: group.id))
       for row in sessions.rows {
         guard case let .text(session) = row[0] else { preconditionFailure("session ids are text") }
         let id = SessionCell.ID(session)

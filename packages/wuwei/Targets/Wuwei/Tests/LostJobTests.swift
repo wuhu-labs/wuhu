@@ -215,13 +215,15 @@ private final class BootProbe: Sendable {
     #expect(try a.worker.store.read { try $0.rows("SELECT fence FROM wuwei_addressable").first![0].integer! } > fence)
   }
 
-  @Test func openingAnOldOuterFileAddsNullableColumnsWithoutChangingMailOrJobs() throws {
+  @Test func openingAnOldOuterFileAddsColumnsWithoutChangingMailJobsOrLeases() throws {
     let world = World()
     let file = try FileDatabase(path: world.path, synchronous: false)
-    try file.write { handle, _ in
+    try file.write { handle in
       let db = Connection(borrowing: handle)
       try db.execute("ALTER TABLE wuwei_job DROP COLUMN creator")
       try db.execute("ALTER TABLE wuwei_mail DROP COLUMN lifecycle")
+      try db.execute("ALTER TABLE wuwei_addressable DROP COLUMN draining")
+      try db.execute("INSERT INTO wuwei_addressable (address, holder, fence, expires_at) VALUES ('Counter/old', 'before', 7, 0)")
       try db.execute("INSERT INTO wuwei_job (address, params) VALUES ('old/job', ?)", .blob(Array("{}".utf8)))
       try db.execute("INSERT INTO wuwei_mail (recipient, payload) VALUES ('old/cell', ?)", .blob(Array("{}".utf8)))
     }
@@ -233,7 +235,26 @@ private final class BootProbe: Sendable {
       #expect(job?[0] == .null)
       #expect(mail?[0] == .null)
       #expect(mail?[1].blob == Array("{}".utf8))
+      let lease = try #require(db.rows("SELECT holder, fence, expires_at, draining FROM wuwei_addressable WHERE address = 'Counter/old'").first)
+      #expect(lease["holder"].text == "before")
+      #expect(lease["fence"].integer == 7)
+      #expect(lease["expires_at"].integer == 0)
+      #expect(lease["draining"].integer == 0)
     }
+    let process = world.simulation.spawn()
+    let worker = Worker(id: "upgraded", storage: .layered(upgraded), scheduler: process, registrations: [.cell(Counter.self)])
+    let counter = Counter.ID("old")
+    worker.send(counter).add(2)
+    world.run(for: .zero)
+    #expect(worker.cell(counter).value() == 2)
+    Task(executorPreference: process) { await worker.quiesce() }
+    world.run(for: .zero)
+    try upgraded.read { handle in
+      let lease = try #require(Connection(borrowing: handle).rows("SELECT fence, draining FROM wuwei_addressable WHERE address = 'Counter/old'").first)
+      #expect(lease["fence"].integer == 8)
+      #expect(lease["draining"].integer == 1)
+    }
+    worker.release()
     _ = try FileDatabase(path: world.path, synchronous: false)
   }
 }

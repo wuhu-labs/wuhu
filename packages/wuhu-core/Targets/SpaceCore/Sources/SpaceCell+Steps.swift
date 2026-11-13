@@ -25,7 +25,7 @@ extension SpaceCell {
     try setCurrentAlias(handle, kind: .person, target: principal)
   }
 
-  private mutating func setCurrentAlias(_ alias: String, kind: AliasKind, target: String) throws {
+  mutating func setCurrentAlias(_ alias: String, kind: AliasKind, target: String) throws {
     try requireFree(alias, kind: kind, target: target)
     try db.execute(AliasRow.where { $0.kind.eq(kind) && $0.target.eq(target) }.update { $0.current = #bind(false) })
     try db.execute(AliasRow.insert {
@@ -37,7 +37,7 @@ extension SpaceCell {
     })
   }
 
-  private func requireFree(_ alias: String, kind: AliasKind, target: String?) throws {
+  func requireFree(_ alias: String, kind: AliasKind, target: String?) throws {
     if let existing = db.rows(GroupRow.where { $0.id.eq(alias) }).first, kind != .group || existing.id != target { throw AliasError.taken(alias) }
     guard let held = db.rows(AliasRow.where { $0.name.eq(alias) }).first else { return }
     guard held.kind == kind, held.target == target else { throw AliasError.taken(alias) }

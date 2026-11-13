@@ -4,12 +4,11 @@ import Crypto
 #else
   import Foundation
 #endif
-import GRDB
 
 // A generation's system text and tool list are one content-addressed blob, named by hash from its line 0 and from the session's prompt row. Every stored line 0 moves into `blobs`; a prompt stored for a generation without a line 0 never recorded its tools, so its next inference renders it again.
 enum Migration030 {
-  static func apply(_ db: Database) throws {
-    for row in try Row.fetchAll(db, sql: "SELECT session_id, generation, message FROM session_lines WHERE position = 0") {
+  static func apply(_ db: MigrationDB) throws {
+    for row in try db.rows("SELECT session_id, generation, message FROM session_lines WHERE position = 0") {
       let session: String = row["session_id"], generation: Int64 = row["generation"], message: String = row["message"]
       let hash = SHA256.hash(data: Data(message.utf8)).map { byte in
         let digits = String(byte, radix: 16)

@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct Migration028Tests {
   @Test func aRequestTakesItsMessagesConversationAndOneThatNeverPostedGoes() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-028-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/migration-028-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let original = try Space(writer: database)
     try await database.write { db in
       try db.execute(sql: """
@@ -19,7 +19,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '028';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path))
+    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
     #expect(try await database.read { try Row.fetchAll($0, sql: "SELECT id, conversation_id FROM requests").map { [$0[0] as String, $0[1] as String] } } == [["r1", "dm"]])
     try await upgraded.close()
     try await original.close()

@@ -33,9 +33,9 @@ import Testing
     let bob = try await harness.space.privateGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
     for group in [Self.team, Self.library] { try await harness.space.seedGroup(group) }
     try await harness.space.setGrant(
-      .account, key.account.rawValue, role: .write, in: Self.team, by: .anonymous, acting: Self.team,
+      .account, key.account.rawValue, role: .write, in: Self.team, by: (try await harness.space.ensureDevPerson()).actor, acting: Self.team,
     )
-    try await harness.space.setGrant(.group, Self.team.rawValue, role: .write, in: Self.library, by: .anonymous, acting: Self.library)
+    try await harness.space.setGrant(.group, Self.team.rawValue, role: .write, in: Self.library, by: (try await harness.space.ensureDevPerson()).actor, acting: Self.library)
     return Space(harness: harness, tokens: tokens, bearer: bearer, account: key.account, alice: alice, bob: bob)
   }
 

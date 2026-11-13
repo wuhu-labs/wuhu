@@ -94,7 +94,7 @@ func withHandlerFiring(
       export default async ({rows}) => { await mutateRows('/throttle-output.table', [{insert: {n: rows.at(-1).n}}]); };
       """.utf8), ifMatch: nil)
       try await withHandlerFiring(loop) { worker, _ in
-        let stream = try space.observeRows("SELECT n FROM \"/throttle-output.table\" ORDER BY id", throttle: .zero, as: .shared(.anonymous))
+        let stream = try space.observeRows("SELECT n FROM \"/throttle-output.table\" ORDER BY id", throttle: .zero, as: .shared(.publicReader))
         var snapshots = stream.makeAsyncIterator()
         #expect(try await snapshots.next()?.rows.isEmpty == true)
         var world = ToolWorld(worker: worker, session: session)
@@ -103,7 +103,7 @@ func withHandlerFiring(
         #expect(try await snapshots.next()?.rows == [[.integer(1)]])
         _ = try await space.mutateRows(input, [.insert([.integer(2)])], in: .shared, acting: .shared)
         try await time.asleep("the SQL slot's owner throttle", dueIn: 10)
-        #expect(try await space.query("SELECT n FROM \"/throttle-output.table\"", as: .shared(.anonymous)).rows == [[.integer(1)]])
+        #expect(try await space.query("SELECT n FROM \"/throttle-output.table\"", as: .shared(.publicReader)).rows == [[.integer(1)]])
         await time.advance(by: 10)
         #expect(try await snapshots.next()?.rows == [[.integer(1)], [.integer(2)]])
       }

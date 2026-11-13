@@ -1,5 +1,4 @@
 import Dispatch
-import GRDB
 import GRDBSQLite
 import Logging
 import Synchronization
@@ -26,7 +25,7 @@ public final class ReadPool: Sendable {
 
   public func run(
     _ sql: String,
-    arguments: [DatabaseValue] = [],
+    arguments: [SQLValue] = [],
     byteLimit: Int? = nil,
     scope: ReadScope,
   ) async throws -> (ReadRows, ReadTables) {
@@ -36,7 +35,7 @@ public final class ReadPool: Sendable {
   }
 
   public func run(
-    _ sql: String, arguments: [DatabaseValue] = [],
+    _ sql: String, arguments: [SQLValue] = [],
     resolving scope: @escaping @Sendable (ReadSnapshot) throws -> ReadScope,
   ) async throws -> (ReadRows, ReadTables) {
     try await withSlot { slot, token in
@@ -103,7 +102,7 @@ actor ReadSlot {
 
   func run(
     _ sql: String,
-    arguments: [DatabaseValue],
+    arguments: [SQLValue],
     byteLimit: Int?,
     scope: ReadScope,
     token: UInt64,
@@ -112,7 +111,7 @@ actor ReadSlot {
   }
 
   func run(
-    _ sql: String, arguments: [DatabaseValue],
+    _ sql: String, arguments: [SQLValue],
     resolving scope: @Sendable (ReadSnapshot) throws -> ReadScope, token: UInt64,
   ) throws -> (ReadRows, ReadTables) {
     try interruptible(token) { try $0.run(sql, arguments: arguments, resolving: scope) }
@@ -129,7 +128,7 @@ actor ReadSlot {
     try Task.checkCancellation()
     do {
       return try body(connection)
-    } catch let error as DatabaseError where error.resultCode == .SQLITE_INTERRUPT && Task.isCancelled {
+    } catch let error as SQLiteFailure where error.primary == SQLITE_INTERRUPT && Task.isCancelled {
       throw CancellationError()
     }
   }
@@ -141,7 +140,7 @@ actor ReadSlot {
   }
 
   private func open() throws -> ReadConnection {
-    guard !closed else { throw DatabaseError(resultCode: .SQLITE_MISUSE, message: "read pool is closed") }
+    guard !closed else { throw SQLiteFailure(code: SQLITE_MISUSE, message: "read pool is closed") }
     if let connection { return connection }
     let opened = try ReadConnection(path: path, catalog: catalog, trace: trace, log: log, label: label)
     connection = opened

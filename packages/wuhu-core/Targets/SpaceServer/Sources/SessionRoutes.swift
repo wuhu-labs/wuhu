@@ -13,9 +13,10 @@ import SpaceContract
 import SpaceCore
 import SpaceTools
 import SystemFiles
+import Wuwei
 
 func addSessionRoutes(
-  _ router: inout Router, space: Space, hub: MachineHub, runtime: SessionRuntime, dev: Bool,
+  _ router: inout Router, space: Space, hub: MachineHub, runtime: SessionRuntime, devPerson: ResolvedPerson?,
   principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict,
 ) {
   let store = space.sessions
@@ -31,7 +32,7 @@ func addSessionRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-create body: \(error)")
     }
     let identity: String
-    switch try await identityVerdict(input.identity, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(input.identity, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): identity = resolved
     case let .refused(response): return response
     }
@@ -285,7 +286,7 @@ func addSessionRoutes(
       }
     }
     let identity: String
-    switch try await identityVerdict(input.identity, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(input.identity, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): identity = resolved
     case let .refused(response): return response
     }
@@ -395,9 +396,6 @@ func addSessionRoutes(
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
-    if case .anonymous = principal.actor {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "creating a channel needs an identified person or session")
-    }
     var members = input.members
     if case .session = principal.actor {
       guard input.identity == nil else { return errorResponse(.badRequest, code: "invalidArgument", message: "a session channel creator takes no human identity") }
@@ -406,7 +404,7 @@ func addSessionRoutes(
         return try Response.json(ConversationPostOutput(messageId: "", conversationId: id.rawValue, n: 0, delivered: []))
       } catch { return sessionErrorResponse(error) }
     }
-    switch try await identityVerdict(input.identity, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(input.identity, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved):
       if !members.contains(resolved) { members.append(resolved) }
       do {
@@ -475,7 +473,7 @@ func addSessionRoutes(
       )
     }
     let identity: String
-    switch try await identityVerdict(input.identity, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(input.identity, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): identity = resolved
     case let .refused(response): return response
     }
@@ -513,7 +511,7 @@ func addSessionRoutes(
 
   // A conversation the caller does not read answers as a missing one.
   // The group the reader acts in, which names the attachments it is handed.
-  @Sendable func readingSeat(_ id: ConversationID, _ request: Request) async throws -> Result<(group: GroupID, reader: String?), RouteRefusal> {
+  @Sendable func readingSeat(_ id: ConversationID, _ request: Request) async throws -> Result<(group: GroupID, reader: String?, principal: Principal), RouteRefusal> {
     let principal: Principal
     switch try await principalOf(request) {
     case let .principal(resolved): principal = resolved
@@ -522,20 +520,17 @@ func addSessionRoutes(
     let reader: String?
     if case .session = principal.actor { reader = principal.member }
     else {
-      switch try await identityVerdict(queryValues(of: request.url)["identity"], request: request, space: space, dev: dev, now: dateGen.now) {
+      switch try await identityVerdict(queryValues(of: request.url)["identity"], request: request, space: space, devPerson: devPerson, now: dateGen.now) {
       case let .identity(resolved): reader = resolved
       case let .refused(response): return .failure(RouteRefusal(response: response))
       }
     }
     do {
       let conversation = try await store.conversation(id)
-      let anonymous: Bool
-      if case .anonymous = principal.actor { anonymous = true } else { anonymous = false }
-      let channelReader = conversation.kind == .users && anonymous ? nil : reader
-      guard try await store.reads(conversation, reader: channelReader, group: principal.group) else {
+      guard try await store.reads(conversation, reader: reader, group: principal.group) else {
         throw SessionStoreError.unknownConversation(id.rawValue)
       }
-      return .success((principal.group, channelReader))
+      return .success((principal.group, reader, reader.map { principal.speaking(as: $0) } ?? principal))
     } catch {
       return .failure(RouteRefusal(response: sessionErrorResponse(error)))
     }
@@ -555,14 +550,12 @@ func addSessionRoutes(
     let reader: String?
     if case .session = principal.actor { reader = principal.member }
     else {
-      switch try await identityVerdict(queryValues(of: request.url)["identity"], request: request, space: space, dev: dev, now: dateGen.now) {
+      switch try await identityVerdict(queryValues(of: request.url)["identity"], request: request, space: space, devPerson: devPerson, now: dateGen.now) {
       case let .identity(resolved): reader = resolved
       case let .refused(response): return response
       }
     }
-    let anonymous: Bool
-    if case .anonymous = principal.actor { anonymous = true } else { anonymous = false }
-    let records = try await store.conversations(reader: reader, group: principal.group).filter { !anonymous || $0.kind != .users }
+    let records = try await store.conversations(reader: reader, group: principal.group)
     return try Response.json(ConversationsOutput(conversations: try await conversationPayloads(records, space: space)))
   }
 
@@ -634,7 +627,7 @@ func addSessionRoutes(
     }
     switch try await readingSeat(id, request) {
     case let .success(viewer):
-      return conversationStreamResponse(space: space, scope: runtime.streamScope, store: store, conversation: id, after: after, viewer: viewer.group, reader: viewer.reader, clock: clock)
+      return conversationStreamResponse(space: space, scope: runtime.streamScope, store: store, conversation: id, after: after, principal: viewer.principal, clock: clock)
     case let .failure(refusal):
       return refusal.response
     }
@@ -648,7 +641,7 @@ func addSessionRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a watermark body: \(error)")
     }
     let identity: String
-    switch try await identityVerdict(input.identity, request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(input.identity, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): identity = resolved
     case let .refused(response): return response
     }
@@ -665,7 +658,7 @@ func addSessionRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "after must be a non-negative integer")
     }
     let identity: String
-    switch try await identityVerdict(query["identity"], request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await identityVerdict(query["identity"], request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved): identity = resolved
     case let .refused(response): return response
     }
@@ -818,6 +811,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
     return errorResponse(.unprocessableContent, code: "invalidArgument", message: error.message)
   case let error as SpaceError:
     return jsonResponse(Wire.failure(error).payload, status: .unprocessableContent)
+  case is Evicted:
+    return errorResponse(.serviceUnavailable, code: ErrorCode.unavailable.rawValue, message: "the session is not hosted here; retry")
   default:
     return errorResponse(.internalServerError, code: "internal", message: String(describing: error))
   }

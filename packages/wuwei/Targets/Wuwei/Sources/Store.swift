@@ -26,28 +26,30 @@ final class OuterStore: Sendable {
     var writingThread: UInt?
     // The host runs its commit hooks after the callback returns, still on the writer.
     defer { if let writingThread { Lane.endedWriter(writingThread) } }
-    try database.write { handle, host in
+    try database.write { handle in
       writingThread = Lane.beganWriter()
-      result = try Self.borrow(database, handle: handle, host: host, owner: owner, body)
+      result = try Self.borrow(handle: handle, owner: owner, body)
     }
     return result!
   }
 
-  static func borrow<T>(_ database: any SharedDatabase, handle: OpaquePointer, host: AnyObject?, owner: String?, _ body: (Connection) throws -> T) rethrows -> T {
+  static func borrow<T>(handle: OpaquePointer, owner: String?, _ body: (Connection) throws -> T) rethrows -> T {
     let db = Connection(borrowing: handle)
-    db.host = host
-    db.hostWrite = { try database.execute($0, $1, on: host) }
     db.owner = owner
     defer { db.owner = nil }
     return try body(db)
   }
 
-  func read<T>(owner: String? = nil, _ body: (Connection) throws -> T) throws -> T {
+  func read<T>(_ body: (Connection) throws -> T) throws -> T {
+    let thread = Lane.beganRead()
+    defer { Lane.endedRead(thread) }
+    return try accessReader(body)
+  }
+
+  private func accessReader<T>(_ body: (Connection) throws -> T) throws -> T {
     var result: T?
     try database.read { handle in
       let db = Connection(borrowing: handle)
-      db.owner = owner
-      defer { db.owner = nil }
       result = try body(db)
     }
     return result!
@@ -58,8 +60,8 @@ final class OuterStore: Sendable {
     id << 32 | Int64(number)
   }
 
-  func page(_ id: Int64, _ number: UInt32) throws -> [UInt8]? {
-    try read { try $0.page(id, number) }
+  func stepPage(_ id: Int64, _ number: UInt32) throws -> [UInt8]? {
+    try accessReader { try $0.page(id, number) }
   }
 
   func holdLeases() {
@@ -104,6 +106,7 @@ final class OuterStore: Sendable {
   /// Brings a kind's tables in the shared database up to its schema, each statement once, tracked in `wuwei_schema`. Two kinds creating one table is a bug, and traps here.
   func prepare(kind: String, schema: [String], owned: [String: String], within: Incarnation? = nil) {
     guard !prepared.withLock({ $0.contains(kind) }) else { return }
+    if within == nil { Lane.preconditionNoRead() }
     do {
       let apply: @Sendable (Connection) throws -> Void = { [self] db in
         let applied = Int(try db.rows("SELECT applied FROM wuwei_schema WHERE kind = ?", .text(kind)).first?["applied"].integer ?? 0)

@@ -22,7 +22,7 @@ private let onePixelPNG = Data([
 
 @Suite(.deterministicDependencies) struct FileRouteTests {
   @Test func bytesRoundTripThroughTheByteRoutes() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
 
     let written = try await harness.put("/logo.png", onePixelPNG)
     #expect(written.status == .ok)
@@ -38,7 +38,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func aBinaryFileRefusesTheTextToolWireInsteadOfCorrupting() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     #expect(try await harness.put("/logo.png", onePixelPNG).status == .ok)
 
     let read = try await harness.post("read", .object(["path": "/logo.png"]))
@@ -56,7 +56,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func ifMatchGuardsByteWritesAndMissingPathsAre404() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let first = try await json(try await harness.put("/a.bin", Data([0x00, 0xFF])))
     let token = try #require(first.field("token")?.text)
 
@@ -73,7 +73,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func historicalBytesReadThroughTheRevisionSuffix() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let first = try await json(try await harness.put("/a.bin", Data([0x01])))
     let token = try #require(first.field("token")?.text)
     #expect(try await harness.put("/a.bin", Data([0x02]), ifMatch: token).status == .ok)
@@ -84,7 +84,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func revisionAddressedWritesCannotChangeTheLiveFile() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let version = try await json(try await harness.put("/doc.md", Data("original".utf8)))
     let token = try #require(version.field("token")?.text)
     for path in ["/doc.md@1", "wuhu://shared.localspace/doc.md@1"] {
@@ -101,7 +101,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func byteRoutesShareTheAPIWallWithTheJSONTools() async throws {
-    let walled = try Harness(dev: false)
+    let walled = try await Harness(dev: false)
     for response in [
       try await walled.get(walled.api, "/v1/f/a.png"),
       try await walled.put("/a.png", onePixelPNG),
@@ -114,7 +114,7 @@ private let onePixelPNG = Data([
   // --public-read opens the content origin, never the API origin: the byte
   // routes must stay as walled as POST /v1/tools/read on a public board.
   @Test func publicReadOpensTheContentOriginButNotTheByteRoutes() async throws {
-    let harness = try Harness(dev: false, publicRead: true)
+    let harness = try await Harness(dev: false, publicRead: true)
     _ = try await harness.direct("write", .object(["path": "/board.md", "content": "public"]))
 
     let content = try await harness.get(harness.web, "/board.md")
@@ -133,7 +133,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func aJSXFileReadsCompiledAsJavaScript() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let source = "export const sizes = ['small']\nexport default () => <Figure value={1} label=\"One\" />\n"
     let written = try await json(try await harness.put("/.widgets/one.widget.jsx", Data(source.utf8)))
     let token = try #require(written.field("token")?.text)
@@ -151,7 +151,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func theProvisionedEverythingCompiles() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     try await provisionEverythingSidebar(harness.space)
 
     let compiled = try await harness.get(harness.api, "/v1/f/.sidebars/everything.sidebar.jsx", query: ["as": "js"])
@@ -160,7 +160,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func aSyntaxErrorNamesTheFileLineAndColumn() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     #expect(try await harness.put("/bad.sidebar.jsx", Data("export default () => <Sidebar name=>".utf8)).status == .ok)
 
     let compiled = try await harness.get(harness.api, "/v1/f/bad.sidebar.jsx", query: ["as": "js"])
@@ -173,7 +173,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func onlyJSXHasAJavaScriptForm() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     #expect(try await harness.put("/note.md", Data("# Note".utf8)).status == .ok)
 
     let compiled = try await harness.get(harness.api, "/v1/f/note.md", query: ["as": "js"])
@@ -182,7 +182,7 @@ private let onePixelPNG = Data([
   }
 
   @Test func everythingIsWrittenWhenMissingAndKeptWhenEdited() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let path = try SpacePath(validating: "/.sidebars/everything.sidebar.jsx")
 
     try await provisionEverythingSidebar(harness.space)

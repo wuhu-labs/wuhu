@@ -29,7 +29,7 @@ private struct Authorization {
       }
       return .shared()
     })
-    #expect(rows.rows == [["a".databaseValue], ["hidden".databaseValue]])
+    #expect(rows.rows == [[.text("a")], [.text("hidden")]])
     #expect(region.names == ["private_auth", "sessions"])
 
     await #expect(throws: ReadError.forbidden("private_auth")) {

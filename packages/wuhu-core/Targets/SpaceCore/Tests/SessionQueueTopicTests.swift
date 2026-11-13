@@ -1,6 +1,9 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
@@ -64,7 +67,7 @@ import Testing
     let peer = try await store.createSession(group: .shared, title: "b", kind: .agent, createdBy: "morgan", model: .test)
     func deadline() async throws -> Date? {
       try await store.deliverMail()
-      return try await rig.space.worker.call(SessionCell.ID(owner.rawValue)) { try $0.rows.yieldDeadline(owner) }
+      return try await rig.space.worker.call(SessionCell.ID(owner.rawValue)) { try $0.yieldDeadline(owner) }
     }
     #expect(try await deadline() == nil)
 

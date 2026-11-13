@@ -142,25 +142,6 @@ import WebPush
     #expect(await messages.values.map(\.group) == ["shared", "shared"])
   }
 
-  @Test func aSessionEventIsTitledWithTheSessionItIsAbout() async throws {
-    let (space, _) = try await notificationSpace(endpoints: [])
-    try await withDependencies {
-      $0.date = .constant(fixedDate)
-    } operation: {
-      let worker = try await space.sessions.createSession(
-        group: .shared,
-        title: "worker",
-        kind: .task,
-        createdBy: "owner",
-        model: ModelSpecifier(provider: "testing", model: "test-model", effort: "medium"),
-      )
-      try await space.sessions.markErrored(worker, message: "boom")
-      try await space.sessions.deliverMail(worker)
-    }
-    let errored = try #require(try await space.sessions.inbox("owner").only)
-    #expect(try await NotificationOrigin(errored, space: space) == .session("worker"))
-  }
-
   @Test func transientFailureDefersTheSameNotification() async throws {
     let (space, _) = try await notificationSpace(endpoints: ["https://push.example/retry"])
     try await withDependencies {

@@ -10,7 +10,7 @@ import { Drafts } from './drafts.ts'
 
 const DraftsContext = createContext<Drafts | null>(null)
 
-// An unenrolled browser has no account to keep drafts for, and no composer.
+// A browser the server seats as nobody has no drafts and no composer.
 export function DraftsProvider(
   { scope, children }: { scope: string | null; children: ReactNode },
 ) {

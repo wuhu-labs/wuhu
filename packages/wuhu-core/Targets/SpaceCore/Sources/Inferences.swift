@@ -6,11 +6,11 @@
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import StructuredQueries
-import StructuredQueriesSQLite
 
-public struct InferenceRecord: Sendable {
+/// One model attempt, as its payer group's cell writes it into `inferences`.
+public struct InferenceRecord: Codable, Sendable {
   /// Who an attempt is billed to.
-  public enum Payer: Sendable {
+  public enum Payer: Codable, Sendable {
     case session(SessionID)
     /// A group observer's handler, in one firing.
     case observer(group: GroupID, firing: String)
@@ -93,34 +93,13 @@ struct InferenceRow {
 }
 
 extension Space {
+  /// The one door for an attempt: its payer group's cell writes the row, so whoever ran it reports and moves on.
   public func recordInference(_ inference: InferenceRecord) async throws {
-    try await writer.write { db in
-      let (session, group, firing): (String?, GroupID, String?) = switch inference.payer {
-      case let .session(session): (session.rawValue, try Sessions.record(session.rawValue, in: db).group, nil)
-      case let .observer(group, firing): (nil, group, firing)
-      }
-      try InferenceRow.insert {
-        InferenceRow(
-          id: inference.id,
-          session: session,
-          at: SQLiteDateFormat.string(from: inference.at),
-          provider: inference.provider,
-          model: inference.model,
-          servedModel: inference.servedModel,
-          effort: inference.effort,
-          input: inference.input,
-          cacheRead: inference.cacheRead,
-          cacheWrite: inference.cacheWrite,
-          output: inference.output,
-          reasoning: inference.reasoning,
-          outcome: inference.outcome,
-          error: inference.error,
-          durationMs: inference.durationMs,
-          ttftMs: inference.ttftMs,
-          grp: group.rawValue,
-          firing: firing,
-        )
-      } onConflict: { $0.id }.execute(db)
+    let group: GroupID
+    switch inference.payer {
+    case let .session(session): group = try cell.sessionRecord(session).group
+    case let .observer(payer, _): group = payer
     }
+    worker.send(GroupCell.ID(group.rawValue)).inferred(inference)
   }
 }

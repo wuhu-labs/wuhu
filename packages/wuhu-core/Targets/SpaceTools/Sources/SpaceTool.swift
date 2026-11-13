@@ -23,7 +23,7 @@ public struct SpaceToolContext: Sendable {
     switch principal.actor {
     case let .page(page): RevisionAttribution(actor: page.viewer.principal.member, via: page.path.rawValue)
     case let .observer(observer): RevisionAttribution(firing: observer)
-    case .session, .person, .anonymous: nil
+    case .session, .person, .publicReader: nil
     }
   }
 
@@ -45,7 +45,7 @@ public struct SpaceToolContext: Sendable {
       if space.isGroupInstructions(path), group != principal.group {
         throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue)
       }
-    case .person, .anonymous:
+    case .person, .publicReader:
       break
     }
     try await space.refuseWrite(path, in: group, by: principal.actor, acting: principal.group)

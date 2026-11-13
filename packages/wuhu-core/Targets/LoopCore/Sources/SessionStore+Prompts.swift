@@ -12,8 +12,14 @@ import struct SpaceCore.PromptOpening
 import enum SpaceCore.SessionPromptReference
 import enum SpaceCore.SessionPromptState
 import struct SpaceCore.SessionStore
+import struct SpaceCore.SpaceCell
 import struct SpaceCore.StoredPrompt
 import enum WuhuAI.Tool
+
+private enum PreparedPrompt {
+  case existing(SessionPromptReference)
+  case pending(PendingPrompt)
+}
 
 public extension SessionStore {
   func promptRevisions(_ id: SessionID) async throws -> [String: Int]? {
@@ -22,21 +28,28 @@ public extension SessionStore {
 
   func promptForInference(_ id: SessionID) async throws -> SessionPromptState {
     let address = SessionCell.ID(id.rawValue)
-    let cell = space.worker.cell(address)
-    if let reference = try cell.promptReference() {
-      return try await promptState(reference)
+    let prepared = try space.worker.read { reader -> PreparedPrompt in
+      let cell = reader.cell(address)
+      if let reference = try cell.promptReference() { return .existing(reference) }
+      let record = try cell.creationRecord()
+      let principal = Principal(actor: .session(id), group: record.group)
+      let spaceCell = reader.cell(SpaceCell.ID("space"))
+      let revs = spaceCell.revisions(in: spaceCell.readable(by: principal).union([principal.group]))
+      return .pending(try cell.pendingInferencePrompt(revs: revs))
     }
-    let record = try cell.creationRecord()
-    let revs = space.currentRevisions(for: Principal(actor: .session(id), group: record.group))
-    let pending = try cell.pendingInferencePrompt(revs: revs)
-    space.worker.send(address).setInferencePrompt(pending)
-    return .pending(pending)
+    switch prepared {
+    case let .existing(reference): return try await promptState(reference)
+    case let .pending(pending):
+      space.worker.send(address).setInferencePrompt(pending)
+      return .pending(pending)
+    }
   }
 
   func storeInferencePrompt(_ id: SessionID, for pending: PendingPrompt, _ prompt: String, opening: PromptOpening? = nil, tools: [Tool], session: PromptSession) async throws -> StoredPrompt {
     precondition(opening == nil || pending.opening, "the generation keeps no room for an opening")
     let address = SessionCell.ID(id.rawValue)
-    if let reference = try space.worker.cell(address).inferencePromptWinner(for: pending) {
+    let reference = try space.worker.cell(address).inferencePromptWinner(for: pending)
+    if let reference {
       guard case let .rendered(stored) = try await promptState(reference) else {
         preconditionFailure("a prompt winner is rendered")
       }

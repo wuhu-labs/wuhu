@@ -136,7 +136,7 @@ import enum Wuwei.Value
     try await fleet.request("r2", on: fleet.tasks[1])
     _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f1"), text: #"{"ok":true}"#)
     _ = try await fleet.store.report(fleet.tasks[1], request: RequestID("r2"), kind: .final, messageID: MessageID("f2"), text: "plain text")
-    let rows = try await fleet.rig.space.query("SELECT schema, fields, result FROM requests ORDER BY id", as: .shared(.anonymous))
+    let rows = try await fleet.rig.space.query("SELECT schema, fields, result FROM requests ORDER BY id", as: .shared(.publicReader))
     #expect(rows.decltypes == ["JSON_TEXT", "JSON_TEXT", "JSON_TEXT"])
     #expect(rows.rows == [
       [.text(#"{"type":"object"}"#), .text(#"{"pr":7}"#), .text(#"{"ok":true}"#)],
@@ -202,7 +202,7 @@ import enum Wuwei.Value
   @Test func `an observation of requests sees each transition`() async throws {
     let fleet = try await Fleet(tasks: 3)
     let stream = try fleet.rig.space.observeRows(
-      "SELECT id, status FROM requests ORDER BY id", throttle: .zero, as: .shared(.anonymous),
+      "SELECT id, status FROM requests ORDER BY id", throttle: .zero, as: .shared(.publicReader),
     )
     let frames = Collector<[[Cell]]>()
     let watching = Task {

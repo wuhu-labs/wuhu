@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration035 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     INSERT INTO wuwei_mail (recipient, payload)
     SELECT DISTINCT 'SessionCell/' || owner, CAST('{"rewatch":{}}' AS BLOB)

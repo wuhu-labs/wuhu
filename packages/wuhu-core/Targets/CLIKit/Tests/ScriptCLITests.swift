@@ -41,6 +41,13 @@ private func hex(_ text: String) -> String {
   SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
+/// The group's cell has taken the attempts its mail carried on their way.
+private func deliverInferences(_ space: Space, _ group: String) async throws {
+  let id = GroupCell.ID(group)
+  while space.worker.hasMail(for: id.recipient) { await Task.yield() }
+  try await space.worker.call(id) { _ in () }
+}
+
 @Suite(.deterministicDependencies) struct ScriptCLITests {
   private func script(_ h: IdentityHarness, _ source: String) throws -> String {
     let file = h.cwd.appendingPathComponent("run.js")
@@ -125,12 +132,13 @@ private func hex(_ text: String) -> String {
       #expect(run.code == 0, "\(run.stderr)")
       #expect(run.stdout == "ok x\nsession null\n")
       let actor = Actor.person(persona: "alice", account: account.id)
+      try await deliverInferences(h.space, "shared")
       let inferences = try await h.space.query(
         #"SELECT grp, session, outcome, firing LIKE 'terminal-%' FROM "wuhu://*.localspace/inferences""#,
         as: .shared(actor),
       ).rows
       #expect(inferences == [[.text("shared"), .null, .text("ok"), .integer(1)]], "\(inferences)")
-      let helper = try await h.space.query("SELECT kind, parent, created_by FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
+      let helper = try await h.space.query("SELECT kind, parent, created_by FROM sessions WHERE title = 'helper'", as: .shared(.publicReader)).rows
       #expect(helper.map { Array($0.prefix(2)) } == [[.text("agent"), .null]], "\(helper)")
       guard case let .text(creator)? = helper.first?.last else { Issue.record("helper has no creator: \(helper)"); return }
       #expect(try await h.space.persona(named: creator)?.account == account.id)
@@ -166,13 +174,13 @@ private func hex(_ text: String) -> String {
     }
   }
 
-  @Test func aTerminalWithoutASignedInPersonIsRefusedByTheServer() async throws {
+  @Test func aTerminalWithoutASignedInPersonUsesTheDevPerson() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness()
       try JSONEncoder().encode(["space": "space.test:5530"]).write(to: h.wallet.appendingPathComponent("config.json"), options: .atomic)
-      let refused = await h.run(["script", try script(h, "result(1)\n")], environment: ["HOME": h.home.path])
-      #expect(refused.code == 1)
-      #expect(refused.stderr.contains("a terminal script runs as a signed-in person"), "\(refused.stderr)")
+      let result = await h.run(["script", try script(h, "result(1)\n")], environment: ["HOME": h.home.path])
+      #expect(result.code == 0, "\(result.stderr)")
+      #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "1")
     }
   }
 }

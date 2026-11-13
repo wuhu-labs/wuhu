@@ -7,7 +7,6 @@ import Fetch
 #else
   import Foundation
 #endif
-import GRDB
 import enum JSONValue.JSONValue
 @testable import LoopCore
 import MachineContract
@@ -20,6 +19,7 @@ import Synchronization
 import Testing
 import struct WuhuAI.ToolCall
 import Wuwei
+import WuweiQueries
 
 @Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct ToolExecClosedInputTests {
   @Test func aKernelExecCatReceivesClosedInputAndReturnsEmptyOutputWithoutAStop() async throws {
@@ -34,6 +34,7 @@ import Wuwei
         let machine = try await space.addMachineV2(name: "box", group: .shared).machine.id
         let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
         let prepared = Gate()
+        let answerMayProceed = Gate()
         let stdin = Mutex<JSONValue?>(nil)
         let stops = Mutex(0)
         let client = FetchClient { request in
@@ -43,18 +44,20 @@ import Wuwei
             stdin.withLock { $0 = start.input.object?["stdin"] }
             request.body = try .json(start)
             prepared.open()
+            await answerMayProceed.wait()
           }
           if request.method == .put, request.url.path.hasSuffix("/stop") { stops.withLock { $0 += 1 } }
           return try await agent.handler(request)
         }
         let runtime = await SessionRuntime.assemble(space: space, hub: hub, credentials: .init { _ in .apiKey("test-key") }, tokens: tokens)
-        _ = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
+        _ = SpaceServer.handler(space: space, hub: hub, sessions: runtime, devPerson: try await space.ensureDevPerson())
         runtime.execution.start()
         do {
           try await withThrowingTaskGroup(of: Void.self) { tasks in
             tasks.addTask { await agent.run() }
             defer { tasks.cancelAll() }
             try await withMachineBox(space: space, hub: hub, machine: machine, client: client) {
+              defer { answerMayProceed.open() }
               let session = try await space.sessions.createSession(
                 group: .shared, title: "closed stdin", kind: .agent, createdBy: "owner",
                 model: .init(provider: "testing", model: "test-model", effort: "high"),
@@ -73,15 +76,17 @@ import Wuwei
               #expect(calls.count == 1)
               let call = try #require(calls.first)
               let callID = ToolCallID(call.id)
-              let writer = await space.writer
-              let answers = ValueObservation.tracking { db in
-                try String.fetchOne(db, sql: "SELECT answer FROM tool_calls WHERE answer IS NOT NULL")
-              }.values(in: writer, bufferingPolicy: .bufferingNewest(1))
-              var recorded: String?
-              for try await value in answers {
-                if let value { recorded = value; break }
+              let turn = try #require(space.worker.cell(SessionCell.ID(session.rawValue)).turn())
+              let job = Slot(session: session, generation: turn.generation, position: turn.position, stepTry: 0).call
+              let watch = await watchSpaceTables(["tool_calls"], in: space)
+              defer { watch.cancel() }
+              answerMayProceed.open()
+              var recorded: ToolCallAnswer?
+              for await _ in watch.changes {
+                if let answer = space.worker.job(job).db.rows(CallRow.all).first?.answer { recorded = answer; break }
               }
-              let answer = try Sessions.decode(ToolCallAnswer.self, from: #require(recorded))
+              try Task.checkCancellation()
+              let answer = try #require(recorded)
               guard case let .result(payload, _) = answer else { Issue.record("cat returned a non-result answer: \(answer)"); return }
               guard case let .exec(result) = payload else { Issue.record("cat returned a non-exec result: \(payload)"); return }
               #expect(result.output.isEmpty)

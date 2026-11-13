@@ -61,7 +61,7 @@ struct IdentityJob {
 
   typealias Message = Never
 
-  mutating func start() async throws -> Outcome {
+  nonisolated(nonsending) mutating func start() async throws -> Outcome {
     let client = ctx.dependency(IdentityClient.self)
     let params = ctx.params
     let state = ctx.cell(params.cell).state()!

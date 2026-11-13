@@ -53,7 +53,7 @@ final class MachineCellTestSpace: Sendable {
 
   func close() async throws {
     await stopWorker()
-    try database.close()
+    database.close()
     try await space.close()
   }
 }

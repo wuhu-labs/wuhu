@@ -30,7 +30,7 @@ import Testing
   }
 
   func rig(dev: Bool = false, publicRead: Bool = false, admin: Bool = true) async throws -> Rig {
-    let harness = try Harness(dev: dev, publicRead: publicRead, origin: Self.origin)
+    let harness = try await Harness(dev: dev, publicRead: publicRead, origin: Self.origin)
     let alice = try await harness.space.addAccount(kind: .human, name: "alice", admin: admin).id
     let bob = try await harness.space.addAccount(kind: .human, name: "bob").id
     let rig = Rig(
@@ -45,7 +45,7 @@ import Testing
 
   @discardableResult
   func run(_ rig: Rig, _ group: GroupID, _ verb: String, _ input: JSONValue) async throws -> JSONValue {
-    let context = SpaceToolContext(space: rig.harness.space, principal: Principal(actor: .anonymous, group: group))
+    let context = SpaceToolContext(space: rig.harness.space, principal: Principal(actor: .person(persona: "fixture", account: group == rig.bobGroup ? rig.bob : rig.alice), group: group))
     return try await SpaceToolbox.all.first { $0.name == verb }!.run(context, input: input)
   }
 
@@ -152,7 +152,7 @@ import Testing
       #expect(error.object?["message"] == "page scripts can't write session homes; keep page data outside /_/sessions/")
       #expect(error.object?["hint"] == nil)
     }
-    let rows = try await r.harness.space.query("SELECT count(*) FROM \"\(table)\"", as: .shared(.anonymous))
+    let rows = try await r.harness.space.query("SELECT count(*) FROM \"\(table)\"", as: .shared(.publicReader))
     #expect(rows.rows == [[.integer(0)]])
     let unchanged = try JSONValueDecoder().decode(ReadOutput.self, from: try await run(r, .shared, "read", ["path": .string(note)]))
     #expect(unchanged.content == "---\nk: 1\n---\n")
@@ -181,7 +181,7 @@ import Testing
   }
 
   func count(_ r: Rig, _ table: String, in group: GroupID) async throws -> [[Cell]] {
-    try await r.harness.space.query("SELECT count(*) FROM \"\(table)\"", as: Principal(actor: .anonymous, group: group)).rows
+    try await r.harness.space.query("SELECT count(*) FROM \"\(table)\"", as: Principal(actor: .person(persona: "fixture", account: group == r.bobGroup ? r.bob : r.alice), group: group)).rows
   }
 
   @Test func aPageWritesOnlyWhereItsGroupWritesWhateverItsViewerHolds() async throws {
@@ -210,7 +210,7 @@ import Testing
     #expect(unchanged.content == "---\nk: 1\n---\n")
   }
 
-  @Test func aDevSeatPageWritesOnlyWhereItsGroupWrites() async throws {
+  @Test func aDevPersonsPageWritesOnlyWhereItsGroupWrites() async throws {
     let r = try await rig(dev: true)
     let (home, vault) = try await homeReadingAVault(r)
     let refused = try await insert(r, on: home, into: "wuhu://\(vault.rawValue).localspace/t.table", cookie: nil)
@@ -288,7 +288,7 @@ import Testing
     let patch: JSONValue = ["path": "/notes.md", "set": ["k": 1], "ifMatch": "x", "page": "/apps/mine.html"]
     let patched = try await post(r, r.bobHost, "/_/space/attributes", patch, cookie: bobs, origin: "null")
     #expect(try await code(patched) == "crossOrigin")
-    let count = try await space.query("SELECT count(*) FROM \"/private.table\"", as: Principal(actor: .anonymous, group: r.bobGroup))
+    let count = try await space.query("SELECT count(*) FROM \"/private.table\"", as: Principal(actor: .person(persona: "bob", account: r.bob), group: r.bobGroup))
     #expect(count.rows == [[.integer(0)]])
 
     _ = try await run(r, r.bobGroup, "write", ["path": "/apps/mine.html", "content": "<html><head></head><body>mine</body></html>"])
@@ -314,7 +314,7 @@ import Testing
     let body = try await json(refused)
     #expect(body.object?["code"] == "invalidArgument")
     #expect(body.object?["message"]?.stringValue?.contains("both touch row 1") == true)
-    let rows = try await r.harness.space.query("SELECT title, meta FROM \"/tasks.table\"", as: .shared(.anonymous))
+    let rows = try await r.harness.space.query("SELECT title, meta FROM \"/tasks.table\"", as: .shared(.publicReader))
     #expect(rows.rows == [[.text("a"), .null]])
   }
 
@@ -355,11 +355,11 @@ import Testing
       "path": "/tasks.table", "ops": [["insert": ["title": "x"]]], "page": "/p.html",
     ], cookie: nil)
     #expect(write.status == .unauthorized)
-    let rows = try await r.harness.space.query("SELECT count(*) FROM \"/tasks.table\"", as: .shared(.anonymous))
+    let rows = try await r.harness.space.query("SELECT count(*) FROM \"/tasks.table\"", as: .shared(.publicReader))
     #expect(rows.rows == [[.integer(0)]])
   }
 
-  @Test func aDevSeatPageWritesWithNoActor() async throws {
+  @Test func aDevPersonsPageWriteIsAttributedToItsPersona() async throws {
     let r = try await rig(dev: true)
     let response = try await post(r, Self.sharedHost, "/_/space/rows", [
       "path": "/tasks.table", "ops": [["insert": ["title": "x"]]], "page": "/p.html",
@@ -368,7 +368,7 @@ import Testing
     let history = try JSONValueDecoder().decode(HistoryOutput.self, from: try await run(r, .shared, "history", ["path": "/tasks.table"]))
     let entry = try #require(history.entries.first { $0.via != nil })
     #expect(entry.via == "/p.html")
-    #expect(entry.by == nil)
+    #expect(entry.by == (try await r.harness.space.ensureDevPerson()).persona)
   }
 
   @Test func queryIsTypedAndBindsParamsWhileLegacyQueryIsUnchanged() async throws {

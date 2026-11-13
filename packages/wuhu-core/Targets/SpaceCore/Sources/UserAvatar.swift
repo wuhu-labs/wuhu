@@ -22,8 +22,11 @@ public enum UserAvatarError: Error, Equatable, Sendable {
 extension Space {
   public func userAvatar(principal: String) async throws -> UserAvatar? {
     let principal = cell.userProfile(handle: principal)?.principal ?? principal
-    guard let owner = cell.personCell(principal),
-          let hash = worker.cell(owner).avatarHash(principal: principal) else { return nil }
+    let hash = worker.read { reader -> String? in
+      guard let owner = reader.cell(SpaceCell.ID("space")).personCell(principal) else { return nil }
+      return reader.cell(owner).avatarHash(principal: principal)
+    }
+    guard let hash else { return nil }
     return try await UserAvatar(hash: hash, data: Data(bucket.bytes(hash)))
   }
 

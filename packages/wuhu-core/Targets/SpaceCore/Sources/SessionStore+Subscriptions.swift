@@ -6,9 +6,9 @@
 import SessionDomain
 import struct SpaceContract.GroupID
 
-struct ObservationProgress: Hashable, Sendable, Codable {
-  var incarnation: UUID
-  var deliverySequence: Int
+public struct ObservationProgress: Hashable, Sendable, Codable {
+  public var incarnation: UUID
+  public var deliverySequence: Int
 }
 
 public struct SubscriptionSlot: Hashable, Sendable, Codable {
@@ -27,8 +27,8 @@ public struct SubscriptionSlot: Hashable, Sendable, Codable {
   public var handlerIncarnation: UUID?
   public var lastError: String?
   /// The handler firing in progress: its observer cell started it and has not taken its answer.
-  var firing: UUID?
-  var observationProgress: ObservationProgress?
+  public var firing: UUID?
+  public var observationProgress: ObservationProgress?
 
   public init(id: SubscriptionID, kind: Kind, handler: String? = nil) {
     self.id = id
@@ -176,7 +176,7 @@ extension SubscriptionSlot.Kind {
   }
 
   /// Whether it watches a source (a query, a stream) rather than a clock.
-  var observes: Bool {
+  public var observes: Bool {
     switch self {
     case .observe, .stream, .children: true
     case .timer: false
@@ -192,11 +192,11 @@ func handlerName(_ path: String) -> String {
 }
 
 // Re-arming after cancellation changes callback identity; transcript generation changes do not.
-func observationToken(_ subscription: ArmedSubscription) -> UUID {
+public func observationToken(_ subscription: ArmedSubscription) -> UUID {
   observationProgress(subscription).incarnation
 }
 
-func observationProgress(_ subscription: ArmedSubscription) -> ObservationProgress {
+public func observationProgress(_ subscription: ArmedSubscription) -> ObservationProgress {
   subscription.slot.observationProgress ?? ObservationProgress(
     incarnation: UUID.deterministic(
       "observation-incarnation",

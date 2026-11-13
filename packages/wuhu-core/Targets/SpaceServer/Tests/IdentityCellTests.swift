@@ -3,15 +3,20 @@ import Crypto
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import Scratch
 @testable import SpaceCore
 @testable import SpaceServer
+import StructuredQueries
 import Synchronization
 import Testing
 import Wuwei
+import WuweiQueries
 
 @Suite(.deterministicDependencies) struct IdentityCellTests {
   private func controlled(_ body: (TimeControl) async throws -> Void) async throws {
@@ -417,7 +422,7 @@ import Wuwei
       #expect(controller.state!.schedule.next == next.kid)
       #expect(try await controller.keys.load(next.kid).rawKey == next.rawKey)
       #expect(try Data(contentsOf: settingsFile) == bytes)
-      let row = try await DatabaseQueue(path: file.path).read { try String.fetchOne($0, sql: "SELECT state FROM server_identity")! }
+      let row = try #require(space.worker.cell(IdentityController.cellID).storedStateForTest())
       for key in [original, current, next] { #expect(!row.contains(key.rawKey.base64EncodedString())) }
       try await space.close()
       try Data("invalid settings".utf8).write(to: settingsFile)
@@ -439,13 +444,12 @@ import Wuwei
 }
 
 private func identitySettles(_ controller: IdentityController, _ condition: () async throws -> Bool) async throws {
-  let writer = await controller.space.writer
-  let changes = ValueObservation.tracking { db in
-    try String.fetchOne(db, sql: "SELECT state FROM server_identity")
-  }.values(in: writer, bufferingPolicy: .bufferingNewest(1))
-  for try await _ in changes {
+  let watch = await watchSpaceTables(["server_identity"], in: controller.space)
+  defer { watch.cancel() }
+  for await _ in watch.changes {
     if try await condition() { return }
   }
+  try Task.checkCancellation()
   preconditionFailure("identity observation ended before its space closed")
 }
 
@@ -503,4 +507,13 @@ private func identityWake(_ controller: IdentityController, in time: TimeControl
     if controller.space.worker.cell(IdentityController.cellID).nextWake() != wake { break }
     await time.advance(by: 1)
   }
+}
+
+@Table("server_identity")
+private struct StoredIdentityState: Owned {
+  let state: String
+}
+
+extension IdentityCell {
+  func storedStateForTest() -> String? { db.rows(StoredIdentityState.all).first?.state }
 }

@@ -11,7 +11,7 @@ import Testing
 @Suite(.deterministicDependencies)
 struct EnrollRoutesTests {
   @Test func mintedTokenConsumesOnceThenDies() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: "alice")
 
     let minted = try await postJSON(harness, "/v1/enroll", [
@@ -40,7 +40,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func revokingAMintedTokenStopsItFromEnrolling() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: "alice")
 
     let minted = try await postJSON(harness, "/v1/enroll", [
@@ -64,7 +64,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func consumeRejectsAMalformedPubkeyAndKeepsTheToken() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let minted = try await harness.space.mintJoinToken(account: account.id, capabilities: [.device], createdBy: nil, lifetime: 600)
     for junk in ["", "phone", "ed25519:phone"] {
@@ -82,7 +82,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func consumeNamesTheMachineOnlyForAMachineAccountToken() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let machine = (try await harness.space.addMachineV2(name: "box")).machine
     let minted = try await harness.space.mintJoinToken(
       account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600,
@@ -106,7 +106,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func mintValidatesAccountAndCapabilities() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
 
     #expect(try await postJSON(harness, "/v1/enroll", [
@@ -127,7 +127,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func shareLoginMintsAOneTimeLinkForTheKeysAccount() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let key = Curve25519.Signing.PrivateKey()
     _ = try await harness.space.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -154,7 +154,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func shareLoginHonorsARequestedTTLUpToTheCap() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let key = Curve25519.Signing.PrivateKey()
     _ = try await harness.space.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -170,7 +170,7 @@ struct EnrollRoutesTests {
 
   @Test(arguments: [0, -60, 259_201])
   func shareLoginRejectsANonpositiveOrOverCapTTL(_ ttl: Int) async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let key = Curve25519.Signing.PrivateKey()
     _ = try await harness.space.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -182,7 +182,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func namingAPubkeyWithoutItsPrivateKeyCannotShareLogin() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let victim = Curve25519.Signing.PrivateKey()
     _ = try await harness.space.addKey(victim.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -203,7 +203,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func aShareLoginChallengeIsOneShotAndMustComeFromTheServer() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let key = Curve25519.Signing.PrivateKey()
     _ = try await harness.space.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -219,7 +219,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func aP256KeyShareLoginsWithARawECDSASignature() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let key = P256.Signing.PrivateKey()
     _ = try await harness.space.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -235,7 +235,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func aCrossCurveShareLoginSignatureIsRejected() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let p256 = P256.Signing.PrivateKey()
     let ed25519 = Curve25519.Signing.PrivateKey()
@@ -260,7 +260,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func retiredKeyCannotShareLogin() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let key = Curve25519.Signing.PrivateKey()
     _ = try await harness.space.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
@@ -270,7 +270,7 @@ struct EnrollRoutesTests {
   }
 
   @Test func theWallBlocksMintButShareLoginSelfAuthenticates() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let minted = try await harness.space.mintJoinToken(account: account.id, capabilities: [.device], createdBy: nil, lifetime: 600)
 

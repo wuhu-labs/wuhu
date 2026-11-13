@@ -11,7 +11,7 @@ private let routePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 
 
 @Suite(.deterministicDependencies) struct CapabilityRouteTests {
   @Test func imageAndSearchHTTPUseTheSharedAuthoritativeResolution() async throws {
-    let harness = try Harness(credentials: .init { id in id == "codex" ? .chatGPT(accessToken: "token", accountID: "account") : .apiKey("key") })
+    let harness = try await Harness(credentials: .init { id in id == "codex" ? .chatGPT(accessToken: "token", accountID: "account") : .apiKey("key") })
     _ = try await harness.space.fs(.settings).write("/capabilities.json", Data(#"{"image":{"active":"openai","providers":{"openai":{"dialect":"openai-images","baseURL":"https://fake.openai/v1"}}},"web_search":{"active":"brave","providers":{"brave":{"dialect":"brave","baseURL":"https://fake.brave"}}}}"#.utf8), ifMatch: nil)
     let seen = LockIsolated<[String]>([])
     let provider = FetchClient { request in
@@ -33,7 +33,7 @@ private let routePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 
   }
 
   @Test func allNewRoutesStayBehindTheAuthenticationWall() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     for path in ["/v1/image", "/v1/web-search"] {
       let response = try await harness.api(Request(url: URL(string: "http://space" + path)!, method: .post, body: .string("{}")))
       #expect(response.status == .unauthorized)

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useOutletContext } from 'react-router'
 import { policyLinks } from '~/components/ai-sharing-dialog'
 import { Avatar } from '~/components/avatar'
 import { BrowserCard } from '~/components/settings-browser'
+import { DevicesCard } from '~/components/settings-devices'
 import { GroupSettings } from '~/components/settings-groups'
 import {
   settingsPlace,
@@ -13,9 +14,7 @@ import { UsageCard } from '~/components/settings-usage'
 import { TemplateCreateDialog } from '~/components/template-create'
 import type { SessionTemplateDescriptor } from '~/lib/contract.gen'
 import { displayNameFor, handleFor } from '~/lib/directory'
-import { inviteCountdown } from '~/lib/invite'
 import { fileHref } from '~/lib/links'
-import { qrModules, qrSvgPath } from '~/lib/qr'
 import { templateDirectory, templateLine } from '~/lib/templates'
 import {
   profileChangedEvent,
@@ -27,11 +26,6 @@ import type { SpaceContext } from '~/routes/space'
 import { enrolledDevice, logout } from '~/sdk/auth'
 import { uploadAvatar } from '~/sdk/avatar'
 import { errorMessage } from '~/sdk/errors'
-import {
-  mintShareLogin,
-  revokeInvite,
-  type ShareLogin,
-} from '~/sdk/share-login'
 import { fetchTemplates } from '~/sdk/templates'
 
 export function meta() {
@@ -83,7 +77,7 @@ function SettingsDetail({ row }: { row: SettingsRow }) {
     case 'devices':
       return <DevicesCard signOut={enrolled ? signOut : null} />
     case 'browser':
-      return <BrowserCard />
+      return <BrowserCard enrolled={enrolled} />
     case 'ai-sharing':
       return <PrivacyCard review={reviewAISharing} />
     case 'templates':
@@ -271,101 +265,6 @@ function ProfileCard() {
   )
 }
 
-function DevicesCard({ signOut }: { signOut: (() => void) | null }) {
-  const [invite, setInvite] = useState<ShareLogin | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [now, setNow] = useState(() => new Date())
-
-  useEffect(() => {
-    if (invite == null) return
-    const tick = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(tick)
-  }, [invite])
-
-  const mint = () => {
-    setBusy(true)
-    setError(null)
-    setCopied(false)
-    mintShareLogin()
-      .then((minted) => {
-        setInvite(minted)
-        setNow(new Date())
-      })
-      .catch((failure: unknown) => setError(errorMessage(failure)))
-      .finally(() => setBusy(false))
-  }
-
-  const revoke = () => {
-    if (invite == null) return
-    setBusy(true)
-    setError(null)
-    revokeInvite(invite.token)
-      .then(() => setInvite(null))
-      .catch((failure: unknown) => setError(errorMessage(failure)))
-      .finally(() => setBusy(false))
-  }
-
-  return (
-    <section className='wuhu-card wuhu-settings-card'>
-      <p className='wuhu-muted'>
-        Scan from the phone's Wuhu login page, or open the link. One-time,
-        expires in 10 minutes.
-      </p>
-      {invite && (
-        <div className='wuhu-invite'>
-          <InviteCode url={invite.url} />
-          <div className='wuhu-panel wuhu-invite-url'>
-            <div className='wuhu-panel-code'>{invite.url}</div>
-          </div>
-          <div className='wuhu-invite-meta'>
-            <span>{inviteCountdown(invite.expiresAt, now)}</span>
-            <button
-              type='button'
-              className='wuhu-quiet-button'
-              onClick={() => {
-                void navigator.clipboard?.writeText(invite.url)
-                setCopied(true)
-              }}
-            >
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-            <button
-              type='button'
-              className='wuhu-quiet-button'
-              disabled={busy}
-              onClick={revoke}
-            >
-              Revoke
-            </button>
-          </div>
-        </div>
-      )}
-      {error && <p className='wuhu-alert'>{error}</p>}
-      <div className='wuhu-form-actions'>
-        {signOut && (
-          <button
-            type='button'
-            className='wuhu-quiet-button wuhu-settings-logout'
-            onClick={signOut}
-          >
-            Log out
-          </button>
-        )}
-        <button
-          type='button'
-          className='wuhu-button'
-          disabled={busy}
-          onClick={mint}
-        >
-          Invite a device
-        </button>
-      </div>
-    </section>
-  )
-}
-
 function PrivacyCard({ review }: { review: () => void }) {
   return (
     <section className='wuhu-card wuhu-settings-card'>
@@ -387,26 +286,5 @@ function PrivacyCard({ review }: { review: () => void }) {
         </a>
       </div>
     </section>
-  )
-}
-
-const quietZone = 4
-
-function InviteCode({ url }: { url: string }) {
-  const { size, path } = useMemo(() => {
-    const modules = qrModules(url)
-    return { size: modules.length, path: qrSvgPath(modules) }
-  }, [url])
-  const span = size + quietZone * 2
-  return (
-    <svg
-      className='wuhu-invite-qr'
-      viewBox={`${-quietZone} ${-quietZone} ${span} ${span}`}
-      shapeRendering='crispEdges'
-      role='img'
-      aria-label='Invite QR code'
-    >
-      <path d={path} fill='currentColor' />
-    </svg>
   )
 }

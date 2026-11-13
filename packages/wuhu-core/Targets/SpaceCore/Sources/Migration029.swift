@@ -1,8 +1,6 @@
-import GRDB
-
 // An attachment is a row of its conversation, not a file of the group's journal. The journal's rows stay where they are; nothing reads them.
 enum Migration029 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE attachments (
       conversation_id TEXT NOT NULL,

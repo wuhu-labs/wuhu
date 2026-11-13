@@ -24,10 +24,10 @@ private final class StretchDatabase: SharedDatabase {
     )
   }
 
-  func write(_ body: (OpaquePointer, AnyObject?) throws -> Void) throws {
+  func write(_ body: (OpaquePointer) throws -> Void) throws {
     var snapshot: StretchSnapshot?
-    try file.write { handle, host in
-      try body(handle, host)
+    try file.write { handle in
+      try body(handle)
       snapshot = try Self.snapshot(handle)
     }
     if let snapshot { commits.withLock { $0.append(snapshot) } }
@@ -37,16 +37,16 @@ private final class StretchDatabase: SharedDatabase {
     StretchTransaction(base: try file.begin(), database: self)
   }
 
-  func read(_ body: (OpaquePointer) throws -> Void) throws { try file.read(body) }
+  func beginRead() throws -> any SharedReadTransaction { try file.beginRead() }
 }
 
 private final class StretchTransaction: SharedTransaction {
   let base: any SharedTransaction
   let database: StretchDatabase
   init(base: any SharedTransaction, database: StretchDatabase) { self.base = base; self.database = database }
-  func access<T: Sendable>(_ body: @Sendable (OpaquePointer, AnyObject?) throws -> T) throws -> T { try base.access(body) }
+  func access<T: Sendable>(_ body: @Sendable (OpaquePointer) throws -> T) throws -> T { try base.access(body) }
   func commit() throws {
-    let snapshot = try base.access { handle, _ in try StretchDatabase.snapshot(handle) }
+    let snapshot = try base.access { handle in try StretchDatabase.snapshot(handle) }
     try base.commit()
     if let snapshot { database.commits.withLock { $0.append(snapshot) } }
   }

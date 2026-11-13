@@ -1,24 +1,22 @@
-import GRDB
-
 enum Migration001 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     let fresh = try !db.tableExists("fs_heads")
     if !fresh {
       guard try db.tableExists("schema_compactions"),
-            try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM schema_compactions WHERE name = 'wuhu-45')") == true
+            try db.bool("SELECT EXISTS (SELECT 1 FROM schema_compactions WHERE name = 'wuhu-45')") == true
       else { throw SpaceError.needsMigration("wuhu-45") }
     }
     try db.execute(sql: schema)
     if fresh {
       try db.execute(sql: "INSERT INTO schema_compactions (name, applied_at) VALUES ('wuhu-45-links', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
     }
-    if try !db.columns(in: "machine_execs").contains(where: { $0.name == "tool_spec" }) {
+    if try !db.columns(in: "machine_execs").contains("tool_spec") {
       try db.execute(sql: "ALTER TABLE machine_execs ADD COLUMN tool_spec TEXT")
     }
-    if try !db.columns(in: "machine_execs").contains(where: { $0.name == "tool_end_owed" }) {
+    if try !db.columns(in: "machine_execs").contains("tool_end_owed") {
       try db.execute(sql: "ALTER TABLE machine_execs ADD COLUMN tool_end_owed INTEGER NOT NULL DEFAULT 0")
     }
-    if try !db.columns(in: "session_api_receipts").contains(where: { $0.name == "request" }) {
+    if try !db.columns(in: "session_api_receipts").contains("request") {
       try db.execute(sql: "ALTER TABLE session_api_receipts ADD COLUMN request TEXT")
     }
     if try db.tableExists("exec_jobs") {

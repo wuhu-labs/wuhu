@@ -1,10 +1,8 @@
-import GRDB
-
 // A session's requests as sent, one row per message, addressed by generation
 // and position; position 0 is the system prompt and tool list. Rows are only
 // ever inserted.
 enum Migration026 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE session_lines (
       session_id TEXT NOT NULL,

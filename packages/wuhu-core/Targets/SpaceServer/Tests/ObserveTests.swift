@@ -13,7 +13,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct ObserveTests {
   @Test func batchRevisionFramesAreWholeLiveAndReplayed() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     for name in ["a", "b", "c"] {
       _ = try await harness.direct("write", .object(["path": .string("/notes/\(name).md"), "content": .string(name)]))
     }
@@ -52,8 +52,8 @@ import Testing
     let folder = try ScratchFolder("observe-unavailable")
     let file = folder.url.appending(path: "space.sqlite")
     let holder = try Space.open(file: file)
-    _ = try await holder.observeFS(glob: "**", group: .shared, as: .shared(.anonymous))
-    let harness = try Harness(opening: { try Space.open(file: file) })
+    _ = try await holder.observeFS(glob: "**", group: .shared, as: .shared(.publicReader))
+    let harness = try await Harness(opening: { try Space.open(file: file) })
 
     for query in [["glob": "/**"], ["sql": "SELECT 1"]] {
       let response = try await harness.get(harness.api, "/v1/observe", query: query)
@@ -68,21 +68,21 @@ import Testing
   }
 
   @Test func discoveryAdvertisesBatchObservation() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.get(harness.api, "/v1/server")
     let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
     #expect(info.features?.contains("observe-batch") == true)
   }
 
   @Test func discoveryAdvertisesBatchPageWatch() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.get(harness.api, "/v1/server")
     let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
     #expect(info.features?.contains("watch-batch") == true)
   }
 
   @Test func globObserveStreamsMutationEvents() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.get(harness.api, "/v1/observe", query: ["glob": "/notes/**"])
     #expect(response.status == .ok)
     #expect(response.headers[.contentType]?.hasPrefix("text/event-stream") == true)
@@ -100,7 +100,7 @@ import Testing
   }
 
   @Test func globObserveWithCursorReplaysJournalThenStreamsLive() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/notes/a.md", "content": "x"]))
     _ = try await harness.direct("write", .object(["path": "/notes/b.md", "content": "y"]))
 
@@ -119,7 +119,7 @@ import Testing
   }
 
   @Test func underscoreObserveAcceptsCursorToo() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/a.md", "content": "x"]))
 
     let response = try await harness.get(harness.web, "/_/observe", query: ["glob": "/**", "from": "0"])
@@ -132,7 +132,7 @@ import Testing
   }
 
   @Test func globObserveRejectsMalformedCursorOnBothOrigins() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     for (path, client) in [("/v1/observe", harness.api), ("/_/observe", harness.web)] {
       for from in ["x", "-1", ""] {
         let response = try await harness.get(client, path, query: ["glob": "/**", "from": from])
@@ -144,7 +144,7 @@ import Testing
   }
 
   @Test func sqlObserveStreamsQueryOutputSnapshots() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct(
       "table.create",
       .object(["path": "/t.table", "header": .object(["columns": .array([.object(["name": "n", "type": "integer"])])])]),
@@ -174,11 +174,9 @@ import Testing
     #expect(snapshots[1].rows == [[.integer(1)]])
   }
 
-  // `viewer()` is the identity a watermark POST from the same caller advances;
-  // the web origin has no caller identity and reads NULL.
   @Test func sqlObserveBindsTheCallerAsViewer() async throws {
-    let harness = try Harness()
-    let origins: [(FetchClient, String, JSONValue)] = [(harness.api, "/v1/observe", "owner"), (harness.web, "/_/observe", .null)]
+    let harness = try await Harness()
+    let origins: [(FetchClient, String, JSONValue)] = [(harness.api, "/v1/observe", .string(try await harness.space.ensureDevPerson().persona)), (harness.web, "/_/observe", .null)]
     for (client, path, expected) in origins {
       let response = try await harness.get(client, path, query: ["sql": "SELECT viewer() AS v", "throttleMs": "0"])
       #expect(response.status == .ok, "\(path)")
@@ -223,7 +221,7 @@ import Testing
   }
 
   @Test func underscoreObserveMatchesApiOriginShapes() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.get(harness.web, "/_/observe", query: ["glob": "/**"])
     #expect(response.status == .ok)
     #expect(response.headers[.contentType]?.hasPrefix("text/event-stream") == true)
@@ -237,7 +235,7 @@ import Testing
   }
 
   @Test func observeWithoutModeIs400() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let neither = try await harness.get(harness.api, "/v1/observe")
     #expect(neither.status == .badRequest)
     let both = try await harness.get(harness.api, "/v1/observe", query: ["glob": "/**", "sql": "SELECT 1"])
@@ -247,7 +245,7 @@ import Testing
   }
 
   @Test func observeRejectsEmptyGlobOnBothOrigins() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     for (path, client) in [("/v1/observe", harness.api), ("/_/observe", harness.web)] {
       let response = try await harness.get(client, path, query: ["glob": ""])
       #expect(response.status == .badRequest, "\(path)")
@@ -257,7 +255,7 @@ import Testing
   }
 
   @Test func observeRejectsInvalidSQLBeforeStreamingOnBothOrigins() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let cases: [(sql: String, code: ErrorCode)] = [
       ("DELETE FROM docs", .invalidArgument),
       ("SELECT * FROM fs_heads", .invalidArgument),
@@ -276,7 +274,7 @@ import Testing
   }
 
   @Test func sqlObserveRehydratesJsonAndBooleanColumns() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct(
       "table.create",
       .object(["path": "/t.table", "header": .object(["columns": .array([

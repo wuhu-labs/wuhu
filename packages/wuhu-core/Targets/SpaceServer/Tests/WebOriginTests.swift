@@ -16,7 +16,7 @@ import Testing
   let importMap = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js","wuhu:device":"/_/device.js"}}</script>"#
 
   @Test func servesFilesWithMimeByExtension() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/style.css", "content": "body {}"]))
     _ = try await harness.direct("write", .object(["path": "/app.js", "content": "1"]))
     _ = try await harness.direct("write", .object(["path": "/data.bin", "content": "x"]))
@@ -38,7 +38,7 @@ import Testing
 
   // Safari and iOS play a video only from a server that answers ranges.
   @Test func aRangeRequestGetsThoseBytesAndAnUnsatisfiableOneGets416() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/clip.mp4", "content": "0123456789"]))
     func fetch(_ range: String?) async throws -> Response {
       var request = Request(url: URL(string: "http://space/clip.mp4")!)
@@ -77,7 +77,7 @@ import Testing
   }
 
   @Test func filesRevalidateByRevision() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/_/sessions/s1/avatar.png", "content": "one"]))
 
     let first = try await harness.get(harness.web, "/_/sessions/s1/avatar.png")
@@ -107,7 +107,7 @@ import Testing
   }
 
   @Test func aRangeIsHonouredOnlyForTheTagTheClientHolds() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/clip.mp4", "content": "0123456789"]))
     let tag = try #require(try await harness.get(harness.web, "/clip.mp4").headers[.eTag])
     func fetch(ifRange: String) async throws -> Response {
@@ -132,7 +132,7 @@ import Testing
   }
 
   @Test func aHeadRevalidatesLikeAGet() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/style.css", "content": "p {}"]))
     let tag = try #require(try await harness.get(harness.web, "/style.css").headers[.eTag])
     var headers = RequestHeaders()
@@ -144,7 +144,7 @@ import Testing
   }
 
   @Test func aDirectoryListingCarriesNoTag() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/d/a.txt", "content": "a"]))
     let listing = try await harness.get(harness.web, "/d/")
     #expect(listing.status == .ok)
@@ -153,7 +153,7 @@ import Testing
   }
 
   @Test func directoryIndexPrecedenceHtmlOverMd() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/index.md", "content": "# md root"]))
     _ = try await harness.direct("write", .object(["path": "/docs/index.md", "content": "# docs"]))
     _ = try await harness.direct("write", .object(["path": "/both/index.html", "content": "<h1>html</h1>"]))
@@ -176,7 +176,7 @@ import Testing
   }
 
   @Test func directoryWithoutAnIndexListsEntriesAsShellLinks() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/d/b.md", "content": "b"]))
     _ = try await harness.direct("write", .object(["path": "/d/sub/keep.md", "content": "k"]))
     _ = try await harness.direct(
@@ -213,7 +213,7 @@ import Testing
   }
 
   @Test func rootWithoutAnIndexListsHiddenEntriesAndHasNoParentLink() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/notes.md", "content": "n"]))
     _ = try await harness.direct("write", .object(["path": "/.agents/skill.md", "content": "s"]))
 
@@ -232,7 +232,7 @@ import Testing
   }
 
   @Test func emptyDirectoryRendersTheEmptyLine() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/hollow/x.md", "content": "x"]))
     _ = try await harness.direct("rm", .object(["path": "/hollow/x.md"]))
 
@@ -245,7 +245,7 @@ import Testing
   }
 
   @Test func listingEscapesAndPercentEncodesEntryNames() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": #"/esc/a <b> & "c" +d.md"#, "content": "x"]))
 
     let response = try await harness.get(harness.web, "/esc")
@@ -257,7 +257,7 @@ import Testing
   }
 
   @Test func underscoreQueryReturnsQueryOutput() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct(
       "table.create",
       .object(["path": "/t.table", "header": .object(["columns": .array([.object(["name": "n", "type": "integer"])])])]),
@@ -344,7 +344,7 @@ import Testing
   }
 
   @Test func aDownloadQueryAnswersTheRawBytesAsAnAttachment() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/out/café build.html", "content": "<main>x</main>"]))
 
     let download = try await harness.get(harness.web, "/out/café build.html", query: ["download": "1"])
@@ -358,7 +358,7 @@ import Testing
   }
 
   @Test func machineNotesServeUnderTheNameAndTheId() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let id = (try await harness.space.addMachineV2(name: "studio")).machine.id.rawValue
     _ = try await harness.direct("write", .object(["path": "/_/machines/studio/AGENTS.md", "content": "studio manual"]))
 
@@ -375,13 +375,13 @@ import Testing
   }
 
   @Test func methodsOtherThanGetHeadAreRejected() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.web(Request(url: URL(string: "http://space/index.md")!, method: .post))
     #expect(response.status == .methodNotAllowed)
   }
 
   @Test func headIsSupportedOnContentAndUnderscoreRoutes() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/style.css", "content": "body {}"]))
     _ = try await harness.direct(
       "table.create",
@@ -402,7 +402,7 @@ import Testing
   }
 
   @Test func queryResultsCarryADigestTagAndRevalidate() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct(
       "table.create",
       .object(["path": "/t.table", "header": .object(["columns": .array([.object(["name": "n", "type": "integer"])])])]),
@@ -441,7 +441,7 @@ import Testing
   @Test(arguments: ["kanban", "list", "wall", "map"])
   func providersRefuseAttachmentDefinitions(provider: String) async throws {
     let views = ["kanban.html": Data("<main>kanban</main>".utf8), "list.html": Data("<main>list</main>".utf8)]
-    let harness = try Harness(views: views)
+    let harness = try await Harness(views: views)
     for target in [
       "/_/conversations/chat/attachments/proof.view",
       "../conversations/chat/attachments/proof.view",
@@ -461,7 +461,7 @@ import Testing
 
   @Test func everyHTMLResponseIsInjectedAndLengthsDescribeTransformedBytes() async throws {
     let providers = ["owned.html": Data("<main>owned</main>".utf8)]
-    let harness = try Harness(views: providers)
+    let harness = try await Harness(views: providers)
     _ = try await harness.direct("write", .object(["path": "/page.html", "content": "<main>authored</main>"]))
     _ = try await harness.direct("write", .object(["path": "/already.html", "content": .string(injection)]))
     _ = try await harness.direct("write", .object(["path": "/plain.txt", "content": "plain"]))
@@ -497,7 +497,7 @@ import Testing
   }
 
   @Test func percentEncodedSegmentsDecodeButCannotSmuggleSlashes() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/café notes.md", "content": "unicode"]))
     _ = try await harness.direct("write", .object(["path": "/a/b.md", "content": "nested"]))
 
@@ -510,7 +510,7 @@ import Testing
   }
 
   @Test func trailingSlashOnAFilePathIs404() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/a.md", "content": "x"]))
     _ = try await harness.direct("write", .object(["path": "/docs/index.md", "content": "# docs"]))
 
@@ -526,7 +526,7 @@ import Testing
       "kanban.html": Data("<html>kanban provider</html>".utf8),
       "kanban.js": Data("export {}".utf8),
     ]
-    let harness = try Harness(views: providers)
+    let harness = try await Harness(views: providers)
 
     let bare = try await harness.get(harness.web, "/_/views/kanban")
     #expect(bare.status == .ok)
@@ -545,7 +545,7 @@ import Testing
 
   @Test func wallAndMapAreServedByTheListProvider() async throws {
     let providers = ["list.html": Data("<html>list provider</html>".utf8)]
-    let harness = try Harness(views: providers)
+    let harness = try await Harness(views: providers)
 
     for kind in ["list", "wall", "map"] {
       let response = try await harness.get(harness.web, "/_/views/\(kind)")
@@ -560,7 +560,7 @@ import Testing
 
   @Test func spaceFilesCannotShadowBundledProviders() async throws {
     let providers = ["kanban.html": Data("<html>bundled</html>".utf8)]
-    let harness = try Harness(views: providers)
+    let harness = try await Harness(views: providers)
     await #expect(throws: (any Error).self) {
       _ = try await harness.direct("write", .object(["path": "/_/views/kanban", "content": "impostor"]))
     }
@@ -569,13 +569,13 @@ import Testing
   }
 
   @Test func noBundledProvidersMeansViews404() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.get(harness.web, "/_/views/kanban")
     #expect(response.status == .notFound)
   }
 
   @Test func viewFilesServeAsJSON() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/board.view", "content": #"{"view":"kanban"}"#]))
     let response = try await harness.get(harness.web, "/board.view")
     #expect(response.status == .ok)
@@ -583,7 +583,7 @@ import Testing
   }
 
   @Test func corsReflectsOnlyTheBareHost() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     _ = try await harness.direct("write", .object(["path": "/font.woff2", "content": "f"]))
     let url = URL(string: "http://space/font.woff2")!
     let paired = "http://localhost"
@@ -615,7 +615,7 @@ import Testing
   }
 
   @Test func corsReflectsTheAdvertisedOriginBehindAProxy() async throws {
-    let harness = try Harness(origin: "https://example.test")
+    let harness = try await Harness(origin: "https://example.test")
     _ = try await harness.direct("write", .object(["path": "/font.woff2", "content": "f"]))
     // The proxy terminates TLS on 443 and forwards to the backend listener;
     // the browser origin is the advertised canonical origin, not the raw port.
@@ -639,7 +639,7 @@ import Testing
   }
 
   @Test func advertisedOriginWithExplicitPortMatchesOnlyThatPort() async throws {
-    let harness = try Harness(origin: "https://example.test:8443")
+    let harness = try await Harness(origin: "https://example.test:8443")
     _ = try await harness.direct("write", .object(["path": "/font.woff2", "content": "f"]))
     let url = URL(string: "https://example.test:8443/font.woff2")!
 
@@ -658,7 +658,7 @@ import Testing
   }
 
   @Test func sessionPreflightAllowsTheAdvertisedOriginBehindAProxy() async throws {
-    let harness = try Harness(origin: "https://example.test")
+    let harness = try await Harness(origin: "https://example.test")
     let url = URL(string: "https://example.test/_/session")!
     var headers = RequestHeaders()
     headers[.origin] = "https://example.test"
@@ -674,7 +674,7 @@ import Testing
   }
 
   @Test func sessionPreflightAllowsOnlyThePairedOriginAndBearerHeader() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let url = URL(string: "http://space/_/session")!
     let paired = "http://localhost"
     var headers = RequestHeaders()
@@ -701,7 +701,7 @@ import Testing
   }
 
   @Test func sessionBootstrapMintsAReadSessionFromTheVerifiedBearer() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     let identity = try await harness.space.identity().rawValue
     let key = Curve25519.Signing.PrivateKey()
     let account = try await harness.space.addAccount(kind: .human, name: "reader")
@@ -722,6 +722,7 @@ import Testing
     var headers = RequestHeaders()
     headers[.authorization] = "Bearer " + assertion.rawValue
     headers[.origin] = "http://localhost"
+    #expect(try await harness.space.persona(account: account.id) == nil)
 
     let response = try await harness.web(Request(
       url: URL(string: "http://space/_/session")!,
@@ -742,6 +743,7 @@ import Testing
     let rawToken = String(try #require(cookie.split(separator: ";").first).dropFirst("wuhu_read=".count))
     #expect(ReadSessionToken.isValid(rawToken))
     #expect(try await harness.space.account(readSession: ReadSessionToken(rawValue: rawToken), in: .shared) == account.id)
+    #expect(try await harness.space.persona(account: account.id) == nil)
 
     var cookieHeaders = RequestHeaders()
     cookieHeaders[.cookie] = "wuhu_read=" + rawToken
@@ -784,19 +786,48 @@ import Testing
     ])
     #expect(ended.headers[clearSiteData] == nil)
     #expect(try await harness.space.account(readSession: ReadSessionToken(rawValue: secondToken), in: .shared) == nil)
+    #expect(try await harness.space.persona(account: account.id) == nil)
   }
 
-  @Test func sessionBootstrapDevAndPrivateAnonymousBehavior() async throws {
+  @Test func devContentCredentialsPrecedeTheUnsignedPersonAndPrivateContentStaysWalled() async throws {
     let sessionURL = URL(string: "http://space/_/session")!
-    let dev = try Harness(dev: true)
+    let dev = try await Harness(dev: true)
     let devResponse = try await dev.web(Request(url: sessionURL, method: .post))
     #expect(devResponse.status == .noContent)
-    #expect(devResponse.headers[.setCookie] == nil)
+    #expect(devResponse.headers[values: .setCookie].contains { $0.hasPrefix("wuhu_read=") })
+    _ = try await dev.direct("write", .object(["path": "/viewer.txt", "content": "visible"]))
+    let owner = try await dev.space.ensureDevPerson()
+    let unsigned = try await dev.get(dev.web, "/viewer.txt")
+    #expect(unsigned.headers[HTTPField.Name("Wuhu-Viewer")!] == owner.account.rawValue)
+
+    let reader = try await dev.space.addAccount(kind: .human, name: "reader")
+    let key = Curve25519.Signing.PrivateKey()
+    _ = try await dev.space.addKey(key.pubkeyLabel, account: reader.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let token = try await dev.space.createReadSession(account: reader.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))
+    var headers = RequestHeaders()
+    headers[.cookie] = "wuhu_read=" + token.rawValue
+    let pageURL = URL(string: "http://space/viewer.txt")!
+    let cookieRead = try await dev.web(Request(url: pageURL, headers: headers))
+    #expect(cookieRead.status == .ok)
+    #expect(cookieRead.headers[HTTPField.Name("Wuhu-Viewer")!] == reader.id.rawValue)
+    headers[.authorization] = "Bearer broken"
+    #expect(try await dev.web(Request(url: pageURL, headers: headers)).status == .unauthorized)
+
+    let identity = try await dev.space.identity().rawValue
+    let assertion = try AssertionClaims(key: key.pubkeyLabel, space: identity, expiresAt: fixedDate.addingTimeInterval(60)).signed(by: key)
+    headers[.authorization] = "Bearer " + assertion.rawValue
+    headers[.cookie] = String(try #require(devResponse.headers[values: .setCookie].first).split(separator: ";")[0])
+    let bearerRead = try await dev.web(Request(url: pageURL, headers: headers))
+    #expect(bearerRead.status == .ok)
+    #expect(bearerRead.headers[HTTPField.Name("Wuhu-Viewer")!] == reader.id.rawValue)
+    headers[.authorization] = nil
+    headers[.cookie] = "wuhu_read=invalid"
+    #expect(try await dev.web(Request(url: pageURL, headers: headers)).status == .unauthorized)
 
     let asGet = try await dev.get(dev.web, "/_/session")
     #expect(asGet.status == .methodNotAllowed)
 
-    let privateSpace = try Harness(dev: false)
+    let privateSpace = try await Harness(dev: false)
     let denied = try await privateSpace.web(Request(url: sessionURL, method: .post))
     #expect(denied.status == .unauthorized)
     #expect(denied.headers[.setCookie] == nil)
@@ -812,7 +843,7 @@ private let clearSiteData = HTTPField.Name("Clear-Site-Data")!
 extension WebOriginTests {
   @Test func publicReadDoesNotAdmitAnonymousChannelReaders() async throws {
     try await withSessionDeps {
-      let harness = try Harness(dev: false, publicRead: true)
+      let harness = try await Harness(dev: false, publicRead: true)
       try await harness.space.registerPeople(["alice"])
       let id = try await harness.space.sessions.createConversation(members: ["alice"], in: .shared)
       let delivery = try await harness.space.sessions.post(.conversation(id), messageID: MessageID("private"), sender: Sender(id: "alice", timeZone: .gmt), content: .init(text: "private"), uploads: [AttachmentUpload(name: "private.txt", bytes: Array("private".utf8))])
@@ -830,7 +861,7 @@ extension WebOriginTests {
 }
 
 private func channelAttachmentReader() async throws -> (Harness, FetchClient, String) {
-  let harness = try Harness(dev: false)
+  let harness = try await Harness(dev: false)
   let account = try await harness.space.addAccount(kind: .human, name: nil)
   let key = try await harness.space.addKey(testPubkey("attachment-owner"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
   let owner = try await harness.space.adoptPersona(key: key).name

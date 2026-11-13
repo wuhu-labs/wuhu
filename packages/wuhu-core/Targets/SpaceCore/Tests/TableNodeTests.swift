@@ -102,7 +102,7 @@ import Testing
     let moved = try path("/b/log.table")
     _ = try await space.mutateRows(moved, [.insert([.integer(3), .string("three")])], in: .shared, acting: .shared)
     for restored in [table, moved] {
-      let sql = "SELECT * FROM \"shared:\(restored.rawValue)\" ORDER BY \"id\""
+      let sql = "SELECT * FROM \"\(restored.rawValue)\" ORDER BY \"id\""
       let live = try await space.dump(sql)
       try await space.rebuildTable(restored)
       #expect(try await space.dump(sql) == live)
@@ -125,10 +125,8 @@ import Testing
 
   @Test func checkoutRestoresATableMovedToAnotherGroup() async throws {
     let space = try makeSpace()
-    let team = GroupID(rawValue: "team")
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('team', '2026-01-01T00:00:00.000Z')")
-    }
+    let owner = try await space.addAccount(kind: .human, name: "Morgan")
+    let team = try await space.createGroup(alias: "team", owner: owner.id)
     let table = try path("/t.table")
     _ = try await space.createTable(table, header: TableHeader(columns: [TableColumn(name: "n", type: .integer)]), in: .shared, acting: .shared)
     let withRows = try await space.mutateRows(table, [.insert([.integer(4)])], in: .shared, acting: .shared)
@@ -136,17 +134,15 @@ import Testing
 
     _ = try await space.checkout(table, rev: withRows, in: .shared, acting: .shared)
     #expect(try await space.query("SELECT n FROM \"/t.table\"").rows == [[.integer(4)]])
-    #expect(try await space.query("SELECT n FROM \"/t.table\"", as: Principal(actor: .anonymous, group: team)).rows == [[.integer(4)]])
+    #expect(try await space.query("SELECT n FROM \"/t.table\"", as: Principal(actor: .publicReader, group: team)).rows == [[.integer(4)]])
   }
 
   /// Schema versions outlive a move or a delete, so a path a table left must read as no table: mutate and alter
   /// there are notATable (a 400), never the SQL error of a materialized table that is gone.
   @Test func mutateAndAlterWhereATableWasAreNotATable() async throws {
     let space = try makeSpace()
-    let team = GroupID(rawValue: "team")
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('team', '2026-01-01T00:00:00.000Z')")
-    }
+    let owner = try await space.addAccount(kind: .human, name: "Morgan")
+    let team = try await space.createGroup(alias: "team", owner: owner.id)
     let header = TableHeader(columns: [TableColumn(name: "n", type: .integer), TableColumn(name: "s", type: .text)])
     _ = try await makeTable(space, at: "/moved.table")
     try await space.fs(.shared).move("/moved.table", to: "/elsewhere.table")
@@ -198,7 +194,7 @@ import Testing
       ]), in: .shared, acting: .shared)
     }
 
-    let liveSQL = "SELECT * FROM \"shared:/data/log.table\" ORDER BY \"id\""
+    let liveSQL = "SELECT * FROM \"/data/log.table\" ORDER BY \"id\""
     let live = try await space.dump(liveSQL)
     try await space.rebuildTable(table)
     #expect(try await space.dump(liveSQL) == live)
@@ -218,7 +214,7 @@ import Testing
     let expectSQL = "SELECT n, s FROM \"/data/log.table\""
     #expect(try await space.query(expectSQL).rows == [[.null, .text("keep")]])
 
-    let liveSQL = "SELECT * FROM \"shared:/data/log.table\" ORDER BY \"id\""
+    let liveSQL = "SELECT * FROM \"/data/log.table\" ORDER BY \"id\""
     let live = try await space.dump(liveSQL)
     try await space.rebuildTable(table)
     #expect(try await space.dump(liveSQL) == live)
@@ -258,7 +254,7 @@ import Testing
     #expect(collected == [MutationEvent(group: .shared, path: "/data/log.table", rev: minted.value, kind: .write, entry: .table)])
     #expect(try await space.history(table, in: .shared).last?.2 == .checkout(fromRev: revOneRow.value))
 
-    let liveSQL = "SELECT * FROM \"shared:/data/log.table\" ORDER BY \"id\""
+    let liveSQL = "SELECT * FROM \"/data/log.table\" ORDER BY \"id\""
     let live = try await space.dump(liveSQL)
     try await space.rebuildTable(table)
     #expect(try await space.dump(liveSQL) == live)

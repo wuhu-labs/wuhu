@@ -4,10 +4,10 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import StructuredQueries
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct StartOverTests {
@@ -29,8 +29,8 @@ import Testing
       try await sessions.put(id, input: Fix.message("first", message: "first"))
       try await sessions.put(id, input: Fix.message("bad", message: "bad"))
       try await sessions.put(id, input: Fix.message("last", message: "last"))
-      try await space.writer.write { db in
-        try db.execute(sql: "UPDATE session_queue SET payload = '{}' WHERE session_id = ? AND id = 2", arguments: [id.rawValue])
+      try await space.worker.call(SessionCell.ID(id.rawValue)) {
+        try $0.db.execute(SessionQueueRow.where { $0.sessionID.eq(id.rawValue) && $0.id.eq(Int64(2)) }.update { $0.payload = "{}" })
       }
       try await sessions.markErrored(id, message: "bad queue")
       try await until("the queue error is visible") { try await sessions.record(id).errorMessage == "bad queue" }

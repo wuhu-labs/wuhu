@@ -16,8 +16,6 @@ public struct HistoryEntry: Codable, Equatable, Sendable {
   public let change: ChangeKind
   public let to: String?
   public let fromRev: Int?
-  /// For a revision a page wrote: the viewer's persona (absent for the
-  /// --dev seat) and the page's path.
   public let by: String?
   public let via: String?
 }

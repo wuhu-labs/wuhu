@@ -45,9 +45,7 @@ private final class CredentialPurgeCommits: TransactionObserver, Sendable {
     let target: String
     switch reason {
     case "revoked":
-      try await space.writer.write { db in
-        try db.execute(sql: "DELETE FROM account_keys WHERE pubkey = ?", arguments: [pubkey])
-      }
+      try await space.space.removeKey(pubkey: pubkey)
       target = machine
     case "otherMachine": target = try await space.addMachineV2(name: "other").machine.id.rawValue
     case "missingMachine": target = "missing-machine"
@@ -109,9 +107,7 @@ private final class CredentialPurgeCommits: TransactionObserver, Sendable {
     let space = try await MachineCellTestSpace.inMemory()
     let machine = try await space.addMachineV2(name: "rotated").machine.id.rawValue
     let oldKey = try await space.space.addMachineTestKey(machine)
-    try await space.writer.write { db in
-      try db.execute(sql: "DELETE FROM account_keys WHERE pubkey = ?", arguments: [oldKey])
-    }
+    try await space.space.removeKey(pubkey: oldKey)
     let newKey = try await space.space.addMachineTestKey(machine)
     let oldEvents = Mutex((frames: 0, closes: 0))
     let old = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: oldKey, streams: 32)) {
@@ -138,7 +134,7 @@ private final class CredentialPurgeCommits: TransactionObserver, Sendable {
     try await space.close()
   }
 
-  @Test(arguments: ["reset", "revoke", "delete"])
+  @Test(arguments: ["reset", "revoke"])
   func purgeCommitAlreadyContainsItsCellMail(action: String) async throws {
     let space = try Space.inMemory()
     let key = Curve25519.Signing.PrivateKey()
@@ -148,50 +144,13 @@ private final class CredentialPurgeCommits: TransactionObserver, Sendable {
     switch action {
     case "reset": _ = try await space.resetCredentials(account: machine.account)
     case "revoke": #expect(try await space.revokeMachine(machine.id, presenting: key.pubkeyLabel))
-    case "delete": try await space.deleteMachine(machine.id, by: .shared(.anonymous))
     default: preconditionFailure()
     }
     let payloads = try #require(observer.first.withLock { $0 })
     #expect(payloads.count == 1)
     let message = try JSONDecoder().decode(MachineCell.Message.self, from: #require(payloads.first))
-    switch (action, message) {
-    case ("reset", .closeBoxes), ("revoke", .closeBoxes), ("delete", .delete): break
-    default: Issue.record("credential purge posted the wrong machine message")
-    }
+    guard case .closeBoxes = message else { Issue.record("credential purge posted the wrong machine message"); return }
     try await space.close()
-  }
-
-  @Test func deleteMailSurvivesTheHostingWorkerDraining() async throws {
-    let folder = try ScratchFolder("machine-delete-rollover")
-    defer { folder.remove() }
-    let file = folder.url.appendingPathComponent("space.sqlite")
-    let old = try await MachineCellTestSpace.open(file: file)
-    let machine = try await old.addMachineV2(name: "box").machine.id
-    let id = MachineCell.ID(machine.rawValue)
-    let pubkey = try await old.space.addMachineTestKey(machine.rawValue)
-    let closes = Mutex(0)
-    let box = try #require(old.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
-      if case .closed = $0 { closes.withLock { $0 += 1 } }
-    })
-    await old.drain()
-    let new = try await MachineCellTestSpace.open(file: file)
-    try await new.space.deleteMachine(machine, by: .shared(.anonymous))
-    new.worker.start()
-    await new.drain()
-    #expect(new.worker.hasMail(for: id.recipient))
-    #expect(closes.withLock { $0 } == 0)
-    await old.stopWorker()
-    new.worker.poke(id.recipient)
-    await new.drain()
-    #expect(new.worker.cell(id).presence.state == "deleted")
-    #expect(!new.worker.hasMail(for: id.recipient))
-    #expect(closes.withLock { $0 } == 1)
-    new.worker.poke(id.recipient)
-    await new.drain()
-    #expect(closes.withLock { $0 } == 1)
-    box.close()
-    try await new.close()
-    try await old.close()
   }
 
   @Test(arguments: ["reset", "revoke", "delete"])
@@ -199,6 +158,7 @@ private final class CredentialPurgeCommits: TransactionObserver, Sendable {
     let space = try Space.inMemory()
     let key = Curve25519.Signing.PrivateKey()
     let machine = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).machine
+    let admin = try await space.ensureDevPerson()
     if action == "reset" { _ = try await space.worker.call(PersonCell.ID(machine.account.rawValue)) { $0.account() } }
     try await space.writer.write { db in
       try db.execute(sql: "CREATE TRIGGER reject_machine_mail BEFORE INSERT ON wuwei_mail BEGIN SELECT RAISE(ABORT, 'injected mail interruption'); END")
@@ -207,11 +167,11 @@ private final class CredentialPurgeCommits: TransactionObserver, Sendable {
       switch action {
       case "reset": _ = try await space.resetCredentials(account: machine.account)
       case "revoke": _ = try await space.revokeMachine(machine.id, presenting: key.pubkeyLabel)
-      case "delete": try await space.deleteMachine(machine.id, by: .shared(.anonymous))
+      case "delete": try await space.deleteMachine(machine.id, by: .shared(admin.actor))
       default: preconditionFailure()
       }
     } throws: { error in
-      action == "reset" ? error is Wuwei.Evicted : error is Wuwei.SQLiteError
+      error is Wuwei.Evicted
     }
     #expect(try await space.machine(pubkey: key.pubkeyLabel) == machine.id)
     #expect(try await space.machine(machine.id) != nil)

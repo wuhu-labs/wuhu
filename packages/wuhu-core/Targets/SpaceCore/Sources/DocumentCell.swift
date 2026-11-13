@@ -43,6 +43,19 @@ struct DocumentCheckpointRow: Owned {
   @Column("frontiers") var frontiers: [UInt8]
 }
 
+@Table("document_lineage")
+struct DocumentLineageRow: Owned {
+  var lineage: Int64
+  var seq: Int64
+  @Column("seed_rev") var seedRev: Int64?
+}
+
+@Table("document_pending_checkpoint")
+struct DocumentPendingCheckpointRow: Owned {
+  var seq: Int64
+  var frontiers: [UInt8]
+}
+
 /// A `.wmd` or `.canvas` file kept live for its open connections: the Loro log its clients typed, the
 /// snapshot that log folds into, the revision each checkpoint wrote, and the relay between its sockets.
 /// One cell per document, keyed `<group><path>`; the replica itself lives in ``DocumentReplicas``, and
@@ -63,14 +76,18 @@ struct DocumentCell {
 
   mutating func attached(_ socket: SocketHandle<DocumentChannel>) {
     do {
-      try withOpenDocument(existing: !socket.opening.create, keeping: socket.id) {
+      try ctx.cell(FilesCell.ID(group.rawValue)).requireAncestorDirectories(path)
+      if ctx.cell(FilesCell.ID(group.rawValue)).file(path) == nil, !socket.opening.create || socket.opening.access != .write {
+        throw LiveRefusal(code: .notFound, message: "\(path.rawValue) does not exist")
+      }
+      try withOpenDocument(file: ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path), existing: !socket.opening.create, keeping: socket.id) {
         cell, document, replica in
         if let reason = document.notDocument { throw LiveRefusal(code: .notLive, message: "\(cell.path.rawValue): \(reason)") }
         if document.fileRev == nil {
           guard socket.opening.create, socket.opening.access == .write else {
             throw LiveRefusal(code: .notFound, message: "\(cell.path.rawValue) does not exist")
           }
-          try cell.commit(&document, replica, acting: cell.group, attribution: nil, except: socket.id)
+          try cell.commit(&document, replica, acting: cell.group, attribution: nil)
         }
         socket.send(
           .control(
@@ -85,7 +102,6 @@ struct DocumentCell {
     } catch is DocumentGone {
       refuse(socket, LiveRefusal(code: .notFound, message: "\(path.rawValue) was moved or deleted"))
     } catch let SpaceError.notADirectory(dir) {
-      // Before this step wrote anything: its file commit is its first write, and it checks the folder first.
       refuse(socket, LiveRefusal(code: .notFound, message: "\(dir) is a file, not a folder"))
     } catch let refusal as LiveRefusal {
       refuse(socket, refusal)
@@ -117,7 +133,7 @@ struct DocumentCell {
       }
       switch frame {
       case let .sync(versionVector):
-        try withCurrentDocument { _, _, replica in
+        try withCurrentDocument(ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path)) { _, _, replica in
           let missing: Data?
           do { missing = try replica.updates(since: Data(versionVector)) } catch {
             throw LiveRefusal(code: .protocolViolation, message: "the sync frame holds no version vector")
@@ -129,7 +145,7 @@ struct DocumentCell {
         guard socket.opening.access == .write else {
           throw LiveRefusal(code: .readOnly, message: "this connection reads \(path.rawValue) only")
         }
-        try withCurrentDocument { cell, document, replica in
+        try withCurrentDocument(ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path)) { cell, document, replica in
           let changed: Bool
           do throws(LiveError) { changed = try replica.importClientUpdate(Data(bytes)) } catch {
             switch error {
@@ -166,26 +182,31 @@ struct DocumentCell {
 
   // MARK: Agents
 
-  /// Brings the file up to the document, for a read or an agent that needs it current.
-  mutating func checkpoint() {
-    do {
-      try withCurrentDocument { cell, document, replica in
-        guard document.dirtyAt != nil else { return }
-        try cell.commit(&document, replica, acting: cell.group, attribution: nil)
+  mutating func checkpoint() { _ = prepareCheckpoint() }
+
+  mutating func committed(_ lineage: Int64, _ seq: Int64, _ rev: Int64, _ previous: Int64) throws {
+    guard db.rows(DocumentLineageRow.all).first?.lineage == lineage else { return }
+    if let pending = db.rows(DocumentPendingCheckpointRow.where { $0.seq.eq(seq) }).first {
+      if db.rows(DocumentCheckpointRow.where { $0.rev.eq(rev) }).isEmpty {
+        try db.execute(DocumentCheckpointRow.insert { DocumentCheckpointRow(rev: rev, frontiers: pending.frontiers) })
       }
-    } catch is DocumentGone {
-      // The file is gone or replaced. Nothing is due any more, and the `removed` mail deletes the rows.
-      settleGone()
-    } catch {
-      preconditionFailure("a checkpoint threw what a checkpoint does not: \(error)")
+      try db.execute(DocumentPendingCheckpointRow.where { $0.seq.eq(seq) }.delete())
+      let current = db.rows(DocumentStateRow.all).first!.fileRev
+      if current == nil || current! <= rev {
+        try db.execute(DocumentStateRow.update { $0.fileRev = #bind(rev) })
+        send(.control(.checkpoint(rev: Int(rev))))
+      }
     }
+    try db.execute(DocumentPendingCheckpointRow.where { $0.seq.gt(previous) && $0.seq.lt(seq) }.delete())
   }
 
   mutating func write(_ prepared: DocumentPrepared, _ request: DocumentWrite) throws -> DocumentWriteOutcome {
+    try ctx.cell(FilesCell.ID(group.rawValue)).requireAncestorDirectories(path)
     do {
       return try documents.replicas.with(id.key) { slot in
         var cell = self
-        let stored = try storedDocument()
+        let file = ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path)
+        let stored = try storedDocument(file)
         var document: Document
         let replica: LiveReplica
         switch prepared.history {
@@ -194,37 +215,34 @@ struct DocumentCell {
           document = current
           replica = slot.take(document.frontier) { rebuild(document) }
         case let .seed(seed):
-          guard stored.document == nil, try DocumentRows.head(path, group, in: host)?.rev == seed.fileRev else { return .stale }
+          guard stored.document == nil, try file.file()?.rev == seed.fileRev else { return .stale }
           for socket in sockets() {
             refuse(socket, LiveRefusal(code: .notFound, message: "\(path.rawValue) was moved or deleted"))
           }
           document = Document(
-            history: seed.history, fileRev: seed.fileRev, frontier: nil, nextSeq: 1, dirtyAt: nil,
+            history: seed.history, lineage: 0, fileRev: seed.fileRev, frontier: nil, nextSeq: 1, dirtyAt: nil,
             snapshot: Array(seed.snapshot), notDocument: seed.notDocument,
           )
           do throws(LiveError) {
             replica = try LiveReplica(format, snapshot: seed.snapshot, updates: [])
           } catch { preconditionFailure("a prepared seed cannot be imported: \(error)") }
           document.frontier = replica.frontiers
-          try cell.writeSeed(document, replica)
+          try cell.writeSeed(&document, replica)
           slot.put(replica, document.frontier)
         }
-        if request.createOnly, document.fileRev != nil { throw SpaceError.alreadyExists(path.rawValue) }
-        if case let .current(rev) = request.base, document.fileRev != rev { throw SpaceError.versionMismatch(path.rawValue) }
+        if request.createOnly, file.head != nil { throw SpaceError.alreadyExists(path.rawValue) }
+        if case let .current(rev) = request.base, file.head?.rev != rev { throw SpaceError.versionMismatch(path.rawValue) }
         if let update = prepared.update {
           do throws(LiveError) { try replica.importUpdate(update) } catch {
             preconditionFailure("a prepared update must import completely into its own history: \(error)")
           }
-        } else if document.notDocument == nil, document.dirtyAt == nil, let rev = document.fileRev {
-          slot.keep(document.frontier)
-          return .wrote(rev)
         }
-        let rev = try cell.commit(
+        let checkpoint = try cell.commit(
           &document, replica, acting: request.acting, attribution: request.attribution, checkout: request.checkout,
           relaying: prepared.update,
         )
         slot.keep(document.frontier)
-        return .wrote(rev)
+        return .wrote(checkpoint)
       }
     } catch is DocumentGone {
       return .stale
@@ -236,17 +254,19 @@ struct DocumentCell {
   /// a history the file no longer is.
   mutating func seed(_ text: Data, _ rev: Int64) throws {
     try documents.replicas.with(id.key) { slot in
-      let stored = try storedDocument()
-      guard stored.document == nil, let head = try DocumentRows.head(path, group, in: host), head.rev == rev else { return }
+      let file = ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path)
+      let stored = try storedDocument(file)
+      guard stored.document == nil, let head = try file.file(), head.rev == rev else { return }
       var cell = self
       let (document, replica) = try cell.seeded(head, text)
       slot.put(replica, document.frontier)
     }
   }
 
-  /// `rev` moved, deleted or replaced the file: rows written before it no longer stand for it.
   mutating func removed(_ rev: Int64) {
-    if let current = db.rows(DocumentStateRow.all).first?.fileRev, current >= rev { return }
+    let file = ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path)
+    if let lineage = db.rows(DocumentLineageRow.all).first,
+       file.isCurrent(lineage.lineage, seedRev: lineage.seedRev), let head = file.head, head.rev >= rev { return }
     drop()
   }
 
@@ -277,7 +297,6 @@ struct DocumentCell {
 
   var group: GroupID { id.group }
   var path: SpacePath { id.path }
-  var host: AnyObject { db.host! }
   var documents: Documents { ctx.dependency(Documents.self) }
   var format: LiveFormat { path.liveKind!.format }
   var notUTF8: String { "a .\(path.liveKind!.rawValue) file is UTF-8 text" }

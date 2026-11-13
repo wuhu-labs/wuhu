@@ -16,7 +16,7 @@ struct ActingCredential: Sendable {
 }
 
 enum BearerVerdict: Sendable {
-  case anonymous
+  case missing
   case verified(ActingCredential)
   case rejected(Response)
 }
@@ -25,7 +25,7 @@ enum BearerVerdict: Sendable {
 // account_keys row, so kicking the row kills outstanding assertions at their
 // next appearance.
 func bearerVerdict(request: Request, space: Space, now: Date) async throws -> BearerVerdict {
-  guard let header = request.headers[.authorization] else { return .anonymous }
+  guard let header = request.headers[.authorization] else { return .missing }
   guard header.hasPrefix("Bearer ") else {
     return .rejected(unauthorized("unsupported authorization scheme; expected: Bearer <assertion>"))
   }
@@ -68,32 +68,29 @@ func bearerVerdict(request: Request, space: Space, now: Date) async throws -> Be
   ))
 }
 
-// The one authorization choke point for credential/account management. Every
-// management route resolves its actor here: a verified key acts as its account, and the anonymous seat is the
-// admin owner principal only behind --dev.
-enum ManagementActor: Sendable {
-  case devOwner
-  case account(AccountRecord)
+struct ManagementActor: Sendable {
+  let record: AccountRecord
+  var isAdmin: Bool { record.isAdmin }
+  var accountID: AccountID { record.id }
+  func mayManage(_ target: AccountID) -> Bool { record.isAdmin || record.id == target }
+}
 
-  var isAdmin: Bool {
-    switch self {
-    case .devOwner: true
-    case let .account(record): record.isAdmin
-    }
-  }
+enum PersonVerdict: Sendable {
+  case person(ResolvedPerson)
+  case refused(Response)
+}
 
-  var accountID: AccountID? {
-    switch self {
-    case .devOwner: nil
-    case let .account(record): record.id
+func personVerdict(request: Request, space: Space, devPerson: ResolvedPerson?, now: Date) async throws -> PersonVerdict {
+  switch try await bearerVerdict(request: request, space: space, now: now) {
+  case let .rejected(response): return .refused(response)
+  case let .verified(credential):
+    return .person(ResolvedPerson(account: credential.key.account, persona: try await space.adoptPersona(key: credential.key).name))
+  case .missing:
+    guard let devPerson else { return .refused(unauthorized("a bearer assertion is required")) }
+    guard let record = try await space.account(devPerson.account), record.removedAt == nil else {
+      return .refused(unauthorized("the dev person is no longer live"))
     }
-  }
-
-  func mayManage(_ target: AccountID) -> Bool {
-    switch self {
-    case .devOwner: true
-    case let .account(record): record.isAdmin || record.id == target
-    }
+    return .person(devPerson)
   }
 }
 
@@ -102,20 +99,14 @@ enum ManagementVerdict: Sendable {
   case refused(Response)
 }
 
-func managementVerdict(request: Request, space: Space, dev: Bool, now: Date) async throws -> ManagementVerdict {
-  switch try await bearerVerdict(request: request, space: space, now: now) {
-  case let .rejected(response):
-    return .refused(response)
-  case let .verified(credential):
-    guard let record = try await space.account(credential.key.account), record.removedAt == nil else {
+func managementVerdict(request: Request, space: Space, devPerson: ResolvedPerson?, now: Date) async throws -> ManagementVerdict {
+  switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: now) {
+  case let .refused(response): return .refused(response)
+  case let .person(person):
+    guard let record = try await space.account(person.account), record.removedAt == nil else {
       return .refused(unknownKey(try await space.identity()))
     }
-    return .actor(.account(record))
-  case .anonymous:
-    guard dev else {
-      return .refused(unauthorized("a bearer assertion is required"))
-    }
-    return .actor(.devOwner)
+    return .actor(ManagementActor(record: record))
   }
 }
 

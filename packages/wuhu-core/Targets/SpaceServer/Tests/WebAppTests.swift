@@ -21,7 +21,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
 
 @Suite(.deterministicDependencies) struct WebAppTests {
   @Test func indexServedAtRootWithNoCache() async throws {
-    let harness = try Harness(webApp: sampleApp)
+    let harness = try await Harness(webApp: sampleApp)
     let response = try await harness.get(harness.api, "/")
     #expect(response.status == .ok)
     #expect(response.headers[.contentType] == "text/html; charset=utf-8")
@@ -30,7 +30,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 
   @Test func theSPAsOwnFilesLiveUnderTheReservedPrefix() async throws {
-    let harness = try Harness(webApp: sampleApp)
+    let harness = try await Harness(webApp: sampleApp)
     let js = try await harness.get(harness.api, "/_/assets/app-abc123.js")
     #expect(js.status == .ok)
     #expect(js.headers[.contentType] == "text/javascript; charset=utf-8")
@@ -48,7 +48,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 
   @Test func everyOtherPathIsASpaceFileAndGetsTheShell() async throws {
-    let harness = try Harness(webApp: sampleApp)
+    let harness = try await Harness(webApp: sampleApp)
     for path in ["/notes/deep/link.md", "/favicon.ico", "/_/assets/gone.js", "/_/sessions/s1", "/_/settings"] {
       let response = try await harness.get(harness.api, path)
       #expect(response.status == .ok)
@@ -58,7 +58,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 
   @Test func deepLinksWithEncodedSlashesFallBackToIndex() async throws {
-    let harness = try Harness(webApp: sampleApp)
+    let harness = try await Harness(webApp: sampleApp)
     let deepLink = try await harness.api(Request(url: URL(string: "http://space/notes%2Fdesign.md")!))
     #expect(deepLink.status == .ok)
     #expect(deepLink.headers[.contentType] == "text/html; charset=utf-8")
@@ -71,7 +71,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 
   @Test func theShellCarriesTheSmartAppBannerForTheRequestedURL() async throws {
-    let harness = try Harness(webApp: bannerApp)
+    let harness = try await Harness(webApp: bannerApp)
     let session = try await harness.api(Request(url: URL(string: "https://Space.example:5530/_/sessions/zebra-forest-bike")!))
     #expect(try await session.text() == """
     <html><head><meta name="apple-itunes-app" content="app-id=6807771419, app-argument=wuhu://space.example:5530/_/sessions/zebra-forest-bike"></head><body></body></html>
@@ -83,7 +83,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 
   @Test func apiRoutesStayAPI() async throws {
-    let harness = try Harness(webApp: sampleApp)
+    let harness = try await Harness(webApp: sampleApp)
     let server = try await harness.get(harness.api, "/v1/server")
     #expect(server.status == .ok)
     #expect(server.headers[.contentType] == "application/json")
@@ -93,13 +93,13 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 
   @Test func noEmbeddedAssetsKeepsThe404() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let response = try await harness.get(harness.api, "/")
     #expect(response.status == .notFound)
   }
 
   @Test func nonDevServesTheShellButKeepsTheAPIWall() async throws {
-    let harness = try Harness(dev: false, webApp: sampleApp)
+    let harness = try await Harness(dev: false, webApp: sampleApp)
     let shell = try await harness.get(harness.api, "/deep/link")
     #expect(shell.status == .ok)
     #expect(try await shell.text() == "<html>shell</html>")
@@ -110,7 +110,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 
   @Test func nonDevWithoutAssetsRejectsEverything() async throws {
-    let harness = try Harness(dev: false)
+    let harness = try await Harness(dev: false)
     let response = try await harness.get(harness.api, "/")
     #expect(response.status == .unauthorized)
   }

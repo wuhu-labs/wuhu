@@ -4,11 +4,12 @@ import Crypto
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import StructuredQueries
 import StructuredQueriesSQLite
+import Wuwei
+import WuweiQueries
 
 extension UUID {
   public static func deterministic(_ parts: String...) -> UUID {
@@ -102,12 +103,12 @@ enum Conversations {
   }
 
   static func record(_ id: String, in db: Database) throws -> ConversationRecord? {
-    guard let row = try ConversationRow.where({ $0.id.eq(id) }).fetchOne(db) else { return nil }
+    guard let row = db.rows(ConversationRow.where({ $0.id.eq(id) })).first else { return nil }
     return ConversationRecord(
       id: ConversationID(row.id),
       kind: ConversationKind(rawValue: row.kind)!,
       ownerSession: row.ownerSession.map { SessionID($0) },
-      title: try ConversationTitleRow.where { $0.conversationID.eq(id) }.fetchOne(db)?.title,
+      title: db.rows(ConversationTitleRow.where { $0.conversationID.eq(id) }).first?.title,
       group: GroupID(rawValue: row.group),
       windowMessages: row.windowMessages,
       windowSeconds: row.windowSeconds,
@@ -117,7 +118,7 @@ enum Conversations {
   }
 
   static func members(_ id: String, in db: Database) throws -> [ConversationMember] {
-    try ConversationMemberRow.where { $0.conversationID.eq(id) }.order { $0.member }.fetchAll(db)
+    db.rows(ConversationMemberRow.where { $0.conversationID.eq(id) }.order { $0.member })
       .map { ConversationMember(member: $0.member, kind: MemberKind(rawValue: $0.kind)!) }
   }
 
@@ -137,44 +138,14 @@ enum Conversations {
     (SELECT grp FROM conversations WHERE id = m.conversation_id))
   """
 
-  static func message(id: String, in db: Database) throws -> MessageRecord? {
-    guard let row = try Row.fetchOne(db, sql: "\(selection) WHERE m.id = ?", arguments: [id]) else {
-      return nil
-    }
-    return try decode(row)
+  static func message(id: String, in db: Database) -> MessageRecord? {
+    db.rows("\(selection) WHERE m.id = ?", .text(id)).first.map(MessageRecord.init(row:))
   }
 
-  static func decode(_ row: Row) throws -> MessageRecord {
-    MessageRecord(
-      n: row["n"],
-      id: MessageID(row["id"] as String),
-      conversation: ConversationID(row["conversation_id"] as String),
-      sender: Sender(
-        id: row["sender_id"],
-        timeZone: TimeZone(identifier: row["sender_timezone"])!,
-        device: row["device_id"],
-      ),
-      senderSession: (row["sender_session_id"] as String?).map { SessionID($0) },
-      senderGroup: GroupID(rawValue: (row["sender_grp"] as String?) ?? GroupID.shared.rawValue),
-      replyTarget: (row["reply_target"] as String?).map { MessageID($0) },
-      kind: MessageKind(rawValue: row["kind"])!,
-      requestID: (row["request_id"] as String?).map { RequestID($0) },
-      viewing: (row["viewing"] as String?).map(Viewing.stored),
-      content: try Sessions.decode(MessageContent.self, from: row["content"]),
-      createdAt: try SQLiteDateFormat.date(from: row["created_at"]),
-    )
-  }
-
-  static func fetch(
-    _ db: Database,
-    where condition: String,
-    arguments: StatementArguments,
-    order: String = "n",
-    limit: Int? = nil,
-  ) throws -> [MessageRecord] {
+  static func fetch(_ db: Database, where condition: String, arguments: [Value], order: String = "n", limit: Int? = nil) -> [MessageRecord] {
     var sql = "\(selection) WHERE \(condition) ORDER BY \(order)"
     if let limit { sql += " LIMIT \(limit)" }
-    return try Row.fetchAll(db, sql: sql, arguments: arguments).map(decode)
+    return db.rows(sql, arguments).map(MessageRecord.init(row:))
   }
 }
 

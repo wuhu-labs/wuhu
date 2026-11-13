@@ -221,7 +221,7 @@ extension Hub {
   // A page acts with its viewer's authority, and only where the viewer writes
   // the page's group.
   nonisolated func admit(_ person: Person) async throws {
-    if let account = person.account, try await space.isGuest(account) {
+    if try await space.isGuest(person.account) {
       throw ToolProblem("a guest's page creates no sessions and posts no messages", code: "groupForbidden")
     }
     guard space.cell.writable(by: person.principal).contains(person.group) else {

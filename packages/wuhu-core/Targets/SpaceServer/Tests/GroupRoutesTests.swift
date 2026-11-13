@@ -192,7 +192,7 @@ import Testing
 
       let dm = try await p.harness.store.post(
         .dm(with: second.name), messageID: MessageID("m1"), sender: Sender(id: foreign.name, timeZone: .gmt),
-        content: .init(text: "hi"), acting: Principal(actor: .anonymous, group: p.bob),
+        content: .init(text: "hi"), acting: Principal(actor: .publicReader, group: p.bob),
       )
       func listed(_ query: String) async throws -> [String] {
         let response = try await send(p, .get, "/v1/conversations\(query)", group: p.alice)

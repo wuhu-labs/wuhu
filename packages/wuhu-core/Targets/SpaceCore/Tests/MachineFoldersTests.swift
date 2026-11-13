@@ -21,7 +21,7 @@ struct MachineFoldersTests {
     let space = try makeSpace()
     let owner = try await space.addAccount(kind: .human, name: "Alice")
     let alice = try await space.createGroup(alias: "alice", owner: owner.id)
-    let machine = try await space.addMachine(name: "studio", group: alice)
+    let machine = try await space.addMachineV2(name: "studio", group: alice).machine
     let id = machine.id.rawValue
     let hers = await space.fs(alice)
     let shared = await space.fs(.shared)
@@ -32,6 +32,7 @@ struct MachineFoldersTests {
     #expect(try await shared.list("/_/machines").1.isEmpty)
 
     #expect(try await space.moveMachine(machine.id, to: .shared).group == .shared)
+    while space.worker.hasMail(for: FilesCell.ID(alice.rawValue).recipient) || space.worker.hasMail(for: FilesCell.ID(GroupID.shared.rawValue).recipient) { await Task.yield() }
     #expect(try await text(shared, "/_/machines/studio/AGENTS.md") == "notes")
     #expect(try await text(shared, "/_/machines/studio/.agents/skills/x/SKILL.md") == "skill")
     #expect(try await shared.list("/_/machines").1.map(\.name) == ["studio"])
@@ -45,6 +46,7 @@ struct MachineFoldersTests {
 
     // Moving back carries them back; a move to the current group moves nothing.
     _ = try await space.moveMachine(machine.id, to: alice)
+    while space.worker.hasMail(for: FilesCell.ID(alice.rawValue).recipient) || space.worker.hasMail(for: FilesCell.ID(GroupID.shared.rawValue).recipient) { await Task.yield() }
     _ = try await space.moveMachine(machine.id, to: alice)
     #expect(try await text(hers, "/_/machines/studio/AGENTS.md") == "notes")
     #expect(try await hers.list("/_/machines/studio").1.map(\.name).sorted() == [".agents", "AGENTS.md"])
@@ -53,7 +55,7 @@ struct MachineFoldersTests {
 
   @Test func theNameAndTheIdReachTheSameFolder() async throws {
     let space = try makeSpace()
-    let id = try await space.addMachine(name: "studio").id.rawValue
+    let id = try await space.addMachineV2(name: "studio").machine.id.rawValue
     let fs = await space.fs(.shared)
 
     let written = try await fs.write("/_/machines/studio/AGENTS.md", Data("manual".utf8), ifMatch: nil)
@@ -68,7 +70,7 @@ struct MachineFoldersTests {
 
   @Test func retiredMachineNamesStillReachStoredNotes() async throws {
     let space = try makeSpace()
-    let machine = try await space.addMachine(name: "old-studio")
+    let machine = try await space.addMachineV2(name: "old-studio").machine
     let fs = await space.fs(.shared)
     _ = try await fs.write("/_/machines/old-studio/AGENTS.md", Data("notes".utf8), ifMatch: nil)
     _ = try await space.renameMachine(machine.id, name: "desk")
@@ -82,13 +84,12 @@ struct MachineFoldersTests {
   @Test func theListingShowsOneEntryPerEnrolledMachineByName() async throws {
     let space = try makeSpace()
     let fs = await space.fs(.shared)
-    _ = try await space.addMachine(name: "studio")
-    _ = try await space.addMachine(name: "laptop")
-    let bare = try await space.addMachine(name: nil).id.rawValue
+    _ = try await space.addMachineV2(name: "studio").machine
+    _ = try await space.addMachineV2(name: "laptop").machine
     _ = try await fs.write("/_/machines/studio/AGENTS.md", Data("manual".utf8), ifMatch: nil)
 
     let (_, entries) = try await fs.list("/_/machines")
-    #expect(entries.map(\.name) == [bare, "laptop", "studio"].sorted())
+    #expect(entries.map(\.name) == ["laptop", "studio"])
     #expect(entries.allSatisfy { $0.kind == .directory })
     #expect(try await fs.list("/_/machines/laptop").1.isEmpty)
     #expect(try await fs.stat("/_/machines/laptop").name == "laptop")
@@ -97,7 +98,7 @@ struct MachineFoldersTests {
   @Test func aPathUnderAnUnknownMachineIsRefusedForWritesAndNotFoundForReads() async throws {
     let space = try makeSpace()
     let fs = await space.fs(.shared)
-    _ = try await space.addMachine(name: "studio")
+    _ = try await space.addMachineV2(name: "studio").machine
 
     for ghost in ["/_/machines/ghost/AGENTS.md", "/_/machines/mc_zzzzzzzz/AGENTS.md"] {
       await #expect(throws: SpaceError.alreadyExists(ghost)) {
@@ -115,24 +116,22 @@ struct MachineFoldersTests {
     }
   }
 
-  @Test func aTableUnderAMachineTakesOnlyTheStoredPath() async throws {
+  @Test func aTableUnderAMachineResolvesItsNameToTheStoredPath() async throws {
     let space = try makeSpace()
-    let id = try await space.addMachine(name: "studio").id.rawValue
+    let id = try await space.addMachineV2(name: "studio").machine.id.rawValue
     let header = TableHeader(columns: [TableColumn(name: "n", type: .integer)])
 
-    await #expect(throws: SpaceError.alreadyExists("/_/machines/studio/t.table")) {
-      try await space.createTable(path("/_/machines/studio/t.table"), header: header, in: .shared, acting: .shared)
-    }
+    _ = try await space.createTable(path("/_/machines/studio/t.table"), header: header, in: .shared, acting: .shared)
     await #expect(throws: SpaceError.alreadyExists("/_/machines/mc_zzzzzzzz/t.table")) {
       try await space.createTable(path("/_/machines/mc_zzzzzzzz/t.table"), header: header, in: .shared, acting: .shared)
     }
-    _ = try await space.createTable(path("/_/machines/\(id)/t.table"), header: header, in: .shared, acting: .shared)
+    #expect(try await space.tableSchema(path("/_/machines/\(id)/t.table"), in: .shared).header == header)
     #expect(try await space.fs(.shared).list("/_/machines/studio").1.map(\.name) == ["t.table"])
   }
 
   @Test func aTemplateInstantiatesIntoAMachineFolderByName() async throws {
     let space = try makeSpace()
-    let id = try await space.addMachine(name: "studio").id.rawValue
+    let id = try await space.addMachineV2(name: "studio").machine.id.rawValue
     let fs = await space.fs(.shared)
     _ = try await fs.write(
       "/_/machines/studio/note.md",
@@ -151,7 +150,7 @@ struct MachineFoldersTests {
   @Test func aRenameMovesNothing() async throws {
     let space = try makeSpace()
     let fs = await space.fs(.shared)
-    let studio = try await space.addMachine(name: "studio")
+    let studio = try await space.addMachineV2(name: "studio").machine
     _ = try await fs.write("/_/machines/studio/AGENTS.md", Data("manual".utf8), ifMatch: nil)
     let before = try await space.currentRevision(in: .shared)
 
@@ -165,8 +164,8 @@ struct MachineFoldersTests {
   @Test func aMoveMapsBothSidesAndHistoryUsesTheCurrentNames() async throws {
     let space = try makeSpace()
     let fs = await space.fs(.shared)
-    let studio = try await space.addMachine(name: "studio")
-    let laptop = try await space.addMachine(name: "laptop")
+    let studio = try await space.addMachineV2(name: "studio").machine
+    let laptop = try await space.addMachineV2(name: "laptop").machine
     _ = try await fs.write("/drafts/AGENTS.md", Data("manual".utf8), ifMatch: nil)
 
     try await fs.move("/drafts/AGENTS.md", to: "/_/machines/studio/AGENTS.md")

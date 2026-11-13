@@ -15,10 +15,9 @@ import Synchronization
 import Testing
 
 // The SQL today's clients send — the app, the SPA, custom sidebars, the CLI —
-// and the errors they read, answered against Backcompat/space.sqlite. The
-// goldens were recorded by the engine that predates scoped queries; a byte of
-// drift is a break in a shipped client. Re-record only from a known-good
-// engine: `bazel test //packages/wuhu-core:SpaceServerTests
+// and the errors they read, answered against Backcompat/space.sqlite with an
+// ordinary account. Wuhu45MigrationTests retains the pre-ledger database.
+// Re-record only from a known-good engine: `bazel test //packages/wuhu-core:SpaceServerTests
 // --test_env=BACKCOMPAT_RECORD=1 --test_filter=BackcompatTests`, then copy
 // space.sqlite and goldens.json out of the test's undeclared outputs.
 @Suite(.deterministicDependencies) struct BackcompatTests {
@@ -197,7 +196,7 @@ enum Backcompat {
     case .tool, .observe: false
     case .webQuery, .webObserve: true
     }
-    let harness = try Harness(dev: !web, opening: { try Space.open(file: file) })
+    let harness = try await Harness(dev: !web, opening: { try Space.open(file: file) })
     let answer = try await answer(probe, harness: harness, meta: meta)
     try await harness.space.close()
     return answer
@@ -245,7 +244,7 @@ enum Backcompat {
   private static func mutate(_ mutation: Mutation, harness: Harness, meta: Goldens.Meta) async throws {
     switch mutation {
     case .readTheBox:
-      try await harness.space.sessions.advanceWatermark(identity: "owner", source: meta.box)
+      try await harness.space.sessions.advanceWatermark(identity: harness.space.ensureDevPerson().persona, source: meta.box)
     case .insertATask:
       _ = try await harness.direct("table.mutate", .object([
         "path": "/tasks.table",
@@ -265,9 +264,10 @@ enum Backcompat {
     let file = scratch.appending(path: "space.sqlite")
     let deviceKey = Curve25519.Signing.PrivateKey()
 
-    let meta = try await fixtureDependencies(fixedDate) {
+    let meta = try await fixtureDependencies(fixedDate) { at in
       let space = try Space.open(file: file)
-      _ = try await SessionToolFixture(space: space)
+      registerSessionCells(in: space)
+      let person = try await space.ensureDevPerson()
       let fs = await space.fs(.shared)
       for (path, content) in [
         ("/models.json", testModelsJSON),
@@ -278,7 +278,7 @@ enum Backcompat {
       ] {
         _ = try await fs.write(path, Data(content.utf8), ifMatch: nil)
       }
-      let context = SpaceToolContext(space: space, principal: .shared(.anonymous))
+      let context = SpaceToolContext(space: space, principal: .shared(person.actor))
       func tool(_ name: String, _ input: JSONValue) async throws {
         _ = try await SpaceToolbox.all.first { $0.name == name }!.run(context, input: input)
       }
@@ -304,40 +304,50 @@ enum Backcompat {
       let store = space.sessions
       let model = ModelSpecifier(provider: "testing", model: "test-model", effort: "high")
       let utc = TimeZone(identifier: "UTC")!
-      let lead = try await store.createSession(group: .shared, title: "Lead", kind: .agent, tags: ["crew"], createdBy: "owner", model: model)
+      at(fixedDate.addingTimeInterval(7))
+      let lead = try await store.createSession(group: .shared, title: "Lead", kind: .agent, tags: ["crew"], createdBy: person.persona, model: model)
+      at(fixedDate.addingTimeInterval(8))
       _ = try await store.createSession(
         group: .shared,
-        title: "Helper", kind: .task, parent: lead, createdBy: "owner", executor: .kernel(model),
+        title: "Helper", kind: .task, parent: lead, createdBy: person.persona, executor: .kernel(model),
       )
-      let quiet = try await store.createSession(group: .shared, title: "Quiet", kind: .agent, createdBy: "owner", model: model)
-      for (box, ask, answer) in [(lead, "m1", "m2"), (quiet, "m3", "m4")] {
+      at(fixedDate.addingTimeInterval(9))
+      let quiet = try await store.createSession(group: .shared, title: "Quiet", kind: .agent, createdBy: person.persona, model: model)
+      for (box, ask, answer, offset) in [(lead, "m1", "m2", 10), (quiet, "m3", "m4", 12)] {
+        at(fixedDate.addingTimeInterval(Double(offset)))
         _ = try await store.post(
-          .box(box), messageID: MessageID(ask), sender: Sender(id: "owner", timeZone: utc), content: .init(text: "q"),
+          .box(box), messageID: MessageID(ask), sender: Sender(id: person.persona, timeZone: utc), content: .init(text: "q"),
         )
+        try await store.deliverMail(box)
+        at(fixedDate.addingTimeInterval(Double(offset + 1)))
         _ = try await store.post(
           .box(box), messageID: MessageID(answer), sender: Sender(id: box.rawValue, timeZone: utc),
           senderSession: box, replyTarget: MessageID(ask), content: .init(text: "a"),
         )
+        try await store.deliverMail(box)
       }
-      try await store.advanceWatermark(identity: "owner", source: quiet.rawValue)
+      try await store.advanceWatermark(identity: person.persona, source: quiet.rawValue)
 
-      let owner = try await space.addAccount(kind: .human, name: "reader")
+      let owner = try #require(try await space.account(person.account))
       _ = try await space.addKey(
         deviceKey.pubkeyLabel, account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil,
       )
+      at(fixedDate.addingTimeInterval(17))
       let device = try await space.upsertDevice(
         pubkey: deviceKey.pubkeyLabel, installation: "install-1", kind: "mac", name: "Studio",
       )
-      _ = try await space.issueDeviceCommand(device: device.id, payload: "{\"sidebar\":\"everything\"}", issuedBy: "owner")
+      at(fixedDate.addingTimeInterval(18))
+      _ = try await space.issueDeviceCommand(device: device.id, payload: "{\"sidebar\":\"everything\"}", issuedBy: person.persona)
       let cookie = try await space.createReadSession(account: owner.id, group: .shared, expiresAt: Date(timeIntervalSince1970: 4_102_444_800))
       try await space.close()
       return Goldens.Meta(box: lead.rawValue, device: device.id, cookie: cookie.rawValue)
     }
 
     // A command the app's 60-second window keeps whenever the replay runs.
-    try await fixtureDependencies(Date(timeIntervalSince1970: 4_102_444_800)) {
+    try await fixtureDependencies(Date(timeIntervalSince1970: 4_102_444_800)) { _ in
       let space = try Space.open(file: file)
-      _ = try await space.issueDeviceCommand(device: meta.device, payload: "{\"sidebar\":\"/.sidebars/a.json\"}", issuedBy: "owner")
+      let person = try await space.ensureDevPerson()
+      _ = try await space.issueDeviceCommand(device: meta.device, payload: "{\"sidebar\":\"/.sidebars/a.json\"}", issuedBy: person.persona)
       try await space.close()
     }
 
@@ -346,21 +356,15 @@ enum Backcompat {
     return meta
   }
 
-  // Every write a second later than the last, so no ORDER BY in a probe ties.
-  private static func fixtureDependencies<R>(_ date: Date, _ body: () async throws -> R) async throws -> R {
+  private static func fixtureDependencies<R>(_ date: Date, _ body: (@Sendable (Date) -> Void) async throws -> R) async throws -> R {
     let clock = Mutex(date)
     return try await withDependencies {
-      $0.date = DateGenerator {
-        clock.withLock { now in
-          defer { now = now.addingTimeInterval(1) }
-          return now
-        }
-      }
+      $0.date = DateGenerator { clock.withLock { $0 } }
       $0.uuid = .incrementing
       $0.continuousClock = ContinuousClock()
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 45))
     } operation: {
-      try await body()
+      try await body { stamp in clock.withLock { $0 = stamp } }
     }
   }
 }

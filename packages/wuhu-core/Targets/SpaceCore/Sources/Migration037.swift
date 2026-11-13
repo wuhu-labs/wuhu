@@ -1,9 +1,7 @@
-import GRDB
-
 /// The documents' rows, owned by the cell of the path they describe. `wmd_snapshots`, `wmd_log` and
 /// `wmd_checkpoints` stay as the tables a space rolled from the old server keeps; nothing reads them.
 enum Migration037 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE document_state (
       owner TEXT NOT NULL DEFAULT (cell()), file_rev INTEGER, frontier BLOB NOT NULL,

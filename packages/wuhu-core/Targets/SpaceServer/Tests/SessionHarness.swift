@@ -116,10 +116,11 @@ struct SessionHarness {
       )
     }
     runtime = SessionRuntime(execution: worker, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
+    let devPerson = dev ? try await space.ensureDevPerson() : nil
     handler = SpaceServer.configuredHandler(
-      space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
+      space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, devPerson: devPerson,
       credentials: credentials, secrets: secrets, execTokens: tokens,
-      identityController: identityController, listenerRoutes: machineV2 ? machineListenerRoutes(space: space, hub: hub, fingerprint: fingerprint) : Router(), keyStreams: keyStreams,
+      identityController: identityController, listenerRoutes: machineV2 ? machineListenerRoutes(space: space, hub: hub, devPerson: devPerson, fingerprint: fingerprint) : Router(), keyStreams: keyStreams,
     )
     api = ServeTesting.client(upgrading: handler)
     worker.start()
@@ -199,7 +200,7 @@ struct SessionHarness {
       tokens: try await testTokens(space: space),
       oidcToken: oidcToken,
     )
-    handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
+    handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, devPerson: try await space.ensureDevPerson())
     api = ServeTesting.client(upgrading: handler)
     runtime.execution.start()
   }
@@ -296,15 +297,4 @@ func until(
 
 final class SessionTestToolStates: Sendable {
   let values = Mutex<[SessionID: ToolExecutionState]>([:])
-}
-
-extension SessionHarness {
-  /// An ordinary group, created before group creation has an API of its own.
-  func addGroup(_ id: GroupID) async throws {
-    try await space.writer.write { db in
-      try db.execute(
-        sql: "INSERT INTO groups (id, created_at) VALUES (?, '2030-01-01T00:00:00.000Z')", arguments: [id.rawValue],
-      )
-    }
-  }
 }

@@ -4,25 +4,29 @@ import Synchronization
 
 /// The database the outer tables live in, and on the shared backend every addressable's tables too: one writer, any number of readers, whose connections the host program may own. Every connection runs ``prepareConnection(_:)`` once, when it opens.
 public protocol SharedDatabase: Sendable {
-  /// One write transaction on the writer: committed if `body` returns, rolled back if it throws. `host` is the host program's own object for this connection, which a cell takes as ``Database/host`` to write the host's tables through the host's code.
-  func write(_ body: (_ handle: OpaquePointer, _ host: AnyObject?) throws -> Void) throws
+  /// One write transaction on the writer: committed if `body` returns, rolled back if it throws.
+  func write(_ body: (OpaquePointer) throws -> Void) throws
   func begin() throws -> any SharedTransaction
   /// One read transaction, never on the writer: a read may run while a write is open.
   func read(_ body: (OpaquePointer) throws -> Void) throws
-  /// One write statement of a cell or a job, inside the transaction `write` or `begin` opened with `host`. A host program whose driver must see every write to its tables, to track changes, runs the statement itself and returns true; false leaves it to the runtime. A statement SQLite refuses throws ``SQLiteError``.
-  func execute(_ sql: String, _ arguments: [Value], on host: AnyObject?) throws -> Bool
+  func beginRead() throws -> any SharedReadTransaction
 }
 
 /// A writer held until commit or rollback. Access is synchronous, on the host's writer; only the command and its Sendable result cross that boundary, never a borrowed connection. Either terminal operation releases the writer, including a failed commit; access throws only for that command and leaves the transaction open.
 public protocol SharedTransaction {
-  func access<T: Sendable>(_ body: @Sendable (OpaquePointer, AnyObject?) throws -> T) throws -> T
+  func access<T: Sendable>(_ body: @Sendable (OpaquePointer) throws -> T) throws -> T
   func commit() throws
   func rollback()
 }
 
+/// A reader held until the last reference is released. Its deferred transaction shares one snapshot across synchronous accesses; no borrowed handle may escape an access.
+public protocol SharedReadTransaction: AnyObject {
+  func access<T: Sendable>(_ body: (OpaquePointer) throws -> T) rethrows -> T
+}
+
 extension SharedDatabase {
-  public func execute(_: String, _: [Value], on _: AnyObject?) throws -> Bool {
-    false
+  public func read(_ body: (OpaquePointer) throws -> Void) throws {
+    try beginRead().access(body)
   }
 }
 
@@ -42,13 +46,13 @@ public final class FileDatabase: SharedDatabase {
   let path: String
   private let writer: Mutex<Connection>
   private let available = DispatchSemaphore(value: 1)
-  private let reader: Mutex<Connection>
+  private let readers: SQLiteReaders
 
   /// `path` may be a `file:` URI. `synchronous` is off only in tests: the file then never fsyncs, which still survives a simulated crash.
   public init(path: String, synchronous: Bool = true) throws {
     self.path = path
     let writer = try Connection(path: path, flags: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI)
-    try writer.execute("PRAGMA busy_timeout = 5000")
+    writer.setBusyHandler()
     try writer.execute("PRAGMA page_size = 8192")
     try writer.execute("PRAGMA journal_mode = WAL")
     try writer.execute(synchronous ? "PRAGMA synchronous = FULL" : "PRAGMA synchronous = OFF")
@@ -56,18 +60,15 @@ public final class FileDatabase: SharedDatabase {
       try writer.execute(statement)
     }
     try writer.transaction {
-      for (table, column) in [("wuwei_job", "creator"), ("wuwei_mail", "lifecycle")] {
+      for (table, column, type) in [("wuwei_job", "creator", "TEXT"), ("wuwei_mail", "lifecycle", "TEXT"), ("wuwei_addressable", "draining", "INTEGER NOT NULL DEFAULT 0")] {
         if try !writer.rows("PRAGMA table_info(\(table))").contains(where: { $0["name"].text == column }) {
-          try writer.execute("ALTER TABLE \(table) ADD COLUMN \(column) TEXT")
+          try writer.execute("ALTER TABLE \(table) ADD COLUMN \(column) \(type)")
         }
       }
     }
-    let reader = try Connection(path: path, flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_URI)
-    try reader.execute("PRAGMA busy_timeout = 5000")
     try Connection.prepare(writer.handle)
-    try Connection.prepare(reader.handle)
     self.writer = Mutex(writer)
-    self.reader = Mutex(reader)
+    readers = SQLiteReaders(path: path)
   }
 
   /// The outer tables. A host program that keeps its own database creates them itself, `wuwei_pages` aside, which only the layered backend uses.
@@ -75,7 +76,7 @@ public final class FileDatabase: SharedDatabase {
     """
     CREATE TABLE IF NOT EXISTS wuwei_addressable (
       id INTEGER PRIMARY KEY, address TEXT NOT NULL UNIQUE,
-      holder TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL, page_count INTEGER NOT NULL DEFAULT 0, wake_at INTEGER)
+      holder TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL, draining INTEGER NOT NULL DEFAULT 0, page_count INTEGER NOT NULL DEFAULT 0, wake_at INTEGER)
     """,
     "CREATE TABLE IF NOT EXISTS wuwei_pages (key INTEGER PRIMARY KEY, data BLOB NOT NULL)",
     "CREATE TABLE IF NOT EXISTS wuwei_mail (id INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT NOT NULL, payload BLOB NOT NULL)",
@@ -86,13 +87,13 @@ public final class FileDatabase: SharedDatabase {
     "CREATE TABLE IF NOT EXISTS wuwei_schema (kind TEXT PRIMARY KEY, applied INTEGER NOT NULL)",
   ]
 
-  public func write(_ body: (OpaquePointer, AnyObject?) throws -> Void) throws {
+  public func write(_ body: (OpaquePointer) throws -> Void) throws {
     available.wait()
     defer { available.signal() }
     try writer.withLock { db in
       try db.execute("BEGIN IMMEDIATE")
       do {
-        try body(db.handle, nil)
+        try body(db.handle)
         try db.execute("COMMIT")
       } catch {
         try? db.execute("ROLLBACK")
@@ -116,12 +117,8 @@ public final class FileDatabase: SharedDatabase {
     available.signal()
   }
 
-  public func read(_ body: (OpaquePointer) throws -> Void) throws {
-    try reader.withLock { db in
-      try db.execute("BEGIN")
-      defer { try? db.execute("COMMIT") }
-      try body(db.handle)
-    }
+  public func beginRead() throws -> any SharedReadTransaction {
+    try readers.beginRead()
   }
 }
 
@@ -131,9 +128,9 @@ private final class FileTransaction: SharedTransaction {
 
   init(database: FileDatabase) { self.database = database }
 
-  func access<T: Sendable>(_ body: @Sendable (OpaquePointer, AnyObject?) throws -> T) throws -> T {
+  func access<T: Sendable>(_ body: @Sendable (OpaquePointer) throws -> T) throws -> T {
     precondition(!finished)
-    return try database.accessWriter { try body($0, nil) }
+    return try database.accessWriter { try body($0) }
   }
 
   func commit() throws {

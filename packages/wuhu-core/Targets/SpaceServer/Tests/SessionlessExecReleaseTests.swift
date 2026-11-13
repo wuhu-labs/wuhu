@@ -72,7 +72,7 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
   @Test(arguments: [SessionlessEnd.firingCancelled, .terminalCancelled, .terminalReturned])
   func aRunsEndRevokesItsTokenAndKillsTheProcessItsScriptStarted(_ end: SessionlessEnd) async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: VirtualClock())
+    let server = try await TestServer(space: space, clock: VirtualClock())
     let (machineID, _) = try await addMachine(server)
     let tokens = try await testTokens(space: space, spaceURL: "http://main")
     let observer = Observer(group: .shared, name: "nightly", firing: "f1")

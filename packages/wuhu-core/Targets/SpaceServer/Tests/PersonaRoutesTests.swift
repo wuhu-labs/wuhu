@@ -14,7 +14,7 @@ import Testing
   let key = Curve25519.Signing.PrivateKey()
 
   init() async throws {
-    harness = try Harness(dev: false)
+    harness = try await Harness(dev: false)
     identity = try await harness.space.identity().rawValue
   }
 

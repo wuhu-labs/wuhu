@@ -19,7 +19,7 @@ import Testing
   let account: AccountID
 
   init() async throws {
-    harness = try Harness(dev: false, webPushApplicationServerKey: applicationServerKey)
+    harness = try await Harness(dev: false, webPushApplicationServerKey: applicationServerKey)
     _ = try await SessionToolFixture(space: harness.space)
     identity = try await harness.space.identity().rawValue
     let account = try await harness.space.addAccount(kind: .human, name: nil)

@@ -17,6 +17,28 @@ public final class Lane: SerialExecutor {
 
   static let drainEvery = 256
   private static let writingThreads = Mutex<Set<UInt>>([])
+  private static let readingThreads = Mutex<Set<UInt>>([])
+  private static let secondRead = "a second read span began while one is open on this thread: take both handles from one `worker.read`, or a handle is being held across an await"
+
+  static func beganRead() -> UInt {
+    preconditionNoWriter("start a read span")
+    let thread = currentThread()
+    precondition(readingThreads.withLock { $0.insert(thread).inserted }, secondRead)
+    return thread
+  }
+
+  static func preconditionReadThread(_ thread: UInt) {
+    precondition(thread == currentThread(), "a read span changed threads: a handle is being held across an await")
+  }
+
+  static func endedRead(_ thread: UInt) {
+    preconditionReadThread(thread)
+    precondition(readingThreads.withLock { $0.remove(thread) != nil })
+  }
+
+  static func preconditionNoRead() {
+    precondition(!readingThreads.withLock { $0.contains(currentThread()) }, secondRead)
+  }
 
   @discardableResult
   static func beganWriter() -> UInt {

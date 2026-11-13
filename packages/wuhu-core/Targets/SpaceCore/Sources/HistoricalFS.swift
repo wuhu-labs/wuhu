@@ -1,67 +1,36 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct SpaceContract.GroupID
 import SpaceFS
+import Wuwei
 
 struct HistoricalFS: SpaceVFS {
   let group: GroupID
-  let writer: any DatabaseWriter
+  let runtime: SpaceRuntime
   let bucket: Bucket
   let ceiling: Int64
   var listingLimit: Int?
   var listingByteLimit: Int?
 
-  struct ResolvedNode {
-    let path: String
-    let kind: String
-    let blobHash: String?
-    let rev: Int64
-    let mtime: String
-  }
-
   func read(_ path: String) async throws -> (VersionToken, Data) {
-    let p = try LiveFS.validated(path)
-    let (group, ceiling) = (group, ceiling)
-    let (rev, hash) = try await writer.read { db in
-      try Self.requireRevision(ceiling, group: group, in: db)
-      guard let node = try Self.resolve(p.rawValue, group: group, ceiling: ceiling, in: db) else {
-        throw SpaceError.notFound(p.rawValue)
-      }
-      guard node.kind == "file", let hash = node.blobHash else { throw SpaceError.notAFile(p.rawValue) }
-      return (node.rev, hash)
-    }
-    return (VersionToken(rev: Int(rev)), Data(try await bucket.bytes(hash)))
+    let node = try runtime.worker().cell(FilesCell.ID(group.rawValue)).historicalFile(LiveFS.validated(path), at: ceiling)
+    return (VersionToken(rev: Int(node.rev)), Data(try await bucket.bytes(node.blobHash!)))
   }
 
   func reader(_ path: String) async throws -> any SpaceFileReader {
-    let p = try LiveFS.validated(path)
-    let (group, ceiling) = (group, ceiling)
-    let hash = try await writer.read { db in
-      try Self.requireRevision(ceiling, group: group, in: db)
-      guard let node = try Self.resolve(p.rawValue, group: group, ceiling: ceiling, in: db) else {
-        throw SpaceError.notFound(p.rawValue)
-      }
-      guard node.kind == "file", let hash = node.blobHash else { throw SpaceError.notAFile(p.rawValue) }
-      return hash
-    }
-    return BucketReader(bucket: bucket, hash: hash)
+    let node = try runtime.worker().cell(FilesCell.ID(group.rawValue)).historicalFile(LiveFS.validated(path), at: ceiling)
+    return BucketReader(bucket: bucket, hash: node.blobHash!)
   }
 
-  func write(_ path: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken {
-    throw SpaceError.readOnlyView(path)
-  }
-
-  func delete(_ path: String, ifMatch _: VersionToken?) async throws {
-    throw SpaceError.readOnlyView(path)
-  }
-
-  func move(_ path: String, to _: String) async throws {
-    throw SpaceError.readOnlyView(path)
-  }
+  func write(_ path: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken { throw SpaceError.readOnlyView(path) }
+  func delete(_ path: String, ifMatch _: VersionToken?) async throws { throw SpaceError.readOnlyView(path) }
+  func move(_ path: String, to _: String) async throws { throw SpaceError.readOnlyView(path) }
 
   func list(_ path: String) async throws -> (VersionToken, [Entry]) {
-    let p = try LiveFS.validated(path)
-    let (entries, _) = try await page(of: p, from: "", limit: listingLimit ?? Int.max, budget: ListingBudget(limit: listingByteLimit))
+    let (entries, _) = try await page(of: LiveFS.validated(path), from: "", limit: listingLimit ?? Int.max, budget: ListingBudget(limit: listingByteLimit))
     return (VersionToken(rev: Int(ceiling)), entries.sorted { $0.name < $1.name })
   }
 
@@ -70,104 +39,24 @@ struct HistoricalFS: SpaceVFS {
     return try await page(of: LiveFS.validated(path), from: from, limit: limit, budget: ListingBudget(limit: nil))
   }
 
-  private func page(of p: SpacePath, from: String, limit: Int, budget: ListingBudget) async throws -> ([Entry], String?) {
-    let (group, ceiling) = (group, ceiling)
-    let (nodes, next) = try await writer.read { db -> ([ResolvedNode], String?) in
-      try Self.requireRevision(ceiling, group: group, in: db)
-      if !p.isRoot {
-        guard let node = try Self.resolve(p.rawValue, group: group, ceiling: ceiling, in: db) else {
-          throw SpaceError.notFound(p.rawValue)
-        }
-        guard node.kind == "directory" else { throw SpaceError.notADirectory(p.rawValue) }
-      }
-      var nodes: [ResolvedNode] = []
-      var next: String?
-      var budget = budget
-      try Self.forEachChild(of: p, from: from, group: group, ceiling: ceiling, limit: limit == Int.max ? limit : limit + 1, in: db) { node in
-        let name = SpacePath.lastComponent(of: node.path)
-        guard nodes.count < limit else {
-          next = name
-          return
-        }
-        try budget.consume(name)
-        nodes.append(node)
-      }
-      return (nodes, next)
-    }
+  private func page(of path: SpacePath, from: String, limit: Int, budget: ListingBudget) async throws -> ([Entry], String?) {
+    let (nodes, next) = try runtime.worker().cell(FilesCell.ID(group.rawValue)).historicalPage(path, at: ceiling, from: from, limit: limit, budget: budget)
     var entries: [Entry] = []
-    for node in nodes {
-      entries.append(try await Self.entry(from: node, bucket: bucket))
-    }
+    for node in nodes { entries.append(try await Self.entry(from: node, bucket: bucket)) }
     return (entries, next)
   }
 
   func stat(_ path: String) async throws -> Entry {
-    let p = try LiveFS.validated(path)
-    let (group, ceiling) = (group, ceiling)
-    let node = try await writer.read { db in
-      try Self.requireRevision(ceiling, group: group, in: db)
-      guard let node = try Self.resolve(p.rawValue, group: group, ceiling: ceiling, in: db) else {
-        throw SpaceError.notFound(p.rawValue)
-      }
-      return node
-    }
+    let node = try runtime.worker().cell(FilesCell.ID(group.rawValue)).historical(LiveFS.validated(path), at: ceiling)
     return try await Self.entry(from: node, bucket: bucket)
   }
 
-  static func requireRevision(_ ceiling: Int64, group: GroupID, in db: Database) throws {
-    guard try Substrate.revisionExists(ceiling, group: group, in: db) else {
-      throw SpaceError.invalidRevision(Int(ceiling))
-    }
-  }
-
-  static func resolve(_ path: String, group: GroupID, ceiling: Int64, in db: Database) throws -> ResolvedNode? {
-    guard let row = try Row.fetchOne(
-      db,
-      sql: """
-      SELECT v.path AS path, v.kind AS kind, v.blob_hash AS blob_hash, v.rev AS rev, r.mtime AS mtime
-      FROM fs_versions v JOIN revisions r ON r.grp = v.grp AND r.rev = v.rev
-      WHERE v.grp = ? AND v.path = ? AND v.rev <= ? ORDER BY v.rev DESC LIMIT 1
-      """,
-      arguments: [group.rawValue, path, ceiling],
-    ) else { return nil }
-    guard let kind: String = row["kind"] else { return nil }
-    return ResolvedNode(path: row["path"], kind: kind, blobHash: row["blob_hash"], rev: row["rev"], mtime: row["mtime"])
-  }
-
-  // The nodes directly under `parent` as of `ceiling`. The path range keeps
-  // the scan to `parent`'s subtree on the (path, rev) key: every path under
-  // `/a/` sorts between `/a/` and `/a0`, `0` being the byte after `/`.
-  static func children(of parent: SpacePath, group: GroupID, ceiling: Int64, limit: Int? = nil, in db: Database) throws -> [ResolvedNode] {
-    var nodes: [ResolvedNode] = []
-    try forEachChild(of: parent, from: "", group: group, ceiling: ceiling, limit: limit ?? Int.max, in: db) { nodes.append($0) }
-    return nodes
-  }
-
-  private static func forEachChild(of parent: SpacePath, from: String, group: GroupID, ceiling: Int64, limit: Int, in db: Database, body: (ResolvedNode) throws -> Void) throws {
-    let prefix = parent.isRoot ? "/" : parent.rawValue + "/"
-    let rows = try Row.fetchCursor(
-      db,
-      sql: """
-      SELECT v.path AS path, v.kind AS kind, v.blob_hash AS blob_hash, v.rev AS rev, r.mtime AS mtime
-      FROM fs_versions v JOIN revisions r ON r.grp = v.grp AND r.rev = v.rev
-      WHERE v.grp = ? AND v.path >= ? AND v.path < ? AND instr(substr(v.path, length(?) + 1), '/') = 0
-        AND v.rev = (SELECT MAX(rev) FROM fs_versions v2 WHERE v2.grp = v.grp AND v2.path = v.path AND v2.rev <= ?)
-        AND v.kind IS NOT NULL
-      ORDER BY v.path LIMIT ?
-      """,
-      arguments: [group.rawValue, prefix + from, String(prefix.dropLast()) + "0", prefix, ceiling, limit],
-    )
-    while let row = try rows.next() {
-      try body(ResolvedNode(path: row["path"], kind: row["kind"], blobHash: row["blob_hash"], rev: row["rev"], mtime: row["mtime"]))
-    }
-  }
-
-  static func entry(from node: ResolvedNode, bucket: Bucket) async throws -> Entry {
+  static func entry(from node: HistoricalNode, bucket: Bucket) async throws -> Entry {
     var measure: (size: Int64, lineCount: Int64?)?
     if node.kind == "file", let hash = node.blobHash { measure = try await bucket.measure(hash) }
     return Entry(
       name: SpacePath.lastComponent(of: node.path),
-      kind: Substrate.entryKind(node.kind),
+      kind: Substrate.entryKind(node.kind!),
       size: Int(measure?.size ?? 0),
       lineCount: measure?.lineCount.map(Int.init),
       token: VersionToken(rev: Int(node.rev)),

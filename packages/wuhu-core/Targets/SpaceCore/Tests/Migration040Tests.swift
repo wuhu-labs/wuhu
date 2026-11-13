@@ -17,7 +17,7 @@ struct Migration040Tests {
         ('CompactionJob/fold-session-id:0:39', X'7B7D', 'live');
       INSERT INTO wuwei_mail (recipient, payload) VALUES ('SessionCell/old', X'7B7D');
       """)
-      try Migration040.apply(db)
+      try Migration040.apply(.init(db))
       let jobs = try Row.fetchAll(db, sql: "SELECT address, phase, creator, hex(params) AS payload FROM wuwei_job ORDER BY address")
       #expect(jobs.map { $0["address"] as String } == [
         "CompactionJob/fold-session-id:0:39", "InferenceJob/active-session-id:236:51:0",

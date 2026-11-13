@@ -318,9 +318,12 @@ enum Fix {
 
 extension SessionStore {
   /// Nothing to do, and no mail on its way to the session's cell.
+  ///
+  /// Mail first: a cell takes a mail row and writes what it causes in one step, so no mail seen means the work read next is the work that mail left.
   func settledWork(_ id: SessionID) async throws -> Bool {
     let cell = SessionCell.ID(id.rawValue)
-    return try space.worker.cell(cell).creationRecord().work == .noWork && !space.worker.hasMail(for: cell.recipient)
+    guard !space.worker.hasMail(for: cell.recipient) else { return false }
+    return try space.worker.cell(cell).creationRecord().work == .noWork
   }
 }
 

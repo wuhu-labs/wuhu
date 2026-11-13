@@ -17,7 +17,7 @@ extension PersonCell {
   }
 
   mutating func create(kind: AccountKind, name: String?, guest: Bool, at now: Date) throws -> AccountID {
-    try db.execute(PersonAccountRow.insert { PersonAccountRow(id: id.key, kind: kind.rawValue, name: name, guest: guest, createdAt: SQLiteDateFormat.string(from: now), removedAt: nil) })
+    try db.execute(PersonAccountRow.insert { PersonAccountRow(id: id.key, kind: kind.rawValue, name: name, guest: guest, createdAt: SQLiteDateFormat.string(from: now), removedAt: nil, owner: id.key) })
     return AccountID(rawValue: id.key)
   }
 
@@ -25,14 +25,16 @@ extension PersonCell {
     try requireAccount()
     let stamp = SQLiteDateFormat.string(from: now)
     try db.execute(PersonAccountRow.where { $0.id.eq(id.key) }.update { $0.removedAt = #bind(stamp) })
-    return try purgeCredentials()
+    let purged = try purgeCredentials()
+    ctx.send(SpaceCell.ID("space")).dropGrants(of: AccountID(rawValue: id.key))
+    return purged
   }
 
   mutating func addKey(_ pubkey: String, capabilities: Set<KeyCapability>, createdBy: AccountID?, at now: Date, expiresAt: Date?) throws -> KeyRecord {
     try requireAccount()
     guard VerifyingKey(label: pubkey) != nil else { throw SpaceError.malformedPubkey(pubkey) }
     guard ctx.cell(SpaceCell.ID("space")).keyRecord(pubkey: pubkey) == nil else { throw SpaceError.alreadyExists(pubkey) }
-    let row = PersonKeyRow(pubkey: pubkey, accountID: id.key, capabilities: Space.stored(capabilities), createdBy: createdBy?.rawValue, createdAt: SQLiteDateFormat.string(from: now), expiresAt: expiresAt.map(SQLiteDateFormat.string(from:)))
+    let row = PersonKeyRow(pubkey: pubkey, accountID: id.key, capabilities: Space.stored(capabilities), createdBy: createdBy?.rawValue, createdAt: SQLiteDateFormat.string(from: now), expiresAt: expiresAt.map(SQLiteDateFormat.string(from:)), owner: id.key)
     try db.execute(PersonKeyRow.insert { row })
     return row.record
   }
@@ -53,7 +55,7 @@ extension PersonCell {
     try db.execute(PersonReadSessionRow.where { $0.accountID.eq(id.key) && $0.expiresAt <= stamp }.delete())
     if let supersedes { _ = try deleteReadSession(supersedes) }
     try db.execute(PersonReadSessionRow.insert {
-      PersonReadSessionRow(tokenHash: Space.credentialDigest(token.rawValue), accountID: id.key, createdAt: stamp, expiresAt: SQLiteDateFormat.string(from: expiresAt), group: group == .shared ? nil : group.rawValue)
+      PersonReadSessionRow(tokenHash: Space.credentialDigest(token.rawValue), accountID: id.key, createdAt: stamp, expiresAt: SQLiteDateFormat.string(from: expiresAt), group: group == .shared ? nil : group.rawValue, owner: id.key)
     })
     return true
   }
@@ -75,7 +77,7 @@ extension PersonCell {
     guard !db.rows(PersonAccountRow.where { $0.id.eq(id.key) && $0.removedAt.is(nil) }).isEmpty else { throw SpaceError.notFound(id.key) }
   }
 
-  private mutating func purgeCredentials() throws -> (keys: Int, readSessions: Int) {
+  mutating func purgeCredentials() throws -> (keys: Int, readSessions: Int) {
     let keys = db.rows(PersonKeyRow.where { $0.accountID.eq(id.key) }).count
     let sessions = db.rows(PersonReadSessionRow.where { $0.accountID.eq(id.key) }).count
     try db.execute(PersonKeyRow.where { $0.accountID.eq(id.key) }.delete())
@@ -93,6 +95,7 @@ struct PersonAccountRow {
   var guest: Bool
   @Column("created_at") var createdAt: String
   @Column("removed_at") var removedAt: String?
+  var owner: String
 
   func record(admin: Bool) -> AccountRecord {
     AccountRecord(id: AccountID(rawValue: id), kind: AccountKind(rawValue: kind)!, name: name, isAdmin: admin, guest: guest, createdAt: try! SQLiteDateFormat.date(from: createdAt), removedAt: removedAt.map { try! SQLiteDateFormat.date(from: $0) })
@@ -107,6 +110,7 @@ struct PersonKeyRow {
   @Column("created_by") var createdBy: String?
   @Column("created_at") var createdAt: String
   @Column("expires_at") var expiresAt: String?
+  var owner: String
 
   var record: KeyRecord {
     KeyRecord(pubkey: pubkey, account: AccountID(rawValue: accountID), capabilities: Space.capabilitySet(capabilities)!, createdBy: createdBy.map(AccountID.init(rawValue:)), createdAt: try! SQLiteDateFormat.date(from: createdAt), expiresAt: expiresAt.map { try! SQLiteDateFormat.date(from: $0) })
@@ -120,6 +124,7 @@ struct PersonReadSessionRow {
   @Column("created_at") var createdAt: String
   @Column("expires_at") var expiresAt: String
   @Column("grp") var group: String?
+  var owner: String
 }
 
 @Selection

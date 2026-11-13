@@ -12,27 +12,13 @@ import ServeRouting
 import SpaceContract
 import SpaceCore
 
-func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChallenges, fingerprint: String?, dev: Bool, keyStreams: KeyStreams) {
+func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChallenges, fingerprint: String?, devPerson: ResolvedPerson?, keyStreams: KeyStreams) {
   @Dependency(\.date) var dateGen
-  // Personas are allocator draws recorded against the minting key, so the
-  // route re-verifies the bearer itself: even behind a --dev wall the draw
-  // must trace persona -> key -> account or not happen at all. Adoption keeps
-  // the route idempotent, so a client asks for its persona instead of caching it.
   router.post("/v1/persona") { request, _ in
     try request.requireNoBody()
-    switch try await bearerVerdict(request: request, space: space, now: dateGen.now) {
-    case let .verified(credential):
-      let persona = try await space.adoptPersona(key: credential.key)
-      return try Response.json(PersonaMintOutput(persona: persona.name))
-    case let .rejected(response):
-      return response
-    case .anonymous:
-      return errorResponse(
-        .unauthorized,
-        code: "unauthorized",
-        message: "personas are minted for enrolled devices only",
-        hint: "enroll this device: wuhu login < invite-link (mint one on an enrolled device: wuhu share-login)",
-      )
+    switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
+    case let .person(person): return try Response.json(PersonaMintOutput(persona: person.persona))
+    case let .refused(response): return response
     }
   }
 
@@ -52,12 +38,12 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
         return Response(status: .noContent)
       case let .rejected(response):
         return response
-      case .anonymous:
+      case .missing:
         return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
       }
     }
     let input = try await request.json(KeyRevokeInput.self)
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(actor):
@@ -76,27 +62,16 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
   }
 
   router.get("/v1/keys") { request, _ in
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(actor):
       let requested = queryValues(of: request.url)["account"]
       let target: AccountID
-      switch (requested, actor) {
-      case let (raw?, _):
-        guard AccountID.isValid(raw) else {
-          return errorResponse(.badRequest, code: "invalidArgument", message: "malformed account id: \(raw)")
-        }
+      if let raw = requested {
+        guard AccountID.isValid(raw) else { return errorResponse(.badRequest, code: "invalidArgument", message: "malformed account id: \(raw)") }
         target = AccountID(rawValue: raw)
-      case let (nil, .account(record)):
-        target = record.id
-      case (nil, .devOwner):
-        return errorResponse(
-          .badRequest,
-          code: "invalidArgument",
-          message: "the --dev seat has no account of its own; pass account=<id>",
-        )
-      }
+      } else { target = actor.accountID }
       guard actor.mayManage(target) else {
         return adminRequired("listing another account's keys")
       }
@@ -109,7 +84,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
   // account freely, but only an admin mints for someone else.
   router.post("/v1/enroll") { request, _ in
     let actor: ManagementActor
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(resolved):
@@ -153,7 +128,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
 
   router.post("/v1/enroll/revoke") { request, _ in
     let actor: ManagementActor
-    switch try await managementVerdict(request: request, space: space, dev: dev, now: dateGen.now) {
+    switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .refused(response):
       return response
     case let .actor(resolved):

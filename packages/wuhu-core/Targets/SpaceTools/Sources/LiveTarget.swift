@@ -33,7 +33,7 @@ extension SpaceToolContext {
     case let .session(id): return try await space.sessions.record(id).title
     case let .observer(observer): return observer.member
     case .page: return "page"
-    case .anonymous: return "dev"
+    case .publicReader: throw ToolRunError.failed(code: .unauthorized, message: "live presence requires a member", hint: nil)
     }
   }
 }

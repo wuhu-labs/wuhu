@@ -1,12 +1,16 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import LoopCore
 import Scratch
 import SessionDomain
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import StructuredQueries
 import Testing
 
 @Suite(.deterministicDependencies) struct InferenceStoreTests {
@@ -21,18 +25,26 @@ import Testing
     )
   }
 
+  /// The group's cell has taken the attempts its mail carried on their way.
+  private func deliverInferences(_ space: Space, _ group: GroupID) async throws {
+    let id = GroupCell.ID(group.rawValue)
+    while space.worker.hasMail(for: id.recipient) { await Task.yield() }
+    try await space.worker.call(id) { _ in () }
+  }
+
   @Test func storesEachCallAndNullUsageAndRetainsRowsAcrossCompactionAndArchive() async throws {
     let space = try makeSpace()
     let session = try await space.sessions.createSession(group: .shared, title: "coder", kind: .agent, tags: ["coder"], createdBy: "owner", model: .test)
     try await space.recordInference(record(session, id: "ok"))
     try await space.recordInference(record(session, id: "failed", failed: true))
+    try await deliverInferences(space, .shared)
     let expected: [[Cell]] = [
       [.text("failed"), .text(session.rawValue), .text("2023-11-14T22:13:20.000Z"), .text("codex"), .text("configured"), .null, .text("high"), .null, .null, .null, .null, .null, .text("timeout"), .text("idleTimeout"), .integer(1200), .null, .null],
       [.text("ok"), .text(session.rawValue), .text("2023-11-14T22:13:20.000Z"), .text("codex"), .text("configured"), .text("served"), .text("high"), .integer(30), .integer(200), .integer(0), .integer(80), .integer(60), .text("ok"), .null, .integer(1200), .integer(100), .null],
     ]
     #expect(try await space.query("SELECT * FROM inferences ORDER BY id").rows == expected)
     _ = try await space.sessions.restart(session)
-    _ = try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.rows.writeGeneration(session, head: .init(id: UUID(), timestamp: fixedDate, summary: "compact", snapshot: .init(), runningWork: [])) }
+    _ = try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.writeGeneration(session, head: .init(id: UUID(), timestamp: fixedDate, summary: "compact", snapshot: .init(), runningWork: [])) }
     _ = try await space.sessions.archive(session, grace: .seconds(0))
     #expect(try await space.query("SELECT * FROM inferences ORDER BY id").rows == expected)
     #expect(try await space.query("SELECT sum(input), sum(cache_read), sum(output), sum(reasoning) FROM inferences JOIN sessions ON session = sessions.id WHERE sessions.tags LIKE '%coder%'").rows == [[.integer(30), .integer(200), .integer(80), .integer(60)]])
@@ -53,16 +65,17 @@ import Testing
   @Test func sameVisibilityAsSessionsIncludingQualifiedReadableGroups() async throws {
     let space = try makeSpace()
     let other = GroupID(rawValue: "other")
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('other', '2026-09-30T00:00:00.000Z')")
+    try await space.worker.call(GroupCell.ID(other.rawValue)) {
+      try $0.db.execute(GroupRow.insert { GroupRow(id: other.rawValue, createdAt: "2026-09-30T00:00:00.000Z", removedAt: nil, visibility: "private", secretsScope: "owner") })
     }
     let session = try await space.sessions.createSession(group: other, title: "hidden", kind: .agent, createdBy: "owner", model: .test)
     try await space.recordInference(record(session, id: "call"))
+    try await deliverInferences(space, other)
     #expect(try await space.query("SELECT * FROM inferences").rows.isEmpty)
     await #expect(throws: SpaceError.unknownRelation("wuhu://other.localspace/inferences")) {
       try await space.query("SELECT * FROM \"wuhu://other.localspace/inferences\"")
     }
-    try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: other, by: .anonymous, acting: other)
+    try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: other, by: (try await space.ensureDevPerson()).actor, acting: other)
     #expect(try await space.query("SELECT session FROM \"wuhu://other.localspace/inferences\"").rows == [[.text(session.rawValue)]])
     #expect(try await space.query("SELECT grp, session FROM \"wuhu://*.localspace/inferences\"").rows == [[.text("other"), .text(session.rawValue)]])
     #expect(try await space.query("SELECT * FROM inferences").rows.isEmpty)

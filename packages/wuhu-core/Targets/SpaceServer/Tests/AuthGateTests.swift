@@ -22,7 +22,7 @@ import Testing
     }
     let server = try await ServeNIOServer.bind(
       port: 0,
-      upgrading: SpaceServer.handler(space: space, hub: hub, dev: false),
+      upgrading: SpaceServer.handler(space: space, hub: hub, devPerson: nil),
     )
     do {
       let port = try #require(server.localAddress?.port)

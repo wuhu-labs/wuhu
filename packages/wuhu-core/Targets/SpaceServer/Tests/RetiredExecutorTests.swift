@@ -80,7 +80,7 @@ private func expectRefused(_ response: Response, status: Status, code: String, m
         code: "invalidArgument",
         message: "template legacy: unknown executor: claude-code",
       )
-      #expect(try await harness.space.query("SELECT id FROM sessions", as: .shared(.anonymous)).rows.isEmpty)
+      #expect(try await harness.space.query("SELECT id FROM sessions", as: .shared(.publicReader)).rows.isEmpty)
     }
   }
 

@@ -344,7 +344,8 @@ extension MachineToolV2RoutingTests {
     let space = try Space.inMemory()
     let (record, _) = try await space.addMachineV2(name: "presence_v2", group: .shared)
     let hub = MachineHub(space: space)
-    let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
+    let devPerson = try await space.ensureDevPerson()
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     for state: MachineV2Presence in [.attached, .lost] {
       try await space.worker.call(MachineCell.ID(record.id.rawValue)) { cell in
         try cell.ensurePresence()
@@ -379,7 +380,7 @@ extension MachineToolV2RoutingTests {
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     try await withMachineBox(space: space, hub: hub, machine: record.id, client: FetchClient { try await agent.handler($0) }) {
-      let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true)
+      let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: try await space.ensureDevPerson())
       let request = Request(url: URL(string: "https://test.invalid/v1/tools/read")!, method: .post, body: try .json(JSONValue.object(["path": .string("machines://" + record.id.rawValue + "/file")])))
       guard case let .response(response) = try await handler(request) else { Issue.record("tool upgraded"); return }
       let body = try await response.body.json(JSONValue.self)

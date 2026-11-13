@@ -10,17 +10,12 @@ import Serve
 import struct SessionDomain.SessionID
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupID
-import let SpaceContract.ownerIdentity
 import SpaceCore
 
-/// Who stands behind a request: a session's exec token, a sessionless
-/// script's token, a verified person, or an unauthenticated caller (the --dev
-/// seat, or a public route).
 enum RequestCredential: Sendable {
   case session(SessionID, group: GroupID)
   case script(SessionlessScript)
-  case person(ActingCredential)
-  case anonymous
+  case person(ResolvedPerson)
 }
 
 enum PrincipalVerdict: Sendable {
@@ -28,9 +23,6 @@ enum PrincipalVerdict: Sendable {
   case refused(Response)
 }
 
-/// A session acts in its own group only. A person names one with the
-/// `wuhu-group` header, else acts in `shared`; a group they may not read is
-/// refused. The --dev seat acts anywhere that exists.
 func principal(for request: Request, credential: RequestCredential, space: Space) async throws -> PrincipalVerdict {
   let named = request.headers[GroupHeader.name]
   switch credential {
@@ -40,7 +32,7 @@ func principal(for request: Request, credential: RequestCredential, space: Space
   case let .script(script):
     if let refused = try await groupMismatch(request, by: "script \(script.member)", group: script.group, space: space) { return .refused(refused) }
     return .principal(script.principal)
-  case .person, .anonymous: break
+  case .person: break
   }
   let actor: Actor
   switch try await speaker(of: credential, speaking: queryValues(of: request.url)["identity"], in: space) {
@@ -58,7 +50,6 @@ func principal(for request: Request, credential: RequestCredential, space: Space
   guard let group = try await space.resolveGroup(named) else {
     return .refused(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(named)"))
   }
-  if case .anonymous = actor { return .principal(Principal(actor: actor, group: group)) }
   guard try await space.role(of: actor, in: group, acting: group) != nil else {
     return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you may not read group \(named)"))
   }
@@ -72,20 +63,19 @@ enum CredentialVerdict: Sendable {
 
 /// Who stands behind a request on the API origin, whatever group it names:
 /// the gated session, else the bearer.
-func requestCredential(_ request: Request, space: Space, date: DateGenerator) async throws -> CredentialVerdict {
+func requestCredential(_ request: Request, space: Space, devPerson: ResolvedPerson?, date: DateGenerator) async throws -> CredentialVerdict {
   if let gated = SessionPrincipal.current { return .credential(.session(gated.session, group: gated.group)) }
   if let script = SessionlessPrincipal.current { return .credential(.script(script)) }
-  switch try await bearerVerdict(request: request, space: space, now: date.now) {
-  case let .rejected(response): return .refused(response)
-  case let .verified(credential): return .credential(.person(credential))
-  case .anonymous: return .credential(.anonymous)
+  switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: date.now) {
+  case let .refused(response): return .refused(response)
+  case let .person(person): return .credential(.person(person))
   }
 }
 
 /// The principal of a request on the API origin: its credential, acting in
 /// the group the request names.
-func requestPrincipal(_ request: Request, space: Space, date: DateGenerator) async throws -> PrincipalVerdict {
-  switch try await requestCredential(request, space: space, date: date) {
+func requestPrincipal(_ request: Request, space: Space, devPerson: ResolvedPerson?, date: DateGenerator) async throws -> PrincipalVerdict {
+  switch try await requestCredential(request, space: space, devPerson: devPerson, date: date) {
   case let .credential(credential): try await principal(for: request, credential: credential, space: space)
   case let .refused(response): .refused(response)
   }
@@ -115,37 +105,27 @@ private enum ActorVerdict {
   case refused(Response)
 }
 
-// A person speaks as the persona the identity routes would give them; a key
-// that carries none and claims none acts as its account.
 private func speaker(of credential: RequestCredential, speaking claimed: String?, in space: Space) async throws -> ActorVerdict {
   switch credential {
   case let .session(session, _):
     return .actor(.session(session))
   case let .script(script):
     return .actor(script.principal.actor)
-  case let .person(acting):
-    if claimed == nil, acting.key.capabilities.isDisjoint(with: [.device, .seat]) {
-      return .actor(.person(persona: try await persona(of: acting.key.account, in: space), account: acting.key.account))
-    }
-    switch try await personaVerdict(claimed, key: acting.key, space: space) {
-    case let .verified(persona, _): return .actor(.person(persona: persona.name, account: persona.account))
+  case let .person(person):
+    switch try await identityVerdict(claimed, person: person, space: space) {
+    case let .identity(persona): return .actor(.person(persona: persona, account: person.account))
     case let .refused(response): return .refused(response)
-    case .anonymous: return .actor(.anonymous)
     }
-  case .anonymous:
-    return .actor(.anonymous)
   }
 }
 
 /// The content origin's reader: the cookie's account, in the Host's group.
 func webPrincipal(_ viewer: AccountID?, group: GroupID, space: Space) async throws -> Principal {
-  try await webPerson(viewer, group: group, space: space).principal
+  guard let viewer else { return .shared(.publicReader) }
+  return try await webPerson(viewer, group: group, space: space).principal
 }
 
-/// The content origin's reader as a person; no account is the --dev seat,
-/// speaking as the owner identity.
-func webPerson(_ viewer: AccountID?, group: GroupID, space: Space) async throws -> Person {
-  guard let viewer else { return Person(persona: ownerIdentity, account: nil, group: group) }
+func webPerson(_ viewer: AccountID, group: GroupID, space: Space) async throws -> Person {
   return Person(persona: try await persona(of: viewer, in: space), account: viewer, group: group)
 }
 

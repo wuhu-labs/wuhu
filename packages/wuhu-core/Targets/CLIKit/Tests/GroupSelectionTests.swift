@@ -218,7 +218,7 @@ import Testing
     #expect(result.code == 0, "\(result.stderr)")
     #expect(result.stderr == "acting as anonymous (wallet)\n")
     let requests = await h.recorder.requests
-    #expect(requests.map(\.url.path) == ["/v1/server", "/v1/tools/ls"])
+    #expect(requests.map(\.url.path) == ["/v1/server", "/v1/persona", "/v1/tools/ls"])
     #expect(requests.last?.headers["wuhu-group"] == (source == .config ? "carol" : "alice"))
     #expect(requests.allSatisfy { $0.headers["authorization"] == nil })
   }
@@ -607,6 +607,8 @@ private struct GroupHarness {
           info.set("group", group.map { JSONValue.string($0) })
         }
         return try Response.json(info)
+      case "/v1/persona":
+        return try unsignedPersonaRefusal()
       case "/v1/machine-v2":
         var output: JSONValue = ["id": "mc_abcdefgh", "token": "jt_test"]
         output.set("group", machineGroup.map(JSONValue.string))

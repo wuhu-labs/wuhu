@@ -16,7 +16,7 @@ func addWebPushRoutes(
 
   router.get("/v1/web-push/config") { request, _ in
     switch try await personaCredentialVerdict(nil, request: request, space: space, now: date.now) {
-    case .anonymous:
+    case .missing:
       return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
     case let .refused(response):
       return response
@@ -53,7 +53,7 @@ func addWebPushRoutes(
       expiresAt = nil
     }
     switch try await personaCredentialVerdict(nil, request: request, space: space, now: date.now) {
-    case .anonymous:
+    case .missing:
       return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
     case let .refused(response):
       return response
@@ -79,7 +79,7 @@ func addWebPushRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a web-push deletion body: \(error)")
     }
     switch try await personaCredentialVerdict(nil, request: request, space: space, now: date.now) {
-    case .anonymous:
+    case .missing:
       return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
     case let .refused(response):
       return response

@@ -853,7 +853,9 @@ private struct Harness {
     self.stdout = stdout
     self.stderr = stderr
     self.runner = CommandRunner(
-      fetch: FetchClient { request in try await recorder.fetch(request) },
+      fetch: FetchClient { request in
+        request.url.path == "/v1/persona" ? try unsignedPersonaRefusal() : try await recorder.fetch(request)
+      },
       stdin: { stdin },
       stdout: { text in await stdout.append(text) },
       stderr: { text in await stderr.append(text) },

@@ -13,14 +13,14 @@ import Testing
   private static let retired = ["machine_v2_trace", "machine_v2_incidents", "machine_v2_problem_index"]
 
   @Test func freshSpaceHasNoTraceOrProblemTables() async throws {
-    let database = try DatabaseQueue(path: "file:/machine-trace-migration-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/machine-trace-migration-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let space = try Space(writer: database)
     #expect(try await database.read { db in try Self.retired.filter { try db.tableExists($0) } } == [])
     try await space.close()
   }
 
   @Test func historicalUpgradeDropsTracesAndProblemsAndKeepsReceiptsAndContent() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-013-\(UUID())?vfs=memdb")
+    let database = try DatabaseQueue(path: "file:/migration-013-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
     let original = try Space(writer: database)
     let problems = try SpacePath(validating: "/wuhu/machine-v2-problems.table")
     _ = try await original.createTable(problems, header: TableHeader(columns: [.init(name: "status", type: .text)]), in: .shared, acting: .shared)
@@ -40,12 +40,12 @@ import Testing
       INSERT INTO machine_v2_maintenance VALUES ('problems/shared', 'now'), ('receipts/shared', 'now');
       """)
     }
-    try await database.write { db in try Migration013.apply(db) }
+    try await database.write { db in try Migration013.apply(.init(db)) }
     #expect(try await database.read { db in try Self.retired.filter { try db.tableExists($0) } } == [])
     #expect(try await database.read { try String.fetchAll($0, sql: "SELECT name FROM sqlite_master WHERE name LIKE 'machine_v2_trace%'") } == [])
     #expect(try await database.read { try String.fetchAll($0, sql: "SELECT kind FROM machine_v2_retention") } == ["operation"])
     #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_maintenance") } == ["receipts/shared"])
-    #expect(try await original.query("SELECT status FROM \"/wuhu/machine-v2-problems.table\"", as: .init(actor: .anonymous, group: .shared)).rows == [[.text("keep")]])
+    #expect(try await original.query("SELECT status FROM \"/wuhu/machine-v2-problems.table\"", as: .init(actor: .publicReader, group: .shared)).rows == [[.text("keep")]])
     try await original.close()
   }
 }

@@ -25,7 +25,7 @@ struct SessionNotificationTests {
     }
   }
 
-  @Test func erroredNotifiesTheOwner() async throws {
+  @Test func erroredDoesNotInventAnOwnerInbox() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
@@ -35,8 +35,7 @@ struct SessionNotificationTests {
       try await store.deliverMail()
 
       let rows = try await store.inbox("owner")
-      #expect(rows.map(\.kind) == [.sessionErrored])
-      #expect(rows[0].payload.contains("provider exploded"))
+      #expect(rows.isEmpty)
       #expect(try await store.inbox("morgan").isEmpty)
     }
   }

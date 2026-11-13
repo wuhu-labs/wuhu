@@ -149,7 +149,7 @@ import Testing
     let (rows, _) = try connection.run(
       "SELECT id FROM temp.\(Self.innerSessions)", arguments: [], byteLimit: nil, scope: .shared(),
     )
-    #expect(rows.rows == [["a".databaseValue]])
+    #expect(rows.rows == [[.text("a")]])
   }
 
   static let bypasses: [String] = {

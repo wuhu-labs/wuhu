@@ -97,26 +97,7 @@ extension SpaceCell {
 
   /// The requests `task` has open, oldest first.
   func openRequests(of task: String) throws -> [OpenRequest] {
-    guard !db.rows(GroupSessionRow.where { $0.id.eq(task) }).isEmpty else {
-      throw SessionStoreError.unknownSession(task)
-    }
-    return db.rows(
-      RequestRow.where { $0.task.eq(task) && $0.status.in(RequestStatus.allCases.filter(\.isOpen).map(\.rawValue)) }
-        .order { $0.createdAt }
-        .select { $0.id },
-    ).map { OpenRequest(id: RequestID($0)) }
-  }
-
-  /// The documents at `path` and under it in `group` that hold edits their files lack.
-  func dirtyDocuments(in group: GroupID, under path: SpacePath) -> [String] {
-    let range = DocumentRows.range(group, path)
-    return db.rows(
-      DocumentStateRow.unscoped.where {
-        (#sql("owner", as: String.self).eq(range.exact) ||
-          (#sql("owner", as: String.self).gte(range.below) && #sql("owner", as: String.self).lt(range.belowUpper)))
-          && $0.dirtyAt.isNot(nil)
-      }.select { _ in #sql("owner", as: String.self) },
-    )
+    try Self.openRequests(task, in: db)
   }
 }
 

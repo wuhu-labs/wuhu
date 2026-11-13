@@ -143,7 +143,7 @@ import Testing
   @Test func eachNotificationCollapsesAloneButOneConversationSharesAThread() async throws {
     let attempts = MessageCollector()
     let (space, owner) = try await relaySpace(grants: ["g1_live"])
-    let helperRow = try await space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
+    let helperRow = try await space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.publicReader)).rows
     guard case let .text(helperID)? = helperRow.first?.first else { Issue.record("no helper"); return }
     let client = PushRelayClient { message in
       await attempts.append(message)
@@ -267,7 +267,7 @@ import Testing
     let messages = MessageCollector()
     let (space, owner) = try await relaySpace(grants: ["g1_live"])
     let persona = try #require(await onlyPersona(space))
-    let helperRow = try await space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
+    let helperRow = try await space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.publicReader)).rows
     guard case let .text(helperID)? = helperRow.first?.first else { Issue.record("no helper"); return }
     let helper = SessionID(helperID)
     let utc = TimeZone(identifier: "UTC")!

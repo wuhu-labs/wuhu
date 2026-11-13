@@ -200,10 +200,10 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('vault', '2026-01-01')")
     }
     let vault = GroupID(rawValue: "vault")
-    try await space.setGrant(.group, "shared", role: .read, in: vault, by: .anonymous, acting: .shared)
+    try await space.setGrant(.group, "shared", role: .read, in: vault, by: (try await space.ensureDevPerson()).actor, acting: .shared)
     _ = try await space.fs(vault).write("/secret.md", Data("secret".utf8), ifMatch: nil)
     let sql = "SELECT path FROM \"wuhu://vault.localspace/docs\""
-    let socket = try space.observeRows(sql, throttle: .zero, as: .shared(.anonymous))
+    let socket = try space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var snapshots = socket.makeAsyncIterator()
     #expect(try await snapshots.next()?.rows == [[.text("/secret.md")]])
     let (stream, output) = AsyncStream<ObservationReply>.makeStream()
@@ -212,7 +212,7 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
     let watching = watch(sql)
     space.worker.send(.watch(watching), to: ObservationJob.address)
     #expect(try rows(await replies.next(), slot: watching.slot).rows == [[.text("/secret.md")]])
-    try await space.removeGrant(.group, "shared", in: vault, by: .anonymous, acting: .shared)
+    try await space.removeGrant(.group, "shared", in: vault, by: (try await space.ensureDevPerson()).actor, acting: .shared)
     #expect(try await snapshots.next() == nil)
     guard case let .failed(slot, _) = await replies.next() else { throw MissingReply() }
     #expect(slot == watching.slot)

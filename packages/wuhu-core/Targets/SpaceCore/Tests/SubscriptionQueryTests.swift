@@ -1,5 +1,5 @@
 import DeterministicDependencies
-import LoopCore
+@testable import LoopCore
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -49,7 +49,7 @@ import Testing
       let bob = try await tests.owner(store, group: GroupIsolationTests.bob)
       for id in [shared, alice, bob] { _ = try await tests.arm(store, id) }
       for principal in [
-        Principal(actor: .anonymous, group: .shared),
+        Principal(actor: .publicReader, group: .shared),
         Principal(actor: .session(alice), group: GroupIsolationTests.alice),
         Principal(actor: .session(bob), group: GroupIsolationTests.bob),
       ] {
@@ -87,7 +87,7 @@ import Testing
       _ = try await awaitItems(collected, atLeast: 3)
       try await tests.finish(space.sessions, attempt, .failed("boom"))
       _ = try await awaitItems(collected, atLeast: 4)
-      try await space.sessions.writer.write { try ObserverRows(db: $0, store: space.sessions).retire(.session(id), slot.slot.id) }
+      try await space.worker.call(ObserverCell.ID(.session(id), slot.slot.id)) { try $0.retire(.session(id), slot.slot.id) }
       let snapshots = try await awaitItems(collected, atLeast: 5)
       try #require(snapshots.count == 5)
       #expect(snapshots.first?.rows.isEmpty == true)

@@ -33,7 +33,7 @@ import struct WuhuAI.ToolCall
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
-      let machine = try await space.addMachine(name: "box").id
+      let machine = try await space.addMachineV2(name: "box").machine.id
       let files = FakeMachineFS()
       files.put("/work/.git/HEAD", "ref: refs/heads/main", mtime: 1)
       files.put("/work/AGENTS.md", "repo manual", mtime: 1)

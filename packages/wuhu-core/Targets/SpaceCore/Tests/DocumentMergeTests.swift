@@ -35,7 +35,7 @@ struct DocumentMergeTests {
     let migrated = try Space.open(file: file)
     let client = try await DocumentClient.join(migrated, plan)
     #expect(client.replica.text == "Before the migration\n")
-    let material = try await migrated.documents.rows.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
+    let material = try await migrated.documents.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
     #expect(try #require(material.history).count == 32)
     #expect(text(try await migrated.fs(.shared).read(plan).1) == "Before the migration\n")
     try await migrated.close()
@@ -51,7 +51,7 @@ struct DocumentMergeTests {
     var started = gate.started.makeAsyncIterator()
     var hub = await space.documents
     hub.merge = gate.client
-    let before = try await hub.rows.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
+    let before = try await hub.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
     let writing = Task { [hub] in
       try await hub.write(.shared, SpacePath(validating: plan), Data(bytes("Agent\n")), base: .latest, createOnly: false, acting: .shared, attribution: nil)
     }
@@ -72,7 +72,7 @@ struct DocumentMergeTests {
     if shallow {
       guard case .control(.error(code: .invalidUpdate, _)) = await client.next() else { Issue.record("a shallow client snapshot was accepted"); return }
       #expect(await client.next() == nil)
-      let after = try await hub.rows.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
+      let after = try await hub.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
       #expect(after.history == before.history)
       #expect(after.snapshot == before.snapshot)
       #expect(after.updates == before.updates)
@@ -144,7 +144,7 @@ struct DocumentMergeTests {
       guard case let .control(.checkpoint(rev)) = await client.next() else { Issue.record("no checkpoint"); return }
       if checkpoint == 2 { #expect(rev == read.rev) }
     }
-    let later = try await hub.rows.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
+    let later = try await hub.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
     guard case let .current(identity) = prepared.history else { Issue.record("not a warm preparation"); return }
     #expect(later.history == identity)
     gate.release.yield(())
@@ -218,7 +218,7 @@ struct DocumentMergeTests {
     defer { gate.release.yield(()) }
     guard case .seed = try #require(await started.next()).history else { Issue.record("not a cold seed"); return }
     _ = try await fs.write(plan, bytes("Racing create\n"), ifMatch: nil)
-    let live = try await hub.rows.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
+    let live = try await hub.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
     gate.release.yield(())
     if createOnly {
       await #expect(throws: SpaceError.alreadyExists(plan)) { try await writing.value }
@@ -230,7 +230,7 @@ struct DocumentMergeTests {
     gate.release.yield(())
     _ = try await writing.value
     #expect(text(try await fs.read(plan).1) == "Agent\n")
-    let final = try await hub.rows.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
+    let final = try await hub.material(.shared, SpacePath(validating: plan), base: .latest, createOnly: false)
     #expect(final.history == live.history)
   }
 

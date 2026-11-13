@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration046 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     ALTER TABLE revisions RENAME TO revisions_old;
     ALTER TABLE revision_actors RENAME TO revision_actors_old;

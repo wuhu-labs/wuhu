@@ -5,7 +5,6 @@
 #endif
 import ComputerFiles
 import Fetch
-import GRDB
 import MachineContract
 import OperationProtocol
 import OperationRuntime
@@ -216,23 +215,17 @@ private struct RealFileWrite: Sendable {
 }
 
 private func waitForNoFileOperations(in space: Space) async throws {
-  let writer = await space.writer
-  let counts = ValueObservation.tracking { db in
-    try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM machine_file_operations")!
-  }.values(in: writer, bufferingPolicy: .bufferingNewest(1))
-  for try await count in counts {
-    if count == 0 { return }
+  let watch = await watchSpaceTables(["machine_file_operations"], in: space)
+  defer { watch.cancel() }
+  for await _ in watch.changes {
+    if testFileOperations(in: space).isEmpty { return }
   }
+  try Task.checkCancellation()
   Issue.record("File-operation observation ended before retirement")
 }
 
 private func stopOutstandingFileWrites(in space: Space) async throws {
-  let writer = await space.writer
-  let operations = try await writer.read { db in
-    try Row.fetchAll(db, sql: "SELECT id, owner FROM machine_file_operations").map { row -> (UUID, String) in
-      (UUID(uuidString: row["id"])!, row["owner"])
-    }
-  }
+  let operations = testFileOperations(in: space).map { (UUID(uuidString: $0.row.id)!, $0.machine) }
   for (operation, machine) in operations {
     try await space.worker.call(MachineCell.ID(machine)) { cell in
       if var row = cell.fileOperation(operation) {

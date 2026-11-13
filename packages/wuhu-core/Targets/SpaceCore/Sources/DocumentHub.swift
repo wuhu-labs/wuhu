@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import GRDB
 import struct SpaceContract.GroupID
 import enum SpaceContract.LiveAccess
 import enum SpaceContract.LiveErrorCode
@@ -11,11 +10,10 @@ import SpaceFS
 import Synchronization
 import Wuwei
 
-/// The host's way into the documents: a client's socket, the checkpoint a read or a move needs, an
-/// agent's write, and the removals the fs tells the documents about. Nothing is kept in memory here.
+/// The host's way into document sockets, checkpoints and agent writes; no in-memory state.
 struct DocumentHub: Sendable {
   let runtime: SpaceRuntime
-  let rows: DocumentRows
+  let bucket: Bucket
   let peer: @Sendable () -> UInt64
   var merge: DocumentMerge = .live
 
@@ -25,11 +23,15 @@ struct DocumentHub: Sendable {
   /// cannot read: the one case a seed is fetched, before the attach or the write that needs it, and only
   /// while the document's rows are not the file's own history — absent, or left over from one it replaced.
   func seed(_ group: GroupID, _ path: SpacePath) async throws {
-    let cell = worker.cell(DocumentCell.ID(group, path))
-    guard let file = try cell.file() else { return }
-    guard cell.fileRev() != file.rev else { return }
-    guard file.text == nil else { return }
-    let text = try await rows.text(of: file.hash)
+    let file = try worker.read { reader -> (rev: Int64, hash: String)? in
+      guard let file = reader.cell(FilesCell.ID(group.rawValue)).file(path) else { return nil }
+      guard file.kind == "file", let hash = file.blobHash else { throw SpaceError.notAFile(path.rawValue) }
+      guard reader.cell(DocumentCell.ID(group, path)).fileRev() != file.rev else { return nil }
+      guard reader.cell(SpaceCell.ID("space")).bucket(hash)!.objectKey != nil else { return nil }
+      return (file.rev, hash)
+    }
+    guard let file else { return }
+    let text = Data(try await bucket.bytes(file.hash))
     do { try await worker.call(DocumentCell.ID(group, path)) { try $0.seed(text, file.rev) } } catch is DocumentGone {
       // The file moved on between the probe and the step: the attach or the write that follows seeds itself.
     }
@@ -40,22 +42,53 @@ struct DocumentHub: Sendable {
     worker.cell(DocumentCell.ID(group, path)).dirty()
   }
 
-  /// Commits what the file lacks, so a read sees it. `Evicted` means a stop is draining the cell, or a
-  /// rollover has it elsewhere: the read then sees the file as of its last checkpoint, and the agent's
-  /// write merges at its base revision, so nothing is lost.
+  /// Commits the latest document state after waiting out a draining holder; an `Evicted` call leaves the read at the last checkpoint.
   func checkpoint(_ group: GroupID, _ path: SpacePath) async {
     await checkpoint(DocumentCell.ID(group, path))
   }
 
   /// Commits every document at or under `path` that a move or a checkout would carry along.
   func checkpoint(under path: SpacePath, in group: GroupID) async throws {
-    for key in worker.cell(SpaceCell.ID("space")).dirtyDocuments(in: group, under: path) {
-      await checkpoint(DocumentCell.ID(key))
+    let dirty = try worker.read { reader in
+      try reader.cell(FilesCell.ID(group.rawValue)).subtree(path).compactMap { head -> DocumentCell.ID? in
+        let live = try SpacePath(validating: head.path)
+        guard live.isLive else { return nil }
+        let id = DocumentCell.ID(group, live)
+        return reader.cell(id).dirty() ? id : nil
+      }
+    }
+    for id in dirty {
+      await checkpoint(id)
     }
   }
 
   private func checkpoint(_ id: DocumentCell.ID) async {
-    _ = try? await worker.call(id) { $0.checkpoint() }
+    do {
+      if let checkpoint = try await worker.call(id, { $0.prepareCheckpoint() }) {
+        _ = try await commit(checkpoint, id: id, attribution: nil, checkout: nil)
+      }
+    } catch is Evicted {} catch is DocumentGone {} catch {
+      preconditionFailure("a document checkpoint failed: \(error)")
+    }
+  }
+
+  private func commit(_ checkpoint: DocumentCheckpoint, id: DocumentCell.ID, attribution: RevisionAttribution?, checkout: Int64?) async throws -> Int64 {
+    guard let result = try await worker.call(FilesCell.ID(id.group.rawValue), {
+      try $0.applyCheckpoint(id.path, hash: checkpoint.hash, lineage: checkpoint.lineage, seq: checkpoint.seq, seedRev: checkpoint.seedRev, attribution: attribution, checkout: checkout)
+    }) else { throw DocumentGone() }
+    do {
+      try await worker.call(id) { try $0.committed(checkpoint.lineage, result.seq, result.rev, result.previous) }
+    } catch is Evicted {}
+    return result.rev
+  }
+
+  func material(_ group: GroupID, _ path: SpacePath, base: DocumentBase, createOnly: Bool) async throws -> DocumentMaterial {
+    var material = try worker.read { reader in
+      let file = reader.cell(FilesCell.ID(group.rawValue)).documentFile(path)
+      return try reader.cell(DocumentCell.ID(group, path)).material(file, base: base, createOnly: createOnly)
+    }
+    if let hash = material.hash { material.text = Data(try await bucket.bytes(hash)) }
+    return material
   }
 
   /// An agent's text as the document's next revision.
@@ -71,26 +104,15 @@ struct DocumentHub: Sendable {
     )
     let id = DocumentCell.ID(group, path)
     for _ in 0 ..< 3 {
-      let material = try await rows.material(group, path, base: base, createOnly: createOnly)
+      let material = try await material(group, path, base: base, createOnly: createOnly)
       let prepared = try await merge.prepare(material, path, text, base, checkout != nil, peer(), peer())
       switch try await worker.call(id, { try $0.write(prepared, request) }) {
-      case let .wrote(rev): return rev
+      case let .wrote(checkpoint):
+        do { return try await commit(checkpoint, id: id, attribution: attribution, checkout: checkout) } catch is DocumentGone { throw SpaceError.notFound(path.rawValue) }
       case .stale: continue
       }
     }
     throw SpaceError.liveBusy(path.rawValue)
-  }
-
-  func removed(under path: SpacePath, in group: GroupID, rev: Int64, on db: GRDB.Database) throws {
-    let range = DocumentRows.range(group, path)
-    for key in try String.fetchAll(
-      db, sql: "SELECT owner FROM document_state WHERE (owner = ? OR (owner >= ? AND owner < ?))",
-      arguments: [range.exact, range.below, range.belowUpper],
-    ) {
-      let recipient = DocumentCell.ID(key).recipient
-      try recipient.post(.removed(rev), on: db.sqliteConnection!)
-      db.afterNextTransaction { _ in runtime.poke(recipient) }
-    }
   }
 }
 

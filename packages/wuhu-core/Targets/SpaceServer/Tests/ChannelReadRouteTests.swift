@@ -23,7 +23,7 @@ import Testing
       try await harness.space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
       }
-      try await harness.space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
+      try await harness.space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: (try await harness.space.ensureDevPerson()).actor, acting: foreign)
       for group in [GroupID.shared, foreign] {
         let id = try await harness.store.createConversation(members: [alice], in: group)
         let delivery = try await harness.store.post(.conversation(id), messageID: MessageID("attachment-" + group.rawValue), sender: Sender(id: alice, timeZone: .gmt), content: .init(text: "look"), uploads: [AttachmentUpload(name: "secret.txt", bytes: Array("secret".utf8))])
@@ -68,7 +68,7 @@ import Testing
       try await harness.space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
       }
-      try await harness.space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
+      try await harness.space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: (try await harness.space.ensureDevPerson()).actor, acting: foreign)
       for group in [GroupID.shared, foreign] {
         let source = try await harness.store.createConversation(members: [alice, bob], in: group)
         let delivery = try await harness.store.post(.conversation(source), messageID: MessageID("copy-source-" + group.rawValue), sender: Sender(id: alice, timeZone: .gmt), content: .init(text: "private"), uploads: [AttachmentUpload(name: "secret.txt", bytes: Array("secret".utf8))])
@@ -97,7 +97,7 @@ import Testing
   @Test func removingAMemberClosesAnAlreadyOpenConversationSSE() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      let alice = try await harness.adoptPersona()
+      let alice = try await harness.space.ensureDevPerson().persona
       let (bobBearer, bobKey) = try await harness.enrolledBearer()
       let bob = try await harness.space.adoptPersona(key: bobKey).name
       let id = try await harness.store.createConversation(members: [alice, bob], in: .shared)
@@ -114,7 +114,7 @@ import Testing
     }
   }
 
-  @Test func devAnonymousReadAndManagementAreRefusedAndMembersListRecentActivity() async throws {
+  @Test func theDevPersonCannotImpersonateChannelMembersAndMembersListRecentActivity() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let (aliceBearer, aliceKey) = try await harness.enrolledBearer()
@@ -129,21 +129,20 @@ import Testing
         #expect(try await json(response).object?["code"] == "notFound")
       }
       #expect(try await harness.get("/v1/conversation/\(first.rawValue)/messages").status == .notFound)
-      #expect(try await harness.get("/v1/conversation/\(first.rawValue)/messages", query: ["identity": alice]).status == .notFound)
-      for fields in [JSONValue.object(["members": .array([.string(alice)])]), ["members": .array([.string(alice)]), "identity": .string(alice)]] {
-        let response = try await harness.post("/v1/conversation", fields)
-        #expect(response.status == .badRequest)
-        let error = try await json(response)
-        #expect(error.object?["code"] == "invalidArgument")
-        #expect(error.object?["message"] == "creating a channel needs an identified person or session")
-      }
+      #expect(try await harness.get("/v1/conversation/\(first.rawValue)/messages", query: ["identity": alice]).status == .forbidden)
+      let devCreated = try await harness.call("/v1/conversation", ["members": .array([.string(alice)])], as: ConversationPostOutput.self)
+      let dev = try await harness.space.ensureDevPerson()
+      #expect(try await harness.store.conversation(ConversationID(devCreated.conversationId)).members.map(\.member).contains(dev.persona))
+      let impersonated = try await harness.post("/v1/conversation", ["members": .array([.string(alice)]), "identity": .string(alice)])
+      #expect(impersonated.status == .forbidden)
+      #expect(try await json(impersonated).object?["code"] == "identityNotYours")
       let created = try await harness.call("/v1/conversation", ["members": .array([]), "title": "Identified"], as: ConversationPostOutput.self, bearer: aliceBearer)
       #expect(try await harness.store.conversation(ConversationID(created.conversationId)).members.map(\.member) == [alice])
       for (id, message) in [(second, "second"), (first, "first")] {
         _ = try await harness.store.post(.conversation(id), messageID: MessageID(message), sender: Sender(id: alice, timeZone: .gmt), content: .init(text: message))
       }
-      let anonymous = try await harness.get("/v1/conversations")
-      #expect(try await anonymous.json(ConversationsOutput.self).conversations.isEmpty)
+      let devList = try await harness.get("/v1/conversations")
+      #expect(try await devList.json(ConversationsOutput.self).conversations.map(\.id) == [devCreated.conversationId])
       let response = try await harness.get("/v1/conversations", bearer: aliceBearer)
       let rows = try await response.json(ConversationsOutput.self)
       #expect(rows.conversations.prefix(2).map(\.id) == [first.rawValue, second.rawValue])

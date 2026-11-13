@@ -69,7 +69,7 @@ import struct WuhuAI.ToolCall
       ])
       for child in children.prefix(2) {
         try await rig.space.worker.call(SessionCell.ID(child.rawValue)) { cell in
-          try cell.rows.show(child, owed: .inference)
+          try cell.show(child, owed: .inference)
         }
       }
       try await rig.space.sessions.markErrored(children[2], message: "inference failed: overloaded")
@@ -81,7 +81,7 @@ import struct WuhuAI.ToolCall
       try await until("the watch list is read") { watchQueries.value > 0 }
       let quickjs = children[0]
       try await rig.space.worker.call(SessionCell.ID(quickjs.rawValue)) { cell in
-        try cell.rows.show(quickjs, owed: .noRun)
+        try cell.show(quickjs, owed: .noRun)
       }
       try await rig.time.wake("the watch's poll", after: 61.234)
       try await rig.messages(1)
@@ -268,7 +268,7 @@ import struct WuhuAI.ToolCall
 
   @Test func importsAMachineModuleThroughTheMachineName() async throws {
     try await withRig { rig in
-      let id = try await rig.space.addMachine(name: "studio").id.rawValue
+      let id = try await rig.space.addMachineV2(name: "studio").machine.id.rawValue
       try await rig.write("/_/machines/\(id)/.agents/skills/hello/hello.js", """
       import { name } from "./name.js"
       export const greeting = `hello from ${name}`
@@ -367,7 +367,7 @@ import struct WuhuAI.ToolCall
     }
     try await withRig(fetch: echo, group: GroupID(rawValue: "alice")) { rig in
       // shared's secrets open to every group that reaches it.
-      try await rig.space.setSecretsScope(.reachable, of: .shared, by: .anonymous, acting: .shared)
+      try await rig.space.setSecretsScope(.reachable, of: .shared, by: (try await rig.space.ensureDevPerson()).actor, acting: .shared)
       try await rig.stores.group("shared").set("K", to: "shared-value")
       try await rig.stores.group("shared").set("S", to: "other-value")
       try await rig.run("secret-groups")
@@ -549,7 +549,7 @@ import struct WuhuAI.ToolCall
     let world = MachineWorld()
     try await withRig(world: world) { rig in
       try await world.attach("box", in: rig.space)
-      _ = try await rig.space.addMachine(name: "away")
+      _ = try await rig.space.addMachineV2(name: "away").machine
       try await rig.run("machine-refusals")
       try await rig.released()
       try rig.expect("machine-refusals")
@@ -720,6 +720,7 @@ final class ScriptRig: Sendable {
   let stores: SpaceSecretStores
   let session: SessionID
   let time: TimeControl
+  let group: GroupID
   private let executor: ToolExecutor
   private let entries = Box<[String]>([])
   private let seen = Box(0)
@@ -736,6 +737,7 @@ final class ScriptRig: Sendable {
     self.scripts = scripts
     self.stores = stores
     secrets = try stores.group(group.rawValue)
+    self.group = group
     self.session = session
     self.time = time
     self.executor = executor
@@ -772,6 +774,13 @@ final class ScriptRig: Sendable {
     _ = try await space.fs(group).write(path, Data(text.utf8), ifMatch: nil)
   }
 
+  /// The rig group's cell has taken the attempts its mail carried on their way.
+  func deliverInferences() async throws {
+    let id = GroupCell.ID(group.rawValue)
+    while space.worker.hasMail(for: id.recipient) { await Task.yield() }
+    try await space.worker.call(id) { _ in () }
+  }
+
   /// A cancel with its failure code shown, from `caller` (the rig's session
   /// by default).
   func cancel(_ id: String, as caller: SessionID? = nil) async throws {
@@ -803,7 +812,7 @@ final class ScriptRig: Sendable {
     do { _ = try ScriptPlan(call) }
     catch let error as ToolProblem { return .failure(.init(message: error.message, code: error.code)) }
     let handle = try await space.worker.call(SessionCell.ID(session.rawValue)) { cell in
-      let hydration = try cell.rows.hydrate(self.session)
+      let hydration = try cell.hydrate(self.session)
       var turn = cell.turn() ?? SessionTurn(generation: hydration.generation, position: 1)
       turn.position += 1
       turn.turn = .tools(calls: [call])
@@ -916,7 +925,7 @@ final class MachineWorld: Sendable {
   let execs = ScriptedExecMachine()
 
   func attach(_ name: String, in space: Space) async throws {
-    let id = try await space.addMachine(name: name).id
+    let id = try await space.addMachineV2(name: name).machine.id
     _ = files.attached.withLock { $0.insert(id) }
   }
 }

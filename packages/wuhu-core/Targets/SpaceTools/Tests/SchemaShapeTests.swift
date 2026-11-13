@@ -60,7 +60,7 @@ import Testing
   ]
 
   @Test func everyToolOutputMatchesItsContractSchema() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/b.md", "target", context)
     _ = try await seedFile("/templates/j.md", "---\ntemplate:\n  strategy: incr\n  prefix: J\n---\nhi", context)
 
@@ -100,7 +100,7 @@ import Testing
   }
 
   @Test func provenanceHistoryEntriesMatchTheSchema() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "v1", context)
     _ = try await seedFile("/a.md", "v2", context)
     _ = try await run("checkout", .object(["path": "/a.md", "rev": .integer(first.rev!)]), context)

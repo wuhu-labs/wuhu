@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router'
 import {
   AppShell,
@@ -52,11 +52,7 @@ import {
   type SidebarCatalog,
   useSidebarCatalog,
 } from '~/lib/use-sidebar-catalog'
-import {
-  SpaceFeedsProvider,
-  spaceScope,
-  useSpaceFeeds,
-} from '~/lib/space-feeds'
+import { useSpaceFeeds } from '~/lib/space-feeds'
 import { type SpaceDestination, spaceDestination } from '~/lib/space-url'
 import { useConversationAccess } from '~/lib/use-conversation-access'
 import {
@@ -64,19 +60,16 @@ import {
   contentOriginString,
 } from '~/lib/use-content-origin'
 import { useDictationOffered } from '~/lib/use-dictation'
-import { ownPrincipal } from '~/lib/use-directory'
-import { DraftsProvider, useDrafts } from '~/lib/use-drafts'
+import { useDrafts } from '~/lib/use-drafts'
 import { useObserve } from '~/lib/use-observe'
+import { Seated } from '~/lib/seat'
 import { useShownNode } from '~/lib/use-shown-node'
 import { useSidebarView } from '~/lib/use-sidebar-view'
 import { usePageVisible } from '~/lib/use-page-visible'
 import { useThemeStylesheet } from '~/lib/use-theme'
 import { type ShownPage, viewingOf } from '~/lib/viewing'
-import { ViewerCacheContext } from '~/lib/viewer-cache'
-import { type EnrolledDevice, enrolledDevice } from '~/sdk/auth'
-import { type SpaceClient, SpaceServer } from '~/sdk/client'
+import type { SpaceClient, SpaceServer } from '~/sdk/client'
 import { onUnauthorized } from '~/sdk/http'
-import { viewerCaches } from '~/sdk/open-cache'
 import { sqlSubscription } from '~/sdk/subscriptions'
 
 export interface SpaceContext {
@@ -96,40 +89,7 @@ export function meta() {
 }
 
 export default function Space() {
-  const [device, setDevice] = useState<EnrolledDevice | null | undefined>()
-  const caches = useMemo(() => viewerCaches(device ?? null), [device])
-  const server = useMemo(() => new SpaceServer(caches), [caches])
-  useEffect(() => {
-    let cancelled = false
-    // Failing to adopt a persona leaves the browser enrolled, only without a
-    // known principal yet.
-    enrolledDevice().then((found) =>
-      found == null || found.principal != null
-        ? found
-        : ownPrincipal().then(() => enrolledDevice(), () => found)
-    ).then(
-      (found) => {
-        if (!cancelled) setDevice(found)
-      },
-      () => {
-        if (!cancelled) setDevice(null)
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [])
-  if (device === undefined) return null
-  const scope = spaceScope(device)
-  return (
-    <ViewerCacheContext value={caches}>
-      <SpaceFeedsProvider key={scope} server={server}>
-        <DraftsProvider scope={scope}>
-          <SpaceBody server={server} device={device} scope={scope} />
-        </DraftsProvider>
-      </SpaceFeedsProvider>
-    </ViewerCacheContext>
-  )
+  return <Seated>{(seated) => <SpaceBody {...seated} />}</Seated>
 }
 
 // How each page sits in the window: chats, settings and Markdown scroll; an
@@ -213,9 +173,9 @@ function historyReach(): HistoryReach {
 }
 
 export function SpaceBody(
-  { server, device, scope }: {
+  { server, deviceKey, scope }: {
     server: SpaceServer
-    device: EnrolledDevice | null
+    deviceKey: string | null
     scope: string | null
   },
 ) {
@@ -228,7 +188,7 @@ export function SpaceBody(
   const [reviewingAISharing, setReviewingAISharing] = useState(() =>
     aiSharing() == null
   )
-  const [view, selectView] = useSidebarView(scope, device?.label ?? null)
+  const [view, selectView] = useSidebarView(scope, deviceKey)
   const feeds = useSpaceFeeds()
   const { sessions } = feeds
   const group = placeGroup(location.search)

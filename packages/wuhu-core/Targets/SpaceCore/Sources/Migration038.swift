@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration038 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     DROP TABLE machine_v2_output;
     DROP TABLE machine_v2_channels;

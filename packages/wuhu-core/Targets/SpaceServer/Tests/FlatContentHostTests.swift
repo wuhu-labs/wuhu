@@ -38,7 +38,7 @@ import Testing
   }
 
   @Test func discoveryRoutingAndMisdirection() async throws {
-    let h = try Harness(dev: true, origin: origin, contentHostPattern: pattern)
+    let h = try await Harness(dev: true, origin: origin, contentHostPattern: pattern)
     _ = try await h.direct("write", .object(["path": "/plan.md", "content": "shared plan"]))
     let account = try await h.space.addAccount(kind: .human, name: "alice").id
     let group = try await h.space.privateGroup(account: account)
@@ -56,7 +56,7 @@ import Testing
   }
 
   @Test func accountNamesCannotChooseReservedGroupLabels() async throws {
-    let h = try Harness(dev: true, origin: origin, contentHostPattern: pattern)
+    let h = try await Harness(dev: true, origin: origin, contentHostPattern: pattern)
     let parsed = try #require(ContentHostPattern(pattern, origin: URL(string: origin)!))
     for name in ["xn--", "xn--foo", "ab--cd"] {
       let account = try await h.space.addAccount(kind: .human, name: name).id
@@ -70,13 +70,13 @@ import Testing
 
   @Test func smartBannerUsesTheFlatTemplate() async throws {
     let shell = WebApp(files: ["index.html": Data("<html><head></head></html>".utf8)])!
-    let h = try Harness(dev: true, origin: origin, contentHostPattern: pattern, webApp: shell)
+    let h = try await Harness(dev: true, origin: origin, contentHostPattern: pattern, webApp: shell)
     let page = try await h.api(Request(url: URL(string: origin + "/plan.md?group=bird-sky&q=1")!))
     #expect(try await page.text().contains("app-argument=wuhu://bird-sky--alex.wuhu.test:5530/plan.md?q=1"))
   }
 
   @Test func flatCookiesMintReadEveryDuplicateAndClear() async throws {
-    let h = try Harness(dev: false, origin: origin, contentHostPattern: pattern)
+    let h = try await Harness(dev: false, origin: origin, contentHostPattern: pattern)
     _ = try await h.direct("write", .object(["path": "/plan.md", "content": "secret"]))
     let account = try await h.space.addAccount(kind: .human, name: "alice").id
     let key = Curve25519.Signing.PrivateKey()
@@ -109,7 +109,7 @@ import Testing
   }
 
   @Test func flatPageWritesAdmitOnlyTheHostCookie() async throws {
-    let h = try Harness(dev: false, origin: origin, contentHostPattern: pattern)
+    let h = try await Harness(dev: false, origin: origin, contentHostPattern: pattern)
     let account = try await h.space.addAccount(kind: .human, name: "alice").id
     let written = try await h.direct("write", .object(["path": "/plan.md", "content": "---\nk: 1\n---\n"]))
     let token = try await h.space.createReadSession(account: account, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))

@@ -26,7 +26,8 @@ import Testing
     init() async throws {
       space = try Space.inMemory()
       hub = MachineHub(space: space)
-      handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
+      let devPerson = try await space.ensureDevPerson()
+      handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
       key = .init()
       let handler = self.handler
       func http<T: Encodable & Sendable>(_ path: String, method: Fetch.Method, input: T) async throws -> Response {
@@ -102,20 +103,6 @@ import Testing
 }
 
 extension MachineV2TunnelTests {
-  @Test func v1EnrollmentTokenRefusalDoesNotConsumeOrInstallItsKey() async throws {
-    let f = try await Fixture()
-    let legacy = try await f.space.addMachine(name: "legacy", group: .shared)
-    let token = try await f.space.mintJoinToken(account: legacy.account, capabilities: [.execMachine], createdBy: nil, lifetime: 3600)
-    let key = Curve25519.Signing.PrivateKey()
-    let rejected = try await f.http("/v1/machine-v2/enroll", method: .post, input: ["token": token.token.rawValue, "pubkey": key.pubkeyLabel])
-    #expect(rejected.status == .unauthorized)
-    #expect(try await f.space.keys(account: legacy.account).isEmpty)
-    _ = try await f.space.consumeJoinToken(token.token, pubkey: key.pubkeyLabel)
-    #expect(try await f.space.machine(pubkey: key.pubkeyLabel) == legacy.id)
-    let replayedAsV2 = try await f.http("/v1/machine-v2/enroll", method: .post, input: ["token": token.token.rawValue, "pubkey": key.pubkeyLabel])
-    #expect(replayedAsV2.status == .unauthorized)
-  }
-
   @Test func aLostEnrollResponseReplaysWithTheSameKeyOnly() async throws {
     let f = try await Fixture()
     let created = try await f.space.addMachineV2(name: "retry_v2")
@@ -152,7 +139,7 @@ extension MachineV2TunnelTests {
 extension MachineV2TunnelTests {
   @Test func productionWallAdmitsOnlySelfAuthenticatedV2Routes() async throws {
     let f = try await Fixture()
-    let handler = SpaceServer.configuredHandler(space: f.space, hub: f.hub, dev: false, listenerRoutes: machineListenerRoutes(space: f.space, hub: f.hub))
+    let handler = SpaceServer.configuredHandler(space: f.space, hub: f.hub, devPerson: nil, listenerRoutes: machineListenerRoutes(space: f.space, hub: f.hub, devPerson: nil))
     guard case let .response(challengeResponse) = try await handler(Request(url: URL(string: "https://space.test/v1/machine-v2/challenge")!)) else { Issue.record("challenge should be HTTP"); return }
     #expect(challengeResponse.status == .ok)
     let challenge = try await challengeResponse.body.json(MachineChallengeOutput.self).challenge
@@ -204,7 +191,8 @@ extension MachineV2TunnelTests {
       try cell.save(presence)
     }
     let restarted = MachineHub(space: f.space)
-    let handler = SpaceServer.configuredHandler(space: f.space, hub: restarted, dev: true, listenerRoutes: machineListenerRoutes(space: f.space, hub: restarted))
+    let devPerson = try await f.space.ensureDevPerson()
+    let handler = SpaceServer.configuredHandler(space: f.space, hub: restarted, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: f.space, hub: restarted, devPerson: devPerson))
     guard case let .response(response) = try await handler(Request(url: URL(string: "https://space.test/v1/machine-v2/" + f.machine.id.rawValue)!)) else {
       Issue.record("status should be HTTP"); return
     }
@@ -244,7 +232,7 @@ extension MachineV2TunnelTests {
 
     let taken = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "laptop", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
     #expect(taken.status == .conflict)
-    let legacy = try await f.space.addMachine(name: "old_box")
+    let legacy = try await f.space.addMachineV2(name: "old_box").machine
     _ = try await f.space.addKey(Curve25519.Signing.PrivateKey().pubkeyLabel, account: legacy.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
     let takenByV1 = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "old_box", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
     #expect(takenByV1.status == .conflict)
@@ -269,7 +257,7 @@ extension MachineV2TunnelTests {
     #expect(foreign.status == .unauthorized)
     #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
 
-    let wall = SpaceServer.configuredHandler(space: f.space, hub: f.hub, dev: false, listenerRoutes: machineListenerRoutes(space: f.space, hub: f.hub))
+    let wall = SpaceServer.configuredHandler(space: f.space, hub: f.hub, devPerson: nil, listenerRoutes: machineListenerRoutes(space: f.space, hub: f.hub, devPerson: nil))
     let request = try await signed(wall, path, key: f.key, machine: f.machine.id)
     guard case let .response(revoked) = try await wall(request) else { Issue.record("revoke should be HTTP"); return }
     #expect(revoked.status == .ok)
@@ -289,7 +277,8 @@ extension MachineV2TunnelTests {
       parked.continuation.yield()
       for await _ in resume.stream { return }
     })
-    let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
+    let devPerson = try await space.ensureDevPerson()
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     let key = Curve25519.Signing.PrivateKey()
     let enrolled = try await space.enrollMachineV2(name: "racer", group: .shared, pubkey: key.pubkeyLabel)
     let machine = enrolled.machine

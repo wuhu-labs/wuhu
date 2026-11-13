@@ -134,7 +134,7 @@ struct DeviceTests {
     let space = try makeSpace()
     let pubkey = try await enrolled(space, "mac")
     let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Mac")
-    let machine = try await space.addMachine(name: "studio")
+    let machine = try await space.addMachineV2(name: "studio").machine
     let persona = try await space.adoptPersona(key: space.credential(pubkey: pubkey)!)
     _ = try await space.setUserProfile(principal: persona.name, handle: "before", displayName: nil)
     let session = try await space.sessions.createSession(group: .shared, title: "names", kind: .agent, createdBy: "morgan", model: .test)

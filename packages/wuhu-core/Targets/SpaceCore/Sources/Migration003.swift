@@ -1,5 +1,3 @@
-import GRDB
-
 /// The settings group, the admin table, personal groups, and the end of the
 /// space-wide layer. Self-contained by rule: raw SQL and local code.
 enum Migration003 {
@@ -9,7 +7,7 @@ enum Migration003 {
     "/models.json", "/model-groups.json", "/capabilities.json", "/machine-v2-upgrade.json",
   ]
 
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: "ALTER TABLE groups ADD COLUMN personal_account TEXT REFERENCES accounts(id)")
     try db.execute(sql: "CREATE UNIQUE INDEX groups_personal_account ON groups(personal_account)")
     try db.execute(sql: """
@@ -85,10 +83,10 @@ enum Migration003 {
 
   /// Rebuilds `group_reads` from the remaining read edges, dropping rows no
   /// edge justifies, and bumps the epoch.
-  private static func rebuildReads(_ db: Database) throws {
-    let groups = try String.fetchAll(db, sql: "SELECT id FROM groups ORDER BY id")
+  private static func rebuildReads(_ db: MigrationDB) throws {
+    let groups = try db.strings("SELECT id FROM groups ORDER BY id")
     var edges: [String: [String]] = [:]
-    for row in try Row.fetchAll(db, sql: "SELECT src, dst FROM group_edges ORDER BY src, dst") {
+    for row in try db.rows("SELECT src, dst FROM group_edges ORDER BY src, dst") {
       edges[row["src"], default: []].append(row["dst"])
     }
     try db.execute(sql: "DELETE FROM group_reads")
@@ -118,14 +116,13 @@ enum Migration003 {
   /// delete. Both revisions are stamped now, so the journal only moves forward;
   /// the settings head keeps the file's own mtime. A path `shared` does not
   /// have is skipped.
-  private static func copySettingsDocument(_ path: String, in db: Database) throws {
-    guard let head = try Row.fetchOne(
-      db,
-      sql: "SELECT blob_hash, size, line_count, etag, mtime FROM fs_heads WHERE grp = 'shared' AND path = ? AND kind = 'file'",
+  private static func copySettingsDocument(_ path: String, in db: MigrationDB) throws {
+    guard let head = try db.row(
+      "SELECT blob_hash, size, line_count, etag, mtime FROM fs_heads WHERE grp = 'shared' AND path = ? AND kind = 'file'",
       arguments: [path],
     ), let hash: String = head["blob_hash"], let mtime: String = head["mtime"]
     else { return }
-    let now = try String.fetchOne(db, sql: "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')") ?? mtime
+    let now = try db.string("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')") ?? mtime
     try db.execute(sql: "INSERT INTO revisions (mtime, grp) VALUES (?, 'settings')", arguments: [now])
     let written = db.lastInsertedRowID
     try db.execute(

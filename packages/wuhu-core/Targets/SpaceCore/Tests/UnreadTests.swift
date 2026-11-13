@@ -66,7 +66,7 @@ struct UnreadTests {
       try await store.deliverMail()
 
       let kinds = try await store.inbox("owner").map(\.kind)
-      #expect(kinds == [.sessionErrored])
+      #expect(kinds.isEmpty)
       #expect(try await unread(space, viewer: "owner") == [[.text(box.rawValue), .integer(0)]])
     }
   }

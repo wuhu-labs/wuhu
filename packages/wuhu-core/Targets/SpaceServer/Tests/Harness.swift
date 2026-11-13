@@ -49,26 +49,27 @@ struct Harness {
     identityController: IdentityController? = nil,
     clock: (any NonsendingClock<Duration>)? = nil,
     opening: () throws -> Space = { try Space.inMemory() },
-  ) throws {
+  ) async throws {
     let contentHost = ContentHost(origin: origin ?? "https://localhost", pattern: contentHostPattern)!
-    let (space, handler) = try withDependencies {
+    let (space, handler) = try await withDependencies {
       $0.date = .constant(fixedDate)
       $0.continuousClock = clock ?? ContinuousClock()
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 11))
     } operation: {
       let space = try opening()
       let hub = MachineHub(space: space)
+      let devPerson = dev ? try await space.ensureDevPerson() : nil
       let handler = SpaceServer.configuredHandler(
         space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern, aiDisclosure: aiDisclosure,
-        fingerprint: fingerprint, dev: dev, publicRead: publicRead, webContent: WebContent(webApp: webApp, views: views, scripts: ["shell.js": Data(), "worker.js": Data(), "space-core.js": Data("export function createSpace() {}".utf8)]),
+        fingerprint: fingerprint, devPerson: devPerson, publicRead: publicRead, webContent: WebContent(webApp: webApp, views: views, scripts: ["shell.js": Data(), "worker.js": Data(), "space-core.js": Data("export function createSpace() {}".utf8)]),
         webPushApplicationServerKey: webPushApplicationServerKey,
-        credentials: credentials, identityController: identityController, listenerRoutes: machineListenerRoutes(space: space, hub: hub, fingerprint: fingerprint), pageFetch: pageFetch,
+        credentials: credentials, identityController: identityController, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson, fingerprint: fingerprint), pageFetch: pageFetch,
       )
       return (space, handler)
     }
     self.space = space
     self.handler = handler
-    self.context = SpaceToolContext(space: space, principal: .shared(.anonymous))
+    self.context = SpaceToolContext(space: space, principal: .shared(dev ? try await space.ensureDevPerson().actor : .publicReader))
     self.api = ServeTesting.client(upgrading: handler)
     self.web = ServeTesting.client(upgrading: { request in
       guard contentHost.plane(of: request.url.host) == .api,
@@ -96,7 +97,8 @@ struct Harness {
   }
 
   func direct(_ name: String, _ input: JSONValue) async throws -> JSONValue {
-    try await SpaceToolbox.all.first { $0.name == name }!.run(context, input: input)
+    let context = SpaceToolContext(space: space, principal: .shared(try await space.ensureDevPerson().actor))
+    return try await SpaceToolbox.all.first { $0.name == name }!.run(context, input: input)
   }
 
   func get(_ client: FetchClient, _ path: String, query: [String: String] = [:]) async throws -> Response {
@@ -118,8 +120,9 @@ func json(_ response: Response) async throws -> JSONValue {
 func connectExecCaller(_ id: ExecID, space: Space, hub: MachineHub) async throws -> any FrameTransport {
   guard let record = try await space.execRecord(id) else { throw MachineHubError.execNotFound(id) }
   let (server, client) = WebSocket.pair()
+  let leg: ExecLeg = if let caller = record.caller { .session(SessionID(rawValue: caller)) } else { .person(try await space.ensureDevPerson().account) }
   _ = try? hub.callerScope.run("in-process-exec-caller") {
-    await hub.runCallerSession(record, socket: server, leg: record.caller.map { .session(SessionID(rawValue: $0)) } ?? .anonymous)
+    await hub.runCallerSession(record, socket: server, leg: leg)
   }
   return WebSocketTransport(client)
 }
@@ -135,7 +138,7 @@ extension Space {
   }
 
   func registerPeople(_ ids: [String]) async throws {
-    for id in ids where id != "owner" {
+    for id in ids {
       try await registerPerson(id)
       _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil)
     }
@@ -145,7 +148,7 @@ extension Space {
 extension Space {
   func privateGroup(account: AccountID) async throws -> GroupID {
     let group = try await createGroup(alias: "fixture_" + account.rawValue, owner: account)
-    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
+    try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
     return group
   }
 
@@ -153,6 +156,13 @@ extension Space {
     let account = if let owner { owner } else { try await addAccount(kind: .human, name: nil).id }
     let claim = GroupClaim(alias: group.rawValue, name: group.rawValue, owner: account, created: "2026-01-01T00:00:00Z")
     try await worker.call(GroupCell.ID(group.rawValue)) { try $0.create(claim) }
-    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
+    try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
+  }
+
+  /// The group's cell has taken the attempts its mail carried on their way.
+  func deliverInferences(_ group: GroupID) async throws {
+    let id = GroupCell.ID(group.rawValue)
+    while worker.hasMail(for: id.recipient) { await Task.yield() }
+    try await worker.call(id) { _ in () }
   }
 }

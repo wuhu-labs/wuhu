@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration015 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     ALTER TABLE groups ADD COLUMN name TEXT;
     UPDATE groups SET name = CASE id WHEN 'shared' THEN 'Shared' ELSE COALESCE(alias, id) END

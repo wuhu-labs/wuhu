@@ -70,11 +70,11 @@ final class WriterTransaction: SharedTransaction, Sendable {
     commands.signal()
   }
 
-  func access<T: Sendable>(_ body: @Sendable (OpaquePointer, AnyObject?) throws -> T) throws -> T {
+  func access<T: Sendable>(_ body: @Sendable (OpaquePointer) throws -> T) throws -> T {
     try withoutActuallyEscaping(body) { body in
       let result = Mutex<Result<T, any Error>?>(nil)
       submit(.access { db in
-        let value = Result { try body(db.sqliteConnection!, db) }
+        let value = Result { try body(db.sqliteConnection!) }
         result.withLock { $0 = value }
       })
       answered.wait()

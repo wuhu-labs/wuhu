@@ -7,7 +7,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct MachineVerbFaithfulnessTests {
   @Test func aMachineCopyWaitsOnTheUntimedClient() async throws {
-    let harness = try MachineCLIHarness()
+    let harness = try await MachineCLIHarness()
     try await harness.runScenario { h in
       let machine = try await h.addMachine()
       let before = await h.longRunningRequests
@@ -20,7 +20,7 @@ import Testing
   }
 
   @Test func machineAddPrintsTheTokenOnceWithJoinGuidance() async throws {
-    let harness = try MachineCLIHarness()
+    let harness = try await MachineCLIHarness()
     try await harness.runScenario { h in
       let io = CLIIO()
       let code = await h.run(["machine-v2", "add", "--name", "box"], io: io)
@@ -40,7 +40,7 @@ import Testing
   }
 
   @Test func machineRecordsSupportNamesRotationAndRevocation() async throws {
-    let harness = try MachineCLIHarness()
+    let harness = try await MachineCLIHarness()
     try await harness.runScenario { h in
       let machine = try await h.addMachine()
       #expect(await h.machineListText() == "box \(machine.id) detached\n")
@@ -70,12 +70,12 @@ import Testing
   }
 
   @Test func machineMoveHandsTheMachineToAnotherGroup() async throws {
-    let harness = try MachineCLIHarness()
+    let harness = try await MachineCLIHarness()
     try await harness.runScenario { h in
       let machine = try await h.addMachine()
       let owner = try await h.space.addAccount(kind: .human, name: nil)
       let team = try await h.space.createGroup(alias: "team", owner: owner.id)
-      try await h.space.setVisibility(.private, of: team, by: .anonymous, acting: team)
+      try await h.space.setVisibility(.private, of: team, by: (try await h.space.ensureDevPerson()).actor, acting: team)
       let io = CLIIO()
       #expect(await h.run(["machine", "move", machine.id, "--group", team.rawValue], io: io) == 0)
       #expect(await io.stdoutText() == "moved box to group \(team.rawValue)\n")

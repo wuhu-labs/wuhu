@@ -36,20 +36,25 @@ extension SessionStore {
   /// Whether `principal` may write `path` in `group`: it reads it and holds a write role there.
   public func writesFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
     guard try await readsFile(path, in: group, as: principal) else { return false }
-    if case .anonymous = principal.actor { return true }
     return (groupCell(group).role(of: principal.actor, acting: principal.group) ?? .read) >= .write
   }
 
   public func conversations(member: String) -> [ConversationRecord] {
-    let ids: [ConversationID]
-    if let person = spaceCell.personCell(member) { ids = runtime.worker().cell(person).conversations() }
-    else { ids = spaceCell.conversations(member: member) }
-    return ids.compactMap { conversationCell($0).record() }
+    runtime.worker().read { reader in
+      let space = reader.cell(SpaceCell.ID("space"))
+      let ids: [ConversationID]
+      if let person = space.personCell(member) { ids = reader.cell(person).conversations() }
+      else { ids = space.conversations(member: member) }
+      return ids.compactMap { reader.cell(ConversationCell.ID($0.rawValue)).record() }
+    }
   }
 
   public func conversations(reader: String?, group: GroupID) async throws -> [ConversationRecord] {
     var readable: [ConversationRecord] = []
-    for record in spaceCell.conversations().compactMap({ conversationCell($0).record() }) {
+    let records = runtime.worker().read { reader in
+      reader.cell(SpaceCell.ID("space")).conversations().compactMap { reader.cell(ConversationCell.ID($0.rawValue)).record() }
+    }
+    for record in records {
       if record.kind == .users {
         if try await reads(record, reader: reader, group: group) { readable.append(record) }
       } else if record.members.contains(where: { $0.member == reader }) { readable.append(record) }
@@ -76,7 +81,8 @@ extension SessionStore {
     let me = senderSession?.rawValue ?? sender.id
     let conversation: ConversationID
     let place: Post.Target
-    if let existing = spaceCell.message(messageID) {
+    let existing = spaceCell.message(messageID)
+    if let existing {
       (conversation, place) = (existing.conversation, .conversation)
     } else {
       switch target {
@@ -120,7 +126,6 @@ extension SessionStore {
 }
 
 extension ConversationRecord {
-  /// Box, DM and channel readership for a session id, a persona, or nil (the --dev seat) acting in `group`. `reach` is the groups that reader reads.
   func reads(_ reader: String?, isSession: Bool, group: GroupID, reach: () throws -> Set<GroupID>) rethrows -> Bool {
     if ownerSession != nil || (kind == .users && isSession) { return try reach().contains(self.group) }
     guard let reader else { return kind != .users && self.group == group }

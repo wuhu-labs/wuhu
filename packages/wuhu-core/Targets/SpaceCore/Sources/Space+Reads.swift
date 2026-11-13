@@ -4,7 +4,6 @@
   import Foundation
 #endif
 
-import GRDB
 import JSONValue
 import SpaceSQL
 
@@ -41,7 +40,7 @@ extension Space {
   }
 
   /// Typed parameters as SQLite values, or the refusal a typed query meets.
-  public static func bound(_ parameters: [JSONValue]) throws -> [DatabaseValue] {
+  public static func bound(_ parameters: [JSONValue]) throws -> [SQLValue] {
     try parameters.enumerated().map { try Cells.typedParameter($1, index: $0) }
   }
 
@@ -58,7 +57,7 @@ extension Space {
 
   static func read(
     _ sql: String,
-    arguments: [DatabaseValue] = [],
+    arguments: [SQLValue] = [],
     byteLimit: Int? = nil,
     scope: ReadScope,
     in reads: ReadPool,

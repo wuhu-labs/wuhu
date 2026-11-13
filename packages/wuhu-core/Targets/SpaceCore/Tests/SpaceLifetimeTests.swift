@@ -6,7 +6,7 @@ import Testing
 
 @Test(.deterministicDependencies) func closingSpaceEndsObservationKindsAndRefusesNewOnes() async throws {
   let space = try Space.inMemory()
-  let query = try space.observeRows("SELECT path FROM docs", throttle: .zero, as: .shared(.anonymous))
+  let query = try space.observeRows("SELECT path FROM docs", throttle: .zero, as: .shared(.publicReader))
   var queryRows = query.makeAsyncIterator()
   #expect(try await queryRows.next() != nil)
   let live = try await space.observeFS(glob: "**", group: .shared)
@@ -29,7 +29,7 @@ import Testing
   let space = try Space.open(file: file)
   let sessions = space.sessions
   let identity = try await space.identity()
-  _ = try await space.query("SELECT path FROM docs", as: .shared(.anonymous))
+  _ = try await space.query("SELECT path FROM docs", as: .shared(.publicReader))
   #if os(Linux)
     func databaseHandles() throws -> [String] {
       try FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd").compactMap { fd in

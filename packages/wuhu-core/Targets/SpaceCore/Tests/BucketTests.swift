@@ -90,12 +90,14 @@ struct BucketTests {
     for path in ["/one.md", "/two.md"] { _ = try await space.writeText(path, small) }
     for path in ["/one.bin", "/two.bin"] { _ = try await space.writeText(path, large) }
 
-    let cell = space.worker.cell(SpaceCell.ID("space"))
-    let smallHash = Substrate.blobHash(Array(small.utf8))
-    let largeHash = Substrate.blobHash(Array(large.utf8))
-    #expect(cell.bucket(smallHash)?.content == Array(small.utf8))
-    #expect(cell.bucket(largeHash)?.content == nil)
-    #expect(cell.bucket(largeHash)?.size == Int64(large.utf8.count))
+    space.worker.read { reader in
+      let cell = reader.cell(SpaceCell.ID("space"))
+      let smallHash = Substrate.blobHash(Array(small.utf8))
+      let largeHash = Substrate.blobHash(Array(large.utf8))
+      #expect(cell.bucket(smallHash)?.content == Array(small.utf8))
+      #expect(cell.bucket(largeHash)?.content == nil)
+      #expect(cell.bucket(largeHash)?.size == Int64(large.utf8.count))
+    }
     #expect(try await objects(folder).list(ListQuery()).entries.count == 1)
     try await space.close()
   }

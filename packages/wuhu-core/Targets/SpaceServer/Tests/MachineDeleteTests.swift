@@ -37,6 +37,9 @@ import Testing
     #expect(try await f.space.machine(f.machine.id) == nil)
     guard case let .response(refused) = try await f.connect(try await f.challenge(), machines: [f.machine.id.rawValue]) else { Issue.record("deleted key connected"); return }
     #expect(refused.status == .unauthorized)
+    try await until("the deleted machine's name is free again", timeout: .seconds(4)) {
+      f.space.cell.machineAlias("scratch") == nil
+    }
     let fresh = try await f.space.addMachineV2(name: "scratch")
     #expect(fresh.machine.id != f.machine.id)
   }
@@ -72,10 +75,11 @@ import Testing
     let otherPointer = try #require(space.machineBuffers.put(Data("untouched".utf8), operation: otherFile.operation, channel: "data", from: 0))
     _ = try await space.fs(.settings).write("/_/machines/untouched/AGENTS.md", Data("other notes".utf8), ifMatch: nil)
     let before = try await space.currentRevision(in: .shared)
-    try await space.deleteMachine(machine.id, by: .shared(.anonymous))
+    try await space.deleteMachine(machine.id, by: .shared(try await space.ensureDevPerson().actor))
     try await until("posted deletion cleans the owning cell and buffers", timeout: .seconds(4)) {
       space.worker.cell(MachineCell.ID(machine.id.rawValue)).presence.state == "deleted"
         && !space.worker.hasMail(for: MachineCell.ID(machine.id.rawValue).recipient)
+        && !space.worker.hasMail(for: FilesCell.ID(GroupID.shared.rawValue).recipient)
         && space.machineBuffers.payload(pointer) == nil
     }
     #expect(space.machineBuffers.payload(pointer) == nil)
@@ -88,10 +92,8 @@ import Testing
 
     let reopened = try Space.open(file: file)
     #expect(try await reopened.machine(machine.id) == nil)
-    #expect(try await reopened.writer.read { db in
-      try Substrate.descendantHeads(of: .init(validating: "/_/machines/\(machine.id.rawValue)"), group: .shared, in: db).isEmpty
-    })
-    #expect(try await reopened.account(machine.account) == nil)
+    #expect(reopened.worker.cell(FilesCell.ID(GroupID.shared.rawValue)).subtree(try .init(validating: "/_/machines/\(machine.id.rawValue)")).isEmpty)
+    #expect(try await reopened.account(machine.account)?.removedAt != nil)
     #expect(try await reopened.device(id: device.id)?.machine == nil)
     #expect(try await reopened.account(person.id) != nil)
     #expect(try await reopened.machine(pubkey: key.pubkeyLabel) == nil)
@@ -157,10 +159,12 @@ import Testing
       var fromShared = request(w.bearer)
       fromShared.headers["wuhu-group"] = GroupID.shared.rawValue
       #expect(try await w.harness.api(fromShared).status == .ok)
-      #expect(try await w.harness.space.account(machine.account) == nil)
-      #expect(try await w.harness.space.device(id: device.id) == nil)
-      #expect(try await w.harness.space.personas().allSatisfy { $0.account != machine.account })
-      #expect(try await grants.send(w, .get, "/v1/group/\(w.group.rawValue)").json(GroupDetail.self).entries.allSatisfy { $0.id != machine.account.rawValue })
+      try await until("the machine's account, device and persona are gone", timeout: .seconds(4)) {
+        let account = try await w.harness.space.account(machine.account)
+        let gone = try await w.harness.space.device(id: device.id)
+        let personas = try await w.harness.space.personas()
+        return account?.removedAt != nil && gone == nil && personas.allSatisfy { $0.account != machine.account }
+      }
       #expect(try await w.harness.space.credential(pubkey: childKey.pubkey) != nil)
       _ = try await w.harness.space.consumeJoinToken(childToken.token, pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel)
       #expect(try await w.harness.api(request(w.bearer)).status == .notFound)

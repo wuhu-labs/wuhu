@@ -13,7 +13,7 @@ import Testing
   }
 
   @Test func attributesReadAndPatchKeepTheRestOfTheFile() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let source = "---\n# owner comment\ntitle: 'Plan'\ndraft: true\n---\nbody\n"
     _ = try await seedFile("/notes/plan.md", source, context)
     let read = try await run("attributes.read", ["path": "/notes/plan.md"], context, as: AttributesReadOutput.self)
@@ -27,12 +27,12 @@ import Testing
     let file = try await run("read", ["path": "/notes/plan.md"], context, as: ReadOutput.self)
     #expect(file.content == "---\n# owner comment\ntitle: 'Plan'\nstatus: done\n---\nbody\n")
     #expect(file.token == patched.token)
-    let docs = try await context.space.query("SELECT status FROM docs WHERE path = '/notes/plan.md'", as: .shared(.anonymous))
+    let docs = try await context.space.query("SELECT status FROM docs WHERE path = '/notes/plan.md'", as: .shared(.publicReader))
     #expect(docs.rows == [[.text("done")]])
   }
 
   @Test func staleIfMatchIsAConflictCarryingTheCurrentToken() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "---\nk: 1\n---\n", context)
     let second = try await seedFile("/a.md", "---\nk: 2\n---\n", context)
     let error = await failure("attributes.patch", ["path": "/a.md", "set": ["k": 3], "ifMatch": .string(first.token)], context)
@@ -43,7 +43,7 @@ import Testing
   }
 
   @Test func patchRefusesWhatItCannotKeepAndWhatIsNotMarkdown() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let anchored = try await seedFile("/a.md", "---\nbase: &b 1\ncopy: *b\n---\n", context)
     #expect(code(await failure("attributes.patch", ["path": "/a.md", "set": ["x": 1], "ifMatch": .string(anchored.token)], context)) == .unsupported)
     let malformed = try await seedFile("/m.md", "---\nk: [\n---\n", context)
@@ -55,14 +55,14 @@ import Testing
   }
 
   @Test func tableMutateReturnsInsertedIDs() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await run("table.create", ["path": "/t.table", "header": ["columns": [["name": "n", "type": "integer"]]]], context)
     let output = try await run(
       "table.mutate",
       ["path": "/t.table", "ops": [["kind": "insert", "values": [1]], ["kind": "insert", "values": [2]]]],
       context, as: TableMutateOutput.self,
     )
-    let rows = try await context.space.query("SELECT id FROM \"/t.table\" ORDER BY id", as: .shared(.anonymous))
+    let rows = try await context.space.query("SELECT id FROM \"/t.table\" ORDER BY id", as: .shared(.publicReader))
     #expect(rows.rows == output.ids.map { [.integer(Int64($0))] })
     #expect(output.ids.count == 2)
   }
@@ -85,7 +85,7 @@ import Testing
   }
 
   @Test func typedQueryWrapsJSONAndBlobsAndBindsParameters() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let header = SpaceCore.TableHeader(columns: [
       TableColumn(name: "meta", type: .json), TableColumn(name: "done", type: .boolean), TableColumn(name: "data", type: .blob),
     ])
@@ -103,7 +103,7 @@ import Testing
   }
 
   @Test func historyShowsTheViewerViaThePage() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let ada = try await context.space.addAccount(kind: .human, name: "ada")
     let group = try await privateGroup(context.space, "ada", owner: ada.id)
     let viewer = Person(persona: "ada", account: ada.id, group: group)
@@ -120,7 +120,7 @@ import Testing
   }
 
   @Test func aPageWritesAsANonAdminMemberOfItsGroup() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let space = context.space
     let admin = try await space.addAccount(kind: .human, name: "root", admin: true)
     #expect(try await space.isHumanAdmin(admin.id, of: .shared))
@@ -135,7 +135,7 @@ import Testing
     }
     let sharedLayer = try await seedFile("/AGENTS.md", "---\nk: 1\n---\n", context)
     let homeLayer = try await seedFile("wuhu://\(home.rawValue).localspace/AGENTS.md", "---\nk: 1\n---\n", person)
-    let siblingFile = try await seedFile("/n.md", "---\nk: 1\n---\n", SpaceToolContext(space: space, principal: Principal(actor: .anonymous, group: sibling)))
+    let siblingFile = try await seedFile("/n.md", "---\nk: 1\n---\n", SpaceToolContext(space: space, principal: Principal(actor: .person(persona: "bob", account: other.id), group: sibling)))
 
     func patch(_ context: SpaceToolContext, _ path: String, _ token: String) async -> ToolRunError? {
       await failure("attributes.patch", ["path": .string(path), "set": ["k": 2], "ifMatch": .string(token)], context)
@@ -155,6 +155,6 @@ import Testing
 
 private func privateGroup(_ space: Space, _ alias: String, owner: AccountID) async throws -> GroupID {
   let group = try await space.createGroup(alias: alias, owner: owner)
-  try await space.setVisibility(.private, of: group, by: .anonymous, acting: group)
+  try await space.setVisibility(.private, of: group, by: (try await space.ensureDevPerson()).actor, acting: group)
   return group
 }

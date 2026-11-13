@@ -3,12 +3,13 @@
 #else
   import Foundation
 #endif
-import GRDB
 import JSONSchema
 import enum JSONValue.JSONValue
 import SessionDomain
 import struct SpaceContract.GroupID
 import StructuredQueries
+import Wuwei
+import WuweiQueries
 
 enum RequestStatus: String, Hashable, Sendable, Codable, CaseIterable {
   case open, done, failed
@@ -58,11 +59,6 @@ struct RequestRow {
   @Column("updated_at") var updatedAt: String
 
   var requestStatus: RequestStatus { RequestStatus(rawValue: status)! }
-
-  static func open(task: String, in db: Database) throws -> [Self] {
-    try Self.where { $0.task.eq(task) && $0.status.in(RequestStatus.allCases.filter(\.isOpen).map(\.rawValue)) }
-      .order(by: \.createdAt).fetchAll(db)
-  }
 }
 
 extension SessionStore {

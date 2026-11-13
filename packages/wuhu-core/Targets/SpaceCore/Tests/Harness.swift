@@ -21,7 +21,7 @@ func testPubkey(_ seed: String) -> String {
 
 func makeSpace(
   date: Date = fixedDate, clock: (any NonsendingClock<Duration>)? = nil, log: Logger? = nil,
-  regions: (@Sendable (any DatabaseWriter) -> RegionSource)? = nil,
+  regions: (@Sendable (@escaping RegionSource) -> RegionSource)? = nil,
 ) throws -> Space {
   try withDependencies {
     $0.installTimeControl(anchor: date)
@@ -77,15 +77,15 @@ extension Space {
     byteLimit: Int? = nil,
     viewer: String? = nil,
   ) async throws -> Rows {
-    try await query(sql, arguments: arguments, byteLimit: byteLimit, viewer: viewer, as: .shared(.anonymous))
+    try await query(sql, arguments: arguments, byteLimit: byteLimit, viewer: viewer, as: .shared(.publicReader))
   }
 
   nonisolated func observeRows(_ sql: String, throttle: Duration, viewer: String? = nil) throws -> AsyncThrowingStream<Rows, any Error> {
-    try observeRows(sql, throttle: throttle, viewer: viewer, as: .shared(.anonymous))
+    try observeRows(sql, throttle: throttle, viewer: viewer, as: .shared(.publicReader))
   }
 
   func observeFS(glob: String, from: Rev? = nil, group: GroupID) async throws -> AsyncStream<FSCommit> {
-    try await observeFS(glob: glob, from: from, group: group, as: .shared(.anonymous))
+    try await observeFS(glob: glob, from: from, group: group, as: .shared(.publicReader))
   }
 }
 
@@ -189,7 +189,7 @@ extension Space {
 extension Space {
   func privateGroup(account: AccountID) async throws -> GroupID {
     let group = try await createGroup(alias: "fixture_" + account.rawValue, owner: account)
-    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
+    try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
     return group
   }
 
@@ -197,6 +197,13 @@ extension Space {
     let account = if let owner { owner } else { try await addAccount(kind: .human, name: nil).id }
     let claim = GroupClaim(alias: group.rawValue, name: group.rawValue, owner: account, created: "2026-01-01T00:00:00Z")
     try await worker.call(GroupCell.ID(group.rawValue)) { try $0.create(claim) }
-    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
+    try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
+  }
+}
+
+extension MigrationDB {
+  init(_ db: Database) {
+    guard let sqliteConnection = db.sqliteConnection else { preconditionFailure("a GRDB connection always has a SQLite handle") }
+    self.init(handle: sqliteConnection)
   }
 }

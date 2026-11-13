@@ -28,6 +28,10 @@ import Testing
       try await sessions.enqueue(leaf, input: Fix.message("queued"))
       try await sessions.enqueue(sibling, input: Fix.message("queued", message: "sibling"))
       try await runService(service) { service in
+        try await until("the parents have taken the mail creating their children sent them") {
+          guard try await sessions.settledWork(child) else { return false }
+          return try await sessions.settledWork(root)
+        }
         do {
           try await service.archive(root)
           Issue.record("busy subtree was archived")
@@ -69,6 +73,10 @@ import Testing
       try await runService(service) { service in
         try await service.enqueue(item: Fix.message("start"), to: leaf)
         try await until("leaf running") { entered.value }
+        try await until("the leaf's parents have taken the mail its creation sent them") {
+          guard try await sessions.settledWork(child) else { return false }
+          return try await sessions.settledWork(root)
+        }
         await #expect(throws: SubtreeArchiveBusy(sessions: [ArchiveBusySession(id: leaf, title: "running leaf")])) {
           try await service.archive(root)
         }
@@ -140,7 +148,7 @@ import Testing
         try await service.archive(child)
         let messages = try await sessions.messages(conversation: delivery.message.conversation)
         #expect(messages.contains { $0.kind == .final && $0.requestID == RequestID("r1") })
-        let rows = try await space.query("SELECT status FROM requests WHERE id = 'r1'", as: .shared(.anonymous))
+        let rows = try await space.query("SELECT status FROM requests WHERE id = 'r1'", as: .shared(.publicReader))
         #expect(rows.rows == [[.text("failed")]])
       } catch {
         await service.shutdown()
@@ -162,6 +170,9 @@ extension SubtreeArchiveTests {
       _ = try await sessions.openRequest(on: child, from: .session(parent), messageID: MessageID("r1"), text: "work")
       try await sessions.markInterrupted(child)
       try await runService(service) { service in
+        try await until("the parent has taken the mail creating its child and opening the request sent it") {
+          try await sessions.settledWork(parent)
+        }
         try await service.archive(parent)
         try await until("both archived") {
           for id in [parent, child] where try await !sessions.record(id).lifecycle.isArchived { return false }

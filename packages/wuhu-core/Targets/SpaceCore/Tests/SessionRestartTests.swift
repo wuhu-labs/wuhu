@@ -1,7 +1,10 @@
 import Dependencies
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore

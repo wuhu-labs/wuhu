@@ -308,8 +308,8 @@ private func withTLSEcho<T>(
   body: String = "{}",
   _ operation: (Int) async throws -> T,
 ) async throws -> T {
-  let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity) { _ in
-    Response(status: .ok, body: .chunk(Data(body.utf8)))
+  let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity) { request in
+    request.url.path == "/v1/persona" ? try unsignedPersonaRefusal() : Response(status: .ok, body: .chunk(Data(body.utf8)))
   }
   do {
     let value = try await operation(try #require(server.boundAddress.port))

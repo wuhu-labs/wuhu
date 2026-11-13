@@ -67,7 +67,7 @@ final class TestServer: Sendable {
   init(
     space: Space, clock: any NonsendingClock<Duration>, dev: Bool = true, tokens: ExecTokens? = nil,
     secrets: SpaceSecretStores? = nil,
-  ) {
+  ) async throws {
     self.space = space
     hub = withDependencies {
       $0.continuousClock = clock
@@ -75,7 +75,8 @@ final class TestServer: Sendable {
     } operation: {
       MachineHub(space: space, tokens: tokens, secrets: secrets)
     }
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: dev, secrets: secrets, listenerRoutes: machineListenerRoutes(space: space, hub: hub))
+    let devPerson = dev ? try await space.ensureDevPerson() : nil
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, secrets: secrets, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     api = ServeTesting.client(upgrading: handler)
     (sessions, sessionsContinuation) = AsyncStream.makeStream()
   }
@@ -251,14 +252,14 @@ func withMachineBox<R>(
 }
 
 func machineListenerRoutes(
-  space: Space, hub: MachineHub, version: String = SpaceServer.unstampedVersion,
+  space: Space, hub: MachineHub, devPerson: ResolvedPerson?, version: String = SpaceServer.unstampedVersion,
   fingerprint: String? = nil,
 ) -> Router {
   let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
   var router = Router()
   addMachineV2Routes(&router, space: space, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
     @Dependency(\.date) var date
-    return try await requestPrincipal(request, space: space, date: date)
+    return try await requestPrincipal(request, space: space, devPerson: devPerson, date: date)
   }
   return router
 }

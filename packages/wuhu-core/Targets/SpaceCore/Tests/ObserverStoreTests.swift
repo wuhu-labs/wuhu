@@ -113,7 +113,7 @@ import Testing
       guard case let .text(effects)? = wroteEffects.first?.first else { Issue.record("a firing that wrote logs its revisions"); return }
       #expect(effects.hasPrefix(#"{"revisions":[""#))
 
-      rig.advance(SessionStore.noEffectFiringRetention + 1)
+      rig.advance(7 * 24 * 60 * 60 + 1)
       let later = try await tests.begin(store, armed, marker: "c")
       try await tests.finish(store, later, .ok(wakes: []), .taken(marker: "c"))
       #expect(try await rig.space.query("SELECT id FROM subscription_firings ORDER BY at").rows == [[.text(made.firing)], [.text(wrote.firing)], [.text(later.firing)]])

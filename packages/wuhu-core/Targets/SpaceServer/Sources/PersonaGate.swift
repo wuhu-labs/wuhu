@@ -1,11 +1,15 @@
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import Serve
 import SpaceContract
 import SpaceCore
 
 enum PersonaCredentialVerdict: Sendable {
-  case anonymous
+  case missing
   case verified(persona: PersonaRecord, key: KeyRecord)
   case refused(Response)
 }
@@ -21,8 +25,8 @@ func personaCredentialVerdict(
     return .refused(response)
   case let .verified(credential):
     return try await personaVerdict(claimed, key: credential.key, space: space)
-  case .anonymous:
-    return .anonymous
+  case .missing:
+    return .missing
   }
 }
 
@@ -41,7 +45,6 @@ func personaVerdict(_ claimed: String?, key: KeyRecord, space: Space) async thro
   guard let claimed else {
     return .verified(persona: try await space.adoptPersona(key: key), key: key)
   }
-  guard claimed != ownerIdentity else { return .refused(ownerIdentityRefused()) }
   guard let persona = try await space.persona(named: claimed) else {
     return .refused(unknownIdentity(claimed))
   }
@@ -65,33 +68,22 @@ func identityVerdict(
   _ claimed: String?,
   request: Request,
   space: Space,
-  dev: Bool,
+  devPerson: ResolvedPerson?,
   now: Date,
 ) async throws -> IdentityVerdict {
-  switch try await personaCredentialVerdict(claimed, request: request, space: space, now: now) {
-  case let .refused(response):
-    return .refused(response)
-  case let .verified(persona, _):
-    return .identity(persona.name)
-  case .anonymous:
-    guard dev else {
-      return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required"))
-    }
-    guard let claimed, claimed != ownerIdentity else { return .identity(ownerIdentity) }
-    guard try await space.persona(named: claimed) != nil else {
-      return .refused(unknownIdentity(claimed))
-    }
-    return .identity(claimed)
+  switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: now) {
+  case let .refused(response): return .refused(response)
+  case let .person(person): return try await identityVerdict(claimed, person: person, space: space)
   }
 }
 
-private func ownerIdentityRefused() -> Response {
-  errorResponse(
-    .forbidden,
-    code: "ownerIdentityWalled",
-    message: "the owner identity acts only for the anonymous seat on a --dev server; this space attributes every action to a minted persona",
-    hint: "omit identity — the server derives your persona from the enrolled key",
-  )
+func identityVerdict(_ claimed: String?, person: ResolvedPerson, space: Space) async throws -> IdentityVerdict {
+  guard let claimed else { return .identity(person.persona) }
+  guard let persona = try await space.persona(named: claimed) else { return .refused(unknownIdentity(claimed)) }
+  guard persona.account == person.account else {
+    return .refused(errorResponse(.forbidden, code: "identityNotYours", message: "persona \(claimed) belongs to another account"))
+  }
+  return .identity(persona.name)
 }
 
 private func unknownIdentity(_ identity: String) -> Response {

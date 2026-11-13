@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration012 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TEMP TABLE removed_machines AS
       SELECT id, account_id FROM machines

@@ -60,8 +60,15 @@ struct DocumentWrite: Sendable {
   var checkout: Int64?
 }
 
+struct DocumentCheckpoint: Sendable, Equatable {
+  var hash: String
+  var lineage: Int64
+  var seq: Int64
+  var seedRev: Int64?
+}
+
 enum DocumentWriteOutcome: Sendable, Equatable {
-  case wrote(Int64)
+  case wrote(DocumentCheckpoint)
   case stale
 }
 

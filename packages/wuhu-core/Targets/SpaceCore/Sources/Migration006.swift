@@ -3,11 +3,10 @@
 #else
   import Foundation
 #endif
-import GRDB
 
 // A permanent reservation is also the redirect: renaming never frees a spelling.
 enum Migration006 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     ALTER TABLE groups ADD COLUMN alias TEXT;
     CREATE TABLE aliases (
@@ -25,11 +24,11 @@ enum Migration006 {
       let old: String
     }
     var labels: [Label] = []
-    let people = try Row.fetchAll(db, sql: "SELECT principal, handle FROM user_profiles ORDER BY principal").map {
+    let people = try db.rows("SELECT principal, handle FROM user_profiles ORDER BY principal").map {
       Label(kind: "person", table: "user_profiles", key: "principal", column: "handle", id: $0["principal"], old: $0["handle"])
     }
     var liveMachines = 0
-    for row in try Row.fetchAll(db, sql: """
+    for row in try db.rows("""
     SELECT id, name, EXISTS (SELECT 1 FROM account_keys WHERE account_id = machines.account_id AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))) AS live
     FROM machines WHERE name IS NOT NULL ORDER BY live DESC, created_at, id
     """) {
@@ -37,7 +36,7 @@ enum Migration006 {
       if row["live"] as Bool { liveMachines += 1 }
     }
     labels.insert(contentsOf: people, at: liveMachines)
-    for row in try Row.fetchAll(db, sql: "SELECT id FROM groups WHERE personal_account IS NULL ORDER BY CASE id WHEN 'shared' THEN 0 ELSE 1 END, id") {
+    for row in try db.rows("SELECT id FROM groups WHERE personal_account IS NULL ORDER BY CASE id WHEN 'shared' THEN 0 ELSE 1 END, id") {
       let id: String = row["id"]
       let label = Label(kind: "group", table: "groups", key: "id", column: "alias", id: id, old: id)
       if id == "shared" { labels.insert(label, at: 0) }
@@ -47,7 +46,7 @@ enum Migration006 {
     for (index, label) in labels.enumerated() {
       try db.execute(sql: "UPDATE \(label.table) SET \(label.column) = ? WHERE \(label.key) = ?", arguments: ["__migration006_\(index)", label.id])
     }
-    let groupIDs = Set(try String.fetchAll(db, sql: "SELECT lower(id) FROM groups"))
+    let groupIDs = Set(try db.strings("SELECT lower(id) FROM groups"))
     var occupied = Set<String>()
     for label in labels {
       let limit = label.kind == "person" ? 32 : 63

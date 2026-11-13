@@ -29,7 +29,7 @@ import Testing
   @Test func aPersonsSendCarriesThePageIntoTheHeader() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.adoptPersona()
+      let person = try await t.harness.space.ensureDevPerson().persona
       _ = try await t.harness.space.fs(.shared).write("/notes/plan.md", Data("# Plan\n".utf8), ifMatch: nil)
       let sent = try await t.harness.call("/v1/conversation/message", [
         "session": .string(t.parent.rawValue), "identity": .string(person), "message": "this one",
@@ -52,7 +52,7 @@ import Testing
   @Test func aMalformedLongOrUnreadablePageIsRefusedWithItsReason() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.adoptPersona()
+      let person = try await t.harness.space.ensureDevPerson().persona
       let long = "/" + String(repeating: "a", count: 1024)
       for (viewing, reason) in [
         ("notes/plan.md", "viewing notes/plan.md must be a space path: /<path>, or wuhu://<group>.localspace/<path> for another group"),
@@ -79,15 +79,16 @@ import Testing
   @Test func aPageInAGroupTheActingGroupCannotReadIsRefusedAsViewing() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.adoptPersona()
-      try await t.harness.space.writer.write { db in
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('sealed', '2026-01-01T00:00:00.000Z')")
-      }
-      _ = try await t.harness.space.fs(GroupID(rawValue: "sealed")).write("/secret.md", Data("no\n".utf8), ifMatch: nil)
+      let (bearer, key) = try await t.harness.enrolledBearer()
+      let person = try await t.harness.space.adoptPersona(key: key).name
+      let owner = try await t.harness.space.addAccount(kind: .human, name: nil)
+      let sealed = try await t.harness.space.createGroup(alias: "sealed", owner: owner.id)
+      try await t.harness.space.setVisibility(.private, of: sealed, by: .person(persona: owner.id.rawValue, account: owner.id), acting: sealed)
+      _ = try await t.harness.space.fs(sealed).write("/secret.md", Data("no\n".utf8), ifMatch: nil)
       let response = try await t.harness.post("/v1/conversation/message", [
         "session": .string(t.parent.rawValue), "identity": .string(person), "message": "look",
         "viewing": "wuhu://sealed.localspace/secret.md",
-      ])
+      ], bearer: bearer)
       #expect(try await refusal(response) == .object([
         "code": "invalidArgument", "message": "viewing wuhu://sealed.localspace/secret.md is not a path you can read", "reason": "viewing",
       ]))
@@ -112,7 +113,7 @@ import Testing
   @Test func aRestartsOpeningMessageCarriesThePage() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.adoptPersona()
+      let person = try await t.harness.space.ensureDevPerson().persona
       _ = try await t.harness.space.fs(.shared).write("/notes/plan.md", Data("# Plan\n".utf8), ifMatch: nil)
       let bare = try await t.harness.post(
         "/v1/session/\(t.parent.rawValue)/restart", ["identity": .string(person), "viewing": "/notes/plan.md"],

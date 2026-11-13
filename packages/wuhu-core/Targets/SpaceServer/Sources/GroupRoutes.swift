@@ -15,7 +15,7 @@ import SpaceTools
 func addGroupRoutes(
   _ router: inout Router,
   space: Space,
-  dev: Bool,
+  devPerson: ResolvedPerson?,
   principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict,
 ) {
   @Dependency(\.date) var clock
@@ -23,18 +23,22 @@ func addGroupRoutes(
   // Public discovery: an anonymous caller gets the ids alone, a credential
   // where it stands, and the group the request names changes neither.
   router.get("/v1/groups") { request, _ in
+    if request.headers[.authorization] == nil, devPerson == nil, SessionPrincipal.current == nil, SessionlessPrincipal.current == nil {
+      return try Response.json(space.cell.groups().filter { $0.removedAt == nil && $0.id != .settings }.map {
+        GroupSummary(id: $0.id.rawValue, name: nil, member: false, readable: false, admin: false)
+      })
+    }
     let principal: Principal
-    switch try await requestCredential(request, space: space, date: clock) {
+    switch try await requestCredential(request, space: space, devPerson: devPerson, date: clock) {
     case let .credential(credential):
       principal = switch credential {
       case let .session(id, group): Principal(actor: .session(id), group: group)
       case let .script(script): script.principal
-      case let .person(acting): Principal(actor: .person(persona: "", account: acting.key.account), group: .shared)
-      case .anonymous: .shared(.anonymous)
+      case let .person(acting): .shared(acting.actor)
       }
     case let .refused(response): return response
     }
-    return try Response.json(try await SpaceToolContext(space: space, principal: principal).discoveryGroups(dev: dev))
+    return try Response.json(try await SpaceToolContext(space: space, principal: principal).discoveryGroups())
   }
 
   router.post("/v1/groups") { request, _ in
@@ -42,16 +46,14 @@ func addGroupRoutes(
     do { input = try await request.json(GroupCreateInput.self) }
     catch { return errorResponse(.badRequest, code: "invalidArgument", message: "expected {alias, name?, owner?}") }
     let owner: AccountID
-    switch try await requestCredential(request, space: space, date: clock) {
+    switch try await requestCredential(request, space: space, devPerson: devPerson, date: clock) {
     case let .credential(.person(credential)):
       guard input.owner == nil else { return errorResponse(.badRequest, code: "invalidArgument", message: "a person creates their own group") }
-      owner = credential.key.account
+      owner = credential.account
     case .credential(.session):
       guard let named = input.owner else { return errorResponse(.badRequest, code: "invalidArgument", message: "createGroup requires owner") }
       let persona = try await space.userProfile(handle: named)?.principal ?? named
       owner = try await space.persona(named: persona)?.account ?? AccountID(rawValue: named)
-    case .credential(.anonymous):
-      return errorResponse(.forbidden, code: "memberRequired", message: "a live space member must own the group")
     case .credential(.script):
       return errorResponse(.forbidden, code: "forbidden", message: "a script without a session creates no group")
     case let .refused(response): return response

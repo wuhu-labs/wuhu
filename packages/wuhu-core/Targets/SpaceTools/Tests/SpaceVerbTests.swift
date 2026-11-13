@@ -7,7 +7,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct SpaceVerbTests {
   @Test func historyAndCheckoutRoundTrip() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "v1", context)
     _ = try await seedFile("/a.md", "v2", context)
 
@@ -29,7 +29,7 @@ import Testing
   }
 
   @Test func historyRecordsDeletes() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.md", "x", context)
     _ = try await run("rm", .object(["path": "/a.md"]), context, as: RevisionOutput.self)
     let history = try await run("history", .object(["path": "/a.md"]), context, as: HistoryOutput.self)
@@ -37,7 +37,7 @@ import Testing
   }
 
   @Test func tableCreateWithoutTableSuffixFailsLoudly() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let bad = await failure(
       "table.create",
       .object(["path": "/data/prs", "header": .object(["columns": .array([
@@ -57,7 +57,7 @@ import Testing
 
   @Test(arguments: ["moved", "deleted", "non-table"])
   func tableVerbsWhereATableWasSayItIsGone(state: String) async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let columns: JSONValue = ["columns": [["name": "n", "type": "integer"]]]
     let path = state == "non-table" ? "/data/log.md" : "/data/log.table"
     if state == "non-table" {
@@ -87,7 +87,7 @@ import Testing
   }
 
   @Test func tableMutateRejectsUnknownIfMatch() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let created = try await run("table.create", ["path": "/data/log.table", "header": ["columns": [["name": "n", "type": "integer"]]]], context)
     let error = try #require(await failure("table.mutate", [
       "path": "/data/log.table", "ifMatch": created.object?["token"] ?? .null,
@@ -104,7 +104,7 @@ import Testing
   }
 
   @Test func tableLifecycleThroughVerbs() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let created = try await run(
       "table.create",
       .object(["path": "/data/habits.table", "header": .object(["columns": .array([
@@ -167,7 +167,7 @@ import Testing
   }
 
   @Test func historyCarriesMoveAndCheckoutProvenance() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let first = try await seedFile("/a.md", "v1", context)
     _ = try await seedFile("/a.md", "v2", context)
     _ = try await run(
@@ -185,7 +185,7 @@ import Testing
   }
 
   @Test func jsonAndBooleanCellsRoundTripThroughQuery() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await run(
       "table.create",
       .object(["path": "/data/j.table", "header": .object(["columns": .array([
@@ -225,7 +225,7 @@ import Testing
   }
 
   @Test func tablesAppearInLsAsTableEntries() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await run(
       "table.create",
       .object(["path": "/data/t.table", "header": .object(["columns": .array([.object(["name": "n", "type": "integer"])])])]),
@@ -237,7 +237,7 @@ import Testing
   }
 
   @Test func queryRejectsMutationsAndForbiddenTables() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let insert = await failure("query", .object(["sql": "INSERT INTO docs (path, title) VALUES ('/x', 'x')"]), context)
     #expect({ if case .failed(code: .invalidArgument, _, _, _) = insert { true } else { false } }())
 
@@ -246,7 +246,7 @@ import Testing
   }
 
   @Test func newInstantiatesTemplate() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile(
       "/templates/issue.md",
       "---\ntemplate:\n  strategy: incr\n  prefix: ISSUE\n  pad: 4\nkind: issue\n---\n# New issue",
@@ -263,7 +263,7 @@ import Testing
   }
 
   @Test func undecodableInputIsDistinguished() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     do {
       _ = try await run("read", .object(["nope": true]), context)
       Issue.record("expected undecodable input")

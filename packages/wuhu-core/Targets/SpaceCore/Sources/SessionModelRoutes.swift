@@ -1,5 +1,6 @@
 import struct SessionDomain.ExecutorSpecError
 import struct SessionDomain.ModelRouteFailure
+import struct SessionDomain.ModelRouteTransition
 import enum SessionDomain.SessionExecutor
 import struct SessionDomain.SessionModelRoute
 import StructuredQueries
@@ -107,6 +108,28 @@ public enum SessionModelRoutes {
     try db.execute(SessionModelRouteHistoryRow.insert { decision })
   }
 
+  public static func commitTransition(_ key: String, transition: ModelRouteTransition, in db: inout Wuwei.Database) throws {
+    guard let row = db.rows(SessionModelRouteRow.where({ $0.sessionID.eq(key) })).first, row.routeEpoch == transition.expectedEpoch else { throw PortableHandoffConflict.routeChanged }
+    let old = try Sessions.decode(SessionModelRoute.self, from: row.payload)
+    let route = transition.route
+    guard route.failure == nil, (route.group == nil) == (route.member == nil) else { throw PortableHandoffConflict.routeChanged }
+    let config = SessionExecutor.kernel(route.specifier).configJSON
+    if route.epoch == old.epoch {
+      var unchanged = route
+      unchanged.specifier.effort = old.specifier.effort
+      unchanged.failure = old.failure
+      guard unchanged == old, route.specifier.effort != old.specifier.effort else { throw PortableHandoffConflict.routeChanged }
+      try db.execute(RouteExecutorRow.where { $0.id.eq(key) }.update { $0.executorConfig = config })
+      let payload = try Sessions.encode(route)
+      try db.execute(SessionModelRouteRow.where { $0.sessionID.eq(key) }.update { $0.payload = payload; $0.phase = route.group == nil ? "bound" : "pinned" })
+      return
+    }
+    guard route.group != old.group || route.member != old.member || route.specifier != old.specifier,
+          transition.binding?.epoch == route.epoch else { throw PortableHandoffConflict.routeChanged }
+    try db.execute(RouteExecutorRow.where { $0.id.eq(key) }.update { $0.executorConfig = config })
+    try write(key, route: route, in: &db)
+  }
+
   private static func target(_ key: String, in db: Wuwei.Database) throws -> ModelRouteTargetRow {
     guard let row = db.rows(ModelRouteTargetRow.where { $0.id.eq(key) }).first else {
       throw SessionStoreError.unknownSession(key)
@@ -128,4 +151,10 @@ private struct StoredModelRoute {
   var payload: String
   var executor: String?
   var executorConfig: String?
+}
+
+@Table("sessions")
+private struct RouteExecutorRow {
+  let id: String
+  @Column("executor_config") var executorConfig: String
 }

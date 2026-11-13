@@ -48,7 +48,6 @@ extension SessionStore {
     return cell(id).record() == nil ? nil : id
   }
 
-  /// Whether a session id, a persona, or nil (the --dev seat) acting in `group` reads the conversation.
   public func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID) async throws -> Bool {
     cell(conversation.id).reads(conversation, reader: reader, group: group)
   }

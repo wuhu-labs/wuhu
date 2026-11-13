@@ -94,7 +94,7 @@ import Testing
       let id = SessionID(output.id)
       #expect(output.parent == nil)
 
-      let row = try await r.harness.space.query("SELECT requester, task, status FROM requests", as: .shared(.anonymous)).rows
+      let row = try await r.harness.space.query("SELECT requester, task, status FROM requests", as: .shared(.publicReader)).rows
       #expect(row == [[.text(r.persona), .text(output.id), .text("open")]])
 
       _ = try await r.harness.store.drainQueue(id)
@@ -104,7 +104,7 @@ import Testing
       #expect(messages.map(\.content.text) == ["triage #7", "fixed"])
       #expect(messages.first?.sender.id == r.persona)
       #expect(messages.last?.senderSession == id)
-      let status = try await r.harness.space.query("SELECT status, result FROM requests", as: .shared(.anonymous)).rows
+      let status = try await r.harness.space.query("SELECT status, result FROM requests", as: .shared(.publicReader)).rows
       #expect(status == [[.text("done"), .text(#""fixed""#)]])
     }
   }
@@ -214,21 +214,22 @@ import Testing
     }
   }
 
-  @Test func theDevSeatsPageCreatesAndPostsAsTheOwner() async throws {
+  @Test func theDevPersonsPageCreatesAndPostsAsThatPerson() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness(dev: true, origin: "https://space.test:5530")
-      let r = Rig(harness: harness, alice: AccountID(rawValue: "unused"), persona: "owner", aliceGroup: .shared)
+      let person = try await harness.space.ensureDevPerson()
+      let r = Rig(harness: harness, alice: person.account, persona: person.persona, aliceGroup: .shared)
       let made = try await post(
         r, r.sharedHost, "session", ["title": "helper", "provider": "testing", "model": "test-model", "message": "start"], cookie: "",
       )
       #expect(made.status == .ok)
       let id = try await created(made)
-      #expect(try await harness.store.record(id).createdBy == "owner")
+      #expect(try await harness.store.record(id).createdBy == person.persona)
       let sent = try await post(r, r.sharedHost, "message", ["session": .string(id.rawValue), "message": "more"], cookie: "")
       #expect(sent.status == .ok)
       let messages = try await harness.store.messages(conversation: ConversationID(id.rawValue))
       #expect(messages.map(\.content.text) == ["start", "more"])
-      #expect(messages.allSatisfy { $0.sender.id == "owner" })
+      #expect(messages.allSatisfy { $0.sender.id == person.persona })
     }
   }
 }

@@ -11,7 +11,9 @@ import WuweiQueries
 
 extension MachineCell {
   func record() -> MachineRecord? {
-    db.rows(MachineRow.where { $0.id.eq(id.key) }).first.map(Space.machineRecord(from:))
+    guard let row = db.rows(MachineRow.where { $0.id.eq(id.key) }).first else { return nil }
+    let name = db.rows(AliasRow.where { $0.kind.eq(AliasKind.machine) && $0.target.eq(id.key) && $0.current }).first?.name
+    return Space.machineRecord(from: row, name: name)
   }
 
   func attachedDescription() -> MachineDescription? {

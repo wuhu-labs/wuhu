@@ -20,7 +20,7 @@ import Testing
   }
 
   @Test func grepFindsMatchesAcrossFiles() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     try await seedCorpus(context)
     let output = try await run("grep", .object(["pattern": "foo \\w+"]), context, as: GrepOutput.self)
     #expect(output.cursor == nil)
@@ -30,14 +30,14 @@ import Testing
   }
 
   @Test func grepScopedToPath() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     try await seedCorpus(context)
     let output = try await run("grep", .object(["pattern": "foo", "path": "/docs"]), context, as: GrepOutput.self)
     #expect(output.matches.map(\.path) == ["/docs/a.txt", "/docs/a.txt", "/docs/c.txt"])
   }
 
   @Test func grepCursorContinuesToCompletion() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     try await seedCorpus(context)
     let full = try await run("grep", .object(["pattern": "foo"]), context, as: GrepOutput.self)
 
@@ -55,13 +55,13 @@ import Testing
   }
 
   @Test func grepRejectsInvalidPattern() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let bad = await failure("grep", .object(["pattern": "("]), context)
     #expect({ if case .failed(code: .invalidArgument, _, _, _) = bad { true } else { false } }())
   }
 
   @Test func grepRejectsNonPositiveLimits() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     for input in [
       JSONValue.object(["pattern": "x", "matchLimit": 0]),
       .object(["pattern": "x", "matchLimit": -3]),
@@ -72,7 +72,7 @@ import Testing
   }
 
   @Test func findMatchesGlob() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     try await seedCorpus(context)
     let txt = try await run("find", .object(["glob": "/docs/*.txt"]), context, as: FindOutput.self)
     #expect(txt.paths == ["/docs/a.txt", "/docs/b.txt", "/docs/c.txt"])
@@ -88,7 +88,7 @@ import Testing
   }
 
   @Test func findSeesTableNodes() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     try await seedCorpus(context)
     _ = try await run(
       "table.create",
@@ -110,7 +110,7 @@ import Testing
   }
 
   @Test func findHonorsMatchLimitCursor() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     try await seedCorpus(context)
     let full = try await run("find", .object(["glob": "/**"]), context, as: FindOutput.self)
     #expect(full.cursor == nil)
@@ -130,7 +130,7 @@ import Testing
   }
 
   @Test func findRejectsNonPositiveLimits() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     for input in [
       JSONValue.object(["glob": "/**", "matchLimit": 0]),
       .object(["glob": "/**", "matchLimit": -1]),
@@ -141,7 +141,7 @@ import Testing
   }
 
   @Test func stepsAreBoundToTheirSearchAndMalformedOnesAreRefused() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     try await seedCorpus(context)
     let find = try await run("find", .object(["glob": "/**", "matchLimit": 1]), context, as: FindOutput.self)
     let findStep = try #require(find.cursor)
@@ -170,7 +170,7 @@ import Testing
   }
 
   @Test func largeLimitsAreCappedNotRefused() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/m", String(repeating: "x\n", count: SearchLimits.maxLimit + 5), context)
     let page = try await run("grep", .object(["pattern": "x", "matchLimit": 50000]), context, as: GrepOutput.self)
     #expect(page.matches.count > SearchLimits.defaultLimit && page.matches.count <= SearchLimits.maxLimit)
@@ -185,7 +185,7 @@ import Testing
   }
 
   @Test func longLinesAreClamped() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a/long.txt", "foo" + String(repeating: "é", count: 2000), context)
     let output = try await run("grep", .object(["pattern": "foo"]), context, as: GrepOutput.self)
     let text = try #require(output.matches.first?.text)
@@ -197,7 +197,7 @@ import Testing
 
   // `/users` (and `/_`) at a space's root are passed over, as `ls` hides them, unless asked.
   @Test func hiddenRootEntriesAreSkippedUnlessAsked() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/users/me.md", "needle", context)
     _ = try await seedFile("/notes/n.md", "needle", context)
     let plain = try await run("grep", .object(["pattern": "needle"]), context, as: GrepOutput.self)
@@ -210,7 +210,7 @@ import Testing
   }
 
   @Test func gitignoreIsHonoredUnlessNoIgnore() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/proj/.gitignore", "*.log\nbuild/\n", context)
     _ = try await seedFile("/proj/a.log", "x", context)
     _ = try await seedFile("/proj/build/out.txt", "x", context)
@@ -227,7 +227,7 @@ import Testing
   // A file is read a range at a time, whatever its size: a match past one
   // page's read budget is found on a later page, as it is on a machine.
   @Test func aFileLargerThanAPageReadIsGreppedToItsEnd() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let readBudget = 4 * SearchLimits.lineBytes
     let filler = String(repeating: "padding line\n", count: (readBudget + SearchLimits.lineBytes) / 13)
     _ = try await seedFile("/big.txt", filler + "needle", context)
@@ -249,7 +249,7 @@ import Testing
 
   // Dot-names are hidden in a space as they are on a machine's disk.
   @Test func dotNamesAreHiddenUnlessAsked() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/proj/.env", "needle", context)
     _ = try await seedFile("/proj/.cache/x.txt", "needle", context)
     _ = try await seedFile("/proj/a.txt", "needle", context)
@@ -263,7 +263,7 @@ import Testing
   // A cursor continues only on the backend that made it: the same root on
   // another backend refuses it.
   @Test func aCursorIsRefusedOnAnotherBackend() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.txt", "x", context)
     _ = try await seedFile("/b.txt", "x", context)
     let first = try await run("find", .object(["glob": "*", "matchLimit": 1]), context, as: FindOutput.self)
@@ -276,7 +276,7 @@ import Testing
 
   // Pages end on counts only, so a loaded server pages exactly like an idle one.
   @Test func pagesEndOnCountsNeverOnTime() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/a.txt", "foo 1\nbar\nfoo 2", context)
     _ = try await seedFile("/b.txt", "foo 3", context)
     var found: [String] = []
@@ -302,7 +302,7 @@ import Testing
   // The deadline races the whole search, so an await that never returns
   // ends there too.
   @Test func aSearchWhoseReadNeverReturnsFailsAtTheDeadline() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     let target = SpaceToolContext.Target(backend: StalledReads(), path: "/", machine: nil)
     let failure = try await failureAtDeadline { try await SpaceToolbox.search(grepQuery("x"), target, context) }
     #expect(failure.advanced >= SearchLimits.deadline)
@@ -338,7 +338,7 @@ import Testing
 
   // grep's dialect is ICU regular expressions (NSRegularExpression).
   @Test func grepSpeaksTheICUDialect() async throws {
-    let context = try makeContext()
+    let context = try await makeContext()
     _ = try await seedFile("/d.txt", "Price: 42 USD\ncafé crème\nfoobar\nbarfoo\nTAB\there\n", context)
     let cases: [(String, [Int])] = [
       (#"\d{2}"#, [1]),

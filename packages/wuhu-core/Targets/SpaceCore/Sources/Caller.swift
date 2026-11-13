@@ -97,14 +97,12 @@ public struct Page: Hashable, Sendable {
   public var principal: Principal { Principal(actor: .page(self), group: group) }
 }
 
-/// A person speaking as `persona`, acting in `group`; no account is the
-/// --dev seat.
 public struct Person: Hashable, Sendable {
   public let persona: String
-  public let account: AccountID?
+  public let account: AccountID
   public let group: GroupID
 
-  public init(persona: String, account: AccountID?, group: GroupID) {
+  public init(persona: String, account: AccountID, group: GroupID) {
     self.persona = persona
     self.account = account
     self.group = group
@@ -119,6 +117,6 @@ public struct Person: Hashable, Sendable {
   }
 
   public var principal: Principal {
-    Principal(actor: account.map { .person(persona: persona, account: $0) } ?? .anonymous, group: group)
+    Principal(actor: .person(persona: persona, account: account), group: group)
   }
 }

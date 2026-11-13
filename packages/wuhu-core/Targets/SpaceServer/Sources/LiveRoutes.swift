@@ -22,7 +22,7 @@ import SpaceTools
 /// the upgrade through bare; the `hello` frame carries the credential and must
 /// come within `liveHelloDeadline`, and a person key's socket ends with the key.
 func addLiveRoutes(
-  _ router: inout Router, space: Space, keyStreams: KeyStreams, dev: Bool,
+  _ router: inout Router, space: Space, keyStreams: KeyStreams, devPerson: ResolvedPerson?,
   contextOf: @escaping @Sendable (Request) async throws -> ToolContextVerdict,
 ) {
   @Dependency(\.date) var dateGen
@@ -44,7 +44,7 @@ func addLiveRoutes(
         }
         guard let first = hello else { return }
         let (outbound, key) = await liveOpen(
-          first, upgrade: request, space: space, now: dateGen.now, dev: dev, contextOf: contextOf, frames: frames,
+          first, upgrade: request, space: space, now: dateGen.now, devPerson: devPerson, contextOf: contextOf, frames: frames,
         )
         let relay = { [inbound] in
           var inbound = inbound
@@ -75,7 +75,7 @@ func addLiveRoutes(
 
 /// The channel, and the person key it lives under.
 private func liveOpen(
-  _ first: WebSocketMessage, upgrade: Request, space: Space, now: Date, dev: Bool,
+  _ first: WebSocketMessage, upgrade: Request, space: Space, now: Date, devPerson: ResolvedPerson?,
   contextOf: @Sendable (Request) async throws -> ToolContextVerdict, frames: AsyncStream<LiveInbound>,
 ) async -> (AsyncStream<LiveOutbound>, KeyRecord?) {
   guard case let .text(text) = first, let json = JSONValue.parse(text),
@@ -91,16 +91,13 @@ private func liveOpen(
     case let .context(resolved): context = resolved
     case .refused: return (liveRefusal(.unauthorized, "the hello's assertion is not accepted"), nil)
     }
-    if !dev, case let .verified(credential) = try await bearerVerdict(request: request, space: space, now: now) {
+    if case let .verified(credential) = try await bearerVerdict(request: request, space: space, now: now) {
       key = credential.key
     } else {
       key = nil
     }
   } catch {
     return (liveRefusal(.internal, "\(error)"), nil)
-  }
-  if case .anonymous = context.principal.actor, !dev {
-    return (liveRefusal(.unauthorized, "this space admits enrolled devices only"), nil)
   }
   guard let address = fileRouteAddress(upgrade.url) else { return (liveRefusal(.notFound, "malformed file path"), nil) }
   let target: LiveTarget

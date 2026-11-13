@@ -83,8 +83,7 @@ changes here are contract changes.
 
 - **`HistoryEntry.by` / `.via`**: present on a revision a page wrote through
   `/_/space/*` (SpaceServer SPEC, "Page data"): `by` the viewer's persona,
-  the three-word id of the read cookie's account (absent for the `--dev`
-  seat), `via` the path the page reported. `via` is the page's claim, not authenticated.
+  the three-word id of the viewer’s account, including the dev person, `via` the path the page reported. `via` is the page's claim, not authenticated.
 
 - **`TableMutateOutput.ids`**: the ids of the rows `insert` ops created, in
   op order, one revision for the whole call. `table.mutate` stays
@@ -194,16 +193,7 @@ cannot state a kind, and live deletes stay wire-identical to their replay.
 
 ## Session domain wire semantics
 
-Identity attribution: the server operates a single distinguished **owner**
-human identity. `identity` fields are optional everywhere; absent (or the
-literal `owner`) means the owner, and any other value must be a persona the
-space minted at `POST /v1/persona` (`PersonaMintOutput`) — an allocator
-word-name drawn against the caller's enrolled key, sharing the allocation
-counter with session ids so the two name spaces cannot collide. A free-form
-identity is rejected with 403 `unknownIdentity` before it can act. `timezone`
-fields are IANA identifiers supplied by the client seat (the CLI sends the
-local timezone, the SPA the browser's); absent means UTC — never
-server-local.
+Identity attribution: optional `identity` fields name an ordinary persona belonging to the authenticated account; absent means that account’s first persona. On `--dev`, an unsigned request uses the ordinary admin person holding the current or historical `owner` handle, never a literal `owner` principal or another account’s persona. Personas are allocator word-names returned by `POST /v1/persona` (`PersonaMintOutput`), sharing the allocation counter with session ids so the two name spaces cannot collide. A free-form identity is rejected with 403 `unknownIdentity`; another account’s persona is 403 `identityNotYours`. `timezone` fields are IANA identifiers supplied by the client (the CLI sends the local timezone, the SPA the browser’s); absent means UTC, never server-local.
 
 - **`ToolRostersOutput`** (`GET /v1/session-tools?executor=kernel`): the kernel tool roster. Omitting `executor` returns this one roster. `ToolDescriptor.parameters` is each tool's parameter JSON Schema. The route is distinct from `/v1/tools`, the space toolbox.
 - **`SessionCreateInput`**: all provider dialects run in the kernel. Optional `executor` accepts `kernel`; any other value returns HTTP 422 `invalidArgument` with message "unknown executor: <value>", as do templates and restart inputs naming one. `effort` absent means the model's declared default

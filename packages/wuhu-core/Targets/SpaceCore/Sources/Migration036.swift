@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration036 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     DELETE FROM machine_v2_operations;
     DELETE FROM machine_v2_retention;

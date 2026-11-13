@@ -5,6 +5,7 @@
 #endif
 
 import ContentLane
+import Dependencies
 import Fetch
 import HTTPTypes
 import JSONValue
@@ -22,7 +23,7 @@ func webResponse(
   contentHost: ContentHost,
   advertisedOrigin: String?,
   now: Date,
-  dev: Bool,
+  devPerson: ResolvedPerson?,
   publicRead: Bool,
   views: [String: Data],
   shell: [String: Data]?,
@@ -54,7 +55,7 @@ func webResponse(
         cookies: contentHost.pattern == nil ? .legacy : .hostOnly,
       ),
       now: now,
-      dev: dev,
+      devPerson: devPerson,
       publicRead: publicRead,
       views: views,
       shell: shell,
@@ -86,7 +87,7 @@ private func routedWebResponse(
   space: Space,
   caller: WebCaller,
   now: Date,
-  dev: Bool,
+  devPerson: ResolvedPerson?,
   publicRead: Bool,
   views: [String: Data],
   shell: [String: Data]?,
@@ -98,14 +99,14 @@ private func routedWebResponse(
     return await pageFetchResponse(space: space, caller: caller, proxy: pageFetch, request: request)
   }
   if request.url.path == "/_/space/session" || request.url.path == "/_/space/message" {
-    return try await pageSessionResponse(space: space, caller: caller, dev: dev, hub: hub, request: request)
+    return try await pageSessionResponse(space: space, caller: caller, devPerson: devPerson, hub: hub, request: request)
   }
   if request.url.path == "/_/session" {
     switch request.method {
     case .options:
       return Response(status: .noContent)
     case .post:
-      return try await mintReadSession(space: space, group: caller.group, dev: dev, now: now, cookies: caller.cookies, request: request)
+      return try await mintReadSession(space: space, group: caller.group, devPerson: devPerson, now: now, cookies: caller.cookies, request: request)
     case .delete:
       if caller.crossOrigin { return crossOriginRefusal() }
       return try await endReadSession(space: space, cookies: caller.cookies, request: request)
@@ -147,7 +148,7 @@ private func routedWebResponse(
       response = try await underscoreResponse(
         space: space,
         caller: caller,
-        dev: dev,
+        devPerson: devPerson,
         publicRead: publicRead,
         shell: shell,
         route: rest.joined(separator: "/"),
@@ -158,7 +159,7 @@ private func routedWebResponse(
   }
 
   let viewer: AccountID?
-  let admitted = try await admission(space: space, group: caller.group, dev: dev, publicRead: publicRead, cookies: caller.cookies, request: request)
+  let admitted = try await admission(space: space, group: caller.group, devPerson: devPerson, publicRead: publicRead, cookies: caller.cookies, request: request)
   switch guarded(admitted, caller: caller, script: false) {
   case let .refused(wall):
     if let opened = openedInWebApp(request, caller: caller) { return opened }
@@ -246,8 +247,22 @@ enum ContentAdmission {
   case refused(Response)
 }
 
-func admission(space: Space, group: GroupID, dev: Bool, publicRead: Bool, cookies: ContentCookies, request: Request) async throws -> ContentAdmission {
-  if dev || (publicRead && group == .shared) { return .admitted(nil) }
+func admission(space: Space, group: GroupID, devPerson: ResolvedPerson?, publicRead: Bool, cookies: ContentCookies, request: Request) async throws -> ContentAdmission {
+  @Dependency(\.date) var dateGen
+  if devPerson != nil, request.headers[.authorization] == nil, !readCookieTokens(request: request, cookies: cookies).isEmpty {
+    return try await cookieAdmission(space: space, group: group, cookies: cookies, request: request)
+  }
+  if devPerson != nil {
+    switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: dateGen.now) {
+    case let .refused(response): return .refused(response)
+    case let .person(person):
+      guard try await space.role(of: .person(persona: person.persona, account: person.account), in: group, acting: group) != nil else {
+        return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you may not read group \(group.rawValue)"))
+      }
+      return .admitted(person.account)
+    }
+  }
+  if publicRead && group == .shared { return .admitted(nil) }
   return try await cookieAdmission(space: space, group: group, cookies: cookies, request: request)
 }
 
@@ -301,38 +316,41 @@ private let viewerCookieTTL: TimeInterval = 400 * 24 * 3600
 
 // The cookie carries no Domain: it is host-only, so a group host's session
 // never reaches the bare host or a sibling group.
-private func mintReadSession(space: Space, group: GroupID, dev: Bool, now: Date, cookies: ContentCookies, request: Request) async throws -> Response {
-  if dev, request.headers[.authorization] == nil {
-    return Response(status: .noContent)
-  }
-  switch try await bearerVerdict(request: request, space: space, now: now) {
-  case let .verified(credential):
-    let actor = Actor.person(persona: credential.key.account.rawValue, account: credential.key.account)
-    if try await space.role(of: actor, in: group, acting: group) == nil {
-      return errorResponse(.forbidden, code: "groupForbidden", message: "you may not read group \(group.rawValue)")
+private func mintReadSession(space: Space, group: GroupID, devPerson: ResolvedPerson?, now: Date, cookies: ContentCookies, request: Request) async throws -> Response {
+  let account: AccountID
+  if devPerson != nil {
+    switch try await personVerdict(request: request, space: space, devPerson: devPerson, now: now) {
+    case let .person(person): account = person.account
+    case let .refused(response): return response
     }
-    let supersedes = readCookieTokens(request: request, cookies: cookies).first.map(ReadSessionToken.init(rawValue:))
-    let token = try await space.createReadSession(
-      account: credential.key.account,
-      group: group,
-      expiresAt: now.addingTimeInterval(readSessionTTL),
-      supersedes: supersedes,
-    )
-    var headers = Headers()
-    headers.append(HTTPField(
-      name: .setCookie,
-      value: "\(cookies.read)=\(token.rawValue); Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=\(Int(readSessionTTL))",
-    ))
-    headers.append(HTTPField(
-      name: .setCookie,
-      value: "\(cookies.viewer)=\(credential.key.account.rawValue); Path=/; Secure; SameSite=Lax; Max-Age=\(Int(viewerCookieTTL))",
-    ))
-    return Response(status: .noContent, headers: headers)
-  case let .rejected(response):
-    return response
-  case .anonymous:
-    return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
+  } else {
+    switch try await bearerVerdict(request: request, space: space, now: now) {
+    case let .verified(credential): account = credential.key.account
+    case let .rejected(response): return response
+    case .missing: return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
+    }
   }
+  let actor = Actor.person(persona: account.rawValue, account: account)
+  if try await space.role(of: actor, in: group, acting: group) == nil {
+    return errorResponse(.forbidden, code: "groupForbidden", message: "you may not read group \(group.rawValue)")
+  }
+  let supersedes = readCookieTokens(request: request, cookies: cookies).first.map(ReadSessionToken.init(rawValue:))
+  let token = try await space.createReadSession(
+    account: account,
+    group: group,
+    expiresAt: now.addingTimeInterval(readSessionTTL),
+    supersedes: supersedes,
+  )
+  var headers = Headers()
+  headers.append(HTTPField(
+    name: .setCookie,
+    value: "\(cookies.read)=\(token.rawValue); Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=\(Int(readSessionTTL))",
+  ))
+  headers.append(HTTPField(
+    name: .setCookie,
+    value: "\(cookies.viewer)=\(account.rawValue); Path=/; Secure; SameSite=Lax; Max-Age=\(Int(viewerCookieTTL))",
+  ))
+  return Response(status: .noContent, headers: headers)
 }
 
 // Ending a read session authenticates by the cookie it deletes; absent or
@@ -360,7 +378,7 @@ private func readCookieTokens(request: Request, cookies: ContentCookies) -> [Str
 private func underscoreResponse(
   space: Space,
   caller: WebCaller,
-  dev: Bool,
+  devPerson: ResolvedPerson?,
   publicRead: Bool,
   shell: [String: Data]?,
   route: String,
@@ -373,14 +391,14 @@ private func underscoreResponse(
   }
   if route.hasPrefix("space/") {
     return try await spaceDataResponse(
-      space: space, caller: caller, dev: dev, publicRead: publicRead, route: String(route.dropFirst("space/".count)),
+      space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, route: String(route.dropFirst("space/".count)),
       request: request,
     )
   }
   switch route {
   case "query":
     let viewer: AccountID?
-    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
     case let .refused(wall): return wall
     case let .admitted(account): viewer = account
     }
@@ -401,7 +419,7 @@ private func underscoreResponse(
       }
     }
   case "observe":
-    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
     case let .refused(wall): return wall
     case let .admitted(viewer):
       let principal = try await webPrincipal(viewer, group: caller.group, space: space)
@@ -414,9 +432,9 @@ private func underscoreResponse(
 
 /// The wall for /_/query and /_/observe: a page may be opened from anywhere,
 /// but only its own origin and the paired SPA may script its reads.
-func scriptAdmission(space: Space, caller: WebCaller, dev: Bool, publicRead: Bool, request: Request) async throws -> ContentAdmission {
+func scriptAdmission(space: Space, caller: WebCaller, devPerson: ResolvedPerson?, publicRead: Bool, request: Request) async throws -> ContentAdmission {
   try await guarded(
-    admission(space: space, group: caller.group, dev: dev, publicRead: publicRead, cookies: caller.cookies, request: request),
+    admission(space: space, group: caller.group, devPerson: devPerson, publicRead: publicRead, cookies: caller.cookies, request: request),
     caller: caller,
     script: true,
   )

@@ -48,11 +48,11 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
 
   @Test(arguments: [false, true])
   func contentOriginUsesServerHostingConfiguration(flat: Bool) async throws {
-    let harness = try Harness(origin: "https://space.test:5530", contentHostPattern: flat ? "{group}--space.test:5530" : nil)
+    let harness = try await Harness(origin: "https://space.test:5530", contentHostPattern: flat ? "{group}--space.test:5530" : nil)
     let owner = try await harness.space.addAccount(kind: .human, name: nil).id
     let open = try await harness.space.createGroup(alias: "readable", owner: owner)
     let hidden = try await harness.space.createGroup(alias: "hidden", owner: owner)
-    try await harness.space.setVisibility(.private, of: hidden, by: .anonymous, acting: hidden)
+    try await harness.space.setVisibility(.private, of: hidden, by: (try await harness.space.ensureDevPerson()).actor, acting: hidden)
     let groups: [GroupID] = [.shared, .settings, open, hidden]
     for group in groups {
       _ = try await harness.space.fs(group).write("/module.js", Data(group.rawValue.utf8), ifMatch: nil)
@@ -61,8 +61,8 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
     #expect(response.status == .ok)
     var context = try #require(try await json(response).object)
     let revisions = try #require(context.removeValue(forKey: "revs")?.object)
-    #expect(Set(revisions.keys) == Set([GroupID.shared, .settings, open].map(\.rawValue)))
-    let files = SpaceToolContext(space: harness.space, principal: .shared(.anonymous))
+    #expect(Set(revisions.keys) == Set(groups.map(\.rawValue)))
+    let files = SpaceToolContext(space: harness.space, principal: .shared(try await harness.space.ensureDevPerson().actor))
     for group in groups {
       let address = "wuhu://\(group.rawValue).localspace/module.js"
       let readable = (try? await files.readBytes(address)) != nil
@@ -74,7 +74,7 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
 
   @Test func capabilityHTTPIsConfigurationOnlyAndDoesNotExposeCredentials() async throws {
     let seen = Mutex<[String]>([])
-    let harness = try Harness(credentials: CredentialResolver { id in
+    let harness = try await Harness(credentials: CredentialResolver { id in
       seen.withLock { $0.append(id) }
       return .chatGPT(accessToken: "private-token", accountID: "private-account")
     })

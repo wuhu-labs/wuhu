@@ -146,7 +146,7 @@ import Testing
   }
 
   @Test func theSharedHostStreamsOnlySharedWhilePrivateGroupsWrite() async throws {
-    let harness = try Harness()
+    let harness = try await Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let alice = try await harness.space.privateGroup(account: account.id)
     _ = try await harness.space.fs(alice).write("/hers-1.md", Data("x".utf8), ifMatch: nil)

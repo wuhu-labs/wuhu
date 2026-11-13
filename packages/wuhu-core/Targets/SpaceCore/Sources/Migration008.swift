@@ -1,4 +1,3 @@
-import GRDB
 import Logging
 
 // A request moves out of `messages` into its own row. Destructive: the drop of
@@ -20,13 +19,13 @@ enum Migration008 {
     }
   }
 
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     let backfill = try run(db)
     let counts = backfill.rows.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")
     Logger(label: "wuhu.migration").notice("migration 008: \(backfill.requestMessages) request messages became request rows (\(counts)); messages.deadline_at dropped")
   }
 
-  static func run(_ db: Database) throws -> Backfill {
+  static func run(_ db: MigrationDB) throws -> Backfill {
     try db.execute(sql: """
     CREATE TABLE requests (
       id TEXT PRIMARY KEY,
@@ -72,9 +71,9 @@ enum Migration008 {
     LEFT JOIN messages f ON f.n = (SELECT min(n) FROM messages WHERE request_id = m.request_id AND kind = 'final')
     WHERE m.kind = 'request';
     """)
-    let requestMessages = try Int.fetchOne(db, sql: "SELECT count(*) FROM messages WHERE kind = 'request'")!
-    let rows = try Int.fetchOne(db, sql: "SELECT count(*) FROM requests")!
-    let unmatched = try String.fetchAll(db, sql: """
+    let requestMessages = try db.int("SELECT count(*) FROM messages WHERE kind = 'request'")!
+    let rows = try db.int("SELECT count(*) FROM requests")!
+    let unmatched = try db.strings("""
     SELECT m.id FROM messages m WHERE m.kind = 'request'
       AND (m.request_id IS NOT m.id OR (SELECT count(*) FROM requests WHERE id = m.request_id) != 1)
     ORDER BY m.n LIMIT 20
@@ -82,7 +81,7 @@ enum Migration008 {
     guard unmatched.isEmpty, rows == requestMessages else {
       throw Unmatched(requestMessages: requestMessages, rows: rows, examples: unmatched)
     }
-    let statuses = try Row.fetchAll(db, sql: "SELECT status, count(*) AS n FROM requests GROUP BY status")
+    let statuses = try db.rows("SELECT status, count(*) AS n FROM requests GROUP BY status")
     try db.execute(sql: "ALTER TABLE messages DROP COLUMN deadline_at")
     return Backfill(
       requestMessages: requestMessages,

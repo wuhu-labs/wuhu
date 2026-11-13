@@ -59,7 +59,8 @@ public struct SessionExecution: Sendable {
     var config = loopConfig(tools)
     let runningWork = config.runningWork
     config.runningWork = { session in
-      space.worker.cell(SessionCell.ID(session.rawValue)).runningScripts() + (try await runningWork(session))
+      let scripts = space.worker.cell(SessionCell.ID(session.rawValue)).runningScripts()
+      return scripts + (try await runningWork(session))
     }
     running = config.runningWork
     @Dependency(\.continuousClock) var clock
@@ -86,7 +87,7 @@ public struct SessionExecution: Sendable {
     registerSessionCells(in: space)
     worker.provide(client)
     for kind: Registration in [
-      .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(StreamJob.self), .job(HandlerJob.self), .job(ScriptJob.self),
+      .job(InferenceJob.self), .job(ToolCallJob.self), .job(CompactionJob.self), .job(HandlerJob.self), .job(ScriptJob.self),
     ] {
       worker.register(kind)
     }
@@ -119,13 +120,13 @@ public struct SessionExecution: Sendable {
   public func retitle(_ session: SessionID, to title: String) async throws -> String {
     let title = try SessionStore.usableTitle(title)
     _ = try await store.record(session)
-    cell(session).retitle(title)
+    try await loops.call(SessionCell.ID(session.rawValue)) { try $0.retitle(title) }
     return title
   }
 
   public func retag(_ session: SessionID, to tags: [String]) async throws {
     _ = try await store.record(session)
-    cell(session).retag(tags)
+    try await loops.call(SessionCell.ID(session.rawValue)) { try $0.retag(tags) }
   }
 
   public func interrupt(_ session: SessionID) async throws {
@@ -194,7 +195,8 @@ public struct SessionExecution: Sendable {
     guard !loops.hasMail(for: SessionCell.ID(session.rawValue).recipient) else { return false }
     let hydration = try await store.hydrate(session)
     let turn: SessionTurn
-    if let stored = loops.cell(SessionCell.ID(session.rawValue)).turn() {
+    let stored = loops.cell(SessionCell.ID(session.rawValue)).turn()
+    if let stored {
       turn = stored
     } else {
       turn = SessionTurn(generation: hydration.generation, position: try await store.transcriptLineCount(session))
@@ -249,7 +251,7 @@ public typealias ObserverRun = @Sendable (Observer, _ script: String, (String) a
 public func registerSessionCells(in space: Space) {
   let worker = space.worker
   worker.provide(space.sessions)
-  for kind: Registration in [.cell(SessionCell.self), .cell(ObserverCell.self)] {
+  for kind: Registration in [.cell(SessionCell.self), .cell(ObserverCell.self), .job(StreamJob.self)] {
     worker.register(kind)
   }
 }

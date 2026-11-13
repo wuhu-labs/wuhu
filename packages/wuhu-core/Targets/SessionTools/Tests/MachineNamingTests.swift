@@ -12,7 +12,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachine(name: "mac_mini")
+      let mini = try await space.addMachineV2(name: "mac_mini").machine
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
@@ -30,7 +30,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachine(name: "mac_mini")
+      let mini = try await space.addMachineV2(name: "mac_mini").machine
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
@@ -72,8 +72,8 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachine(name: "mac_mini")
-      let anonymous = try await space.addMachine(name: nil)
+      let mini = try await space.addMachineV2(name: "mac_mini").machine
+      let builder = try await space.addMachineV2(name: "ci_box").machine
       var world = ToolWorld(
         executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
         session: try await makeSession(space),
@@ -84,7 +84,7 @@ import Testing
       }
       let rendered = ToolResultPayload.machines(result).renderedText
       #expect(rendered.contains("mac_mini \(mini.id.rawValue) detached"))
-      #expect(rendered.contains("\n\(anonymous.id.rawValue) detached") || rendered.hasPrefix("\(anonymous.id.rawValue) detached"))
+      #expect(rendered.contains("ci_box \(builder.id.rawValue) detached"))
     }
   }
 }

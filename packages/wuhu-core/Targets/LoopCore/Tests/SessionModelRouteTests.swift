@@ -26,7 +26,7 @@ import Testing
       try await store.markInterrupted(id)
       try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.resume() }
       let head = GenerationHead(id: UUID(), timestamp: handlerDate, summary: "summary", snapshot: .init(), runningWork: [])
-      _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.rows.writeGeneration(id, head: head) }
+      _ = try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.writeGeneration(id, head: head) }
       await space.stopWorker()
       let reopened = registerHandlerSessions(try Space.open(file: file))
       #expect(try await reopened.sessions.modelRoute(id) == pin)
@@ -52,7 +52,7 @@ import Testing
       await #expect(throws: ExecutorSpecError.self) {
         try await store.createSession(group: .shared, title: "bad", kind: .agent, createdBy: "morgan", executor: .kernel(.test), modelRoute: route())
       }
-      #expect(try await space.query("SELECT * FROM sessions", as: .shared(.anonymous)).rows.isEmpty)
+      #expect(try await space.query("SELECT * FROM sessions", as: .shared(.publicReader)).rows.isEmpty)
       let id = try await store.createSession(group: .shared, title: "good", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: route())
       #expect(try await store.modelRoute(id) == route())
     }
@@ -70,7 +70,7 @@ extension SessionModelRouteTests {
       #expect(try await store.establishInferenceModelRoute(id, route: route) == route)
       await store.noMail(id)
       #expect(try await store.modelRouteHistory(id) == [route])
-      #expect(try await space.query("SELECT phase FROM session_model_routes", as: .shared(.anonymous)).rows == [[.text("bound")]])
+      #expect(try await space.query("SELECT phase FROM session_model_routes", as: .shared(.publicReader)).rows == [[.text("bound")]])
       _ = try await store.restart(id)
       #expect(try await store.modelRoute(id) == nil)
       #expect(try await store.modelRouteHistory(id) == [route])

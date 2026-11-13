@@ -193,7 +193,7 @@ extension SessionRuntime {
     )
     return SpaceServer.configuredHandler(
       space: owner.space, hub: hub ?? MachineHub(space: owner.space), sessions: runtime, origin: origin, contentHostPattern: contentHostPattern,
-      dev: true, credentials: credentials, secrets: secrets, identityController: identity, machines: owner.machines,
+      devPerson: nil, credentials: credentials, secrets: secrets, identityController: identity, machines: owner.machines,
     )
   }
 

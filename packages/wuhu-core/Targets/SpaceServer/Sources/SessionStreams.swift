@@ -35,14 +35,12 @@ func conversationStreamResponse(
   store: SessionStore,
   conversation: ConversationID,
   after: Int64,
-  viewer: GroupID,
-  reader: String? = nil,
+  principal: Principal,
   clock: any Clock<Duration>,
 ) -> Response {
-  let principal = Principal(actor: reader.map { .person(persona: $0, account: AccountID(rawValue: $0)) } ?? .anonymous, group: viewer)
   return sseResponse("conversation-events", scope: scope, clock: clock) { send in
     for try await batch in store.observeConversation(conversation, after: after, as: principal) {
-      for payload in try await messagePayloads(batch, sessions: store, space: space, viewer: viewer) {
+      for payload in try await messagePayloads(batch, sessions: store, space: space, viewer: principal.group) {
         send(try .json(payload))
       }
     }

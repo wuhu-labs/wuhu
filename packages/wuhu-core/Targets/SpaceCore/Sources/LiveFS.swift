@@ -4,20 +4,14 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 import struct SpaceContract.GroupID
 import SpaceFS
-import StructuredQueries
-
-enum FSWriteOutcome {
-  case unchanged(Int64)
-  case wrote(Int64)
-}
+import Wuwei
 
 struct LiveFS: SpaceVFS {
   let group: GroupID
   let acting: GroupID
-  let writer: any DatabaseWriter
+  let runtime: SpaceRuntime
   let bucket: Bucket
   let dateGen: DateGenerator
   let documents: DocumentHub
@@ -25,28 +19,19 @@ struct LiveFS: SpaceVFS {
   var listingByteLimit: Int?
   var attribution: RevisionAttribution?
 
+  var worker: Worker { runtime.worker() }
+
   func read(_ path: String) async throws -> (VersionToken, Data) {
     let p = try Self.validated(path)
     if p.isLive, documents.dirty(group, p) { await documents.checkpoint(group, p) }
-    let group = group
-    let (rev, hash) = try await writer.read { db in
-      guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
-      guard head.kind == "file", let hash = head.blobHash else { throw SpaceError.notAFile(p.rawValue) }
-      return (head.rev, hash)
-    }
+    let (rev, hash) = try worker.cell(FilesCell.ID(group.rawValue)).fileContents(p)
     return (VersionToken(rev: Int(rev)), Data(try await bucket.bytes(hash)))
   }
 
   func reader(_ path: String) async throws -> any SpaceFileReader {
     let p = try Self.validated(path)
     if p.isLive, documents.dirty(group, p) { await documents.checkpoint(group, p) }
-    let group = group
-    let hash = try await writer.read { db in
-      guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
-      guard head.kind == "file", let hash = head.blobHash else { throw SpaceError.notAFile(p.rawValue) }
-      return hash
-    }
-    return BucketReader(bucket: bucket, hash: hash)
+    return BucketReader(bucket: bucket, hash: try worker.cell(FilesCell.ID(group.rawValue)).fileContents(p).hash)
   }
 
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?) async throws -> VersionToken {
@@ -57,31 +42,14 @@ struct LiveFS: SpaceVFS {
     let p = try Self.validatedFileTarget(path)
     if p.isLive {
       if let ifMatch, ifMatch.rev == nil { throw SpaceError.versionMismatch(p.rawValue) }
-      let (acting, attribution) = (acting, attribution)
       let base = ifMatch.map { DocumentBase.read(Int64($0.rev!)) } ?? .latest
-      let rev = try await documents.write(
-        group, p, data, base: base, createOnly: createOnly, acting: acting, attribution: attribution,
-      )
-      return VersionToken(rev: Int(rev))
+      return try await VersionToken(rev: Int(documents.write(group, p, data, base: base, createOnly: createOnly, acting: acting, attribution: attribution)))
     }
-    let blob = try await bucket.stage(Array(data))
-    let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let (group, acting, attribution) = (group, acting, attribution)
-    let outcome: FSWriteOutcome = try await writer.write { db in
-      let head = try Substrate.head(p, group: group, in: db)
-      if createOnly, head != nil { throw SpaceError.alreadyExists(p.rawValue) }
-      try Self.checkIfMatch(ifMatch, head: head, path: p)
-      try InterimBlob.record(blob, in: db)
-      return try Self.commitFile(
-        p, group: group, acting: acting, attribution: attribution, blob: blob, head: head, mtime: mtime, in: db,
-      )
+    let blob = try await bucket.stage(Array(data)), mtime = SQLiteDateFormat.string(from: dateGen.now)
+    let rev = try await worker.call(FilesCell.ID(group.rawValue)) {
+      try $0.write(p, blob: blob, ifMatch: ifMatch, createOnly: createOnly, mtime: mtime, attribution: attribution)
     }
-    switch outcome {
-    case let .unchanged(rev):
-      return VersionToken(rev: Int(rev))
-    case let .wrote(rev):
-      return VersionToken(rev: Int(rev))
-    }
+    return VersionToken(rev: Int(rev))
   }
 
   static func validatedFileTarget(_ path: String) throws -> SpacePath {
@@ -90,32 +58,10 @@ struct LiveFS: SpaceVFS {
     return p
   }
 
-  static func commitFile(
-    _ p: SpacePath, group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, blob: Blob, head: FSHeadRow?,
-    mtime: String, op: JournalOp = .write, aux: String? = nil, in db: Database,
-  ) throws -> FSWriteOutcome {
-    if let head, head.kind == "directory" { throw SpaceError.pathIsDirectory(p.rawValue) }
-    try Substrate.requireAncestorDirectories(p, group: group, in: db)
-    if let head, head.blobHash == blob.hash { return .unchanged(head.rev) }
-    let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
-    try Substrate.writeFile(p, group: group, blob: blob, rev: rev, mtime: mtime, op: op, aux: aux, in: db)
-    return .wrote(rev)
-  }
-
   func delete(_ path: String, ifMatch: VersionToken?) async throws {
-    let p = try Self.validated(path, mutating: true)
-    let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let (group, attribution) = (group, attribution)
-    try await writer.write { db in
-      guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
-      try Self.checkIfMatch(ifMatch, head: head, path: p)
-      let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
-      let targets = head.kind == "directory" ? try Substrate.descendantHeads(of: p, group: group, in: db) : [head]
-      for node in targets {
-        try Self.remove(node, group: group, rev: rev, op: .delete, in: db)
-      }
-      try documents.removed(under: p, in: group, rev: rev, on: db)
-    }
+    let p = try Self.validated(path, mutating: true), mtime = SQLiteDateFormat.string(from: dateGen.now)
+    try await documents.checkpoint(under: p, in: group)
+    try await worker.call(FilesCell.ID(group.rawValue)) { try $0.delete(p, ifMatch: ifMatch, mtime: mtime, attribution: attribution) }
   }
 
   func move(_ path: String, to destination: String) async throws {
@@ -126,139 +72,56 @@ struct LiveFS: SpaceVFS {
     try await move(path, to: destination, in: group, replacing: replacing)
   }
 
-  /// Within one group a move journals a move; across groups it is a delete in
-  /// this group and a create in `destinationGroup`, one revision per written group.
   func move(_ path: String, to destination: String, in destinationGroup: GroupID, replacing: Bool) async throws {
-    let src = try Self.validated(path, mutating: true)
-    let dst = try Self.validated(destination, mutating: true)
+    let src = try Self.validated(path, mutating: true), dst = try Self.validated(destination, mutating: true)
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let (group, acting, attribution) = (group, acting, attribution)
-    let across = destinationGroup != group
-    var tries = 0
-    while true {
-      try await documents.checkpoint(under: src, in: group)
-      do {
-        return try await moveOnce(
-          src, to: dst, in: destinationGroup, replacing: replacing, across: across, mtime: mtime, acting: acting,
-          attribution: attribution,
-        )
-      } catch is DocumentEdited, is BlobContents.Missing {
-        tries += 1
-        if tries == 3 { throw SpaceError.liveBusy(src.rawValue) }
-      }
+    try await documents.checkpoint(under: src, in: group)
+    let (exported, external) = try worker.read { reader in
+      let transfer = try reader.cell(FilesCell.ID(group.rawValue)).export(src)
+      let external = Set(transfer.nodes.compactMap { node -> String? in
+        guard let hash = node.head.blobHash, reader.cell(SpaceCell.ID("space")).bucket(hash)!.objectKey != nil else { return nil }
+        return hash
+      })
+      return (transfer, external)
     }
-  }
-
-  /// One attempt at the move: its own transaction checks, before it carries the old bytes, that no
-  /// document at or under `src` holds edits its file lacks — one writer serializes the two, so nothing
-  /// can be acknowledged in between. `DocumentEdited` means the host checkpoints and tries again; only an
-  /// external file written after the read is one the transaction has no bytes for, and it tries again.
-  private func moveOnce(
-    _ src: SpacePath, to dst: SpacePath, in destinationGroup: GroupID, replacing: Bool, across: Bool, mtime: String,
-    acting: GroupID, attribution: RevisionAttribution?,
-  ) async throws {
-    let group = group
-    let external = try await writer.read { db -> [String] in
-      guard let head = try Substrate.head(src, group: group, in: db) else { return [] }
-      let nodes = head.kind == "directory" ? try Substrate.descendantHeads(of: src, group: group, in: db) : [head]
-      return try InterimBlob.external(nodes.compactMap { $0.kind == "file" ? $0.blobHash : nil }, in: db)
-    }
-    let contents = try await bucket.contents(of: external)
-    try await writer.write { db in
-      try DocumentRows.requireCommitted(group, under: src, in: db)
-      guard let head = try Substrate.head(src, group: group, in: db) else { throw SpaceError.notFound(src.rawValue) }
-      if let existing = try Substrate.head(dst, group: destinationGroup, in: db) {
-        guard replacing, existing.kind == "file", across || dst != src else { throw SpaceError.alreadyExists(dst.rawValue) }
-      }
-      if (dst.lastComponent?.hasSuffix(".table") == true) != (head.kind == "table") {
-        throw SpaceError.reservedTablePath(dst.rawValue)
-      }
-      let rev = try Substrate.mintRevision(mtime: mtime, group: group, attribution: attribution, in: db)
-      let destinationRev = across ? try Substrate.mintRevision(mtime: mtime, group: destinationGroup, attribution: attribution, in: db) : rev
-      if try Substrate.head(dst, group: destinationGroup, in: db) != nil {
-        try Self.tombstone(path: dst.rawValue, group: destinationGroup, rev: destinationRev, op: .delete, in: db)
-      }
-      try Substrate.ensureAncestorDirectories(dst, group: destinationGroup, rev: destinationRev, mtime: mtime, in: db)
-      let nodes = head.kind == "directory" ? try Substrate.descendantHeads(of: src, group: group, in: db) : [head]
-      for node in nodes {
-        let newPath = try Self.reparent(node.path, from: src, to: dst)
-        if node.kind == "table" {
-          try Tables.reparent(
-            from: try SpacePath(validating: node.path), in: group, to: newPath, in: destinationGroup, rev: destinationRev, sourceRev: rev, in: db,
-          )
-        }
-        if across {
-          try Self.tombstone(path: node.path, group: group, rev: rev, op: .delete, in: db)
-        } else {
-          try Self.tombstone(path: node.path, group: group, rev: rev, op: .move, aux: newPath.rawValue, in: db)
-        }
-        try Substrate.appendVersion(
-          group: destinationGroup, path: newPath.rawValue, rev: destinationRev, kind: node.kind, blobHash: node.blobHash, op: .write, in: db,
-        )
-        try Substrate.upsertHead(
-          FSHeadRow(
-            grp: destinationGroup.rawValue, path: newPath.rawValue, parentPath: newPath.parent.rawValue, kind: node.kind,
-            blobHash: node.blobHash, size: node.size, lineCount: node.lineCount,
-            etag: node.etag, rev: destinationRev, mtime: mtime,
-          ),
-          in: db,
-        )
-        if node.kind == "file", let hash = node.blobHash {
-          let content = try InterimBlob.inlineBytes(hash, in: db) ?? contents.bytes(of: hash)
-          try Induction.index(path: newPath, group: destinationGroup, content: content, in: db)
+    var transfer = exported
+    if destinationGroup == group {
+      var staged: [String: [String: FileIndex]] = [:]
+      for node in transfer.nodes {
+        let target = try Self.reparent(node.head.path, from: src, to: dst)
+        guard node.head.kind == "file", Induction.isDocument(target), let hash = node.head.blobHash else { continue }
+        if external.contains(hash) {
+          staged[hash, default: [:]][target.rawValue] = .parse(target, group: group, content: try await bucket.bytes(hash))
         }
       }
-      try documents.removed(under: src, in: group, rev: rev, on: db)
-      try documents.removed(under: dst, in: destinationGroup, rev: destinationRev, on: db)
+      let indices = staged
+      try await worker.call(FilesCell.ID(group.rawValue)) { try $0.move(src, to: dst, replacing: replacing, staged: indices, mtime: mtime, attribution: attribution) }
+    } else {
+      for i in transfer.nodes.indices {
+        let target = try Self.reparent(transfer.nodes[i].head.path, from: src, to: dst)
+        if transfer.nodes[i].head.kind == "file", Induction.isDocument(target) {
+          transfer.nodes[i].index = .parse(target, group: destinationGroup, content: try await bucket.bytes(transfer.nodes[i].head.blobHash!))
+        } else { transfer.nodes[i].index = FileIndex() }
+      }
+      let snapshot = transfer
+      try await worker.call(FilesCell.ID(destinationGroup.rawValue)) { try $0.adopt(snapshot, at: dst, replacing: replacing, mtime: mtime, attribution: attribution) }
+      try await worker.call(FilesCell.ID(group.rawValue)) { try $0.delete(snapshot, mtime: mtime, attribution: attribution) }
     }
   }
 
   func list(_ path: String) async throws -> (VersionToken, [Entry]) {
-    let p = try Self.validated(path)
-    let (entries, _, token) = try await page(of: p, from: "", limit: listingLimit ?? Int.max, budget: ListingBudget(limit: listingByteLimit))
+    let (entries, _, token) = try worker.cell(FilesCell.ID(group.rawValue)).page(Self.validated(path), from: "", limit: listingLimit ?? Int.max, budget: ListingBudget(limit: listingByteLimit))
     return (token, entries.sorted { $0.name < $1.name })
   }
 
   func list(_ path: String, from: String, limit: Int) async throws -> (entries: [Entry], next: String?) {
     precondition(limit > 0)
-    let (entries, next, _) = try await page(of: Self.validated(path), from: from, limit: limit, budget: ListingBudget(limit: nil))
+    let (entries, next, _) = try worker.cell(FilesCell.ID(group.rawValue)).page(Self.validated(path), from: from, limit: limit, budget: ListingBudget(limit: nil))
     return (entries, next)
   }
 
-  private func page(of p: SpacePath, from: String, limit: Int, budget: ListingBudget) async throws -> ([Entry], String?, VersionToken) {
-    let group = group
-    let start = (p.isRoot ? "/" : p.rawValue + "/") + from
-    return try await writer.read { db in
-      if !p.isRoot {
-        guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
-        guard head.kind == "directory" else { throw SpaceError.notADirectory(p.rawValue) }
-      }
-      let query = FSHeadRow.where { $0.grp.eq(group.rawValue) && $0.parentPath.eq(p.rawValue) && $0.path.gte(start) }
-        .order { $0.path }.limit(limit == Int.max ? limit : limit + 1)
-      let cursor = try QueryValueCursor<FSHeadRow>(db: db, query: query.query)
-      var budget = budget
-      var entries: [Entry] = []
-      var next: String?
-      while let child = try cursor.next() {
-        let name = SpacePath.lastComponent(of: child.path)
-        guard entries.count < limit else {
-          next = name
-          break
-        }
-        try budget.consume(name)
-        entries.append(Substrate.entry(from: child))
-      }
-      return (entries, next, VersionToken(rev: Int(try Substrate.maxRevision(group, in: db))))
-    }
-  }
-
   func stat(_ path: String) async throws -> Entry {
-    let p = try Self.validated(path)
-    let group = group
-    return try await writer.read { db in
-      guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
-      return Substrate.entry(from: head)
-    }
+    try worker.cell(FilesCell.ID(group.rawValue)).entry(Self.validated(path))
   }
 
   static func validated(_ path: String, mutating: Bool = false) throws -> SpacePath {
@@ -272,21 +135,6 @@ struct LiveFS: SpaceVFS {
     guard let ifMatch else { return }
     guard let head, let expected = ifMatch.rev, Int(head.rev) == expected else {
       throw SpaceError.versionMismatch(path.rawValue)
-    }
-  }
-
-  static func remove(_ node: FSHeadRow, group: GroupID, rev: Int64, op: JournalOp, aux: String? = nil, in db: Database) throws {
-    if node.kind == "table" {
-      try Tables.retire(try SpacePath(validating: node.path), group: group, rev: rev, in: db)
-    }
-    try tombstone(path: node.path, group: group, rev: rev, op: op, aux: aux, in: db)
-  }
-
-  static func tombstone(path: String, group: GroupID, rev: Int64, op: JournalOp, aux: String? = nil, in db: Database) throws {
-    try Substrate.appendVersion(group: group, path: path, rev: rev, kind: nil, blobHash: nil, op: op, aux: aux, in: db)
-    try db.execute(sql: "DELETE FROM fs_heads WHERE grp = ? AND path = ?", arguments: [group.rawValue, path])
-    if let p = try? SpacePath(validating: path) {
-      try Induction.remove(path: p, group: group, in: db)
     }
   }
 

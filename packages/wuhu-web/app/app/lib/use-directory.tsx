@@ -1,4 +1,3 @@
-import { retryRead } from './retry-read.ts'
 import {
   createContext,
   type ReactNode,
@@ -15,13 +14,13 @@ import {
   sessionTitlesOf,
 } from '~/lib/directory'
 import type {
-  PersonaMintOutput,
   UserPayload,
   UserProfileInput,
   UsersOutput,
 } from '~/lib/contract.gen'
-import { enrolledDevice, recordPrincipal } from '~/sdk/auth'
+import { recordPrincipal } from '~/sdk/auth'
 import { api } from '~/sdk/http'
+import type { Viewer } from '~/sdk/viewer'
 import { cachedThenLive, kept } from './cached-then-live.ts'
 import { sharedGroup } from './groups.ts'
 import { useViewerCache } from './viewer-cache.ts'
@@ -31,8 +30,8 @@ export const profileChangedEvent = 'wuhu:profile-changed'
 interface DirectoryState {
   users: Directory
   sessions: SessionTitles
-  // Undefined while the enrolled device's persona is being resolved; null
-  // once it is known there is none, or the lookup failed.
+  // Undefined until the server says who this browser is; null once it says
+  // nobody.
   principal: string | null | undefined
   avatars: AvatarSource
 }
@@ -75,32 +74,20 @@ export function useGroupOrigin(group: string): string | null {
   return origins.get(group) ?? null
 }
 
-// The enrolled device knows its account, not its persona, and only a persona
-// is a principal here. Adoption is idempotent, so asking once and caching the
-// answer converges every device onto the identity the server already attributes
-// its writes to.
-export async function ownPrincipal(): Promise<string | null> {
-  const device = await enrolledDevice()
-  if (device == null) return null
-  if (device.principal != null) return device.principal
-  const minted = await api<PersonaMintOutput>('/v1/persona', { method: 'POST' })
-  await recordPrincipal(minted.persona).catch(() => undefined)
-  return minted.persona
-}
-
 export function DirectoryProvider({
+  viewer,
   children,
   contentOrigins = new Map(),
   sessions = null,
   sessionAvatarRevs = {},
 }: {
+  viewer: Viewer | null | undefined
   children: ReactNode
   contentOrigins?: ReadonlyMap<string, string>
   sessions?: readonly { id: string; group: string; title: string }[] | null
   sessionAvatarRevs?: Readonly<Record<string, number>>
 }) {
   const [users, setUsers] = useState<Directory>(emptyDirectory)
-  const [principal, setPrincipal] = useState<string | null | undefined>()
   const [rev, setRev] = useState(0)
   const cache = useViewerCache(sharedGroup)
 
@@ -122,15 +109,9 @@ export function DirectoryProvider({
       )
     }
     load()
-    const stopPrincipal = retryRead(
-      ownPrincipal,
-      (found) => setPrincipal(found),
-      () => setPrincipal((previous) => previous ?? null),
-    )
     globalThis.addEventListener(profileChangedEvent, load)
     return () => {
       cancelled = true
-      stopPrincipal()
       globalThis.removeEventListener(profileChangedEvent, load)
     }
   }, [cache])
@@ -140,7 +121,7 @@ export function DirectoryProvider({
       value={{
         users,
         sessions: sessionTitlesOf(sessions),
-        principal,
+        principal: viewer === undefined ? undefined : viewer?.principal ?? null,
         avatars: {
           origins: contentOrigins,
           rev,

@@ -698,7 +698,7 @@ extension Space {
 extension Space {
   func privateGroup(account: AccountID) async throws -> GroupID {
     let group = try await createGroup(alias: "fixture_" + account.rawValue, owner: account)
-    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
+    try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
     return group
   }
 
@@ -706,6 +706,6 @@ extension Space {
     let account = if let owner { owner } else { try await addAccount(kind: .human, name: nil).id }
     let claim = GroupClaim(alias: group.rawValue, name: group.rawValue, owner: account, created: "2026-01-01T00:00:00Z")
     try await worker.call(GroupCell.ID(group.rawValue)) { try $0.create(claim) }
-    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
+    try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
   }
 }

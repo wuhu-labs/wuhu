@@ -26,13 +26,19 @@ import Testing
     return space
   }
 
+  func reader(_ space: Space, in group: GroupID) throws -> Principal {
+    if group == .shared { return .shared(.publicReader) }
+    let grant = try #require(space.cell(of: group).grants().first { $0.subject == .account && $0.role == .admin })
+    return Principal(actor: .person(persona: grant.id, account: AccountID(rawValue: grant.id)), group: group)
+  }
+
   func rows(_ space: Space, _ group: GroupID, _ sql: String) async throws -> [[Cell]] {
-    try await space.query(sql, as: Principal(actor: .anonymous, group: group)).rows
+    try await space.query(sql, as: reader(space, in: group)).rows
   }
 
   func refusal(_ space: Space, _ group: GroupID, _ sql: String) async -> SpaceError? {
     do {
-      _ = try await space.query(sql, as: Principal(actor: .anonymous, group: group))
+      _ = try await space.query(sql, as: reader(space, in: group))
       return nil
     } catch {
       return error as? SpaceError
@@ -82,7 +88,7 @@ import Testing
     let space = try await seeded()
     let (left, arrived) = (Collector<MutationEvent>(), Collector<MutationEvent>())
     let fromShared = try await space.observeFS(glob: "**", group: .shared).mutations
-    let intoAlice = try await space.observeFS(glob: "**", group: Self.alice, as: Principal(actor: .anonymous, group: Self.alice)).mutations
+    let intoAlice = try await space.observeFS(glob: "**", group: Self.alice, as: reader(space, in: Self.alice)).mutations
     let consumers = [
       Task { for await event in fromShared { await left.append(event) } },
       Task { for await event in intoAlice { await arrived.append(event) } },
@@ -127,10 +133,10 @@ import Testing
     let space = try await seeded()
     let vault = GroupID(rawValue: "vault")
     try await space.seedGroup(vault)
-    try await space.setGrant(.group, Self.alice.rawValue, role: .write, in: vault, by: .anonymous, acting: vault)
+    try await space.setGrant(.group, Self.alice.rawValue, role: .write, in: vault, by: (try await space.ensureDevPerson()).actor, acting: vault)
     _ = try await space.fs(vault).write("/readme.md", bytes("# Vault\n"), ifMatch: nil)
     let stream = try space.observeRows(
-      "SELECT path FROM \"wuhu://vault.localspace/docs\"", throttle: .zero, as: Principal(actor: .anonymous, group: Self.alice),
+      "SELECT path FROM \"wuhu://vault.localspace/docs\"", throttle: .zero, as: reader(space, in: Self.alice),
     )
     let frames = Collector<Rows>()
     let ending = Task { () -> (any Error)? in
@@ -142,7 +148,7 @@ import Testing
       }
     }
     #expect(try await awaitItems(frames, atLeast: 1).map(\.rows) == [[[.text("/readme.md")]]])
-    try await space.removeGrant(.group, Self.alice.rawValue, in: vault, by: .anonymous, acting: vault)
+    try await space.removeGrant(.group, Self.alice.rawValue, in: vault, by: (try await space.ensureDevPerson()).actor, acting: vault)
     let error = await ending.value
     #expect(error == nil)
   }
@@ -163,7 +169,7 @@ import Testing
     #expect(try await !space.isAdmin(.session(task), of: .shared, acting: .shared))
     #expect(try await !space.isAdmin(.session(child), of: .shared, acting: .shared))
     #expect(try await !space.isAdmin(.session(agent), of: GroupID(rawValue: "elsewhere"), acting: .shared))
-    #expect(try await !space.isAdmin(.anonymous, of: .shared, acting: .shared))
+    #expect(try await !space.isAdmin(.publicReader, of: .shared, acting: .shared))
   }
 
   // The space cell's administered(by:) names exactly the groups isAdmin admits, for an
@@ -185,7 +191,7 @@ import Testing
       (.session(task), []),
       (.person(persona: morgansGroup.rawValue, account: morgan.id), everyGroup),
       (.person(persona: alicesGroup.rawValue, account: alice.id), [alicesGroup]),
-      (.anonymous, []),
+      (.publicReader, []),
     ]
     for (actor, expected) in cases {
       #expect(space.cell.administered(by: .shared(actor)) == expected, "\(actor)")

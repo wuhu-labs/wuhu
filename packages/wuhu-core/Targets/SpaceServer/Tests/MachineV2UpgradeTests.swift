@@ -85,12 +85,13 @@ private struct Fixture {
     try registerMachineReleases(space: space, version: boot ? version : SpaceServer.unstampedVersion, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: host.clock))
     space.worker.start()
     if warm, boot, MachineV2ReleaseVersion.isValid(version) { try await releaseSettled(space, version) }
-    let enrolling = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, version: version))
+    let devPerson = try await space.ensureDevPerson()
+    let enrolling = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson, version: version))
     let key = Curve25519.Signing.PrivateKey()
     self.key = key
     machine = try await Self.enroll(space, enrolling, "laptop", key)
     other = try await Self.enroll(space, enrolling, "desktop", .init())
-    handler = dev ? enrolling : SpaceServer.configuredHandler(space: space, hub: hub, dev: false, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, version: version))
+    handler = dev ? enrolling : SpaceServer.configuredHandler(space: space, hub: hub, devPerson: nil, version: version, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: nil, version: version))
   }
 
   static func enroll(_ space: Space, _ handler: UpgradingHandler, _ name: String, _ key: Curve25519.Signing.PrivateKey) async throws -> MachineRecord {

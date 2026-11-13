@@ -144,7 +144,7 @@ import Testing
       await #expect(throws: SessionStoreError.unknownConversation(id.rawValue)) {
         try await space.sessions.post(.conversation(id), messageID: MessageID("before"), sender: person(agent.rawValue), senderSession: agent, content: .init(text: "no access"))
       }
-      try await space.setGrant(.group, bob.rawValue, role: .write, in: alice, by: .anonymous, acting: alice)
+      try await space.setGrant(.group, bob.rawValue, role: .write, in: alice, by: (try await space.ensureDevPerson()).actor, acting: alice)
       #expect(try await space.sessions.reads(space.sessions.conversation(id), reader: agent.rawValue, group: bob))
       #expect(try await !space.sessions.reads(space.sessions.conversation(id), reader: "bob", group: bob))
       let principal = Principal(actor: .session(agent), group: bob)
@@ -170,7 +170,7 @@ import Testing
     try await withSessionDeps {
       let space = try makeSpace()
       let foreign = try await plainGroup(space, "foreign")
-      try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
+      try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: (try await space.ensureDevPerson()).actor, acting: foreign)
       let agent = try await space.sessions.createSession(group: .shared, title: "Reader", kind: .agent, createdBy: "alice", model: .test)
       for group in [GroupID.shared, foreign] {
         try await space.registerPeople(["alice", "bob"])
@@ -217,20 +217,20 @@ import Testing
       let newer = try await store.createConversation(members: ["alice"], title: "Newer", in: .shared)
       let foreign = try await plainGroup(space, "foreign")
       let remote = try await store.createConversation(members: ["alice"], in: foreign)
-      try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
+      try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: (try await space.ensureDevPerson()).actor, acting: foreign)
       #expect(try await !store.reads(store.conversation(older), reader: nil, group: .shared))
       for operation in [0, 1, 2] {
         await #expect(throws: SessionStoreError.unknownConversation(older.rawValue)) {
           switch operation {
-          case 0: try await store.addChannelMembers(older, people: ["bob"], as: .shared(.anonymous))
-          case 1: try await store.removeChannelMembers(older, people: ["alice"], as: .shared(.anonymous))
-          default: try await store.renameChannel(older, title: "No", as: .shared(.anonymous))
+          case 0: try await store.addChannelMembers(older, people: ["bob"], as: .shared(.publicReader))
+          case 1: try await store.removeChannelMembers(older, people: ["alice"], as: .shared(.publicReader))
+          default: try await store.renameChannel(older, title: "No", as: .shared(.publicReader))
           }
         }
       }
       #expect(try await !store.reads(store.conversation(remote), reader: nil, group: .shared))
-      #expect(try await space.query("SELECT title FROM conversations WHERE id = '\(older.rawValue)'", as: .shared(.anonymous)).rows.isEmpty)
-      #expect(try await space.query("SELECT id FROM \"wuhu://*.localspace/conversations\" WHERE id = '\(remote.rawValue)'", as: .shared(.anonymous)).rows.isEmpty)
+      #expect(try await space.query("SELECT title FROM conversations WHERE id = '\(older.rawValue)'", as: .shared(.publicReader)).rows.isEmpty)
+      #expect(try await space.query("SELECT id FROM \"wuhu://*.localspace/conversations\" WHERE id = '\(remote.rawValue)'", as: .shared(.publicReader)).rows.isEmpty)
       _ = try await store.post(.conversation(newer), messageID: MessageID("newer"), sender: person("alice"), content: .init(text: "newer"))
       _ = try await store.post(.conversation(older), messageID: MessageID("older"), sender: person("alice"), content: .init(text: "older"))
       #expect(try await store.conversations(reader: nil, group: .shared).isEmpty)

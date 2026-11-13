@@ -55,7 +55,7 @@ extension ConversationCell {
       allowed = group.role(of: principal.actor, acting: principal.group).map { $0 >= .write } ?? false
     case let .person(persona, _):
       allowed = record.members.contains { $0.member == persona && $0.kind == .user }
-    case .anonymous:
+    case .publicReader:
       allowed = false
     }
     guard allowed else { throw SessionStoreError.unknownConversation(id.key) }

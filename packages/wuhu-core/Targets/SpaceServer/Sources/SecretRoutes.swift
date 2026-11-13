@@ -9,12 +9,6 @@ import struct SpaceContract.SecretSetInput
 import struct SpaceContract.SecretsOutput
 import SpaceCore
 
-// Secrets are the acting group's, with no fallback; `?group=` names another
-// group the acting one reads. Listing takes acting in the group; a value goes
-// only to a session's worker (its script's fetch; the gate keeps an exec's
-// token out) or the --dev seat; setting one takes an admin of the group the
-// secret lives in, and removing one, which can't be undone, a human admin of
-// it. The --dev seat is unrestricted.
 func addSecretRoutes(
   _ router: inout Router,
   space: Space,
@@ -42,7 +36,7 @@ func addSecretRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a secret body {\"value\": ...}: \(error)")
     }
     return try await secretVerdict(secrets, space, request, principalOf) { store, principal, group in
-      let admitted = if principal.actor == .anonymous { true } else { try await space.isAdmin(principal.actor, of: group, acting: principal.group) }
+      let admitted = try await space.isAdmin(principal.actor, of: group, acting: principal.group)
       guard admitted else {
         var message = "setting a secret needs an admin of group \(group.rawValue)"
         if case let .session(session) = principal.actor { message += await notAdmin(session, of: group, space: space) }
@@ -56,9 +50,8 @@ func addSecretRoutes(
     try await secretVerdict(secrets, space, request, principalOf) { store, principal, group in
       let name = parameters["name"] ?? ""
       let admitted: Bool = switch principal.actor {
-      case .anonymous: true
       case let .person(_, account): try await space.isHumanAdmin(account, of: group)
-      case .session, .observer, .page: false
+      case .session, .observer, .page, .publicReader: false
       }
       guard admitted else {
         return errorResponse(
@@ -82,10 +75,7 @@ func notAdmin(_ session: SessionID, of group: GroupID, space: Space) async -> St
   return ""
 }
 
-// A group's secrets open to its owner group alone, or — with the switch — to
-// every group that writes it. The --dev seat is unrestricted.
 private func admitsSecrets(of group: GroupID, principal: Principal, space: Space) async throws -> Bool {
-  if case .anonymous = principal.actor { return true }
   guard let record = try await space.group(group) else { return false }
   switch record.secretsScope {
   case .owner:

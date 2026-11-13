@@ -17,7 +17,7 @@ import Testing
       let tree = try await SessionGateTests().tree(dev: false)
       let identity = try await testIdentity()
       let harness = tree.harness
-      let handler = SpaceServer.configuredHandler(space: harness.space, hub: harness.hub, sessions: harness.runtime, origin: "https://space.test", dev: false, execTokens: tree.tokens, identityController: identity.controller)
+      let handler = SpaceServer.configuredHandler(space: harness.space, hub: harness.hub, sessions: harness.runtime, origin: "https://space.test", devPerson: nil, execTokens: tree.tokens, identityController: identity.controller)
       let api = ServeTesting.client(upgrading: handler)
       let url = URL(string: "https://space.test/v1/identity")!
       #expect(try await api(Request(url: url)).status == .unauthorized)

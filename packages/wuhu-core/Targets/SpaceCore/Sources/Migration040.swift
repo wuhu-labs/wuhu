@@ -1,7 +1,5 @@
-import GRDB
-
 enum Migration040 {
-  static func apply(_ db: Database) throws {
+  static func apply(_ db: MigrationDB) throws {
     try db.execute(sql: """
     ALTER TABLE wuwei_job ADD COLUMN creator TEXT;
     ALTER TABLE wuwei_mail ADD COLUMN lifecycle TEXT;

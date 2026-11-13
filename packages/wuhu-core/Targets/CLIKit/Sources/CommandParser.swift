@@ -1396,7 +1396,8 @@ extension Command {
     opens content reads of the shared group (shared.<host>) to anyone, a
     public board; group hosts still need a read session, and writes stay
     walled.
-    --dev drops both walls for local iteration.
+    --dev admits unsigned requests as a real admin person with handle owner
+    for local iteration. Signed requests retain their own identity and authority.
     --web-port and --web-origin are deprecated and ignored: serve prints a
     warning for each; remove them.
     \(exitCodes)

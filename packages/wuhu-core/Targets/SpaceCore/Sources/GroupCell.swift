@@ -1,18 +1,22 @@
+import struct MachineContract.MachineID
 import struct SpaceContract.GroupID
 import SpaceFS
 import StructuredQueries
+import StructuredQueriesSQLite
 import Wuwei
 import WuweiQueries
 
-/// A group, keyed by its id: its `groups` row and its `group_roles` rows, which only its own steps write.
+/// A group, keyed by its id: its `groups` row and its `group_roles` rows, which only its own steps write, and its inference log.
 @Cell
 public struct GroupCell {
+  /// The log is the payer group's: `inferences.grp` is the group that pays, which only its steps write.
+  public static let owned = ["inferences": "grp"]
+
   /// What `actor` may do here acting out of `acting`; nil for no access.
   public func role(of actor: Actor, acting: GroupID) -> GroupRole? {
     rows.role(of: actor, in: GroupID(rawValue: id.key), acting: acting, rows: GroupAccess.ActorRows(db))
   }
 
-  /// Whether `principal` reads the group: the rule `SpaceCell.readable` filters every group by, which differs from `role` for the anonymous --dev seat and for a page, read with its viewer's rights.
   public func reads(_ principal: Principal) -> Bool {
     rows.reads(rows.reader(principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(db)), id.key)
   }
@@ -27,9 +31,7 @@ public struct GroupCell {
     (rows.role(from: group.rawValue, in: id.key) ?? .read) >= .write
   }
 
-  /// Writing a group's file takes a write role in it; the --dev seat is unrestricted.
   public func refusesWrite(_ path: SpacePath, by actor: Actor, acting: GroupID) throws {
-    if case .anonymous = actor { return }
     guard let held = role(of: actor, acting: acting) else { throw SpaceError.notFound(path.rawValue) }
     guard held >= .write else { throw SpaceError.forbiddenWrite(path: path.rawValue, group: id.key) }
   }
@@ -53,6 +55,34 @@ public struct GroupCell {
         accountID: claim.owner.rawValue, sourceGroup: nil, grp: id.key, role: GroupRole.admin.rawValue, createdAt: claim.created,
       )
     })
+  }
+
+  /// One row per attempt, in the payer's own log: mail is at-least-once, so a second report of the same id writes nothing.
+  public mutating func inferred(_ inference: InferenceRecord) throws {
+    switch inference.payer {
+    case let .session(session):
+      try insertInference(inference, session: session.rawValue, firing: nil)
+    case let .observer(group, firing):
+      precondition(group.rawValue == id.key)
+      try insertInference(inference, session: nil, firing: firing)
+    }
+  }
+
+  private mutating func insertInference(_ inference: InferenceRecord, session: String?, firing: String?) throws {
+    try db.execute(InferenceRow.insert {
+      InferenceRow(
+        id: inference.id, session: session, at: SQLiteDateFormat.string(from: inference.at), provider: inference.provider,
+        model: inference.model, servedModel: inference.servedModel, effort: inference.effort, input: inference.input,
+        cacheRead: inference.cacheRead, cacheWrite: inference.cacheWrite, output: inference.output, reasoning: inference.reasoning,
+        outcome: inference.outcome, error: inference.error, durationMs: inference.durationMs, ttftMs: inference.ttftMs,
+        grp: id.key, firing: firing,
+      )
+    } onConflict: { $0.id })
+  }
+
+  /// The account's removal reaching this group: its entries go, its source-group entries stay.
+  mutating func dropGrants(of account: AccountID) throws {
+    try db.execute(GroupRoleRow.where { $0.grp.eq(id.key) && $0.accountID.eq(account.rawValue) }.delete())
   }
 
   /// Nil for a group that was removed or never made.
@@ -103,6 +133,11 @@ public struct SpaceCell {
     rows.administered(by: principal.actor, rows: GroupAccess.ActorRows(db))
   }
 
+  /// Spreads an account's removal over every group it lists: each drops the account's rows from its own list.
+  mutating func dropGrants(of account: AccountID) {
+    for group in db.rows(GroupRow.all) { ctx.send(GroupCell.ID(group.id)).dropGrants(of: account) }
+  }
+
   /// The last reset seen of each fixed plan window, kept across restarts.
   public mutating func saveWindowResets(_ resets: [UsageWindowKey: Double]) throws {
     for (key, resetsAt) in resets {
@@ -114,6 +149,11 @@ public struct SpaceCell {
         $0.resetsAt = $1.resetsAt
       })
     }
+  }
+
+  /// The name and every spelling it ever had, which no machine holds again.
+  public mutating func freeMachine(_ id: MachineID) throws {
+    try db.execute(AliasRow.where { $0.kind.eq(AliasKind.machine) && $0.target.eq(id.rawValue) }.delete())
   }
 
   /// The person a spelling names: by alias, persona name or profile; nil for nobody.

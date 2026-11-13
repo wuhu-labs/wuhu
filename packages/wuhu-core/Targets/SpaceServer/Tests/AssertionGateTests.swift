@@ -15,7 +15,7 @@ import Testing
   let key = Curve25519.Signing.PrivateKey()
 
   init() async throws {
-    harness = try Harness(dev: false)
+    harness = try await Harness(dev: false)
     identity = try await harness.space.identity().rawValue
   }
 
@@ -146,7 +146,7 @@ import Testing
   @Test func anAssertionForSpaceAIsRejectedBySpaceB() async throws {
     // Even with the very same key enrolled on both sides, the space claim
     // alone must pin the assertion to the space it was minted for.
-    let other = try Harness(dev: false)
+    let other = try await Harness(dev: false)
     let otherIdentity = try await other.space.identity().rawValue
     #expect(identity != otherIdentity)
     try await enroll(key.pubkeyLabel, in: other.space)

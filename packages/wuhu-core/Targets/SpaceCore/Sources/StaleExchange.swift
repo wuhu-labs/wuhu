@@ -3,35 +3,32 @@
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
 import StructuredQueries
 import StructuredQueriesSQLite
+import Wuwei
+import WuweiQueries
 
-extension Conversations {
+extension Sessions {
   /// The session's last message in `conversation` and the one it answered (its
   /// reply target, else the message before it), oldest first. Empty when the
   /// session never posted there, posted there at or after the generation
   /// began, or the generation already shows a message from there: that one
   /// carried the exchange, or the compaction kept it.
-  static func staleExchange(
+  public static func staleExchange(
     _ conversation: ConversationID, session key: String, generation: Int64, startedAt start: Date, in db: Database,
   ) throws -> [MessageRecord] {
-    guard let last = try fetch(
+    guard let last = Conversations.fetch(
       db, where: "m.conversation_id = ? AND m.sender_session_id = ?",
-      arguments: [conversation.rawValue, key], order: "m.n DESC", limit: 1,
+      arguments: [.text(conversation.rawValue), .text(key)], order: "m.n DESC", limit: 1,
     ).first, last.createdAt < start else { return [] }
-    let shown = try Bool.fetchOne(
-      db,
-      sql: """
-      SELECT EXISTS (SELECT 1 FROM session_lines l JOIN messages m ON l.key = 'message:' || m.id
-        WHERE l.session_id = ? AND l.generation = ? AND m.conversation_id = ?)
-      """,
-      arguments: [key, generation, conversation.rawValue],
-    ) ?? false
+    let shown = !db.rows(SessionLineRow
+      .join(StaleMessageRow.all) { $0.key.eq("message:" + $1.id) }
+      .where { $0.sessionID.eq(key) && $0.generation.eq(generation) && $1.conversationID.eq(conversation.rawValue) }
+      .limit(1).select { line, _ in line.position }).isEmpty
     guard !shown else { return [] }
-    let answered = try last.replyTarget.flatMap { try message(id: $0.rawValue, in: db) }
-      ?? fetch(db, where: "m.conversation_id = ? AND m.n < ?", arguments: [conversation.rawValue, last.n], order: "m.n DESC", limit: 1).first
+    let answered = last.replyTarget.flatMap { Conversations.message(id: $0.rawValue, in: db) }
+      ?? Conversations.fetch(db, where: "m.conversation_id = ? AND m.n < ?", arguments: [.text(conversation.rawValue), .integer(last.n)], order: "m.n DESC", limit: 1).first
     return (answered.map { [$0] } ?? []) + [last]
   }
 }
@@ -40,15 +37,21 @@ extension Sessions {
   /// When the session's current generation began: its head's timestamp. A
   /// creation without a head began with the session, so nothing it posted
   /// predates it.
-  static func generationStart(_ key: String, generation: Int64, in db: Database) throws -> Date? {
+  public static func generationStart(_ key: String, generation: Int64, in db: Database) throws -> Date? {
     try lineText(key, generation: generation, lineKey: LineKey.head, in: db)?.at
   }
 
   /// The sender as the recipient is shown it, named by today's handle and device name.
-  static func attributed(_ sender: Sender, in db: Database) throws -> Sender {
+  public static func attributed(_ sender: Sender, in db: Database) throws -> Sender {
     var sender = sender
-    sender.handle = try AliasRow.where { $0.kind.eq(AliasKind.person) && $0.target.eq(sender.id) && $0.current }.select(\.name).fetchOne(db)
-    if let device = sender.device { sender.deviceName = try DeviceRow.find(device).fetchOne(db)?.name }
+    sender.handle = db.rows(AliasRow.where { $0.kind.eq(AliasKind.person) && $0.target.eq(sender.id) && $0.current }.select(\.name)).first
+    if let device = sender.device { sender.deviceName = db.rows(DeviceRow.find(device)).first?.name }
     return sender
   }
+}
+
+@Table("messages")
+private struct StaleMessageRow {
+  let id: String
+  @Column("conversation_id") let conversationID: String
 }

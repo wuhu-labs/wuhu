@@ -8,7 +8,6 @@ import DeterministicDependencies
   import Foundation
 #endif
 import struct FileSearch.SearchError
-import GRDB
 import JSONValue
 import MachineContract
 import OperationProtocol
@@ -64,15 +63,15 @@ func withFileBox<R: Sendable>(
 }
 
 private func waitForFileConsumption(_ operation: UUID, channel: String, through: Int64, in space: Space) async throws {
-  let writer = await space.writer
-  let changes = ValueObservation.tracking { db in
-    try Int64.fetchOne(db, sql: "SELECT json_extract(offsets, ?) FROM machine_file_operations WHERE id = ?", arguments: ["$." + channel, operation.uuidString.lowercased()])
-  }.values(in: writer, bufferingPolicy: .bufferingNewest(1))
-  for try await value in changes {
-    let offset = try #require(value, "File operation disappeared before its consumption committed")
-    try #require(offset == 0 || offset == through, "Unexpected file consumption offset")
-    if offset == through { return }
+  let watch = await watchSpaceTables(["machine_file_operations"], in: space)
+  defer { watch.cancel() }
+  for await _ in watch.changes {
+    let row = try #require(testFileOperations(in: space).first { $0.row.id == operation.uuidString.lowercased() }?.row, "File operation disappeared before its consumption committed")
+    let offset = try #require(row.offsets[channel])
+    try #require(offset == 0 || offset == UInt64(through), "Unexpected file consumption offset")
+    if offset == UInt64(through) { return }
   }
+  try Task.checkCancellation()
   Issue.record("File consumption observation ended before the wanted offset committed")
   throw CancellationError()
 }

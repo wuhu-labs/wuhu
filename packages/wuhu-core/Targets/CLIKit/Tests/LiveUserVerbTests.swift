@@ -102,7 +102,8 @@ import Testing
         #expect(await io.stderrText().contains("no signed-in identity"))
       }
       #expect(log.recorded.isEmpty)
-      #expect(try await rig.space.accounts().isEmpty)
+      let person = try await rig.space.ensureDevPerson()
+      #expect(try await rig.space.accounts().map(\.id) == [person.account])
     }
   }
 
@@ -137,7 +138,7 @@ import Testing
         #expect(await io.stdoutText() == "")
         #expect(!requests.recorded.isEmpty)
       }
-      #expect(try await rig.space.accounts().count == 2)
+      #expect(try await rig.space.accounts().count == 3)
       #expect(try await rig.space.account(target.id)?.isAdmin == false)
     }
   }

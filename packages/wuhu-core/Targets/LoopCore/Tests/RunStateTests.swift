@@ -19,7 +19,7 @@ import WuhuAI
     let rows = try await space.query(
       "SELECT work, run_state, run_progress_at, last_activity_at FROM sessions WHERE id = ?",
       arguments: [.string(id.rawValue)],
-      as: .shared(.anonymous),
+      as: .shared(.publicReader),
     )
     func text(_ cell: Cell) -> String? {
       if case let .text(value) = cell { return value }

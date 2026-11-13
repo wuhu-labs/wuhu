@@ -107,10 +107,9 @@ enum GroupAccess {
     }
 
     /// What `actor` may do in `group` acting out of `acting`; nil for no access.
-    /// The --dev seat is the caller's to admit, and gets no role here.
     func role<Failure>(of actor: Actor, in group: GroupID, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> GroupRole? {
       switch actor {
-      case .anonymous:
+      case .publicReader:
         return nil
       case let .observer(observer):
         // An observer writes only its own group, whatever that group may write elsewhere.
@@ -141,8 +140,8 @@ enum GroupAccess {
 
     func reader<Failure>(_ actor: Actor, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> Reader {
       switch actor {
-      case .anonymous:
-        return .reach(of: acting.rawValue)
+      case .publicReader:
+        return .reach(of: GroupID.shared.rawValue)
       case let .observer(observer):
         return .reach(of: observer.group.rawValue)
       case let .page(page):
@@ -176,8 +175,8 @@ enum GroupAccess {
     func writable<Failure>(by actor: Actor, acting: GroupID, rows: ActorRows<Failure>) throws(Failure) -> Set<GroupID> {
       func writes(_ role: GroupRole?) -> Bool { (role ?? .read) >= .write }
       switch actor {
-      case .anonymous:
-        return reach(of: acting)
+      case .publicReader:
+        return []
       case let .observer(observer):
         return writes(role(from: observer.group.rawValue, in: observer.group.rawValue)) ? [observer.group] : []
       case let .page(page):
@@ -193,7 +192,7 @@ enum GroupAccess {
 
     func administered<Failure>(by actor: Actor, rows: ActorRows<Failure>) throws(Failure) -> Set<GroupID> {
       switch actor {
-      case .anonymous, .observer, .page:
+      case .publicReader, .observer, .page:
         return []
       case let .session(id):
         return try rows.session(id).map(administered(by:)) ?? []

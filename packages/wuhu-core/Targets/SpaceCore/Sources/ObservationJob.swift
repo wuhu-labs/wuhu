@@ -1,4 +1,3 @@
-import GRDB
 import JSONValue
 import struct SpaceContract.GroupID
 import SpaceFS
@@ -43,7 +42,6 @@ public struct ObservationsUnavailable: Error, Equatable, Sendable {
 
 /// What the observation job needs of the space, provided to its worker: the database its watches read, the read pool their statements run on, the clock their throttles wait on, and the region observations that wake them.
 struct ObservationSources: Sendable {
-  let writer: any DatabaseWriter
   let reads: ReadPool
   let clock: any Clock<Duration>
   let regions: RegionSource
@@ -248,8 +246,9 @@ struct ObservationJob {
     var context = ctx
     let state = state
     let sources = ctx.dependency(ObservationSources.self)
+    let files = ctx.dependency(FileWatchReads.self)
     let effects = context.effects
-    async let _: Void = effects.effect { await Self.watchAll(state, sources) }
+    async let _: Void = effects.effect { await Self.watchAll(state, sources, files) }
     while true {
       state.wakingResults()
       // The wait is the effect's: it holds the quiesce gate and refuses a dead incarnation before the lane goes on to send.
@@ -301,7 +300,7 @@ struct ObservationJob {
   }
 
   /// The long effect of one incarnation: every registered watch runs as its own child, from the moment it registers to the moment it goes.
-  private static func watchAll(_ state: State, _ sources: ObservationSources) async {
+  private static func watchAll(_ state: State, _ sources: ObservationSources, _ files: FileWatchReads) async {
     // Opened before the watch set is read, so an attach that lands while it looks is not missed.
     state.wakingWatches()
     await withDiscardingTaskGroup { group in
@@ -311,7 +310,7 @@ struct ObservationJob {
         for id in watching.subtracting(running) {
           guard let live = state.listening(id) else { continue }
           running.insert(id)
-          group.addTask { await Self.run(id, live, state, sources) }
+          group.addTask { await Self.run(id, live, state, sources, files) }
         }
         running.formIntersection(watching)
         guard await state.changed() else { break }
@@ -321,7 +320,7 @@ struct ObservationJob {
   }
 
   /// One watch: its own body beside the stream that ends it where it stands, so a `closed` need not wait out a throttle.
-  private static func run(_ id: State.Registration, _ live: State.Live, _ state: State, _ sources: ObservationSources) async {
+  private static func run(_ id: State.Registration, _ live: State.Live, _ state: State, _ sources: ObservationSources, _ files: FileWatchReads) async {
     enum Ending { case retired, ended }
     await withTaskGroup(of: Ending.self) { group in
       group.addTask {
@@ -329,9 +328,9 @@ struct ObservationJob {
         case let .rows(opening): try? await rows(opening, sources, live.wakes, live.wake) { state.publish(id, .rows($0)) }
         case let .slot(watch):
           do {
-            try await rows(.init(sql: watch.statement, parameters: [], throttle: .zero, viewer: nil, principal: .shared(.anonymous)), sources, live.wakes, live.wake, principal: watch.principal) { state.publish(id, .rows($0)) }
+            try await rows(.init(sql: watch.statement, parameters: [], throttle: .zero, viewer: nil, principal: .shared(.publicReader)), sources, live.wakes, live.wake, principal: watch.principal) { state.publish(id, .rows($0)) }
           } catch is CancellationError {} catch { state.publish(id, .failed(String(describing: error))) }
-        case let .files(opening): try? await files(opening, sources, live.wakes, live.wake) { state.publish(id, .commit($0)) }
+        case let .files(opening): try? await Self.files(opening, sources, files, live.wakes, live.wake) { state.publish(id, .commit($0)) }
         }
         return .ended
       }
@@ -404,6 +403,7 @@ struct ObservationJob {
   static func files(
     _ opening: FileStream.Opening,
     _ sources: ObservationSources,
+    _ reader: FileWatchReads,
     _ wakes: AsyncStream<Void>,
     _ wake: AsyncStream<Void>.Continuation,
     publish: @Sendable (FSCommit) -> Void,
@@ -411,25 +411,20 @@ struct ObservationJob {
     var cursor = opening.after
     let observation = sources.regions(["fs_versions", "groups", "group_roles"], wake)
     defer { observation() }
-    // The access and the journal in one database read: a revoke cannot slip between them and let a commit through.
-    func catchUp() async throws {
-      let from = cursor
-      let (readable, commits) = try await sources.writer.read { db -> (Bool, [FSCommit]) in
-        let readable = try GroupAccess.readable(by: opening.principal.actor, acting: opening.principal.group, in: db)
-        guard readable.contains(opening.group) else { return (false, []) }
-        return (true, try journalCommits(after: from, group: opening.group, in: db))
-      }
-      guard readable else { throw WatchEnded() }
-      guard let last = commits.last?.rev else { return }
-      cursor = last
-      for commit in commits {
-        let events = commit.events.filter { matches(opening.glob, $0) }
-        if !events.isEmpty { publish(FSCommit(group: commit.group, rev: commit.rev, events: events)) }
+    func catchUp() throws {
+      while true {
+        let page = try reader.page(opening, after: cursor)
+        if let last = page.cursor { cursor = last }
+        for commit in page.commits {
+          let events = commit.events.filter { matches(opening.glob, $0) }
+          if !events.isEmpty { publish(FSCommit(group: commit.group, rev: commit.rev, events: events)) }
+        }
+        if !page.full { return }
       }
     }
-    try await catchUp()
+    try catchUp()
     for await _ in wakes {
-      try await catchUp()
+      try catchUp()
     }
   }
 
@@ -441,59 +436,6 @@ struct ObservationJob {
 
 /// The watch ends: a refused statement, a failed read, or a group the principal no longer reads.
 private struct WatchEnded: Error {}
-
-/// The journal after `after`, one commit per revision in order, a move folded into one event that carries both ends.
-private func journalCommits(after: Int, group: GroupID, in db: GRDB.Database) throws -> [FSCommit] {
-  struct JournalRow {
-    let path: String
-    let rev: Int
-    let kind: String?
-    let op: JournalOp
-    let aux: String?
-  }
-  let rows = try Row.fetchAll(
-    db,
-    sql: "SELECT path, rev, kind, op, aux FROM fs_versions WHERE grp = ? AND rev > ? ORDER BY rev, path",
-    arguments: [group.rawValue, after],
-  ).map { row in
-    JournalRow(
-      path: row["path"], rev: Int(row["rev"] as Int64), kind: row["kind"],
-      op: JournalOp(rawValue: row["op"])!, aux: row["aux"],
-    )
-  }
-  var commits: [FSCommit] = []
-  var index = rows.startIndex
-  while index < rows.endIndex {
-    var events: [MutationEvent] = []
-    let rev = rows[index].rev
-    let batch = rows[index...].prefix { $0.rev == rev }
-    index += batch.count
-    // A move journals two rows per node: a tombstone at the source and a write at the destination. The move event carries both ends, so the destination write row is suppressed.
-    let moveDestinations = Set(batch.compactMap { $0.op == .move ? $0.aux : nil })
-    let kinds = batch.reduce(into: [String: String]()) { acc, row in
-      if let kind = row.kind { acc[row.path] = kind }
-    }
-    for row in batch {
-      switch row.op {
-      case .move:
-        events.append(MutationEvent(
-          group: group, path: row.aux!, from: row.path, rev: rev, kind: .move,
-          entry: Substrate.entryKind(kinds[row.aux!]!),
-        ))
-      case .write, .delete, .checkout:
-        if let kind = row.kind {
-          if !moveDestinations.contains(row.path) {
-            events.append(MutationEvent(group: group, path: row.path, rev: rev, kind: .write, entry: Substrate.entryKind(kind)))
-          }
-        } else {
-          events.append(MutationEvent(group: group, path: row.path, rev: rev, kind: .delete, entry: nil))
-        }
-      }
-    }
-    commits.append(FSCommit(group: group, rev: rev, events: events))
-  }
-  return commits
-}
 
 @Table("observation_slots")
 private struct ObservationRow: Owned {
