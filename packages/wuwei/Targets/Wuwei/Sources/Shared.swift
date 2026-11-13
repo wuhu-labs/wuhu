@@ -81,6 +81,8 @@ public final class FileDatabase: SharedDatabase {
     "CREATE TABLE IF NOT EXISTS wuwei_mail (id INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT NOT NULL, payload BLOB NOT NULL)",
     "CREATE INDEX IF NOT EXISTS wuwei_mail_recipient ON wuwei_mail (recipient)",
     "CREATE TABLE IF NOT EXISTS wuwei_job (address TEXT PRIMARY KEY, params BLOB NOT NULL, phase TEXT NOT NULL DEFAULT 'new', wake_at INTEGER)",
+    "CREATE INDEX IF NOT EXISTS wuwei_job_pending ON wuwei_job (address, wake_at) WHERE phase != 'done'",
+    "CREATE INDEX IF NOT EXISTS wuwei_addressable_wake ON wuwei_addressable (wake_at) WHERE wake_at IS NOT NULL",
     "CREATE TABLE IF NOT EXISTS wuwei_schema (kind TEXT PRIMARY KEY, applied INTEGER NOT NULL)",
   ]
 
