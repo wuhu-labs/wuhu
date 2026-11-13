@@ -384,13 +384,13 @@
     {
       "id": "group-instructions",
       "title": "Group-local instructions and hidden settings",
-      "prompt": "This is a text-only smoke; do not run tools or write files. You are in group studio. Shared has an AGENTS.md and a deploy skill. Are they injected into your prompt? Where do you read models.json and who may edit it? Can a personal group grant its person admin over studio? Answer in at most three lines.",
+      "prompt": "This is a text-only smoke; do not run tools or write files. You are in group studio. Shared has an AGENTS.md and a deploy skill. Are they injected into your prompt? Where do you read models.json and who may edit it? Does administering one group grant its person admin over studio? Answer in at most three lines.",
       "required": [
         "settings_path",
         "no_tools",
         "no_files_written"
       ],
-      "judge": "PASS only if shared instructions and skills are not injected into studio; models.json is read from wuhu://settings.localspace/models.json and only a human space admin edits it; personal groups confer no admin over studio. No tools or files.",
+      "judge": "PASS only if shared instructions and skills are not injected into studio; models.json is read from wuhu://settings.localspace/models.json and only a human space admin edits it; administering another group confers no admin over studio. No tools or files.",
       "issue": 399
     },
     {
@@ -498,10 +498,10 @@
       "prompt": "There's a tool at {script} on {machine}. I'd like to run it myself later from my own laptop's terminal, without you. Will that work, whom will it act as, and which group are any model calls it makes attributed to? Don't run it and don't change anything.",
       "required": [
         "did_not_run",
-        "names_personal_group",
+        "names_acting_group",
         "no_files_written"
       ],
-      "judge": "PASS only if the reply says yes: from a terminal signed in with wuhu login, `wuhu script {script}` (or running the file directly, given its #!/usr/bin/env -S wuhu script line) runs it on the server as that person, in the group they act in (--group, WUHU_GROUP or the wallet's group), with its model calls attributed to the person's personal group; it may add that the script gets what an observer's handler gets, not a session's verbs. The subject may read the file or wuhu script --help but must not run the script. Fail a claim that a terminal caller is refused, that it acts as the subject session, or that its model calls are attributed to the subject's group or session, and fail running the script or writing files."
+      "judge": "PASS only if the reply says yes: from a terminal signed in with wuhu login, `wuhu script {script}` (or running the file directly, given its #!/usr/bin/env -S wuhu script line) runs it on the server as that person, in the group they act in (--group, WUHU_GROUP or the wallet's group), with its model calls attributed to the person's acting group; it may add that the script gets what an observer's handler gets, not a session's verbs. The subject may read the file or wuhu script --help but must not run the script. Fail a claim that a terminal caller is refused, that it acts as the subject session, or that its model calls are attributed to the subject's session rather than the terminal caller's acting group, and fail running the script or writing files."
     },
     {
       "id": "agent-page",

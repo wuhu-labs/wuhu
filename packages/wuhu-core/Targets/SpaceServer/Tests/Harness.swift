@@ -129,7 +129,7 @@ extension Space {
     if cell.persona(named: id) != nil { return }
     let account = try await addAccount(kind: .human, name: nil)
     let key = try await addKey(testPubkey(id), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
-    let allocation = cell.reservedPersona(account.id)!
+    let allocation = try await allocate(.persona, createdBy: key.pubkey)
     let now = fixedDate
     _ = try await worker.call(PersonCell.ID(account.id.rawValue)) { try $0.adoptPersona(key: key, allocation: allocation.id, name: id, at: now) }
   }
@@ -139,5 +139,20 @@ extension Space {
       try await registerPerson(id)
       _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil)
     }
+  }
+}
+
+extension Space {
+  func privateGroup(account: AccountID) async throws -> GroupID {
+    let group = try await createGroup(alias: "fixture_" + account.rawValue, owner: account)
+    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
+    return group
+  }
+
+  func seedGroup(_ group: GroupID, owner: AccountID? = nil) async throws {
+    let account = if let owner { owner } else { try await addAccount(kind: .human, name: nil).id }
+    let claim = GroupClaim(alias: group.rawValue, name: group.rawValue, owner: account, created: "2026-01-01T00:00:00Z")
+    try await worker.call(GroupCell.ID(group.rawValue)) { try $0.create(claim) }
+    try await setVisibility(.private, of: group, by: .anonymous, acting: group)
   }
 }

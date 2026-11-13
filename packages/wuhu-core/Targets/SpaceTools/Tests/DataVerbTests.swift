@@ -2,7 +2,7 @@ import DeterministicDependencies
 import JSONValue
 import OrderedCollections
 import SpaceContract
-@testable import SpaceCore
+import SpaceCore
 import SpaceFS
 import SpaceTools
 import Testing
@@ -105,7 +105,7 @@ import Testing
   @Test func historyShowsTheViewerViaThePage() async throws {
     let context = try makeContext()
     let ada = try await context.space.addAccount(kind: .human, name: "ada")
-    let group = try await plainGroup(context.space, "ada")
+    let group = try await privateGroup(context.space, "ada", owner: ada.id)
     let viewer = Person(persona: "ada", account: ada.id, group: group)
     let page = SpaceToolContext(space: context.space, principal: Page(path: try SpacePath(validating: "/apps/tasks.html"), viewer: viewer).principal)
     _ = try await run("table.create", ["path": "/tasks.table", "header": ["columns": [["name": "title", "type": "string"]]]], context)
@@ -124,9 +124,9 @@ import Testing
     let space = context.space
     let admin = try await space.addAccount(kind: .human, name: "root", admin: true)
     #expect(try await space.isHumanAdmin(admin.id, of: .shared))
-    let home = try await plainGroup(space, "home")
+    let home = try await privateGroup(space, "home", owner: admin.id)
     let other = try await space.addAccount(kind: .human, name: "bob")
-    let sibling = try await space.ensurePersonalGroup(account: other.id)
+    let sibling = try await privateGroup(space, "sibling", owner: other.id)
     let actor = Actor.person(persona: "root", account: admin.id)
     let person = SpaceToolContext(space: space, principal: Principal(actor: actor, group: home))
     let pageAt: (GroupID) throws -> SpaceToolContext = { group in
@@ -153,9 +153,8 @@ import Testing
   }
 }
 
-private func plainGroup(_ space: Space, _ id: String) async throws -> GroupID {
-  try await space.writer.write { db in
-    try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00Z')", arguments: [id])
-  }
-  return GroupID(rawValue: id)
+private func privateGroup(_ space: Space, _ alias: String, owner: AccountID) async throws -> GroupID {
+  let group = try await space.createGroup(alias: alias, owner: owner)
+  try await space.setVisibility(.private, of: group, by: .anonymous, acting: group)
+  return group
 }

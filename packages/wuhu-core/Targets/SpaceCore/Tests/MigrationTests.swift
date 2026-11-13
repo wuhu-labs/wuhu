@@ -458,7 +458,6 @@ import Testing
     let original = try Space(writer: database)
     let owner = try await original.addAccount(kind: .human, name: "Morgan").id
     let lab = try await original.createGroup(alias: "lab", owner: owner)
-    let personal = try await original.ensurePersonalGroup(account: owner)
     let offline = try DatabaseQueue(path: database.path)
     try await original.close()
     try await offline.write { db in
@@ -469,11 +468,14 @@ import Testing
       UPDATE groups SET alias = (SELECT name FROM aliases WHERE aliases.kind = 'group' AND aliases.target = groups.id AND aliases.current)
       """)
       try db.execute(sql: "ALTER TABLE aliases DROP COLUMN current")
-      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('015', '043')")
+      try db.execute(sql: "ALTER TABLE groups ADD COLUMN personal_account TEXT")
+      try Migration015.apply(db)
+      try db.execute(sql: "ALTER TABLE groups DROP COLUMN personal_account")
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '043'")
     }
     let upgraded = try Space(writer: try DatabaseQueue(path: database.path))
     let names = Dictionary(uniqueKeysWithValues: try await upgraded.groups().map { ($0.id, $0.name) })
-    #expect(names == [.shared: "Shared", .settings: "settings", lab: "lab", GroupID(rawValue: "bare"): "bare", personal: nil])
+    #expect(names == [.shared: "Shared", .settings: "settings", lab: "lab", GroupID(rawValue: "bare"): "bare"])
     try await upgraded.close()
   }
 

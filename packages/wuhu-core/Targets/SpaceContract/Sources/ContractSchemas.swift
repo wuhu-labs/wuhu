@@ -112,6 +112,9 @@ public enum ContractSchemas {
     ("UserPayload", UserPayload.jsonSchema),
     ("UsersOutput", UsersOutput.jsonSchema),
     ("UserProfileInput", UserProfileInput.jsonSchema),
+    ("HiddenSidebarAddress", HiddenSidebarAddress.jsonSchema),
+    ("UserSettingsPayload", UserSettingsPayload.jsonSchema),
+    ("SidebarVisibilityInput", SidebarVisibilityInput.jsonSchema),
 
     ("SecretsOutput", SecretsOutput.jsonSchema),
     ("SecretSetInput", SecretSetInput.jsonSchema),

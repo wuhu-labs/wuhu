@@ -57,7 +57,7 @@ import Testing
       $0.date = .constant(fixedDate)
     } operation: {
       let account = try await space.addAccount(kind: .human, name: "alice")
-      let alice = try await space.ensurePersonalGroup(account: account.id)
+      let alice = try await space.privateGroup(account: account.id)
       let visitor = try await space.sessions.createSession(
         group: alice, title: "visitor", kind: .agent, createdBy: "alice",
         model: ModelSpecifier(provider: "testing", model: "test-model", effort: "medium"),

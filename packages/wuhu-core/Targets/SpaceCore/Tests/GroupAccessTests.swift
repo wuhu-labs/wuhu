@@ -14,11 +14,7 @@ import Testing
 
   func space() async throws -> Space {
     let space = try makeSpace()
-    try await space.writer.write { db in
-      for id in [Self.team, Self.studio] {
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00Z')", arguments: [id.rawValue])
-      }
-    }
+    for id in [Self.team, Self.studio] { try await space.seedGroup(id) }
     return space
   }
 
@@ -36,7 +32,7 @@ import Testing
   @Test func aPrivateGroupTakesItsListAndReadIsReadOnly() async throws {
     let space = try await space()
     let reader = try await space.addAccount(kind: .human, name: "reader")
-    let readerGroup = try #require(try await space.personalGroup(of: reader.id))
+    let readerGroup = try await space.privateGroup(account: reader.id)
     let writer = try await space.sessions.createSession(group: Self.studio, title: "w", kind: .agent, createdBy: "owner", model: .test)
     try await space.setGrant(.account, reader.id.rawValue, role: .read, in: Self.team, by: .anonymous, acting: Self.team)
     try await space.setGrant(.group, Self.studio.rawValue, role: .write, in: Self.team, by: .anonymous, acting: Self.team)
@@ -54,11 +50,11 @@ import Testing
   @Test func aReadEntryIsNoMembershipButTheListIsVisibleToItsPeople() async throws {
     let space = try await space()
     let reader = try await space.addAccount(kind: .human, name: "reader")
-    let readerGroup = try #require(try await space.personalGroup(of: reader.id))
+    let readerGroup = try await space.privateGroup(account: reader.id)
     try await space.setGrant(.account, reader.id.rawValue, role: .read, in: Self.team, by: .anonymous, acting: Self.team)
     let principal = Principal(actor: .person(persona: "reader", account: reader.id), group: readerGroup)
     let team = space.cell(of: Self.team)
-    #expect(team.grants() == [GroupGrant(subject: .account, id: reader.id.rawValue, role: .read)])
+    #expect(team.grants().contains(GroupGrant(subject: .account, id: reader.id.rawValue, role: .read)))
     #expect(try await space.role(of: principal, in: Self.team) != nil)
     #expect(team.role(of: principal.actor, acting: principal.group) == (try await space.role(of: principal, in: Self.team)))
     #expect(team.record()?.id == Self.team)
@@ -67,21 +63,17 @@ import Testing
     await #expect(throws: SpaceError.groupForbidden("team")) {
       try await space.setGrant(.account, reader.id.rawValue, role: .write, in: Self.team, by: principal.actor, acting: readerGroup)
     }
-    let own = try #require(try await space.personalGroup(of: reader.id))
-    await #expect(throws: SpaceError.personalGroupPrivate(own.rawValue)) {
-      try await space.setGrant(.account, reader.id.rawValue, role: .read, in: own, by: .anonymous, acting: own)
-    }
   }
 
-  @Test func aSpaceAdminAdministersEveryGroupButAnotherPersonsOwn() async throws {
+  @Test func aSpaceAdminAdministersEveryGroup() async throws {
     let space = try await space()
     let admin = try await space.addAccount(kind: .human, name: "admin", admin: true)
     let other = try await space.addAccount(kind: .human, name: "other")
-    let others = try #require(try await space.personalGroup(of: other.id))
+    let others = try await space.privateGroup(account: other.id)
     let principal = Principal(actor: .person(persona: "admin", account: admin.id), group: .shared)
     #expect(try await space.role(of: principal, in: Self.team) == .admin)
     #expect(try await space.role(of: principal, in: .shared) == .admin)
-    #expect(try await space.role(of: principal, in: others) == nil)
+    #expect(try await space.role(of: principal, in: others) == .admin)
     #expect(try await space.role(of: principal, in: .settings) == .admin)
     try await space.setVisibility(.open, of: Self.team, by: principal.actor, acting: .shared)
     #expect(try await space.group(Self.team)?.visibility == .open)
@@ -106,8 +98,6 @@ import Testing
     let principal = Principal(actor: .person(persona: "guest", account: guest.id), group: Self.team)
     #expect(try await space.reads(for: principal) == [Self.team, .settings])
     #expect(try await space.role(of: principal, in: .shared) == nil)
-    // A guest holds no personal group and takes no admin.
-    #expect(try await space.personalGroup(of: guest.id) == nil)
     await #expect(throws: SpaceError.notAPerson(guest.id.rawValue)) { try await space.setAdmin(guest.id, admin: true) }
   }
 

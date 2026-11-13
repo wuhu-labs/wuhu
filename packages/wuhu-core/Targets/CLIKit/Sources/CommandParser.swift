@@ -1789,7 +1789,7 @@ extension Command {
     runs <file> on the server as a space script, as run_script runs its
     source, as the session whose exec this is (WUHU_EXEC=1), or from a
     terminal as the signed-in person in the group they act in, its model
-    calls attributed to their personal group. The arguments are the
+    calls attributed to their acting group. The arguments are the
     script's import.meta.args.
     Each update() and the result() print to stdout as they come. A first
     line of #!/usr/bin/env -S wuhu script makes the file run from a shell.

@@ -54,7 +54,7 @@ import Testing
     "session_scope_context", "session_watches",
   ]
 
-  @Test func everyAdminStaysAnAdminThroughTheirPersonalGroup() async throws {
+  @Test func everyAdminStaysAnAdminWhileEmptyLegacyGroupsDisappear() async throws {
     let folder = try scratch()
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = try copy(to: folder, seeding: Self.people)
@@ -65,16 +65,10 @@ import Testing
     try Wuhu45Migration.apply(to: file)
     let space = try Space.open(file: file)
     #expect(try await Set(space.accounts().filter(\.isAdmin).map(\.id.rawValue)) == Set(admins))
-    let bosses = GroupID(rawValue: "amber-river-stone")
-    let carols = GroupID(rawValue: "cedar-lake-ember")
-    #expect(try await space.personalGroup(of: Self.boss) == bosses)
-    #expect(try await space.personalGroup(of: Self.carol) == carols)
-    #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings, bosses, carols])
+    #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings])
     #expect(try await space.isHumanAdmin(Self.boss, of: .shared))
     #expect(try await !space.isHumanAdmin(Self.carol, of: .shared))
-    #expect(try await space.isHumanAdmin(Self.carol, of: carols))
-    #expect(try await !space.isHumanAdmin(Self.carol, of: bosses))
-    #expect(try await space.reads(carols) == [carols, .shared, .settings])
+    #expect(try await space.memberGroups(of: Self.carol) == [.shared])
     #expect(try await space.reads(.shared) == [.shared, .settings])
     try await space.close()
   }
@@ -104,7 +98,7 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines", "bucket_objects"]
+    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines", "bucket_objects", "person_hidden_sidebars"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
     let dropped: Set = ["session_receipts", "session_api_receipts", "session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs", "blobs", "blob_objects"]
     let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)

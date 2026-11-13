@@ -189,12 +189,8 @@ import Testing
     #expect(AccountID.isValid(carolID))
     #expect(carol["admin"] == .bool(false))
     let accountID = AccountID(rawValue: carolID)
-    let personal = try #require(try await harness.space.personalGroup(of: accountID))
-    #expect(try await harness.space.memberGroups(of: accountID) == [personal])
-    #expect(try await harness.space.reads(personal) == [personal, .settings, .shared])
-    #expect(try await harness.space.isHumanAdmin(accountID, of: personal))
+    #expect(try await harness.space.memberGroups(of: accountID).isEmpty)
     #expect(try await !harness.space.isHumanAdmin(accountID, of: .shared))
-    #expect(try await harness.space.ensurePersonalGroup(account: accountID) == personal)
 
     let reserved = try await send(.post, "/v1/accounts", body: .object(["name": .string("Owner")]), key: root.key)
     #expect(reserved.status == .badRequest)

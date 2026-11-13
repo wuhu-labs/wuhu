@@ -51,7 +51,7 @@ extension SpaceToolContext {
       named = true
     }
     return live
-      .filter { $0.id != .settings && $0.personalAccount == nil }
+      .filter { $0.id != .settings }
       .map { group in
         GroupSummary(
           id: group.id.rawValue, name: named ? group.name : nil, member: member.contains(group.id), readable: readable.contains(group.id),

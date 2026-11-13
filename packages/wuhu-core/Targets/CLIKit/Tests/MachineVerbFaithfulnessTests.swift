@@ -73,7 +73,9 @@ import Testing
     let harness = try MachineCLIHarness()
     try await harness.runScenario { h in
       let machine = try await h.addMachine()
-      let team = try await h.space.ensurePersonalGroup(account: try await h.space.addAccount(kind: .human, name: nil).id)
+      let owner = try await h.space.addAccount(kind: .human, name: nil)
+      let team = try await h.space.createGroup(alias: "team", owner: owner.id)
+      try await h.space.setVisibility(.private, of: team, by: .anonymous, acting: team)
       let io = CLIIO()
       #expect(await h.run(["machine", "move", machine.id, "--group", team.rawValue], io: io) == 0)
       #expect(await io.stdoutText() == "moved box to group \(team.rawValue)\n")

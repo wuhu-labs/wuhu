@@ -18,7 +18,6 @@ extension Space {
     let id = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
     let createdAt = dateGen.now
     _ = try await worker.call(PersonCell.ID(id.rawValue)) { try $0.create(kind: kind, name: name, guest: guest, at: createdAt) }
-    if kind == .human, !guest { _ = try await ensurePersonalGroup(account: id) }
     if admin { return try await setAdmin(id, admin: true) }
     return AccountRecord(id: id, kind: kind, name: name, isAdmin: false, guest: guest, createdAt: createdAt, removedAt: nil)
   }

@@ -33,7 +33,7 @@ public final class Scripts: Sendable {
     case let .session(session, group): (id, actor, root) = (newScriptID(), .session(session), SpanOwner(session: session, group: group))
     case let .person(run):
       guard let token = script.token else { preconditionFailure("a terminal run reached the worker without its token") }
-      (id, actor, root) = (run.id, .person(run, token: token), SpanOwner(session: nil, group: run.personalGroup))
+      (id, actor, root) = (run.id, .person(run, token: token), SpanOwner(session: nil, group: run.group))
     }
     let client = tools.client(actor)
     let execution = ScriptExecution(

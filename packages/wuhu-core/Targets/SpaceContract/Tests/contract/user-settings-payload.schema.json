@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"UserSettingsPayload","type":"object","properties":{"hidden":{"type":"array","items":{"type":"object","properties":{"group":{"type":"string"},"path":{"type":"string"}},"required":["group","path"],"additionalProperties":false}}},"required":["hidden"],"additionalProperties":false}

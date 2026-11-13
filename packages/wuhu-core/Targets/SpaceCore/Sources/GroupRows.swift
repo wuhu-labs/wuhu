@@ -5,7 +5,6 @@ import StructuredQueriesSQLite
 struct GroupRow {
   @Column(primaryKey: true) var id: String
   @Column("created_at") var createdAt: String
-  @Column("personal_account") var personalAccount: String?
   @Column("removed_at") var removedAt: String?
   var visibility: String
   @Column("secrets_scope") var secretsScope: String

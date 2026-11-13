@@ -78,7 +78,7 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
     let observer = Observer(group: .shared, name: "nightly", firing: "f1")
     let firing = handlerScriptID(UUID())
     let account = AccountID(rawValue: "ac_alice001")
-    let terminal = TerminalRun(id: "terminal-1", persona: "nightly", account: account, group: .shared, personalGroup: GroupID(rawValue: "alice"))
+    let terminal = TerminalRun(id: "terminal-1", persona: "nightly", account: account, group: .shared)
     let (script, caller, leg, sessionless): (String, String, ExecLeg, SessionlessScript) = switch end {
     case .firingCancelled: (firing, observer.member, .observer(observer.member), .observer(observer))
     case .terminalCancelled, .terminalReturned: (terminal.id, Person.execCaller(account), .person(account), .person(terminal))

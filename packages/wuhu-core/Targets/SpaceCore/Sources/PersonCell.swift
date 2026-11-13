@@ -16,7 +16,7 @@ public struct PersonNote: Hashable, Codable, Sendable {
 /// An account: a person’s, a machine’s or the space’s. The literal `owner` has only an inbox, with no account.
 @Cell
 public struct PersonCell {
-  public static let owned = ["notifications": "owner_account", "watermarks": "owner_account", "user_profiles": "owner_account"]
+  public static let owned = ["notifications": "owner_account", "watermarks": "owner_account", "user_profiles": "owner_account", "person_hidden_sidebars": "owner_account"]
 
   public func notifications(after n: Int64 = 0) -> [NotificationRecord] {
     db.rows(NotificationRow.where { $0.ownerAccount.eq(id.key) && $0.n > n }.order(by: \.n)).map(NotificationRecord.init(row:))

@@ -32,10 +32,7 @@ func webResponse(
 ) async throws -> Response {
   let resolved = try await space.resolveGroup(group.rawValue)
   if let resolved, resolved != group, let record = try await space.group(resolved) {
-    var current = record.alias
-    if let account = record.personalAccount, let persona = try await space.persona(account: account) {
-      current = try await space.userProfile(principal: persona.name)?.handle
-    }
+    let current = record.alias
     if let current, current != group.rawValue {
       var parts = URLComponents(url: request.url, resolvingAgainstBaseURL: false)!
       parts.host = contentHost.pattern?.template.replacingOccurrences(of: "{group}", with: current).split(separator: ":").first.map(String.init) ?? current + "." + contentHost.host
@@ -131,6 +128,14 @@ private func routedWebResponse(
     // segment split.
     guard !decoded.contains("/") else { return plainStatus(.notFound) }
     segments.append(decoded)
+  }
+
+  if caller.group == .shared, segments.count == 4, segments[0] == "v1", segments[1] == "user", segments[3] == "avatar" {
+    switch try await cookieAdmission(space: space, group: .shared, cookies: caller.cookies, request: request) {
+    case let .refused(response): return response
+    case let .admitted(viewer):
+      return try await userAvatarResponse(space: space, person: segments[2], request: request).viewed(by: viewer)
+    }
   }
 
   if segments.first == "_", !systemFolders.contains(segments.dropFirst().first ?? "") {

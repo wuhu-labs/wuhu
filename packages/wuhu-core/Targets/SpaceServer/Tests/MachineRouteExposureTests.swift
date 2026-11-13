@@ -22,7 +22,7 @@ import Testing
     var input: [String: JSONValue] = ["name": "must_not_enroll"]
     if explicitGroup {
       let person = try await space.addAccount(kind: .human, name: "group-owner")
-      let group = try await space.ensurePersonalGroup(account: person.id)
+      let group = try await space.privateGroup(account: person.id)
       input["group"] = .string(group.rawValue)
     }
     let fixture = try await SessionToolFixture(space: space)

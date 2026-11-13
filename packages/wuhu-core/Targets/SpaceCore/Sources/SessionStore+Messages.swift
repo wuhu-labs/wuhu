@@ -26,13 +26,6 @@ extension SessionStore {
     if let conversation, conversation.kind == .users {
       return try await reads(conversation, reader: principal.member, group: principal.group)
     }
-    // A person's own group is theirs alone: it reads as nothing to everyone else, including a space admin.
-    if let owner = groupCell(group).record()?.personalAccount {
-      switch principal.actor {
-      case let .person(_, account): guard account == owner else { return false }
-      case .session, .observer, .page, .anonymous: guard principal.group == group else { return false }
-      }
-    }
     if group == principal.group { return true }
     if groupCell(group).reads(principal) { return true }
     let parts = path.split(separator: "/", omittingEmptySubsequences: true)

@@ -178,7 +178,6 @@ private func groupDetail(_ id: GroupID, _ group: GroupCell) throws -> GroupDetai
     name: record.name,
     open: record.visibility == .open,
     secrets: record.secretsScope.rawValue,
-    personal: record.personalAccount != nil,
     entries: group.grants().map { GroupAccessEntry(kind: $0.subject.rawValue, id: $0.id, role: $0.role.rawValue) },
   )
 }
@@ -201,8 +200,6 @@ private func groupErrorResponse(_ error: any Error) -> Response {
     return errorResponse(.notFound, code: "notFound", message: "no such account or group")
   case SpaceError.groupForbidden(let group):
     return errorResponse(.forbidden, code: "groupForbidden", message: "you may not administer group \(group)")
-  case let SpaceError.personalGroupPrivate(group):
-    return errorResponse(.forbidden, code: "personalGroup", message: "group \(group) is its owner's alone")
   case SpaceError.settingsGroupAccess:
     return errorResponse(
       .forbidden, code: "adminRequired",

@@ -203,7 +203,6 @@ public enum SpaceError: Error, Equatable, Sendable {
   /// settings group.
   case forbiddenWrite(path: String, group: String)
   /// A read edge into a person's own group: it has one member, its owner.
-  case personalGroupPrivate(String)
   /// Administering the settings group is the account admin verb's, alone, so
   /// the last-admin guard cannot be skipped.
   case settingsGroupAccess

@@ -1,26 +1,19 @@
-import { assertEquals, assertRejects, assertThrows } from 'jsr:@std/assert@1'
+import { assertEquals } from 'jsr:@std/assert@1'
 import {
   catalogSidebars,
-  changeSidebarVisibility,
-  hiddenSidebars,
   namedSidebars,
-  readSidebarPreferences,
   sidebarGroupRows,
   sidebarGroups,
   sidebarKey,
   sidebarScripts,
-  sidebarSettingsPath,
-  writeSidebarVisibility,
 } from './sidebar-catalog.ts'
-import type { GroupDetail, WriteInput } from './contract.gen.ts'
-import { ApiError } from '~/sdk/errors'
+import type { GroupDetail } from './contract.gen.ts'
 import { everything, sidebarName } from './sidebars.ts'
 import { sharedGroup } from './groups.ts'
 
 const detail = (id: string, alias: string): GroupDetail => ({
   id,
   alias,
-  personal: false,
   open: true,
   secrets: 'owner',
   entries: [],
@@ -116,150 +109,6 @@ Deno.test('hidden scripts do not run', () => {
     sidebarScripts(entries.map((entry) => ({ ...entry, visible: false }))),
     [],
   )
-})
-
-Deno.test('visibility defaults to shown; malformed preferences retain last good hidden addresses and surface Settings error', () => {
-  const other = { group: 'gone', path: '/.sidebars/old.json' }
-  const hidden = changeSidebarVisibility([other], address, false)
-  assertEquals(hidden, [other, address])
-  assertEquals(changeSidebarVisibility(hidden, address, false), hidden)
-  assertEquals(changeSidebarVisibility(hidden, address, true), [other])
-  assertEquals(hiddenSidebars(JSON.stringify({ hidden })), hidden)
-  assertThrows(() => hiddenSidebars('{"hidden":[{}]}'))
-  const initial = { hidden: [], error: null }
-  assertEquals(readSidebarPreferences(initial, 'bad'), {
-    hidden: [],
-    error: "Sidebar settings can't be read",
-  })
-  const good = readSidebarPreferences(initial, JSON.stringify({ hidden }))
-  assertEquals(readSidebarPreferences(good, 'null'), {
-    hidden,
-    error: "Sidebar settings can't be read",
-  })
-  assertEquals(readSidebarPreferences(good, null), initial)
-})
-
-Deno.test('first write is create-only and existing writes preserve unrelated document keys and addresses', async () => {
-  const writes: WriteInput[] = []
-  const write = (input: WriteInput) => {
-    writes.push(input)
-    return Promise.resolve()
-  }
-  await writeSidebarVisibility(
-    { read: () => Promise.resolve(null), write },
-    address,
-    false,
-  )
-  assertEquals(writes[0], {
-    path: sidebarSettingsPath,
-    content: JSON.stringify({ hidden: [address] }),
-    createOnly: true,
-  })
-  const other = { group: 'a-group', path: '/.sidebars/new.json' }
-  await writeSidebarVisibility(
-    {
-      read: () =>
-        Promise.resolve({
-          token: 'fresh',
-          content: JSON.stringify({
-            version: 7,
-            hidden: [other, address],
-            extra: { theme: 'kept' },
-          }),
-        }),
-      write,
-    },
-    address,
-    true,
-  )
-  assertEquals(writes[1], {
-    path: sidebarSettingsPath,
-    content: JSON.stringify({
-      version: 7,
-      hidden: [other],
-      extra: { theme: 'kept' },
-    }),
-    ifMatch: 'fresh',
-  })
-})
-
-Deno.test('conflict rereads and reapplies only this address once, preserving a concurrent different address', async () => {
-  const other = { group: 'a-group', path: '/.sidebars/new.json' }
-  const writes: WriteInput[] = []
-  let reads = 0
-  const conflict = new ApiError(409, { code: 'conflict', message: 'stale' })
-  const hidden = await writeSidebarVisibility(
-    {
-      read: () =>
-        Promise.resolve(
-          ++reads === 1
-            ? { token: 'old', content: '{"hidden":[]}' }
-            : { token: 'new', content: JSON.stringify({ hidden: [other] }) },
-        ),
-      write: (input) => {
-        writes.push(input)
-        return writes.length === 1
-          ? Promise.reject(conflict)
-          : Promise.resolve()
-      },
-    },
-    address,
-    false,
-  )
-  assertEquals(reads, 2)
-  assertEquals(hidden, [other, address])
-  assertEquals(writes[1].ifMatch, 'new')
-  assertEquals(JSON.parse(writes[1].content), { hidden: [other, address] })
-  reads = 0
-  await assertRejects(() =>
-    writeSidebarVisibility(
-      {
-        read: () => {
-          reads++
-          return Promise.resolve(null)
-        },
-        write: () => Promise.reject(conflict),
-      },
-      address,
-      false,
-    ), ApiError)
-  assertEquals(reads, 2)
-})
-
-Deno.test('unreadable preferences never write; non-conflicts do not retry', async () => {
-  let written = false
-  await assertRejects(() =>
-    writeSidebarVisibility(
-      {
-        read: () => Promise.resolve({ token: 'old', content: 'bad' }),
-        write: () => {
-          written = true
-          return Promise.resolve()
-        },
-      },
-      address,
-      false,
-    )
-  )
-  assertEquals(written, false)
-  let reads = 0
-  await assertRejects(
-    () =>
-      writeSidebarVisibility(
-        {
-          read: () => {
-            reads++
-            return Promise.resolve(null)
-          },
-          write: () => Promise.reject(new Error('offline')),
-        },
-        address,
-        false,
-      ),
-    Error,
-    'offline',
-  )
-  assertEquals(reads, 1)
 })
 
 Deno.test('metadata distinguishes pending from failed without discarding successful group details', () => {

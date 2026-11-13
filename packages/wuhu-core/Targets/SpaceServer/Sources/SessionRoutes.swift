@@ -155,9 +155,7 @@ func addSessionRoutes(
       guard case let .person(persona, account) = principal.actor, try await space.account(account)?.kind == .human else {
         return errorResponse(.forbidden, code: "forbidden", message: "a terminal script runs as a signed-in person")
       }
-      // A persona older than personal groups may have none yet.
-      let personalGroup = if let existing = try await space.personalGroup(of: account) { existing } else { try await space.ensurePersonalGroup(account: account) }
-      run = TerminalRun(id: "terminal-" + uuid().uuidString.lowercased(), persona: persona, account: account, group: principal.group, personalGroup: personalGroup)
+      run = TerminalRun(id: "terminal-" + uuid().uuidString.lowercased(), persona: persona, account: account, group: principal.group)
     case let .refused(response): return response
     }
     return scriptStream(in: runtime.streamScope) { say in

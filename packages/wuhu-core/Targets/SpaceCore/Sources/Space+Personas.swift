@@ -27,7 +27,6 @@ extension Space {
   public func adoptPersona(key: KeyRecord) async throws -> PersonaRecord {
     if let existing = worker.cell(PersonCell.ID(key.account.rawValue)).persona() { return existing }
     guard let account = cell.account(key.account), account.removedAt == nil else { throw SpaceError.notFound(key.account.rawValue) }
-    if account.kind == .human { _ = try await ensurePersonalGroup(account: key.account) }
     let allocation: (id: Int64, name: String)
     if let reserved = cell.reservedPersona(key.account) { allocation = reserved }
     else {

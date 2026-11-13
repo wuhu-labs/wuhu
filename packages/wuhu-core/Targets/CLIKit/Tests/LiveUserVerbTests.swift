@@ -25,11 +25,7 @@ import Testing
       let bob = try #require(try await rig.space.accounts().first { $0.name == "bob" })
       #expect(lines.first == "account \(bob.id.rawValue) (bob)")
       #expect(!bob.isAdmin)
-      let personal = try #require(try await rig.space.personalGroup(of: bob.id))
-      #expect(try await rig.space.memberGroups(of: bob.id) == [personal])
-      #expect(try await rig.space.reads(personal) == [personal, .settings, .shared])
-      #expect(try await rig.space.isHumanAdmin(bob.id, of: personal))
-      #expect(try await rig.space.ensurePersonalGroup(account: bob.id) == personal)
+      #expect(try await rig.space.memberGroups(of: bob.id).isEmpty)
       #expect(await added.stderrText() == "one-time link; it dies at first use or in 3600 seconds\n")
       let envelope = try #require(EnrollmentEnvelope.parse(lines[1]))
       #expect(envelope.space == server.space)
@@ -64,13 +60,14 @@ import Testing
     }
   }
 
-  @Test func personalGroupAdminCannotAddPromoteOrInviteSomeoneElse() async throws {
+  @Test func aGroupAdminCannotAddPromoteOrInviteSomeoneElse() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving(origin: "https://public.test") { server in
       let alice = try await signIn(rig, server: server, admin: false)
-      let personal = try #require(try await rig.space.personalGroup(of: alice.id))
-      #expect(try await rig.space.isHumanAdmin(alice.id, of: personal))
+      let group = try await rig.space.createGroup(alias: "team", owner: alice.id)
+      try await rig.space.setVisibility(.private, of: group, by: .person(persona: "alice", account: alice.id), acting: group)
+      #expect(try await rig.space.isHumanAdmin(alice.id, of: group))
       #expect(try await !rig.space.isHumanAdmin(alice.id, of: .shared))
       let bob = try await rig.space.addAccount(kind: .human, name: "bob")
       for args in [

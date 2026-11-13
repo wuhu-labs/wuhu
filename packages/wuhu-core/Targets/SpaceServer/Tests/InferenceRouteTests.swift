@@ -68,7 +68,7 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
       let exec = try await harness.get("/v1/media", query: ["url": "wuhu-blob:\(hash)"], bearer: execToken)
       #expect(exec.status == .forbidden)
       let account = try await harness.space.addAccount(kind: .human, name: "attachment owner")
-      let group = try #require(try await harness.space.personalGroup(of: account.id))
+      let group = try await harness.space.privateGroup(account: account.id)
       _ = try await harness.space.fs(group).write("/attachment.png", bytes, ifMatch: nil)
       let reference = "wuhu-space:wuhu://\(group.rawValue).localspace/attachment.png"
       let attachment = try await harness.get("/v1/media", query: ["url": reference], bearer: token)

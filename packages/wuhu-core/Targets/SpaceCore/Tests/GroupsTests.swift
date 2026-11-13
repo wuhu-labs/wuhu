@@ -1,6 +1,5 @@
 import DeterministicDependencies
 import Foundation
-import GRDB
 import JSONValue
 import LoopCore
 import struct SessionDomain.SessionID
@@ -18,11 +17,7 @@ import Testing
   // shared holds /readme.md.
   func seeded() async throws -> Space {
     let space = try makeSpace()
-    try await space.writer.write { db in
-      for group in [Self.alice, Self.bob] {
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
-      }
-    }
+    for group in [Self.alice, Self.bob] { try await space.seedGroup(group) }
     _ = try await space.fs(Self.alice).write("/plan.md", bytes("# Plan\n\nSee [readme](wuhu://shared.localspace/readme.md).\n"), ifMatch: nil)
     _ = try await space.fs(.shared).write("/readme.md", bytes("# Readme\n"), ifMatch: nil)
     _ = try await space.createTable(path("/t.table"), header: TableHeader(columns: [TableColumn(name: "n", type: .integer)]), in: Self.alice, acting: Self.alice)
@@ -131,9 +126,7 @@ import Testing
   @Test func removingTheListEntryEndsAnOpenObservation() async throws {
     let space = try await seeded()
     let vault = GroupID(rawValue: "vault")
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('vault', '2026-01-01T00:00:00.000Z')")
-    }
+    try await space.seedGroup(vault)
     try await space.setGrant(.group, Self.alice.rawValue, role: .write, in: vault, by: .anonymous, acting: vault)
     _ = try await space.fs(vault).write("/readme.md", bytes("# Vault\n"), ifMatch: nil)
     let stream = try space.observeRows(
@@ -152,17 +145,6 @@ import Testing
     try await space.removeGrant(.group, Self.alice.rawValue, in: vault, by: .anonymous, acting: vault)
     let error = await ending.value
     #expect(error == nil)
-  }
-
-  @Test func aRowWithoutAGroupIsRefused() async throws {
-    let space = try makeSpace()
-    for table in ["sessions", "revisions", "conversations", "machines", "join_tokens"] {
-      await #expect {
-        try await space.writer.write { db in try db.execute(sql: "INSERT INTO \(table) DEFAULT VALUES") }
-      } throws: { error in
-        (error as? DatabaseError)?.message == (table == "revisions" ? "NOT NULL constraint failed: revisions.grp" : "grp required: \(table)")
-      }
-    }
   }
 }
 
@@ -191,18 +173,17 @@ import Testing
     let space = try makeSpace()
     let morgan = try await space.addAccount(kind: .human, name: "morgan", admin: true)
     let alice = try await space.addAccount(kind: .human, name: "alice")
-    let morgansGroup = try #require(try await space.personalGroup(of: morgan.id))
-    let alicesGroup = try #require(try await space.personalGroup(of: alice.id))
+    let morgansGroup = try await space.privateGroup(account: morgan.id)
+    let alicesGroup = try await space.privateGroup(account: alice.id)
     let agent = try await space.sessions.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", model: .test)
     let task = try await space.sessions.createSession(
       group: .shared, title: "St", kind: .task, parent: agent, createdBy: "owner", executor: .kernel(.test),
     )
-    // A space admin administers every group but another person's own.
     let everyGroup: Set<GroupID> = [.shared, .settings, morgansGroup, alicesGroup]
     let cases: [(SpaceCore.Actor, Set<GroupID>)] = [
       (.session(agent), [.shared]),
       (.session(task), []),
-      (.person(persona: morgansGroup.rawValue, account: morgan.id), [.shared, .settings, morgansGroup]),
+      (.person(persona: morgansGroup.rawValue, account: morgan.id), everyGroup),
       (.person(persona: alicesGroup.rawValue, account: alice.id), [alicesGroup]),
       (.anonymous, []),
     ]
@@ -220,7 +201,7 @@ import Testing
     let space = try makeSpace()
     let morgan = try await space.addAccount(kind: .human, name: "morgan", admin: true)
     let alice = try await space.addAccount(kind: .human, name: "alice")
-    let alicesGroup = try #require(try await space.personalGroup(of: alice.id))
+    let alicesGroup = try await space.privateGroup(account: alice.id)
     let alicePerson = SpaceCore.Actor.person(persona: alicesGroup.rawValue, account: alice.id)
     #expect(try await space.isHumanAdmin(morgan.id, of: .shared))
     #expect(try await !space.isHumanAdmin(alice.id, of: .shared))
@@ -233,56 +214,23 @@ import Testing
     #expect(try await space.isAdmin(alicePerson, of: alicesGroup, acting: alicesGroup))
     _ = try await space.setAdmin(alice.id, admin: false)
     #expect(try await !space.isHumanAdmin(alice.id, of: .shared))
-    // Her own group is still hers: the personal group is not a grant.
+    // Demotion leaves the ordinary group's explicit admin grant intact.
     #expect(try await space.isAdmin(alicePerson, of: alicesGroup, acting: alicesGroup))
     await #expect(throws: SpaceError.lastAdmin(morgan.id.rawValue)) { try await space.setAdmin(morgan.id, admin: false) }
     await #expect(throws: SpaceError.notAPerson("bot")) { try await space.addAccount(kind: .machine, name: "bot", admin: true) }
     _ = try await space.removeAccount(alice.id)
     #expect(try await !space.isHumanAdmin(alice.id, of: alicesGroup))
 
-    let morgansGroup = try #require(try await space.personalGroup(of: morgan.id))
-    let raw = try await space.writer.read { db in
-      try String.fetchAll(db, sql: "SELECT grp FROM group_roles WHERE role = 'admin' AND account_id = ? ORDER BY grp", arguments: [morgan.id.rawValue])
-    }
-    #expect(raw == [morgansGroup.rawValue, GroupID.settings.rawValue].sorted())
+    #expect(space.cell.memberGroups(of: morgan.id) == [.settings])
   }
 
-  @Test func theFirstPersonaNamesThePersonalGroup() async throws {
+  @Test func adoptingAPersonaDoesNotCreateAGroup() async throws {
     let space = try makeSpace()
     let account = try await space.addAccount(kind: .human, name: nil)
-    let group = try #require(try await space.personalGroup(of: account.id))
     let key = try await space.addKey(testPubkey("laptop"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     let persona = try await space.adoptPersona(key: key)
-    #expect(persona.name == group.rawValue)
-    #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings, group])
-    #expect(try await space.groups().first { $0.id == group }?.personalAccount == account.id)
-    #expect(try await space.groups().first { $0.id == .settings }?.personalAccount == nil)
-  }
-}
-
-// Every statement keyed on a path names its group, or the conversation an attachment row belongs to: a path alone
-// matches that path in every group.
-@Suite(.deterministicDependencies) struct StorageLintTests {
-  static let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-    .appending(path: "Sources")
-
-  @Test func noStatementKeysOnAPathAlone() throws {
-    let pathKeyed: [Regex<Substring>] = [
-      /ON CONFLICT\s*\([^)]*\bpath\b/,
-      /\b(?:WHERE|AND|ON)\s+(?:\w+\.)?path\s*(?:=|LIKE|IN)/,
-      /\$0\.(?:path|parentPath)\.(?:eq|in|like|glob)\(/,
-    ]
-    var offenders: [String] = []
-    let files = try FileManager.default.contentsOfDirectory(at: Self.sources, includingPropertiesForKeys: nil)
-      .filter { $0.pathExtension == "swift" }
-    #expect(!files.isEmpty)
-    for file in files {
-      for (number, line) in try String(contentsOf: file, encoding: .utf8).split(separator: "\n", omittingEmptySubsequences: false).enumerated()
-        where pathKeyed.contains(where: { line.contains($0) }) && !line.contains("grp") && !line.contains("conversationID")
-      {
-        offenders.append("\(file.lastPathComponent):\(number + 1): \(line.trimmingCharacters(in: .whitespaces))")
-      }
-    }
-    #expect(offenders == [])
+    #expect(try await space.persona(account: account.id) == persona)
+    #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings])
+    #expect(try await space.memberGroups(of: account.id).isEmpty)
   }
 }

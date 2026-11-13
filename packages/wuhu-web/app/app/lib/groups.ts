@@ -1,5 +1,4 @@
 import type { GroupSummary } from './contract.gen.ts'
-import { type Directory, displayFor } from './directory.ts'
 import { sharedGroup } from './shell-sdk/open-cache.js'
 
 export { sharedGroup }
@@ -12,9 +11,8 @@ export function memberGroups(groups: readonly GroupSummary[]): string[] {
     : ids
 }
 
-// A personal group's id is its person's.
-export function groupLabel(group: string, directory: Directory): string {
-  return group === sharedGroup ? 'Shared' : displayFor(directory, group)
+export function groupLabel(group: string): string {
+  return group === sharedGroup ? 'Shared' : group
 }
 
 // A group host is another site than Shared's, so its reads carry the cookie.

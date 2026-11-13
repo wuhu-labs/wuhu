@@ -26,9 +26,7 @@ import Testing
     let tokens = harness.runtime.tokens
     let (bearer, key) = try await harness.enrolledBearer()
     let group = GroupID(rawValue: "studio")
-    try await harness.space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('studio', '2030-01-01T00:00:00Z')")
-    }
+    try await harness.space.seedGroup(group, owner: key.account)
     try await harness.space.setGrant(.account, key.account.rawValue, role: .admin, in: group, by: .anonymous, acting: group)
     return World(harness: harness, tokens: tokens, bearer: bearer, account: key.account, group: group)
   }
@@ -169,8 +167,8 @@ import Testing
         #expect(try await json(refused).object?["code"] == "invalidName")
       }
       #expect(try await send(w, .post, "/v1/groups", ["alias": "lab2", "name": ""]).status == .badRequest)
-      let own = try #require(try await w.harness.space.personalGroup(of: w.account))
-      #expect(try await send(w, .put, "/v1/group/\(own.rawValue)", ["name": "Mine"]).status == .forbidden)
+      let own = w.group
+      #expect(try await send(w, .put, "/v1/group/\(own.rawValue)", ["name": "Mine"]).status == .ok)
       let other = try await w.harness.space.addAccount(kind: .human, name: "Other")
       let theirs = try await w.harness.space.createGroup(alias: "theirs", owner: other.id)
       #expect(try await send(w, .put, "/v1/group/\(theirs.rawValue)", ["name": "Taken over"]).status == .forbidden)
@@ -178,16 +176,9 @@ import Testing
     }
   }
 
-  @Test func aPersonalGroupTakesNoListAndTheSettingsGroupNoVisibility() async throws {
+  @Test func theSettingsGroupTakesNoVisibilityChanges() async throws {
     try await withSessionDeps {
       let w = try await world()
-      let own = try #require(try await w.harness.space.personalGroup(of: w.account))
-      let personal = try await send(w, .put, "/v1/group/\(own.rawValue)", ["open": .bool(true)])
-      #expect(personal.status == .forbidden)
-      let entries = try await send(
-        w, .put, "/v1/group/\(own.rawValue)/access", ["kind": "account", "id": .string(w.account.rawValue), "role": "read"],
-      )
-      #expect(entries.status == .forbidden)
       let settings = try await send(w, .put, "/v1/group/settings", ["open": .bool(true)])
       #expect(settings.status == .forbidden)
     }

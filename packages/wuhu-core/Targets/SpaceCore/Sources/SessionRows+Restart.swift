@@ -141,7 +141,6 @@ extension Sessions {
       do {
         _ = try decode(QueueInput.self, from: row["payload"])
         _ = try SQLiteDateFormat.date(from: row["enqueued_at"])
-        if let drainedAt = row["drained_at"] as String? { _ = try SQLiteDateFormat.date(from: drainedAt) }
         readable.append(row["id"])
       } catch where isUnreadableSessionData(error) {
         dropped += 1

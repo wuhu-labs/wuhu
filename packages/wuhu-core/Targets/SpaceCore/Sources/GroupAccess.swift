@@ -75,7 +75,6 @@ enum GroupAccess {
       guard let target = live(group) else { return nil }
       if group == GroupID.settings.rawValue { return .read }
       if source == group { return .write }
-      guard target.personalAccount == nil else { return nil }
       let explicit = roleRow(account: nil, group: source, grp: group)
       guard target.visibility == GroupVisibility.open.rawValue else { return explicit }
       return explicit == .admin ? .admin : .write
@@ -84,7 +83,6 @@ enum GroupAccess {
     /// What an account may do in a group acting out of `acting`.
     func role(of account: GroupAccountRow, in group: String, acting: String) -> GroupRole? {
       guard let target = live(group) else { return nil }
-      if let owner = target.personalAccount { return owner == account.id ? .admin : nil }
       let human = account.kind == "human" && account.removedAt == nil
       if group == GroupID.settings.rawValue { return isSpaceAdmin(account.id) ? .admin : (human ? .read : nil) }
       guard human else { return nil }
@@ -209,11 +207,9 @@ enum GroupAccess {
     }
 
     /// The direct human admin of a group: an account row, never one inherited
-    /// through an acting group. Space admins administer every group but another
-    /// person's own.
+    /// through an acting group. Space admins administer every group.
     func isHumanAdmin(_ account: GroupAccountRow, of group: String) -> Bool {
-      guard account.kind == "human", account.removedAt == nil, let target = live(group) else { return false }
-      if let owner = target.personalAccount { return owner == account.id }
+      guard account.kind == "human", account.removedAt == nil, live(group) != nil else { return false }
       if isSpaceAdmin(account.id) { return true }
       return roleRow(account: account.id, group: nil, grp: group) == .admin
     }

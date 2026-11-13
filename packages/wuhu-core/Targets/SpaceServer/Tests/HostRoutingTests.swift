@@ -26,7 +26,7 @@ import Testing
   ) async throws -> Rig {
     let harness = try Harness(dev: dev, publicRead: publicRead, origin: origin, webApp: webApp)
     let alice = try await harness.space.addAccount(kind: .human, name: "alice").id
-    let rig = Rig(harness: harness, alice: alice, aliceGroup: try await harness.space.ensurePersonalGroup(account: alice))
+    let rig = Rig(harness: harness, alice: alice, aliceGroup: try await harness.space.privateGroup(account: alice))
     for group in [GroupID.shared, rig.aliceGroup] {
       _ = try await harness.space.fs(group).write("/plan.md", Data("\(group.rawValue) plan".utf8), ifMatch: nil)
     }

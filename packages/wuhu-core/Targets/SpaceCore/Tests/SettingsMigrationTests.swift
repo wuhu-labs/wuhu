@@ -11,7 +11,7 @@ import Testing
 // machine-account membership and incoming read edges, and read-closure rows no
 // edge justifies.
 @Suite(.deterministicDependencies) struct SettingsMigrationTests {
-  @Test func upgradeCopiesCatalogsAndKeepsLegacyAuthorityOutOfPersonalGroups() async throws {
+  @Test func upgradeCopiesCatalogsAndDeletesTheEmptyLegacyGroup() async throws {
     let database = try DatabaseQueue(path: "file:/settings-migration-\(UUID())?vfs=memdb")
     try await database.write { db in
       try Migration001.apply(db)
@@ -60,37 +60,19 @@ import Testing
     #expect(try await space.account(owner)?.isAdmin == true)
     #expect(try await space.account(operatorAccount)?.isAdmin == true)
     #expect(try await space.account(machine)?.isAdmin == false)
-    // The personal group is the owner's alone; the team group is not personal.
-    #expect(try await space.personalGroup(of: owner) == GroupID(rawValue: "personal"))
-    #expect(try await space.personalGroup(of: operatorAccount) == nil)
-    #expect(try await space.groups().first { $0.id.rawValue == "personal" }?.personalAccount == owner)
-    #expect(try await space.groups().first { $0.id.rawValue == "ops" }?.personalAccount == nil)
-    // A removed account gets neither an owner nor an admin row.
+    let personal = GroupID(rawValue: "personal")
+    let ops = GroupID(rawValue: "ops")
+    #expect(try await space.group(personal) == nil)
+    #expect(try await space.group(ops)?.visibility == .private)
     let removed = AccountID(rawValue: "gone")
-    #expect(try await space.personalGroup(of: removed) == nil)
-    #expect(try await space.groups().first { $0.id.rawValue == "gone-group" }?.personalAccount == nil)
-    #expect(try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'gone'")
-    } == 0)
     #expect(try await !space.isHumanAdmin(removed, of: .shared))
-    // The dangling membership neither blocks the upgrade nor becomes a role:
-    // the account it named never existed.
-    #expect(try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'ghost'")
-    } == 0)
-    #expect(try await space.writer.read { db in
-      try String.fetchAll(
-        db,
-        sql: "SELECT account_id FROM group_roles WHERE grp = 'ops' AND role = 'admin' ORDER BY 1",
-      )
-    } == ["operator", "person"])
-    // A space admin does not administer someone else's own group.
-    #expect(try await space.isHumanAdmin(owner, of: GroupID(rawValue: "ops")))
-    #expect(try await !space.isHumanAdmin(operatorAccount, of: GroupID(rawValue: "personal")))
-    #expect(try await space.isHumanAdmin(owner, of: GroupID(rawValue: "personal")))
-    // Incoming read edges into the personal group are gone, with the closure.
+    #expect(space.cell.memberGroups(of: removed).isEmpty)
+    #expect(space.cell.memberGroups(of: AccountID(rawValue: "ghost")).isEmpty)
+    #expect(space.cell(of: ops).grants().filter { $0.role == .admin }.map(\.id).sorted() == ["operator", "person"])
+    #expect(try await space.isHumanAdmin(owner, of: ops))
+    #expect(try await !space.isHumanAdmin(operatorAccount, of: personal))
+    #expect(try await !space.isHumanAdmin(owner, of: personal))
     #expect(try await space.reads(.shared) == [.shared, .settings])
-    #expect(try await space.reads(GroupID(rawValue: "personal")) == [GroupID(rawValue: "personal"), GroupID(rawValue: "ops"), .shared, .settings])
     // The settings group holds the catalogs; shared's copies are ordinary
     // file deletes, still in the journal.
     for path in ["/models.json", "/model-groups.json", "/capabilities.json", "/machine-v2-upgrade.json"] {

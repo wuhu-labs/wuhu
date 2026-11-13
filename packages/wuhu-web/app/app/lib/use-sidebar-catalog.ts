@@ -1,30 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
-import type { GroupDetail, ReadOutput, RevisionEvents } from './contract.gen.ts'
+import type {
+  GroupDetail,
+  SidebarVisibilityInput,
+  UserSettingsPayload,
+} from './contract.gen.ts'
 import {
   catalogSidebars,
   namedSidebars,
-  readSidebarPreferences,
   selectedSidebar,
   type SidebarAddress,
   sidebarGroupRows,
   sidebarGroups,
   sidebarKey,
-  type SidebarPreferences,
   sidebarScripts,
-  sidebarSettingsPath,
-  writeSidebarVisibility,
 } from './sidebar-catalog.ts'
 import { discoverSidebarGroups } from './sidebar-discovery.ts'
 import { scriptSidebar } from '~/components/script-sidebar'
 import type { SidebarView } from './sidebars.ts'
 import { useScripts } from './widgets/use-script.ts'
 import { useSpaceFeeds } from './space-feeds.tsx'
-import { useOwnPrincipal } from './use-directory.tsx'
-import { useObserve } from './use-observe.ts'
-import { globSubscription } from '~/sdk/subscriptions'
+import { usePageVisible } from './use-page-visible.ts'
 import type { SpaceServer } from '~/sdk/client'
-import { ApiError, errorMessage } from '~/sdk/errors'
-import { api, inGroup, post } from '~/sdk/http'
+import { errorMessage } from '~/sdk/errors'
+import { api } from '~/sdk/http'
 
 export function useSidebarCatalog(
   server: SpaceServer,
@@ -33,24 +31,17 @@ export function useSidebarCatalog(
   askedGroup: string | null,
 ) {
   const feeds = useSpaceFeeds()
-  const principal = useOwnPrincipal()
-  const preferenceChanges = useObserve<number, RevisionEvents>(
-    principal == null
-      ? null
-      : globSubscription(server.client(principal), sidebarSettingsPath, 0),
-    (_, event) => event.rev,
-    0,
-  )
+  const pageVisible = usePageVisible()
+  const settingsRequest = useRef(0)
   const [details, setDetails] = useState<ReadonlyMap<string, GroupDetail>>(() =>
     new Map()
   )
   const [detailErrors, setDetailErrors] = useState<ReadonlyMap<string, string>>(
     () => new Map(),
   )
-  const [preferences, setPreferences] = useState<SidebarPreferences>({
-    hidden: [],
-    error: null,
-  })
+  const [preferences, setPreferences] = useState<
+    UserSettingsPayload & { error: string | null }
+  >({ hidden: [], error: null })
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [writeError, setWriteError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -75,28 +66,30 @@ export function useSidebarCatalog(
     )
   }, [feeds.groups, feeds.liveness])
   useEffect(() => {
-    if (principal === undefined) return
-    if (principal === null) {
-      setPreferencesLoaded(true)
+    if ((!pageVisible && settingsRequest.current !== 0) || writing.current) {
       return
     }
-    return server.client(principal).read(sidebarSettingsPath)(
+    const request = ++settingsRequest.current
+    let cancelled = false
+    void api<UserSettingsPayload>('/v1/user/me/settings').then(
       (output) => {
+        if (cancelled || request !== settingsRequest.current) return
         setPreferencesLoaded(true)
-        setPreferences((previous) =>
-          readSidebarPreferences(previous, output.content)
-        )
+        setPreferences({ ...output, error: null })
       },
-      (failure) => {
+      () => {
+        if (cancelled || request !== settingsRequest.current) return
         setPreferencesLoaded(true)
-        setPreferences((previous) =>
-          failure instanceof ApiError && failure.code === 'notFound'
-            ? readSidebarPreferences(previous, null)
-            : { ...previous, error: "Sidebar settings can't be read" }
-        )
+        setPreferences((previous) => ({
+          ...previous,
+          error: "Sidebar settings can't be read",
+        }))
       },
     )
-  }, [server, principal, preferenceChanges.data, preferenceChanges.liveness])
+    return () => {
+      cancelled = true
+    }
+  }, [pageVisible])
   const groups = feeds.groups === null ? null : sidebarGroups(
     feeds.groups,
     [...details.values()],
@@ -140,31 +133,22 @@ export function useSidebarCatalog(
     [preferences.error, writeError, ...errors].filter(Boolean).join(' · ') ||
     null
   const setVisible = async (address: SidebarAddress, visible: boolean) => {
-    if (principal == null || writing.current) return
+    if (writing.current) return
     writing.current = true
+    settingsRequest.current++
     setBusy(true)
     setWriteError(null)
     try {
-      const hidden = await writeSidebarVisibility(
+      const input: SidebarVisibilityInput = { ...address, hidden: !visible }
+      const output = await api<UserSettingsPayload>(
+        '/v1/user/me/settings/sidebar',
         {
-          read: async () => {
-            try {
-              return await post<ReadOutput>('/v1/tools/read', {
-                path: sidebarSettingsPath,
-              }, inGroup(principal))
-            } catch (failure) {
-              if (
-                failure instanceof ApiError && failure.code === 'notFound'
-              ) return null
-              throw failure
-            }
-          },
-          write: (input) => post('/v1/tools/write', input, inGroup(principal)),
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
         },
-        address,
-        visible,
       )
-      setPreferences({ hidden, error: null })
+      setPreferences({ ...output, error: null })
     } catch (failure) {
       setWriteError(errorMessage(failure))
     } finally {

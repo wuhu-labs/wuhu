@@ -29,13 +29,13 @@ import Testing
     var bobHost: String { "\(bobGroup.rawValue).space.test:5530" }
   }
 
-  func rig(dev: Bool = false, publicRead: Bool = false) async throws -> Rig {
+  func rig(dev: Bool = false, publicRead: Bool = false, admin: Bool = true) async throws -> Rig {
     let harness = try Harness(dev: dev, publicRead: publicRead, origin: Self.origin)
-    let alice = try await harness.space.addAccount(kind: .human, name: "alice", admin: true).id
+    let alice = try await harness.space.addAccount(kind: .human, name: "alice", admin: admin).id
     let bob = try await harness.space.addAccount(kind: .human, name: "bob").id
     let rig = Rig(
-      harness: harness, alice: alice, aliceGroup: try await harness.space.ensurePersonalGroup(account: alice),
-      bob: bob, bobGroup: try await harness.space.ensurePersonalGroup(account: bob),
+      harness: harness, alice: alice, aliceGroup: try await harness.space.privateGroup(account: alice),
+      bob: bob, bobGroup: try await harness.space.privateGroup(account: bob),
     )
     _ = try await run(rig, .shared, "table.create", [
       "path": "/tasks.table", "header": ["columns": [["name": "title", "type": "string"], ["name": "meta", "type": "json"]]],
@@ -524,7 +524,7 @@ import Testing
   }
 
   @Test func findAndGrepReadAsThePagesGroupAndPageWithAStep() async throws {
-    let r = try await rig()
+    let r = try await rig(admin: false)
     try await run(r, r.aliceGroup, "write", ["path": "/notes/a.md", "content": "TODO one\nTODO two\n"])
     try await run(r, .shared, "write", ["path": "/docs/s.md", "content": "TODO shared\n"])
     try await run(r, r.bobGroup, "write", ["path": "/secret.md", "content": "TODO bob\n"])

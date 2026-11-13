@@ -94,6 +94,7 @@
         "packages/wuhu-core/Targets/wuhu/target.yml",
         "tools/signing/signing.yml",
         "tools/sim/*.ts",
+        "tools/sim/gold.json",
         ".agents/skills/mac-worker-setup/pin.env",
         "packages/wuhu-desktop/.gitignore",
         "packages/wuhu-desktop/MODULE.fragment.bazel",
@@ -167,6 +168,7 @@
         "tools/module-profile/*.ts",
         "tools/otel/*.ts",
         "tools/sim/*.ts",
+        "tools/sim/gold.json",
         ".agents/skills/mac-worker-setup/pin.env",
         "packages/build-pool/SPEC.md",
         "packages/build-pool/bench/**",
@@ -216,6 +218,7 @@
         "tools/preview/**/*.ts",
         "tools/public/**/*.ts",
         "tools/sim/**/*.ts",
+        "tools/sim/gold.json",
         "tools/test/**/*.ts",
         "tools/stress/**",
         "packages/alignment/package.yml",
@@ -332,6 +335,7 @@
         "packages/wuhu-app/Apps/wuhu/app.yml",
         "packages/wuhu-core/Targets/wuhu/target.yml",
         "tools/sim/*.ts",
+        "tools/sim/gold.json",
         ".agents/skills/mac-worker-setup/pin.env"
       ]
     },

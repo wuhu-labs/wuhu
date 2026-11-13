@@ -1,4 +1,3 @@
-import { directoryOf } from './directory.ts'
 import { groupLabel, memberGroups } from './groups.ts'
 
 function assertEquals(actual: unknown, expected: unknown): void {
@@ -6,10 +5,6 @@ function assertEquals(actual: unknown, expected: unknown): void {
   const e = JSON.stringify(expected)
   if (a !== e) throw new Error(`expected ${e}, got ${a}`)
 }
-
-const people = directoryOf([
-  { id: 'lamp-oak-fern', handle: 'minsheng', displayName: 'Minsheng' },
-])
 
 Deno.test('member groups list Shared first, then the server order', () => {
   assertEquals(
@@ -22,8 +17,8 @@ Deno.test('member groups list Shared first, then the server order', () => {
   )
 })
 
-Deno.test('Shared is Shared; a personal group is its person', () => {
-  assertEquals(groupLabel('shared', people), 'Shared')
-  assertEquals(groupLabel('lamp-oak-fern', people), 'Minsheng')
-  assertEquals(groupLabel('moss-kite-drum', people), 'moss-kite-drum')
+Deno.test('Shared is Shared; other groups keep their identity', () => {
+  assertEquals(groupLabel('shared'), 'Shared')
+  assertEquals(groupLabel('lamp-oak-fern'), 'lamp-oak-fern')
+  assertEquals(groupLabel('moss-kite-drum'), 'moss-kite-drum')
 })

@@ -54,7 +54,7 @@ enum SessionlessScript: Hashable, Sendable {
     case let .observer(observer):
       guard let firing = observer.firing else { preconditionFailure("a firing token names its firing") }
       return .observer(group: observer.group.rawValue, firing: firing)
-    case let .person(run): return .observer(group: run.personalGroup.rawValue, firing: run.id)
+    case let .person(run): return .observer(group: run.group.rawValue, firing: run.id)
     }
   }
 }

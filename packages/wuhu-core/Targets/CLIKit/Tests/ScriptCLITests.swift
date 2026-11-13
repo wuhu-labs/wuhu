@@ -2,11 +2,14 @@ import Crypto
 import Dependencies
 import DeterministicDependencies
 import Fetch
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import InMemoryTracing
 import ServerTelemetry
-@testable import SpaceCore
+import SpaceCore
 import Synchronization
 import Testing
 import Tracing
@@ -102,7 +105,7 @@ private func hex(_ text: String) -> String {
     }
   }
 
-  @Test func aTerminalRunActsAsThePersonAndItsInferenceNamesTheirOwnGroup() async throws {
+  @Test func aTerminalRunActsAsThePersonAndItsInferenceNamesTheActingGroup() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness(dev: false)
       let (terminal, account) = try await h.signIn("alice")
@@ -121,26 +124,28 @@ private func hex(_ text: String) -> String {
       let run = await withDependencies { $0.fetch = provider } operation: { await h.run(["script", file, "x"], environment: terminal) }
       #expect(run.code == 0, "\(run.stderr)")
       #expect(run.stdout == "ok x\nsession null\n")
-      let personal = try #require(try await h.space.personalGroup(of: account.id))
+      let actor = Actor.person(persona: "alice", account: account.id)
       let inferences = try await h.space.query(
         #"SELECT grp, session, outcome, firing LIKE 'terminal-%' FROM "wuhu://*.localspace/inferences""#,
-        as: Principal(actor: .person(persona: "alice", account: account.id), group: personal),
+        as: .shared(actor),
       ).rows
-      #expect(inferences == [[.text(personal.rawValue), .null, .text("ok"), .integer(1)]], "\(inferences)")
+      #expect(inferences == [[.text("shared"), .null, .text("ok"), .integer(1)]], "\(inferences)")
       let helper = try await h.space.query("SELECT kind, parent, created_by FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
       #expect(helper.map { Array($0.prefix(2)) } == [[.text("agent"), .null]], "\(helper)")
       guard case let .text(creator)? = helper.first?.last else { Issue.record("helper has no creator: \(helper)"); return }
       #expect(try await h.space.persona(named: creator)?.account == account.id)
 
+      let group = try await h.space.createGroup(alias: "workspace", owner: account.id)
+      try await h.space.setVisibility(.private, of: group, by: actor, acting: group)
       let elsewhere = try script(h, """
       import { createSession } from 'wuhu:session'
       await createSession({ title: 'mine', provider: 'testing', model: 'test-model' })
       result('made')
       """)
-      let placed = await h.run(["--group", personal.rawValue, "script", elsewhere], environment: terminal)
+      let placed = await h.run(["--group", group.rawValue, "script", elsewhere], environment: terminal)
       #expect(placed.code == 0, "\(placed.stderr)")
       let mine = try await h.space.query(
-        #"SELECT title FROM "wuhu://\#(personal.rawValue).localspace/sessions""#, as: Principal(actor: .person(persona: "alice", account: account.id), group: personal),
+        #"SELECT title FROM "wuhu://\#(group.rawValue).localspace/sessions""#, as: Principal(actor: actor, group: group),
       ).rows
       #expect(mine == [[.text("mine")]], "\(mine)")
 
@@ -151,37 +156,13 @@ private func hex(_ text: String) -> String {
     }
   }
 
-  // A persona older than personal groups has none until its first terminal
-  // run, which makes it.
-  @Test func aTerminalRunMakesTheMissingPersonalGroupOfAnOlderPersona() async throws {
-    try await withIdentityDeps {
-      let h = try await IdentityHarness(dev: false)
-      let (terminal, account) = try await h.signIn("bob")
-      let first = await h.run(["script", try script(h, "result(1)\n")], environment: terminal)
-      #expect(first.code == 0, "\(first.stderr)")
-      let personal = try #require(try await h.space.personalGroup(of: account.id))
-      try await h.space.writer.write { db in
-        try db.execute(sql: "DELETE FROM group_roles WHERE grp = ?", arguments: [personal.rawValue])
-        try db.execute(sql: "DELETE FROM groups WHERE id = ?", arguments: [personal.rawValue])
-      }
-      #expect(try await h.space.personalGroup(of: account.id) == nil)
-
-      let run = await h.run(["script", try script(h, "result(2)\n")], environment: terminal)
-      #expect(run.code == 0, "\(run.stderr)")
-      #expect(run.stdout == "2\n")
-      #expect(try await h.space.personalGroup(of: account.id) != nil)
-    }
-  }
-
   @Test func aSignedInAccountThatIsNoPersonIsRefused() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness(dev: false)
-      let (terminal, account) = try await h.signIn("box", kind: .machine)
-      // A group it owns lets it through the acting-group gate to the route.
-      let own = try await h.space.ensurePersonalGroup(account: account.id)
-      let refused = await h.run(["--group", own.rawValue, "script", try script(h, "result(1)\n")], environment: terminal)
+      let (terminal, _) = try await h.signIn("box", kind: .machine)
+      let refused = await h.run(["script", try script(h, "result(1)\n")], environment: terminal)
       #expect(refused.code == 1)
-      #expect(refused.stderr.contains("a terminal script runs as a signed-in person"), "\(refused.stderr)")
+      #expect(refused.stderr.contains("you may not read group shared"), "\(refused.stderr)")
     }
   }
 

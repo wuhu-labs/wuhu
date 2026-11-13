@@ -97,6 +97,6 @@ import Testing
     let session = try await space.sessions.createSession(group: team, title: "s", kind: .agent, createdBy: "owner", model: .test)
     #expect(try await space.role(of: .session(session), in: GroupID(rawValue: "ops"), acting: team) == .write)
     #expect(try await space.isHumanAdmin(person, of: GroupID(rawValue: "settings")))
-    #expect(try await space.personalGroup(of: person) == GroupID(rawValue: "personal"))
+    #expect(try await space.group(GroupID(rawValue: "personal")) == nil)
   }
 }

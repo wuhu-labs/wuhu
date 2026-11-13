@@ -9,8 +9,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-// Sessions, settings and conversations by group on the API: alice is the
-// person's personal group, bob another person's.
+// Sessions, settings and conversations in ordinary private groups on the API.
 @Suite(.deterministicDependencies) struct GroupRoutesTests {
   struct People {
     let harness: SessionHarness
@@ -23,8 +22,8 @@ import Testing
   func people() async throws -> People {
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530")
     let (bearer, key) = try await harness.enrolledBearer()
-    let alice = try await harness.space.ensurePersonalGroup(account: key.account)
-    let bob = try await harness.space.ensurePersonalGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
+    let alice = try await harness.space.privateGroup(account: key.account)
+    let bob = try await harness.space.privateGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
     return People(harness: harness, bearer: bearer, key: key, alice: alice, bob: bob)
   }
 

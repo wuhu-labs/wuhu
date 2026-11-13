@@ -12,6 +12,7 @@ import SpaceContract
 import SpaceCore
 
 func addUserRoutes(_ router: inout Router, space: Space, dev: Bool) {
+  addUserSettingsRoutes(&router, space: space, dev: dev)
   @Dependency(\.date) var dateGen
 
   router.get("/v1/users") { request, _ in

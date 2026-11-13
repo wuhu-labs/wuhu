@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"HiddenSidebarAddress","type":"object","properties":{"group":{"type":"string"},"path":{"type":"string"}},"required":["group","path"],"additionalProperties":false}

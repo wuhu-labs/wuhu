@@ -194,7 +194,7 @@ function ProfileCard() {
     if (file == null || principal == null) return
     setBusy(true)
     setError(null)
-    uploadAvatar(principal, file)
+    uploadAvatar(file)
       .then(() => globalThis.dispatchEvent(new Event(profileChangedEvent)))
       .catch((failure: unknown) => setError(errorMessage(failure)))
       .finally(() => setBusy(false))

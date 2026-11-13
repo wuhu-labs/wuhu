@@ -14,9 +14,6 @@ import { crossOriginFor, sharedGroup } from '~/lib/groups'
 // compiler memoises renders on state, not on module variables.
 const missing = new Map<string, number>()
 
-// A session's photo is its home's avatar.png and a user's is under /users; a
-// principal the session roster knows is a session unless the caller says so.
-// A session outside every group the viewer is a member of shows its initials.
 export function Avatar({
   principal,
   name,

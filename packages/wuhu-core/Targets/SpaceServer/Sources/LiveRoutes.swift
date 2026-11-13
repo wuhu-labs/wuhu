@@ -134,7 +134,7 @@ private func liveTargetRefusal(_ error: any Error, address: String) -> (code: Li
   case let ToolRunError.failed(code, message, _, _):
     (code == .unauthorized ? .forbidden : code == .notFound || code == .invalidPath ? .notFound : .internal, message)
   case SpaceError.notFound: (.notFound, "\(address) does not exist")
-  case SpaceError.groupForbidden, SpaceError.personalGroupPrivate: (.forbidden, "\(address) is not readable from here")
+  case SpaceError.groupForbidden: (.forbidden, "\(address) is not readable from here")
   default: (.internal, "\(error)")
   }
 }

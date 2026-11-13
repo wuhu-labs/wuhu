@@ -33,7 +33,6 @@ import { type CreatedSession, sessionHref } from '~/lib/links'
 import { settingsHref } from '~/components/settings-nav'
 import { createSession } from '~/sdk/session'
 import { groupLabel } from '~/lib/groups'
-import { useDirectory } from '~/lib/use-directory'
 
 const kinds: { kind: SessionKind; label: string; blurb: string }[] = [
   {
@@ -227,7 +226,6 @@ function CreateForm({
   onDone: () => void
 }) {
   const navigate = useNavigate()
-  const directory = useDirectory()
   const [group, setGroup] = useState(defaultGroup)
   const [templates, setTemplates] = useState<
     ReadonlyMap<string, SessionTemplateDescriptor[]>
@@ -297,7 +295,7 @@ function CreateForm({
         >
           {groups.map((option) => (
             <option key={option} value={option}>
-              {groupLabel(option, directory)}
+              {groupLabel(option)}
             </option>
           ))}
         </select>

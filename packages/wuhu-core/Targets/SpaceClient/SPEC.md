@@ -22,3 +22,7 @@ Unknown server error codes remain transport failures rather than decoding as a k
 ## Worker media
 
 `media(_:)` reads a transcript media URL through the worker-only `/v1/media` route. Both blob and space-file references use this route; exec credentials are refused. Ordinary `file(_:)` reads remain subject to the caller’s current file access.
+
+## Person avatars
+
+`userAvatar(_:)` reads `/v1/user/:person/avatar` through the authenticated binary transport and returns nil for 404. `putUserAvatar(_:)` uploads raw `image/png` to `/v1/user/me/avatar` and requires 204. Avatars are person-owned bucket hashes, not files in a group; these client methods still exchange PNG bytes, with no storage shape on the wire.

@@ -135,13 +135,6 @@ enum Sessions {
     )
   }
 
-  static func markDrained(_ key: String, through id: Int64, now: String, in db: Database) throws {
-    try db.execute(
-      sql: "UPDATE session_queue SET drained_at = ? WHERE session_id = ? AND id <= ? AND drained_at IS NULL",
-      arguments: [now, key, id],
-    )
-  }
-
   /// The last due input, or `tail` when none waits.
   static func queueHead(_ key: String, tail: Int64, at clock: String, in db: Database) throws -> Int64 {
     let maxID = try Int64.fetchOne(

@@ -41,6 +41,7 @@ import Testing
     }
     try await database.write { db in
       try db.execute(sql: "INSERT INTO devices (id, account_id, pubkey, installation, kind, name, machine_id, created_at, last_seen_at) VALUES ('device', ?, 'device-key', 'install', 'mac', 'Mac', ?, 'now', 'now')", arguments: [person.id.rawValue, old.id.rawValue])
+      try db.execute(sql: "ALTER TABLE groups ADD COLUMN personal_account TEXT")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '012'")
     }
     let tables = ["account_keys", "join_tokens", "join_token_receipts", "group_roles", "machine_execs", "script_execs"]
@@ -48,6 +49,7 @@ import Testing
       try Dictionary(uniqueKeysWithValues: tables.map { ($0, try Int.fetchOne(db, sql: "SELECT count(*) FROM \($0)")!) })
     }
     let upgraded = try Space(writer: database)
+    try await database.write { try $0.execute(sql: "ALTER TABLE groups DROP COLUMN personal_account") }
     #expect(try await upgraded.machines().map(\.id) == [kept.id])
     #expect(try await upgraded.accounts().contains { $0.id == person.id })
     for table in tables {

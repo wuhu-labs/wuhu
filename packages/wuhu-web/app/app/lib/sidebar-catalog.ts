@@ -1,10 +1,8 @@
 import type {
   GroupDetail,
   GroupSummary,
-  ReadOutput,
-  WriteInput,
+  HiddenSidebarAddress,
 } from './contract.gen.ts'
-import { ApiError } from '~/sdk/errors'
 import { sharedGroup } from './groups.ts'
 import { everything, type SidebarFile, type SidebarView } from './sidebars.ts'
 
@@ -17,17 +15,12 @@ export interface SidebarGroup {
   role: 'Admin' | 'Member' | 'Read-only'
 }
 
-export interface SidebarAddress {
-  group: string
-  path: string
-}
+export type SidebarAddress = HiddenSidebarAddress
 
 export type CatalogSidebar = SidebarFile & {
   group: SidebarGroup
   visible: boolean
 }
-
-export const sidebarSettingsPath = '/.settings/sidebars.json'
 
 export function sidebarKey(address: SidebarAddress): string {
   return `${address.group}:${address.path}`
@@ -61,50 +54,6 @@ export function sidebarGroups(
     Number(b.id === sharedGroup) - Number(a.id === sharedGroup) ||
     a.alias.localeCompare(b.alias) || a.id.localeCompare(b.id)
   )
-}
-
-export function hiddenSidebars(content: string): SidebarAddress[] {
-  const value: unknown = JSON.parse(content)
-  if (
-    typeof value !== 'object' || value === null || !('hidden' in value) ||
-    !Array.isArray(value.hidden) ||
-    !value.hidden.every((entry: unknown) =>
-      typeof entry === 'object' && entry !== null && 'group' in entry &&
-      typeof entry.group === 'string' && 'path' in entry &&
-      typeof entry.path === 'string'
-    )
-  ) throw new Error("Sidebar settings can't be read")
-  return value.hidden
-}
-
-export interface SidebarPreferences {
-  hidden: SidebarAddress[]
-  error: string | null
-}
-
-export function readSidebarPreferences(
-  previous: SidebarPreferences,
-  content: string | null,
-): SidebarPreferences {
-  try {
-    return {
-      hidden: content === null ? [] : hiddenSidebars(content),
-      error: null,
-    }
-  } catch {
-    return { ...previous, error: "Sidebar settings can't be read" }
-  }
-}
-
-export function changeSidebarVisibility(
-  hidden: readonly SidebarAddress[],
-  address: SidebarAddress,
-  visible: boolean,
-): SidebarAddress[] {
-  const rest = hidden.filter((entry) =>
-    sidebarKey(entry) !== sidebarKey(address)
-  )
-  return visible ? rest : [...rest, address]
 }
 
 export function catalogSidebars(
@@ -165,40 +114,6 @@ export function sidebarGroupRows(
     loading: !loaded(group.id),
     sidebars: entries.filter((entry) => entry.group.id === group.id),
   }))
-}
-
-export async function writeSidebarVisibility(
-  io: {
-    read(): Promise<ReadOutput | null>
-    write(input: WriteInput): Promise<unknown>
-  },
-  address: SidebarAddress,
-  visible: boolean,
-): Promise<SidebarAddress[]> {
-  for (let attempt = 0;; attempt++) {
-    const current = await io.read()
-    const hidden = changeSidebarVisibility(
-      current === null ? [] : hiddenSidebars(current.content),
-      address,
-      visible,
-    )
-    const document = current === null ? {} : JSON.parse(current.content)
-    try {
-      await io.write({
-        path: sidebarSettingsPath,
-        content: JSON.stringify({ ...document, hidden }),
-        ...(current === null
-          ? { createOnly: true }
-          : { ifMatch: current.token }),
-      })
-      return hidden
-    } catch (failure) {
-      if (
-        !(failure instanceof ApiError && failure.code === 'conflict') ||
-        attempt > 0
-      ) throw failure
-    }
-  }
 }
 
 export function selectedSidebar(

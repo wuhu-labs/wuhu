@@ -2,7 +2,6 @@ import AsyncHTTPClient
 import Dependencies
 import DeterministicDependencies
 import Foundation
-import GRDB
 import Logging
 import LoopCore
 import NIOCore
@@ -64,16 +63,12 @@ import WebPush
         p256dh: "p256dh", auth: "auth", vapidKeyID: "vapid",
         expiresAt: fixedDate.addingTimeInterval(-1),
       ))
-      #expect(try await space.writer.read {
-        try Int.fetchOne($0, sql: "SELECT count(*) FROM web_push_subscriptions WHERE endpoint = ?", arguments: ["https://push.example/expired"])
-      } == 1)
+      #expect(space.cell.webPushSubscription("https://push.example/expired") != nil)
       try await WebPushJobTest(
         space: space, logger: Logger(label: "web-push-test"),
         client: WebPushClient { message in #expect(message.endpoint == "https://push.example/live") },
       ).drain()
-      #expect(try await space.writer.read {
-        try Int.fetchOne($0, sql: "SELECT count(*) FROM web_push_subscriptions WHERE endpoint = ?", arguments: ["https://push.example/expired"])
-      } == 0)
+      #expect(space.cell.webPushSubscription("https://push.example/expired") == nil)
     }
     try await space.close()
   }
@@ -123,7 +118,7 @@ import WebPush
       $0.date = .constant(fixedDate)
     } operation: {
       let account = try await space.addAccount(kind: .human, name: "alice")
-      let alice = try await space.ensurePersonalGroup(account: account.id)
+      let alice = try await space.privateGroup(account: account.id)
       let visitor = try await space.sessions.createSession(
         group: alice, title: "visitor", kind: .agent, createdBy: "alice",
         model: ModelSpecifier(provider: "testing", model: "test-model", effort: "medium"),

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SidebarVisibilityInput","type":"object","properties":{"group":{"type":"string"},"path":{"type":"string"},"hidden":{"type":"boolean"}},"required":["group","path","hidden"],"additionalProperties":false}

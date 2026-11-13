@@ -201,7 +201,7 @@ _Afterwards:_ deterministic checks require an exec running the script, the reply
 
 _Prompt:_ "There's a tool at {script} on {machine}. I'd like to run it myself later from my own laptop's terminal, without you. Will that work, whom will it act as, and which group are any model calls it makes attributed to? Don't run it and don't change anything." The setup is shebang-script's.
 
-_Afterwards:_ deterministic checks require no exec running the script, the reply naming the personal group, and no files written. The judge passes a reply that the person's signed-in `wuhu script` runs it as them in their acting group, its inferences attributed to their personal group; it fails "terminal callers are refused" or "attributed to the session". The case runs only when the pinned release's `wuhu script --help` names the signed-in person.
+_Afterwards:_ deterministic checks require no exec running the script, the reply naming the acting group, and no files written. The judge passes a reply that the person's signed-in `wuhu script` runs it as them in their acting group, its inferences attributed to their acting group; it fails "terminal callers are refused" or "attributed to the session". The case runs only when the pinned release's `wuhu script --help` names the signed-in person.
 
 ## agent-page
 

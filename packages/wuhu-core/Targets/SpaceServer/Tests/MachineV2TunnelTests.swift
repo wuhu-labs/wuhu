@@ -138,7 +138,7 @@ extension MachineV2TunnelTests {
   @Test func machineMovePreservesExplicitMembershipButRevokesOldGroupVisibility() async throws {
     let f = try await Fixture()
     let person = try await f.space.addAccount(kind: .human, name: "other", admin: false)
-    let group = try await f.space.ensurePersonalGroup(account: person.id)
+    let group = try await f.space.privateGroup(account: person.id)
     let credential = MachineHub.Credential(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])
     _ = try await f.space.moveMachine(f.machine.id, to: group)
     #expect(try await f.space.machineV2Members(group: .shared).isEmpty)

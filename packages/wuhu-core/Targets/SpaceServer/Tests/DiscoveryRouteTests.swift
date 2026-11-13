@@ -53,8 +53,7 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
     let open = try await harness.space.createGroup(alias: "readable", owner: owner)
     let hidden = try await harness.space.createGroup(alias: "hidden", owner: owner)
     try await harness.space.setVisibility(.private, of: hidden, by: .anonymous, acting: hidden)
-    let personal = try await harness.space.ensurePersonalGroup(account: owner)
-    let groups: [GroupID] = [.shared, .settings, open, hidden, personal]
+    let groups: [GroupID] = [.shared, .settings, open, hidden]
     for group in groups {
       _ = try await harness.space.fs(group).write("/module.js", Data(group.rawValue.utf8), ifMatch: nil)
     }

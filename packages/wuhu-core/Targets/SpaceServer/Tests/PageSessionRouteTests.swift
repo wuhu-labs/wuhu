@@ -28,7 +28,7 @@ import Testing
     let alice = try await harness.space.addAccount(kind: .human, name: "alice", admin: true).id
     return Rig(
       harness: harness, alice: alice, persona: try await harness.space.persona(account: alice)?.name ?? alice.rawValue,
-      aliceGroup: try await harness.space.ensurePersonalGroup(account: alice),
+      aliceGroup: try await harness.space.privateGroup(account: alice),
     )
   }
 

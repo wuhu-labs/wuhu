@@ -99,7 +99,7 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
-      let group = try await t.harness.space.ensurePersonalGroup(account: account.id)
+      let group = try await t.harness.space.privateGroup(account: account.id)
       let owner = GroupID(rawValue: "owner")
       try await t.harness.addGroup(owner)
       // owner's list admits the reader's group at read only.

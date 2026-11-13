@@ -46,21 +46,18 @@ public struct ScriptRun: Sendable, Codable, Equatable {
 }
 
 /// A person's terminal script: the id its machine processes are owned by and
-/// its inferences name as their firing, the person, the group it acts in and
-/// the person's own group its inferences are attributed to.
+/// its inferences name as their firing, the person and the acting group.
 public struct TerminalRun: Hashable, Sendable, Codable {
   public let id: String
   public let persona: String
   public let account: AccountID
   public let group: GroupID
-  public let personalGroup: GroupID
 
-  public init(id: String, persona: String, account: AccountID, group: GroupID, personalGroup: GroupID) {
+  public init(id: String, persona: String, account: AccountID, group: GroupID) {
     self.id = id
     self.persona = persona
     self.account = account
     self.group = group
-    self.personalGroup = personalGroup
   }
 
   public var person: Person { Person(persona: persona, account: account, group: group) }

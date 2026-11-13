@@ -147,13 +147,12 @@ import Testing
     }
   }
 
-  @Test(arguments: ["enqueued_at", "drained_at"])
-  func unreadableQueuedDateIsReportedAndDoesNotWakeOrPreventArchive(column: String) async throws {
+  @Test func unreadableQueuedDateIsReportedAndDoesNotWakeOrPreventArchive() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let id = try await store.createSession(group: .shared, title: "date recovery", kind: .agent, createdBy: "morgan", model: .test)
       try await store.put(id, input: SessionFix.message("bad date"))
-      try await store.space.plant("UPDATE session_queue SET \(column) = 'oops' WHERE session_id = ?", arguments: [id.rawValue])
+      try await store.space.plant("UPDATE session_queue SET enqueued_at = 'oops' WHERE session_id = ?", arguments: [id.rawValue])
       try await store.markErrored(id, message: "invalid date")
       try await store.deliverMail()
       _ = try await store.restart(id)

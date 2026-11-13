@@ -36,8 +36,8 @@ import Testing
     let bob = try await harness.space.addAccount(kind: .human, name: "bob").id
     let rig = Rig(
       harness: harness, alice: alice, bob: bob,
-      aliceGroup: try await harness.space.ensurePersonalGroup(account: alice),
-      bobGroup: try await harness.space.ensurePersonalGroup(account: bob),
+      aliceGroup: try await harness.space.privateGroup(account: alice),
+      bobGroup: try await harness.space.privateGroup(account: bob),
     )
     try await put(rig, .shared, "/plan.md", "shared plan")
     try await put(rig, rig.aliceGroup, "/plan.md", "alice plan")
@@ -183,7 +183,7 @@ import Testing
     #expect(try await alices.text() == "dm bytes")
 
     let carol = try await space.addAccount(kind: .human, name: "carol").id
-    let carolGroup = try await space.ensurePersonalGroup(account: carol)
+    let carolGroup = try await space.privateGroup(account: carol)
     let carolHost = "\(carolGroup.rawValue).space.test:5530"
     #expect(try await get(r, carolHost, path, cookie: try await cookie(r, carol, carolGroup)).status == .notFound)
   }

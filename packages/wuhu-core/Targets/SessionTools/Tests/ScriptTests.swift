@@ -11,7 +11,6 @@ import Fetch
 #else
   import Foundation
 #endif
-import GRDB
 import JSONValue
 @testable import LoopCore
 import MachineChannel
@@ -296,9 +295,7 @@ import struct WuhuAI.ToolCall
   @Test func anotherGroupsModuleImportsOnlyByItsQualifiedFormAndOnlyIfReadable() async throws {
     try await withRig { rig in
       try await rig.write("/skills/lib.js", "export const where = \"shared\"")
-      try await rig.space.writer.write { db in
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('other', '2026-01-01T00:00:00.000Z')")
-      }
+      try await rig.space.seedGroup(GroupID(rawValue: "other"))
       _ = try await rig.space.fs(GroupID(rawValue: "other")).write("/skills/lib.js", Data("export const where = \"other\"".utf8), ifMatch: nil)
       try await rig.run("module-group")
       try await rig.released()
@@ -307,7 +304,7 @@ import struct WuhuAI.ToolCall
     }
   }
 
-  @Test func aPersonalGroupSessionImportsAndWritesInItsOwnGroupAndReachesSharedByName() async throws {
+  @Test func aPrivateGroupSessionImportsAndWritesInItsOwnGroupAndReachesSharedByName() async throws {
     let alice = GroupID(rawValue: "alice")
     try await withRig(group: alice) { rig in
       try await rig.write("/skills/lib.js", "export const where = \"shared\"")
@@ -384,9 +381,7 @@ import struct WuhuAI.ToolCall
   @Test func aSharedScriptNeverFallsBackIntoAGroupItDoesNotRead() async throws {
     let echo = FetchClient { request in Response(status: .ok, body: .string(request.url.absoluteString)) }
     try await withRig(fetch: echo) { rig in
-      try await rig.space.writer.write { db in
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
-      }
+      try await rig.space.seedGroup(GroupID(rawValue: "alice"))
       try await rig.stores.group("alice").set("K", to: "alice-value")
       try await rig.run("secret-no-fallback")
       try await rig.released()
@@ -458,9 +453,7 @@ import struct WuhuAI.ToolCall
         .dm(with: helper.rawValue), messageID: MessageID("d1"), sender: me, senderSession: rig.session,
         content: .init(text: "psst"),
       )
-      try await rig.space.writer.write { db in
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
-      }
+      try await rig.space.seedGroup(GroupID(rawValue: "alice"))
       _ = try await rig.space.setUserProfile(principal: "u_morgan", handle: "morgan", displayName: nil)
       let theirs = try await store.createConversation(members: ["u_morgan"], in: GroupID(rawValue: "alice"))
       let ours = try await store.createConversation(members: ["u_morgan"], in: .shared)
@@ -875,7 +868,9 @@ final class ScriptRig: Sendable {
   }
 
   func scriptExecRows() async throws -> Int {
-    try await space.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM machine_operations WHERE delivered = 0 AND json_extract(request, '$.script') IS NOT NULL") ?? 0 }
+    try await space.machines().reduce(0) { count, machine in
+      count + space.worker.cell(MachineCell.ID(machine.id.rawValue)).pendingScriptExecs()
+    }
   }
 
   func running() -> [String] { space.worker.cell(SessionCell.ID(session.rawValue)).runningScripts() }
@@ -1018,9 +1013,7 @@ func withRig(
       let access = InferenceAccess(credentials: credentials)
       let loop = try await ToolFixture(space: space, access: access, scripts: scripts)
       if group != .shared {
-        try await space.writer.write { db in
-          try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
-        }
+        try await space.seedGroup(group)
       }
       var session = try await makeSession(space, group: group)
       try await space.worker.call(SessionCell.ID(session.rawValue)) { try $0.interrupt() }
@@ -1102,4 +1095,10 @@ private func normalizingExecIDs(_ text: String) -> String {
 private struct ScriptActivityRow {
   let id: String
   @Column("last_activity_at") var lastActivityAt: String
+}
+
+extension MachineCell {
+  fileprivate func pendingScriptExecs() -> Int {
+    db.rows(MachineOperation.live).filter { !$0.delivered && $0.request.script != nil }.count
+  }
 }

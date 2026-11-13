@@ -228,8 +228,6 @@ public enum Wire {
           : "\(path) is part of group \(group)'s instructions; only its members write it",
         hint: nil,
       )
-    case let .personalGroupPrivate(group):
-      .failed(code: .invalidArgument, message: "group \(group) is personal: only its owner reads it", hint: nil)
     case .settingsGroupAccess:
       .failed(
         code: .unauthorized,

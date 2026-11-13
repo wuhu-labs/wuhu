@@ -107,4 +107,4 @@ The system picks the size. When one runs short of room, the caption goes first, 
 3. Read the file back and check that it parses as JSON. A file that doesn't, or that names an unknown template, draws as "Not a widget" with the reason.
 4. Tell the person the file is ready and how to add it: add the Space widget from the widget gallery, long-press it, Edit Widget, choose the space, then the file. A widget refreshes about every 15 minutes and whenever the app opens.
 
-Edit the file to change the widget; everyone who picked it gets the change. A file in `shared`'s `/.widgets/` is offered to every member, after their own group's.
+Edit the file to change the widget; everyone who picked it gets the change. The widget picker offers files in `shared`'s `/.widgets/` to every member.

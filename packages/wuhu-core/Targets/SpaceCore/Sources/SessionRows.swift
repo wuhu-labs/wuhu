@@ -88,7 +88,6 @@ public struct SessionRows {
       sql: "UPDATE session_runtime SET queue_tail = ? WHERE session_id = ?",
       arguments: [lastID, key],
     )
-    try Sessions.markDrained(key, through: Int64(lastID), now: now, in: db)
     try Sessions.putNextTimers(key, after: entries.map(\.input), now: try SQLiteDateFormat.date(from: now), in: db)
     return QueueDrain(items: items, queueTail: lastID, firings: try Sessions.firings(of: entries.map(\.input), in: db))
   }

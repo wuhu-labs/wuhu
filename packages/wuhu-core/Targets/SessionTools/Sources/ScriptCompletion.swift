@@ -162,7 +162,7 @@ extension ToolExecutor {
       payer = .observer(group: observer.group.rawValue, firing: firing)
     case let .person(run, _):
       session = try sessionlessCacheKey(Person.execCaller(run.account), catalog: catalog, request: request)
-      payer = .observer(group: run.personalGroup.rawValue, firing: run.id)
+      payer = .observer(group: run.group.rawValue, firing: run.id)
     }
     let resolved: ResolvedModel
     do { resolved = try await catalog.resolve(specifier, session: session) }

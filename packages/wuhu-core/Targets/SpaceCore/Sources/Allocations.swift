@@ -17,7 +17,7 @@ public struct Allocation: Equatable, Sendable {
   public let createdAt: Date
 }
 
-/// The draws that still run on the host's own writer, for the pieces whose rows are not the space cell's yet: personas, devices and the personal group.
+/// The draws that still run on the host's own writer, for the pieces whose rows are not the space cell's yet: personas and devices.
 enum Allocations {
   static func draw(
     _ kind: AllocationKind,

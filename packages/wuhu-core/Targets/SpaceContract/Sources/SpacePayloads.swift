@@ -224,7 +224,6 @@ public struct GroupDetail: Codable, Equatable, Sendable {
   public let name: String?
   public let open: Bool
   public let secrets: String
-  public let personal: Bool
   public let entries: [GroupAccessEntry]
 }
 

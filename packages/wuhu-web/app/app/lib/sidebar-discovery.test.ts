@@ -31,7 +31,6 @@ Deno.test('parallel group metadata has independent failure, backoff, retained su
         {
           id,
           alias: id,
-          personal: false,
           open: true,
           secrets: 'owner',
           entries: [],

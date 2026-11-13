@@ -13,14 +13,13 @@ public struct GroupClaim: Codable, Hashable, Sendable {
 extension GroupCell {
   /// What the apps call the project.
   public mutating func name(_ name: String) throws {
-    let row = try live()
-    guard row.personalAccount == nil else { throw SpaceError.groupForbidden(id.key) }
+    _ = try live()
     try db.execute(GroupRow.where { $0.id.eq(id.key) }.update { $0.name = #bind(name) })
   }
 
   public mutating func setVisibility(_ visibility: GroupVisibility) throws {
-    let row = try live()
-    guard row.personalAccount == nil, id.key != GroupID.settings.rawValue else { throw SpaceError.groupForbidden(id.key) }
+    _ = try live()
+    guard id.key != GroupID.settings.rawValue else { throw SpaceError.groupForbidden(id.key) }
     try db.execute(GroupRow.where { $0.id.eq(id.key) }.update { $0.visibility = #bind(visibility.rawValue) })
   }
 
@@ -52,11 +51,10 @@ extension GroupCell {
     return row
   }
 
-  /// A list's edits need a group that is live, nobody's own, and not the settings group, whose admins are the account admin verb's to set.
+  /// A list's edits need a live group that is not the settings group, whose admins are the account admin verb's to set.
   private func requireOrdinary() throws {
     guard id.key != GroupID.settings.rawValue else { throw SpaceError.settingsGroupAccess }
-    let row = try live()
-    guard row.personalAccount == nil else { throw SpaceError.personalGroupPrivate(id.key) }
+    _ = try live()
   }
 
   private func requireSubject(_ subject: GroupGrant.Subject, _ subjectID: String, role: GroupRole) throws {

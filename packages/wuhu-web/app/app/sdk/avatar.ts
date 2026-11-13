@@ -3,7 +3,7 @@ import { authorizedRequest } from './http'
 const edge = 128
 
 export function avatarPath(principal: string): string {
-  return `/users/${principal}/avatar.png`
+  return `/v1/user/${encodeURIComponent(principal)}/avatar`
 }
 
 export function sessionAvatarPath(session: string): string {
@@ -44,11 +44,8 @@ async function resample(file: File): Promise<Blob> {
   }
 }
 
-export async function uploadAvatar(
-  principal: string,
-  file: File,
-): Promise<void> {
-  await authorizedRequest(`/v1/f${avatarPath(principal)}`, {
+export async function uploadAvatar(file: File): Promise<void> {
+  await authorizedRequest('/v1/user/me/avatar', {
     method: 'PUT',
     headers: { 'content-type': 'image/png' },
     body: await resample(file),

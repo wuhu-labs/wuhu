@@ -23,7 +23,7 @@ import SpaceContract
 import Testing
 
 // Group isolation over HTTP: secrets, machines, archive and the MCP
-// seat live in groups. Alice and Bob are people with personal groups; Admin is
+// seat live in groups. Alice and Bob are people with private groups; Admin is
 // a human admin of shared; P is a top-level agent in alice, S one in shared.
 @Suite(.deterministicDependencies) struct GroupIsolationRouteTests {
   struct World {
@@ -51,11 +51,11 @@ import Testing
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", spaceURL: "https://space.test:5530", secrets: stores, machineV2: true)
     let tokens = harness.runtime.tokens
     let (alice, aliceKey) = try await harness.enrolledBearer()
-    let aliceGroup = try await harness.space.ensurePersonalGroup(account: aliceKey.account)
+    let aliceGroup = try await harness.space.privateGroup(account: aliceKey.account)
     let (bob, bobKey) = try await harness.enrolledBearer()
-    let bobGroup = try await harness.space.ensurePersonalGroup(account: bobKey.account)
+    let bobGroup = try await harness.space.privateGroup(account: bobKey.account)
     let (admin, adminKey) = try await harness.enrolledBearer()
-    let adminGroup = try await harness.space.ensurePersonalGroup(account: adminKey.account)
+    let adminGroup = try await harness.space.privateGroup(account: adminKey.account)
     _ = try await harness.space.setAdmin(adminKey.account, admin: true)
     let p = try await harness.store.createSession(group: aliceGroup, title: "P", kind: .agent, createdBy: "owner", executor: Self.model)
     let s = try await harness.store.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", executor: Self.model)
@@ -260,10 +260,8 @@ import Testing
     try await withSessionDeps {
       try await world { w in
         let project = GroupID(rawValue: "project")
-        try await w.harness.space.writer.write { db in
-          try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
-        }
-        // A space admin administers every group but another person's own, so
+        try await w.harness.space.seedGroup(project)
+        // A space admin administers every group, so
         // it may act in one it holds no entry in.
         let actingAsTarget = try await send(
           w, .post, "/v1/machine-v2", ["name": "admin_acting_v2", "group": .string(project.rawValue)], bearer: w.admin, group: project,
@@ -276,9 +274,8 @@ import Testing
         #expect(output.group == project.rawValue)
         #expect(try await w.harness.space.machine(output.id)?.group == project)
 
-        // Another person's own group is theirs: a space admin does not administer it.
-        let personal: JSONValue = ["name": "not_hers", "group": .string(w.bobGroup.rawValue)]
-        #expect(try await send(w, .post, "/v1/machine-v2", personal, bearer: w.admin).status == .forbidden)
+        let privateTarget: JSONValue = ["name": "admin_private", "group": .string(w.bobGroup.rawValue)]
+        #expect(try await send(w, .post, "/v1/machine-v2", privateTarget, bearer: w.admin).status == .ok)
       }
     }
   }
@@ -497,10 +494,8 @@ import Testing
         #expect(try await send(w, .put, path, .object(["group": "nowhere"]), bearer: w.alice).status == .notFound)
         #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
 
-        // Another person's own group is theirs: even a space admin does not move
-        // its machine, and alice may once she administers the space herself.
-        #expect(try await send(w, .put, path, toShared, bearer: w.admin).status == .notFound)
-        #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
+        #expect(try await send(w, .put, path, toShared, bearer: w.admin).status == .ok)
+        #expect(try await w.harness.space.machine(id)?.group == .shared)
         _ = try await w.harness.space.setAdmin(w.aliceAccount, admin: true)
         #expect(try await send(w, .put, path, toShared, bearer: w.alice).status == .ok)
         #expect(try await w.harness.space.machine(id)?.group == .shared)

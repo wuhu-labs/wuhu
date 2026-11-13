@@ -29,24 +29,25 @@ import Testing
       await #expect(throws: AliasError.memberRequired) { try await space.createGroup(alias: "research", owner: owner) }
     }
     let member = try await space.addAccount(kind: .human, name: "Member")
-    try await space.writer.write { db in
-      try db.execute(sql: "UPDATE accounts SET removed_at = '2030-01-01T00:00:00Z' WHERE id = ?", arguments: [member.id.rawValue])
-    }
+    _ = try await space.removeAccount(member.id)
     await #expect(throws: AliasError.memberRequired) { try await space.createGroup(alias: "research", owner: member.id) }
   }
 
-  @Test func personAliasesNameTheirPersonalGroupAndKeepResolvingAfterRename() async throws {
+  @Test func personAliasesDoNotNameGroupsButAStoredGroupIDStillResolves() async throws {
     let space = try makeSpace()
     let person = try await space.addAccount(kind: .human, name: "Morgan")
     let key = try await space.addKey(testPubkey("reader"), account: person.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     let persona = try await space.adoptPersona(key: key)
     _ = try await space.setUserProfile(principal: persona.name, handle: "morgan", displayName: nil)
-    let group = try #require(try await space.personalGroup(of: person.id))
-    #expect(try await space.group(group)?.alias == nil)
-    #expect(try await space.resolveGroup("morgan") == group)
+    #expect(try await space.resolveGroup(persona.name) == nil)
+    #expect(try await space.resolveGroup("morgan") == nil)
+    let group = GroupID(rawValue: persona.name)
+    try await space.seedGroup(group)
+    #expect(try await space.resolveGroup(persona.name) == group)
     _ = try await space.setUserProfile(principal: persona.name, handle: "reader", displayName: nil)
-    #expect(try await space.resolveGroup("morgan") == group)
-    #expect(try await space.resolveGroup("reader") == group)
+    #expect(try await space.resolveGroup("morgan") == nil)
+    #expect(try await space.resolveGroup("reader") == nil)
+    #expect(try await space.resolveGroup(persona.name) == group)
   }
 
   @Test func namespaceAndHistorySpanAllThreeKinds() async throws {

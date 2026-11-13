@@ -8,6 +8,7 @@ struct UserProfileRow {
   @Column("principal", primaryKey: true) var principal: String
   @Column("owner_account") var ownerAccount: String
   @Column("display_name") var displayName: String?
+  @Column("avatar") var avatarHash: String?
 }
 
 public struct UserProfile: Equatable, Sendable {
@@ -35,7 +36,13 @@ extension Space {
 extension PersonCell {
   mutating func setDisplayName(_ principal: String, displayName: String?) throws -> Bool {
     try requireAccount()
-    try db.execute(UserProfileRow.upsert { UserProfileRow(principal: principal, ownerAccount: id.key, displayName: displayName) })
+    try db.execute(UserProfileRow.insert {
+      UserProfileRow(principal: principal, ownerAccount: id.key, displayName: displayName, avatarHash: nil)
+    } onConflict: {
+      $0.principal
+    } doUpdate: {
+      $0.displayName = $1.displayName
+    })
     return true
   }
 }

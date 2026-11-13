@@ -50,7 +50,7 @@ import Testing
       #expect(try await harness.post("/v1/group/nowhere/observers", body).status == .notFound)
 
       let alice = try await harness.space.addAccount(kind: .human, name: "alice")
-      let foreign = try await harness.space.ensurePersonalGroup(account: alice.id)
+      let foreign = try await harness.space.privateGroup(account: alice.id)
       let session = try await harness.store.createSession(
         group: .shared, title: "agent", kind: .agent, createdBy: "owner",
         executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
@@ -86,7 +86,7 @@ import Testing
       let common = (try await harness.space.addMachineV2(name: "common")).machine.id
       try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
         let alice = try await harness.space.addAccount(kind: .human, name: "alice")
-        let hers = (try await harness.space.addMachineV2(name: "hers", group: try await harness.space.ensurePersonalGroup(account: alice.id))).machine.id
+        let hers = (try await harness.space.addMachineV2(name: "hers", group: try await harness.space.privateGroup(account: alice.id))).machine.id
         let firing = tokens.scriptToken(.observer(Observer(group: .shared, name: "nightly", firing: "f1")))
 
         let listed = try await harness.get("/v1/machine", bearer: firing)
@@ -131,7 +131,6 @@ import Testing
         let alice = try await harness.space.addAccount(kind: .human, name: "alice")
         let run = TerminalRun(
           id: "terminal-1", persona: "nightly", account: alice.id, group: .shared,
-          personalGroup: try await harness.space.ensurePersonalGroup(account: alice.id),
         )
         let person = tokens.scriptToken(.person(run))
         let namesake = tokens.scriptToken(.observer(Observer(group: .shared, name: "nightly", firing: "f1")))

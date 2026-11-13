@@ -15,7 +15,7 @@ extension SpaceCell {
 
   /// Marks `alias` the group's current one; every spelling it ever had stays reserved.
   mutating func rename(_ group: GroupID, alias: String) throws {
-    guard let row = db.rows(GroupRow.where { $0.id.eq(group.rawValue) }).first, row.personalAccount == nil, row.removedAt == nil else {
+    guard let row = db.rows(GroupRow.where { $0.id.eq(group.rawValue) }).first, row.removedAt == nil else {
       throw SpaceError.groupForbidden(group.rawValue)
     }
     try setCurrentAlias(alias, kind: .group, target: group.rawValue)
