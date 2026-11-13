@@ -9,6 +9,7 @@ dependencies:
   - GRDB
   - StructuredQueriesCore
   - GRDBSQLite
+  - Logging
 tests:
   dependencies:
     - StructuredQueries

@@ -43,7 +43,7 @@ public actor Space {
     let taskScope = TaskScope()
     self.taskScope = taskScope
     self.writer = writer
-    self.reads = ReadPool(path: writer.path, catalog: catalog, trace: trace)
+    self.reads = ReadPool(path: writer.path, catalog: catalog, trace: trace, log: log)
     self.dateGen = date
     self.clock = clock
     let changes = ChangeSource()
@@ -62,6 +62,7 @@ public actor Space {
         peer: peer,
         mtime: { SQLiteDateFormat.string(from: date.now) },
       ),
+      log: log,
     )
     self.runtime = runtime
     let bucket = Bucket(runtime: runtime, objects: objects)
@@ -90,7 +91,10 @@ public actor Space {
       throw SpaceIdentityError.invalid(identity.rawValue)
     }
     var configuration = makeConfiguration()
-    configuration.prepareDatabase { try $0.execute(sql: PageCache.pragmas(cacheKiB: PageCache.writerKiB)) }
+    configuration.prepareDatabase {
+      try $0.execute(sql: PageCache.pragmas(cacheKiB: PageCache.writerKiB))
+      $0.traceSlowStatements(on: "writer", to: log)
+    }
     let queue = try DatabaseQueue(path: file.path, configuration: configuration)
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
     return try Space(writer: queue, identity: identity, objects: store, log: log)

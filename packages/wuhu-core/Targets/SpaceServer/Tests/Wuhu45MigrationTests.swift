@@ -284,7 +284,7 @@ import Testing
       ["/missing.md stale", "/notes/c.md c.md"],
       ["wuhu-45", "wuhu-45-links"],
     ])
-    let skipped = logs.messages
+    let skipped = logs.messages.filter { $0.contains("shared:") }
     #expect(skipped.count == 2)
     #expect(skipped.contains { $0.contains("shared:/missing.md") })
     #expect(skipped.contains { $0.contains("shared:/unreadable.md") })

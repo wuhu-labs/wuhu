@@ -123,7 +123,7 @@ private final class TransactionPokes: TransactionObserver, Sendable {
     #expect(observer.commits.withLock { $0 } > 0)
     let numbers = try await space.writer.read { try Int.fetchAll($0, sql: "SELECT n FROM transaction_job ORDER BY n") }
     #expect(numbers == [1, 2, 4])
-    try database.base.reader.close()
+    try database.base.close()
     try await space.close()
   }
 }
@@ -157,7 +157,7 @@ extension JobTransactionTests {
     try success.access { _, host in _ = try database.execute("INSERT INTO probe VALUES (3)", [], on: host) }
     try success.commit()
     #expect(try writer.read { try Int.fetchAll($0, sql: "SELECT n FROM probe") } == [3])
-    try database.reader.close()
+    try database.close()
     try writer.close()
   }
 
@@ -167,6 +167,6 @@ extension JobTransactionTests {
     let database = try WuweiDatabase(writer: writer)
     try writer.close()
     #expect(throws: DatabaseError.self) { _ = try database.begin() }
-    try database.reader.close()
+    try database.close()
   }
 }

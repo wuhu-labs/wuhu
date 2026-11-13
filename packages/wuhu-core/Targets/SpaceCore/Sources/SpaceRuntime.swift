@@ -5,7 +5,10 @@
 #endif
 import Dispatch
 import GRDB
+import GRDBSQLite
+import Logging
 import SessionDomain
+import SpaceSQL
 import Synchronization
 import Wuwei
 
@@ -19,6 +22,7 @@ final class SpaceRuntime: Sendable {
   private let writer: any DatabaseWriter
   private let observations: ObservationSources
   private let documents: Documents
+  private let log: Logger
   /// Held while a worker is made, which writes — and only there: the writer's commit hooks run inside a write, so no lock they take may be held across one.
   private let database = Mutex<WuweiDatabase?>(nil)
   /// The worker this space hosts and its scheduler; a commit hook poking a cell takes it for the length of a lock.
@@ -26,10 +30,11 @@ final class SpaceRuntime: Sendable {
   /// Whether the space is closing, read and set for the length of a lock only: closing under the same lock a worker is handed out under keeps the two atomic without holding it across the work of making one.
   private let closing = Mutex(false)
 
-  init(writer: any DatabaseWriter, observations: ObservationSources, documents: Documents) {
+  init(writer: any DatabaseWriter, observations: ObservationSources, documents: Documents, log: Logger) {
     self.writer = writer
     self.observations = observations
     self.documents = documents
+    self.log = log
   }
 
   func worker() -> Worker {
@@ -48,7 +53,7 @@ final class SpaceRuntime: Sendable {
       if let running = running.withLock({ $0 }) { return running.worker }
       guard !closing.withLock({ $0 }) else { return nil }
       if database == nil {
-        do { database = try WuweiDatabase(writer: writer) } catch { preconditionFailure("the space database took no reader: \(error)") }
+        do { database = try WuweiDatabase(writer: writer, log: log) } catch { preconditionFailure("the space database took no reader: \(error)") }
       }
       let scheduler = DependencyScheduler()
       // A worker retakes a lease held under its own id at once, so two processes on one database never share an id.
@@ -99,7 +104,7 @@ final class SpaceRuntime: Sendable {
   }
 
   func close() throws {
-    try database.withLock { try $0?.reader.close() }
+    try database.withLock { try $0?.close() }
   }
 }
 
@@ -121,19 +126,37 @@ extension Space {
   }
 }
 
+/// Which reader a read takes next; a struct cannot hold the counter itself.
+private final class ReaderTurn: Sendable {
+  let next = Atomic<UInt64>(0)
+}
+
 struct WuweiDatabase: SharedDatabase {
   let writer: any DatabaseWriter
-  let reader: DatabaseQueue
+  /// One read-only queue per reader: four for a file database, one for an in-memory one, whose readers hold read
+  /// transactions that a commit has to wait for.
+  let readers: [DatabaseQueue]
+  private let turn = ReaderTurn()
   private let transactions = DispatchQueue(label: "wuwei.writer")
 
-  init(writer: any DatabaseWriter) throws {
-    try writer.writeWithoutTransaction { try prepareConnection($0.sqliteConnection!) }
-    var configuration = Configuration()
-    configuration.readonly = true
-    configuration.busyMode = .timeout(5)
-    configuration.prepareDatabase { try prepareConnection($0.sqliteConnection!) }
+  init(writer: any DatabaseWriter, log: Logger = Logger(label: "wuhu.space")) throws {
+    let inMemory = try writer.writeWithoutTransaction { db in
+      try prepareConnection(db.sqliteConnection!)
+      return String(cString: sqlite3_db_filename(db.sqliteConnection!, "main")).isEmpty
+    }
+    func makeReader(_ index: Int) throws -> DatabaseQueue {
+      var configuration = Configuration()
+      configuration.readonly = true
+      configuration.busyMode = .timeout(5)
+      configuration.prepareDatabase {
+        try $0.execute(sql: PageCache.pragmas(cacheKiB: PageCache.readerKiB))
+        try prepareConnection($0.sqliteConnection!)
+        $0.traceSlowStatements(on: "wuwei.reader.\(index)", to: log)
+      }
+      return try DatabaseQueue(path: writer.path, configuration: configuration)
+    }
     self.writer = writer
-    reader = try DatabaseQueue(path: writer.path, configuration: configuration)
+    readers = try (0 ..< (inMemory ? 1 : 4)).map(makeReader)
   }
 
   func write(_ body: (OpaquePointer, AnyObject?) throws -> Void) throws {
@@ -156,7 +179,12 @@ struct WuweiDatabase: SharedDatabase {
   }
 
   func read(_ body: (OpaquePointer) throws -> Void) throws {
+    let reader = readers[Int(turn.next.add(1, ordering: .relaxed).newValue % UInt64(readers.count))]
     try reader.read { try body(try open($0)) }
+  }
+
+  func close() throws {
+    for reader in readers { try reader.close() }
   }
 
   /// GRDB runs what a cell or a job writes, so whoever watches a table (an observation, a push) hears of the rows a cell wrote.

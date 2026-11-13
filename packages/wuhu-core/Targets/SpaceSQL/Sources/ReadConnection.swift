@@ -6,6 +6,7 @@
 
 import GRDB
 import GRDBSQLite
+import Logging
 import struct SpaceContract.GroupID
 import StructuredQueriesCore
 
@@ -45,6 +46,8 @@ final class ReadConnection {
   private var innerViews: [(inner: String, table: String)] = []
   private let catalog: ViewCatalog
   private let trace: (@Sendable (String) -> Void)?
+  private let log: Logger
+  private let label: String
   private var bound: Binding?
   private var forbiddenTables: Set<String> = []
   private var modules: Set<String> = []
@@ -60,6 +63,8 @@ final class ReadConnection {
     path: String,
     catalog: ViewCatalog,
     trace: (@Sendable (String) -> Void)? = nil,
+    log: Logger = Logger(label: "wuhu.space.read"),
+    label: String = "read",
     secrets: Secrets = .random(),
     screensText: Bool = true,
   ) throws {
@@ -74,6 +79,8 @@ final class ReadConnection {
     self.handle = handle
     self.catalog = catalog
     self.trace = trace
+    self.log = log
+    self.label = label
     let schema = "s" + secrets.schema
     self.schema = schema
     self.viewPrefix = "__v" + secrets.views
@@ -104,6 +111,17 @@ final class ReadConnection {
     modules = try Set(strings("SELECT name FROM pragma_module_list")).subtracting(ViewCatalog.tableFunctions)
     try exec("ATTACH DATABASE \(Self.literal(Self.attachmentURI(path))) AS \(quoted(schema))")
     try exec(PageCache.pragmas(cacheKiB: PageCache.readerKiB, schema: schema))
+    sqlite3_trace_v2(handle, UInt32(SQLITE_TRACE_PROFILE), { _, context, statement, duration in
+      Unmanaged<ReadConnection>.fromOpaque(context!).takeUnretainedValue()
+        .report(OpaquePointer(statement!), nanoseconds: duration!.assumingMemoryBound(to: Int64.self).pointee)
+      return SQLITE_OK
+    }, Unmanaged.passUnretained(self).toOpaque())
+  }
+
+  private func report(_ statement: OpaquePointer, nanoseconds: Int64) {
+    let milliseconds = Double(nanoseconds) / 1_000_000
+    guard SlowStatement.isSlow(milliseconds) else { return }
+    SlowStatement.log(String(cString: sqlite3_sql(statement)), milliseconds: milliseconds, on: label, to: log)
   }
 
   private static func attachmentURI(_ path: String) -> String {
@@ -126,6 +144,7 @@ final class ReadConnection {
 
   func close() throws {
     guard !closed else { return }
+    sqlite3_trace_v2(handle, 0, nil, nil)
     let code = sqlite3_close(handle)
     guard code == SQLITE_OK else {
       throw DatabaseError(resultCode: ResultCode(rawValue: code), message: String(cString: sqlite3_errmsg(handle)))
@@ -134,7 +153,10 @@ final class ReadConnection {
   }
 
   deinit {
-    if !closed { sqlite3_close_v2(handle) }
+    if !closed {
+      sqlite3_trace_v2(handle, 0, nil, nil)
+      sqlite3_close_v2(handle)
+    }
   }
 
   func run(

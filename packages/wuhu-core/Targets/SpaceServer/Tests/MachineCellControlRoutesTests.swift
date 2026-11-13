@@ -243,7 +243,7 @@ import Wuwei
     await worker.quiesce()
     worker.release()
     await scheduler.drain()
-    try database.reader.close()
+    try database.close()
     try await space.close()
   }
 

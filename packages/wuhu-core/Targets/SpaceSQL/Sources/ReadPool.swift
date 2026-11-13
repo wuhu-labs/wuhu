@@ -1,6 +1,7 @@
 import Dispatch
 import GRDB
 import GRDBSQLite
+import Logging
 import Synchronization
 
 /// Lazily opened read connections to one space database. A statement steps on its
@@ -15,9 +16,10 @@ public final class ReadPool: Sendable {
     capacity: Int = 4,
     catalog: ViewCatalog = .identity,
     trace: (@Sendable (String) -> Void)? = nil,
+    log: Logger = Logger(label: "wuhu.space.read"),
   ) {
     slots = (0 ..< capacity).map { index in
-      ReadSlot(path: path, catalog: catalog, trace: trace, label: "wuhu.space.read.\(index)")
+      ReadSlot(path: path, catalog: catalog, trace: trace, log: log, label: "read.\(index)")
     }
     load = Mutex(Array(repeating: 0, count: capacity))
   }
@@ -83,16 +85,20 @@ actor ReadSlot {
   private let path: String
   private let catalog: ViewCatalog
   private let trace: (@Sendable (String) -> Void)?
+  private let log: Logger
+  private let label: String
   private var connection: ReadConnection?
   private var closed = false
 
   nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
 
-  init(path: String, catalog: ViewCatalog, trace: (@Sendable (String) -> Void)?, label: String) {
-    self.executor = QueueExecutor(label: label)
+  init(path: String, catalog: ViewCatalog, trace: (@Sendable (String) -> Void)?, log: Logger, label: String) {
+    self.executor = QueueExecutor(label: "wuhu.space.\(label)")
     self.path = path
     self.catalog = catalog
     self.trace = trace
+    self.log = log
+    self.label = label
   }
 
   func run(
@@ -137,7 +143,7 @@ actor ReadSlot {
   private func open() throws -> ReadConnection {
     guard !closed else { throw DatabaseError(resultCode: .SQLITE_MISUSE, message: "read pool is closed") }
     if let connection { return connection }
-    let opened = try ReadConnection(path: path, catalog: catalog, trace: trace)
+    let opened = try ReadConnection(path: path, catalog: catalog, trace: trace, log: log, label: label)
     connection = opened
     return opened
   }

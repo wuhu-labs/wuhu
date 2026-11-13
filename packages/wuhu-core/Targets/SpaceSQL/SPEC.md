@@ -1,5 +1,9 @@
 # SpaceSQL
 
+## Slow statements
+
+A slot names itself `read.<n>` to the log the pool was given. SQLite's profile callback on the slot's connection reports every statement it finished; one that ran 100 ms or more becomes a single warning — connection, milliseconds, and the statement as prepared cut at 500 characters, never its bound values (`SlowStatement`). The pool's other connections are the space's: the host writer and the wuwei readers trace their own handles the same way through `Database.traceSlowStatements(on:to:)`.
+
 ## Read pool lifetime
 
 `ReadPool.close()` drains each read slot, closes its SQLite connection, and refuses later queries and table discovery with `SQLITE_MISUSE`, including on slots never opened. Close is idempotent, attempts every slot even if one fails, and throws the first SQLite close failure.
