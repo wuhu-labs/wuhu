@@ -55,7 +55,7 @@ extension MachineCell {
         ctx.emit { buffers.remove(pointer) }
         return
       }
-      guard !row.stdinEnded, buffers.pend(pointer, end: false, accepted: row.stdin, window: row.request.window) else { socket.close(); return }
+      guard !row.stdinEnded, buffers.pend(pointer, end: false, accepted: row.stdin, window: row.request.window, piece: 65536) else { socket.close(); return }
       if pointer.from < row.stdin { socket.send(.accepted(row.stdin)) }
     case let .eof(offset):
       guard offset >= row.stdin else { socket.close(); return }
@@ -64,7 +64,7 @@ extension MachineCell {
         socket.send(.accepted(row.stdin)); return
       }
       let pointer = buffers.put(Data(), operation: row.request.operation, channel: "stdin", from: offset)!
-      guard buffers.pend(pointer, end: true, accepted: row.stdin, window: row.request.window) else { socket.close(); return }
+      guard buffers.pend(pointer, end: true, accepted: row.stdin, window: row.request.window, piece: 65536) else { socket.close(); return }
     case .kill:
       if !row.delivered { try requestStop(&row, reason: "callerCancelled"); try finishExecStep(&row, presence: presence) }
       return

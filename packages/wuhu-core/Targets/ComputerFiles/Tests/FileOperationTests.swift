@@ -52,6 +52,27 @@ import Testing
     #expect(changed.verdict?.error?.code == .fileChanged)
   }
 
+  @Test func aReadIsAdmittedForWhatItsStatSaw() async throws {
+    let files = ComputerFileSystem(
+      status: { path in
+        guard path == "/file" else { throw OperationError(.fileUnavailable) }
+        return .init(version: "v1", size: 4096, kind: "file")
+      },
+      read: { _, _, count in Data(repeating: 7, count: count) },
+      search: { _ in NoFiles() },
+    )
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
+    func reserved(_ path: String) async throws -> Int? {
+      let id = UUID()
+      let url = URL(string: "https://agent/machine/v2/machines/disk/operations/\(id.uuidString)")!
+      let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "read.v1", input: ["path": .string(path), "offset": "1024"]))))
+      return try await response.body.json(OperationSnapshot.self).bufferReservationBytes
+    }
+    #expect(try await reserved("/file") == 3072)
+    #expect(try await reserved("/missing") == 0)
+    await agent.shutdown()
+  }
+
   @Test func fullReadWindowSuspendsEffectsAndControlStopStillAnswers() async throws {
     let files = FakeFiles(data: Data(repeating: 42, count: 1024 * 1024))
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
@@ -60,8 +81,10 @@ import Testing
       group.addTask { await agent.run() }; defer { group.cancelAll() }
       let operation = try await operations.start(.init(kind: "read.v1", input: ["path": "/file"]))
       let description = try await operations.describe()
-      let channel = try #require(description.kinds.first { $0.name == "read.v1" }?.outputChannels.first)
-      let expectedReads = channel.windowBytes / 65536 + 1
+      // The operation reserves what the file holds, one piece at most, and reads it in that piece: the read after the window
+      // fills is the one that suspends.
+      let piece = min(description.limits.filePieceBytes, 1024 * 1024)
+      let expectedReads = piece / 65536 + 1
       for _ in 0 ..< 10000 {
         if await files.reads == expectedReads { break }
         await Task.yield()
@@ -69,7 +92,7 @@ import Testing
       #expect(await files.reads == expectedReads)
       let snapshot = try await operation.poll([.init(name: "channel", value: "data"), .init(name: "after", value: "0")])
       #expect(snapshot.verdict == nil)
-      #expect(snapshot.payload?.data?.count == min(description.limits.pollBytes, channel.windowBytes))
+      #expect(snapshot.payload?.data?.count == min(description.limits.pollBytes, piece))
       for _ in 0 ..< 100 { await Task.yield() }
       #expect(await files.reads == expectedReads)
       try await operation.stop("testStop")

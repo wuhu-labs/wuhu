@@ -12,7 +12,7 @@ import Testing
       for seed in UInt8(1) ... UInt8(3) {
         let account = try await rig.space.addAccount(kind: .human, name: nil)
         let key = try await rig.space.addKey("ed25519:" + Data(repeating: seed, count: 32).base64EncodedString(), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
-        people.append(try await rig.space.mintPersona(key: key).name)
+        people.append(try await rig.space.adoptPersona(key: key).name)
       }
       let result = try await rig.evaluate("""
       import { createChannel, addChannelMembers, removeChannelMembers, renameChannel, conversation } from "wuhu:space"

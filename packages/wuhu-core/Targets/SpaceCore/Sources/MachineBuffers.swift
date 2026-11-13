@@ -178,8 +178,8 @@ public final class MachineBuffers: Sendable {
     }
   }
 
-  func pend(_ pointer: MachinePointer, end: Bool, accepted: UInt64, window: Int) -> Bool {
-    guard pointer.worker == worker, pointer.through >= pointer.from, let payload = payload(pointer), payload.byteCount <= 65536 else { return false }
+  func pend(_ pointer: MachinePointer, end: Bool, accepted: UInt64, window: Int, piece: Int) -> Bool {
+    guard pointer.worker == worker, pointer.through >= pointer.from, let payload = payload(pointer), payload.byteCount <= piece else { return false }
     return windows.withLock { windows in
       var state = windows[pointer.operation] ?? Window()
       guard state.pieces[pointer] != nil else { return false }

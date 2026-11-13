@@ -7,6 +7,7 @@ import GRDB
 import JSONValue
 import SessionDomain
 import struct SpaceContract.GroupID
+import StructuredQueries
 
 /// A handler slot as its observer cell finds it.
 public struct ObserverSlot: Sendable {
@@ -172,13 +173,14 @@ public struct ObserverRows {
   }
 
   private func failures(_ owner: SubscriptionOwner, _ id: SubscriptionID) throws -> Int {
-    try String.fetchAll(
-      db,
-      sql: """
-      SELECT outcome FROM subscription_firings WHERE owner_kind = ? AND owner = ? AND subscription = ? AND outcome IN ('ok', 'failed')
-      ORDER BY at DESC, rowid DESC LIMIT 16
-      """,
-      arguments: [owner.kind, owner.key, id.rawValue],
-    ).prefix { $0 == FiringOutcome.failed.rawValue }.count
+    try FiringRow.where {
+      $0.ownerKind.eq(owner.kind) && $0.owner.eq(owner.key) && $0.subscription.eq(id.rawValue)
+        && $0.outcome.in([FiringOutcome.ok.rawValue, FiringOutcome.failed.rawValue])
+    }
+    .order { ($0.at.desc(), #sql("rowid", as: Int64.self).desc()) }
+    .limit(16)
+    .select { $0.outcome }
+    .fetchAll(db)
+    .prefix { $0 == FiringOutcome.failed.rawValue }.count
   }
 }

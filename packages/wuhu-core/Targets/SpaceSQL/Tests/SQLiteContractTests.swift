@@ -104,29 +104,6 @@ import Testing
     #expect(try probe.decltypes("SELECT * FROM sessions") == ["TEXT", "BOOLEAN", "JSON_TEXT"])
     #expect(try probe.decltypes("SELECT flag, j, 1 AS n FROM sessions") == ["BOOLEAN", "JSON_TEXT", nil])
   }
-
-  @Test func anAuthorizerRecordedTableWakesGRDBRegionObservation() async throws {
-    let file = try Fixture()
-    let probe = try Probe(path: file.path)
-    try probe.exec(Fixture.views)
-    let tables = try Set(probe.authorizing("SELECT id FROM sessions").mainReads.map(\.table))
-    #expect(tables == ["sessions"])
-
-    let writer = try DatabaseQueue(path: file.path)
-    let (wakes, continuation) = AsyncStream<Void>.makeStream()
-    let observation = DatabaseRegionObservation(tracking: tables.map { Table($0) })
-      .start(in: writer, onError: { _ in continuation.finish() }, onChange: { _ in continuation.yield(()) })
-    defer { observation.cancel() }
-
-    try await writer.write { db in try db.execute(sql: "INSERT INTO other VALUES (1)") }
-    try await writer.write { db in try db.execute(sql: "UPDATE sessions SET flag = 1 WHERE id = 'hidden'") }
-    try await writer.write { db in try db.execute(sql: "INSERT INTO other VALUES (2)") }
-    continuation.finish()
-    var count = 0
-    for await _ in wakes { count += 1 }
-    #expect(count == 1)
-    #expect(try probe.column("SELECT count(*) FROM main.sessions WHERE flag = 1") == ["2"])
-  }
 }
 
 // A WAL database the way Space.open leaves one, with a hidden row the views

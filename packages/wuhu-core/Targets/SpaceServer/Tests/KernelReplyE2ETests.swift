@@ -170,7 +170,7 @@ private final class ToolsWitness: Sendable {
             #expect(!acknowledged.isEmpty, "the agent acknowledged the ask in its box")
             #expect(!delegated.contains { $0.key == "subscription:owed.reply" })
             #expect(delegating.queueHead == delegating.queueTail)
-            #expect(try await harness.store.openRequests(task).map(\.id) == [request])
+            #expect(try harness.store.openRequests(task).map(\.id) == [request])
 
             hold.gate.open()
 
@@ -182,7 +182,7 @@ private final class ToolsWitness: Sendable {
             #expect(reports.map { $0.arguments.object?["kind"]?.stringValue } == ["final"], "task transcript:\n\(reported.outline)")
             #expect(reports.map { $0.arguments.object?["request_id"]?.stringValue } == [request.rawValue])
             #expect(reports.allSatisfy { call in reported.contains { $0.key == "call:\(call.id)" && $0.text.contains("reported final") } })
-            #expect(try await harness.store.openRequests(task).isEmpty)
+            #expect(try harness.store.openRequests(task).isEmpty)
 
             try await until("the agent relays the final into its box", timeout: .seconds(300)) {
               guard try await harness.store.settledWork(agent) else { return false }

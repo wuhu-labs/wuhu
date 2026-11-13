@@ -40,7 +40,8 @@ public enum FileBulk: Socket {
 
   public enum Outgoing: Sendable {
     case started
-    case ready(inputs: [ChannelDescriptor])
+    /// `piece`: the most bytes one input request may carry, as the box advertised it.
+    case ready(inputs: [ChannelDescriptor], piece: Int)
     case accepted(channel: String, offset: UInt64, end: Bool)
     case output(MachinePointer)
     case finished(Result<JSONValue, MachineFileFailure>)

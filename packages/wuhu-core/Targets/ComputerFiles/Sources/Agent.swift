@@ -61,6 +61,7 @@ public actor ComputerAgent {
   let external: ExternalKind?
   let kinds: [KindDescriptor]
   let clock: OperationClock
+  let limits: OperationLimits
   let instance = UUID()
   /// Starts admitted and not yet answered, by id, with their reservations. A start enters only after its admission check, in the
   /// same actor turn, so every later check sees it and no start is charged for one that may still be refused.
@@ -75,18 +76,18 @@ public actor ComputerAgent {
   let abandonedEffects: @Sendable () -> Int
 
   /// `audit` sees every admitted start, in-process or external, once, after the machine answered 201.
-  public init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil, audit: (@Sendable (AdmittedStart) -> Void)? = nil) throws {
-    try self.init(machine: machine, files: files, kinds: kinds, external: external, clock: .continuous, audit: audit)
+  public init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil, limits: OperationLimits = .init(), audit: (@Sendable (AdmittedStart) -> Void)? = nil) throws {
+    try self.init(machine: machine, files: files, kinds: kinds, external: external, clock: .continuous, limits: limits, audit: audit)
   }
 
-  init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil, clock: OperationClock, audit: (@Sendable (AdmittedStart) -> Void)? = nil) throws {
+  init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil, clock: OperationClock, limits: OperationLimits = .init(), audit: (@Sendable (AdmittedStart) -> Void)? = nil) throws {
     let local = fileOperationKinds(files: files) + kinds
-    try OperationAgent.validate(descriptors: (external.map { [$0.descriptor] } ?? []) + local.map(\.descriptor))
-    if let external, !(0 ... OperationLimits().bufferBytes).contains(external.reservation) { throw OperationError(.invalidInput, message: "Invalid machine registry or limits") }
-    runtime = try OperationAgent(machine: machine, kinds: local, clock: clock, authorize: { _, id in
+    try OperationAgent.validate(descriptors: (external.map { [$0.descriptor] } ?? []) + local.map(\.descriptor), limits: limits)
+    if let external, !(0 ... limits.bufferBytes).contains(external.reservation) { throw OperationError(.invalidInput, message: "Invalid machine registry or limits") }
+    runtime = try OperationAgent(machine: machine, kinds: local, clock: clock, limits: limits, authorize: { _, id in
       guard id == machine else { throw OperationError(.machineNotAuthorized) }
     })
-    self.machine = machine; self.external = external; self.clock = clock; self.audit = audit; abandonedEffects = files.abandonedEffects
+    self.machine = machine; self.external = external; self.clock = clock; self.limits = limits; self.audit = audit; abandonedEffects = files.abandonedEffects
     self.kinds = (external.map { [$0.descriptor] } ?? []) + local.map(\.descriptor)
   }
 
@@ -142,16 +143,23 @@ public actor ComputerAgent {
     guard path.count >= 4, Array(path.prefix(3)) == ["machine", "v2", "machines"], path[3] == machine else { throw OperationError(.machineNotAuthorized) }
     if path.count == 4, request.method == .get {
       _ = try await externalUsage()
-      return try .json(MachineDescription(instance: instance, acceptingStarts: !closed, limits: .init(), kinds: kinds))
+      return try .json(MachineDescription(instance: instance, acceptingStarts: !closed, limits: limits, kinds: kinds))
     }
     guard path.count >= 6, path[4] == "operations", let id = UUID(uuidString: path[5]) else { throw OperationError(.unknownOperation) }
     if request.method == .post, path.count == 6 {
       guard !closed else { throw OperationError(.leaving) }
       guard pending[id] == nil, await runtime.inspect(id) == nil, !(await owned(id)) else { throw OperationError(.operationExists) }
-      let start = try await request.json(StartRequest.self, upTo: OperationLimits().inputBytes)
+      let start = try await request.json(StartRequest.self, upTo: limits.inputBytes)
       guard let kind = kinds.first(where: { $0.name == start.kind }) else { throw OperationError(.unknownKind) }
       let target = kind.name == external?.descriptor.name ? external : nil
-      let reserve = target?.reservation ?? (kind.inputChannels + kind.outputChannels).reduce(0) { $0 + $1.windowBytes }
+      let reserve: Int
+      if let target {
+        reserve = target.reservation
+      } else if let reported = try await runtime.reservation(kind: start.kind, input: start.input) {
+        reserve = reported
+      } else {
+        reserve = (kind.inputChannels + kind.outputChannels).reduce(0) { $0 + $1.windowBytes }
+      }
       guard !closed else { throw OperationError(.leaving) }
       guard pending[id] == nil, !admitting.contains(id) else { throw OperationError(.operationExists) }
       admitting.insert(id)
@@ -162,7 +170,6 @@ public actor ComputerAgent {
       // Checked against the starts already admitted plus this one. An external start the backend already routes is in both
       // maps; it counts once, at the larger reservation.
       let ids = Set(a.operations.keys).union(pending.keys).union([id])
-      let limits = OperationLimits()
       let receipts = try Self.total([a.receipts, b.receipts, ids.count, abandonedEffects()], cap: "receipts", limit: limits.receipts)
       guard receipts <= limits.receipts else { throw OperationError.capacityExceeded("receipts", used: receipts - 1, limit: limits.receipts) }
       let charges = ids.map { max(a.operations[$0] ?? 0, pending[$0] ?? ($0 == id ? reserve : 0)) }

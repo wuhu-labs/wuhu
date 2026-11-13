@@ -27,7 +27,11 @@ import Testing
 private struct SilentExec: OperationKind {
   struct Input: Decodable, Sendable { let argv: [String] }
   let descriptor = ComputerKindSchemas.exec
-  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+  func start(_ input: Input, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    OperationStart { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     while try await channels.read("stdin", upTo: 65536) != nil {}
     return ["termination": ["tag": "exit", "code": 0]]
   }

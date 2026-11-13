@@ -29,7 +29,7 @@ import Testing
   @Test func aPersonsSendCarriesThePageIntoTheHeader() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       _ = try await t.harness.space.fs(.shared).write("/notes/plan.md", Data("# Plan\n".utf8), ifMatch: nil)
       let sent = try await t.harness.call("/v1/conversation/message", [
         "session": .string(t.parent.rawValue), "identity": .string(person), "message": "this one",
@@ -38,7 +38,7 @@ import Testing
       #expect(sent.delivered == [t.parent.rawValue])
       let heard = try #require(try await queued(t.harness, t.parent).last)
       #expect(heard.header.render().contains("\n<viewing>/notes/plan.md</viewing>"))
-      #expect(try await t.harness.store.message(MessageID(sent.messageId))?.viewing?.stored == "wuhu://shared.localspace/notes/plan.md")
+      #expect(t.harness.store.message(MessageID(sent.messageId))?.viewing?.stored == "wuhu://shared.localspace/notes/plan.md")
 
       _ = try await t.harness.call("/v1/conversation/message", [
         "session": .string(t.parent.rawValue), "identity": .string(person), "message": "plain",
@@ -52,7 +52,7 @@ import Testing
   @Test func aMalformedLongOrUnreadablePageIsRefusedWithItsReason() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       let long = "/" + String(repeating: "a", count: 1024)
       for (viewing, reason) in [
         ("notes/plan.md", "viewing notes/plan.md must be a space path: /<path>, or wuhu://<group>.localspace/<path> for another group"),
@@ -79,7 +79,7 @@ import Testing
   @Test func aPageInAGroupTheActingGroupCannotReadIsRefusedAsViewing() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       try await t.harness.space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('sealed', '2026-01-01T00:00:00.000Z')")
       }
@@ -112,7 +112,7 @@ import Testing
   @Test func aRestartsOpeningMessageCarriesThePage() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       _ = try await t.harness.space.fs(.shared).write("/notes/plan.md", Data("# Plan\n".utf8), ifMatch: nil)
       let bare = try await t.harness.post(
         "/v1/session/\(t.parent.rawValue)/restart", ["identity": .string(person), "viewing": "/notes/plan.md"],

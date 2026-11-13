@@ -16,7 +16,7 @@ import Testing
 private struct EchoKind: OperationKind {
   struct Input: Decodable, Sendable { let text: String }
   let descriptor = KindDescriptor("echo.v1", inputSchema: ["type": "object"], resultSchema: ["type": "string"], deliveryPolicy: .boundedResult)
-  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> String { input.text }
+  func start(_ input: Input, limits: OperationLimits) async throws -> OperationStart<String> { OperationStart { _, _ in input.text } }
 }
 
 private final class FakeExternal: Sendable {

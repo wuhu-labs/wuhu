@@ -125,7 +125,19 @@ func connectExecCaller(_ id: ExecID, space: Space, hub: MachineHub) async throws
 }
 
 extension Space {
+  func registerPerson(_ id: String) async throws {
+    if cell.persona(named: id) != nil { return }
+    let account = try await addAccount(kind: .human, name: nil)
+    let key = try await addKey(testPubkey(id), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let allocation = cell.reservedPersona(account.id)!
+    let now = fixedDate
+    _ = try await worker.call(PersonCell.ID(account.id.rawValue)) { try $0.adoptPersona(key: key, allocation: allocation.id, name: id, at: now) }
+  }
+
   func registerPeople(_ ids: [String]) async throws {
-    for id in ids { _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil) }
+    for id in ids where id != "owner" {
+      try await registerPerson(id)
+      _ = try await setUserProfile(principal: id, handle: "person_" + id.replacingOccurrences(of: "-", with: "_"), displayName: nil)
+    }
   }
 }

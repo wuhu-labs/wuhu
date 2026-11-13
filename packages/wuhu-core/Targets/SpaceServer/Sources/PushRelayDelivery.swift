@@ -48,7 +48,7 @@ func render(_ delivery: PushRelayDelivery, space: Space) async throws -> PushRel
     data["session"] = delivery.ownerSession
     data["message"] = payload?["messageID"]?.stringValue
     if let message = payload?["messageID"]?.stringValue {
-      data["senderGroup"] = try await space.sessions.message(MessageID(message))?.senderGroup.rawValue
+      data["senderGroup"] = space.sessions.message(MessageID(message))?.senderGroup.rawValue
     }
   case .sessionSettled, .sessionErrored,
        .sessionDisconnected, .contractorDisconnected:

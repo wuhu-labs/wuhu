@@ -1,9 +1,13 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct MachineContract.MachineID
 import SessionDomain
 import StructuredQueries
-import StructuredQueriesSQLite
+import Wuwei
+import WuweiQueries
 
 @Table("devices")
 struct DeviceRow {
@@ -22,6 +26,7 @@ struct DeviceRow {
 struct DeviceCommandRow {
   @Column("n", primaryKey: true) var n: Int64
   @Column("device_id") var deviceID: String
+  @Column("owner_account") var ownerAccount: String
   @Column("payload") var payload: String
   @Column("issued_by") var issuedBy: String
   @Column("created_at") var createdAt: String
@@ -54,157 +59,91 @@ public struct DeviceRecord: Equatable, Sendable {
 }
 
 extension Space {
-  // Identity is (account, installation): the app mints the installation once
-  // per install, so a re-enrolled device adopts its own row with a new key
-  // instead of orphaning it.
-  public func upsertDevice(
-    pubkey: String,
-    installation: String,
-    kind: String,
-    name: String,
-  ) async throws -> DeviceRecord {
+  public func upsertDevice(pubkey: String, installation: String, kind: String, name: String) async throws -> DeviceRecord {
     guard let kind = DeviceKind(rawValue: kind) else { throw SpaceError.invalidDeviceKind(kind) }
     try Self.checkDeviceName(name)
-    guard let key = try await credential(pubkey: pubkey), key.capabilities.contains(.device) else {
-      throw SpaceError.unknownDevice(pubkey)
-    }
+    guard let key = try await credential(pubkey: pubkey), key.capabilities.contains(.device) else { throw SpaceError.unknownDevice(pubkey) }
+    let existing = worker.cell(PersonCell.ID(key.account.rawValue)).device(installation: installation)
+    let id: String
+    if let existing { id = existing.id }
+    else { id = try await allocate(.device, createdBy: key.account.rawValue).name }
     let now = dateGen.now
-    let stamp = SQLiteDateFormat.string(from: now)
-    let minted = Allocations.mintSecretCandidate(rng)
-    let row = try await writer.write { db -> DeviceRow in
-      let existing = try DeviceRow
-        .where { $0.accountID.eq(key.account.rawValue) && $0.installation.eq(installation) }
-        .fetchOne(db)
-      let holder = try DeviceRow.where { $0.pubkey.eq(pubkey) }.fetchOne(db)
-      guard holder == nil || holder?.id == existing?.id else { throw SpaceError.alreadyExists(pubkey) }
-      var row: DeviceRow
-      if let existing {
-        row = existing
-        row.pubkey = pubkey
-        row.kind = kind.rawValue
-        row.name = name
-      } else {
-        let allocated = try Allocations.draw(
-          .device, createdBy: key.account.rawValue, created: stamp, minted: minted, in: db,
-        )
-        row = DeviceRow(
-          id: allocated.name,
-          accountID: key.account.rawValue,
-          pubkey: pubkey,
-          installation: installation,
-          kind: kind.rawValue,
-          name: name,
-          machineID: nil,
-          createdAt: stamp,
-          lastSeenAt: stamp,
-        )
-      }
-      row.lastSeenAt = stamp
-      try DeviceRow.upsert { row }.execute(db)
-      return row
-    }
-    return Self.device(from: row)
+    return try await worker.call(PersonCell.ID(key.account.rawValue)) { try $0.upsertDevice(id: id, pubkey: pubkey, installation: installation, kind: kind, name: name, at: now) }
   }
 
   static func checkDeviceName(_ name: String) throws {
     if let problem = DeviceName.problem(name) { throw SpaceError.invalidDeviceName("device name \(name) \(problem)") }
   }
 
-  public func devices() async throws -> [DeviceRecord] {
-    try await writer.read { db in
-      try DeviceRow.order { $0.id }.fetchAll(db).map(Self.device(from:))
-    }
-  }
+  public func devices() async throws -> [DeviceRecord] { cell.devices() }
+  public func device(id: String) async throws -> DeviceRecord? { cell.device(id: id) }
+  public func device(pubkey: String) async throws -> DeviceRecord? { cell.device(pubkey: pubkey) }
 
-  public func device(id: String) async throws -> DeviceRecord? {
-    try await writer.read { db in
-      try DeviceRow.where { $0.id.eq(id) }.fetchOne(db).map(Self.device(from:))
-    }
-  }
-
-  public func device(pubkey: String) async throws -> DeviceRecord? {
-    try await writer.read { db in
-      try DeviceRow.where { $0.pubkey.eq(pubkey) }.fetchOne(db).map(Self.device(from:))
-    }
-  }
-
-  public func annotateDevice(
-    _ id: String,
-    name: String?,
-    machine: MachineID?,
-  ) async throws -> DeviceRecord {
+  public func annotateDevice(_ id: String, name: String?, machine: MachineID?) async throws -> DeviceRecord {
     if let name { try Self.checkDeviceName(name) }
-    let row = try await writer.write { db -> DeviceRow in
-      let found = try DeviceRow.where { $0.id.eq(id) }.fetchOne(db)
-      guard var row = found else { throw SpaceError.unknownDevice(id) }
-      if let name { row.name = name }
-      if let machine {
-        let known = try MachineRow.where { $0.id.eq(machine.rawValue) }.fetchOne(db)
-        guard known != nil else { throw SpaceError.notFound(machine.rawValue) }
-        row.machineID = machine.rawValue
-      }
-      try DeviceRow.upsert { row }.execute(db)
-      return row
-    }
-    return Self.device(from: row)
+    guard let device = cell.device(id: id) else { throw SpaceError.unknownDevice(id) }
+    return try await worker.call(PersonCell.ID(device.account.rawValue)) { try $0.annotateDevice(id, name: name, machine: machine) }
   }
 
-  // The payload is the app's vocabulary, not the server's: it is stored and
-  // handed back verbatim, so a new verb needs no server change.
   @discardableResult
   public func issueDeviceCommand(device: String, payload: String, issuedBy: String) async throws -> Int64 {
-    let stamp = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      try Self.insertDeviceCommand(device, payload: payload, issuedBy: issuedBy, at: stamp, in: db)
+    guard let row = cell.device(id: device) else { throw SpaceError.unknownDevice(device) }
+    let now = dateGen.now
+    return try await worker.call(PersonCell.ID(row.account.rawValue)) { try $0.issueDeviceCommand(device, payload: payload, issuedBy: issuedBy, at: now) }
+  }
+
+  public func issueDeviceCommand(device: String, payload: String, issuedBy session: SessionID, answering callID: ToolCallID) async throws -> ToolResultPayload {
+    let n = try await issueDeviceCommand(device: device, payload: payload, issuedBy: session.rawValue)
+    return .manipulateUI(.init(device: device, n: n))
+  }
+
+  public func deviceNames() async throws -> [String: String] { Dictionary(uniqueKeysWithValues: cell.devices().map { ($0.id, $0.name) }) }
+}
+
+extension DeviceRow {
+  var record: DeviceRecord {
+    DeviceRecord(id: id, account: AccountID(rawValue: accountID), pubkey: pubkey, installation: installation, kind: DeviceKind(rawValue: kind)!, name: name, machine: machineID.map(MachineID.init(rawValue:)), createdAt: try! SQLiteDateFormat.date(from: createdAt), lastSeenAt: try! SQLiteDateFormat.date(from: lastSeenAt))
+  }
+}
+
+extension SpaceCell {
+  func devices() -> [DeviceRecord] { db.rows(DeviceRow.order { $0.id }).map(\.record) }
+  func device(id: String) -> DeviceRecord? { db.rows(DeviceRow.where { $0.id.eq(id) }).first?.record }
+  func device(pubkey: String) -> DeviceRecord? { db.rows(DeviceRow.where { $0.pubkey.eq(pubkey) }).first?.record }
+}
+
+extension PersonCell {
+  func device(installation: String) -> DeviceRecord? { db.rows(DeviceRow.where { $0.accountID.eq(id.key) && $0.installation.eq(installation) }).first?.record }
+
+  mutating func upsertDevice(id allocated: String, pubkey: String, installation: String, kind: DeviceKind, name: String, at now: Date) throws -> DeviceRecord {
+    let existing = db.rows(DeviceRow.where { $0.accountID.eq(id.key) && $0.installation.eq(installation) }).first
+    let holder = ctx.cell(SpaceCell.ID("space")).device(pubkey: pubkey)
+    guard holder == nil || holder?.id == existing?.id else { throw SpaceError.alreadyExists(pubkey) }
+    let stamp = SQLiteDateFormat.string(from: now)
+    var row = existing ?? DeviceRow(id: allocated, accountID: id.key, pubkey: pubkey, installation: installation, kind: kind.rawValue, name: name, machineID: nil, createdAt: stamp, lastSeenAt: stamp)
+    row.pubkey = pubkey
+    row.kind = kind.rawValue
+    row.name = name
+    row.lastSeenAt = stamp
+    try db.execute(DeviceRow.upsert { row })
+    return row.record
+  }
+
+  mutating func annotateDevice(_ device: String, name: String?, machine: MachineID?) throws -> DeviceRecord {
+    guard var row = db.rows(DeviceRow.where { $0.accountID.eq(id.key) && $0.id.eq(device) }).first else { throw SpaceError.unknownDevice(device) }
+    if let name { row.name = name }
+    if let machine {
+      guard !db.rows(MachineRow.where { $0.id.eq(machine.rawValue) }).isEmpty else { throw SpaceError.notFound(machine.rawValue) }
+      row.machineID = machine.rawValue
     }
+    try db.execute(DeviceRow.upsert { row })
+    return row.record
   }
 
-  // The command as a tool call's effect: the call's answer is looked up and
-  // recorded in the write that issues it, so a call already answered (an
-  // earlier run, or an overlapping twin of this one) gets that answer and
-  // the device is driven once.
-  public func issueDeviceCommand(
-    device: String,
-    payload: String,
-    issuedBy session: SessionID,
-    answering callID: ToolCallID,
-  ) async throws -> ToolResultPayload {
-    let stamp = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      if let recorded = try Sessions.receipt(session.rawValue, toolCallID: callID.rawValue, in: db) { return recorded }
-      let n = try Self.insertDeviceCommand(device, payload: payload, issuedBy: session.rawValue, at: stamp, in: db)
-      let receipt = ToolReceipt(session: session, callID: callID, payload: .manipulateUI(.init(device: device, n: n)))
-      try receipt.record(now: stamp, in: db)
-      return receipt.payload
-    }
-  }
-
-  private static func insertDeviceCommand(_ device: String, payload: String, issuedBy: String, at stamp: String, in db: Database) throws -> Int64 {
-    let known = try DeviceRow.where { $0.id.eq(device) }.fetchOne(db)
-    guard known != nil else { throw SpaceError.unknownDevice(device) }
-    try db.execute(
-      sql: "INSERT INTO device_commands (device_id, payload, issued_by, created_at) VALUES (?, ?, ?, ?)",
-      arguments: [device, payload, issuedBy, stamp],
-    )
-    return db.lastInsertedRowID
-  }
-
-  public func deviceNames() async throws -> [String: String] {
-    Dictionary(uniqueKeysWithValues: try await devices().map { ($0.id, $0.name) })
-  }
-
-  private static func device(from row: DeviceRow) -> DeviceRecord {
-    DeviceRecord(
-      id: row.id,
-      account: AccountID(rawValue: row.accountID),
-      pubkey: row.pubkey,
-      installation: row.installation,
-      kind: DeviceKind(rawValue: row.kind)!,
-      name: row.name,
-      machine: row.machineID.map { MachineID(rawValue: $0) },
-      createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
-      lastSeenAt: (try? SQLiteDateFormat.date(from: row.lastSeenAt)) ?? Date(timeIntervalSince1970: 0),
-    )
+  mutating func issueDeviceCommand(_ device: String, payload: String, issuedBy: String, at now: Date) throws -> Int64 {
+    guard !db.rows(DeviceRow.where { $0.accountID.eq(id.key) && $0.id.eq(device) }).isEmpty else { throw SpaceError.unknownDevice(device) }
+    try db.execute(DeviceCommandRow.insert { DeviceCommandRow.Draft(deviceID: device, ownerAccount: id.key, payload: payload, issuedBy: issuedBy, createdAt: SQLiteDateFormat.string(from: now)) })
+    return db.rows(#sql("SELECT last_insert_rowid()", as: Int64.self)).first!
   }
 }
 

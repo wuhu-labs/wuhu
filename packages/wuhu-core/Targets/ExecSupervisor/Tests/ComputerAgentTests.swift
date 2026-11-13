@@ -17,18 +17,20 @@ import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.StartRequest
 import struct OperationRuntime.AnyOperationKind
 import struct OperationRuntime.OperationCancellation
 import struct OperationRuntime.OperationChannels
 import protocol OperationRuntime.OperationKind
+import struct OperationRuntime.OperationStart
 import Synchronization
 import Testing
 
 @Suite struct ComputerAgentTests {
-  func fixture(clock: OperationClock = .continuous) throws -> (ComputerAgent, ExecWorkers) {
+  func fixture(clock: OperationClock = .continuous, limits: OperationLimits = .init()) throws -> (ComputerAgent, ExecWorkers) {
     let workers = try ExecWorkers(machine: "test", operationsDirectory: "/tmp/ops", executable: "/tmp/wuhu", launch: { _ in nil }, authorize: { _, _ in })
-    return (try ComputerAgent(machine: "test", external: workers.external, clock: clock), workers)
+    return (try ComputerAgent(machine: "test", external: workers.external, clock: clock, limits: limits), workers)
   }
 
   func describe() -> Request { Request(url: URL(string: "https://agent/machine/v2/machines/test")!) }
@@ -51,6 +53,23 @@ import Testing
     }
     let duplicate = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + fileIDs[0].uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
     #expect(try await agent.handler(duplicate).body.json(ErrorEnvelope.self).error.code == .operationExists)
+    await agent.shutdown()
+  }
+
+  @Test func aFourMebibyteBoxAdmitsConcurrentReadsOfMissingAndSmallFiles() async throws {
+    var limits = OperationLimits()
+    limits.filePieceBytes = OperationLimits.maxFilePieceBytes
+    let (agent, _) = try fixture(limits: limits)
+    #expect(try await agent.handler(describe()).body.json(MachineDescription.self).limits.filePieceBytes == OperationLimits.maxFilePieceBytes)
+    let small = "/tmp/wuhu-small-" + UUID().uuidString
+    try Data("0123456789".utf8).write(to: URL(fileURLWithPath: small))
+    defer { try? FileManager.default.removeItem(atPath: small) }
+    for path in ["/tmp/not-opened-before-run", small] {
+      for _ in 0 ..< 48 {
+        let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": .string(path)])))
+        #expect(try await agent.handler(request).status.code == 201)
+      }
+    }
     await agent.shutdown()
   }
 
@@ -224,7 +243,7 @@ import Testing
 private struct NoteKind: OperationKind {
   struct Input: Decodable, Sendable {}
   let descriptor = KindDescriptor("note.v1", inputSchema: ["type": "object"], resultSchema: ["type": "string"], deliveryPolicy: .boundedResult)
-  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> String { "" }
+  func start(_ input: Input, limits: OperationLimits) async throws -> OperationStart<String> { OperationStart { _, _ in "" } }
 }
 
 private func retainAgentLock(_ root: String) throws -> Int32 {

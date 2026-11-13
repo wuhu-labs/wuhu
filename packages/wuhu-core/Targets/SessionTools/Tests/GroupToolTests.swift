@@ -103,7 +103,7 @@ import struct WuhuAI.ToolArguments
       ]))
       guard case let .sendMessage(receipt) = sent else { throw Mismatch("send_message failed: \(sent)") }
       #expect(try await rig.space.sessions.conversation(receipt.conversationID).group == Self.alice)
-      let stored = try #require(try await rig.space.sessions.message(receipt.messageID)?.content.attachments.first?.path)
+      let stored = try #require(rig.space.sessions.message(receipt.messageID)?.content.attachments.first?.path)
       #expect(try await rig.space.fs(Self.alice).read(stored).1 == Data("rules".utf8))
       try await rig.space.sessions.deliverMail()
       let delivered = try #require(try await rig.space.sessions.undrainedInputs(rig.s).compactMap {

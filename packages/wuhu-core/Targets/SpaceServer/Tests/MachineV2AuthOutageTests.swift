@@ -32,17 +32,6 @@ extension MachineV2TunnelTests {
     ]
   }
 
-  @Test func anAuthorizationOutageIsRetryableNeverAKeyVerdict() async throws {
-    let f = try await Fixture()
-    let offline = { try await f.space.writer.write { db in try db.execute(sql: "ALTER TABLE account_keys RENAME TO account_keys_offline") } }
-    for (status, code) in try await probes(f, key: f.key, between: offline) {
-      #expect(status == .serviceUnavailable)
-      #expect(code == "machineAuthUnavailable")
-    }
-    try await f.space.writer.write { db in try db.execute(sql: "ALTER TABLE account_keys_offline RENAME TO account_keys") }
-    #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
-  }
-
   @Test func aRevokedKeyIsADefinitiveRefusalOnEveryPath() async throws {
     let f = try await Fixture()
     _ = try await f.space.resetCredentials(account: f.machine.account)

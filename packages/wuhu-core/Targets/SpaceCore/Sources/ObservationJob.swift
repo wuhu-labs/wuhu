@@ -47,17 +47,6 @@ struct ObservationSources: Sendable {
   let reads: ReadPool
   let clock: any Clock<Duration>
   let regions: RegionSource
-
-  static func live(writer: any DatabaseWriter) -> RegionSource {
-    { tables, wakes in
-      let cancellable = DatabaseRegionObservation(tracking: tables.map { Table($0) }).start(
-        in: writer,
-        onError: { _ in wakes.finish() },
-        onChange: { _ in wakes.yield(()) },
-      )
-      return { cancellable.cancel() }
-    }
-  }
 }
 
 /// The space's one observation job: client sockets and durable agent SQL slots run side by side. A drain closes sockets for reconnect; slots hydrate from the job's rows and suppress unchanged reruns with their marker.

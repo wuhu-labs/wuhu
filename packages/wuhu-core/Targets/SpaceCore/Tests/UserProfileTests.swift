@@ -7,6 +7,7 @@ import Testing
 struct UserProfileTests {
   @Test func aHandleIsStoredLowercasedAndFoundEitherWay() async throws {
     let space = try makeSpace()
+    try await space.registerPerson("sail-clock-pepper")
     let saved = try await space.setUserProfile(principal: "sail-clock-pepper", handle: "Alice", displayName: "Alice A")
     #expect(saved.handle == "alice")
     #expect(saved.displayName == "Alice A")
@@ -20,7 +21,9 @@ struct UserProfileTests {
 
   @Test func twoPrincipalsCannotShareAHandleInAnyCasing() async throws {
     let space = try makeSpace()
+    try await space.registerPerson("one")
     _ = try await space.setUserProfile(principal: "one", handle: "alice", displayName: nil)
+    try await space.registerPerson("two")
     await #expect(throws: SpaceError.handleTaken("alice")) {
       try await space.setUserProfile(principal: "two", handle: "Alice", displayName: nil)
     }
@@ -29,6 +32,7 @@ struct UserProfileTests {
 
   @Test func resettingTheSameHandleForTheSamePrincipalSucceeds() async throws {
     let space = try makeSpace()
+    try await space.registerPerson("one")
     _ = try await space.setUserProfile(principal: "one", handle: "alice", displayName: nil)
     let again = try await space.setUserProfile(principal: "one", handle: "alice", displayName: "renamed")
     #expect(again.displayName == "renamed")
@@ -37,11 +41,13 @@ struct UserProfileTests {
 
   @Test func renamingReservesAndResolvesTheOldHandle() async throws {
     let space = try makeSpace()
+    try await space.registerPerson("one")
     _ = try await space.setUserProfile(principal: "one", handle: "alice", displayName: nil)
     _ = try await space.setUserProfile(principal: "one", handle: "alicia", displayName: nil)
     #expect(try await space.userProfile(handle: "alice")?.handle == "alicia")
     #expect(try await space.userProfile(principal: "one")?.handle == "alicia")
 
+    try await space.registerPerson("two")
     await #expect(throws: SpaceError.handleTaken("alice")) {
       try await space.setUserProfile(principal: "two", handle: "alice", displayName: nil)
     }
@@ -52,6 +58,7 @@ struct UserProfileTests {
   func invalidHandlesAreRefused(_ raw: String) async throws {
     #expect(Handle.normalized(raw) == nil)
     let space = try makeSpace()
+    try await space.registerPerson("one")
     await #expect(throws: SpaceError.invalidHandle(raw)) {
       try await space.setUserProfile(principal: "one", handle: raw, displayName: nil)
     }

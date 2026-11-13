@@ -12,127 +12,82 @@ import StructuredQueriesSQLite
 
 extension Space {
   public func addAccount(kind: AccountKind, name: String?, admin: Bool = false, guest: Bool = false) async throws -> AccountRecord {
-    // "owner" (SpaceContract's ownerIdentity) is the generic principal that
-    // unenrolled --dev seats act as; no account may squat it in any casing.
-    if let name, name.lowercased() == Notifications.ownerRecipient {
-      throw SpaceError.reservedAccountName(name)
-    }
-    if admin, kind != .human { throw SpaceError.notAPerson(name ?? kind.rawValue) }
-    if guest, kind != .human { throw SpaceError.notAPerson(name ?? kind.rawValue) }
+    if let name, name.lowercased() == Notifications.ownerRecipient { throw SpaceError.reservedAccountName(name) }
+    if (admin || guest), kind != .human { throw SpaceError.notAPerson(name ?? kind.rawValue) }
     if admin, guest { throw SpaceError.notAPerson(name ?? kind.rawValue) }
     let id = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
     let createdAt = dateGen.now
-    let created = SQLiteDateFormat.string(from: createdAt)
-    let rng = rng
-    try await writer.write { db in
-      try db.execute(
-        sql: "INSERT INTO accounts (id, kind, name, created_at, guest) VALUES (?, ?, ?, ?, ?)",
-        arguments: [id.rawValue, kind.rawValue, name, created, guest],
-      )
-      guard kind == .human, !guest else { return }
-      _ = try Groups.ensurePersonalGroup(account: id, created: created, rng: rng, in: db)
-      if admin { try Groups.grant(.admin, in: .settings, to: id, created: created, in: db) }
-    }
-    return AccountRecord(id: id, kind: kind, name: name, isAdmin: admin, guest: guest, createdAt: createdAt, removedAt: nil)
+    _ = try await worker.call(PersonCell.ID(id.rawValue)) { try $0.create(kind: kind, name: name, guest: guest, at: createdAt) }
+    if kind == .human, !guest { _ = try await ensurePersonalGroup(account: id) }
+    if admin { return try await setAdmin(id, admin: true) }
+    return AccountRecord(id: id, kind: kind, name: name, isAdmin: false, guest: guest, createdAt: createdAt, removedAt: nil)
   }
 
-  public func account(_ id: AccountID) async throws -> AccountRecord? {
-    try await writer.read { db in
-      try Row.fetchOne(db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE id = ?", arguments: [id.rawValue])
-        .map(Self.accountRecord(from:))
-    }
-  }
-
-  public func accounts() async throws -> [AccountRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL ORDER BY created_at, id")
-        .map(Self.accountRecord(from:))
-    }
-  }
-
-  public func hasAdminAccount() async throws -> Bool {
-    try await writer.read { db in
-      try Self.liveAdminCount(in: db) > 0
-    }
-  }
+  public func account(_ id: AccountID) async throws -> AccountRecord? { cell.account(id) }
+  public func accounts() async throws -> [AccountRecord] { cell.accounts() }
+  public func hasAdminAccount() async throws -> Bool { cell.hasAdminAccount() }
 
   public func setAdmin(_ id: AccountID, admin: Bool) async throws -> AccountRecord {
-    let created = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      guard let row = try Row.fetchOne(
-        db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
-        arguments: [id.rawValue],
-      ) else {
-        throw SpaceError.notFound(id.rawValue)
-      }
-      let record = Self.accountRecord(from: row)
-      if record.isAdmin, !admin, try Self.liveAdminCount(in: db) == 1 {
-        throw SpaceError.lastAdmin(id.rawValue)
-      }
-      if admin, record.kind != .human || record.guest { throw SpaceError.notAPerson(id.rawValue) }
-      if admin {
-        try Groups.grant(.admin, in: .settings, to: id, created: created, in: db)
-      } else {
-        try Groups.revoke(.admin, in: .settings, from: id, in: db)
-      }
-      return AccountRecord(
-        id: record.id, kind: record.kind, name: record.name,
-        isAdmin: admin, guest: record.guest, createdAt: record.createdAt, removedAt: nil,
-      )
-    }
+    guard let record = worker.cell(PersonCell.ID(id.rawValue)).account(), record.removedAt == nil else { throw SpaceError.notFound(id.rawValue) }
+    if admin, record.kind != .human || record.guest { throw SpaceError.notAPerson(id.rawValue) }
+    let stamp = SQLiteDateFormat.string(from: dateGen.now)
+    _ = try await worker.call(GroupCell.ID(GroupID.settings.rawValue)) { try $0.setAdmin(id, admin: admin, at: stamp) }
+    guard let record = cell.account(id) else { throw SpaceError.notFound(id.rawValue) }
+    return record
   }
 
-  // The row survives as a tombstone: attribution (personas, created_by, journal
-  // history) keeps resolving, while every credential and credential-in-waiting
-  // dies in the same transaction.
   public func removeAccount(_ id: AccountID) async throws -> (keys: Int, readSessions: Int) {
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      guard let row = try Row.fetchOne(
-        db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
-        arguments: [id.rawValue],
-      ) else {
-        throw SpaceError.notFound(id.rawValue)
-      }
-      if Self.accountRecord(from: row).isAdmin, try Self.liveAdminCount(in: db) == 1 {
-        throw SpaceError.lastAdmin(id.rawValue)
-      }
-      try db.execute(sql: "UPDATE accounts SET removed_at = ? WHERE id = ?", arguments: [now, id.rawValue])
-      return try Self.purgeCredentials(account: id, in: db)
-    }
+    _ = try await setAdmin(id, admin: false)
+    let now = dateGen.now
+    return try await worker.call(PersonCell.ID(id.rawValue)) { try $0.removeAccount(at: now) }
   }
 
-  // Outstanding join tokens are credentials-in-waiting: a purge that left one
-  // alive would re-admit the account it just kicked.
+  public func addKey(_ pubkey: String, account: AccountID, capabilities: Set<KeyCapability>, createdBy: AccountID?, expiresAt: Date?) async throws -> KeyRecord {
+    let now = dateGen.now
+    return try await worker.call(PersonCell.ID(account.rawValue)) { try $0.addKey(pubkey, capabilities: capabilities, createdBy: createdBy, at: now, expiresAt: expiresAt) }
+  }
+
+  public func keyRecord(pubkey: String) async throws -> KeyRecord? { cell.keyRecord(pubkey: pubkey) }
+  public func keys(account: AccountID) async throws -> [KeyRecord] { worker.cell(PersonCell.ID(account.rawValue)).keys() }
+  public func credential(pubkey: String) async throws -> KeyRecord? {
+    guard let record = cell.keyRecord(pubkey: pubkey), Self.isLive(record.expiresAt, at: dateGen.now) else { return nil }
+    return record
+  }
+
+  public func removeKey(pubkey: String) async throws {
+    guard let key = cell.keyRecord(pubkey: pubkey) else { throw SpaceError.notFound(pubkey) }
+    _ = try await worker.call(PersonCell.ID(key.account.rawValue)) { try $0.removeKey(pubkey) }
+  }
+
+  public func createReadSession(account: AccountID, group: GroupID, expiresAt: Date, supersedes: ReadSessionToken? = nil) async throws -> ReadSessionToken {
+    let token = ReadSessionToken(rawValue: ReadSessionToken.prefix + randomSuffix(ReadSessionToken.suffixLength))
+    let now = dateGen.now
+    _ = try await worker.call(PersonCell.ID(account.rawValue)) { try $0.createReadSession(token, group: group, at: now, expiresAt: expiresAt, supersedes: supersedes) }
+    return token
+  }
+
+  public func account(readSession: ReadSessionToken, in group: GroupID) async throws -> AccountID? {
+    guard ReadSessionToken.isValid(readSession.rawValue), let row = cell.readSession(readSession), (row.group ?? GroupID.shared.rawValue) == group.rawValue,
+          Self.isLive(try SQLiteDateFormat.date(from: row.expiresAt), at: dateGen.now) else { return nil }
+    return AccountID(rawValue: row.accountID)
+  }
+
+  public func deleteReadSession(_ token: ReadSessionToken) async throws {
+    guard let row = cell.readSession(token) else { return }
+    _ = try await worker.call(PersonCell.ID(row.accountID)) { try $0.deleteReadSession(token) }
+  }
+
+  public func resetCredentials(account: AccountID) async throws -> (keys: Int, readSessions: Int) {
+    return try await worker.call(PersonCell.ID(account.rawValue)) { try $0.resetCredentials() }
+  }
+
   static func purgeCredentials(account: AccountID, in db: Database) throws -> (keys: Int, readSessions: Int) {
     try db.execute(sql: "DELETE FROM account_keys WHERE account_id = ?", arguments: [account.rawValue])
     let keys = db.changesCount
     try db.execute(sql: "DELETE FROM read_sessions WHERE account_id = ?", arguments: [account.rawValue])
     let readSessions = db.changesCount
     try db.execute(sql: "DELETE FROM join_tokens WHERE account_id = ?", arguments: [account.rawValue])
-    return (keys: keys, readSessions: readSessions)
-  }
-
-  public func addKey(
-    _ pubkey: String,
-    account: AccountID,
-    capabilities: Set<KeyCapability>,
-    createdBy: AccountID?,
-    expiresAt: Date?,
-  ) async throws -> KeyRecord {
-    let createdAt = dateGen.now
-    return try await writer.write { db in
-      try Self.requireAccount(account, in: db)
-      return try Self.insertKey(
-        pubkey,
-        account: account,
-        capabilities: capabilities,
-        createdBy: createdBy,
-        createdAt: createdAt,
-        expiresAt: expiresAt,
-        in: db,
-      )
-    }
+    return (keys, readSessions)
   }
 
   static func insertKey(
@@ -173,121 +128,6 @@ extension Space {
     )
   }
 
-  // Management lookup, distinct from credential(pubkey:): an expired key is
-  // no credential but is still addressable, e.g. for revocation.
-  public func keyRecord(pubkey: String) async throws -> KeyRecord? {
-    try await writer.read { db in
-      try Row.fetchOne(db, sql: "SELECT * FROM account_keys WHERE pubkey = ?", arguments: [pubkey])
-        .map(Self.keyRecord(from:))
-    }
-  }
-
-  public func keys(account: AccountID) async throws -> [KeyRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM account_keys WHERE account_id = ? ORDER BY created_at, pubkey",
-        arguments: [account.rawValue],
-      ).map(Self.keyRecord(from:))
-    }
-  }
-
-  // The live-key oracle behind every signature gate. A row that does not
-  // decode is no credential: the request fails closed (401, not a crash), and
-  // the row stays in place as evidence.
-  public func credential(pubkey: String) async throws -> KeyRecord? {
-    let now = dateGen.now
-    let log = log
-    let record = try await writer.read { db in
-      try Row.fetchOne(db, sql: "SELECT * FROM account_keys WHERE pubkey = ?", arguments: [pubkey])
-        .flatMap { row -> KeyRecord? in
-          do {
-            return try Self.keyRecord(from: row)
-          } catch {
-            log.warning(
-              "account key row failed to decode; refusing the credential",
-              metadata: ["pubkey": "\(pubkey)", "reason": "\(error)"],
-            )
-            return nil
-          }
-        }
-    }
-    guard let record, Self.isLive(record.expiresAt, at: now) else { return nil }
-    return record
-  }
-
-  public func removeKey(pubkey: String) async throws {
-    try await writer.write { db in
-      try db.execute(sql: "DELETE FROM account_keys WHERE pubkey = ?", arguments: [pubkey])
-      guard db.changesCount > 0 else { throw SpaceError.notFound(pubkey) }
-    }
-  }
-
-  // A read session is minted on one web host and binds that host's group;
-  // shared is stored as NULL, the shape every pre-group row already has.
-  public func createReadSession(
-    account: AccountID,
-    group: GroupID,
-    expiresAt: Date,
-    supersedes: ReadSessionToken? = nil,
-  ) async throws -> ReadSessionToken {
-    let token = ReadSessionToken(rawValue: ReadSessionToken.prefix + randomSuffix(ReadSessionToken.suffixLength))
-    let now = SQLiteDateFormat.string(from: dateGen.now)
-    return try await writer.write { db in
-      try Self.requireAccount(account, in: db)
-      // Expired rows are unreachable by deleteReadSession; sweep the account's
-      // dead rows on mint so the table cannot grow without bound.
-      try db.execute(sql: "DELETE FROM read_sessions WHERE account_id = ? AND expires_at <= ?", arguments: [account.rawValue, now])
-      // The re-mint on each page load supersedes the browser's current cookie:
-      // drop the row it names so a browsing session leaves one live row, not one
-      // per load.
-      if let supersedes {
-        try db.execute(sql: "DELETE FROM read_sessions WHERE token_hash = ?", arguments: [Self.credentialDigest(supersedes.rawValue)])
-      }
-      try db.execute(
-        sql: "INSERT INTO read_sessions (token_hash, account_id, created_at, expires_at, grp) VALUES (?, ?, ?, ?, ?)",
-        arguments: [
-          Self.credentialDigest(token.rawValue), account.rawValue, now, SQLiteDateFormat.string(from: expiresAt),
-          group == .shared ? nil : group.rawValue,
-        ],
-      )
-      return token
-    }
-  }
-
-  public func account(readSession: ReadSessionToken, in group: GroupID) async throws -> AccountID? {
-    guard ReadSessionToken.isValid(readSession.rawValue) else { return nil }
-    let now = dateGen.now
-    return try await writer.read { db -> AccountID? in
-      guard let row = try Row.fetchOne(
-        db,
-        sql: "SELECT account_id, expires_at FROM read_sessions WHERE token_hash = ? AND ifnull(grp, ?) = ?",
-        arguments: [Self.credentialDigest(readSession.rawValue), GroupID.shared.rawValue, group.rawValue],
-      ) else { return nil }
-      guard try Self.isLive(SQLiteDateFormat.date(from: row["expires_at"]), at: now) else { return nil }
-      return AccountID(rawValue: row["account_id"])
-    }
-  }
-
-  public func deleteReadSession(_ token: ReadSessionToken) async throws {
-    try await writer.write { db in
-      try db.execute(sql: "DELETE FROM read_sessions WHERE token_hash = ?", arguments: [Self.credentialDigest(token.rawValue)])
-    }
-  }
-
-  public func resetCredentials(account: AccountID) async throws -> (keys: Int, readSessions: Int) {
-    try await writer.write { db in
-      try Self.requireAccount(account, in: db)
-      let purged = try Self.purgeCredentials(account: account, in: db)
-      for machine in try MachineRow.where({ $0.accountID.eq(account.rawValue) }).fetchAll(db) {
-        let recipient = MachineCell.ID(machine.id).recipient
-        try recipient.post(.closeBoxes, on: db.sqliteConnection!)
-        db.afterNextTransaction { _ in self.runtime.poke(recipient) }
-      }
-      return purged
-    }
-  }
-
   struct CorruptCredentialRow: Error {
     let stored: String
   }
@@ -299,24 +139,6 @@ extension Space {
     ) != nil else {
       throw SpaceError.notFound(id.rawValue)
     }
-  }
-
-  static func liveAdminCount(in db: Database) throws -> Int {
-    try Int.fetchOne(
-      db, sql: "SELECT count(*) FROM (SELECT \(GroupAccess.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL) WHERE is_admin",
-    ) ?? 0
-  }
-
-  private static func accountRecord(from row: Row) -> AccountRecord {
-    AccountRecord(
-      id: AccountID(rawValue: row["id"]),
-      kind: AccountKind(rawValue: row["kind"])!,
-      name: row["name"],
-      isAdmin: row["is_admin"],
-      guest: row["guest"],
-      createdAt: (try? SQLiteDateFormat.date(from: row["created_at"])) ?? Date(timeIntervalSince1970: 0),
-      removedAt: (row["removed_at"] as String?).flatMap { try? SQLiteDateFormat.date(from: $0) },
-    )
   }
 
   static func keyRecord(from row: Row) throws -> KeyRecord {

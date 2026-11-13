@@ -54,6 +54,7 @@ import Testing
 
   @Test func `the yield deadline is the earliest grace of the due input, from when it came due`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let store = rig.store
     let owner = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "morgan", model: .test)
     let peer = try await store.createSession(group: .shared, title: "b", kind: .agent, createdBy: "morgan", model: .test)

@@ -40,7 +40,7 @@ import Testing
     )
     #expect(final.enqueued == [parent])
     _ = try await rig.store.drainQueue(agent)
-    #expect(try await rig.store.openRequests(agent).isEmpty)
+    #expect(try rig.store.openRequests(agent).isEmpty)
   }
 
   @Test func `a root cannot report`() async throws {

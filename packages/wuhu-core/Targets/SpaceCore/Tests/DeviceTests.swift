@@ -134,14 +134,15 @@ struct DeviceTests {
     let pubkey = try await enrolled(space, "mac")
     let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Mac")
     let machine = try await space.addMachine(name: "studio")
-    _ = try await space.setUserProfile(principal: device.account.rawValue, handle: "before", displayName: nil)
+    let persona = try await space.adoptPersona(key: space.credential(pubkey: pubkey)!)
+    _ = try await space.setUserProfile(principal: persona.name, handle: "before", displayName: nil)
     let session = try await space.sessions.createSession(group: .shared, title: "names", kind: .agent, createdBy: "morgan", model: .test)
     func input() -> QueueInput {
-      .message(.init(id: UUID(), messageID: .init(UUID().uuidString), conversationID: .init("names"), sender: .init(id: device.account.rawValue, timeZone: TimeZone(identifier: "UTC")!, device: device.id), timestamp: fixedDate, content: .init(text: "hello")))
+      .message(.init(id: UUID(), messageID: .init(UUID().uuidString), conversationID: .init("names"), sender: .init(id: persona.name, timeZone: TimeZone(identifier: "UTC")!, device: device.id), timestamp: fixedDate, content: .init(text: "hello")))
     }
     _ = try await space.sessions.put(session, input: input())
     let before = try await space.sessions.drainQueue(session)
-    _ = try await space.setUserProfile(principal: device.account.rawValue, handle: "after", displayName: nil)
+    _ = try await space.setUserProfile(principal: persona.name, handle: "after", displayName: nil)
     let annotated = try await space.annotateDevice(device.id, name: "Studio Mac", machine: machine.id)
     #expect(annotated.name == "Studio Mac")
     #expect(annotated.machine == machine.id)
@@ -201,6 +202,7 @@ struct DeviceTests {
 
   @Test func aMessagePostedFromADeviceCarriesItOnTheRecordAndInItsHeader() async throws {
     let space = try makeSpace()
+    try await space.registerPerson("morgan")
     let pubkey = try await enrolled(space, "mac")
     let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Studio")
     let store = space.sessions
@@ -219,6 +221,7 @@ struct DeviceTests {
 
   @Test func aMessagePostedWithoutADeviceStaysUnattributed() async throws {
     let space = try makeSpace()
+    try await space.registerPerson("morgan")
     let store = space.sessions
     try await space.registerPeople(["alice", "morgan"])
     let conversation = try await store.createConversation(members: ["morgan", "alice"], in: .shared)

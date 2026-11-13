@@ -53,6 +53,7 @@ import Testing
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     let group = try await space.createGroup(alias: "research", owner: owner.id)
     await #expect(throws: SpaceError.machineNameTaken("research")) { try await space.addMachine(name: "research") }
+    try await space.registerPerson("person")
     await #expect(throws: SpaceError.handleTaken("research")) {
       try await space.setUserProfile(principal: "person", handle: "research", displayName: nil)
     }
@@ -75,6 +76,7 @@ import Testing
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     await #expect(throws: AliasError.taken("shared")) { try await space.createGroup(alias: "shared", owner: owner.id) }
     await #expect(throws: SpaceError.machineNameTaken("settings")) { try await space.addMachine(name: "settings") }
+    try await space.registerPerson("reader")
     await #expect(throws: SpaceError.handleTaken("settings")) {
       try await space.setUserProfile(principal: "reader", handle: "settings", displayName: nil)
     }

@@ -42,7 +42,7 @@ import Testing
     #expect(delivery.message.kind == .request)
     #expect(delivery.message.requestID == RequestID("r1"))
     try await pair.drain(pair.task)
-    #expect(try await pair.store.openRequests(pair.task) == [OpenRequest(id: RequestID("r1"))])
+    #expect(try pair.store.openRequests(pair.task) == [OpenRequest(id: RequestID("r1"))])
   }
 
   @Test func `a second request while one is open is refused`() async throws {
@@ -77,13 +77,13 @@ import Testing
     )
     #expect(progress.enqueued == [pair.parent])
     #expect(progress.message.kind == .progress)
-    #expect(try await pair.store.openRequests(pair.task).count == 1)
+    #expect(try pair.store.openRequests(pair.task).count == 1)
 
     let final = try await pair.store.report(
       pair.task, request: .init("r1"), kind: .final, messageID: MessageID("f1"), text: "done",
     )
     #expect(final.enqueued == [pair.parent])
-    #expect(try await pair.store.openRequests(pair.task).isEmpty)
+    #expect(try pair.store.openRequests(pair.task).isEmpty)
 
     // A second brief is legal once the first is answered.
     _ = try await pair.request("r2")

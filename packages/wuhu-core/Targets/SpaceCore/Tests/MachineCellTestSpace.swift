@@ -47,6 +47,7 @@ final class MachineCellTestSpace: Sendable {
     guard stopped.withLock({ let wasStopped = $0; $0 = true; return !wasStopped }) else { return }
     await worker.quiesce()
     worker.release()
+    await space.stopWorker()
     await drain()
   }
 

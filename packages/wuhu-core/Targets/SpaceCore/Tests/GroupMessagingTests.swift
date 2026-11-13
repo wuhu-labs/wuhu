@@ -43,6 +43,7 @@ import Testing
 
   @Test func sharedCannotDialIntoAlice() async throws {
     let rig = try await makeRig()
+    try await rig.space.registerPerson("carol")
     let ids = try await rig.space.query("SELECT id FROM sessions", as: Principal(actor: .session(rig.s), group: .shared)).rows
     #expect(ids == [[.text(rig.s.rawValue)]])
     await #expect(throws: SessionStoreError.unknownSession(rig.p.rawValue)) {
@@ -115,6 +116,7 @@ import Testing
 
   @Test func anAttachmentLivesInItsConversationsGroupAndEveryRecipientCanNameIt() async throws {
     let rig = try await makeRig()
+    try await rig.space.registerPerson("carol")
     let own = try await rig.store.post(
       .box(rig.p), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: Self.utc),
       content: .init(text: "for you"), uploads: [AttachmentUpload(name: "note.txt", bytes: Array("mine".utf8))],
@@ -135,10 +137,10 @@ import Testing
     let heard = try #require(try await queued(rig, rig.s).last?.content.attachments.first?.path)
     #expect(heard == "wuhu://alice.localspace" + dmPath)
     #expect(try await rig.space.attachmentBytes(heard, readingIn: .shared) == Data("dm".utf8))
-    #expect(try await rig.store.readsAttachment(dmPath, in: Self.alice, member: rig.s.rawValue))
+    #expect(rig.store.readsAttachment(dmPath, in: Self.alice, member: rig.s.rawValue))
     let stranger = try await rig.store.createSession(group: .shared, title: "X", kind: .agent, createdBy: "owner", model: .test)
-    #expect(try await !rig.store.readsAttachment(dmPath, in: Self.alice, member: stranger.rawValue))
-    #expect(try await !rig.store.readsAttachment(dmPath, in: .shared, member: rig.s.rawValue))
+    #expect(!rig.store.readsAttachment(dmPath, in: Self.alice, member: stranger.rawValue))
+    #expect(!rig.store.readsAttachment(dmPath, in: .shared, member: rig.s.rawValue))
 
     _ = try await rig.store.post(
       .box(rig.s), messageID: MessageID("m3"), sender: sender(rig.p), senderSession: rig.p, content: .init(text: "hi"),
@@ -156,6 +158,7 @@ import Testing
 
   @Test func anAttachmentIsAFileOfItsConversationThatNothingRewritesAndMintsNoRevision() async throws {
     let rig = try await makeRig()
+    try await rig.space.registerPerson("carol")
     func revisions() async throws -> Int { try await rig.space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM revisions")! } }
     let before = try await revisions()
     let posted = try await rig.store.post(
@@ -264,20 +267,22 @@ import Testing
     let rig = try await makeRig()
     let m = try await rig.space.addAccount(kind: .human, name: "m", admin: true)
     let person = try await rig.space.addAccount(kind: .human, name: "al")
+    let mPersona = m.id.rawValue
+    let alPersona = person.id.rawValue
     let s2 = try await rig.store.createSession(group: .shared, title: "S2", kind: .agent, createdBy: "owner", model: .test)
     let own = try await rig.store.createSession(group: Self.alice, title: "C", kind: .agent, createdBy: rig.p.rawValue, model: .test)
 
     _ = try await rig.store.post(
-      .box(rig.s), messageID: MessageID("m1"), sender: Sender(id: "m", timeZone: Self.utc), content: .init(text: "hi"),
-      acting: Principal(actor: .person(persona: "m", account: m.id), group: .shared),
+      .box(rig.s), messageID: MessageID("m1"), sender: Sender(id: mPersona, timeZone: Self.utc), content: .init(text: "hi"),
+      acting: Principal(actor: .person(persona: mPersona, account: m.id), group: .shared),
     )
     let fromM = try #require(try await queued(rig, rig.s).last)
     #expect(fromM.senderAdmin == true)
     #expect(fromM.header.render().contains("<sender-admin>yes</sender-admin>"))
 
     _ = try await rig.store.post(
-      .box(rig.s), messageID: MessageID("m2"), sender: Sender(id: "al", timeZone: Self.utc), content: .init(text: "hi"),
-      acting: Principal(actor: .person(persona: "al", account: person.id), group: Self.alice),
+      .box(rig.s), messageID: MessageID("m2"), sender: Sender(id: alPersona, timeZone: Self.utc), content: .init(text: "hi"),
+      acting: Principal(actor: .person(persona: alPersona, account: person.id), group: Self.alice),
     )
     let fromAlice = try #require(try await queued(rig, rig.s).last)
     #expect(fromAlice.senderAdmin == false)
@@ -300,7 +305,7 @@ import Testing
   @Test func watermarksShowOnlyTheReadersOwnRows() async throws {
     let rig = try await makeRig()
     for identity in [rig.p.rawValue, rig.s.rawValue, "someone"] {
-      try await rig.space.plant("INSERT INTO watermarks VALUES (?, ?, 1)", arguments: [identity, rig.s.rawValue])
+      try await rig.space.plant("INSERT INTO watermarks (identity, owner_account, source, last_read_n) VALUES (?, ?, ?, 1)", arguments: [identity, identity, rig.s.rawValue])
     }
     let rows = try await rig.space.query("SELECT identity FROM watermarks", as: Principal(actor: .session(rig.s), group: .shared)).rows
     #expect(rows == [[.text(rig.s.rawValue)]])
@@ -308,37 +313,27 @@ import Testing
 
   @Test func aPersonSeesTheirDMAndItsNotificationsFromAnyGroup() async throws {
     let rig = try await makeRig()
-    let bob = try await rig.space.addAccount(kind: .human, name: "bob")
-    let persona = try await rig.space.writer.write { db in
-      try db.execute(
-        sql: "INSERT INTO personas VALUES ('bobp', 900, 'k', ?, '2026-01-01T00:00:00.000Z')", arguments: [bob.id.rawValue],
-      )
-      return "bobp"
-    }
-    try await rig.space.registerPeople(["alice-person"])
+    try await rig.space.registerPeople(["bobp", "alice-person"])
+    let persona = "bobp"
+    let bob = try #require(try await rig.space.persona(named: persona)).account
     let dm = try await rig.store.post(
       .dm(with: persona), messageID: MessageID("m1"), sender: Sender(id: "alice-person", timeZone: Self.utc),
       content: .init(text: "hi bob"), acting: Principal(actor: .anonymous, group: Self.alice),
     )
     #expect(try await rig.store.conversation(dm.message.conversation).group == Self.alice)
-    let asBob = Principal(actor: .person(persona: persona, account: bob.id), group: Self.bob)
+    let asBob = Principal(actor: .person(persona: persona, account: bob), group: Self.bob)
     let conversations = try await rig.space.query("SELECT id FROM conversations", as: asBob).rows
     #expect(conversations == [[.text(dm.message.conversation.rawValue)]])
     let notifications = try await rig.space.query("SELECT source FROM notifications", as: asBob).rows
     #expect(notifications.contains([.text(dm.message.conversation.rawValue)]))
-    #expect(try await rig.store.conversations(member: persona).map(\.id) == [dm.message.conversation])
+    #expect(rig.store.conversations(member: persona).map(\.id) == [dm.message.conversation])
   }
 
   // One inbox across a person's groups: each row names its group, and a
   // conversation message from outside that group names the sender's.
   @Test func aNotificationNamesItsGroupAndAnOutsideSendersGroup() async throws {
     let rig = try await makeRig()
-    let account = try await rig.space.addAccount(kind: .human, name: "carol")
-    try await rig.space.writer.write { db in
-      try db.execute(
-        sql: "INSERT INTO personas VALUES ('carol', 901, 'k', ?, '2026-01-01T00:00:00.000Z')", arguments: [account.id.rawValue],
-      )
-    }
+    try await rig.space.registerPeople(["carol"])
     let carol = Sender(id: "carol", timeZone: Self.utc)
     try await rig.space.registerPeople(["alice-person"])
     let dm = try await rig.store.post(
@@ -364,14 +359,15 @@ import Testing
   @Test func theViewedPageIsNamedAsEachRecipientsGroupNamesIt() async throws {
     let rig = try await makeRig()
     let person = try await rig.space.addAccount(kind: .human, name: "al")
-    let al = Principal(actor: .person(persona: "al", account: person.id), group: Self.alice)
+    let alPersona = person.id.rawValue
+    let al = Principal(actor: .person(persona: alPersona, account: person.id), group: Self.alice)
     _ = try await rig.space.fs(Self.alice).write("/notes/plan.md", bytes("# Plan\n"), ifMatch: nil)
     let viewing = try await rig.space.viewing("/notes/plan.md", as: al)
     #expect(viewing.stored == "wuhu://alice.localspace/notes/plan.md")
 
     for (box, id) in [(rig.p, "m1"), (rig.s, "m2")] {
       _ = try await rig.store.post(
-        .box(box), messageID: MessageID(id), sender: Sender(id: "al", timeZone: Self.utc), viewing: viewing,
+        .box(box), messageID: MessageID(id), sender: Sender(id: alPersona, timeZone: Self.utc), viewing: viewing,
         content: .init(text: "look"), acting: al,
       )
     }
@@ -379,20 +375,21 @@ import Testing
     let outside = try #require(try await queued(rig, rig.s).last)
     #expect(outside.viewing == "wuhu://alice.localspace/notes/plan.md")
     #expect(outside.header.render().contains("\n<viewing>wuhu://alice.localspace/notes/plan.md</viewing>\n"))
-    #expect(try await rig.store.message(MessageID("m2"))?.viewing == viewing)
+    #expect(rig.store.message(MessageID("m2"))?.viewing == viewing)
 
     _ = try await rig.store.post(
-      .box(rig.p), messageID: MessageID("m3"), sender: Sender(id: "al", timeZone: Self.utc), content: .init(text: "plain"), acting: al,
+      .box(rig.p), messageID: MessageID("m3"), sender: Sender(id: alPersona, timeZone: Self.utc), content: .init(text: "plain"), acting: al,
     )
     let plain = try #require(try await queued(rig, rig.p).last)
     #expect(plain.viewing == nil)
-    #expect(try await rig.store.message(MessageID("m3"))?.viewing == nil)
+    #expect(rig.store.message(MessageID("m3"))?.viewing == nil)
   }
 
   @Test func aViewedPageIsRefusedUnlessThePersonReadsItNow() async throws {
     let rig = try await makeRig()
     let person = try await rig.space.addAccount(kind: .human, name: "al")
-    let al = Principal(actor: .person(persona: "al", account: person.id), group: Self.alice)
+    let alPersona = person.id.rawValue
+    let al = Principal(actor: .person(persona: alPersona, account: person.id), group: Self.alice)
     _ = try await rig.space.fs(.shared).write("/readme.md", bytes("hi\n"), ifMatch: nil)
     _ = try await rig.space.fs(Self.bob).write("/secret.md", bytes("no\n"), ifMatch: nil)
 

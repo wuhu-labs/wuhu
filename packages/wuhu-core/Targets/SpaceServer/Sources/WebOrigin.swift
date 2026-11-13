@@ -209,7 +209,7 @@ private func attachmentHome(_ path: String, host: GroupID, viewer: AccountID?, s
   let principal = try await webPrincipal(viewer, group: host, space: space)
   if try await space.reads(for: principal).contains(conversation.group) { return conversation.group }
   guard let member = principal.member,
-        try await space.sessions.readsAttachment(path, in: conversation.group, member: member)
+        space.sessions.readsAttachment(path, in: conversation.group, member: member)
   else { return nil }
   return conversation.group
 }
@@ -476,7 +476,7 @@ private func contentResponse(
     guard let (_, candidates) = try? await fs.list(directory) else { return plainStatus(.notFound) }
     var entries: [SpaceFS.Entry] = []
     for entry in candidates {
-      if let conversation = try? await space.sessions.attachmentConversation(prefix + entry.name, in: files ?? group), conversation.kind == .users {
+      if let conversation = space.sessions.attachmentConversation(prefix + entry.name, in: files ?? group), conversation.kind == .users {
         guard (try? await space.sessions.reads(conversation, reader: principal.member, group: principal.group)) == true else { continue }
       }
       entries.append(entry)

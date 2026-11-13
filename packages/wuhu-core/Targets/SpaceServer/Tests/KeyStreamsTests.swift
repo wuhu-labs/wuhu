@@ -19,9 +19,9 @@ private let bound: Duration = .seconds(5)
       let harness = try await SessionHarness(dev: false)
       let (a, aKey) = try await harness.enrolledBearer()
       let (b, bKey) = try await harness.enrolledBearer()
-      let bPersona = try await harness.space.mintPersona(key: bKey).name
+      let bPersona = try await harness.space.adoptPersona(key: bKey).name
       let conversation = try await harness.store.createConversation(
-        members: [harness.space.mintPersona(key: aKey).name, bPersona], in: .shared,
+        members: [harness.space.adoptPersona(key: aKey).name, bPersona], in: .shared,
       )
       let created = try await harness.post("/v1/tools/table.create", ["path": "/probe.table", "header": ["columns": [["name": "n", "type": "integer"]]]], bearer: b)
       #expect(created.status == .ok)

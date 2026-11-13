@@ -260,9 +260,9 @@ struct DocumentCellTests {
     let read = try await fs.write(plan, bytes("# A\n\none\n"), ifMatch: nil)
     var client = try await Client.join(space, plan)
     let before = try await space.currentRevision()
-    let original = try await space.writer.read { db in
-      try Data.fetchOne(db, sql: "SELECT frontiers FROM document_checkpoint WHERE rev = ?", arguments: [read.rev])
-    }
+    let revision = try #require(read.rev)
+    let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
+    let original = document.checkpoints().first { $0.rev == revision }?.frontiers
 
     // Two changed frames that cancel out: the text is the file's again, and the log is not empty.
     try client.edit("# A\n\none!\n")
@@ -274,18 +274,12 @@ struct DocumentCellTests {
     #expect(rev == read.rev, "an unchanged text minted a revision")
     #expect(try await space.currentRevision() == before)
 
-    let (rows, frontiers, state, dirty) = try await space.writer.read { db in
-      (
-        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM document_checkpoint WHERE rev = ?", arguments: [read.rev]) ?? -1,
-        try Data.fetchOne(db, sql: "SELECT frontiers FROM document_checkpoint WHERE rev = ?", arguments: [read.rev]),
-        try Data.fetchOne(db, sql: "SELECT frontier FROM document_state"),
-        try Row.fetchOne(db, sql: "SELECT dirty_at FROM document_state")?["dirty_at"] as Int64?,
-      )
-    }
-    #expect(rows == 1, "the revision kept \(rows) checkpoint rows")
-    #expect(dirty == nil, "an unchanged commit stayed due")
-    #expect(frontiers != original, "the row kept the frontiers before the edits")
-    #expect(frontiers == state, "the row and the state disagree on the frontiers")
+    let kept = document.checkpoints().filter { $0.rev == revision }
+    let state = try #require(document.state())
+    #expect(kept.count == 1, "the revision kept \(kept.count) checkpoint rows")
+    #expect(state.dirtyAt == nil, "an unchanged commit stayed due")
+    #expect(kept.first?.frontiers != original, "the row kept the frontiers before the edits")
+    #expect(kept.first?.frontiers == state.frontier, "the row and the state disagree on the frontiers")
 
     _ = try await fs.write(plan, bytes("# B\n\none\n"), ifMatch: read)
     #expect(text(try await fs.read(plan).1) == "# B\n\none\n")
@@ -299,7 +293,7 @@ struct DocumentCellTests {
     try client.edit("Hello there\n")
     #expect(await client.next() == .control(.ack(count: 1)))
     #expect(try await space.currentRevision() == before)
-    #expect(try await logRows(space) == 1)
+    #expect(try logRows(space) == 1)
   }
 
   @Test func aRefusedFrameClosesOnlyItsSocketAndTheNextReadCommitsTheLog() async throws {
@@ -317,9 +311,9 @@ struct DocumentCellTests {
     #expect(await client.next() == nil)
     guard case let .control(.peers(after)) = await observer.next() else { Issue.record("the refused socket took the other one with it"); return }
     #expect(after.map(\.peer) == ["2"], "roster \(after.map(\.peer))")
-    #expect(try await logRows(space) == 1)
+    #expect(try logRows(space) == 1)
     #expect(text(try await space.fs(.shared).read(plan).1) == "Hello there\n")
-    #expect(try await logRows(space) == 0)
+    #expect(try logRows(space) == 0)
   }
 
   @Test func aStopLeavesTheEditsInTheLogAndTheNextReaderCommitsThem() async throws {
@@ -334,13 +328,13 @@ struct DocumentCellTests {
     #expect(await client.next() == .control(.ack(count: 1)))
 
     try await first.close()
-    #expect(try await logRows(second) == 1, "a stop writes no file")
+    #expect(try logRows(second) == 1, "a stop writes no file")
     #expect(text(try await second.fs(.shared).read(plan).1) == "Hello, stop\n")
-    #expect(try await logRows(second) == 0)
+    #expect(try logRows(second) == 0)
   }
 
-  private func logRows(_ space: Space) async throws -> Int {
-    try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM document_log") ?? 0 }
+  private func logRows(_ space: Space) throws -> Int {
+    try space.worker.cell(DocumentCell.ID(.shared, SpacePath(validating: plan))).pendingUpdates()
   }
 
   @Test func aCheckoutMergesIntoTheLiveDocument() async throws {
@@ -464,7 +458,8 @@ struct DocumentCellTests {
       return
     }
     #expect(await client.next() == nil)
-    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM document_state") } == 0)
+    let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: "/parent.txt/doc.wmd")))
+    #expect(document.state() == nil)
   }
 
   @Test func aStaleHistoryOverAnExternalFileIsReplacedFromTheStore() async throws {
@@ -488,9 +483,9 @@ struct DocumentCellTests {
     }
     let blobRows = try await space.writer.read { db in try Substrate.storedBlob(Substrate.blobHash(Array(big.utf8)), in: db) }
     guard case .external = blobRows else { Issue.record("the file stayed inline, so nothing is fetched"); return }
-    let key = DocumentCell.key(.shared, try SpacePath(validating: plan))
-    let stored = try await space.documents.rows.fileRev(key)
-    let head = try await space.writer.read { db in try Int64.fetchOne(db, sql: "SELECT rev FROM fs_heads WHERE path = ?", arguments: [plan]) }
+    let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
+    let stored = document.fileRev()
+    let head = try #require(try document.file()).rev
     #expect(stored != head, "the rows still stand for the replaced file")
 
     let again = try await Client.join(space, plan, peer: "2")
@@ -648,7 +643,7 @@ struct DocumentCellTests {
       try client.edit(typed)
       #expect(await client.next() == .control(.ack(count: 1)))
     }
-    #expect(try await logRows(space) == 0, "the log folded into the snapshot")
+    #expect(try logRows(space) == 0, "the log folded into the snapshot")
     #expect(try await space.currentRevision() == before, "a fold writes no file")
 
     let (read, data) = try await fs.read(plan)
@@ -681,15 +676,13 @@ struct DocumentCellTests {
     #expect(again.replica.text == "Other\n")
     guard case .control(.error(code: .notFound, _)) = await client.next() else { Issue.record("the old document kept its socket"); return }
     // The new history starts from the file's text: nothing of the old one is left in any of the four rows.
-    let (fileRev, head, log, checkpoints, snapshots) = try await space.writer.read { db in
-      (
-        try Int64.fetchOne(db, sql: "SELECT file_rev FROM document_state") ?? -1,
-        try Int64.fetchOne(db, sql: "SELECT rev FROM fs_heads WHERE path = ?", arguments: [plan]) ?? -1,
-        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM document_log") ?? -1,
-        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM document_checkpoint") ?? -1,
-        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM document_snapshot") ?? -1,
-      )
-    }
+    let document = space.worker.cell(DocumentCell.ID(.shared, try SpacePath(validating: plan)))
+    let state = try #require(document.state())
+    let fileRev = state.fileRev ?? -1
+    let head = try document.file()?.rev ?? -1
+    let log = document.pendingUpdates()
+    let checkpoints = document.checkpoints().count
+    let snapshots = document.snapshotCount()
     #expect(fileRev == head, "the state stands at another revision than the file")
     #expect(
       log == 0 && checkpoints == 1 && snapshots == 1,
@@ -709,7 +702,7 @@ struct DocumentCellTests {
     try client.replica.importUpdate(update)
     client.send(.update(Array(update)))
     #expect(await client.next() == .control(.ack(count: 1)))
-    #expect(try await logRows(first) == 1)
+    #expect(try logRows(first) == 1)
 
     await first.stopWorker()
     #expect(await client.next() == nil, "the drained worker kept the socket")
@@ -719,7 +712,7 @@ struct DocumentCellTests {
     var again = try await Client.join(second, plan, peer: "1")
     again.send(.update(Array(update)))
     #expect(await again.next() == .control(.ack(count: 1)))
-    #expect(try await logRows(second) == 1)
+    #expect(try logRows(second) == 1)
     #expect(text(try await second.fs(.shared).read(plan).1) == "Hello, rolled\n")
   }
 
@@ -780,9 +773,9 @@ struct DocumentCellTests {
 
     let underNotes = try SpacePath(validating: "/notes")
     let both = ["shared/notes/a/b.wmd", "shared/notes/plan.wmd"]
-    #expect(try await space.documents.rows.dirty(.shared, under: underNotes).sorted() == both)
+    #expect(space.worker.cell(SpaceCell.ID("space")).dirtyDocuments(in: .shared, under: underNotes).sorted() == both)
     let underStudio = try SpacePath(validating: "/_/machines/\(studio.id.rawValue)")
-    #expect(try await space.documents.rows.dirty(.shared, under: underStudio) == ["shared" + notes])
+    #expect(space.worker.cell(SpaceCell.ID("space")).dirtyDocuments(in: .shared, under: underStudio) == ["shared" + notes])
   }
 
   @Test func aWakeThatFindsTheFileGoneLeavesNothingDueAndTheMailDeletesTheRows() async throws {
@@ -829,7 +822,7 @@ struct DocumentCellTests {
       return
     }
     #expect(await client.next() == nil)
-    #expect(try await logRows(space) == 0, "a refused edit was logged")
+    #expect(try logRows(space) == 0, "a refused edit was logged")
   }
 
   @Test func aFolderWhereTheDocumentWasIsRefusedAndStaysUnexplained() async throws {
@@ -853,7 +846,7 @@ struct DocumentCellTests {
       Issue.record("a frame for a folder was taken")
       return
     }
-    #expect(try await logRows(space) == 1, "a refused frame was logged")
+    #expect(try logRows(space) == 1, "a refused frame was logged")
     await #expect(throws: SpaceError.notAFile(plan)) { _ = try await fs.read(plan) }
   }
 

@@ -3,7 +3,6 @@ import DeterministicDependencies
 import Foundation
 import GRDB
 @testable import SpaceCore
-import Synchronization
 import Testing
 import Wuwei
 
@@ -18,15 +17,16 @@ import Wuwei
 
   @Test func `a row a cell wrote wakes whoever watches its table`() async throws {
     try await hosting { space in
-      let wakes = Mutex(0)
+      let changes = ChangeSource()
+      let (wakes, wake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+      let stopWatching = changes.subscribe(["notifications"], wake)
+      defer { stopWatching() }
       let writer = await space.writer
-      let watch = DatabaseRegionObservation(tracking: [Table("notifications")]).start(
-        in: writer, onError: { _ in }, onChange: { _ in wakes.withLock { $0 += 1 } },
-      )
-      defer { watch.cancel() }
-      let rows = try await space.worker.call(Scribe.ID("carol")) { try $0.note("carol") }
-      #expect(rows == 1)
-      #expect(wakes.withLock { $0 } == 1)
+      writer.add(transactionObserver: ChangeSourceFeeder(changes), extent: .databaseLifetime)
+      try await space.worker.call(PersonCell.ID("owner")) { try $0.notify("owner", PersonNote(source: "s", group: .shared, kind: .sessionSettled, payload: "{}", createdAt: "2026-11-11T00:00:00.000Z")) }
+      #expect(space.sessions.notifications(recipient: "owner").count == 1)
+      var woken = wakes.makeAsyncIterator()
+      #expect(await woken.next() != nil)
     }
   }
 

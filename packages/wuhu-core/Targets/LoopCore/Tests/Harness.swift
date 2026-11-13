@@ -259,7 +259,7 @@ func makeConfig(
 enum Fix {
   static let sender = Sender(id: "morgan", timeZone: TimeZone(identifier: "UTC")!)
 
-  static func message(_ text: String, message: String = "m1", conversation: String = "ch1", owesReply: Bool = false) -> QueueInput {
+  static func message(_ text: String, message: String = "m1", conversation: String = "ch1", owesReply: Bool = false, sender: Sender = Fix.sender) -> QueueInput {
     .message(.init(
       id: UUID(),
       messageID: .init(message),

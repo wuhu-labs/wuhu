@@ -51,7 +51,8 @@ extension ConversationCell {
       createdAt: SQLiteDateFormat.string(from: now),
     )
     for member in routed.notified {
-      ctx.send(PersonCell.ID(member)).notify(note)
+      guard let person = ctx.cell(SpaceCell.ID("space")).personCell(member) else { continue }
+      ctx.send(person).notify(member, note)
     }
     return enqueued
   }

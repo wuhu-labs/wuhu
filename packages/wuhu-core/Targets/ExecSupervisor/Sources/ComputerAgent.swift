@@ -19,6 +19,7 @@ import Fetch
 import struct Logging.Logger
 import enum OperationProtocol.ComputerKindSchemas
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import struct OperationRuntime.AnyOperationKind
 import class OperationRuntime.OperationAgent
 import typealias Serve.Handler
@@ -104,7 +105,10 @@ extension ExecSupervisor {
       // Holding the lock entitles this agent to replace a stale ctl.sock; workers that outlived the last agent redial it.
       let listener = try await Rendezvous.listen(path: rendezvous, group: events)
       defer { _ = unlink(rendezvous) }
-      let agent = try ComputerAgent(machine: machine, files: files, kinds: kinds, external: workers.external, audit: audit)
+      // A box moves the largest piece the protocol allows, and says so: the server takes the piece it advertises.
+      var limits = OperationLimits()
+      limits.filePieceBytes = OperationLimits.maxFilePieceBytes
+      let agent = try ComputerAgent(machine: machine, files: files, kinds: kinds, external: workers.external, limits: limits, audit: audit)
       return try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await workers.run() }
         group.addTask { await agent.run() }

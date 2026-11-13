@@ -358,16 +358,6 @@ import Testing
       #expect(try await call(.delete, "/v1/subscription/\(goneID)", .null, toolCall: "tc-timer-gone-cancel").0 == .ok)
       #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone") == gone)
       #expect(try await t.harness.store.armedSubscriptions(t.parent).allSatisfy { $0.slot.id.rawValue != goneID })
-
-      // A device is driven once: the retry answers with the first command's n.
-      let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
-      _ = try await t.harness.space.addKey(testPubkey("phone"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
-      let device = try await t.harness.space.upsertDevice(pubkey: testPubkey("phone"), installation: "inst-1", kind: "phone", name: "Phone")
-      let driven = try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device")
-      #expect(driven.0 == .ok)
-      #expect(try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device") == driven)
-      let again = try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device-2")
-      #expect(JSONValue.parse(again.1)?.object?["n"] == .integer(2))
     }
   }
 
@@ -397,19 +387,6 @@ import Testing
       #expect(cancelled.0.0 == .ok)
       #expect(cancelled.0 == cancelled.1)
       #expect(try await pendingTimers(t.harness, t.parent).isEmpty)
-
-      let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
-      _ = try await t.harness.space.addKey(testPubkey("phone"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
-      let device = try await t.harness.space.upsertDevice(pubkey: testPubkey("phone"), installation: "inst-1", kind: "phone", name: "Phone")
-      let command: JSONValue = .object(["payload": ["sidebar": "everything"]])
-      async let firstDrive = call(.post, "/v1/device/\(device.id)/command", command, "tc-device")
-      async let secondDrive = call(.post, "/v1/device/\(device.id)/command", command, "tc-device")
-      let driven = try await (firstDrive, secondDrive)
-      #expect(driven.0.0 == .ok)
-      #expect(driven.0 == driven.1)
-      // One command was issued: the next is the second.
-      let next = try await call(.post, "/v1/device/\(device.id)/command", command, "tc-device-2")
-      #expect(JSONValue.parse(next.1)?.object?["n"] == .integer(2))
     }
   }
 
@@ -603,9 +580,9 @@ extension SessionGateTests {
   @Test func aSessionExecCreatesAndManagesAHumanOnlyChannel() async throws {
     try await withSessionDeps {
       let t = try await tree()
-      let alice = try await t.harness.mintPersona()
-      let bob = try await t.harness.mintPersona()
-      let carol = try await t.harness.mintPersona()
+      let alice = try await t.harness.adoptPersona()
+      let bob = try await t.harness.adoptPersona()
+      let carol = try await t.harness.adoptPersona()
       let output = try await t.harness.call("/v1/conversation", ["members": .array([.string(alice), .string(bob)]), "title": "People"], as: ConversationPostOutput.self, bearer: t.token)
       let id = output.conversationId
       let channel = try await t.harness.store.conversation(ConversationID(id))

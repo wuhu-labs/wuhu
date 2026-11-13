@@ -25,7 +25,7 @@ import struct WuhuAI.ToolCall
   @Test func sessionHTTPUserAndLegacyConversationTargetsAreRefused() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       let dm = try await legacyDM(t.harness, session: t.parent, person: person)
       for body: JSONValue in [
         ["message": "lost", "user": .string(person)],
@@ -46,8 +46,8 @@ import struct WuhuAI.ToolCall
   @Test func aSessionCannotPostIntoAPersonPersonDMByIdButPeopleStillCan() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let first = try await t.harness.mintPersona()
-      let second = try await t.harness.mintPersona()
+      let first = try await t.harness.adoptPersona()
+      let second = try await t.harness.adoptPersona()
       let dm = try await t.harness.call("/v1/conversation/message", [
         "user": .string(second), "identity": .string(first), "message": "hello",
       ], as: ConversationPostOutput.self)
@@ -70,7 +70,7 @@ import struct WuhuAI.ToolCall
   @Test func aPersonCannotPostIntoAnOldHumanSessionDMButCanStillReadIt() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       let dm = try await legacyDM(t.harness, session: t.parent, person: person)
       let response = try await t.harness.post("/v1/conversation/message", [
         "message": "lost", "conversation": .string(dm.rawValue), "identity": .string(person),
@@ -86,7 +86,7 @@ import struct WuhuAI.ToolCall
   @Test func scriptHTTPPostsUseTheSameRefusal() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       // The identity hop lands on the harness as the parent's own bearer.
       let owner = Hub(space: t.harness.space)
       let scripts = Scripts()
@@ -121,7 +121,7 @@ import struct WuhuAI.ToolCall
           }
         }
       }
-      #expect(try await t.harness.store.conversations(member: person).isEmpty)
+      #expect(t.harness.store.conversations(member: person).isEmpty)
       #expect(try await t.harness.store.messages(conversation: .init(t.parent.rawValue)).isEmpty)
     }
   }
@@ -129,7 +129,7 @@ import struct WuhuAI.ToolCall
   @Test func aBoxReplyStillNotifiesThePersonWhoPostedThere() async throws {
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
-      let person = try await t.harness.mintPersona()
+      let person = try await t.harness.adoptPersona()
       let first = try await t.harness.call("/v1/conversation/message", [
         "session": .string(t.parent.rawValue), "identity": .string(person), "message": "hello",
       ], as: ConversationPostOutput.self)

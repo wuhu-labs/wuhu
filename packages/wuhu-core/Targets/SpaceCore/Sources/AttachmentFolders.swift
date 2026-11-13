@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import GRDB
+import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceFS
 import Wuwei
@@ -53,12 +54,12 @@ struct AttachmentFolders: SpaceVFS {
       var (token, entries) = (Self.token, [Entry]())
       do { (token, entries) = try await base.list(path) } catch SpaceError.notFound {}
       entries.removeAll { $0.name == Self.root[1] }
-      if try await !conversations().isEmpty { entries.append(directory(Self.root[1])) }
+      if !conversations().isEmpty { entries.append(directory(Self.root[1])) }
       guard !entries.isEmpty else { throw SpaceError.notFound(path) }
       return (token, entries.sorted { $0.name < $1.name })
     }
     guard let components = inside(path) else { return try await base.list(path) }
-    let entries = components.count == 2 ? try await conversations().map(directory) : try children(of: components)
+    let entries = components.count == 2 ? conversations().map { directory($0.rawValue) } : try children(of: components)
     guard !entries.isEmpty else { throw SpaceError.notFound(path) }
     return (Self.token, entries)
   }
@@ -66,7 +67,7 @@ struct AttachmentFolders: SpaceVFS {
   func stat(_ path: String) async throws -> Entry {
     guard let components = inside(path) else { return try await base.stat(path) }
     if components.count == 2 {
-      guard try await !conversations().isEmpty else { throw SpaceError.notFound(path) }
+      guard !conversations().isEmpty else { throw SpaceError.notFound(path) }
       return directory(Self.root[1])
     }
     if let row = rows(components).first(where: { $0.path == rawPath(components) }) { return try entry(row) }
@@ -114,14 +115,9 @@ struct AttachmentFolders: SpaceVFS {
     return entries
   }
 
-  /// The conversations homed in this group that hold an attachment: the one read here that spans cells.
-  private func conversations() async throws -> [String] {
-    let group = group.rawValue
-    return try await writer.read { db in
-      try String.fetchAll(
-        db, sql: "SELECT id FROM conversations WHERE grp = ? AND id IN (SELECT conversation_id FROM attachments) ORDER BY id", arguments: [group],
-      )
-    }
+  /// The conversations homed in this group that hold an attachment: the one read here that spans cells, answered by the group's.
+  private func conversations() -> [ConversationID] {
+    runtime.worker().cell(GroupCell.ID(group.rawValue)).attachmentConversations()
   }
 
   private func entry(_ row: AttachmentRow) throws -> Entry {

@@ -1,10 +1,10 @@
 import DeterministicDependencies
 import Foundation
-import GRDB
 import JSONValue
 import SessionDomain
 @testable import SpaceCore
 import Testing
+import enum Wuwei.Value
 
 // One row per request in `requests`, moved by the write that posts or fires.
 @Suite(.deterministicDependencies) struct RequestRowsTests {
@@ -34,27 +34,18 @@ import Testing
       try await store.openRequest(on: task ?? self.task, from: .session(parent), messageID: MessageID(id), text: "do \(id)", terms: terms)
     }
 
-    // The row's non-null columns, as text.
-    func row(_ id: String) async throws -> [String: String]? {
-      try await store.writer.read { db in
-        try Row.fetchOne(db, sql: "SELECT * FROM requests WHERE id = ?", arguments: [id]).map { row in
-          row.reduce(into: [:]) { columns, column in
-            switch column.1.storage {
-            case .null: break
-            case let .int64(value): columns[column.0] = "\(value)"
-            case let .string(value): columns[column.0] = value
-            case let .double(value): columns[column.0] = "\(value)"
-            case .blob: Issue.record("blob in requests.\(column.0)")
-            }
-          }
-        }
-      }
+    /// The request's row, as the space's cell reads it.
+    func row(_ id: String) -> RequestRow? {
+      store.space.request(RequestID(id))
     }
 
-    func status(_ id: String) async throws -> String? { try await row(id)?["status"] }
+    func status(_ id: String) -> String? { row(id)?.status }
 
-    func count(_ sql: String) async throws -> Int {
-      try await store.writer.read { try Int.fetchOne($0, sql: sql)! }
+    /// The finals posted into the task's request conversation.
+    func finals() -> Int {
+      let conversation = Conversations.dmID(parent.rawValue, task.rawValue)
+      return rig.space.worker.cell(ConversationCell.ID(conversation.rawValue))
+        .messages(where: "m.kind = ?", .text(MessageKind.final.rawValue), limit: nil).count
     }
   }
 
@@ -65,13 +56,13 @@ import Testing
   @Test func `a request is a row with its brief and terms`() async throws {
     let fleet = try await Fleet()
     try await fleet.request("r1", try terms(fields: #"{"pr":7}"#))
-    let row = try #require(try await fleet.row("r1"))
-    #expect(row["grp"] == "shared")
-    #expect(row["requester"] == fleet.parent.rawValue)
-    #expect(row["task"] == fleet.task.rawValue)
-    #expect(row["status"] == "open")
-    #expect(row["brief"] == "do r1")
-    #expect(row["fields"] == #"{"pr":7}"#)
+    let row = try #require(fleet.row("r1"))
+    #expect(row.group == "shared")
+    #expect(row.requester == fleet.parent.rawValue)
+    #expect(row.task == fleet.task.rawValue)
+    #expect(row.status == "open")
+    #expect(row.brief == "do r1")
+    #expect(row.fields == #"{"pr":7}"#)
   }
 
   @Test func `bad terms are refused before anything is written`() throws {
@@ -83,11 +74,11 @@ import Testing
     let fleet = try await Fleet()
     try await fleet.request("r1")
     _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .progress, messageID: MessageID("p1"), text: "half")
-    #expect(try await fleet.status("r1") == "open")
+    #expect(fleet.status("r1") == "open")
     _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f1"), text: "done")
-    let row = try #require(try await fleet.row("r1"))
-    #expect(row["status"] == "done")
-    #expect(row["result"] == #""done""#)
+    let row = try #require(fleet.row("r1"))
+    #expect(row.status == "done")
+    #expect(row.result == #""done""#)
     await #expect(throws: SessionStoreError.unknownRequest("r1")) {
       _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f2"), text: "again")
     }
@@ -104,20 +95,20 @@ import Testing
         guard case let .reportRefused(id, violations, left) = error as? SessionStoreError else { return false }
         return id == "r1" && !violations.isEmpty && left == RequestTerms.refusalLimit - n - 1
       }
-      #expect(try await fleet.status("r1") == "open")
+      #expect(fleet.status("r1") == "open")
     }
-    #expect(try await fleet.count("SELECT count(*) FROM messages WHERE kind = 'final'") == 0)
+    #expect(fleet.finals() == 0)
     await #expect {
       _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f2"), text: "[]")
     } throws: { error in
       guard case let .reportRefused(_, _, left) = error as? SessionStoreError else { return false }
       return left == 0
     }
-    let row = try #require(try await fleet.row("r1"))
-    #expect(row["status"] == "failed")
-    #expect(row["refusals"] == #"["f0","f1","f2"]"#)
-    #expect(try await fleet.count("SELECT count(*) FROM messages WHERE kind = 'final'") == 1)
-    #expect(try await fleet.store.openRequests(fleet.task).isEmpty, "a failed request is owed no more")
+    let row = try #require(fleet.row("r1"))
+    #expect(row.status == "failed")
+    #expect(row.refusals == #"["f0","f1","f2"]"#)
+    #expect(fleet.finals() == 1)
+    #expect(try fleet.store.openRequests(fleet.task).isEmpty, "a failed request is owed no more")
   }
 
   @Test func `a retried refused attempt counts once, however late`() async throws {
@@ -131,10 +122,10 @@ import Testing
         return refusalsLeft == left
       }
     }
-    let row = try #require(try await fleet.row("r1"))
-    #expect(row["status"] == "open")
-    #expect(row["refusals"] == #"["a","b"]"#)
-    #expect(try await fleet.count("SELECT count(*) FROM messages WHERE kind = 'final'") == 0)
+    let row = try #require(fleet.row("r1"))
+    #expect(row.status == "open")
+    #expect(row.refusals == #"["a","b"]"#)
+    #expect(fleet.finals() == 0)
   }
 
   @Test func `a query reads schema, fields and result as JSON columns`() async throws {
@@ -155,9 +146,9 @@ import Testing
     let fleet = try await Fleet()
     try await fleet.request("r1", try terms(schema: #"{"type":"object","required":["verdict"]}"#))
     _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f1"), text: #" { "verdict" : "pass" } "#)
-    let row = try #require(try await fleet.row("r1"))
-    #expect(row["status"] == "done")
-    #expect(row["result"] == #"{"verdict":"pass"}"#)
+    let row = try #require(fleet.row("r1"))
+    #expect(row.status == "done")
+    #expect(row.result == #"{"verdict":"pass"}"#)
   }
 
   @Test func `a quiet request reminds its requester, a progress report moves the reminder and the final takes it back`() async throws {
@@ -191,19 +182,19 @@ import Testing
     try await fleet.request("r2", on: fleet.tasks[1])
     fleet.rig.advance(60)
     _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .progress, messageID: MessageID("p1"), text: "half")
-    #expect(try await fleet.store.awaitedRequests(fleet.parent) == [
+    #expect(fleet.store.awaitedRequests(fleet.parent) == [
       AwaitedRequest(id: RequestID("r1"), task: fleet.task, lastHeard: fixedDate.addingTimeInterval(120)),
       AwaitedRequest(id: RequestID("r2"), task: fleet.tasks[1], lastHeard: fixedDate.addingTimeInterval(60)),
     ])
     _ = try await fleet.store.report(fleet.task, request: RequestID("r1"), kind: .final, messageID: MessageID("f1"), text: "done")
-    #expect(try await fleet.store.awaitedRequests(fleet.parent).map(\.id) == [RequestID("r2")])
+    #expect(fleet.store.awaitedRequests(fleet.parent).map(\.id) == [RequestID("r2")])
   }
 
   @Test func `archive fails the open row`() async throws {
     let fleet = try await Fleet()
     try await fleet.request("r1")
     try await fleet.store.closeRequestsForArchive(fleet.task)
-    #expect(try await fleet.status("r1") == "failed")
+    #expect(fleet.status("r1") == "failed")
   }
 
   @Test func `an observation of requests sees each transition`() async throws {

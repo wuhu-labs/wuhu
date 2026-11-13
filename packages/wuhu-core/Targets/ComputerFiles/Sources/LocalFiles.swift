@@ -10,6 +10,7 @@ import Dispatch
   import Darwin
 #endif
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import Synchronization
 
 extension ComputerFileSystem {
@@ -21,7 +22,7 @@ extension ComputerFileSystem {
     let effects = DiskEffects()
     return Self(status: { path in try await diskIO { try fileLookup { try fileStatus(path) } } }, read: { path, offset, count in
       try await diskIO {
-        guard count > 0 && count <= 65536, offset <= UInt64(Int64.max) else { throw OperationError(.invalidInput) }
+        guard count > 0 && count <= OperationLimits.maxFilePieceBytes, offset <= UInt64(Int64.max) else { throw OperationError(.invalidInput) }
         try beforeOpen(path)
         let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW)
         guard fd >= 0 else { throw diskError() }; defer { closeDescriptor(fd) }

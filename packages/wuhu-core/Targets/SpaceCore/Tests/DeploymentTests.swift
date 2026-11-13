@@ -99,6 +99,7 @@ struct DeploymentTests {
     let account = try await space.addAccount(kind: .human, name: nil)
     try await space.recordDeployment(DeploymentRecord(origin: "https://wuhu.example", tlsFingerprint: fp, certificate: certificate))
 
+    await space.stopWorker()
     let (link, note) = try await UserRecovery.invite(folder: scratch.url, account: account.id.rawValue, server: nil, ttl: nil)
     #expect(link.hasPrefix("https://wuhu.example/_/enroll#token=jt_"))
     #expect(link.contains("&fp=\(fp)") == pinned)

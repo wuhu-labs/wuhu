@@ -4,7 +4,6 @@
   import Foundation
 #endif
 
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import enum SpaceContract.ImageMedia

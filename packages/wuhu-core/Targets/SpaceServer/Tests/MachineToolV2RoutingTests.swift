@@ -130,7 +130,11 @@ private struct RoutedEcho: OperationKind {
   var fastExit = false
   struct Input: Decodable, Sendable { let argv: [String]; let cwd: String; let stdin: Bool }
   let descriptor = ComputerKindSchemas.exec
-  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+  func start(_ input: Input, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    OperationStart { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     #expect(input.argv == ["echo-test"]); #expect(input.cwd == "/tmp"); #expect(input.stdin)
     if fastExit { try await channels.send(.init(data: Data("fast".utf8)), to: "stdout") }
     else { while let payload = try await channels.read("stdin", upTo: 65536) { try await channels.send(payload, to: "stdout") } }

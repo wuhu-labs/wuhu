@@ -22,7 +22,7 @@ public enum ComputerKindSchemas {
     inputSchema:
     object(["path": ["type": "string", "pattern": "^/"], "offset": offset, "length": offset, "ifMatch": string], required: ["path"]),
     resultSchema: object(["version": string, "bytes": offset, "reachedEOF": ["type": "boolean"]], required: ["version", "bytes", "reachedEOF"]),
-    outputChannels: [.init("data")],
+    outputChannels: [.init("data", windowBytes: OperationLimits.maxFilePieceBytes)],
   )
   /// One page of a find (glob over paths) or grep (ICU regex over lines) under `root`; the result is the whole page. A cursor continues only under the `scope` (the caller's name for this machine) that made it.
   public static let search = KindDescriptor(
@@ -43,16 +43,16 @@ public enum ComputerKindSchemas {
   )
   public static let stat = KindDescriptor("stat.v1", inputSchema: pathInput, resultSchema: entry, deliveryPolicy: .boundedResult)
   public static let list = KindDescriptor("list.v1", inputSchema: pathInput, resultSchema: object(["count": offset], required: ["count"]), outputChannels: [.init("entries", unit: .records, schema: entry)])
-  public static let write = KindDescriptor("write.v1", inputSchema: object(["path": string, "ifMatch": string, "bytes": offset, "digest": string], required: ["path", "bytes", "digest"]), resultSchema: object(["version": string], required: ["version"]), inputChannels: [.init("data", windowBytes: 65536)])
+  public static let write = KindDescriptor("write.v1", inputSchema: object(["path": string, "ifMatch": string, "bytes": offset, "digest": string], required: ["path", "bytes", "digest"]), resultSchema: object(["version": string], required: ["version"]), inputChannels: [.init("data", windowBytes: OperationLimits.maxFilePieceBytes)])
   /// A file of unknown length and digest, streamed on `data` into a hidden sibling of `path`; once `data` ends, `commit` carries
   /// the length and sha256 of every byte sent. A match is synced and renamed into place, over an existing file only with
   /// `replace` (`fileUnavailable` with errno EEXIST otherwise, checked at start and at the rename); anything else removes the stage.
   public static let stagedWrite = KindDescriptor(
     "stagedWrite.v1",
-    inputSchema: object(["path": ["type": "string", "pattern": "^/"], "replace": ["type": "boolean"]], required: ["path", "replace"]),
+    inputSchema: object(["path": ["type": "string", "pattern": "^/"], "replace": ["type": "boolean"], "length": offset], required: ["path", "replace"]),
     resultSchema: object(["version": string], required: ["version"]),
     inputChannels: [
-      .init("data", windowBytes: 1 << 20),
+      .init("data", windowBytes: OperationLimits.maxFilePieceBytes),
       .init("commit", unit: .records, windowBytes: 1024, maxRecordBytes: 1024, schema: object(["bytes": offset, "sha256": string], required: ["bytes", "sha256"])),
     ],
   )

@@ -57,16 +57,17 @@ extension MachineCell {
         return
       }
       guard let payload = buffers.payload(pointer) else { try failFile(&row, .outcomeUnknown); return }
+      let piece = presence.piece
       let unitMatches = descriptor.unit == .bytes ? payload.data != nil : payload.records != nil
       guard unitMatches, UInt64(payload.count) == pointer.through - pointer.from, payload.count > 0 || end,
-            payload.byteCount <= min(65536, descriptor.windowBytes),
+            payload.byteCount <= min(piece, descriptor.windowBytes),
             payload.records?.allSatisfy({ $0.jsonString().utf8.count <= descriptor.maxRecordBytes }) != false,
             !row.inputEnded.contains(pointer.channel), pointer.from == accepted
       else { try failFile(&row, .operation(.init(.invalidInput))); return }
       if let pending = buffers.pending(row.request.operation, accepted: row.inputOffsets, ended: row.inputEnded), pending.0 != pointer || pending.1 != end {
         try failFile(&row, .operation(.init(.invalidInput))); return
       }
-      guard buffers.pend(pointer, end: end, accepted: accepted, window: descriptor.windowBytes) else {
+      guard buffers.pend(pointer, end: end, accepted: accepted, window: descriptor.windowBytes, piece: piece) else {
         try failFile(&row, .operation(.init(.invalidInput))); return
       }
     case .cancel:
@@ -186,10 +187,10 @@ extension MachineCell {
     ctx.emit { buffers.discard(operation) }
   }
 
-  mutating func readyFile(_ row: inout MachineFileOperation) {
+  mutating func readyFile(_ row: inout MachineFileOperation, piece: Int) {
     if row.inputReady { return }
     row.inputReady = true
-    fileSocket(row)?.send(.ready(inputs: row.inputChannels))
+    fileSocket(row)?.send(.ready(inputs: row.inputChannels, piece: piece))
   }
 
   mutating func resetFileWorker(_ row: inout MachineFileOperation) throws -> Bool {

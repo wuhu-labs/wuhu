@@ -419,6 +419,7 @@ import struct WuhuAI.ToolCall
   @Test func readsAConversationByMessageIdOrTime() async throws {
     try await withRig { rig in
       let helper = try await makeSession(rig.space, name: "Helper")
+      try await rig.space.registerPerson("u_morgan")
       _ = try await rig.space.setUserProfile(principal: "u_morgan", handle: "morgan", displayName: nil)
       let person = Sender(id: "u_morgan", timeZone: TimeZone(identifier: "Asia/Shanghai")!)
       let me = Sender(id: rig.session.rawValue, timeZone: TimeZone(identifier: "UTC")!)

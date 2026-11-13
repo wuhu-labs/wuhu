@@ -90,8 +90,10 @@ public actor OperationAgent {
         payload: .init(data: Data()),
       )
       let head = try Body.json(metadata, outputFormatting: [.sortedKeys, .withoutEscapingSlashes]).contentLength ?? 0
-      let worst = Int(head) + limits.resultBytes + limits.pollBytes * 2 + 32
-      guard worst <= OperationLimits.responseBytes else { throw OperationError.capacityExceeded("responseBytes", used: worst, limit: OperationLimits.responseBytes) }
+      let largest = all.map(\.windowBytes).max() ?? 0
+      let worst = Int(head) + limits.resultBytes + max(limits.pollBytes, min(largest, limits.filePieceBytes)) * 2 + 32
+      let frame = largest > limits.pollBytes ? OperationLimits.maxFileResponseBytes : OperationLimits.responseBytes
+      guard worst <= frame else { throw OperationError.capacityExceeded("responseBytes", used: worst, limit: frame) }
     }
     let registry = try JSONEncoder().encode(descriptors).count
     guard registry <= 1024 * 1024 else { throw OperationError.capacityExceeded("registryBytes", used: registry, limit: 1024 * 1024) }
@@ -111,6 +113,14 @@ public actor OperationAgent {
       group.cancelAll()
     }
     running = false
+  }
+
+  /// What a start of `kind` would reserve, as the kind reports it for this input; nil for a kind this agent does not serve.
+  public func reservation(kind: String, input: JSONValue) async throws -> Int? {
+    guard let kind = kinds[kind] else { return nil }
+    let start = try await kind.prepare(input, limits)
+    let d = kind.descriptor
+    return (d.inputChannels + d.outputChannels).reduce(0) { $0 + (start.windows[$1.name] ?? $1.windowBytes) }
   }
 
   public func admissionUsage() -> (receipts: Int, bufferBytes: Int) {
@@ -187,6 +197,7 @@ public actor OperationAgent {
       capacityImpl: { try await self.capacity($0, id: id) },
       availableInputImpl: { try await self.availableInput($0, bytes: $1, id: id) },
       publishImpl: { try await self.publish($0, id: id) },
+      windowImpl: { await self.window($0, id: id) },
     )
     let cancellation = OperationCancellation(checkImpl: { try await self.check(id) }, stopImpl: { try await self.kindStop(id, reason: $0) }, reasonImpl: { await self.stopReason(id) }, stoppedImpl: { await self.stopped(id) })
     let verdict: Verdict
@@ -206,11 +217,11 @@ public actor OperationAgent {
 
   func send(_ payload: ChannelPayload, name: String, id: UUID) async throws {
     try checkOutput(id)
-    guard let descriptor = operations[id]?.outputs[name]?.descriptor else { throw OperationError(.unknownChannel) }
+    guard let channel = operations[id]?.outputs[name] else { throw OperationError(.unknownChannel) }
     try operations[id]?.outputs[name]?.validate(payload)
     var offset = 0
     while offset < payload.count {
-      let count = descriptor.unit == .bytes ? min(descriptor.windowBytes, payload.count - offset) : 1
+      let count = channel.descriptor.unit == .bytes ? min(channel.windowBytes, payload.count - offset) : 1
       let piece = payload.slice(offset ..< offset + count)
       while true {
         try Task.checkCancellation(); try checkOutput(id)
@@ -228,7 +239,7 @@ public actor OperationAgent {
     while true {
       try Task.checkCancellation(); try check(id)
       guard let state = operations[id]?.inputs[name] else { throw OperationError(.unknownChannel) }
-      let value = state.prefix(upTo: min(bytes, limits.pollBytes))
+      let value = state.prefix(upTo: min(bytes, state.windowBytes))
       if value.count > 0 {
         try operations[id]?.inputs[name]?.acknowledge(state.floor.advanced(by: value.count)); return value
       }
@@ -285,16 +296,20 @@ public actor OperationAgent {
     if op.verdict == nil && op.stopReason != nil { throw CancellationError() }
   }
 
+  func window(_ name: String, id: UUID) async -> Int {
+    operations[id].map { $0.outputs[name]?.windowBytes ?? $0.inputs[name]?.windowBytes ?? 0 } ?? 0
+  }
+
   func capacity(_ name: String, id: UUID) throws -> Int {
     try checkOutput(id)
     guard let channel = operations[id]?.outputs[name], channel.descriptor.unit == .bytes else { throw OperationError(.unknownChannel) }
-    return channel.end ? 0 : channel.descriptor.windowBytes - channel.payload.byteCount
+    return channel.end ? 0 : channel.windowBytes - channel.payload.byteCount
   }
 
   func availableInput(_ name: String, bytes: Int, id: UUID) throws -> ChannelPayload? {
     try check(id)
     guard bytes > 0, let channel = operations[id]?.inputs[name] else { throw OperationError(.unknownChannel) }
-    let value = channel.prefix(upTo: min(bytes, limits.pollBytes))
+    let value = channel.prefix(upTo: min(bytes, channel.windowBytes))
     if value.count > 0 { try operations[id]?.inputs[name]?.acknowledge(channel.floor.advanced(by: value.count)); return value }
     return channel.end ? nil : value
   }
@@ -315,10 +330,12 @@ public actor OperationAgent {
   func handle(_ request: Request) async throws -> Response {
     var response: Response
     do { response = try await route(request) }
-    catch { response = try .json(
-      ErrorEnvelope(error as? OperationError ?? .init(.invalidInput)),
-      status: .init(code: (error as? OperationError)?.statusCode ?? 400),
-    ) }
+    catch {
+      response = try .json(
+        ErrorEnvelope(error as? OperationError ?? .init(.invalidInput)),
+        status: .init(code: (error as? OperationError)?.statusCode ?? 400),
+      )
+    }
     response.headers[.init("X-Wuhu-Agent-Instance")!] = instance.uuidString
     response.headers[.init("X-Wuhu-Correlation-ID")!] = request.headers["X-Wuhu-Correlation-ID"]
     response.headers[.init("X-Wuhu-Request-ID")!] = request.headers["X-Wuhu-Request-ID"]
@@ -351,11 +368,18 @@ public actor OperationAgent {
       try await availability?.admit(start.kind)
       guard let kind = kinds[start.kind] else { throw OperationError(.unknownKind) }
       let run: @Sendable (OperationChannels, OperationCancellation) async throws -> JSONValue
-      do { run = try kind.prepare(start.input) } catch let error as OperationError { throw error } catch { throw OperationError(.invalidInput) }
+      let reserved: [String: Int]
+      do { let prepared = try await kind.prepare(start.input, limits); run = prepared.run; reserved = prepared.windows }
+      catch let error as OperationError { throw error } catch { throw OperationError(.invalidInput) }
       guard !closed else { throw OperationError(.leaving) }
       guard operations[id] == nil else { throw OperationError(.operationExists) }
       let d = kind.descriptor
-      let reserve = (d.inputChannels + d.outputChannels).reduce(0) { $0 + $1.windowBytes }
+      let windows = Dictionary(uniqueKeysWithValues: (d.inputChannels + d.outputChannels).map { channel in
+        let window = reserved[channel.name] ?? channel.windowBytes
+        precondition(window <= channel.windowBytes && window >= 0, "a kind reserved more than its window")
+        return (channel.name, window)
+      })
+      let reserve = windows.values.reduce(0, +)
       let used = operations.values.reduce(0) { $0 + $1.bufferReservation }
       guard operations.count < limits.receipts else { throw OperationError.capacityExceeded("receipts", used: operations.count, limit: limits.receipts) }
       guard reserve <= limits.bufferBytes - used else { throw OperationError.capacityExceeded("bufferBytes", used: used, limit: limits.bufferBytes, requested: reserve) }
@@ -363,8 +387,8 @@ public actor OperationAgent {
       operations[id] = .init(
         id: id,
         kind: start.kind,
-        inputs: Dictionary(uniqueKeysWithValues: d.inputChannels.map { ($0.name, ChannelState($0)) }),
-        outputs: Dictionary(uniqueKeysWithValues: d.outputChannels.map { ($0.name, ChannelState($0)) }),
+        inputs: Dictionary(uniqueKeysWithValues: d.inputChannels.map { ($0.name, ChannelState($0, windowBytes: windows[$0.name])) }),
+        outputs: Dictionary(uniqueKeysWithValues: d.outputChannels.map { ($0.name, ChannelState($0, windowBytes: windows[$0.name])) }),
         leaseDeadline: now + .milliseconds(limits.leaseMs),
         lastRequest: now,
       )
@@ -384,7 +408,14 @@ public actor OperationAgent {
       let channel = q["channel"]
       let hold = q["holdMs"].flatMap(Int.init) ?? (q["holdMs"] == nil ? 0 : -1)
       let limit = q["limit"].flatMap(Int.init) ?? (q["limit"] == nil ? limits.pollBytes : -1)
-      guard hold >= 0 && hold <= limits.pollHoldMs, limit > 0 && limit <= limits.pollBytes else { throw OperationError(.invalidInput) }
+      // A poll without a channel is the whole operation: a file operation's control poll asks for a piece. With a channel, the
+      // channel's window bounds it.
+      let maxPoll = if let channel, let window = operations[id]?.outputs[channel]?.descriptor.windowBytes {
+        max(limits.pollBytes, min(window, limits.filePieceBytes))
+      } else {
+        max(limits.pollBytes, limits.filePieceBytes)
+      }
+      guard hold >= 0 && hold <= limits.pollHoldMs, limit > 0, limit <= maxPoll else { throw OperationError(.invalidInput) }
       if let channel {
         guard operations[id]?.outputs[channel] != nil else { throw OperationError(.unknownChannel) }
         guard let text = q["after"], text.allSatisfy({ $0.isASCII && $0.isNumber }), let after = UInt64(text) else { throw OperationError(.invalidOffset) }
@@ -402,7 +433,9 @@ public actor OperationAgent {
         let now = clock.now()
         if s.verdict != nil || (s.payload?.count ?? 0) > 0 || s.channelEnd || now >= deadline {
           let response = try Response.json(s, outputFormatting: [.sortedKeys, .withoutEscapingSlashes])
-          guard (response.body.contentLength ?? 0) <= OperationLimits.responseBytes else { throw OperationError(.resultTooLarge) }
+          // A file piece rides base64 inside the snapshot: the answer bound follows what the caller asked for.
+          let frame = OperationLimits.answerBytes(for: limit)
+          guard (response.body.contentLength ?? 0) <= frame else { throw OperationError(.resultTooLarge) }
           return response
         }
         try await nextChange(within: deadline - now); try Task.checkCancellation()
@@ -419,7 +452,7 @@ public actor OperationAgent {
       guard operations[id]?.verdict == nil && operations[id]?.stopReason == nil else { throw OperationError(.operationEnded) }
       guard operations[id]?.inputs[path[7]] != nil else { throw OperationError(.unknownChannel) }
       let write: WriteRequest
-      do { write = try await request.json(WriteRequest.self, upTo: limits.inputBytes) }
+      do { write = try await request.json(WriteRequest.self, upTo: 2 * limits.filePieceBytes + limits.inputBytes) }
       catch FetchError.bodyLimitExceeded { throw OperationError(.inputTooLarge) }
       guard operations[id]?.verdict == nil && operations[id]?.stopReason == nil else { throw OperationError(.operationEnded) }
       guard operations[id]?.inputs[path[7]] != nil else { throw OperationError(.unknownChannel) }

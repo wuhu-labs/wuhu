@@ -207,7 +207,11 @@ private struct ShutdownProcess: OperationKind {
   struct Input: Decodable, Sendable { let argv: [String]; let cwd: String; let stdin: Bool }
   let descriptor = ComputerKindSchemas.exec
 
-  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+  func start(_ input: Input, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    OperationStart { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     side.startedFlag.withLock { $0 = true }
     side.started.open()
     @Dependency(\.continuousClock) var clock

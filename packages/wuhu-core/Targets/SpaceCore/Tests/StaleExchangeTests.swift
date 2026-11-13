@@ -55,6 +55,7 @@ import Testing
 
   func makeRig(_ ticker: Ticker = Ticker(), open: () throws -> Space = { try Space.inMemory() }) async throws -> Rig {
     let space = try opened(ticker, open)
+    try await space.registerPerson("minsheng")
     let agent = try await space.sessions.createSession(
       group: .shared, title: "A", kind: .agent, createdBy: "owner", model: .test, snapshot: .init(),
     )
@@ -168,6 +169,7 @@ import Testing
     let shown = try await rig.drained()
     #expect(shown.map { $0.hasPrefix("<earlier-in-conversation>\n<message id=\"m1\" sender=\"minsheng\"") } == [true])
     let before = try await rig.stored()
+    try await rig.space.registerPerson("minsheng")
     _ = try await rig.space.setUserProfile(principal: "minsheng", handle: "ms", displayName: nil)
     try await rig.replies("m4", to: "m3", "reading it")
     try await rig.says("m5", "and?")

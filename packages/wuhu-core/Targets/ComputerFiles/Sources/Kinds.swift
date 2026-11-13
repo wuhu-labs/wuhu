@@ -11,6 +11,7 @@ import enum OperationProtocol.ComputerKindSchemas
 import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.Offset
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import OperationRuntime
 
 /// `searchClock` times a search's ``FileSearch/SearchLimits/deadline``.
@@ -34,14 +35,29 @@ private struct ReadInput: Decodable, Sendable {
 private struct ReadKind: OperationKind {
   let files: ComputerFileSystem
   let descriptor = ComputerKindSchemas.read
-  func run(_ input: ReadInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
-    let initial = try await files.status(input.path)
-    guard initial.kind == "file" else { throw OperationError(.fileUnavailable) }
+  /// The one look a read gets at the world serves its admission and its work: `data` is admitted for what the file holds from
+  /// `offset` (one piece at most, `length` when smaller), and the read stops at the size it saw. A path that cannot be stat'd
+  /// or is not a file is admitted for nothing, and its read fails with the error the stat gave.
+  func start(_ input: ReadInput, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    let initial: ComputerFileStatus
+    do { initial = try await files.status(input.path) } catch { return OperationStart(windows: ["data": 0]) { _, _ in throw error } }
+    guard initial.kind == "file" else { return OperationStart(windows: ["data": 0]) { _, _ in throw OperationError(.fileUnavailable) } }
+    let piece = min(descriptor.outputChannels[0].windowBytes, limits.filePieceBytes)
+    let offset = input.offset.rawValue
+    let held = min(UInt64(piece), initial.size > offset ? initial.size - offset : 0, input.length?.rawValue ?? .max)
+    return OperationStart(windows: ["data": Int(held)]) { channels, cancellation in
+      try await run(input, initial: initial, channels: channels, cancellation: cancellation)
+    }
+  }
+
+  private func run(_ input: ReadInput, initial: ComputerFileStatus, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     guard input.ifMatch == nil || input.ifMatch == initial.version else { throw OperationError(.fileChanged) }
     var count: UInt64 = 0; var eof = input.offset.rawValue >= initial.size
     while !eof && (input.length == nil || count < input.length!.rawValue) {
       try await cancellation.check()
-      let maximum = Int(min(65536, input.length.map { $0.rawValue - count } ?? 65536))
+      let room = UInt64(max(0, await channels.windowBytes("data")))
+      guard room > 0 else { throw OperationError(.invalidInput) }
+      let maximum = Int(min(room, input.length.map { $0.rawValue - count } ?? room))
       let bytes = try await files.read(input.path, input.offset.rawValue + count, maximum)
       guard bytes.count <= maximum else { throw OperationError(.invalidResponse) }
       try await verify(files, input.path, initial)
@@ -83,7 +99,11 @@ private struct SearchKind: OperationKind {
     do { try input.query.validate() } catch { throw operationError(error) }
   }
 
-  func run(_ input: SearchInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> SearchPage {
+  func start(_ input: SearchInput, limits: OperationLimits) async throws -> OperationStart<SearchPage> {
+    OperationStart { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: SearchInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> SearchPage {
     let source = files.search(input.query.root)
     do {
       return try await cancellation.unlessStopped { [clock] in try await input.query.run(in: source, clock: clock) }

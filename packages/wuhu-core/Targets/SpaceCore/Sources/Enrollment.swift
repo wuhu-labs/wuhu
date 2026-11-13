@@ -153,19 +153,19 @@ extension Space {
     let token = JoinToken(rawValue: JoinToken.prefix + randomSuffix(JoinToken.suffixLength))
     let createdAt = dateGen.now
     let expiresAt = createdAt.addingTimeInterval(lifetime)
-    try await writer.write { db in
-      try Self.requireAccount(account, in: db)
-      try EnrollmentTokenRow.insert {
-        EnrollmentTokenRow(tokenHash: Self.credentialDigest(token.rawValue), accountID: account.rawValue, capabilities: Self.stored(capabilities), createdBy: createdBy?.rawValue, createdAt: SQLiteDateFormat.string(from: createdAt), expiresAt: SQLiteDateFormat.string(from: expiresAt), grp: GroupID.shared.rawValue)
-      }.execute(db)
-    }
+    _ = try await worker.call(PersonCell.ID(account.rawValue)) { try $0.mintJoinToken(token, capabilities: capabilities, createdBy: createdBy, at: createdAt, expiresAt: expiresAt) }
     return MintedJoinToken(token: token, expiresAt: expiresAt)
   }
 
   // One serialized write transaction claims the token row and enrolls the key,
   // so two racing consumers cannot both succeed; any throw rolls both back.
   public func consumeJoinToken(_ token: JoinToken, pubkey: String) async throws -> KeyRecord {
-    try await consumeJoinToken(token, pubkey: pubkey, machineV2: false)
+    guard JoinToken.isValid(token.rawValue) else { throw JoinTokenRejected() }
+    guard let row = cell.joinToken(Self.credentialDigest(token.rawValue)) else { return try await consumeJoinToken(token, pubkey: pubkey, machineV2: false) }
+    guard let account = cell.account(AccountID(rawValue: row.accountID)) else { throw JoinTokenRejected() }
+    if account.kind == .machine { return try await consumeJoinToken(token, pubkey: pubkey, machineV2: false) }
+    let now = dateGen.now
+    return try await worker.call(PersonCell.ID(row.accountID)) { try $0.consumeJoinToken(token, pubkey: pubkey, at: now) }
   }
 
   public func consumeMachineV2JoinToken(_ token: JoinToken, pubkey: String) async throws -> KeyRecord {
@@ -234,17 +234,10 @@ extension Space {
     guard JoinToken.isValid(token.rawValue) else { return nil }
     let now = dateGen.now
     let hash = Self.credentialDigest(token.rawValue)
-    return try await writer.write { db in
-      guard let row = try EnrollmentTokenRow.where({ $0.tokenHash.eq(hash) }).fetchOne(db),
-            try Self.isLive(SQLiteDateFormat.date(from: row.expiresAt), at: now)
-      else {
-        return nil
-      }
-      let account = AccountID(rawValue: row.accountID)
-      guard allows(account) else { throw JoinTokenRevocationRefused(account: account) }
-      try EnrollmentTokenRow.where { $0.tokenHash.eq(hash) }.delete().execute(db)
-      return account
-    }
+    guard let row = cell.joinToken(hash), Self.isLive(try SQLiteDateFormat.date(from: row.expiresAt), at: now) else { return nil }
+    let account = AccountID(rawValue: row.accountID)
+    guard allows(account) else { throw JoinTokenRevocationRefused(account: account) }
+    return try await worker.call(PersonCell.ID(row.accountID)) { try $0.revokeJoinToken(token, at: now) }
   }
 }
 
@@ -258,7 +251,7 @@ public struct JoinTokenRevocationRefused: Error, Equatable, Sendable {
 }
 
 @Table("join_tokens")
-private struct EnrollmentTokenRow {
+struct EnrollmentTokenRow {
   @Column("token_hash", primaryKey: true) var tokenHash: String
   @Column("account_id") var accountID: String
   var capabilities: String

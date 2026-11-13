@@ -27,7 +27,7 @@ struct HumanAgentDMToolTests {
         #expect(try failureMessage(result) == refusal)
       }
       #expect(try await space.sessions.messages(conversation: .init(session.rawValue)).isEmpty)
-      #expect(try await space.sessions.conversations(member: "carol").isEmpty)
+      #expect(space.sessions.conversations(member: "carol").isEmpty)
       let tool = try #require(ToolExecutor.tools.first {
         if case .function("send_message", _, _) = $0 { return true }
         return false

@@ -41,7 +41,9 @@ struct SessionNotificationTests {
 
   @Test func watermarkAdvancesWholesaleAndBadgesDerive() async throws {
     try await withSessionDeps {
-      let store = try makeSpace().sessions
+      let space = try makeSpace()
+      try await space.registerPerson("carol")
+      let store = space.sessions
       let owner = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "morgan", model: .test)
       let sender = Sender(id: owner.rawValue, timeZone: TimeZone(identifier: "UTC")!)
 

@@ -12,6 +12,7 @@ import enum MachineContract.CopyTarget
 import struct MachineContract.MachineID
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.StartRequest
 import SpaceCore
 
@@ -42,7 +43,13 @@ struct MachineFileTransfer: Sendable {
       sink = nil
     case let .machine(machine, path, replace):
       let client = MachineFileClient(space: space, machine: machine, caller: caller)
-      let start = StartRequest(kind: "stagedWrite.v1", input: object(["path": .string(path), "replace": .bool(replace)]), caller: caller)
+      // A box that lists `length` reserves what the copy will send, not a whole piece: an older one refuses a key it does not
+      // advertise, so only ask it of the one that does.
+      var input: [String: JSONValue] = ["path": .string(path), "replace": .bool(replace)]
+      let advertisesLength = try await space.machineDescription(machine)?
+        .kinds.first { $0.name == "stagedWrite.v1" }?.inputSchema.object?["properties"]?.object?["length"] != nil
+      if advertisesLength ?? false { input["length"] = .string(String(size)) }
+      let start = StartRequest(kind: "stagedWrite.v1", input: object(input), caller: caller)
       sink = (try client.connect(start), machine)
     }
     defer { sink?.connection.close() }
@@ -58,8 +65,8 @@ struct MachineFileTransfer: Sendable {
     }
     switch source {
     case let .bytes(bytes):
-      for offset in stride(from: 0, to: bytes.count, by: 65536) {
-        try await land(Data(bytes[offset ..< min(bytes.count, offset + 65536)]))
+      for offset in stride(from: 0, to: bytes.count, by: OperationLimits.maxFilePieceBytes) {
+        try await land(Data(bytes[offset ..< min(bytes.count, offset + OperationLimits.maxFilePieceBytes)]))
       }
     case .machine:
       let read = pinned!
@@ -131,7 +138,7 @@ nonisolated(nonsending) func readAhead(_ client: MachineFileClient, start: Start
         _ = try await refusing(.source, client.machine, pinned: true) {
           try await client.call(start) { payload in
             guard let data = payload.data else { throw OperationError(.invalidResponse) }
-            precondition(data.count <= 65536)
+            precondition(data.count <= OperationLimits.maxFilePieceBytes)
             switch chunks.continuation.yield(data) {
             case .enqueued: break
             case .terminated: throw CancellationError()

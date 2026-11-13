@@ -60,6 +60,8 @@ func addUserRoutes(_ router: inout Router, space: Space, dev: Bool) {
       )
     } catch let SpaceError.handleTaken(handle) {
       return errorResponse(.conflict, code: "handleTaken", message: "handle @\(handle) is already taken")
+    } catch SpaceError.notFound {
+      return errorResponse(.notFound, code: "notFound", message: "no such account")
     }
   }
 }

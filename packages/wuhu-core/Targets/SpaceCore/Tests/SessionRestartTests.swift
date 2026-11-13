@@ -70,17 +70,17 @@ import Testing
       let hydration = try await store.hydrate(task)
       #expect(try await store.undrainedInputs(task).count == 1)
       #expect(hydration.queueHead > hydration.queueTail)
-      #expect(try await store.openRequests(task).map(\.id) == [.init("r1")])
+      #expect(try store.openRequests(task).map(\.id) == [.init("r1")])
       let drained = try await store.drainQueue(task)
       #expect(drained.items.count == 1)
       #expect(try await store.transcriptLines(task).last?.key == "message:queued")
       _ = try await store.report(task, request: .init("r1"), kind: .final, messageID: .init("f1"), text: "done")
-      #expect(try await store.openRequests(task).isEmpty)
+      #expect(try store.openRequests(task).isEmpty)
       _ = try await store.openRequest(on: task, from: .session(parent), messageID: .init("r2"), text: "new duty")
       _ = try await store.drainQueue(task)
-      #expect(try await store.openRequests(task).map(\.id) == [.init("r2")])
+      #expect(try store.openRequests(task).map(\.id) == [.init("r2")])
       _ = try await store.report(task, request: .init("r2"), kind: .final, messageID: .init("f2"), text: "done again")
-      #expect(try await store.openRequests(task).isEmpty)
+      #expect(try store.openRequests(task).isEmpty)
     }
   }
 

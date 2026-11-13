@@ -14,10 +14,12 @@ import enum OperationProtocol.ComputerKindSchemas
 import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.Verdict
 import struct OperationRuntime.OperationCancellation
 import struct OperationRuntime.OperationChannels
 import protocol OperationRuntime.OperationKind
+import struct OperationRuntime.OperationStart
 import struct SecretMasking.SecretMasker
 
 struct ExecInput: Codable, Sendable {
@@ -74,7 +76,11 @@ struct ExecKind: OperationKind {
     return (child, receipt)
   }
 
-  func run(_ input: ExecInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+  func start(_ input: ExecInput, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    OperationStart { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: ExecInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     try input.validate()
     try await cancellation.check()
     let (child, receipt) = try await spawn(input)

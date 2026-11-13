@@ -25,8 +25,9 @@ struct DocumentHub: Sendable {
   /// cannot read: the one case a seed is fetched, before the attach or the write that needs it, and only
   /// while the document's rows are not the file's own history — absent, or left over from one it replaced.
   func seed(_ group: GroupID, _ path: SpacePath) async throws {
-    guard let file = try await rows.file(group, path) else { return }
-    guard try await rows.fileRev(DocumentCell.key(group, path)) != file.rev else { return }
+    let cell = worker.cell(DocumentCell.ID(group, path))
+    guard let file = try cell.file() else { return }
+    guard cell.fileRev() != file.rev else { return }
     guard file.text == nil else { return }
     let text = try await rows.text(of: file.hash)
     do { try await worker.call(DocumentCell.ID(group, path)) { try $0.seed(text, file.rev) } } catch is DocumentGone {
@@ -35,8 +36,8 @@ struct DocumentHub: Sendable {
   }
 
   /// Whether the document holds edits its file lacks, which a read must commit first.
-  func dirty(_ group: GroupID, _ path: SpacePath) async throws -> Bool {
-    try await rows.dirty(DocumentCell.key(group, path))
+  func dirty(_ group: GroupID, _ path: SpacePath) -> Bool {
+    worker.cell(DocumentCell.ID(group, path)).dirty()
   }
 
   /// Commits what the file lacks, so a read sees it. `Evicted` means a stop is draining the cell, or a
@@ -48,7 +49,7 @@ struct DocumentHub: Sendable {
 
   /// Commits every document at or under `path` that a move or a checkout would carry along.
   func checkpoint(under path: SpacePath, in group: GroupID) async throws {
-    for key in try await rows.dirty(group, under: path) {
+    for key in worker.cell(SpaceCell.ID("space")).dirtyDocuments(in: group, under: path) {
       await checkpoint(DocumentCell.ID(key))
     }
   }
@@ -136,9 +137,11 @@ extension Space {
       return outbound
     }
     socket.withLock { $0 = attached }
-    let accessChanges = regionWakes([Table("groups"), Table("group_roles")], in: writer)
+    let (accessChanges, changes) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    let stopWatching = observations.regions(["groups", "group_roles"], changes)
     do {
       _ = try taskScope.run("document-connection") {
+        defer { stopWatching() }
         await withTaskGroup(of: Void.self) { tasks in
           tasks.addTask {
             for await message in frames { attached.send(message) }
@@ -162,6 +165,7 @@ extension Space {
         continuation.finish()
       }
     } catch {
+      stopWatching()
       attached.close()
       continuation.finish()
     }

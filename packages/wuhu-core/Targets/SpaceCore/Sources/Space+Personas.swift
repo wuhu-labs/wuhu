@@ -3,9 +3,8 @@
 #else
   import Foundation
 #endif
-import GRDB
 import StructuredQueries
-import StructuredQueriesSQLite
+import WuweiQueries
 
 @Table("personas")
 struct PersonaRow {
@@ -14,6 +13,8 @@ struct PersonaRow {
   var pubkey: String
   @Column("account_id") var accountID: String
   @Column("created_at") var createdAt: String
+
+  var record: PersonaRecord { PersonaRecord(name: name, key: pubkey, account: AccountID(rawValue: accountID)) }
 }
 
 public struct PersonaRecord: Equatable, Sendable {
@@ -23,78 +24,58 @@ public struct PersonaRecord: Equatable, Sendable {
 }
 
 extension Space {
-  public func mintPersona(key: KeyRecord) async throws -> PersonaRecord {
-    let created = SQLiteDateFormat.string(from: dateGen.now)
-    let minted = Allocations.mintSecretCandidate(rng)
-    let name = try await writer.write { db in
-      try insertPersona(db, key: key, created: created, minted: minted)
-    }
-    return PersonaRecord(name: name, key: key.pubkey, account: key.account)
-  }
-
-  // Personas are account-interchangeable, so adoption converges every key of
-  // one account onto the account's earliest draw; a per-key adoption would
-  // fragment notification inboxes across a human's devices. Only a new
-  // account's first request takes the write lock.
   public func adoptPersona(key: KeyRecord) async throws -> PersonaRecord {
-    if let existing = try await persona(account: key.account) { return existing }
-    let created = SQLiteDateFormat.string(from: dateGen.now)
-    let minted = Allocations.mintSecretCandidate(rng)
-    let rng = rng
-    return try await writer.write { db in
-      if let existing = try firstPersona(db, account: key.account) { return existing }
-      let name = try insertPersona(db, key: key, created: created, minted: minted)
-      if try String.fetchOne(db, sql: "SELECT kind FROM accounts WHERE id = ?", arguments: [key.account.rawValue]) == "human" {
-        _ = try Groups.ensurePersonalGroup(account: key.account, created: created, rng: rng, in: db)
-      }
-      return PersonaRecord(name: name, key: key.pubkey, account: key.account)
+    if let existing = worker.cell(PersonCell.ID(key.account.rawValue)).persona() { return existing }
+    guard let account = cell.account(key.account), account.removedAt == nil else { throw SpaceError.notFound(key.account.rawValue) }
+    if account.kind == .human { _ = try await ensurePersonalGroup(account: key.account) }
+    let allocation: (id: Int64, name: String)
+    if let reserved = cell.reservedPersona(key.account) { allocation = reserved }
+    else {
+      let drawn = try await allocate(.persona, createdBy: key.pubkey)
+      allocation = (drawn.id, drawn.name)
     }
+    let now = dateGen.now
+    return try await worker.call(PersonCell.ID(key.account.rawValue)) { try $0.adoptPersona(key: key, allocation: allocation.id, name: allocation.name, at: now) }
   }
 
-  public func persona(named name: String) async throws -> PersonaRecord? {
-    try await writer.read { db in
-      try Row.fetchOne(db, sql: "SELECT name, pubkey, account_id FROM personas WHERE name = ?", arguments: [name])
-        .map(personaRecord)
-    }
+  public func persona(named name: String) async throws -> PersonaRecord? { cell.persona(named: name) }
+  public func persona(account: AccountID) async throws -> PersonaRecord? { worker.cell(PersonCell.ID(account.rawValue)).persona() }
+  public func personas() async throws -> [PersonaRecord] { cell.personas() }
+}
+
+extension PersonCell {
+  public func persona() -> PersonaRecord? {
+    db.rows(PersonaRow.where { $0.accountID.eq(id.key) }.order { $0.allocation }.limit(1)).first?.record
   }
 
-  public func persona(account: AccountID) async throws -> PersonaRecord? {
-    try await writer.read { db in
-      try firstPersona(db, account: account)
-    }
-  }
-
-  public func personas() async throws -> [PersonaRecord] {
-    try await writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT name, pubkey, account_id FROM personas ORDER BY allocation")
-        .map(personaRecord)
-    }
+  mutating func adoptPersona(key: KeyRecord, allocation: Int64, name: String, at now: Date) throws -> PersonaRecord {
+    if let existing = persona() { return existing }
+    try requireAccount()
+    let row = PersonaRow(name: name, allocation: allocation, pubkey: key.pubkey, accountID: id.key, createdAt: SQLiteDateFormat.string(from: now))
+    try db.execute(PersonaRow.insert { row })
+    return row.record
   }
 }
 
-private func personaRecord(_ row: Row) -> PersonaRecord {
-  PersonaRecord(
-    name: row["name"],
-    key: row["pubkey"],
-    account: AccountID(rawValue: row["account_id"]),
-  )
+extension SpaceCell {
+  func persona(named name: String) -> PersonaRecord? { db.rows(PersonaRow.where { $0.name.eq(name) }).first?.record }
+  func personas() -> [PersonaRecord] {
+    var seen: Set<String> = []
+    return db.rows(PersonaRow.order { $0.allocation }).filter { seen.insert($0.accountID).inserted }.map(\.record)
+  }
+
+  func reservedPersona(_ account: AccountID) -> (id: Int64, name: String)? {
+    guard let allocation = db.rows(AllocationRow.where {
+      $0.kind.eq(AllocationKind.persona.rawValue) && $0.createdBy.eq(account.rawValue) && !$0.id.in(PersonaRow.select { $0.allocation })
+    }.order { $0.id }.limit(1)
+      .join(AllocationFreezeRow.all) { _, _ in #sql("1", as: Bool.self) }
+      .select { ReservedPersona.Columns(id: $0.id, secret: $1.secret) }).first else { return nil }
+    return (allocation.id, AllocationNames.name(for: allocation.id, words: AllocationVocabulary.words, secret: Array(allocation.secret)))
+  }
 }
 
-private func firstPersona(_ db: Database, account: AccountID) throws -> PersonaRecord? {
-  try Row.fetchOne(
-    db,
-    sql: "SELECT name, pubkey, account_id FROM personas WHERE account_id = ? ORDER BY allocation LIMIT 1",
-    arguments: [account.rawValue],
-  ).map(personaRecord)
-}
-
-// A human's first persona takes the allocation its personal group was named after.
-private func insertPersona(_ db: Database, key: KeyRecord, created: String, minted: [UInt8]) throws -> String {
-  let (id, name) = try Groups.reservedPersona(of: key.account, in: db)
-    ?? Allocations.draw(.persona, createdBy: key.pubkey, created: created, minted: minted, in: db)
-  try db.execute(
-    sql: "INSERT INTO personas (name, allocation, pubkey, account_id, created_at) VALUES (?, ?, ?, ?, ?)",
-    arguments: [name, id, key.pubkey, key.account.rawValue, created],
-  )
-  return name
+@Selection
+private struct ReservedPersona {
+  var id: Int64
+  var secret: [UInt8]
 }

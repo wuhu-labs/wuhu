@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -67,11 +71,6 @@ enum Notifications {
     ))
   }
 
-  /// Mail to the person's cell, durable with the write in `db`; whoever commits pokes the cell (`SpaceRuntime.poke(person:)`), or the worker's scan finds the mail.
-  static func notify(_ recipient: String, _ note: PersonNote, in db: GRDB.Database) throws {
-    try PersonCell.ID(recipient).recipient.post(.notify(note), on: db.sqliteConnection!)
-  }
-
   // The distinguished owner principal (SpaceContract's ownerIdentity on the
   // wire).
   static let ownerRecipient = "owner"
@@ -82,19 +81,22 @@ enum Notifications {
       error: error,
       message: said,
     ))
-    try notify(
-      ownerRecipient, PersonNote(source: key, group: Sessions.group(of: key, in: db), kind: .sessionErrored, payload: payload, createdAt: now), in: db,
-    )
+    let note = PersonNote(source: key, group: try Sessions.group(of: key, in: db), kind: .sessionErrored, payload: payload, createdAt: now)
+    try PersonCell.ID(ownerRecipient).recipient.post(.notify(ownerRecipient, note), on: db.sqliteConnection!)
   }
 }
 
 extension SessionStore {
   public func notifications(recipient: String, after n: Int64 = 0) -> [NotificationRecord] {
-    runtime.worker().cell(PersonCell.ID(recipient)).notifications(after: n)
+    let worker = runtime.worker()
+    guard let person = worker.cell(SpaceCell.ID("space")).personCell(recipient) else { return [] }
+    return worker.cell(person).notifications(after: n)
   }
 
   @discardableResult
   public func advanceWatermark(identity: String, source: String) async throws -> Int64 {
-    try await runtime.worker().call(PersonCell.ID(identity)) { try $0.read(source) }
+    let worker = runtime.worker()
+    guard let person = worker.cell(SpaceCell.ID("space")).personCell(identity) else { throw SpaceError.notFound(identity) }
+    return try await worker.call(person) { try $0.read(identity, source: source) }
   }
 }

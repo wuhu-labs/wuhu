@@ -23,6 +23,7 @@ struct MachineFileOperation: Owned {
   var inputReady = false
   @Column(as: [String: UInt64].JSONRepresentation.self) var inputOffsets: [String: UInt64] = [:]
   @Column(as: [ChannelDescriptor].JSONRepresentation.self) var inputChannels: [ChannelDescriptor] = []
+  @Column(as: [ChannelDescriptor].JSONRepresentation.self) var outputChannels: [ChannelDescriptor] = []
   @Column(as: Set<String>.JSONRepresentation.self) var inputEnded: Set<String> = []
   @Column(as: [String: UInt64].JSONRepresentation.self) var offsets: [String: UInt64] = [:]
   @Column(as: [String: UInt64].JSONRepresentation.self) var offered: [String: UInt64] = [:]

@@ -23,6 +23,8 @@ struct UnreadTests {
     try await withSessionDeps {
       let space = try makeSpace(clock: ImmediateClock())
       let store = space.sessions
+      try await space.registerPerson("carol")
+      try await space.registerPerson("dave")
       let box = try await store.createSession(group: .shared, title: "a", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await store.post(
         .box(box), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: utc), content: .init(text: "q"),

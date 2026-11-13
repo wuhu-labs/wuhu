@@ -117,10 +117,20 @@ public struct SpaceCell {
   }
 
   /// The person a spelling names: by alias, persona name or profile; nil for nobody.
-  func person(_ spelling: String) -> String? {
-    let name = alias(ofPerson: spelling) ?? spelling
-    if !db.rows(PersonaRow.where { $0.name.eq(name) }).isEmpty { return name }
-    return db.rows(UserProfileRow.where { $0.principal.eq(name) }).first?.principal
+  func person(_ spelling: String) -> String? { directoryTarget(spelling, sessions: false) }
+
+  func directoryTarget(_ spelling: String, sessions: Bool) -> String? {
+    db.rows(#sql("""
+    WITH person(principal) AS (
+      SELECT COALESCE((SELECT target FROM aliases WHERE name = \(bind: spelling.lowercased()) AND kind = 'person'), \(bind: spelling))
+    )
+    SELECT \(bind: spelling) WHERE \(bind: sessions) AND EXISTS (SELECT 1 FROM sessions WHERE id = \(bind: spelling))
+    UNION ALL
+    SELECT principal FROM person
+    WHERE EXISTS (SELECT 1 FROM personas WHERE name = person.principal)
+      OR EXISTS (SELECT 1 FROM aliases WHERE kind = 'person' AND current AND target = person.principal)
+    LIMIT 1
+    """, as: String.self)).first
   }
 
   func alias(ofPerson spelling: String) -> String? {

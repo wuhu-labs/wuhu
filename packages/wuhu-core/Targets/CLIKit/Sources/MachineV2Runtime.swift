@@ -28,6 +28,7 @@ import enum MachineContract.MachineV2Connect
 import struct MachineContract.MachineV2Upgrade
 import struct NIOCore.IOError
 import struct OperationProtocol.OperationClock
+import struct OperationProtocol.OperationLimits
 import enum PinnedTLS.PinnedTLS
 import typealias Serve.Handler
 import enum ServeTunnel.ServeTunnel
@@ -265,7 +266,7 @@ public enum MachineV2Runtime {
         let transport = try await connect()
         defer { transport.abort() }
         await connected()
-        try await ServeTunnel.run(handler: handler, over: transport, limits: TunnelLimits(streams: MachineV2Connect.tunnelStreams))
+        try await ServeTunnel.run(handler: handler, over: transport, limits: TunnelLimits(bodyBytes: OperationLimits.maxFileResponseBytes, streams: MachineV2Connect.tunnelStreams))
       } catch is CancellationError { throw CancellationError() }
       catch let error as MachineV2RuntimeError { if error.code != .serverUnavailable { throw error } }
       catch { try Task.checkCancellation() }

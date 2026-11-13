@@ -14,13 +14,16 @@ import struct OperationProtocol.WriteRequest
 
 struct ChannelState: Sendable {
   let descriptor: ChannelDescriptor
+  /// What this operation's channel may hold: the descriptor's window, or the piece the kind reserved for this start.
+  let windowBytes: Int
   var floor: Offset = .zero
   var acknowledged: Offset = .zero
   var through: Offset = .zero
   var end = false
   var payload: ChannelPayload
-  init(_ descriptor: ChannelDescriptor) {
+  init(_ descriptor: ChannelDescriptor, windowBytes: Int? = nil) {
     self.descriptor = descriptor
+    self.windowBytes = windowBytes ?? descriptor.windowBytes
     payload = descriptor.unit == .bytes ? .init(data: Data()) : .init(records: [])
   }
 
@@ -39,8 +42,8 @@ struct ChannelState: Sendable {
   func fits(_ value: ChannelPayload) throws -> Bool {
     try validate(value)
     guard !end else { throw OperationError(.operationEnded) }
-    guard value.byteCount <= descriptor.windowBytes else { throw OperationError(.inputTooLarge) }
-    return payload.byteCount + value.byteCount <= descriptor.windowBytes
+    guard value.byteCount <= windowBytes else { throw OperationError(.inputTooLarge) }
+    return payload.byteCount + value.byteCount <= windowBytes
   }
 
   mutating func append(_ value: ChannelPayload) throws -> Bool {
@@ -88,7 +91,7 @@ struct ChannelState: Sendable {
     if request.end && requestedEnd < through { throw OperationError(.invalidOffset) }
     if requestedEnd > through {
       let suffix = request.payload.slice(Int(through.rawValue - request.offset.rawValue) ..< request.payload.count)
-      let space = descriptor.windowBytes - payload.byteCount
+      let space = windowBytes - payload.byteCount
       let accepted: ChannelPayload
       if let data = suffix.data { accepted = .init(data: Data(data.prefix(space))) }
       else {
@@ -126,8 +129,8 @@ struct OperationState: Sendable {
   /// Settled, and acknowledged on every output channel: no caller can still need it.
   var released: Bool { settled && outputs.keys.allSatisfy(terminalAcknowledgedChannels.contains) }
   var bufferReservation: Int {
-    inputs.values.reduce(0) { $0 + (verdict == nil || $1.payload.count > 0 ? $1.descriptor.windowBytes : 0) }
-      + outputs.values.reduce(0) { $0 + (!$1.end || $1.payload.count > 0 ? $1.descriptor.windowBytes : 0) }
+    inputs.values.reduce(0) { $0 + (verdict == nil || $1.payload.count > 0 ? $1.windowBytes : 0) }
+      + outputs.values.reduce(0) { $0 + (!$1.end || $1.payload.count > 0 ? $1.windowBytes : 0) }
   }
 
   /// A request inside the lease extends it; one after the lease lapsed finds it expired, whether or not a sweep ran since.

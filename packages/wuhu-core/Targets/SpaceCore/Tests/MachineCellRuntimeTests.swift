@@ -62,7 +62,7 @@ import Wuwei
       guard case let .poll(operation, channel, _, hold, _, limit) = frame.exchange else { return nil }
       return (operation, channel, hold, limit)
     } }
-    #expect(polls.contains { $0.0 == read && $0.1 == "data" && $0.2 == 3000 && $0.3 == 100 })
+    #expect(polls.contains { $0.0 == read && $0.1 == "data" && $0.2 == 3000 && $0.3 == limits.filePieceBytes })
     #expect(polls.contains { $0.0 == exec.operation && $0.1 == "stdout" && $0.3 == 23 })
     #expect(polls.contains { $0.0 == exec.operation && $0.1 == "stderr" && $0.3 == 17 })
     let pointer = try #require(space.machineBuffers.put(payload: .init(data: Data([1, 2, 3])), operation: read, channel: "data", from: 0))
@@ -177,6 +177,49 @@ import Wuwei
     #expect(try await space.space.machineDescription(machine)?.acceptingStarts == false)
     try await space.writer.writeWithoutTransaction { $0.trace(options: []) }
     box.peer.close()
+    try await space.close()
+  }
+
+  @Test func aDescriptionAdvertisingMoreThanFourMebibytePiecesIsRefused() async throws {
+    let space = try await MachineCellTestSpace.inMemory()
+    let machine = try await space.addMachineV2(name: "piece-too-big").machine.id
+    let id = MachineCell.ID(machine.rawValue)
+    let box = try await RuntimeBox.attach(space, id: id)
+    var limits = OperationLimits()
+    limits.filePieceBytes = 1024 * 1024 * 1024
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [])
+    try await box.answer(.init(tag: .describe, answer: .description(description)), space: space, id: id)
+    #expect(space.worker.cell(id).presence.state == "lost")
+    #expect(space.worker.cell(id).presence.filePieceBytes == nil)
+    #expect(try await space.space.machineDescription(machine) == nil)
+    box.peer.close()
+    try await space.close()
+  }
+
+  @Test func aPresenceFromBeforeThePieceColumnServesAFileAtSixtyFourKiB() async throws {
+    let space = try await MachineCellTestSpace.inMemory()
+    let machine = try await space.addMachineV2(name: "old-piece").machine.id
+    let id = MachineCell.ID(machine.rawValue)
+    let box = try await RuntimeBox.attach(space, id: id)
+    var limits = OperationLimits(); limits.leaseMs = 9000; limits.pollHoldMs = 3000
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [ComputerKindSchemas.read])
+    try await box.answer(.init(tag: .describe, answer: .description(description)), space: space, id: id)
+    // Migration041 only adds the column, so a row that predates it is this one with the column NULL.
+    try await space.worker.call(id) { cell in
+      try cell.db.execute("UPDATE machine_presence SET filePieceBytes = NULL")
+    }
+    #expect(space.worker.cell(id).presence.filePieceBytes == nil)
+    #expect(try await space.worker.call(id) { $0.presence.runtime?.filePieceBytes } == 64 * 1024)
+    let read = UUID()
+    let reader = try #require(space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: read, start: .init(kind: "read.v1", input: ["path": "/file"])))) { _ in })
+    await space.drain()
+    try await box.answer(.init(tag: .operation(read, .start), answer: .snapshot(.init(snapshot: Self.snapshot(read)))), space: space, id: id)
+    let polls = box.frames.values.withLock { $0.compactMap { frame -> (UUID, String?, Int)? in
+      guard case let .poll(operation, channel, _, _, _, limit) = frame.exchange else { return nil }
+      return (operation, channel, limit)
+    } }
+    #expect(polls.contains { $0.0 == read && $0.1 == "data" && $0.2 == 64 * 1024 })
+    reader.close(); box.peer.close()
     try await space.close()
   }
 

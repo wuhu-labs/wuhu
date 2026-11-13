@@ -70,6 +70,7 @@ struct BoxLink: Sendable {
     let request: MachineExchange
     let body: Body?
     var hold = 0
+    var pollLimit = 0
     do {
       switch exchange {
       case .start, .startFile: try await authorizeStart()
@@ -83,7 +84,7 @@ struct BoxLink: Sendable {
       case let .startFile(op, start):
         correlation = op; request = .start(op); body = try .json(start)
       case let .poll(op, channel, after, holdMs, terminal, limit):
-        correlation = op; hold = holdMs
+        correlation = op; hold = holdMs; pollLimit = limit
         var query = [URLQueryItem(name: "holdMs", value: String(holdMs)), URLQueryItem(name: "limit", value: String(limit))]
         if let channel { query += [.init(name: "channel", value: channel), .init(name: "after", value: String(after))] }
         if let terminal { query.append(.init(name: "terminalAck", value: terminal.uuidString)) }
@@ -114,14 +115,14 @@ struct BoxLink: Sendable {
       case let .failure(error): return answer.answered ? .box(error) : .transport(error)
       }
     case .start, .startFile, .poll, .stop:
-      let answer = await link.send(OperationSnapshot.self, machine, request, body: body, correlation: correlation, deadline: deadline, limit: OperationLimits.responseBytes)
+      let answer = await link.send(OperationSnapshot.self, machine, request, body: body, correlation: correlation, deadline: deadline, limit: OperationLimits.answerBytes(for: pollLimit))
       switch answer.result {
       case let .failure(error): return answer.answered ? .box(error) : .transport(error)
       case let .success(snapshot):
         let stripped = OperationSnapshot(operation: snapshot.operation, verdict: snapshot.verdict, terminalToken: snapshot.terminalToken, finalOffsets: snapshot.finalOffsets, outputConsumed: snapshot.outputConsumed, channel: snapshot.channel, from: snapshot.from, through: snapshot.through, channelEnd: snapshot.channelEnd, bufferReservationBytes: snapshot.bufferReservationBytes)
         guard let channel = snapshot.channel else { return .snapshot(.init(snapshot: stripped)) }
         guard let payload = snapshot.payload, (payload.data != nil) != (payload.records != nil), let from = snapshot.from, let through = snapshot.through,
-              through >= from, through.rawValue - from.rawValue == UInt64(payload.count), payload.byteCount <= 64 * 1024
+              through >= from, through.rawValue - from.rawValue == UInt64(payload.count), payload.byteCount <= pollLimit
         else { return .box(.init(.invalidResponse)) }
         let pointer = payload.count == 0 ? nil : buffers.put(payload: payload, operation: snapshot.operation, channel: channel, from: from.rawValue)
         if payload.count != 0 && pointer == nil { return .transport(.init(.capacityExceeded, message: "Worker output window is full")) }

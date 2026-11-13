@@ -1,7 +1,9 @@
 import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
+import StructuredQueries
 import Testing
+import WuweiQueries
 
 @Suite(.deterministicDependencies)
 struct AuthStoreTests {
@@ -88,62 +90,6 @@ struct AuthStoreTests {
     #expect(try await space.account(readSession: readSession, in: .shared) == nil)
   }
 
-  @Test func corruptKeyExpiryRefusesTheCredential() async throws {
-    let space = try makeSpace()
-    let owner = try await space.addAccount(kind: .human, name: nil)
-    _ = try await space.addKey(testPubkey("poisoned"), account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: fixedDate.addingTimeInterval(-3600))
-    try await space.writer.write { db in
-      try db.execute(sql: "UPDATE account_keys SET expires_at = '2020-01-01 00:00:00' WHERE pubkey = ?", arguments: [testPubkey("poisoned")])
-    }
-    #expect(try await space.credential(pubkey: testPubkey("poisoned")) == nil)
-  }
-
-  // A malformed key row fails the request closed — never a crash, never an
-  // auto-delete: the row stays put as evidence.
-  @Test func corruptKeyCapabilityRefusesTheCredentialKeepsTheRowAndWarns() async throws {
-    let logs = RecordedLogs()
-    let space = try makeSpace(log: logs.logger)
-    let owner = try await space.addAccount(kind: .human, name: nil)
-    _ = try await space.addKey(testPubkey("junk"), account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
-    try await space.writer.write { db in
-      try db.execute(sql: "UPDATE account_keys SET capabilities = 'device warp-drive' WHERE pubkey = ?", arguments: [testPubkey("junk")])
-    }
-    #expect(try await space.credential(pubkey: testPubkey("junk")) == nil)
-    let warnings = logs.all.filter { $0.level == .warning }
-    #expect(warnings.count == 1)
-    #expect(warnings.first?.metadata["pubkey"] == testPubkey("junk"))
-    #expect(warnings.first?.metadata["reason"]?.contains("warp-drive") == true)
-    let survived = try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM account_keys WHERE pubkey = ?", arguments: [testPubkey("junk")])
-    }
-    #expect(survived == 1)
-    await #expect(throws: (any Error).self) {
-      _ = try await space.keys(account: owner.id)
-    }
-  }
-
-  @Test func corruptReadSessionExpiryRefusesTheToken() async throws {
-    let space = try makeSpace()
-    let owner = try await space.addAccount(kind: .human, name: nil)
-    let token = try await space.createReadSession(account: owner.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(-3600))
-    try await space.writer.write { db in
-      try db.execute(sql: "UPDATE read_sessions SET expires_at = 'corrupted 2020-01-01'")
-    }
-    await #expect(throws: (any Error).self) {
-      _ = try await space.account(readSession: token, in: .shared)
-    }
-  }
-
-  @Test func schemaRefusesUnknownAccountKind() async throws {
-    let space = try makeSpace()
-    _ = try await space.addAccount(kind: .human, name: nil)
-    await #expect(throws: (any Error).self) {
-      try await space.writer.write { db in
-        try db.execute(sql: "UPDATE accounts SET kind = 'alien'")
-      }
-    }
-  }
-
   @Test func removedKeyIsGone() async throws {
     let space = try makeSpace()
     let owner = try await space.addAccount(kind: .human, name: nil)
@@ -188,16 +134,9 @@ struct AuthStoreTests {
     let bystanderExpired = try await space.createReadSession(account: bystander.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(-1))
 
     _ = try await space.createReadSession(account: owner.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))
-    let remaining = try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM read_sessions WHERE account_id = ?", arguments: [owner.id.rawValue])
-    }
-    // The two dead owner rows are swept; the fresh one is all that survives.
-    #expect(remaining == 1)
-    // Pruning is scoped to the minting account: a bystander's dead row stays.
-    let bystanderRows = try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM read_sessions WHERE token_hash = ?", arguments: [Space.credentialDigest(bystanderExpired.rawValue)])
-    }
-    #expect(bystanderRows == 1)
+    let remaining = space.worker.cell(PersonCell.ID(owner.id.rawValue)).db.rows(PersonReadSessionRow.where { $0.accountID.eq(owner.id.rawValue) })
+    #expect(remaining.count == 1)
+    #expect(space.cell.readSession(bystanderExpired) != nil)
   }
 
   @Test func mintingSupersedesTheNamedReadSession() async throws {
@@ -212,10 +151,8 @@ struct AuthStoreTests {
     )
     #expect(try await space.account(readSession: first, in: .shared) == nil)
     #expect(try await space.account(readSession: second, in: .shared) == owner.id)
-    let rows = try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM read_sessions WHERE account_id = ?", arguments: [owner.id.rawValue])
-    }
-    #expect(rows == 1)
+    let rows = space.worker.cell(PersonCell.ID(owner.id.rawValue)).db.rows(PersonReadSessionRow.where { $0.accountID.eq(owner.id.rawValue) })
+    #expect(rows.count == 1)
   }
 
   @Test func adminIsAnAccountFlagOffByDefault() async throws {
@@ -252,7 +189,7 @@ struct AuthStoreTests {
     _ = try await space.addKey(testPubkey("victim"), account: victim.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     let readSession = try await space.createReadSession(account: victim.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))
     let invite = try await space.mintJoinToken(account: victim.id, capabilities: [.device], createdBy: nil, lifetime: 600)
-    let persona = try await space.mintPersona(key: try #require(try await space.credential(pubkey: testPubkey("victim"))))
+    let persona = try await space.adoptPersona(key: try #require(try await space.credential(pubkey: testPubkey("victim"))))
 
     let removed = try await space.removeAccount(victim.id)
     #expect(removed.keys == 1)

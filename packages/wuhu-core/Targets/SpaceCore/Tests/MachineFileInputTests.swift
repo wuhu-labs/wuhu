@@ -22,7 +22,7 @@ import Wuwei
     #expect(f.row?.inputReady == false)
     #expect(f.readyCount == 0)
     try await f.answer(.start, .snapshot(.init(snapshot: f.snapshot())))
-    guard case let .ready(inputs) = try await f.callerNext() else { Issue.record("Expected ready"); return }
+    guard case let .ready(inputs, _) = try await f.callerNext() else { Issue.record("Expected ready"); return }
     #expect(inputs == ComputerKindSchemas.stagedWrite.inputChannels)
     #expect(f.row?.inputOffsets == ["data": 0, "commit": 0])
     try await f.answer(.start, .snapshot(.init(snapshot: f.snapshot())))
@@ -122,7 +122,7 @@ import Wuwei
     try await f.replaceBox()
     _ = try await f.next(.control)
     try await f.answer(.control, .snapshot(.init(snapshot: f.snapshot())))
-    guard case let .ready(inputs) = try await f.callerNext() else { Issue.record("Expected reconciled readiness"); return }
+    guard case let .ready(inputs, _) = try await f.callerNext() else { Issue.record("Expected reconciled readiness"); return }
     #expect(inputs == ComputerKindSchemas.stagedWrite.inputChannels)
     #expect(f.row?.state == "running")
     let data = try f.input(.init(data: Data([1, 2, 3])), channel: "data", end: true)

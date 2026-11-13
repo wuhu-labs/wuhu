@@ -181,7 +181,7 @@ import Testing
     let record = try await space.addKey(
       key.pubkeyLabel, account: account.id, capabilities: capabilities, createdBy: nil, expiresAt: nil,
     )
-    return try await space.mintPersona(key: record).name
+    return try await space.adoptPersona(key: record).name
   }
 
   private func bearer(_ key: Curve25519.Signing.PrivateKey, space: String) throws -> String {

@@ -51,6 +51,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a box is there from its session's creation and written by its first post`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let owner = try await agent(rig.store)
     let box = ConversationID(owner.rawValue)
     let unopened = try await rig.store.conversation(box)
@@ -68,6 +69,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `the box owner hears everything posted into its box`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let owner = try await agent(rig.store)
     let delivery = try await rig.store.post(
       .box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "hi"),
@@ -85,6 +87,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a person can neither post to a task nor DM it, and nothing is stored`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     try await rig.space.registerPeople(["carol"])
     let parent = try await agent(rig.store)
     let task = try await task(rig.store, parent: parent)
@@ -98,8 +101,8 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
         .dm(with: task.rawValue), messageID: MessageID("m2"), sender: human("carol"), content: .init(text: "hi"),
       )
     }
-    #expect(try await rig.store.message(MessageID("m2")) == nil)
-    #expect(try await rig.store.conversations(member: "carol").isEmpty)
+    #expect(rig.store.message(MessageID("m2")) == nil)
+    #expect(rig.store.conversations(member: "carol").isEmpty)
   }
 
   @Test func `a session reaches a task in its DM, never its box`() async throws {
@@ -121,6 +124,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a person's post that would reach only tasks is refused`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let parent = try await agent(rig.store)
     let task = try await task(rig.store, parent: parent)
     try await rig.space.registerPeople(["carol"])
@@ -135,11 +139,12 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
         replyTarget: MessageID("t1"), content: .init(text: "about that"),
       )
     }
-    #expect(try await rig.store.message(MessageID("m1")) == nil)
+    #expect(rig.store.message(MessageID("m1")) == nil)
   }
 
   @Test func `a reply target forwards to whoever posted it`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let owner = try await agent(rig.store, "owner")
     let other = try await agent(rig.store, "other")
     _ = try await rig.store.post(
@@ -155,6 +160,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
   }
 
   private func visited(_ rig: MovingClockSpace) async throws -> (owner: SessionID, visitor: SessionID) {
+    try await rig.space.registerPerson("carol")
     let owner = try await agent(rig.store, "owner")
     let visitor = try await agent(rig.store, "visitor")
     _ = try await rig.store.post(
@@ -196,6 +202,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test(arguments: [false, true]) func attentionDeliveryOrder(reversePosts: Bool) async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let a = try await agent(rig.store)
     let b = try await agent(rig.store)
     let sessions = [a, b].sorted { $0.rawValue < $1.rawValue }
@@ -247,6 +254,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `posting the same message id twice replays instead of duplicating`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let owner = try await agent(rig.store)
     _ = try await rig.store.post(
       .box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "hi"),
@@ -261,6 +269,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a reply target in another conversation is refused`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let a = try await agent(rig.store, "a")
     let b = try await agent(rig.store, "b")
     _ = try await rig.store.post(
@@ -276,6 +285,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a human member who did not send gets a notification row`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
     let owner = try await agent(rig.store)
     _ = try await rig.store.post(
       .box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "hi"),
@@ -291,6 +301,8 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a box post skips a member who last wrote over a day before it`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("hazel")
+    try await rig.space.registerPerson("minsheng")
     let owner = try await agent(rig.store)
     _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("hazel"), content: .init(text: "once"))
     rig.advance(RoutingSnapshot.boxNotificationSeconds + 1)
@@ -306,6 +318,8 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `a box post notifies its latest writer and a writer from inside the window`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("hazel")
+    try await rig.space.registerPerson("minsheng")
     let owner = try await agent(rig.store)
     _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("minsheng"), content: .init(text: "at 15:00"))
     rig.advance(2 * 3600)
@@ -320,6 +334,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
   @Test func `an observer's box post is no person write`() async throws {
     let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("hazel")
     let owner = try await agent(rig.store)
     let observer = Observer(group: .shared, name: "watch", firing: "firing-1")
     _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("hazel"), content: .init(text: "once"))

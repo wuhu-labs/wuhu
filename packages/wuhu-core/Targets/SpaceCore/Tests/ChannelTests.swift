@@ -19,6 +19,7 @@ import Testing
     #expect(try await space.query("SELECT id, title FROM conversations WHERE kind = 'users'", as: reader).rows == [[.text(id.rawValue), .text("Wuhu bugs")]])
     #expect(try await space.sessions.reads(space.sessions.conversation(id), reader: persona.name, group: .shared))
     _ = try await space.sessions.post(.conversation(id), messageID: MessageID("opened"), sender: person(persona.name), content: .init(text: "hello"), acting: reader)
+    try await space.registerPerson("second-person")
     _ = try await space.setUserProfile(principal: "second-person", handle: "hazel", displayName: nil)
     await #expect(throws: ChannelError.unknownPerson("missing")) {
       try await space.sessions.addChannelMembers(id, people: ["hazel", "missing"], as: reader)
@@ -36,15 +37,15 @@ import Testing
 
   @Test func removingPeopleAlsoRemovesLegacyRawAliasesAndUnknownStoredMembers() async throws {
     let space = try makeSpace()
-    try await space.registerPeople(["owner", "person-id"])
+    try await space.registerPeople(["channel-owner", "person-id"])
     _ = try await space.setUserProfile(principal: "person-id", handle: "hazel", displayName: nil)
-    let id = try await space.sessions.createConversation(members: ["owner", "person-id"], in: .shared)
-    let owner = Principal.shared(.person(persona: "owner", account: AccountID(rawValue: "owner")))
+    let id = try await space.sessions.createConversation(members: ["channel-owner", "person-id"], in: .shared)
+    let owner = Principal.shared(.person(persona: "channel-owner", account: AccountID(rawValue: "channel-owner")))
     for raw in ["hazel", "no-longer-in-directory"] {
       try await space.plant("INSERT INTO conversation_members VALUES (?, ?, 'user', '2026-01-01T00:00:00Z')", arguments: [id.rawValue, raw])
     }
     try await space.sessions.removeChannelMembers(id, people: ["hazel", "no-longer-in-directory", "not-a-member"], as: owner)
-    #expect(try await space.sessions.conversation(id).members.map(\.member) == ["owner"])
+    #expect(try await space.sessions.conversation(id).members.map(\.member) == ["channel-owner"])
   }
 
   @Test func managementIsAtomicHumanOnlyAndSessionsNeverJoin() async throws {

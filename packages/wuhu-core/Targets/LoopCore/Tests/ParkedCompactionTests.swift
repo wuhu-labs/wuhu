@@ -119,8 +119,8 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
       #expect(copy.role == .user)
       #expect(copy.text.contains("<type>message</type>"))
       #expect(!copy.text.contains("<type>request</type>"))
-      #expect(try await sessions.openRequests(bystander).isEmpty)
-      #expect(try await sessions.openRequests(task).map(\.id) == [RequestID("r1")])
+      #expect(try sessions.openRequests(bystander).isEmpty)
+      #expect(try sessions.openRequests(task).map(\.id) == [RequestID("r1")])
     }
   }
 
@@ -143,7 +143,7 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
         try await until("the bystander's park settles") { try await sessions.settledWork(bystander) && script.count == 1 }
         guard case .folding? = space.worker.cell(SessionCell.ID(bystander.rawValue)).turn()?.turn else { throw UnexpectedCall("the park was refused") }
       }
-      #expect(try await sessions.openRequests(task).map(\.id) == [RequestID("r1")])
+      #expect(try sessions.openRequests(task).map(\.id) == [RequestID("r1")])
     }
   }
 
@@ -160,7 +160,7 @@ private func parks(_ text: String = "nothing more is coming") -> InferenceScript
           _ = try await sessions.report(task, request: .init("r1"), kind: .final, messageID: .init(attempt), text: "not an object")
         }
       }
-      #expect(try await sessions.openRequests(task).isEmpty)
+      #expect(try sessions.openRequests(task).isEmpty)
       let script = InferenceScript([parks()])
       let config = makeConfig(executeTool: { _ in .failure(.init(message: "no file")) }, inference: { try await script($0) })
       try await runService(space, config) { service in

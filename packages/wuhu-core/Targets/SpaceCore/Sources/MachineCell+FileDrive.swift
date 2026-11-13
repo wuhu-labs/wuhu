@@ -1,6 +1,7 @@
 import JSONValue
 import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.StartRequest
 import StructuredQueries
 import Wuwei
@@ -28,7 +29,10 @@ extension MachineCell {
     if try resetFileWorker(&row) { return .settled }
     let limits = runtime
     let hold = min(limits.pollHoldMs, limits.leaseMs / 3)
-    let limit = min(limits.pollBytes, 65536)
+    // A records channel holds its window and the box refuses a larger poll; a row from before the column asks for the day-one payload.
+    let windows = Dictionary(uniqueKeysWithValues: row.outputChannels.map { ($0.name, $0.windowBytes) })
+    let limit = limits.filePieceBytes
+    func channelLimit(_ channel: String) -> Int { min(limit, windows[channel] ?? limits.pollBytes) }
     var changed = false
     if !row.dispatched {
       guard let description else { return .unchanged }
@@ -42,6 +46,7 @@ extension MachineCell {
       }
       let kind = description.kinds.first { $0.name == row.request.start.kind }!
       row.offsets = Dictionary(uniqueKeysWithValues: kind.outputChannels.map { ($0.name, 0) })
+      row.outputChannels = kind.outputChannels
       row.offered = row.offsets
       row.received = row.offsets
       row.inputOffsets = Dictionary(uniqueKeysWithValues: kind.inputChannels.map { ($0.name, 0) })
@@ -74,7 +79,7 @@ extension MachineCell {
           if let final = row.snapshot?.finalOffsets[channel], row.snapshot?.verdict != nil, received >= final.rawValue { continue }
           if let flight = row.flights[.output(channel)], flight.waiting || flight.due > now { continue }
           if buffers.retained(row.request.operation, channel: channel, from: offset) > (4 << 20) - limit { continue }
-          changed = requestFile(.output(channel), .poll(row.request.operation, channel: channel, after: received, holdMs: hold, terminal: nil, limit: limit), row: &row, to: box) || changed
+          changed = requestFile(.output(channel), .poll(row.request.operation, channel: channel, after: received, holdMs: hold, terminal: nil, limit: channelLimit(channel)), row: &row, to: box) || changed
         }
       }
     }
@@ -85,7 +90,7 @@ extension MachineCell {
       if !row.delivered { try deliverFile(&row); changed = true }
       let channels = row.offsets.isEmpty ? [""] : Array(row.offsets.keys)
       for channel in channels where !row.terminalAcks.contains(channel) {
-        changed = requestFile(.terminal(channel), .poll(row.request.operation, channel: channel.isEmpty ? nil : channel, after: row.offsets[channel] ?? 0, holdMs: 0, terminal: snapshot.terminalToken!, limit: limit), row: &row, to: box) || changed
+        changed = requestFile(.terminal(channel), .poll(row.request.operation, channel: channel.isEmpty ? nil : channel, after: row.offsets[channel] ?? 0, holdMs: 0, terminal: snapshot.terminalToken!, limit: channel.isEmpty ? limit : channelLimit(channel)), row: &row, to: box) || changed
       }
     }
     return changed ? .changed : .unchanged

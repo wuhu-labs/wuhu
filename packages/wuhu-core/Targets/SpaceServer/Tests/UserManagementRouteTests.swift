@@ -222,7 +222,7 @@ import Testing
       group: .shared,
       expiresAt: fixedDate.addingTimeInterval(3600),
     )
-    let persona = try await harness.space.mintPersona(
+    let persona = try await harness.space.adoptPersona(
       key: try #require(try await harness.space.credential(pubkey: alice.key.pubkeyLabel)),
     )
 

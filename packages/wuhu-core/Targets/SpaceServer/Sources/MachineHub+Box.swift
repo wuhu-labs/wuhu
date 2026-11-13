@@ -4,7 +4,9 @@
   import Foundation
 #endif
 import FetchTunnel
+import enum MachineContract.MachineV2Connect
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import SpaceCore
 
 extension MachineHub {
@@ -34,7 +36,7 @@ extension MachineHub {
     defer { boxLink.close() }
     do {
       try await authorize(credential)
-      let tunnel = try Tunnel(over: transport, limits: .init(streams: streams))
+      let tunnel = try Tunnel(over: transport, limits: .init(bodyBytes: OperationLimits.maxFileResponseBytes, streams: streams))
       await withTaskGroup(of: Void.self) { tasks in
         tasks.addTask { try? await tunnel.run() }
         tasks.addTask { await boxLink.run(client: tunnel.client) }

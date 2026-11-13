@@ -161,7 +161,7 @@ struct SessionHarness {
     return try await api(request)
   }
 
-  func mintPersona() async throws -> String {
+  func adoptPersona() async throws -> String {
     let account = try await space.addAccount(kind: .human, name: nil)
     let key = try await space.addKey(
       testPubkey(UUID().uuidString),
@@ -170,7 +170,7 @@ struct SessionHarness {
       createdBy: nil,
       expiresAt: nil,
     )
-    return try await space.mintPersona(key: key).name
+    return try await space.adoptPersona(key: key).name
   }
 
   init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil, metrics: InferenceMetricsSink = .noop) async throws {

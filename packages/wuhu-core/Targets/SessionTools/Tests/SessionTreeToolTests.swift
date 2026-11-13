@@ -26,7 +26,7 @@ private func created(_ payload: ToolResultPayload) throws -> CreateSessionResult
 // The messages a session holds in its DMs with other sessions.
 private func directMessages(_ space: Space, to session: SessionID) async throws -> [MessageRecord] {
   var found: [MessageRecord] = []
-  for conversation in try await space.sessions.conversations(member: session.rawValue) where conversation.kind == .dmSession {
+  for conversation in space.sessions.conversations(member: session.rawValue) where conversation.kind == .dmSession {
     found += try await space.sessions.messages(conversation: conversation.id)
   }
   return found

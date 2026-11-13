@@ -15,7 +15,7 @@ enum Migrations {
     ("013", Migration013.apply), ("014", Migration014.apply), ("015", Migration015.apply), ("016", Migration016.apply),
     ("017", Migration017.apply), ("018", Migration018.apply), ("019", Migration019.apply), ("020", Migration020.apply), ("021", Migration021.apply), ("022", Migration022.apply), ("023", Migration023.apply), ("024", Migration024.apply),
     ("025", Migration025.apply), ("026", Migration026.apply), ("027", Migration027.apply), ("028", Migration028.apply), ("029", Migration029.apply),
-    ("030", Migration030.apply), ("031", Migration031.apply), ("032", Migration032.apply), ("033", Migration033.apply), ("034", Migration034.apply), ("035", Migration035.apply), ("036", Migration036.apply), ("037", Migration037.apply), ("038", Migration038.apply), ("039", Migration039.apply), ("040", Migration040.apply), ("043", Migration043.apply),
+    ("030", Migration030.apply), ("031", Migration031.apply), ("032", Migration032.apply), ("033", Migration033.apply), ("034", Migration034.apply), ("035", Migration035.apply), ("036", Migration036.apply), ("037", Migration037.apply), ("038", Migration038.apply), ("039", Migration039.apply), ("040", Migration040.apply), ("041", Migration041.apply), ("043", Migration043.apply), ("044", Migration044.apply),
   ]
 
   static func apply(to writer: any DatabaseWriter, log: Logger, date: DateGenerator) throws {

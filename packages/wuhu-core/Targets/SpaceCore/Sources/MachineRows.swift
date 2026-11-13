@@ -1,5 +1,6 @@
 import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.OperationSnapshot
 import StructuredQueries
 import Wuwei
@@ -24,11 +25,17 @@ struct MachinePresence: Owned, Equatable {
   var resultBytes: Int?
   var execStdoutWindow: Int?
   var execStderrWindow: Int?
+  /// NULL on a presence written before Migration041.
+  var filePieceBytes: Int?
 
   var runtime: MachineRuntime? {
     guard let pollHoldMs, let pollBytes, let resultBytes else { return nil }
-    return MachineRuntime(leaseMs: leaseMs, pollHoldMs: pollHoldMs, pollBytes: pollBytes, resultBytes: resultBytes, execStdoutWindow: execStdoutWindow, execStderrWindow: execStderrWindow)
+    return MachineRuntime(leaseMs: leaseMs, pollHoldMs: pollHoldMs, pollBytes: pollBytes, resultBytes: resultBytes, execStdoutWindow: execStdoutWindow, execStderrWindow: execStderrWindow, filePieceBytes: piece)
   }
+
+  /// The piece this machine moves now: what its box last described, or the day-one 64 KiB while it has not described in this
+  /// incarnation (and on a row that predates the column).
+  var piece: Int { filePieceBytes ?? OperationLimits.defaultFilePieceBytes }
 }
 
 struct MachineRuntime {
@@ -38,6 +45,7 @@ struct MachineRuntime {
   var resultBytes: Int
   var execStdoutWindow: Int?
   var execStderrWindow: Int?
+  var filePieceBytes: Int
 }
 
 @Table("machine_descriptions")

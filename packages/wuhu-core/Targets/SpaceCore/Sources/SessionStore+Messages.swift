@@ -7,81 +7,57 @@ import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceFS
-import StructuredQueries
-import StructuredQueriesSQLite
 
 extension SessionStore {
   /// Whether `member` reads `path` in `group` because it is a member of the conversation homed there whose attachment folder holds it, whatever its own group reads.
-  public func readsAttachment(_ path: String, in group: GroupID, member: String) async throws -> Bool {
-    try await attachmentConversation(path, in: group)?.members.contains { $0.member == member } == true
+  public func readsAttachment(_ path: String, in group: GroupID, member: String) -> Bool {
+    attachmentConversation(path, in: group)?.members.contains { $0.member == member } == true
   }
 
   /// The conversation homed in `group` whose folder holds `path`.
-  public func attachmentConversation(_ path: String, in group: GroupID) async throws -> ConversationRecord? {
+  public func attachmentConversation(_ path: String, in group: GroupID) -> ConversationRecord? {
     let parts = path.split(separator: "/", omittingEmptySubsequences: true)
     guard parts.count >= 3, parts[0] == "_", parts[1] == "conversations",
-          let record = runtime.worker().cell(ConversationCell.ID(String(parts[2]))).record(), record.group == group else { return nil }
+          let record = conversationCell(ConversationID(String(parts[2]))).record(), record.group == group else { return nil }
     return record
   }
 
   public func readsFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
-    let conversation = try await attachmentConversation(path, in: group)
+    let conversation = attachmentConversation(path, in: group)
     if let conversation, conversation.kind == .users {
       return try await reads(conversation, reader: principal.member, group: principal.group)
     }
-    return try await writer.read { db in
-      // A person's own group is theirs alone: it reads as nothing to everyone
-      // else, including a space admin.
-      if let owner = try String.fetchOne(
-        db, sql: "SELECT personal_account FROM groups WHERE id = ? AND personal_account IS NOT NULL",
-        arguments: [group.rawValue],
-      ) {
-        switch principal.actor {
-        case let .person(_, account): guard account.rawValue == owner else { return false }
-        case .session, .observer, .page, .anonymous: guard principal.group == group else { return false }
-        }
+    // A person's own group is theirs alone: it reads as nothing to everyone else, including a space admin.
+    if let owner = groupCell(group).record()?.personalAccount {
+      switch principal.actor {
+      case let .person(_, account): guard account == owner else { return false }
+      case .session, .observer, .page, .anonymous: guard principal.group == group else { return false }
       }
-      if group == principal.group { return true }
-      if try GroupAccess.readable(by: principal.actor, acting: principal.group, in: db).contains(group) { return true }
-      let parts = path.split(separator: "/", omittingEmptySubsequences: true)
-      guard parts.count >= 4, parts[3] == "attachments", let member = principal.member else { return false }
-      return conversation?.members.contains { $0.member == member } == true
     }
+    if group == principal.group { return true }
+    if groupCell(group).reads(principal) { return true }
+    let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+    guard parts.count >= 4, parts[3] == "attachments", let member = principal.member else { return false }
+    return conversation?.members.contains { $0.member == member } == true
   }
 
   /// Whether `principal` may write `path` in `group`: it reads it and holds a write role there.
   public func writesFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
     guard try await readsFile(path, in: group, as: principal) else { return false }
     if case .anonymous = principal.actor { return true }
-    let held = try await writer.read { db in
-      try GroupAccess.role(of: principal.actor, in: group, acting: principal.group, in: db)
-    }
-    return (held ?? .read) >= .write
+    return (groupCell(group).role(of: principal.actor, acting: principal.group) ?? .read) >= .write
   }
 
-  public func conversations(member: String) async throws -> [ConversationRecord] {
-    try await writer.read { db in
-      try String.fetchAll(
-        db,
-        sql: """
-        SELECT c.id FROM conversations c
-        JOIN conversation_members m ON m.conversation_id = c.id
-        WHERE m.member = ?
-        ORDER BY COALESCE((SELECT MAX(n) FROM messages WHERE conversation_id = c.id), 0) DESC
-        """,
-        arguments: [member],
-      ).compactMap { try Conversations.record($0, in: db) }
-    }
+  public func conversations(member: String) -> [ConversationRecord] {
+    let ids: [ConversationID]
+    if let person = space.personCell(member) { ids = runtime.worker().cell(person).conversations() }
+    else { ids = space.conversations(member: member) }
+    return ids.compactMap { conversationCell($0).record() }
   }
 
   public func conversations(reader: String?, group: GroupID) async throws -> [ConversationRecord] {
-    let records = try await writer.read { db in
-      try ConversationRow.order {
-        #sql("COALESCE((SELECT MAX(n) FROM messages WHERE conversation_id = \($0.id)), 0)", as: Int64.self).desc()
-      }.fetchAll(db).compactMap { try Conversations.record($0.id, in: db) }
-    }
     var readable: [ConversationRecord] = []
-    for record in records {
+    for record in space.conversations().compactMap({ conversationCell($0).record() }) {
       if record.kind == .users {
         if try await reads(record, reader: reader, group: group) { readable.append(record) }
       } else if record.members.contains(where: { $0.member == reader }) { readable.append(record) }
@@ -106,24 +82,20 @@ extension SessionStore {
     precondition(viewing == nil || senderSession == nil, "only a person's message carries viewing")
     let now = dateGen.now
     let me = senderSession?.rawValue ?? sender.id
-    // Still main's reads: which conversation holds a message posted before, and who a DM's spelling names.
-    let (conversation, place): (ConversationID, Post.Target) = try await writer.read { db in
-      if let existing = try Conversations.message(id: messageID.rawValue, in: db) { return (existing.conversation, .conversation) }
+    let conversation: ConversationID
+    let place: Post.Target
+    if let existing = space.message(messageID) {
+      (conversation, place) = (existing.conversation, .conversation)
+    } else {
       switch target {
       case let .conversation(id):
-        return (id, .conversation)
+        (conversation, place) = (id, .conversation)
       case let .box(owner):
-        return (ConversationID(owner.rawValue), .box)
+        (conversation, place) = (ConversationID(owner.rawValue), .box)
       case let .dm(spelling):
-        let other: String
-        if try Sessions.exists(spelling, in: db) {
-          other = spelling
-        } else {
-          guard let person = try Aliases.resolvePerson(spelling, in: db) else { throw SessionStoreError.unknownPerson(spelling) }
-          other = person
-        }
+        guard let other = space.directMessageTarget(spelling) else { throw SessionStoreError.unknownPerson(spelling) }
         guard me != other else { throw SessionStoreError.selfDirectMessage(me) }
-        return (Conversations.dmID(me, other), .dm(with: other))
+        (conversation, place) = (Conversations.dmID(me, other), .dm(with: other))
       }
     }
     var post = Post(
@@ -142,13 +114,19 @@ extension SessionStore {
         for blob in staged { try Substrate.record(blob, in: db) }
       }
     }
-    let worker = runtime.worker()
-    let cell = ConversationCell.ID(conversation.rawValue)
-    return try await worker.call(cell) { [post] in try $0.post(post) }
+    return try await runtime.worker().call(ConversationCell.ID(conversation.rawValue)) { [post] in try $0.post(post) }
   }
 
-  public func message(_ id: MessageID) async throws -> MessageRecord? {
-    try await writer.read { db in try Conversations.message(id: id.rawValue, in: db) }
+  public func message(_ id: MessageID) -> MessageRecord? {
+    space.message(id)
+  }
+
+  private func conversationCell(_ id: ConversationID) -> ConversationCell {
+    runtime.worker().cell(ConversationCell.ID(id.rawValue))
+  }
+
+  private func groupCell(_ group: GroupID) -> GroupCell {
+    runtime.worker().cell(GroupCell.ID(group.rawValue))
   }
 }
 

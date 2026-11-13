@@ -194,7 +194,7 @@ extension Hub {
         if expectsReply {
           let delivery = try await store.openRequest(on: id, from: requester, messageID: messageID, text: message, stallSeconds: stall, terms: terms)
           spawned.requestID = delivery.message.requestID
-        } else if try await store.message(messageID) == nil {
+        } else if store.message(messageID) == nil {
           // A session primes the new one in private; a person has only its box.
           let target: ConversationTarget = creator == nil ? .box(id) : .dm(with: id.rawValue)
           _ = try await deliver(target, as: caller, messageID: messageID, text: message, replyTarget: nil, uploads: [])
@@ -202,7 +202,7 @@ extension Hub {
       }
       // A replay answers what the first call made, request included.
       if replayed, spawned.requestID == nil {
-        spawned.requestID = try await store.message(messageID)?.requestID
+        spawned.requestID = store.message(messageID)?.requestID
       }
     } catch is CancellationError {
       throw CancellationError()

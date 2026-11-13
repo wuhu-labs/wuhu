@@ -364,13 +364,14 @@ private final class RegionDouble: Sendable {
 
   var source: (@Sendable (any DatabaseWriter) -> RegionSource) {
     { writer in
-      let live = ObservationSources.live(writer: writer)
+      let changes = ChangeSource()
+      writer.add(transactionObserver: ChangeSourceFeeder(changes), extent: .databaseLifetime)
       return { tables, wakes in
         self.state.withLock {
           $0.starts += 1
           $0.failing.append { wakes.finish() }
         }
-        let cancel = live(tables, wakes)
+        let cancel = changes.subscribe(tables, wakes)
         return {
           self.state.withLock { $0.cancellations += 1 }
           self.cancelledEvents.yield(())

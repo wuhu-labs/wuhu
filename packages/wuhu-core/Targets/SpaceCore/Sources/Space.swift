@@ -48,8 +48,11 @@ public actor Space {
     self.blobs = blobs
     self.dateGen = date
     self.clock = clock
+    let changes = ChangeSource()
+    writer.add(transactionObserver: ChangeSourceFeeder(changes), extent: .databaseLifetime)
     self.observations = ObservationSources(
-      writer: writer, reads: reads, clock: clock, regions: regions.map { $0(writer) } ?? ObservationSources.live(writer: writer),
+      writer: writer, reads: reads, clock: clock,
+      regions: regions.map { $0(writer) } ?? { tables, wakes in changes.subscribe(tables, wakes) },
     )
     let replicas = DocumentReplicas()
     let peers = rng

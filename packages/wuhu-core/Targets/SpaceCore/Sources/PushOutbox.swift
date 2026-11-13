@@ -65,6 +65,7 @@ extension JobDatabase {
 @Table("web_push_subscriptions")
 struct WebPushSubscriptionRow {
   @Column(primaryKey: true) var endpoint: String
+  @Column("owner_account") var ownerAccount: String
   var recipient: String
   @Column("device_pubkey") var devicePublicKey: String
   var p256dh: String
@@ -84,6 +85,7 @@ struct PushRelayGrantRow {
   var endpoint: String
   var token: String
   var platform: String
+  @Column("owner_account") var ownerAccount: String
   var recipient: String
   @Column("device_pubkey") var devicePublicKey: String
   @Column("notification_cursor") var notificationCursor: Int64

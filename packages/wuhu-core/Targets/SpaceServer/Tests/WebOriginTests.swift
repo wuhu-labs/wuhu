@@ -833,7 +833,7 @@ private func channelAttachmentReader() async throws -> (Harness, FetchClient, St
   let harness = try Harness(dev: false)
   let account = try await harness.space.addAccount(kind: .human, name: nil)
   let key = try await harness.space.addKey(testPubkey("attachment-owner"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
-  let owner = try await harness.space.mintPersona(key: key).name
+  let owner = try await harness.space.adoptPersona(key: key).name
   let token = try await harness.space.createReadSession(account: account.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))
   let web = FetchClient { request in
     var request = request

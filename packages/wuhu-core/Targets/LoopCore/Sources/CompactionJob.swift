@@ -62,7 +62,7 @@ struct CompactionJob {
         let head = GenerationHead(
           id: client.uuid(), timestamp: client.now(), summary: arguments.summary,
           snapshot: .init(preReads: arguments.preReads ?? []),
-          runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
+          runningWork: try await client.runningWork(params.session), awaiting: client.store.awaitedRequests(params.session),
         )
         let budget = await client.budget(params.session)
         let carried = try stored.filter { kept?.contains($0.position) == true && $0.key != LineKey.pressure }
@@ -84,7 +84,7 @@ struct CompactionJob {
         }
         let head = GenerationHead(
           id: client.uuid(), timestamp: client.now(), summary: summary, snapshot: .init(),
-          runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
+          runningWork: try await client.runningWork(params.session), awaiting: client.store.awaitedRequests(params.session),
         )
         let budget = await client.budget(params.session)
         let transition = try await client.prepareCompaction(params.session, head.lines(session: params.session).estimatedContextTokens(images: budget.images), nil)
@@ -94,7 +94,7 @@ struct CompactionJob {
         let head = GenerationHead(
           id: client.uuid(), timestamp: client.now(), summary: SessionPrompt.pointerSummary(session: params.session, generation: params.generation),
           snapshot: .init(), replayBinding: binding,
-          runningWork: try await client.runningWork(params.session), awaiting: try await client.store.awaitedRequests(params.session),
+          runningWork: try await client.runningWork(params.session), awaiting: client.store.awaitedRequests(params.session),
         )
         let after = TranscriptItem.notification(SystemNotification(
           id: client.uuid(), timestamp: client.now(), kind: .context, subscriptionID: SubscriptionID("replay-handoff"),

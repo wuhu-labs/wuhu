@@ -14,7 +14,8 @@ import WuweiQueries
 struct DocumentEdited: Error {}
 
 /// The host's side of the documents: the files their cells write in a step through the host's own
-/// connection, and the cells' rows read to find the documents a host action must reach.
+/// connection, and the bytes only the host can reach for a document whose file lives in the object
+/// store. Everything read about a document itself is the document cell's.
 struct DocumentRows: Sendable {
   let writer: any DatabaseWriter
   let blobs: BlobStore
@@ -77,24 +78,15 @@ struct DocumentRows: Sendable {
     guard try Self.dirtyKeys(group, under: path, in: db).isEmpty else { throw DocumentEdited() }
   }
 
-  // MARK: The documents a host action must reach
+  // MARK: The bytes only the host can reach
 
   /// The text of a file whose bytes live in the object store.
   func text(of hash: String) async throws -> Data {
     try await blobs.read(writer) { db, cache in Data(try cache.blob(of: hash, in: db).content) }
   }
 
-  func file(_ group: GroupID, _ path: SpacePath) async throws -> (rev: Int64, text: Data?, hash: String)? {
-    try await writer.read { db in
-      guard let head = try Substrate.head(path, group: group, in: db) else { return nil }
-      guard head.kind == "file", let hash = head.blobHash else { throw SpaceError.notAFile(path.rawValue) }
-      switch try Substrate.storedBlob(hash, in: db) {
-      case let .inline(content): return (head.rev, Data(content), hash)
-      case .external: return (head.rev, nil, hash)
-      }
-    }
-  }
-
+  /// The document as a merge takes it. One read, because the state, snapshot, log and checkpoint it
+  /// answers with must agree, and a read handle runs each statement on a snapshot of its own.
   func material(_ group: GroupID, _ path: SpacePath, base: DocumentBase, createOnly: Bool) async throws -> DocumentMaterial {
     let key = DocumentCell.key(group, path)
     var material = try await writer.read { db -> DocumentMaterial in
@@ -128,24 +120,6 @@ struct DocumentRows: Sendable {
     }
     if let hash = material.hash { material.text = try await text(of: hash) }
     return material
-  }
-
-  /// The revision the document's row says its file has.
-  func fileRev(_ key: String) async throws -> Int64? {
-    try await writer.read { db in
-      try DocumentStateRow.unscoped.where { _ in #sql("owner", as: String.self).eq(key) }.fetchOne(db)?.fileRev
-    }
-  }
-
-  /// Whether the document holds edits its file lacks.
-  func dirty(_ key: String) async throws -> Bool {
-    try await writer.read { db in
-      try DocumentStateRow.unscoped.where { #sql("owner", as: String.self).eq(key) && $0.dirtyAt.isNot(nil) }.fetchOne(db) != nil
-    }
-  }
-
-  func dirty(_ group: GroupID, under path: SpacePath) async throws -> [String] {
-    try await writer.read { db in try Self.dirtyKeys(group, under: path, in: db) }
   }
 
   /// The documents at `path` and under it — never a sibling whose name starts the same way (`/notes` must

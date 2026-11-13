@@ -12,6 +12,7 @@ import MachineContract
 import struct OperationProtocol.ChannelDescriptor
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.StartRequest
 import SpaceCore
 import Wuwei
@@ -171,6 +172,7 @@ final class MachineFileConnection {
   private var iterator: AsyncStream<FileBulk.Outgoing>.Iterator
   private var started = false
   private var inputs: [ChannelDescriptor]?
+  private var piece = OperationLimits.defaultFilePieceBytes
   private var inputOffsets: [String: UInt64] = [:]
   private var offset: UInt64 = 0
   private var terminal: Result<JSONValue, MachineFileFailure>?
@@ -199,8 +201,8 @@ final class MachineFileConnection {
       try Task.checkCancellation()
       switch event {
       case .started: started = true
-      case let .ready(channels):
-        inputs = channels
+      case let .ready(channels, advertised):
+        inputs = channels; piece = advertised
         return event
       case let .finished(result):
         terminal = result
@@ -243,7 +245,7 @@ final class MachineFileConnection {
     if let terminal { _ = try value(terminal); throw OperationError(.operationEnded) }
     guard let descriptor = try await channels().first(where: { $0.name == channel }) else { throw OperationError(.invalidInput) }
     guard (descriptor.unit == .bytes) == (payload.data != nil) else { throw OperationError(.invalidInput) }
-    let window = min(65536, descriptor.windowBytes)
+    let window = min(descriptor.windowBytes, piece)
     guard window > 0 else { throw OperationError(.invalidResponse) }
     var from = 0
     repeat {

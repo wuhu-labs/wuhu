@@ -139,7 +139,7 @@ extension MachineFileTransferTests {
   @Test func cancellingAfterAppendBeforeTheInputReplyAllowsTheSamePathToBeWrittenAgain() async throws {
     let folder = try ScratchFolder("real-write-in-flight-stop")
     let target = folder.url.appending(path: "target")
-    let prefix = Data(repeating: 11, count: 65536)
+    let prefix = Data(repeating: 11, count: 4 << 20)
     let appended = AsyncStream<Void>.makeStream()
     let closed = AsyncStream<Void>.makeStream()
     let callerClosed = AsyncStream<Void>.makeStream()
@@ -159,7 +159,7 @@ extension MachineFileTransferTests {
       try await withThrowingTaskGroup(of: Result<Void, any Error>.self) { group in
         group.addTask {
           do {
-            let connection = try client.connect(.init(kind: "write.v1", input: ["path": .string(target.path), "bytes": "131072", "digest": .string(sha256(prefix + prefix))]))
+            let connection = try client.connect(.init(kind: "write.v1", input: ["path": .string(target.path), "bytes": .string(String(2 * prefix.count)), "digest": .string(sha256(prefix + prefix))]))
             defer {
               connection.close()
               callerClosed.continuation.yield()

@@ -1,70 +1,74 @@
-import Foundation
 import enum SpaceContract.Handle
 import StructuredQueries
-import StructuredQueriesSQLite
+import Wuwei
+import WuweiQueries
 
 @Table("user_profiles")
 struct UserProfileRow {
   @Column("principal", primaryKey: true) var principal: String
-  @Column("handle") var handle: String
+  @Column("owner_account") var ownerAccount: String
   @Column("display_name") var displayName: String?
-  @Column("updated_at") var updatedAt: String
 }
 
 public struct UserProfile: Equatable, Sendable {
   public let principal: String
   public let handle: String
   public let displayName: String?
-  public let updatedAt: Date
 }
 
 extension Space {
   public func setUserProfile(principal: String, handle: String, displayName: String?) async throws -> UserProfile {
     guard let normalized = Handle.normalized(handle) else { throw SpaceError.invalidHandle(handle) }
-    let updatedAt = dateGen.now
-    let row = UserProfileRow(
-      principal: principal,
-      handle: normalized,
-      displayName: displayName,
-      updatedAt: SQLiteDateFormat.string(from: updatedAt),
-    )
-    try await writer.write { db in
-      do { try Aliases.requireFree(normalized, kind: .person, target: principal, in: db) }
-      catch AliasError.taken { throw SpaceError.handleTaken(normalized) }
-      try UserProfileRow.upsert { row }.execute(db)
-    }
-    return UserProfile(principal: principal, handle: normalized, displayName: displayName, updatedAt: updatedAt)
+    guard let owner = cell.personCell(principal), let account = worker.cell(owner).account(), account.removedAt == nil else { throw SpaceError.notFound(principal) }
+    do { try await worker.call(SpaceCell.ID("space")) { try $0.renamePerson(principal, handle: normalized) } }
+    catch AliasError.taken { throw SpaceError.handleTaken(normalized) }
+    _ = try await worker.call(owner) { try $0.setDisplayName(principal, displayName: displayName) }
+    return cell.userProfile(principal: principal)!
   }
 
-  public func userProfile(principal: String) async throws -> UserProfile? {
-    try await writer.read { db in
-      try UserProfileRow.where { $0.principal.eq(principal) }.fetchOne(db).map(Self.userProfile(from:))
-    }
+  public func userProfile(principal: String) async throws -> UserProfile? { cell.userProfile(principal: principal) }
+  public func userProfile(handle: String) async throws -> UserProfile? { cell.userProfile(handle: handle) }
+  public func userProfiles() async throws -> [UserProfile] { cell.userProfiles() }
+  public func handlesByPrincipal() async throws -> [String: String] { Dictionary(uniqueKeysWithValues: cell.userProfiles().map { ($0.principal, $0.handle) }) }
+}
+
+extension PersonCell {
+  mutating func setDisplayName(_ principal: String, displayName: String?) throws -> Bool {
+    try requireAccount()
+    try db.execute(UserProfileRow.upsert { UserProfileRow(principal: principal, ownerAccount: id.key, displayName: displayName) })
+    return true
+  }
+}
+
+extension SpaceCell {
+  func userProfile(principal: String) -> UserProfile? {
+    db.rows(AliasRow.where { $0.kind.eq(AliasKind.person) && $0.current && $0.target.eq(principal) }.select {
+      UserProfileRead.Columns(principal: $0.target, handle: $0.name, displayName: #sql("(SELECT display_name FROM user_profiles WHERE principal = \($0.target))", as: String?.self))
+    }).first?.record
   }
 
-  public func userProfile(handle: String) async throws -> UserProfile? {
-    return try await writer.read { db in
-      guard let id = try Aliases.resolvePerson(handle, in: db) else { return nil }
-      return try UserProfileRow.find(id).fetchOne(db).map(Self.userProfile(from:))
-    }
+  func userProfile(handle: String) -> UserProfile? {
+    let handle = handle.lowercased()
+    return db.rows(AliasRow.where {
+      $0.kind.eq(AliasKind.person) && $0.current
+        && $0.target.eq(#sql("(SELECT target FROM aliases WHERE name = \(bind: handle) AND kind = 'person')", as: String.self))
+    }.select {
+      UserProfileRead.Columns(principal: $0.target, handle: $0.name, displayName: #sql("(SELECT display_name FROM user_profiles WHERE principal = \($0.target))", as: String?.self))
+    }).first?.record
   }
 
-  public func userProfiles() async throws -> [UserProfile] {
-    try await writer.read { db in
-      try UserProfileRow.order { $0.handle }.fetchAll(db).map(Self.userProfile(from:))
-    }
+  func userProfiles() -> [UserProfile] {
+    db.rows(AliasRow.where { $0.kind.eq(AliasKind.person) && $0.current }.order { $0.name }.select {
+      UserProfileRead.Columns(principal: $0.target, handle: $0.name, displayName: #sql("(SELECT display_name FROM user_profiles WHERE principal = \($0.target))", as: String?.self))
+    }).map(\.record)
   }
+}
 
-  public func handlesByPrincipal() async throws -> [String: String] {
-    Dictionary(uniqueKeysWithValues: try await userProfiles().map { ($0.principal, $0.handle) })
-  }
+@Selection
+private struct UserProfileRead {
+  var principal: String
+  var handle: String
+  var displayName: String?
 
-  private static func userProfile(from row: UserProfileRow) -> UserProfile {
-    UserProfile(
-      principal: row.principal,
-      handle: row.handle,
-      displayName: row.displayName,
-      updatedAt: (try? SQLiteDateFormat.date(from: row.updatedAt)) ?? Date(timeIntervalSince1970: 0),
-    )
-  }
+  var record: UserProfile { UserProfile(principal: principal, handle: handle, displayName: displayName) }
 }

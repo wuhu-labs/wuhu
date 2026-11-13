@@ -25,7 +25,7 @@ import Testing
       title: "coder", kind: .task, parent: parent, createdBy: parent.rawValue,
       executor: .kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high")),
     )
-    return Tree(harness: harness, parent: parent, task: task, person: try await harness.mintPersona())
+    return Tree(harness: harness, parent: parent, task: task, person: try await harness.adoptPersona())
   }
 
   func code(_ response: Response) async throws -> String? {
@@ -125,7 +125,7 @@ import Testing
         .object(["title": "helper", "template": "coder", "expects_reply": true, "message": "go"]),
       )
       #expect(!isToolError(spawned))
-      let dm = try #require(try await t.harness.store.conversations(member: t.parent.rawValue).first {
+      let dm = try #require(t.harness.store.conversations(member: t.parent.rawValue).first {
         $0.kind == .dmSession && !$0.members.contains { $0.member == t.task.rawValue }
       })
       let child = try #require(dm.members.first { $0.member != t.parent.rawValue })
@@ -150,7 +150,7 @@ import Testing
       )
       #expect(!isToolError(followed))
 
-      let dm = try #require(try await t.harness.store.conversations(member: task).first { $0.kind == .dmSession })
+      let dm = try #require(t.harness.store.conversations(member: task).first { $0.kind == .dmSession })
       let request = try #require(try await t.harness.store.messages(conversation: dm.id).first?.requestID)
       // The task has seen its request once its queue drains; only then may it report.
       _ = try await t.harness.store.drainQueue(t.task)

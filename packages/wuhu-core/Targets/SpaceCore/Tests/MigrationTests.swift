@@ -15,13 +15,14 @@ import Testing
   private func database() throws -> DatabaseQueue {
     var configuration = Configuration()
     configuration.foreignKeysEnabled = true
+    configuration.busyMode = .timeout(5)
     return try DatabaseQueue(path: "file:/migration-\(UUID())?vfs=memdb", configuration: configuration)
   }
 
   private func baseline(_ database: DatabaseQueue) async throws -> Space {
     let space = try Space(writer: database)
-    _ = try await space.addAccount(kind: .human, name: "Kept")
     try await database.write { db in
+      try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005')")
       try db.execute(sql: """
       CREATE TABLE machine_execs (
@@ -68,6 +69,7 @@ import Testing
     let owed = try #require(try await first.owedExecs().first)
     #expect(owed.toolSpec == "{}")
     let identity = try await first.identity()
+    await first.stopWorker()
     try await database.write { db in
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
       try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, 'changed')", arguments: [owed.id])
@@ -113,8 +115,8 @@ import Testing
   @Test func historicalMachineCellMigrationDropsExecStateButKeepsFileOperations() async throws {
     let database = try database()
     let original = try Space(writer: database)
-    _ = try await original.addAccount(kind: .human, name: "Kept")
     try await database.write { db in
+      try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
       try LegacyMachineSchema.create(in: db)
       try db.execute(sql: """
       DROP TABLE machine_operations;
@@ -391,6 +393,7 @@ import Testing
     #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE name IN (\(Self.dropped.map { "'" + $0 + "'" }.joined(separator: ","))) ORDER BY 1") } == [])
     let fresh = try self.database()
     let freshSpace = try Space(writer: fresh)
+    _ = freshSpace.worker
     let migrated = try Self.schemaShape(reopened)
     let expected = try Self.schemaShape(fresh)
     #expect(migrated.tables.keys.sorted() == expected.tables.keys.sorted())
@@ -408,7 +411,9 @@ import Testing
     let owner = try await original.addAccount(kind: .human, name: "Morgan").id
     let lab = try await original.createGroup(alias: "lab", owner: owner)
     let personal = try await original.ensurePersonalGroup(account: owner)
-    try await database.write { db in
+    let offline = try DatabaseQueue(path: database.path)
+    try await original.close()
+    try await offline.write { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('bare', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "ALTER TABLE groups DROP COLUMN name")
       try db.execute(sql: "ALTER TABLE groups ADD COLUMN alias TEXT")
@@ -421,7 +426,6 @@ import Testing
     let upgraded = try Space(writer: try DatabaseQueue(path: database.path))
     let names = Dictionary(uniqueKeysWithValues: try await upgraded.groups().map { ($0.id, $0.name) })
     #expect(names == [.shared: "Shared", .settings: "settings", lab: "lab", GroupID(rawValue: "bare"): "bare", personal: nil])
-    try await original.close()
     try await upgraded.close()
   }
 

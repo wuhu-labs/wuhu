@@ -103,9 +103,9 @@ import Testing
           #expect(final.requestID == RequestID(request.rawValue))
           #expect(final.senderSession == id)
           #expect(final.content.text.contains("archived before reporting"))
-          #expect(try await sessions.openRequests(id).isEmpty)
+          #expect(try sessions.openRequests(id).isEmpty)
           _ = try await sessions.drainQueue(id)
-          #expect(try await sessions.openRequests(id).isEmpty)
+          #expect(try sessions.openRequests(id).isEmpty)
         }
         #expect(try await sessions.record(requester).lifecycle == .live)
         try await until("the final reaches the requester") {

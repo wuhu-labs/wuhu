@@ -444,7 +444,7 @@ struct MessagingTests {
         throw Mismatch("expected a report outcome, got \(progress)")
       }
       #expect(reported.kind == .progress)
-      #expect(try await space.sessions.openRequests(task).count == 1)
+      #expect(try space.sessions.openRequests(task).count == 1)
 
       let final = try await taskWorld.run("report", .object([
         "request_id": .string(request.requestID.rawValue),
@@ -454,7 +454,7 @@ struct MessagingTests {
       guard case .report = final else {
         throw Mismatch("expected a report outcome, got \(final)")
       }
-      #expect(try await space.sessions.openRequests(task).isEmpty)
+      #expect(try space.sessions.openRequests(task).isEmpty)
       try await space.sessions.deliverMail()
       #expect(try await space.sessions.undrainedInputs(parent).count == 2)
     }
@@ -512,7 +512,7 @@ struct MessagingTests {
       }
       let request = try #require(withRequest.requestID)
       _ = try await space.sessions.drainQueue(withRequest.sessionID)
-      #expect(try await space.sessions.openRequests(withRequest.sessionID).map(\.id) == [request])
+      #expect(try space.sessions.openRequests(withRequest.sessionID).map(\.id) == [request])
 
       let missingMessage = try await world.run("create_session", .object([
         "title": .string("nope"),

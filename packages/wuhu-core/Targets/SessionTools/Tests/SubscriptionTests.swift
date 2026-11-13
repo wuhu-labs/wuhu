@@ -97,7 +97,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
             && notifications.contains { $0.content.text == "once survives" }
         }
         #expect(try await space.sessions.armedSubscriptions(session).count == 1)
-        #expect(try await space.sessions.openRequests(child).map(\.id) == [.init("restart-duty")])
+        #expect(try space.sessions.openRequests(child).map(\.id) == [.init("restart-duty")])
         _ = try await space.sessions.drainQueue(session)
         await time.advance(by: 60)
         try await untilAdvancing("cron fires again", time) {

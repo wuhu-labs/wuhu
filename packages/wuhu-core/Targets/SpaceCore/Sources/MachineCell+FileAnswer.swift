@@ -56,7 +56,7 @@ extension MachineCell {
         row.state = "reconciling"
       } else if purpose == .start, error.code == .operationExists {
         row.state = "running"
-        readyFile(&row)
+        readyFile(&row, piece: presence.piece)
       } else if [.transport, .requestDeadline, .requestCancelled, .machineUnavailable, .capacityExceeded].contains(error.code) {
         if purpose == .start { row.state = "reconciling" }
         else { stalled = true }
@@ -96,7 +96,7 @@ extension MachineCell {
       switch purpose {
       case .start:
         row.state = "running"
-        if row.stop == nil, !row.delivered { readyFile(&row) }
+        if row.stop == nil, !row.delivered { readyFile(&row, piece: presence.piece) }
       case .stop:
         try deleteFile(row)
         return
@@ -132,7 +132,7 @@ extension MachineCell {
       case .control:
         if row.state == "reconciling" {
           row.state = "running"
-          if row.stop == nil, !row.delivered { readyFile(&row) }
+          if row.stop == nil, !row.delivered { readyFile(&row, piece: presence.piece) }
         }
         stalled = snapshot.verdict == nil
       case let .terminal(channel):

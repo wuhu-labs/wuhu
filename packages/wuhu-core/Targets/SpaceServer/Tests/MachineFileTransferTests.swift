@@ -18,8 +18,17 @@ import Synchronization
 import Testing
 
 @Suite(.deterministicDependencies(clock: ContinuousClock())) struct MachineFileTransferTests {
+  /// The box every file test runs against: the largest piece the protocol allows, so each exchange carries what a real box
+  /// that advertises four mebibytes sends.
+  static var pieceSized: OperationLimits {
+    var limits = OperationLimits()
+    limits.filePieceBytes = OperationLimits.maxFilePieceBytes
+    return limits
+  }
+
   @discardableResult func withMachines<T: Sendable>(
     _ machines: [String: [AnyOperationKind]],
+    limits: OperationLimits = MachineFileTransferTests.pieceSized,
     intercept: @escaping @Sendable (String, Request) async throws -> Void = { _, _ in },
     interceptResponse: @escaping @Sendable (String, Request, Response) async throws -> Response = { _, _, response in response },
     body: (MachineFileTransfer) async throws -> T,
@@ -29,7 +38,7 @@ import Testing
       var agents: [OperationAgent] = []
       var links: [(BoxLink, FetchClient)] = []
       for (name, kinds) in machines {
-        let agent = try OperationAgent(machine: name, kinds: kinds, authorize: { _, _ in })
+        let agent = try OperationAgent(machine: name, kinds: kinds, limits: limits, authorize: { _, _ in })
         agents.append(agent)
         let pubkey = try await seedBoxKey(space: space, machine: name)
         let link = try #require(BoxLink(worker: space.worker, machine: name, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) { _ in preconditionFailure("file-only fixture") })
@@ -76,6 +85,68 @@ import Testing
     #expect(!token.isEmpty)
   }
 
+  /// A copy moves one piece per exchange on each side: a 100 MiB file of 4 MiB pieces is 25 of them, plus start, commit,
+  /// describe and terminal.
+  @Test func aHundredMiBCopyMovesInOnePieceExchanges() async throws {
+    let folder = try ScratchFolder("copy-hundred")
+    let source = folder.url.appending(path: "source.bin").path, target = folder.url.appending(path: "target.bin").path
+    let piece = 4 * 1024 * 1024
+    var limits = OperationLimits()
+    limits.filePieceBytes = piece
+    let chunk = Data((0 ..< piece).map { UInt8(($0 * 7) % 251) })
+    var content = Data(capacity: 25 * piece)
+    for _ in 0 ..< 25 { content.append(chunk) }
+    try content.write(to: URL(fileURLWithPath: source))
+    let exchanges = Mutex<[String: [String]]>([:])
+    let receipt = try await withMachines(["a": fileOperationKinds(), "b": fileOperationKinds()], limits: limits, intercept: { name, request in
+      exchanges.withLock { $0[name, default: []].append("\(request.method) \(request.url.path)") }
+    }) { transfer in
+      try await transfer.copy(from: .machine(a, path: source), to: .machine(b, path: target, replace: false))
+    }
+    #expect(receipt.bytes == 25 * piece)
+    #expect(receipt.sha256 == sha256(try Data(contentsOf: URL(fileURLWithPath: target))))
+    for (name, requests) in exchanges.withLock({ $0 }) {
+      // 25 pieces, plus the source's stat, describe, start, one control poll, commit and the terminal answers.
+      #expect(requests.count <= 34, "\(name) exchanged \(requests.count) times")
+    }
+  }
+
+  /// A box that advertises today's limits keeps moving 64 KiB pieces: the piece is what it advertises, not a constant.
+  @Test func aBoxAtTodaysLimitsStillMovesSixtyFourKiBPieces() async throws {
+    let folder = try ScratchFolder("copy-today")
+    let source = folder.url.appending(path: "source.bin").path, target = folder.url.appending(path: "target.bin").path
+    let bytes = Data((0 ..< 1024 * 1024).map { UInt8(($0 * 13) % 251) })
+    try bytes.write(to: URL(fileURLWithPath: source))
+    let exchanges = Mutex<[String: [Int]]>([:])
+    let receipt = try await withMachines(["a": fileOperationKinds(), "b": fileOperationKinds()], limits: OperationLimits(), intercept: { name, request in
+      exchanges.withLock { $0[name, default: []].append(Int(request.body?.contentLength ?? 0)) }
+    }) { transfer in
+      try await transfer.copy(from: .machine(a, path: source), to: .machine(b, path: target, replace: false))
+    }
+    #expect(receipt.bytes == bytes.count)
+    let sizes = try #require(exchanges.withLock { $0["b"] })
+    // 1 MiB in 64 KiB pieces; a write request carries one piece base64-encoded inside the snapshot.
+    #expect(sizes.count >= 16, "b exchanged only \(sizes.count) times")
+    #expect((sizes.max() ?? 0) <= 64 * 1024 * 4 / 3 + 4096, "b moved a piece of \(sizes.max() ?? 0) bytes")
+  }
+
+  /// A box whose piece sits between the response cap and twice it still moves whole pieces: the answer frame follows the
+  /// poll's limit, so a piece that base64-encodes past 256 KiB is not refused.
+  @Test(.timeLimit(.minutes(1))) func aBoxWithPiecesBetweenTheCapsMovesWholePieces() async throws {
+    let folder = try ScratchFolder("copy-200k")
+    let source = folder.url.appending(path: "source.bin").path, target = folder.url.appending(path: "target.bin").path
+    let bytes = Data((0 ..< 1024 * 1024).map { UInt8(($0 * 11) % 251) })
+    try bytes.write(to: URL(fileURLWithPath: source))
+    var limits = OperationLimits()
+    limits.filePieceBytes = 200 * 1024
+    let receipt = try await withMachines(["a": fileOperationKinds(), "b": fileOperationKinds()], limits: limits) { transfer in
+      try await transfer.copy(from: .machine(a, path: source), to: .machine(b, path: target, replace: false))
+    }
+    #expect(receipt.bytes == bytes.count)
+    #expect(receipt.sha256 == sha256(bytes))
+    #expect(try Data(contentsOf: URL(fileURLWithPath: target)) == bytes)
+  }
+
   @Test func anExistingTargetIsRefusedUnlessReplacedAndThenReplacedWhole() async throws {
     let folder = try ScratchFolder("copy-exists")
     let target = folder.url.appending(path: "target.txt").path
@@ -92,6 +163,22 @@ import Testing
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path) == ["target.txt"])
   }
 
+  /// A listing answers records on a 256 KiB channel: the poll asks for the channel's window, not the box's piece, which on a
+  /// four-mebibyte box the box refuses.
+  @Test func aListingOnAFourMebibyteBoxDeliversItsEntries() async throws {
+    let folder = try ScratchFolder("list-piece")
+    let directory = folder.url.appending(path: "dir")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    let names = (0 ..< 8).map { "entry-\($0)" }
+    for name in names { try Data(name.utf8).write(to: directory.appending(path: name)) }
+    try await withMachines(["a": fileOperationKinds()]) { transfer in
+      let client = MachineFileClient(space: transfer.space, machine: a, caller: nil)
+      let result = try await client.vfs(.ls(path: directory.path))
+      guard case let .entries(entries) = result else { Issue.record("expected entries"); return }
+      #expect(entries.map(\.name).sorted() == names)
+    }
+  }
+
   @Test func aCopyCancelledHalfwayLeavesNothingAtItsTarget() async throws {
     let folder = try ScratchFolder("copy-cut")
     let target = folder.url.appending(path: "target.bin").path
@@ -103,7 +190,7 @@ import Testing
       reached.yield()
       for await _ in cancelled {}
     }) { transfer in
-      let copy = Task { try await transfer.copy(from: .bytes(Array(repeating: 7, count: 1_000_000)), to: .machine(b, path: target, replace: false)) }
+      let copy = Task { try await transfer.copy(from: .bytes(Array(repeating: 7, count: 3 * OperationLimits.maxFilePieceBytes)), to: .machine(b, path: target, replace: false)) }
       for await _ in halfway { break }
       copy.cancel()
       cancelling.finish()
@@ -283,7 +370,8 @@ import Testing
     let folder = try ScratchFolder("copy-backpressure")
     let source = folder.url.appending(path: "source").path
     let target = folder.url.appending(path: "target").path
-    let bytes = Data(repeating: 9, count: 400_000)
+    let piece = OperationLimits.maxFilePieceBytes
+    let bytes = Data(repeating: 9, count: 8 * piece)
     try bytes.write(to: URL(fileURLWithPath: source))
     let inputs = Mutex(0)
     let (blocked, didBlock) = AsyncStream<Void>.makeStream()
@@ -302,7 +390,7 @@ import Testing
           let caller = cell.ctx.sockets(of: FileBulk.self).first { $0.opening.request.start.kind == "read.v1" }!
           return cell.fileOperation(caller.opening.request.operation)!.offsets["data"]!
         }
-        #expect((2 * 65536 ... 3 * 65536).contains(consumed))
+        #expect((UInt64(2 * piece) ... UInt64(3 * piece)).contains(consumed))
         release.finish()
         let receipt = try #require(try await group.next())
         #expect(receipt.bytes == bytes.count)

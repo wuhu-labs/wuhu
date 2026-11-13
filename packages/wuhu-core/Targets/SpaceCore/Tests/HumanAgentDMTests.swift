@@ -54,11 +54,11 @@ import Testing
               senderSession: bySession ? session : nil, content: .init(text: "not delivered"),
             )
           }
-          #expect(try await store.message(id) == nil)
+          #expect(store.message(id) == nil)
         }
         #expect(try await store.undrainedInputs(session).isEmpty)
       }
-      #expect(try await store.conversations(member: "carol").isEmpty)
+      #expect(store.conversations(member: "carol").isEmpty)
       #expect(try await store.inbox("carol").isEmpty)
     }
   }

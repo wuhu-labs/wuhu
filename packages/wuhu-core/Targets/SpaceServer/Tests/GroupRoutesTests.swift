@@ -174,7 +174,7 @@ import Testing
     try await withSessionDeps {
       let p = try await people()
       let first = try await p.harness.space.adoptPersona(key: p.key)
-      let second = try await p.harness.space.mintPersona(key: p.key)
+      let second = try await p.harness.space.adoptPersona(key: p.key)
       for persona in [first.name, second.name] {
         try await p.harness.store.advanceWatermark(identity: persona, source: "somewhere")
       }
@@ -198,7 +198,7 @@ import Testing
         let response = try await send(p, .get, "/v1/conversations\(query)", group: p.alice)
         return try JSONValueDecoder().decode(ConversationsOutput.self, from: try await json(response)).conversations.map(\.id)
       }
-      #expect(try await listed("") == [])
+      #expect(try await listed("") == [dm.message.conversation.rawValue])
       // Homed in bob, which alice does not read: listed and notified because
       // the persona is a member.
       #expect(try await listed("?identity=\(second.name)") == [dm.message.conversation.rawValue])

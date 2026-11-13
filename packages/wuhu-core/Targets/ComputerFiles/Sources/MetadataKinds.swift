@@ -9,6 +9,7 @@ import enum OperationProtocol.ComputerKindSchemas
 import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.Offset
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationLimits
 import OperationRuntime
 
 func metadataOperationKinds(files: ComputerFileOperations) -> [AnyOperationKind] {
@@ -44,7 +45,13 @@ private struct MetadataKind: OperationKind {
     }
   }
 
-  func run(_ input: MetadataInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+  /// A write knows its length at start, so `data` is admitted for what it moves, not the descriptor's ceiling.
+  func start(_ input: MetadataInput, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    let windows = descriptor.name == "write.v1" ? ["data": Int(min(input.bytes!.rawValue, UInt64(limits.filePieceBytes)))] : [:]
+    return OperationStart(windows: windows) { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: MetadataInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     try await cancellation.unlessStopped { try await self.perform(input, channels: channels, cancellation: cancellation) }
   }
 
@@ -81,7 +88,7 @@ private struct MetadataKind: OperationKind {
 private func stream(_ channel: String, into writer: ComputerWriter, channels: OperationChannels, cancellation: OperationCancellation, limit: UInt64 = .max, verify: (UInt64, String) async throws -> Void) async throws -> JSONValue {
   do {
     var hash = SHA256(); var count: UInt64 = 0
-    while let chunk = try await channels.read(channel, upTo: 1 << 20) {
+    while let chunk = try await channels.read(channel, upTo: OperationLimits.maxFilePieceBytes) {
       guard let data = chunk.data, UInt64(data.count) <= limit - count else { throw OperationError(.invalidInput) }
       hash.update(data: data); count += UInt64(data.count); try await writer.append(data)
     }
@@ -96,12 +103,13 @@ private func stream(_ channel: String, into writer: ComputerWriter, channels: Op
 }
 
 private struct StagedWriteInput: Decodable, Sendable {
-  let path: String; let replace: Bool
-  enum CodingKeys: String, CodingKey { case path, replace }
+  let path: String; let replace: Bool; let length: Offset?
+  enum CodingKeys: String, CodingKey { case path, replace, length }
   init(from decoder: any Decoder) throws {
-    try fields(decoder, allowed: ["path", "replace"])
+    try fields(decoder, allowed: ["path", "replace", "length"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
     path = try c.decode(String.self, forKey: .path); replace = try c.decode(Bool.self, forKey: .replace)
+    length = try c.decodeIfPresent(Offset.self, forKey: .length)
     try absolute(path)
   }
 }
@@ -111,7 +119,15 @@ private struct StagedCommit: Decodable { let bytes: Offset; let sha256: String }
 private struct StagedWriteKind: OperationKind {
   let files: ComputerFileOperations
   let descriptor = ComputerKindSchemas.stagedWrite
-  func run(_ input: StagedWriteInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+  /// A copy that pins its source knows how much it will send; one that does not is admitted for a piece, never the descriptor
+  /// ceiling.
+  func start(_ input: StagedWriteInput, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    let piece = min(descriptor.inputChannels[0].windowBytes, limits.filePieceBytes)
+    let windows = ["data": Int(min(input.length?.rawValue ?? UInt64(piece), UInt64(piece)))]
+    return OperationStart(windows: windows) { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: StagedWriteInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     try await cancellation.unlessStopped {
       try await stream("data", into: files.write(input.path, input.replace ? .any : .absent), channels: channels, cancellation: cancellation) { count, digest in
         guard let record = try await channels.read("commit", upTo: 1024)?.records?.first else { throw OperationError(.invalidInput, message: "No commit record") }

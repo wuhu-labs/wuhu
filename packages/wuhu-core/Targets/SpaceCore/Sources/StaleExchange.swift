@@ -5,6 +5,8 @@
 #endif
 import GRDB
 import SessionDomain
+import StructuredQueries
+import StructuredQueriesSQLite
 
 extension Conversations {
   /// The session's last message in `conversation` and the one it answered (its
@@ -45,7 +47,7 @@ extension Sessions {
   /// The sender as the recipient is shown it, named by today's handle and device name.
   static func attributed(_ sender: Sender, in db: Database) throws -> Sender {
     var sender = sender
-    sender.handle = try UserProfileRow.find(sender.id).fetchOne(db)?.handle
+    sender.handle = try AliasRow.where { $0.kind.eq(AliasKind.person) && $0.target.eq(sender.id) && $0.current }.select(\.name).fetchOne(db)
     if let device = sender.device { sender.deviceName = try DeviceRow.find(device).fetchOne(db)?.name }
     return sender
   }

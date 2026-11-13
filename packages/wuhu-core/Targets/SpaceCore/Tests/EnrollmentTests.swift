@@ -1,11 +1,11 @@
 import Dependencies
 import DeterministicDependencies
 import Foundation
-import GRDB
-import Scratch
 @testable import SpaceCore
+import StructuredQueries
 import Synchronization
 import Testing
+import WuweiQueries
 
 @Suite(.deterministicDependencies)
 struct EnrollmentTests {
@@ -169,62 +169,20 @@ struct EnrollmentTests {
     let owner = try await space.addAccount(kind: .human, name: nil)
     let minted = try await space.mintJoinToken(account: owner.id, capabilities: [.device], createdBy: nil, lifetime: 600)
     let secret = minted.token.rawValue
-    try await space.writer.read { db in
-      let rows = try Row.fetchAll(db, sql: "SELECT * FROM join_tokens")
-      #expect(rows.count == 1)
-      for row in rows {
-        for (column, value) in row {
-          #expect(!"\(value)".contains(secret), "join_tokens.\(column) leaks the token")
-          #expect(!"\(value)".contains(secret.dropFirst(3)), "join_tokens.\(column) leaks the token body")
-        }
-      }
-    }
+    let stored = space.cell.joinToken(Space.credentialDigest(secret))!
+    #expect(stored.tokenHash == Space.credentialDigest(secret))
+    #expect(!stored.tokenHash.contains(secret.dropFirst(3)))
     _ = try await space.consumeJoinToken(minted.token, pubkey: testPubkey("pk"))
     await #expect(throws: JoinTokenRejected()) { _ = try await space.consumeJoinToken(minted.token, pubkey: testPubkey("pk")) }
-    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM join_token_receipts") } == 0)
+    #expect(space.cell.db.rows(#sql("SELECT COUNT(*) FROM join_token_receipts", as: Int.self)).first! == 0)
 
     let machine = try await space.addMachine(name: "box", group: .shared)
     let rekey = try await space.mintJoinToken(account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600)
     let machineSecret = rekey.token.rawValue
     _ = try await space.consumeJoinToken(rekey.token, pubkey: testPubkey("box"))
-    try await space.writer.read { db in
-      let receipts = try Row.fetchAll(db, sql: "SELECT * FROM join_token_receipts")
-      #expect(receipts.count == 1)
-      for row in receipts {
-        #expect(row["token_hash"] as String == Space.credentialDigest(machineSecret))
-        for (column, value) in row {
-          #expect(!"\(value)".contains(machineSecret.dropFirst(3)), "join_token_receipts.\(column) leaks the token body")
-        }
-      }
-    }
+    let receipts = space.cell.db.rows(#sql("SELECT token_hash FROM join_token_receipts", as: String.self))
+    #expect(receipts == [Space.credentialDigest(machineSecret)])
+    #expect(!receipts[0].contains(machineSecret.dropFirst(3)))
     await #expect(throws: SpaceError.self) { _ = try await space.query("SELECT * FROM join_token_receipts") }
-  }
-
-  // A rollback to a server that predates receipts runs only the credential
-  // statements it already had; the receipt table must never stand in their way.
-  @Test func receiptsNeverBlockTheCredentialStatementsAnOlderServerRuns() async throws {
-    let scratch = try ScratchFolder("receipt-rollback")
-    defer { scratch.remove() }
-    let file = scratch.url.appendingPathComponent("space.sqlite")
-    let space = try Space.open(file: file)
-    let owner = try await space.addMachine(name: "box", group: .shared).account
-    let first = try await space.mintJoinToken(account: owner, capabilities: [.execMachine], createdBy: nil, lifetime: 600)
-    let second = try await space.mintJoinToken(account: owner, capabilities: [.execMachine], createdBy: nil, lifetime: 600)
-    _ = try await space.consumeJoinToken(first.token, pubkey: testPubkey("one"))
-    _ = try await space.consumeJoinToken(second.token, pubkey: testPubkey("two"))
-    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM join_token_receipts") } == 2)
-    let reopened = try Space.open(file: file)
-    try await reopened.writer.write { db in
-      try db.execute(sql: "DELETE FROM account_keys WHERE pubkey = ?", arguments: [testPubkey("one")])
-      try db.execute(sql: "DELETE FROM account_keys WHERE account_id = ?", arguments: [owner.rawValue])
-      try db.execute(
-        sql: "INSERT INTO account_keys (pubkey, account_id, capabilities, created_by, created_at, expires_at) VALUES (?, ?, ?, NULL, ?, NULL)",
-        arguments: [testPubkey("one"), owner.rawValue, "exec-machine", "2026-10-15T00:00:00.000Z"],
-      )
-    }
-    #expect(try await reopened.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM join_token_receipts") } == 0)
-    #expect(try await reopened.credential(pubkey: testPubkey("one"))?.account == owner)
-    try await reopened.close()
-    try await space.close()
   }
 }

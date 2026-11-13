@@ -104,7 +104,7 @@ enum Substrate {
   }
 
   static func head(_ path: SpacePath, group: GroupID, in db: Database) throws -> FSHeadRow? {
-    try FSHeadRow.where { $0.grp.eq(group.rawValue) && $0.path.eq(path.rawValue) }.fetchOne(db)
+    try FSHeadRow.at(path, in: group).fetchOne(db)
   }
 
   static func tableExists(_ path: SpacePath, group: GroupID, in db: Database) throws -> Bool {

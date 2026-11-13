@@ -96,8 +96,8 @@ import Testing
       let id = try await harness.createSession()
       let key = id.rawValue
 
-      let alice = try await harness.mintPersona()
-      let bob = try await harness.mintPersona()
+      let alice = try await harness.adoptPersona()
+      let bob = try await harness.adoptPersona()
       let head = try await harness.call(
         "/v1/conversation/message",
         .object(["message": "first", "session": .string(key), "identity": .string(alice), "timezone": "Europe/Paris"]),
@@ -153,8 +153,8 @@ import Testing
       let id = try await harness.createSession()
       let key = id.rawValue
 
-      let alice = try await harness.mintPersona()
-      let bob = try await harness.mintPersona()
+      let alice = try await harness.adoptPersona()
+      let bob = try await harness.adoptPersona()
       let head = try await harness.call(
         "/v1/conversation/message",
         .object(["message": "question", "session": .string(key), "identity": .string(alice)]),
@@ -242,7 +242,7 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness(dev: false)
       let (bearer, enrolled) = try await harness.enrolledBearer()
-      let persona = try await harness.space.mintPersona(key: enrolled).name
+      let persona = try await harness.space.adoptPersona(key: enrolled).name
 
       let created = try await harness.call(
         "/v1/session",
@@ -347,8 +347,8 @@ import Testing
       let harness = try await SessionHarness(dev: false)
       let (alice, aliceKey) = try await harness.enrolledBearer()
       let (bob, bobKey) = try await harness.enrolledBearer()
-      let alicePersona = try await harness.space.mintPersona(key: aliceKey).name
-      let bobPersona = try await harness.space.mintPersona(key: bobKey).name
+      let alicePersona = try await harness.space.adoptPersona(key: aliceKey).name
+      let bobPersona = try await harness.space.adoptPersona(key: bobKey).name
 
       let created = try await harness.call(
         "/v1/session",
@@ -396,7 +396,7 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness(dev: false)
       let (_, firstKey) = try await harness.enrolledBearer()
-      let persona = try await harness.space.mintPersona(key: firstKey).name
+      let persona = try await harness.space.adoptPersona(key: firstKey).name
       let (second, _) = try await harness.enrolledBearer(account: firstKey.account)
 
       // Explicit: another key of the same account may speak as its persona.
@@ -440,7 +440,7 @@ import Testing
       #expect(persona != "owner")
       #expect(try await harness.store.record(SessionID(created.id)).createdBy == persona)
 
-      let stranger = try await harness.mintPersona()
+      let stranger = try await harness.adoptPersona()
       let forged = try await harness.post(
         "/v1/conversation/message",
         .object(["message": "hi", "session": .string(created.id), "identity": .string(stranger)]),

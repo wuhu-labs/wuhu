@@ -199,16 +199,19 @@ private final class CredentialPurgeCommits: TransactionObserver, Sendable {
     let space = try Space.inMemory()
     let key = Curve25519.Signing.PrivateKey()
     let machine = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).machine
+    if action == "reset" { _ = try await space.worker.call(PersonCell.ID(machine.account.rawValue)) { $0.account() } }
     try await space.writer.write { db in
       try db.execute(sql: "CREATE TRIGGER reject_machine_mail BEFORE INSERT ON wuwei_mail BEGIN SELECT RAISE(ABORT, 'injected mail interruption'); END")
     }
-    await #expect(throws: Wuwei.SQLiteError.self) {
+    await #expect {
       switch action {
       case "reset": _ = try await space.resetCredentials(account: machine.account)
       case "revoke": _ = try await space.revokeMachine(machine.id, presenting: key.pubkeyLabel)
       case "delete": try await space.deleteMachine(machine.id, by: .shared(.anonymous))
       default: preconditionFailure()
       }
+    } throws: { error in
+      action == "reset" ? error is Wuwei.Evicted : error is Wuwei.SQLiteError
     }
     #expect(try await space.machine(pubkey: key.pubkeyLabel) == machine.id)
     #expect(try await space.machine(machine.id) != nil)

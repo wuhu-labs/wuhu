@@ -15,7 +15,7 @@ struct AliasRow {
   @Column(primaryKey: true) var name: String
   var kind: AliasKind
   var target: String
-  /// Whether this spelling is its record's current name. Only groups keep that here: a person's is its handle, a machine's its name.
+  /// Whether this spelling is its record's current name. Groups and people keep it here; machines keep their current name in their own row.
   var current: Bool = false
 }
 
@@ -33,7 +33,7 @@ enum Aliases {
   static func resolvePerson(_ spelling: String, in db: Database) throws -> String? {
     let id = try target(spelling, kind: .person, in: db) ?? spelling
     if try PersonaRow.find(id).select(\.name).fetchOne(db) != nil { return id }
-    return try UserProfileRow.find(id).select(\.principal).fetchOne(db)
+    return try AliasRow.where { $0.kind.eq(AliasKind.person) && $0.current && $0.target.eq(id) }.select(\.target).fetchOne(db)
   }
 
   static func requireFree(_ name: String, kind: AliasKind, target: String?, group: GroupID? = nil, in db: Database) throws {

@@ -107,6 +107,7 @@ extension MachineCell {
         p.resultBytes = description.limits.resultBytes
         p.execStdoutWindow = exec?.outputChannels.first { $0.name == "stdout" }?.windowBytes
         p.execStderrWindow = exec?.outputChannels.first { $0.name == "stderr" }?.windowBytes
+        p.filePieceBytes = description.limits.filePieceBytes
         p.state = "attached"; p.observed = now
         p.lease = now + Int64(description.limits.leaseMs)
         p.describeAt = now + Int64(description.limits.leaseMs / 3); p.describeRetry = 100

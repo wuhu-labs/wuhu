@@ -29,7 +29,7 @@ struct LiveFS: SpaceVFS {
 
   func read(_ path: String) async throws -> (VersionToken, Data) {
     let p = try Self.validated(path)
-    if p.isLive, try await documents.dirty(group, p) { await documents.checkpoint(group, p) }
+    if p.isLive, documents.dirty(group, p) { await documents.checkpoint(group, p) }
     let group = group
     return try await blobs.read(writer) { db, cache in
       guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
@@ -40,7 +40,7 @@ struct LiveFS: SpaceVFS {
 
   func reader(_ path: String) async throws -> any SpaceFileReader {
     let p = try Self.validated(path)
-    if p.isLive, try await documents.dirty(group, p) { await documents.checkpoint(group, p) }
+    if p.isLive, documents.dirty(group, p) { await documents.checkpoint(group, p) }
     let group = group
     let hash = try await writer.read { db in
       guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }

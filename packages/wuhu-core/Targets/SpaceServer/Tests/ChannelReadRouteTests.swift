@@ -15,8 +15,8 @@ import Testing
       let harness = try await SessionHarness(dev: false, origin: "https://localhost")
       let (aliceBearer, aliceKey) = try await harness.enrolledBearer()
       let (carolBearer, carolKey) = try await harness.enrolledBearer()
-      let alice = try await harness.space.mintPersona(key: aliceKey).name
-      _ = try await harness.space.mintPersona(key: carolKey)
+      let alice = try await harness.space.adoptPersona(key: aliceKey).name
+      _ = try await harness.space.adoptPersona(key: carolKey)
       let aliceCookie = try await harness.space.createReadSession(account: aliceKey.account, group: .shared, expiresAt: Date().addingTimeInterval(3600))
       let carolCookie = try await harness.space.createReadSession(account: carolKey.account, group: .shared, expiresAt: Date().addingTimeInterval(3600))
       let foreign = GroupID(rawValue: "project")
@@ -61,8 +61,8 @@ import Testing
       let harness = try await SessionHarness(dev: false)
       let (aliceBearer, aliceKey) = try await harness.enrolledBearer()
       let (bobBearer, bobKey) = try await harness.enrolledBearer()
-      let alice = try await harness.space.mintPersona(key: aliceKey).name
-      let bob = try await harness.space.mintPersona(key: bobKey).name
+      let alice = try await harness.space.adoptPersona(key: aliceKey).name
+      let bob = try await harness.space.adoptPersona(key: bobKey).name
       let destination = try await harness.store.createConversation(members: [bob], in: .shared)
       let foreign = GroupID(rawValue: "project")
       try await harness.space.writer.write { db in
@@ -97,9 +97,9 @@ import Testing
   @Test func removingAMemberClosesAnAlreadyOpenConversationSSE() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      let alice = try await harness.mintPersona()
+      let alice = try await harness.adoptPersona()
       let (bobBearer, bobKey) = try await harness.enrolledBearer()
-      let bob = try await harness.space.mintPersona(key: bobKey).name
+      let bob = try await harness.space.adoptPersona(key: bobKey).name
       let id = try await harness.store.createConversation(members: [alice, bob], in: .shared)
       _ = try await harness.store.post(.conversation(id), messageID: MessageID("before"), sender: Sender(id: alice, timeZone: .gmt), content: .init(text: "before"))
       let response = try await harness.get("/v1/conversation/\(id.rawValue)/observe", bearer: bobBearer)
@@ -118,9 +118,10 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let (aliceBearer, aliceKey) = try await harness.enrolledBearer()
-      let alice = try await harness.space.mintPersona(key: aliceKey).name
-      _ = try await harness.space.setUserProfile(principal: ownerIdentity, handle: "owner", displayName: nil)
-      let first = try await harness.store.createConversation(members: [alice, ownerIdentity], title: "First", in: .shared)
+      let alice = try await harness.space.adoptPersona(key: aliceKey).name
+      let bob = try await harness.adoptPersona()
+      _ = try await harness.space.setUserProfile(principal: bob, handle: "bob", displayName: nil)
+      let first = try await harness.store.createConversation(members: [alice, bob], title: "First", in: .shared)
       let second = try await harness.store.createConversation(members: [alice], title: "Second", in: .shared)
       for (operation, fields) in [("rename", JSONValue.object(["title": "First renamed"])), ("add", ["people": .array([.string(alice)])]), ("remove", ["people": .array([.string(alice)])])] {
         let response = try await harness.post("/v1/channel/\(first.rawValue)/" + operation, fields)

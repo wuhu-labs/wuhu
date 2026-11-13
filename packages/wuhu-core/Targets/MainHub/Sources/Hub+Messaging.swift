@@ -24,7 +24,7 @@ extension Hub {
     // A retry of a send that already committed must not read its attachments
     // again: the machine may be gone by now, and a failure here would make the
     // model send the message twice.
-    if let posted = try await store.message(messageID) {
+    if let posted = store.message(messageID) {
       let delivery = try await deliver(
         .conversation(posted.conversation), as: caller, messageID: messageID,
         text: arguments.message, replyTarget: arguments.replyTarget.map { MessageID($0) }, uploads: [],

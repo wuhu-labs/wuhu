@@ -10,19 +10,21 @@ import Testing
   @Test func settingAHandleRefusesJunkAndCollisions() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
+      let (bearer, key) = try await harness.enrolledBearer()
+      _ = try await harness.space.adoptPersona(key: key)
 
-      let set = try await harness.put("/v1/user/me/profile", .object(["handle": "Owner", "displayName": "The Owner"]))
+      let set = try await harness.put("/v1/user/me/profile", .object(["handle": "Owner", "displayName": "The Owner"]), bearer: bearer)
       #expect(set.status == .ok)
       let payload = try JSONValueDecoder().decode(UserPayload.self, from: try await json(set))
       #expect(payload.handle == "owner")
       #expect(payload.displayName == "The Owner")
 
-      let junk = try await harness.put("/v1/user/me/profile", .object(["handle": "-nope"]))
+      let junk = try await harness.put("/v1/user/me/profile", .object(["handle": "-nope"]), bearer: bearer)
       #expect(junk.status == .badRequest)
 
-      let stranger = try await harness.mintPersona()
+      let stranger = try await harness.adoptPersona()
       _ = try await harness.space.setUserProfile(principal: stranger, handle: "taken", displayName: nil)
-      let clash = try await harness.put("/v1/user/me/profile", .object(["handle": "TAKEN"]))
+      let clash = try await harness.put("/v1/user/me/profile", .object(["handle": "TAKEN"]), bearer: bearer)
       #expect(clash.status == .conflict)
     }
   }
@@ -30,17 +32,19 @@ import Testing
   @Test func theDirectoryListsEveryPersonaAndEveryProfiledPrincipal() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      let alice = try await harness.mintPersona()
+      let (bearer, key) = try await harness.enrolledBearer()
+      let person = try await harness.space.adoptPersona(key: key).name
+      let alice = try await harness.adoptPersona()
       _ = try await harness.space.setUserProfile(principal: alice, handle: "alice", displayName: nil)
-      _ = try await harness.mintPersona()
-      _ = try await harness.put("/v1/user/me/profile", .object(["handle": "owner"]))
+      _ = try await harness.adoptPersona()
+      _ = try await harness.put("/v1/user/me/profile", .object(["handle": "owner"]), bearer: bearer)
 
       let users = try JSONValueDecoder().decode(
         UsersOutput.self, from: try await json(try await harness.get("/v1/users")),
       ).users
       #expect(users.count == 3)
       #expect(users.first { $0.id == alice }?.handle == "alice")
-      #expect(users.first { $0.id == "owner" }?.handle == "owner")
+      #expect(users.first { $0.id == person }?.handle == "owner")
       #expect(users.filter { $0.handle == nil }.count == 1)
     }
   }
@@ -49,7 +53,7 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await harness.createSession()
-      let alice = try await harness.mintPersona()
+      let alice = try await harness.adoptPersona()
       _ = try await harness.space.setUserProfile(principal: alice, handle: "alice", displayName: nil)
 
       _ = try await harness.call(
@@ -82,7 +86,7 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await harness.createSession()
-      let alice = try await harness.mintPersona()
+      let alice = try await harness.adoptPersona()
       _ = try await harness.space.setUserProfile(principal: alice, handle: "alice", displayName: nil)
       _ = try await harness.call(
         "/v1/conversation/message",

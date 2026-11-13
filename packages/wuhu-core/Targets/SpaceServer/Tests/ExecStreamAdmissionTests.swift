@@ -144,7 +144,11 @@ private struct AdmissionProcess: OperationKind {
   struct Input: Decodable, Sendable { let argv: [String] }
   let descriptor = ComputerKindSchemas.exec
 
-  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+  func start(_ input: Input, limits: OperationLimits) async throws -> OperationStart<JSONValue> {
+    OperationStart { channels, cancellation in try await run(input, channels: channels, cancellation: cancellation) }
+  }
+
+  private func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     #expect(input.argv == ["admission-test"])
     try await channels.send(.init(data: Data(Self.prefix.utf8)), to: "stdout")
     do {

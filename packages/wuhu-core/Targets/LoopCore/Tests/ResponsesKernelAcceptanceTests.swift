@@ -67,8 +67,12 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      _ = try await space.setUserProfile(principal: "morgan", handle: "old_handle", displayName: nil)
-      let sid = try await sessions.createSession(group: .shared, title: "socket acceptance", kind: .agent, createdBy: "morgan", model: .test)
+      let account = try await space.addAccount(kind: .human, name: "Morgan")
+      let pubkey = "ed25519:" + Data(repeating: 1, count: 32).base64EncodedString()
+      let key = try await space.addKey(pubkey, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+      let persona = try await space.adoptPersona(key: key).name
+      _ = try await space.setUserProfile(principal: persona, handle: "old_handle", displayName: nil)
+      let sid = try await sessions.createSession(group: .shared, title: "socket acceptance", kind: .agent, createdBy: persona, model: .test)
       let registry = ResponsesSocketRegistry()
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
       let resolved = try await ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "verified-offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
@@ -98,7 +102,7 @@ import WuhuAI
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry in
           commits.withLock { $0.append(entry) }
           if kind != "no-ack" {
-            if kind == "handles" { _ = try? await space.setUserProfile(principal: "morgan", handle: "new_handle", displayName: nil) }
+            if kind == "handles" { _ = try? await space.setUserProfile(principal: persona, handle: "new_handle", displayName: nil) }
             await executor.acknowledge(entry: entry, context: completed.context)
           }
         })
@@ -141,7 +145,7 @@ import WuhuAI
           }
           do {
             try await runService(space, config) { service in
-              try await service.enqueue(item: Fix.message("use lookup"), to: sid)
+              try await service.enqueue(item: Fix.message("use lookup", sender: Sender(id: persona, timeZone: .gmt)), to: sid)
               try await until("two committed turns") { commits.withLock { $0.count } == 2 }
               try await until("settled") { try await sessions.settledWork(sid) }
             }

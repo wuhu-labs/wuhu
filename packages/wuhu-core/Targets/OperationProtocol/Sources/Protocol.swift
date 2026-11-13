@@ -134,11 +134,21 @@ public struct OperationClock: Sendable {
 
 public struct OperationLimits: Codable, Equatable, Sendable {
   public static let responseBytes = 256 * 1024
+  /// The most a file piece may be, whatever a box advertises: a description declaring more is not valid.
+  public static let maxFilePieceBytes = 4 * 1024 * 1024
+  /// The most one answer to a poll may weigh when it asked for `limit` bytes: the snapshot head and a piece that long
+  /// riding base64, and never less than the ordinary response cap.
+  public static func answerBytes(for limit: Int) -> Int { max(responseBytes, 2 * limit + responseBytes) }
+  /// The most a box answer carrying a file piece may be: the piece rides base64 inside the snapshot.
+  public static let maxFileResponseBytes = answerBytes(for: maxFilePieceBytes)
+  public static let defaultFilePieceBytes = 64 * 1024
   public var leaseMs = 60000
   public var pollHoldMs = 20000
   public var inputBytes = 128 * 1024
   public var resultBytes = 64 * 1024
   public var pollBytes = 64 * 1024
+  /// The most one file piece may carry, for file kinds only: an older description without it means 64 KiB.
+  public var filePieceBytes = defaultFilePieceBytes
   /// Deprecated: advertised at its default for older servers, whose limit validation and claim checks require it; nothing reads it.
   public var activeOperations = 32
   public var bufferBytes = 64 * 1024 * 1024
@@ -149,6 +159,22 @@ public struct OperationLimits: Codable, Equatable, Sendable {
   public var isValid: Bool {
     leaseMs > 0 && pollHoldMs >= 0 && pollHoldMs < leaseMs && inputBytes > 0 && resultBytes > 0
       && pollBytes > 0 && pollBytes <= Self.responseBytes / 2 && resultBytes <= Self.responseBytes && bufferBytes > 0 && receipts > 0
+      && filePieceBytes > 0 && filePieceBytes <= Self.maxFilePieceBytes
+  }
+
+  /// A description from before `filePieceBytes` exists carries no such key; what it does not advertise is 64 KiB.
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    leaseMs = try c.decode(Int.self, forKey: .leaseMs)
+    pollHoldMs = try c.decode(Int.self, forKey: .pollHoldMs)
+    inputBytes = try c.decode(Int.self, forKey: .inputBytes)
+    resultBytes = try c.decode(Int.self, forKey: .resultBytes)
+    pollBytes = try c.decode(Int.self, forKey: .pollBytes)
+    activeOperations = try c.decode(Int.self, forKey: .activeOperations)
+    bufferBytes = try c.decode(Int.self, forKey: .bufferBytes)
+    receipts = try c.decode(Int.self, forKey: .receipts)
+    receiptMs = try c.decode(Int.self, forKey: .receiptMs)
+    filePieceBytes = try c.decodeIfPresent(Int.self, forKey: .filePieceBytes) ?? Self.defaultFilePieceBytes
   }
 }
 

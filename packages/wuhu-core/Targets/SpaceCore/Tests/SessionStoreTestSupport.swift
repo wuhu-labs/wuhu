@@ -33,7 +33,7 @@ extension SessionStore {
   func inbox(_ recipient: String) async throws -> [NotificationRecord] {
     _ = runtime.worker()
     runtime.poke(person: recipient)
-    while try await writer.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["PersonCell/" + recipient])! }) {
+    while try await writer.read({ try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM wuwei_mail WHERE recipient = ?)", arguments: ["PersonCell/" + (runtime.worker().cell(SpaceCell.ID("space")).personCell(recipient)?.key ?? recipient)])! }) {
       await Task.yield()
     }
     return notifications(recipient: recipient)

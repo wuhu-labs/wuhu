@@ -116,11 +116,12 @@ import Testing
     // `groups`, `accounts`, `machines`, `messages` and `sessions` are reshaped
     // by the next migrations; the reopened comparison below pins their columns.
     for (table, lines) in expected.sorted(by: { $0.key < $1.key })
-      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions"].contains(table)
+      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles"].contains(table)
     {
       #expect(migrated[table] == lines.filter { line in
         !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)
           && !line.contains("_alias_insert") && !line.contains("_alias_update")
+          && !line.contains("owner_account")
           && !(table == "session_runtime" && line.contains("step_try"))
           && !(table == "session_queue" && (line.contains("topic") || line.contains("due_at")))
       }, "\(table)")

@@ -67,28 +67,12 @@ struct RequestRow {
 
 extension SessionStore {
   /// The requests `requester` opened that still wait on their final, oldest first.
-  public func awaitedRequests(_ requester: SessionID) async throws -> [AwaitedRequest] {
-    try await writer.read { db in
-      try Row.fetchAll(db, sql: """
-      SELECT r.id, r.task,
-        COALESCE((SELECT MAX(m.created_at) FROM messages AS m WHERE m.request_id = r.id AND m.kind = 'progress'), r.created_at) AS heard
-      FROM requests AS r WHERE r.requester = ? AND r.status = 'open' ORDER BY r.created_at, r.id
-      """, arguments: [requester.rawValue]).map { row in
-        AwaitedRequest(
-          id: RequestID(row["id"]), task: SessionID(row["task"]),
-          lastHeard: try SQLiteDateFormat.date(from: row["heard"]),
-        )
-      }
-    }
+  public func awaitedRequests(_ requester: SessionID) -> [AwaitedRequest] {
+    space.awaitedRequests(of: requester.rawValue)
   }
 
-  public func openRequests(_ id: SessionID) async throws -> [OpenRequest] {
-    try await writer.read { db in
-      _ = try Sessions.record(id.rawValue, in: db)
-      return try RequestRow.open(task: id.rawValue, in: db).map {
-        OpenRequest(id: RequestID($0.id))
-      }
-    }
+  public func openRequests(_ id: SessionID) throws -> [OpenRequest] {
+    try space.openRequests(of: id.rawValue)
   }
 
   /// Opens a request on a child, or, for a person, on the top-level agent their page created, in its box. The conversation checks who asks and writes the row with the message.
