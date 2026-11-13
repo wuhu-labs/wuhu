@@ -40,7 +40,6 @@ dependencies:
   - Dependencies
   - Clocks
   - Logging
-  - GRDB
   - SecretMasking
   - ScriptWebPlatform
 tests:
@@ -79,7 +78,6 @@ tests:
     - WuhuAI
     - JSONValue
     - OrderedCollections
-    - GRDB
     - Dependencies
     - DependenciesTestSupport
     - Clocks

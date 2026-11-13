@@ -1,14 +1,20 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import Scratch
 @testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct Migration031Tests {
   @Test func theJournalForgetsAttachmentsAndKeepsTheirRowsAndRevisions() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-031-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
-    let original = try Space(writer: database)
-    try await database.write { db in
+    let folder = try ScratchFolder("migration-031")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try Space.open(file: file)
+    let database = try RawDatabase(path: file.path)
+    try database.access { db in
       try db.execute(sql: """
       INSERT INTO revisions (rev, mtime, grp) VALUES (901, 'then', 'shared'), (902, 'then', 'shared');
       INSERT INTO fs_heads (grp, path, parent_path, kind, blob_hash, size, etag, rev, mtime) VALUES
@@ -25,10 +31,10 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '031';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
-    let left = try await database.read { db in
-      try ["fs_heads", "fs_versions", "docs", "attachments"].map { try String.fetchAll(db, sql: "SELECT path FROM \($0) WHERE path LIKE '/_/conv%' OR path LIKE '/notes/%' ORDER BY path") }
-        + [try String.fetchAll(db, sql: "SELECT CAST(rev AS TEXT) FROM revisions WHERE rev > 900 ORDER BY rev")]
+    let upgraded = try Space.open(file: file)
+    let left = try database.access { db in
+      try ["fs_heads", "fs_versions", "docs", "attachments"].map { try db.strings("SELECT path FROM \($0) WHERE path LIKE '/_/conv%' OR path LIKE '/notes/%' ORDER BY path") }
+        + [try db.strings("SELECT CAST(rev AS TEXT) FROM revisions WHERE rev > 900 ORDER BY rev")]
     }
     #expect(left == [
       ["/_/conversationsx", "/notes/attachments/c.png"], ["/notes/attachments/c.png"], ["/notes/b.md"],

@@ -1,4 +1,3 @@
-import GRDB
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 
@@ -54,10 +53,6 @@ enum GroupAccess {
     init(groups: [GroupRow], roles: [GroupRoleRow]) {
       self.groups = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
       self.roles = roles
-    }
-
-    init(_ db: Database) throws {
-      try self.init(groups: GroupRow.all.fetchAll(db), roles: GroupRoleRow.all.fetchAll(db))
     }
 
     func live(_ group: String) -> GroupRow? {
@@ -250,35 +245,10 @@ enum GroupAccess {
     }
   }
 
-  static func accountRow(_ id: AccountID, in db: Database) throws -> GroupAccountRow? {
-    try GroupAccountRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)
-  }
-
-  static func sessionRow(_ id: SessionID, in db: Database) throws -> GroupSessionRow? {
-    try GroupSessionRow.where { $0.id.eq(id.rawValue) }.fetchOne(db)
-  }
-
   /// How a rule finds the row of the session or the account an actor names.
   struct ActorRows<Failure: Error> {
     let session: (SessionID) throws(Failure) -> GroupSessionRow?
     let account: (AccountID) throws(Failure) -> GroupAccountRow?
-  }
-
-  static func actorRows(in db: Database) -> ActorRows<any Error> {
-    ActorRows(session: { try sessionRow($0, in: db) }, account: { try accountRow($0, in: db) })
-  }
-
-  static func role(of actor: Actor, in group: GroupID, acting: GroupID, in db: Database) throws -> GroupRole? {
-    try Snapshot(db).role(of: actor, in: group, acting: acting, rows: actorRows(in: db))
-  }
-
-  static func readable(by actor: Actor, acting: GroupID, in db: Database) throws -> Set<GroupID> {
-    try Snapshot(db).readable(by: actor, acting: acting, rows: actorRows(in: db))
-  }
-
-  static func isLiveHuman(_ account: AccountID, in db: Database) throws -> Bool {
-    guard let row = try accountRow(account, in: db) else { return false }
-    return row.kind == "human" && row.removedAt == nil
   }
 
   /// The admin rows that make `account` a space admin: the settings group's.
@@ -293,11 +263,4 @@ enum GroupAccess {
   /// `is_admin` of an `accounts` row: a live person who is a space admin.
   static let spaceAdminColumn: String =
     "EXISTS (\(spaceAdminSQL(account: "accounts.id"))) AND accounts.kind = 'human' AS is_admin"
-
-  static func isSpaceAdmin(_ account: AccountID, in db: Database) throws -> Bool {
-    guard try isLiveHuman(account, in: db) else { return false }
-    return try Bool.fetchOne(
-      db, sql: "SELECT EXISTS (\(spaceAdminSQL(account: "?")))", arguments: [account.rawValue],
-    ) ?? false
-  }
 }

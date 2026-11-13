@@ -1,7 +1,11 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import LoopCore
+import Scratch
 import SessionDomain
 @testable import SpaceCore
 import Testing
@@ -9,24 +13,12 @@ import Testing
 // A space from before migration 008: request state lived on messages
 // (`deadline_at`) and in the fold of finals, with no `requests` table.
 @Suite(.deterministicDependencies) struct Migration008Tests {
-  private func memoryConfiguration() -> Configuration {
-    Space.makeConfiguration(journalMode: .default)
-  }
-
-  private func database() throws -> DatabaseQueue {
-    try DatabaseQueue(path: "file:/migration-008-\(UUID())?vfs=memdb", configuration: memoryConfiguration())
-  }
-
-  private func connection(to database: DatabaseQueue) throws -> DatabaseQueue {
-    try DatabaseQueue(path: database.path, configuration: memoryConfiguration())
-  }
-
   // Five requests: answered, on an archived task, past its deadline, before
   // its deadline, and without one. Then the
   // schema goes back to before 008 (and 009, which builds on it), on a
   // connection of its own: the space's writer guards the rows its cells own.
-  private func before008(_ database: DatabaseQueue) async throws -> Space {
-    let space = registerSessionExecution(try Space(writer: database))
+  private func before008(_ file: URL) async throws -> Space {
+    let space = registerSessionExecution(try Space.open(file: file))
     let store = space.sessions
     let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
     for id in ["done", "gone", "late", "pending", "plain"] {
@@ -44,7 +36,7 @@ import Testing
     }
     try await store.deliverMail()
     await space.stopWorker()
-    try await connection(to: database).write { db in
+    try RawDatabase.open(file.path) { db in
       try db.execute(sql: """
       DELETE FROM grdb_migrations WHERE identifier IN ('008', '009');
       CREATE TABLE "session_subscriptions" (
@@ -69,12 +61,13 @@ import Testing
   }
 
   @Test func `every request message becomes one row and deadline_at is dropped`() async throws {
-    let database = try database()
-    let original = try await before008(database)
-    let reopened = try connection(to: database)
-    let space = try Space(writer: reopened)
-    let rows = try await reopened.read { db in
-      try Row.fetchAll(db, sql: "SELECT id, status, brief, result, deadline_at, kind, key FROM requests ORDER BY id")
+    let folder = try ScratchFolder("migration-008")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try await before008(file)
+    let space = try Space.open(file: file)
+    let reopened = try RawDatabase(path: file.path)
+    let rows = try reopened.access { db in
+      try db.rows("SELECT id, status, brief, result, deadline_at, kind, key FROM requests ORDER BY id")
         .map { [$0["id"], $0["status"], $0["brief"], $0["result"], $0["deadline_at"], $0["kind"], $0["key"]] as [String?] }
     }
     #expect(rows == [
@@ -84,20 +77,19 @@ import Testing
       ["pending", "open", "brief pending", nil, "2999-01-01T00:00:00.000Z", nil, nil],
       ["plain", "open", "brief plain", nil, nil, nil, nil],
     ])
-    #expect(try await reopened.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'deadline_at'") } == 0)
+    #expect(try reopened.access { try $0.int("SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'deadline_at'") } == 0)
     try await original.close()
     try await space.close()
   }
 
   @Test func `the backfill reports what it made`() async throws {
-    let database = try database()
-    let original = try await before008(database)
-    let backfill = try await connection(to: database).writeWithoutTransaction { db in
-      var backfill: Migration008.Backfill?
-      try db.inTransaction {
-        backfill = try Migration008.run(.init(db))
-        return .rollback
-      }
+    let folder = try ScratchFolder("migration-008")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try await before008(file)
+    let backfill = try RawDatabase.open(file.path) { db in
+      try db.execute(sql: "BEGIN IMMEDIATE")
+      let backfill = try Migration008.run(db)
+      try db.execute(sql: "ROLLBACK")
       return backfill
     }
     #expect(backfill == Migration008.Backfill(requestMessages: 5, rows: ["done": 1, "failed": 1, "open": 2, "overdue": 1]))
@@ -105,16 +97,17 @@ import Testing
   }
 
   @Test func `a request message without exactly one row stops the migration and changes nothing`() async throws {
-    let database = try database()
-    let original = try await before008(database)
-    try await connection(to: database).write { db in
+    let folder = try ScratchFolder("migration-008")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try await before008(file)
+    try RawDatabase.open(file.path) { db in
       try db.execute(sql: "DELETE FROM conversation_members WHERE member_kind = 'session' AND member IN (SELECT id FROM sessions WHERE title = 'plain')")
     }
-    let reopened = try connection(to: database)
-    #expect(throws: Migration008.Unmatched.self) { try Space(writer: reopened) }
-    #expect(try await reopened.read { try Bool.fetchOne($0, sql: "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'requests')") } == false)
-    #expect(try await reopened.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'deadline_at'") } == 1)
-    #expect(try await reopened.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier = '008'") } == 0)
+    let reopened = try RawDatabase(path: file.path)
+    #expect(throws: Migration008.Unmatched.self) { try Space.open(file: file) }
+    #expect(try reopened.access { try $0.bool("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'requests')") } == false)
+    #expect(try reopened.access { try $0.int("SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'deadline_at'") } == 1)
+    #expect(try reopened.access { try $0.int("SELECT count(*) FROM grdb_migrations WHERE identifier = '008'") } == 0)
     try await original.close()
   }
 }

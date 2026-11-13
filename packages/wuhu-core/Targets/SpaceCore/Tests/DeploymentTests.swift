@@ -1,6 +1,9 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import Scratch
 @testable import SpaceCore
 import Testing
@@ -109,11 +112,9 @@ struct DeploymentTests {
   }
 
   private func olderServerBoot(_ space: Space, fingerprint: String) async throws {
-    try await space.writer.write { db in
-      try db.execute(
-        sql: "INSERT OR REPLACE INTO space_deployment (id, origin, tls_fingerprint) VALUES (1, ?, ?)",
-        arguments: ["https://wuhu.example", fingerprint],
-      )
-    }
+    try await space.plant(
+      "INSERT OR REPLACE INTO space_deployment (id, origin, tls_fingerprint) VALUES (1, ?, ?)",
+      arguments: ["https://wuhu.example", fingerprint],
+    )
   }
 }

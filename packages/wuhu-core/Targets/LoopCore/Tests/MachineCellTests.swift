@@ -4,7 +4,6 @@ import ControlledTime
 #else
   import Foundation
 #endif
-import GRDB
 import OperationProtocol
 import Scratch
 @testable import SpaceCore
@@ -96,7 +95,12 @@ import WuweiQueries
       #expect(space.worker.cell(cell).tail(exec.id) == bytes)
       try await space.worker.call(cell) { try $0.taken(exec.id) }
       #expect(space.worker.cell(cell).tail(exec.id).isEmpty)
-      let mails = try await space.writer.read { db in try Data.fetchAll(db, sql: "SELECT payload FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") }
+      let mails = try RawDatabase.open(space.databasePath) {
+        try $0.rows("SELECT payload FROM wuwei_mail WHERE recipient = 'test-recipient/exec'").map { row in
+          let payload: Data = row[0]
+          return payload
+        }
+      }
       #expect(mails.count == 1)
       guard case let .finished(end) = try JSONDecoder().decode(MachineExecReply.self, from: #require(mails.first)) else { return }
       #expect(end.tail == bytes)
@@ -154,7 +158,7 @@ import WuweiQueries
       try await space.worker.call(cell) { try $0.delete(in: .shared) }
       #expect(space.worker.cell(cell).operation(exec.id) == nil)
       #expect(space.worker.cell(cell).presence.state == "deleted")
-      let count = try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") }
+      let count = try RawDatabase.open(space.databasePath) { try $0.int("SELECT count(*) FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") }
       #expect(count == 1)
       await #expect(throws: OperationError.self) { try await space.worker.call(cell) { try $0.reserve(exec) } }
       try await space.close()

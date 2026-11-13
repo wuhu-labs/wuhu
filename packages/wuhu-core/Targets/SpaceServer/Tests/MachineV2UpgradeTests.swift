@@ -5,7 +5,6 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import Foundation
-import GRDB
 import MachineContract
 import OperationProtocol
 import Serve
@@ -326,8 +325,8 @@ let both: Set<String> = ["linux-amd64", "macos-arm64"]
 
 func releaseSettled(_ space: Space, _ version: String) async throws {
   try await outboxEventually("release lookup commits") {
-    let settled = try await space.writer.read { db in
-      try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM machine_release_resolutions WHERE version = ? AND looked_up_at IS NOT NULL AND requested = 0)", arguments: [version])!
+    let settled = try RawDatabase.open(space.databasePath) {
+      try $0.bool("SELECT EXISTS (SELECT 1 FROM machine_release_resolutions WHERE version = ? AND looked_up_at IS NOT NULL AND requested = 0)", arguments: [version])!
     }
     return settled && !space.worker.hasMail(for: MachineReleaseJob.singleton.recipient)
   }

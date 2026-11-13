@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceFS
@@ -13,7 +12,6 @@ import Wuwei
 struct AttachmentFolders: SpaceVFS {
   let base: any SpaceVFS
   let runtime: SpaceRuntime
-  let writer: any DatabaseWriter
   let bucket: Bucket
   let group: GroupID
 

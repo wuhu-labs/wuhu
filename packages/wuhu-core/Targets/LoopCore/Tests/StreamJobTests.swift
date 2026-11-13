@@ -6,7 +6,6 @@ import Fetch
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import MainHub
 import SessionDomain
@@ -85,8 +84,8 @@ private func observed(_ space: Space, _ session: SessionID) async throws -> [Tra
   try await space.sessions.lines(session).filter { $0.key == "subscription:\(observation.rawValue)" }
 }
 
-private func cursor(_ space: Space) async throws -> String? {
-  try await space.sessions.writer.read { db in try String.fetchOne(db, sql: "SELECT last_event_id FROM streams") }
+private func cursor(_ space: Space, _ session: SessionID) async throws -> String? {
+  space.worker.job(StreamJob.ID("\(session.rawValue):\(observation.rawValue)")).db.rows(StreamRow.all).first?.lastEventID
 }
 
 @Suite struct StreamJobTests {
@@ -100,7 +99,7 @@ private func cursor(_ space: Space) async throws -> String? {
       events.send("id: 1\ndata: one\n\n", on: 0)
       try await until("first wake") { try await observed(space, session).count == 1 }
       events.send("id: 2\nevent: build\ndata: two\n\nid: 3\ndata: three\ndata: lines\n\n", on: 0)
-      try await until("both taken") { try await cursor(space) == "3" }
+      try await until("both taken") { try await cursor(space, session) == "3" }
       #expect(try await observed(space, session).count == 1)
       // The second notice is a queued input due one throttle (30 s) after it was put, and the cell drains it at the wake that comes
       // next: bounded ticks past the throttle, never one per poll (see `until`), with one worker here so no lease lapses.
@@ -130,7 +129,7 @@ private func cursor(_ space: Space) async throws -> String? {
       let ending = try await observed(space, session)[0]
       #expect(ending.text.hasSuffix("\n\nobservation \(observation.rawValue) of \(url) failed and was cancelled: \(url) answered HTTP 404"))
       #expect(try await space.query("SELECT id FROM subscriptions", as: space.principal(of: session)).rows.isEmpty)
-      #expect(try await cursor(space) == nil)
+      #expect(try await cursor(space, session) == nil)
       #expect(events.dials.count == 1)
     }
   }

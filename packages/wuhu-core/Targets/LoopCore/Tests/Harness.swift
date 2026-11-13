@@ -2,7 +2,6 @@ import Clocks
 import ControlledTime
 import Dependencies
 import Foundation
-import GRDB
 import JSONValue
 import Logging
 @testable import LoopCore
@@ -106,15 +105,12 @@ func createRetiredSession(
     group: .shared, title: title, kind: kind, parent: parent, createdBy: createdBy, executor: .kernel(.test),
   )
   let retired = SessionExecutor.retired(kind: executorKind)
-  let path = await space.writer.path
-  let plant = try DatabaseQueue(path: path, configuration: Space.makeConfiguration(journalMode: .default))
-  try await plant.write { db in
-    try db.execute(
+  try RawDatabase.open(space.databasePath) {
+    try $0.execute(
       sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?",
       arguments: [retired.kind, retired.configJSON, id.rawValue],
     )
   }
-  try plant.close()
   return id
 }
 

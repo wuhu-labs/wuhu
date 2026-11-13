@@ -27,6 +27,8 @@ extension DocumentCell {
     db.rows(DocumentStateRow.all).first?.fileRev
   }
 
+  func lineage() -> Int64? { db.rows(DocumentLineageRow.all).first?.lineage }
+
   /// Whether the document holds edits its file lacks.
   func dirty() -> Bool {
     if db.rows(DocumentStateRow.all).first?.dirtyAt != nil { return true }

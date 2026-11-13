@@ -263,10 +263,10 @@ struct DocumentCell {
     }
   }
 
-  mutating func removed(_ rev: Int64) {
+  mutating func removed(_ rev: Int64, lineage: Int64) {
+    guard let current = db.rows(DocumentLineageRow.all).first, current.lineage == lineage else { return }
     let file = ctx.cell(FilesCell.ID(group.rawValue)).documentFile(path)
-    if let lineage = db.rows(DocumentLineageRow.all).first,
-       file.isCurrent(lineage.lineage, seedRev: lineage.seedRev), let head = file.head, head.rev >= rev { return }
+    if file.isCurrent(current.lineage, seedRev: current.seedRev), let head = file.head, head.rev >= rev { return }
     drop()
   }
 

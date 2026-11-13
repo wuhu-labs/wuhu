@@ -4,12 +4,10 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import enum JSONValue.JSONValue
 import OperationProtocol
 import Scratch
 @testable import SpaceCore
-import StructuredQueries
 import Synchronization
 import Testing
 import Wuwei
@@ -35,13 +33,13 @@ import Wuwei
     await space.drain()
     #expect(space.machineBuffers.payload(pointer)?.data == bytes)
     #expect(box.outputPolls(operation, channel: "data") == [0, UInt64(bytes.count)])
-    let persisted = try await space.writer.read { db in
-      try String.fetchOne(db, sql: "SELECT request || COALESCE(snapshot, '') FROM machine_file_operations WHERE id = ?", arguments: [operation.uuidString.lowercased()])!
+    let persisted = try RawDatabase.open(space.space.databasePath) { db in
+      try db.string("SELECT request || COALESCE(snapshot, '') FROM machine_file_operations WHERE id = ?", arguments: [operation.uuidString.lowercased()])!
     }
     #expect(persisted.utf8.count < 4096)
     #expect(!persisted.contains("cell-file-payload-marker"))
     #expect(!persisted.contains(bytes.base64EncodedString()))
-    #expect(try await space.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM machine_operations") } == 0)
+    #expect(try RawDatabase.open(space.space.databasePath) { try $0.int("SELECT COUNT(*) FROM machine_operations") } == 0)
 
     caller.peer.send(.want(channel: "data", offset: 7))
     let suffix = try await caller.output()
@@ -475,9 +473,7 @@ import Wuwei
       #expect(space.worker.cell(id).fileOperation(operation) == nil)
     }
     if state == "missingRow" {
-      try await space.worker.call(id) { cell in
-        try cell.db.execute(MachineFileOperation.where { $0.id.eq(operation.uuidString.lowercased()) }.delete())
-      }
+      try await space.space.plant("DELETE FROM machine_file_operations WHERE id = ?", arguments: [operation.uuidString.lowercased()])
       #expect(space.worker.cell(id).fileOperation(operation) == nil)
     }
     let pointer = try #require(space.machineBuffers.put(Data([9, 8]), operation: operation, channel: "data", from: 0))

@@ -9,7 +9,6 @@ import LoopCore
 #endif
 @testable import ExecSupervisor
 import Fetch
-import GRDB
 import MachineChannel
 import MachineContract
 import OperationProtocol
@@ -67,16 +66,19 @@ import Wuwei
         #expect(credential.hasPrefix(ExecTokens.prefix))
         #expect(input["secretValues"]?.object?["WUHU_ID_TOKEN_REQUEST"] == nil)
         #expect(input["env"]?.object?["WUHU_ID_TOKEN_URL"] == nil)
-        let payloads = try await space.writer.read { db in
-          try Row.fetchAll(db, sql: "SELECT * FROM machine_operations").flatMap { row in
-            row.compactMap { _, value -> Data? in
-              switch value.storage {
-              case let .string(text): Data(text.utf8)
-              case let .blob(data): data
-              case .null, .int64, .double: nil
+        let payloads = try RawDatabase.open(space.databasePath) { db in
+          try db.rows("SELECT * FROM machine_operations").flatMap { row in
+            row.values.compactMap { value -> Data? in
+              switch value {
+              case let .text(text): Data(text.utf8)
+              case let .blob(bytes): Data(bytes)
+              case .null, .integer, .real: nil
               }
             }
-          } + Data.fetchAll(db, sql: "SELECT payload FROM wuwei_mail")
+          } + db.rows("SELECT payload FROM wuwei_mail").map { row in
+            let payload: Data = row[0]
+            return payload
+          }
         }
         for value in [secret, credential] {
           #expect(!value.isEmpty)
@@ -117,7 +119,7 @@ import Wuwei
       let marker = rig.scratch.url.appendingPathComponent("spawned")
       try await rig.run(machines: [machine]) {
         let collected = try await rig.exec(on: machine, command: ["touch", marker.path])
-        #expect(String(decoding: collected.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group team\n")
+        #expect(String(decoding: collected.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group \(team.rawValue)\n")
         #expect(collected.exit == .exited(code: 1))
         #expect(!FileManager.default.fileExists(atPath: marker.path))
         let record = try #require(try await rig.space.execRecord(collected.id))
@@ -141,10 +143,10 @@ import Wuwei
 
         _ = try await rig.space.moveMachine(machine.id, to: team)
         let missing = try await rig.exec(on: machine, command: echo)
-        #expect(String(decoding: missing.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group team\n")
+        #expect(String(decoding: missing.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group \(team.rawValue)\n")
         #expect(missing.exit == .exited(code: 1))
 
-        try await rig.stores.group("team").set("API_KEY", to: "team-value")
+        try await rig.stores.group(team.rawValue).set("API_KEY", to: "team-value")
         let after = try await rig.exec(on: machine, command: echo)
         #expect(String(decoding: after.stdout, as: UTF8.self) == "TEAM-VALUE\n")
       }
@@ -204,10 +206,7 @@ struct SecretRig: Sendable {
   }
 
   func addGroup(_ name: String) async throws -> GroupID {
-    let group = GroupID(rawValue: name)
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2030-01-01T00:00:00.000Z')", arguments: [name])
-    }
+    let group = try await space.createGroup(alias: name, owner: (try await space.ensureDevPerson()).account)
     try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: group, by: (try await space.ensureDevPerson()).actor, acting: group)
     return group
   }

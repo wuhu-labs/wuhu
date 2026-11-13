@@ -5,7 +5,6 @@ import LoopCore
 #else
   import Foundation
 #endif
-import GRDB
 import JSONValue
 import enum ModelProviders.CatalogError
 import SessionDomain

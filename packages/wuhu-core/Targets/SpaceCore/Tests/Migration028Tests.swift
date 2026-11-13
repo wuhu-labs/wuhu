@@ -1,14 +1,20 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import Scratch
 @testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct Migration028Tests {
   @Test func aRequestTakesItsMessagesConversationAndOneThatNeverPostedGoes() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-028-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
-    let original = try Space(writer: database)
-    try await database.write { db in
+    let folder = try ScratchFolder("migration-028")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try Space.open(file: file)
+    let database = try RawDatabase(path: file.path)
+    try database.access { db in
       try db.execute(sql: """
       ALTER TABLE requests DROP COLUMN conversation_id;
       INSERT INTO conversations (id, kind, window_messages, window_seconds, created_at, grp) VALUES ('dm', 'dm_session', 10, 900, 'now', 'shared');
@@ -19,8 +25,8 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '028';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
-    #expect(try await database.read { try Row.fetchAll($0, sql: "SELECT id, conversation_id FROM requests").map { [$0[0] as String, $0[1] as String] } } == [["r1", "dm"]])
+    let upgraded = try Space.open(file: file)
+    #expect(try database.access { try $0.rows("SELECT id, conversation_id FROM requests").map { [$0[0] as String, $0[1] as String] } } == [["r1", "dm"]])
     try await upgraded.close()
     try await original.close()
   }

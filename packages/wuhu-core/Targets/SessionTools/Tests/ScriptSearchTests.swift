@@ -1,6 +1,5 @@
 import DeterministicDependencies
 import Foundation
-import GRDB
 import JSONValue
 @testable import SessionTools
 import SpaceContract
@@ -14,7 +13,7 @@ import Testing
   @Test func findAndGrepPageThroughOwnAndReadableGroupsWithTypedErrors() async throws {
     let alice = GroupID(rawValue: "alice")
     try await withRig(group: alice, prepare: { space, _ in
-      try await space.writer.write { db in
+      try RawDatabase.open(space.databasePath) { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('bob', '2026-01-01T00:00:00.000Z')")
       }
       let files: [(GroupID, String, String)] = [

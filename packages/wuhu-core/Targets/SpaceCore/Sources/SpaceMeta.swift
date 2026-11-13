@@ -4,9 +4,10 @@
   import Foundation
 #endif
 import Dependencies
-import GRDB
+import GRDBSQLite
 import Logging
 import StructuredQueries
+import Wuwei
 
 public struct SpaceIdentity: Hashable, Sendable {
   static let prefix: String = "spc_"
@@ -24,40 +25,43 @@ public struct SpaceIdentity: Hashable, Sendable {
 }
 
 enum SpaceMeta {
-  static let memorySchema: Result<DatabaseQueue, any Error> = Result {
-    let queue = try DatabaseQueue()
-    try migrate(queue, log: Logger(label: "wuhu.migration") { _ in SwiftLogNoOpLogHandler() }, date: .constant(Date(timeIntervalSince1970: 0)))
-    return queue
+  private static let memorySchema: Result<SQLiteWriter, any Error> = Result {
+    let writer = try SQLiteWriter(path: ":memory:", flags: WuweiDatabase.openFlags, pragmas: ["PRAGMA foreign_keys = ON", "PRAGMA busy_timeout = 0"])
+    try writer.access { try Migrations.apply(handle: $0, log: Logger(label: "wuhu.migration") { _ in SwiftLogNoOpLogHandler() }, date: .constant(Date(timeIntervalSince1970: 0))) }
+    return writer
   }
 
-  static func prepare(_ queue: any DatabaseWriter, identity: SpaceIdentity? = nil, log: Logger, date: DateGenerator) throws {
-    try queue.read { db in
+  static func cloneMemorySchema(to database: WuweiDatabase) throws {
+    try memorySchema.get().access { source in
+      try database.accessWriter { destination in
+        guard let backup = sqlite3_backup_init(destination, "main", source, "main") else {
+          throw SQLiteError(code: sqlite3_errcode(destination), message: String(cString: sqlite3_errmsg(destination)))
+        }
+        let step = sqlite3_backup_step(backup, -1)
+        let finish = sqlite3_backup_finish(backup)
+        guard step == SQLITE_DONE, finish == SQLITE_OK else {
+          throw SQLiteError(code: finish == SQLITE_OK ? step : finish, message: String(cString: sqlite3_errmsg(destination)))
+        }
+      }
+    }
+  }
+
+  static func prepare(_ database: WuweiDatabase, identity: SpaceIdentity? = nil, log: Logger, date: DateGenerator) throws -> SpaceIdentity {
+    try database.accessWriter { handle in
+      let db = MigrationDB(handle: handle)
       if let identity, try db.tableExists("space_meta"),
-         let actual = try String.fetchOne(db, sql: "SELECT space_id FROM space_meta WHERE id = 1"), actual != identity.rawValue
+         let actual = try db.string("SELECT space_id FROM space_meta WHERE id = 1"), actual != identity.rawValue
       {
         throw SpaceIdentityError.mismatch(expected: identity.rawValue, actual: actual)
       }
-    }
-    try migrate(queue, log: log, date: date)
-    try queue.write { db in
-      try seedIfAbsent(in: db, identity: identity)
-    }
-  }
-
-  /// Migrations run on the writer's own connection, in no surrounding transaction: each migration is one.
-  private static func migrate(_ queue: any DatabaseWriter, log: Logger, date: DateGenerator) throws {
-    try queue.barrierWriteWithoutTransaction { db in
-      guard let sqliteConnection = db.sqliteConnection else { preconditionFailure("a GRDB connection always has a SQLite handle") }
-      try Migrations.apply(handle: sqliteConnection, log: log, date: date)
-      // The bodies changed the schema through the raw handle, of which GRDB's own statement cache knows nothing.
-      db.clearSchemaCache()
+      try Migrations.apply(handle: handle, log: log, date: date)
+      try db.inImmediateTransaction { try seedIfAbsent(in: db, identity: identity) }
+      return SpaceIdentity(rawValue: try db.string("SELECT space_id FROM space_meta WHERE id = 1")!)
     }
   }
 
-  // Default ids use system entropy, never the injected RNG stream that belongs
-  // to account/machine/token ids. Provisioners may supply their persisted id.
-  static func seedIfAbsent(in db: Database, identity: SpaceIdentity?) throws {
-    guard try Row.fetchOne(db, sql: "SELECT 1 FROM space_meta WHERE id = 1") == nil else { return }
+  static func seedIfAbsent(in db: MigrationDB, identity: SpaceIdentity?) throws {
+    guard try db.row("SELECT 1 FROM space_meta WHERE id = 1") == nil else { return }
     var generator = SystemRandomNumberGenerator()
     let id = identity?.rawValue ?? (SpaceIdentity.prefix + randomAlphanumericSuffix(SpaceIdentity.suffixLength, using: &generator))
     try db.execute(sql: "INSERT INTO space_meta (id, space_id) VALUES (1, ?)", arguments: [id])
@@ -144,15 +148,7 @@ extension Space {
   }
 
   public func identity() async throws -> SpaceIdentity {
-    if let identityCache { return identityCache }
-    let identity = try await writer.read { db in
-      guard let row = try Row.fetchOne(db, sql: "SELECT space_id FROM space_meta WHERE id = 1") else {
-        preconditionFailure("space_meta must be seeded by Space.open/inMemory before identity() is read")
-      }
-      return SpaceIdentity(rawValue: row["space_id"])
-    }
-    identityCache = identity
-    return identity
+    identityCache
   }
 }
 

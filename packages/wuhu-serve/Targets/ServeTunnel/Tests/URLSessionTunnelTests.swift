@@ -52,37 +52,81 @@ struct URLSessionTunnelTests {
     } catch { await server.shutdown(); throw error }
   }
 
-  // Cancelling while the ping is pending fails its pong handler; a reset during the socket's teardown fails it again.
-  // A message the peer sent first holds the pong back, so the ping is still pending at cancellation.
-  // On the macOS pool the second call arrived in about 5 of 8 attempts, so 16 attempts all miss it with odds below
-  // one in a million. A single attempt passes about 40% of the time on the old continuation; keep the count.
-  @Test(arguments: 0 ..< 16) func cancellingWhilePingIsPendingFailsOnce(_ attempt: Int) async throws {
+  @Test func binaryBeforeAnyPongDoesNotHoldConnect() async throws {
     let peer = try RawWebSocketPeer()
+    defer { peer.reset() }
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let url = URL(string: "ws://127.0.0.1:\(peer.port)/")!
     let dial = Task { try await TunnelURLSession.connect(url: url, session: session) }
     await peer.serve(.message)
-    dial.cancel()
-    peer.reset()
-    await #expect(throws: (any Error).self) { try await dial.value }
-    // Leave room for URLSession's second pong-handler call.
-    try await Task.sleep(for: .milliseconds(300))
+    let socket = try await dial.value
+    defer { socket.transport.abort() }
+    #expect(try await socket.transport.receive() == Data([1, 2, 3]))
   }
 
-  // After a close frame URLSession never calls the ping's pong handler, so only cancellation can end the dial.
-  @Test func cancellingADialWhosePingNeverSettlesThrowsCancellation() async throws {
+  @Test func pingBeforeFirstReceiveFinishesWhenTheReceiveLoopStarts() async throws {
     let peer = try RawWebSocketPeer()
+    defer { peer.reset() }
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let url = URL(string: "ws://127.0.0.1:\(peer.port)/")!
+    async let serving: Void = peer.serve(.messagesBeforePong)
+    let socket = try await TunnelURLSession.connect(url: url, session: session)
+    defer { socket.transport.abort() }
+    let ping = Task { try await socket.ping() }
+    defer { ping.cancel() }
+    await serving
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { () async throws -> Void in
+        #expect(try await socket.transport.receive() == Data([1, 2, 3]))
+        #expect(try await socket.transport.receive() == Data([4, 5, 6]))
+        _ = try? await socket.transport.receive()
+      }
+      try await ping.value
+      socket.transport.abort()
+      group.cancelAll()
+    }
+  }
+
+  @Test func failedUpgradeEndsConnect() async throws {
+    let peer = try RawWebSocketPeer()
+    defer { peer.reset() }
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let url = URL(string: "ws://127.0.0.1:\(peer.port)/")!
     let dial = Task { try await TunnelURLSession.connect(url: url, session: session) }
-    await peer.serve(.closeFrame)
-    let cancelled = ContinuousClock.now
+    await peer.serve(.refuseUpgrade)
+    await #expect(throws: (any Error).self) { try await dial.value }
+  }
+
+  @Test func cancellingBeforeUpgradeThrowsCancellation() async throws {
+    let peer = try RawWebSocketPeer()
+    defer { peer.reset() }
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let url = URL(string: "ws://127.0.0.1:\(peer.port)/")!
+    let dial = Task { try await TunnelURLSession.connect(url: url, session: session) }
+    await peer.serve(.holdUpgrade)
     dial.cancel()
     await #expect(throws: CancellationError.self) { try await dial.value }
-    #expect(ContinuousClock.now - cancelled < .seconds(5))
-    peer.reset()
+  }
+
+  @Test func cancellingAFirstPongWaitThrowsCancellationWithoutAnOutcome() async throws {
+    let held = HeldPong()
+    let (sent, sending) = AsyncStream<Void>.makeStream()
+    let ping = Task {
+      try await firstPong { pong in
+        held.store(pong)
+        sending.yield()
+      }
+    }
+    defer { ping.cancel() }
+    var pings = sent.makeAsyncIterator()
+    _ = try #require(await pings.next())
+    ping.cancel()
+    await #expect(throws: CancellationError.self) { try await ping.value }
+    held.call(nil)
   }
 
   @Test func firstPongOutcomeWinsAndLaterCallsAreDropped() async throws {
@@ -111,9 +155,8 @@ struct URLSessionTunnelTests {
   }
 }
 
-private final class HeldPong: @unchecked Sendable {
-  private let lock = NSLock()
-  private var pong: (@Sendable ((any Error)?) -> Void)?
-  func store(_ pong: @escaping @Sendable ((any Error)?) -> Void) { lock.withLock { self.pong = pong } }
-  func call(_ error: (any Error)?) { lock.withLock { pong }?(error) }
+private final class HeldPong: Sendable {
+  private let pong = Mutex<(@Sendable ((any Error)?) -> Void)?>(nil)
+  func store(_ pong: @escaping @Sendable ((any Error)?) -> Void) { self.pong.withLock { $0 = pong } }
+  func call(_ error: (any Error)?) { pong.withLock { $0 }?(error) }
 }

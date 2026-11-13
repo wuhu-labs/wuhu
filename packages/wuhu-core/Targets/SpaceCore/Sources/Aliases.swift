@@ -1,4 +1,3 @@
-import GRDB
 import struct SpaceContract.GroupID
 import func SpaceContract.normalizedLabel
 import StructuredQueries
@@ -23,12 +22,6 @@ public enum AliasError: Error, Equatable, Sendable {
   case invalid(String)
   case taken(String)
   case memberRequired
-}
-
-enum Aliases {
-  static func target(_ spelling: String, kind: AliasKind, in db: Database) throws -> String? {
-    try AliasRow.where { $0.name.eq(spelling.lowercased()) && $0.kind.eq(kind) }.select(\.target).fetchOne(db)
-  }
 }
 
 extension Space {

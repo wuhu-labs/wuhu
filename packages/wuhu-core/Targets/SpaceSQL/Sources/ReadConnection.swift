@@ -43,6 +43,7 @@ final class ReadConnection {
   private var innerViews: [(inner: String, table: String)] = []
   private let catalog: ViewCatalog
   private let trace: (@Sendable (String) -> Void)?
+  private let latch: InterruptLatch
   private let log: Logger
   private let label: String
   private var bound: Binding?
@@ -59,6 +60,7 @@ final class ReadConnection {
   init(
     path: String,
     catalog: ViewCatalog,
+    latch: InterruptLatch,
     trace: (@Sendable (String) -> Void)? = nil,
     log: Logger = Logger(label: "wuhu.space.read"),
     label: String = "read",
@@ -76,6 +78,7 @@ final class ReadConnection {
     self.handle = handle
     self.catalog = catalog
     self.trace = trace
+    self.latch = latch
     self.log = log
     self.label = label
     let schema = "s" + secrets.schema
@@ -217,6 +220,9 @@ final class ReadConnection {
       return result
     } catch {
       gate.mode = .setup
+      // Neither a late interrupt nor the progress handler may abort rollback.
+      latch.disarm()
+      sqlite3_progress_handler(handle, 0, nil, nil)
       sqlite3_exec(handle, "ROLLBACK", nil, nil, nil)
       if rebound { bound = nil }
       throw error

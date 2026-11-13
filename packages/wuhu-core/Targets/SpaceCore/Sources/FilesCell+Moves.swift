@@ -72,7 +72,7 @@ extension FilesCell {
       try appendVersion(target.rawValue, rev: rev, kind: head.kind, hash: head.blobHash, op: .write)
       try upsertHead(head)
       try index(target, node.index)
-      if target.isLive, !displaced || target != destination { ctx.send(DocumentCell.ID(group, target)).removed(rev) }
+      if !displaced || target != destination { removed(target, rev: rev) }
     }
   }
 

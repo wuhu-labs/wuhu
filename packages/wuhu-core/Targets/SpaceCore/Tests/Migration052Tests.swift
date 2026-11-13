@@ -4,7 +4,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import Scratch
 @testable import SpaceCore
 import SpaceFS
@@ -22,9 +21,8 @@ struct Migration052Tests {
     let expected = try await original.fs(.shared).read(path).1
     try await original.close()
 
-    let fixture = try DatabaseQueue(path: file.path)
-    try await fixture.write { db in
-      let db = MigrationDB(db)
+    let fixture = try RawDatabase(path: file.path)
+    try fixture.access { db in
       #expect(try db.int("SELECT count(*) FROM document_state") == 1)
       try db.execute(sql: """
       DROP TABLE document_lineage;
@@ -35,8 +33,7 @@ struct Migration052Tests {
     }
 
     let migrated = try Space.open(file: file)
-    try await fixture.read { db in
-      let db = MigrationDB(db)
+    try fixture.access { db in
       let row = try #require(try db.row("SELECT owner, lineage, seq, seed_rev FROM document_lineage"))
       #expect(row["owner"] as String == "shared" + path)
       #expect(row["lineage"] as Int == 1)
@@ -48,6 +45,5 @@ struct Migration052Tests {
     #expect(client.replica.text == String(decoding: expected, as: UTF8.self))
     #expect(try await migrated.fs(.shared).read(path).1 == expected)
     try await migrated.close()
-    try fixture.close()
   }
 }

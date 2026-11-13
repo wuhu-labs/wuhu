@@ -20,7 +20,7 @@ import Testing
       let aliceCookie = try await harness.space.createReadSession(account: aliceKey.account, group: .shared, expiresAt: Date().addingTimeInterval(3600))
       let carolCookie = try await harness.space.createReadSession(account: carolKey.account, group: .shared, expiresAt: Date().addingTimeInterval(3600))
       let foreign = GroupID(rawValue: "project")
-      try await harness.space.writer.write { db in
+      try RawDatabase.open(harness.space.databasePath) { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
       }
       try await harness.space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: (try await harness.space.ensureDevPerson()).actor, acting: foreign)
@@ -65,7 +65,7 @@ import Testing
       let bob = try await harness.space.adoptPersona(key: bobKey).name
       let destination = try await harness.store.createConversation(members: [bob], in: .shared)
       let foreign = GroupID(rawValue: "project")
-      try await harness.space.writer.write { db in
+      try RawDatabase.open(harness.space.databasePath) { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
       }
       try await harness.space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: (try await harness.space.ensureDevPerson()).actor, acting: foreign)

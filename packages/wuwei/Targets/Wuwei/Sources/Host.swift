@@ -369,7 +369,7 @@ final class Incarnation {
     } catch {
       rollback = error
       pending = []
-      if !dead { worker.log.error("\(address) rolled back a call: \(error)") }
+      if !dead { worker.log.debug("\(address) rolled back a call: \(error)") }
     }
     hold(pending!)
     pending = nil

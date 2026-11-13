@@ -4,7 +4,6 @@
   import Foundation
 #endif
 import Dependencies
-import GRDB
 import OperationProtocol
 import Scratch
 @testable import SpaceCore
@@ -155,7 +154,7 @@ extension MachineCellTests {
       try await space.worker.call(cell) { try $0.abandon(exec.id) }
       #expect(space.worker.cell(cell).operation(exec.id)?.recipient == nil)
       #expect(space.worker.cell(cell).tail(exec.id).isEmpty)
-      let count = try await space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM wuwei_mail WHERE recipient = 'SessionCell/test-session'") }
+      let count = try RawDatabase.open(space.databasePath) { try $0.int("SELECT count(*) FROM wuwei_mail WHERE recipient = 'SessionCell/test-session'") }
       #expect(count == 0)
       peer.close()
       try await space.close()

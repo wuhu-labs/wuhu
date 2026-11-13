@@ -1081,7 +1081,7 @@ private let githubStub = FetchClient { request in
 }
 
 private func tracedSpace(_ executed: @escaping @Sendable (String) -> Void) throws -> Space {
-  try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), trace: executed)
+  try Space.inMemory(trace: executed)
 }
 
 private func normalizingExecIDs(_ text: String) -> String {

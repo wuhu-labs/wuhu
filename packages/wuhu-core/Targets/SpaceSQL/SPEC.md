@@ -10,6 +10,8 @@ A slot names itself `read.<n>` to the log the pool was given. SQLite's profile c
 
 ## Read pool lifetime
 
+A cancelled caller interrupts its slot’s current SQLite work and throws `CancellationError`, including when cancellation arrives between preparing a statement and its first step. A progress handler observes the checkout's task cancellation while its statements execute, at a 1000-instruction interval; a cancel that lands before a step is honoured at that step's first checkpoint. The interrupt latch is disarmed and the progress handler removed before rollback and before the slot can serve another checkout, so neither a late interrupt nor a cancelled progress callback can abort cleanup; rollback releases its read locks and later readers remain usable.
+
 `ReadPool.close()` drains each read slot, closes its SQLite connection, and refuses later queries and table discovery with `SQLITE_MISUSE`, including on slots never opened. Close is idempotent, attempts every slot even if one fails, and throws the first SQLite close failure.
 
 ## Conversation views

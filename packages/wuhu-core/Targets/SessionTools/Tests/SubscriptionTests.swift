@@ -36,7 +36,7 @@ private func tablePath(_ raw: String) throws -> SpacePath {
 }
 
 private func tracingSpace(_ executed: @escaping @Sendable (String) -> Void) throws -> Space {
-  try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), trace: executed)
+  try Space.inMemory(trace: executed)
 }
 
 private func observationNotifications(_ space: Space, session: SessionID) async throws -> [SystemNotification] {

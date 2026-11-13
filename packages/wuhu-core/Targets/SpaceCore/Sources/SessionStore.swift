@@ -5,7 +5,6 @@ import TaskLifetime
 #else
   import Foundation
 #endif
-import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import enum SpaceContract.SessionHoldPayload
@@ -162,7 +161,6 @@ public enum SessionStoreError: Error, Equatable, Sendable {
 public struct SessionStore: Sendable {
   public let space: Space
   let taskScope: TaskScope
-  let writer: any DatabaseWriter
   let bucket: Bucket
   let dateGen: DateGenerator
   let runtime: SpaceRuntime
@@ -171,7 +169,7 @@ public struct SessionStore: Sendable {
 
 extension Space {
   public nonisolated var sessions: SessionStore {
-    SessionStore(space: self, taskScope: taskScope, writer: writer, bucket: bucket, dateGen: dateGen, runtime: runtime, rng: rng)
+    SessionStore(space: self, taskScope: taskScope, bucket: bucket, dateGen: dateGen, runtime: runtime, rng: rng)
   }
 }
 

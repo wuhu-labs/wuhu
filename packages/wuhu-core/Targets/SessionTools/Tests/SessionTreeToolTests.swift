@@ -262,7 +262,7 @@ struct SessionTreeToolTests {
 }
 
 func plainGroup(_ space: Space, _ id: String) async throws -> GroupID {
-  try await space.writer.write { db in
+  try RawDatabase.open(space.databasePath) { db in
     try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00Z')", arguments: [id])
   }
   return GroupID(rawValue: id)

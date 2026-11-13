@@ -21,7 +21,6 @@ dependencies:
   - OrderedCollections
   - Dependencies
   - Logging
-  - GRDB
   - Wuwei
   - WuweiQueries
   - StructuredQueries
@@ -49,7 +48,7 @@ tests:
     - Clocks
     - ControlledTime
     - Logging
-    - GRDB
+    - GRDBSQLite
     - InferenceKit
     - ModelProviders
     - Credentials

@@ -2,7 +2,6 @@ import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import Foundation
-import GRDB
 import MachineContract
 import Scratch
 @testable import SpaceCore
@@ -59,14 +58,18 @@ import Wuwei
   }
 
   private func assertRow(_ space: Space, requested: Bool, lookedUp: Bool) async throws {
-    try await space.writer.read { db in
-      let rows = try Row.fetchAll(db, sql: "SELECT owner, version, requested, looked_up_at FROM machine_release_resolutions")
+    try RawDatabase.open(space.databasePath) { db in
+      let rows = try db.rows("SELECT owner, version, requested, looked_up_at FROM machine_release_resolutions")
       #expect(rows.count == 1)
       let row = try #require(rows.first)
-      #expect(row["owner"] as String == "releases")
-      #expect(row["version"] as String == "1.2.3")
-      #expect(row["requested"] as Bool == requested)
-      #expect(((row["looked_up_at"] as Int64?) != nil) == lookedUp)
+      let owner: String = row["owner"]
+      let version: String = row["version"]
+      let storedRequested: Bool = row["requested"]
+      let lookedUpAt: Int64? = row["looked_up_at"]
+      #expect(owner == "releases")
+      #expect(version == "1.2.3")
+      #expect(storedRequested == requested)
+      #expect((lookedUpAt != nil) == lookedUp)
     }
   }
 

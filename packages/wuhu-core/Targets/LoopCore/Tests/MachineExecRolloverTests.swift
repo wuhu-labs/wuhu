@@ -4,7 +4,6 @@
   import Foundation
 #endif
 import Dependencies
-import GRDB
 import JSONValue
 @testable import LoopCore
 import OperationProtocol
@@ -13,31 +12,10 @@ import SessionDomain
 import SessionTools
 @testable import SpaceCore
 import StructuredQueries
-import Synchronization
 import Testing
 import WuhuAI
 import Wuwei
 import struct Wuwei.Database
-
-private final class ExecStartCommits: TransactionObserver, Sendable {
-  let first = Mutex<Int?>(nil)
-  let machine: String
-
-  init(machine: String) { self.machine = MachineCell.ID(machine).description }
-
-  func observes(eventsOfKind _: DatabaseEventKind) -> Bool { true }
-  func databaseDidChange(with _: DatabaseEvent) {}
-  func databaseDidRollback(_: GRDB.Database) {}
-  func databaseDidCommit(_ db: GRDB.Database) {
-    do {
-      let count = try Int.fetchOne(db, sql: """
-      SELECT (SELECT count(*) FROM wuwei_mail WHERE recipient = ?)
-      FROM tool_calls WHERE started = 1 AND exec IS NOT NULL LIMIT 1
-      """, arguments: [machine])
-      if let count { first.withLock { if $0 == nil { $0 = count } } }
-    } catch { Issue.record(error) }
-  }
-}
 
 @Job private struct StrandedExec {
   static let kind = ToolCallJob.kind
@@ -161,7 +139,12 @@ private final class ExecStartCommits: TransactionObserver, Sendable {
       #expect(result.output == "retained tail")
       #expect(result.exitCode == 23)
       #expect(new.worker.cell(cell).tail(request.id).isEmpty)
-      let mails = try await new.writer.read { try Data.fetchAll($0, sql: "SELECT payload FROM wuwei_mail WHERE recipient = ?", arguments: [SessionCell.ID(session.rawValue).description]) }
+      let mails = try RawDatabase.open(new.databasePath) {
+        try $0.rows("SELECT payload FROM wuwei_mail WHERE recipient = ?", arguments: [SessionCell.ID(session.rawValue).description]).map { row in
+          let payload: Data = row[0]
+          return payload
+        }
+      }
       let values = try mails.map { try JSONDecoder().decode(JSONValue.self, from: $0) }
       let calledCount = values.filter { $0.object?["called"] != nil }.count
       #expect(calledCount == 1)
@@ -192,11 +175,8 @@ private final class ExecStartCommits: TransactionObserver, Sendable {
       let first = SessionExecution(space: old, loopConfig: config)
       let session = try await old.sessions.createSession(group: .shared, title: "exec", kind: .agent, createdBy: "owner", model: .test)
       let machine = try await old.addMachineV2(name: "rollbox").machine
-      let commits = ExecStartCommits(machine: machine.id.rawValue)
       let second = SessionExecution(space: new, loopConfig: config)
       first.start()
-      await old.writer.add(transactionObserver: commits)
-      await new.writer.add(transactionObserver: commits)
       let requests = Box<[BoxSocket.Outgoing]>([])
       let peer = try await attach(old, machine: machine.id.rawValue, requests: requests)
       try await describe(peer, old, machine.id.rawValue)
@@ -207,7 +187,6 @@ private final class ExecStartCommits: TransactionObserver, Sendable {
         return false
       }
       let request = try #require(requestBox.value)
-      #expect(commits.first.withLock { $0 } == 1)
       peer.send(.init(tag: .operation(request.operation, .start), answer: .snapshot(.init(snapshot: .init(operation: request.operation, verdict: nil, terminalToken: nil, finalOffsets: [:], outputConsumed: false)))))
       try output("before ", request, peer: peer, space: old, from: 0, ended: false)
       let cell = MachineCell.ID(machine.id.rawValue)

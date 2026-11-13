@@ -18,7 +18,7 @@ import Testing
   func callerContextAndGroupStandingMatchCheckedService(kind: String, host: String) async throws {
     let alice = GroupID(rawValue: "alice")
     try await withRig(contentHost: host, group: alice, task: kind == "task", childAgent: kind == "child") { rig in
-      try await rig.space.writer.write { db in
+      try RawDatabase.open(rig.space.databasePath) { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('hidden', '2026-01-01T00:00:00.000Z')")
       }
       let principal = try await rig.space.principal(of: rig.session)

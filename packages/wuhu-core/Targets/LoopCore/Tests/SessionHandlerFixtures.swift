@@ -5,7 +5,6 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
@@ -32,10 +31,8 @@ func makeHandlerSpace() throws -> Space {
 }
 
 extension Space {
-  func plantHandlerRows(_ sql: String, arguments: StatementArguments = StatementArguments()) async throws {
-    var configuration = Configuration()
-    configuration.busyMode = .timeout(5)
-    try await DatabaseQueue(path: writer.path, configuration: configuration).write { try $0.execute(sql: sql, arguments: arguments) }
+  func plantHandlerRows(_ sql: String, arguments: [any MigrationValue?] = []) throws {
+    try RawDatabase.open(databasePath) { try $0.execute(sql: sql, arguments: arguments) }
   }
 
   func writeHandlerText(_ path: String, _ content: String) async throws {

@@ -4,7 +4,6 @@ import ControlledTime
 #else
   import Foundation
 #endif
-import GRDB
 import OperationProtocol
 import Scratch
 @testable import SpaceCore
@@ -89,10 +88,7 @@ extension MachineCellTests {
       var expectedFlights: Set<BoxPurpose> = [.control, .output("stdout"), .output("stderr")]
       if deadline == .answerAt { expectedFlights.insert(.stop) }
       #expect(Set(flights.keys) == expectedFlights)
-      do {
-        let source = try DatabaseQueue(path: file.path)
-        try source.backup(to: DatabaseQueue(path: copy.path))
-      }
+      try RawDatabase.open(file.path) { try $0.execute(sql: "VACUUM INTO ?", arguments: [copy.path]) }
       peer.close()
       try await old.close()
       await time.advance(to: anchor.addingTimeInterval(deadline.restartAfter))
@@ -143,7 +139,12 @@ extension MachineCellTests {
         try await until("the resumed exec finishes once") { new.worker.cell(cell).operation(exec.id)?.delivered == true }
         #expect(new.worker.cell(cell).tail(exec.id) == Data("beforeafter".utf8))
       }
-      let mails = try await new.writer.read { db in try Data.fetchAll(db, sql: "SELECT payload FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") }
+      let mails = try RawDatabase.open(new.databasePath) {
+        try $0.rows("SELECT payload FROM wuwei_mail WHERE recipient = 'test-recipient/exec'").map { row in
+          let payload: Data = row[0]
+          return payload
+        }
+      }
       #expect(mails.count == 1)
       let result = try JSONDecoder().decode(MachineExecReply.self, from: #require(mails.first))
       guard case let .finished(end) = result else {
@@ -162,8 +163,11 @@ extension MachineCellTests {
 
   private func crashWakeSettles(_ space: Space) async throws {
     try await until("the copied worker moves its due wake strictly into the future") {
-      try await space.writer.read { db in
-        try Bool.fetchOne(db, sql: "SELECT holder = ? AND (wake_at IS NULL OR wake_at > ?) FROM wuwei_addressable WHERE address = ?", arguments: [space.worker.id, space.worker.scheduler.now.milliseconds, cell.description]) == true
+      try RawDatabase.open(space.databasePath) {
+        try $0.bool(
+          "SELECT holder = ? AND (wake_at IS NULL OR wake_at > ?) FROM wuwei_addressable WHERE address = ?",
+          arguments: [space.worker.id, space.worker.scheduler.now.milliseconds, cell.description],
+        ) == true
       }
     }
   }

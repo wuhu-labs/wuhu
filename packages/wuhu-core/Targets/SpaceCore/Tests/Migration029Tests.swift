@@ -1,14 +1,20 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import Scratch
 @testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct Migration029Tests {
   @Test func aJournalledAttachmentBecomesARowOfTheConversationHomedInItsGroup() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-029-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
-    let original = try Space(writer: database)
-    try await database.write { db in
+    let folder = try ScratchFolder("migration-029")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try Space.open(file: file)
+    let database = try RawDatabase(path: file.path)
+    try database.access { db in
       try db.execute(sql: """
       DROP TABLE attachments;
       INSERT INTO conversations (id, kind, window_messages, window_seconds, created_at, grp) VALUES ('dm', 'dm_session', 10, 900, 'now', 'shared');
@@ -20,9 +26,9 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '029';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
-    let rows = try await database.read { db in
-      try Row.fetchAll(db, sql: "SELECT conversation_id, path, blob, size, created_at FROM attachments").map { row in
+    let upgraded = try Space.open(file: file)
+    let rows = try database.access { db in
+      try db.rows("SELECT conversation_id, path, blob, size, created_at FROM attachments").map { row in
         [row[0] as String, row[1] as String, row[2] as String, String(row[3] as Int), row[4] as String]
       }
     }

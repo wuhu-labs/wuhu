@@ -1,18 +1,19 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import Dispatch
 import GRDBSQLite
 @testable import SpaceSQL
 import Testing
 
-// The isolation the view layer promises, on a catalog that hides one row of
-// `sessions`: no statement a caller can write reaches that row, and nothing
-// outside the views, by any route SQLite offers.
 @Suite struct ReadPoolTests {
   static let hiding = ViewCatalog { table, _ in table == "sessions" ? "id <> 'hidden'" : nil }
 
   @Test func busyConnectionCloseThrowsAndCanBeRetried() throws {
     let file = try Fixture()
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding)
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch())
     var statement: OpaquePointer?
     #expect(sqlite3_prepare_v2(connection.handle, "SELECT 1", -1, &statement, nil) == SQLITE_OK)
     #expect(throws: SQLiteFailure.self) { try connection.close() }
@@ -23,7 +24,7 @@ import Testing
 
   @Test func attachedSpaceHasThePageCache() throws {
     let file = try Fixture()
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: .init(schema: "page", views: "cache"))
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: .init(schema: "page", views: "cache"))
     func text(_ sql: String) -> String? {
       var statement: OpaquePointer?
       #expect(sqlite3_prepare_v2(connection.handle, sql, -1, &statement, nil) == SQLITE_OK)
@@ -52,29 +53,28 @@ import Testing
 
   @Test func cancellingAMemoryReaderLetsTheWaitingWriterCommit() async throws {
     let path = "file:/read-contract-\(UUID())?vfs=memdb"
-    var configuration = Configuration()
-    configuration.busyMode = .timeout(5)
-    let writer = try DatabaseQueue(path: path, configuration: configuration)
-    try await writer.write { try $0.execute(sql: "CREATE TABLE sessions (id TEXT); INSERT INTO sessions VALUES ('first')") }
+    let writer = try FixtureWriter(path: path)
+    try writer.execute("CREATE TABLE sessions (id TEXT); INSERT INTO sessions VALUES ('first')")
     let (reading, readStarted) = AsyncStream<Void>.makeStream()
-    let pool = ReadPool(path: path, trace: { _ in readStarted.yield() })
-    let reader = Task {
-      try await pool.run(
-        "WITH RECURSIVE c(n) AS (SELECT 1 FROM sessions UNION ALL SELECT n + 1 FROM c) SELECT count(*) FROM c",
-        scope: .shared(),
-      )
-    }
+    let step = DispatchSemaphore(value: 0)
+    let endless = "WITH RECURSIVE c(n) AS (SELECT 1 FROM sessions UNION ALL SELECT n + 1 FROM c) SELECT count(*) FROM c"
+    let pool = ReadPool(path: path, trace: { sql in
+      if sql == endless {
+        readStarted.yield()
+        step.wait()
+      }
+    })
+    let reader = Task { try await pool.run(endless, scope: .shared()) }
     defer { reader.cancel() }
     for await _ in reading { break }
     let (writing, writeStarted) = AsyncStream<Void>.makeStream()
     let mutation = Task {
-      try await writer.write {
-        writeStarted.yield()
-        try $0.execute(sql: "INSERT INTO sessions VALUES ('second')")
-      }
+      writeStarted.yield()
+      try await writer.write("INSERT INTO sessions VALUES ('second')")
     }
     for await _ in writing { break }
     reader.cancel()
+    step.signal()
     await #expect(throws: CancellationError.self) { _ = try await reader.value }
     try await mutation.value
     #expect(try await column(pool, "SELECT count(*) FROM sessions") == ["2"])
@@ -158,10 +158,8 @@ import Testing
     let pool = ReadPool(path: file.path, capacity: 1)
     await refused(pool, "SELECT n FROM \"/t.table\"", .unknownRelation("/t.table"))
 
-    let writer = try DatabaseQueue(path: file.path)
-    try await writer.write { db in
-      try db.execute(sql: "CREATE TABLE \"/t.table\" (n INTEGER); INSERT INTO \"/t.table\" VALUES (7)")
-    }
+    let writer = try FixtureWriter(path: file.path)
+    try writer.execute("CREATE TABLE \"/t.table\" (n INTEGER); INSERT INTO \"/t.table\" VALUES (7)")
     #expect(try await column(pool, "SELECT n FROM \"/t.table\"") == ["7"])
   }
 

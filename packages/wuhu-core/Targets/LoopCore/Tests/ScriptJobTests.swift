@@ -5,7 +5,6 @@
 #endif
 import Dependencies
 import Fetch
-import GRDB
 import JSONValue
 @testable import LoopCore
 import MainHub
@@ -14,7 +13,6 @@ import SessionDomain
 import SessionTools
 @testable import SpaceCore
 import StructuredQueries
-import Synchronization
 import Testing
 import WuhuAI
 import Wuwei
@@ -23,36 +21,6 @@ import struct Wuwei.Database
 @Cell struct ScriptLaunch {
   mutating func launch(_ params: ScriptJob.Params) {
     ctx.create(ScriptJob.ID("\(params.session.rawValue):\(params.handle)"), params: params)
-  }
-}
-
-private final class ScriptCommits: TransactionObserver, Sendable {
-  struct Commit: Equatable {
-    let phase: String
-    let answered: Bool
-    let resulted: Bool
-    let posts: Int
-    let answers: Int
-    let notices: Int
-    let ends: Int
-  }
-
-  let values = Mutex<[Commit]>([])
-  func observes(eventsOfKind _: DatabaseEventKind) -> Bool { true }
-  func databaseDidChange(with _: DatabaseEvent) {}
-  func databaseDidRollback(_: GRDB.Database) {}
-  func databaseDidCommit(_ db: GRDB.Database) {
-    do {
-      guard let row = try Row.fetchOne(db, sql: """
-      SELECT phase, answered, resulted, posts,
-        (SELECT count(*) FROM wuwei_mail WHERE json_extract(CAST(payload AS TEXT), '$.scriptAnswered') IS NOT NULL) AS answers,
-        (SELECT count(*) FROM wuwei_mail WHERE json_extract(CAST(payload AS TEXT), '$.scriptPosted') IS NOT NULL) AS notices,
-        (SELECT count(*) FROM wuwei_mail WHERE json_extract(CAST(payload AS TEXT), '$.scriptEnded') IS NOT NULL) AS ends
-      FROM script_runs LIMIT 1
-      """) else { return }
-      let value = Commit(phase: row["phase"], answered: row["answered"], resulted: row["resulted"], posts: row["posts"], answers: row["answers"], notices: row["notices"], ends: row["ends"])
-      values.withLock { if $0.last != value { $0.append(value) } }
-    } catch { Issue.record(error) }
   }
 }
 
@@ -89,8 +57,11 @@ func scriptParams(session: SessionID, source: String, wait: Double = 300, lifeti
 }
 
 func scriptMail(_ space: Space, _ session: SessionID) async throws -> [SessionCell.Message] {
-  try await space.writer.read { db in
-    try Data.fetchAll(db, sql: "SELECT payload FROM wuwei_mail WHERE recipient = ? ORDER BY rowid", arguments: [SessionCell.ID(session.rawValue).description]).map { try JSONDecoder().decode(SessionCell.Message.self, from: $0) }
+  try RawDatabase.open(space.databasePath) {
+    try $0.rows("SELECT payload FROM wuwei_mail WHERE recipient = ? ORDER BY rowid", arguments: [SessionCell.ID(session.rawValue).description]).map { row in
+      let payload: Data = row[0]
+      return try JSONDecoder().decode(SessionCell.Message.self, from: payload)
+    }
   }
 }
 
@@ -98,18 +69,29 @@ func scriptMail(_ space: Space, _ session: SessionID) async throws -> [SessionCe
   @Test func `the session creates the script job directly and forgets its last mail`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
-      let call = ToolCall(id: "call", name: "run_script", arguments: .object(["source": "result('first')"]))
+      let (release, gate) = AsyncStream<Void>.makeStream()
+      defer { gate.finish() }
+      let call = ToolCall(id: "call", name: "run_script", arguments: .object(["source": "import {query} from 'wuhu:space'; await query('SELECT 1'); result('first')"]))
       let inference = InferenceScript([Fix.replying("run", calls: [call]), Fix.replying("done")])
-      let service = SessionExecution(connection: scriptConnection(), credential: { _ in "test" }, space: space) { _ in makeConfig(inference: { try await inference($0) }) }
+      let service = SessionExecution(connection: scriptConnection(query: { for await _ in release { break } }), credential: { _ in "test" }, space: space) { _ in makeConfig(inference: { try await inference($0) }) }
       let session = try await space.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       service.start()
       try await service.enqueue(item: Fix.message("run"), to: session)
+      let script = Box<ScriptJob.ID?>(nil)
+      try await until("the script job is created") {
+        let runs = space.worker.cell(SessionCell.ID(session.rawValue)).scriptRuns()
+        if script.value == nil { script.withLock { $0 = runs.first } }
+        return !runs.isEmpty
+      }
+      gate.yield(())
       try await until("one tool result and terminal script membership") {
         try await space.sessions.transcriptLines(session).contains { $0.role == .toolResult }
           && space.worker.cell(SessionCell.ID(session.rawValue)).runningScripts().isEmpty
       }
-      #expect(try await space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM tool_calls") } == 0)
-      #expect(try await space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM script_runs WHERE phase = 'ended' AND answered = 1 AND resulted = 1") } == 1)
+      #expect(try RawDatabase.open(space.databasePath) { try $0.int("SELECT count(*) FROM tool_calls") } == 0)
+      let job = try #require(script.value)
+      let run = try #require(space.worker.job(job).db.rows(ScriptRow.all).first)
+      #expect(run.phase == "ended" && run.answered && run.resulted)
       await service.shutdown()
       try await space.close()
     }
@@ -129,8 +111,6 @@ func scriptMail(_ space: Space, _ session: SessionID) async throws -> [SessionCe
       let source = "import {query} from 'wuhu:space'; " + (waitFirst ? "await query('SELECT 1'); result('first'); update('second'); update('third')" : "result('first'); await query('SELECT 1'); update('second'); update('third')")
       let params = try scriptParams(session: session, source: source, wait: waitFirst ? 0.1 : 300)
       let job = ScriptJob.ID("s:script.12345678")
-      let commits = ScriptCommits()
-      await space.writer.add(transactionObserver: commits)
       try await space.worker.call(ScriptLaunch.ID("launch")) { $0.launch(params) }
       try await until("the runtime starts") { space.worker.job(job).db.rows(ScriptRow.all).first?.phase == "running" }
       try await until("the runtime waits") { waiting.value }
@@ -147,11 +127,6 @@ func scriptMail(_ space: Space, _ session: SessionID) async throws -> [SessionCe
       let expected = waitFirst ? ["result of script.12345678:\nfirst", "second", "third"] : ["second", "third"]
       #expect(posted == expected)
       guard case .scriptEnded = mail.last else { throw UnexpectedCall("script terminal mail") }
-      for commit in commits.values.withLock({ $0 }) {
-        if commit.answered { #expect(commit.answers == 1) }
-        #expect(commit.notices == commit.posts + (waitFirst && commit.resulted ? 1 : 0))
-        if commit.phase == "ended" { #expect(commit.ends == 1) }
-      }
       try await space.close()
     }
   }

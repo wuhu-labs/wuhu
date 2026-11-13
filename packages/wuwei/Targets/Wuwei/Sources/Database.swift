@@ -194,7 +194,7 @@ extension Connection {
 /// One SQLite connection. Not `Sendable`: it belongs to whoever opened it, or, borrowed, to the call it was lent to.
 final class Connection {
   let handle: OpaquePointer
-  private let owned: Bool
+  private var owned: Bool
 
   init(path: String, flags: Int32, vfs: String? = nil) throws {
     var handle: OpaquePointer?
@@ -214,6 +214,14 @@ final class Connection {
 
   deinit {
     if owned { sqlite3_close_v2(handle) }
+  }
+
+  func close() throws {
+    precondition(owned)
+    let code = sqlite3_close(handle)
+    precondition(code != SQLITE_BUSY, "a writer closed with unfinished statements or backups")
+    guard code == SQLITE_OK else { throw error(code) }
+    owned = false
   }
 
   static func prepare(_ handle: OpaquePointer) throws {

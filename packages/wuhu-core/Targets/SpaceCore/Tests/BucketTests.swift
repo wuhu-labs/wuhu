@@ -1,6 +1,9 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import KeelObjectStore
 import Scratch
 @testable import SpaceCore

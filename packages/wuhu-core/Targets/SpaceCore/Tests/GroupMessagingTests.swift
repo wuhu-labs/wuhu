@@ -23,11 +23,7 @@ import Testing
 
   func makeRig() async throws -> Rig {
     let space = try makeSpace()
-    try await space.writer.write { db in
-      for group in [Self.alice, Self.bob] {
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
-      }
-    }
+    for group in [Self.alice, Self.bob] { try await space.seedGroup(group) }
     let p = try await space.sessions.createSession(group: Self.alice, title: "P", kind: .agent, createdBy: "owner", model: .test)
     let s = try await space.sessions.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", model: .test)
     try await space.sessions.markInterrupted(p)
@@ -162,7 +158,12 @@ import Testing
   @Test func anAttachmentIsAFileOfItsConversationThatNothingRewritesAndMintsNoRevision() async throws {
     let rig = try await makeRig()
     try await rig.space.registerPerson("carol")
-    func revisions() async throws -> Int { try await rig.space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM revisions")! } }
+    func revisions() async throws -> Int64 {
+      let groups = try await rig.space.groups()
+      return rig.space.worker.read { reader in
+        groups.reduce(0) { $0 + reader.cell(FilesCell.ID($1.id.rawValue)).currentRevision() }
+      }
+    }
     let before = try await revisions()
     let posted = try await rig.store.post(
       .box(rig.p), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: Self.utc),

@@ -4,7 +4,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import enum JSONValue.JSONValue
 import OperationProtocol
 import Scratch
@@ -80,8 +79,8 @@ import Wuwei
     #expect(space.machineBuffers.retained(f.operation, channel: "data") == 0)
     #expect(space.machineBuffers.retained(f.operation, channel: "commit") == 0)
     let operation = f.operation
-    let persisted = try await space.writer.read { db in
-      try String.fetchOne(db, sql: "SELECT inputOffsets || inputEnded || flights || COALESCE(snapshot, '') FROM machine_file_operations WHERE id = ?", arguments: [operation.uuidString.lowercased()])!
+    let persisted = try RawDatabase.open(space.databasePath) { db in
+      try db.string("SELECT inputOffsets || inputEnded || flights || COALESCE(snapshot, '') FROM machine_file_operations WHERE id = ?", arguments: [operation.uuidString.lowercased()])!
     }
     #expect(!persisted.contains("payload-only-in-buffers"))
     #expect(!persisted.contains(bytes.base64EncodedString()))

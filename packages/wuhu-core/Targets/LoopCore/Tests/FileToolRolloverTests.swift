@@ -4,7 +4,6 @@ import Dependencies
 #else
   import Foundation
 #endif
-import protocol GRDB.DatabaseValueConvertible
 import JSONValue
 @testable import LoopCore
 import Scratch
@@ -150,7 +149,12 @@ import Wuwei
       guard case let .result(result, _) = answer else { throw UnexpectedCall("hydrated file answer") }
       #expect(result == payload(name, "fresh after hydration"))
       #expect(attempts.value == 1)
-      let mails = try await new.writer.read { try Data.fetchAll($0, sql: "SELECT payload FROM wuwei_mail WHERE recipient = ?", arguments: [SessionCell.ID(session.rawValue).description]) }
+      let mails = try RawDatabase.open(new.databasePath) {
+        try $0.rows("SELECT payload FROM wuwei_mail WHERE recipient = ?", arguments: [SessionCell.ID(session.rawValue).description]).map { row in
+          let payload: Data = row[0]
+          return payload
+        }
+      }
       let values = try mails.map { try JSONDecoder().decode(JSONValue.self, from: $0) }
       #expect(values.filter { $0.object?["called"] != nil }.count == 1)
       #expect(!mails.contains { String(decoding: $0, as: UTF8.self).contains("serverRestarted") })

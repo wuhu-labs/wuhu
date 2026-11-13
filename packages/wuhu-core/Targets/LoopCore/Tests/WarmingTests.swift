@@ -5,12 +5,12 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 import JSONValue
 @testable import LoopCore
 import Scratch
 import SessionDomain
 @testable import SpaceCore
+import StructuredQueries
 import Testing
 import WuhuAI
 
@@ -26,13 +26,9 @@ import WuhuAI
 
   /// Whether the cell has taken the delayed put on `topic`: its due is recorded from then on, while it is still ahead.
   private func delayedArmed(_ space: Space, _ id: SessionID, topic: String) async throws -> Bool {
-    try await space.writer.read { db in
-      try String.fetchOne(
-        db,
-        sql: "SELECT due_at FROM session_queue WHERE session_id = ? AND topic = ? ORDER BY id DESC LIMIT 1",
-        arguments: [id.rawValue, topic],
-      ) != nil
-    }
+    try space.worker.cell(SessionCell.ID(id.rawValue)).db
+      .rows(SessionQueueRow.where { $0.sessionID.eq(id.rawValue) && $0.topic.eq(topic) }.order { $0.id.desc() }.limit(1).select { $0.dueAt })
+      .first != nil
   }
 
   private func agent(_ space: Space) async throws -> SessionID {
@@ -55,7 +51,7 @@ import WuhuAI
       execution.start()
       await execution.shutdown()
       try await first.close()
-      try await DatabaseQueue(path: file.path).write { db in
+      try RawDatabase.open(file.path) { db in
         try db.execute(sql: "DROP TABLE session_scripts")
         try db.execute(sql: "ALTER TABLE session_state DROP COLUMN warming")
         try db.execute(sql: "UPDATE wuwei_schema SET applied = applied - 2 WHERE kind = 'SessionCell'")
@@ -67,7 +63,7 @@ import WuhuAI
       upgraded.start()
       #expect(try await space.sessions.record(id).title == "upgraded")
       await upgraded.shutdown()
-      let columns = try await DatabaseQueue(path: file.path).read { db in try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('session_state')") }
+      let columns = try RawDatabase.open(file.path) { try $0.strings("SELECT name FROM pragma_table_info('session_state')") }
       #expect(columns.contains("warming"))
       try await space.close()
     }

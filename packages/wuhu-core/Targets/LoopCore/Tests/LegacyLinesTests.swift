@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import Scratch
 import SessionDomain
@@ -121,8 +120,8 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
       await first.shutdown()
       let slot = Slot(session: id, generation: 0, position: 7, stepTry: 0)
       let params = try JSONEncoder().encode(CompactionJob.Params(session: id, generation: 0, position: 7, kind: .pointer))
-      try await old.writer.write { db in
-        try db.execute(sql: "INSERT INTO wuwei_job (address, params) VALUES (?, ?)", arguments: [slot.compaction.description, params])
+      try RawDatabase.open(old.databasePath) {
+        try $0.execute(sql: "INSERT INTO wuwei_job (address, params) VALUES (?, ?)", arguments: [slot.compaction.description, params])
       }
       let new = try Space.open(file: file)
       try await runService(new, config) { _ in
@@ -186,8 +185,8 @@ func seedLegacyGeneration(_ space: Space, _ session: SessionID) async throws {
         try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.installTurn(position: 7) }
         let address = Slot(session: id, generation: 0, position: 7, stepTry: 0).compaction.description
         let params = try JSONEncoder().encode(CompactionJob.Params(session: id, generation: 0, position: 7, kind: .pointer))
-        try await space.writer.write { db in
-          try db.execute(sql: "INSERT INTO wuwei_job (address, params, phase) VALUES (?, ?, 'done')", arguments: [address, params])
+        try RawDatabase.open(space.databasePath) {
+          try $0.execute(sql: "INSERT INTO wuwei_job (address, params, phase) VALUES (?, ?, 'done')", arguments: [address, params])
         }
         try await space.worker.call(SessionCell.ID(id.rawValue)) { try $0.look() }
         #expect(script.count == 0)

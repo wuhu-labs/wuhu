@@ -130,7 +130,6 @@ tests:
     - WuhuRecordReplay
     - Logging
     - WebPush
-    - GRDB
     - Scratch
     - ScratchTesting
     - WmdDocument

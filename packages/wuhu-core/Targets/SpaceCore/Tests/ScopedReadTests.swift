@@ -37,9 +37,7 @@ import Testing
     let runs = Mutex(0)
     let space = try hidingSpace { sql in if sql == Self.count { runs.withLock { $0 += 1 } } }
     let table = try await seeded(space)
-    let hidden = try await space.writer.read { db in
-      try Int64.fetchOne(db, sql: "SELECT id FROM \"shared:/t.table\" WHERE n = 99")!
-    }
+    let hidden = try #require(space.worker.cell(FilesCell.ID("shared")).tableState(table, ceiling: Int64.max).1.first { $0.cells["n"] == .integer(99) }).id
 
     let results = Collector<Rows>()
     let stream = try space.observeRows(Self.count, throttle: .zero)
@@ -95,7 +93,7 @@ import Testing
       $0.date = .constant(fixedDate)
       $0.continuousClock = ImmediateClock()
     } operation: {
-      try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), catalog: Self.hiding, trace: trace)
+      try Space.inMemory(catalog: Self.hiding, trace: trace)
     }
   }
 

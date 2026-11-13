@@ -1,8 +1,11 @@
 import Clocks
 import ControlledTime
 import Dependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import Logging
 import LoopCore
@@ -30,7 +33,7 @@ func makeSpace(
   } operation: {
     guard log != nil || regions != nil else { return registerSessionExecution(try Space.inMemory(), clock: clock) }
     return registerSessionExecution(try Space.inMemory(
-      configuration: Space.makeConfiguration(journalMode: .default), log: log ?? Logger(label: "wuhu.space"), regions: regions,
+      log: log ?? Logger(label: "wuhu.space"), regions: regions,
     ), clock: clock)
   }
 }
@@ -153,20 +156,14 @@ func awaitItem<Element>(
   return nil
 }
 
-// Give background observation work (GRDB region callbacks run on a dispatch
-// queue, then hop back onto the cooperative pool) real wall-clock time to reach
-// a settled state before asserting on it. The space under test uses its own
-// injected clock, independent of this real-time poll.
 func settle(_ duration: Duration = .milliseconds(80)) async {
   try? await ContinuousClock().sleep(for: duration)
 }
 
 extension Space {
   /// Rows the program never wrote, as old data is: put there on a connection of their own, which the owner guard on the space's writer does not see.
-  func plant(_ sql: String, arguments: StatementArguments = StatementArguments()) async throws {
-    var configuration = Configuration()
-    configuration.busyMode = .timeout(5)
-    try await DatabaseQueue(path: writer.path, configuration: configuration).write { try $0.execute(sql: sql, arguments: arguments) }
+  func plant(_ sql: String, arguments: [any MigrationValue?] = []) throws {
+    try RawDatabase.open(databasePath) { try $0.execute(sql: sql, arguments: arguments) }
   }
 
   func registerPerson(_ id: String) async throws {
@@ -198,12 +195,5 @@ extension Space {
     let claim = GroupClaim(alias: group.rawValue, name: group.rawValue, owner: account, created: "2026-01-01T00:00:00Z")
     try await worker.call(GroupCell.ID(group.rawValue)) { try $0.create(claim) }
     try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
-  }
-}
-
-extension MigrationDB {
-  init(_ db: Database) {
-    guard let sqliteConnection = db.sqliteConnection else { preconditionFailure("a GRDB connection always has a SQLite handle") }
-    self.init(handle: sqliteConnection)
   }
 }

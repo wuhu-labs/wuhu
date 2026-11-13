@@ -1,6 +1,4 @@
-import Dispatch
 import GRDBSQLite
-import Synchronization
 
 /// The database the outer tables live in, and on the shared backend every addressable's tables too: one writer, any number of readers, whose connections the host program may own. Every connection runs ``prepareConnection(_:)`` once, when it opens.
 public protocol SharedDatabase: Sendable {
@@ -44,30 +42,27 @@ public enum Storage: Sendable {
 /// A shared database in a file of the runtime's own, in WAL mode, with the outer tables.
 public final class FileDatabase: SharedDatabase {
   let path: String
-  private let writer: Mutex<Connection>
-  private let available = DispatchSemaphore(value: 1)
+  private let writer: SQLiteWriter
   private let readers: SQLiteReaders
 
   /// `path` may be a `file:` URI. `synchronous` is off only in tests: the file then never fsyncs, which still survives a simulated crash.
   public init(path: String, synchronous: Bool = true) throws {
     self.path = path
-    let writer = try Connection(path: path, flags: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI)
-    writer.setBusyHandler()
-    try writer.execute("PRAGMA page_size = 8192")
-    try writer.execute("PRAGMA journal_mode = WAL")
-    try writer.execute(synchronous ? "PRAGMA synchronous = FULL" : "PRAGMA synchronous = OFF")
-    for statement in Self.schema {
-      try writer.execute(statement)
-    }
-    try writer.transaction {
-      for (table, column, type) in [("wuwei_job", "creator", "TEXT"), ("wuwei_mail", "lifecycle", "TEXT"), ("wuwei_addressable", "draining", "INTEGER NOT NULL DEFAULT 0")] {
-        if try !writer.rows("PRAGMA table_info(\(table))").contains(where: { $0["name"].text == column }) {
-          try writer.execute("ALTER TABLE \(table) ADD COLUMN \(column) \(type)")
+    writer = try SQLiteWriter(
+      path: path, flags: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI,
+      pragmas: ["PRAGMA page_size = 8192", "PRAGMA journal_mode = WAL", synchronous ? "PRAGMA synchronous = FULL" : "PRAGMA synchronous = OFF"],
+      prepare: { handle in
+        let db = Connection(borrowing: handle)
+        for statement in Self.schema { try db.execute(statement) }
+        try db.transaction {
+          for (table, column, type) in [("wuwei_job", "creator", "TEXT"), ("wuwei_mail", "lifecycle", "TEXT"), ("wuwei_addressable", "draining", "INTEGER NOT NULL DEFAULT 0")] {
+            if try !db.rows("PRAGMA table_info(\(table))").contains(where: { $0["name"].text == column }) {
+              try db.execute("ALTER TABLE \(table) ADD COLUMN \(column) \(type)")
+            }
+          }
         }
-      }
-    }
-    try Connection.prepare(writer.handle)
-    self.writer = Mutex(writer)
+      },
+    )
     readers = SQLiteReaders(path: path)
   }
 
@@ -88,68 +83,14 @@ public final class FileDatabase: SharedDatabase {
   ]
 
   public func write(_ body: (OpaquePointer) throws -> Void) throws {
-    available.wait()
-    defer { available.signal() }
-    try writer.withLock { db in
-      try db.execute("BEGIN IMMEDIATE")
-      do {
-        try body(db.handle)
-        try db.execute("COMMIT")
-      } catch {
-        try? db.execute("ROLLBACK")
-        throw error
-      }
-    }
+    try writer.write(body)
   }
 
   public func begin() throws -> any SharedTransaction {
-    available.wait()
-    do { try accessWriter { try Connection(borrowing: $0).execute("BEGIN IMMEDIATE") } }
-    catch { available.signal(); throw error }
-    return FileTransaction(database: self)
-  }
-
-  fileprivate func accessWriter<T: Sendable>(_ body: @Sendable (OpaquePointer) throws -> T) rethrows -> T {
-    try writer.withLock { try body($0.handle) }
-  }
-
-  fileprivate func finishWriter() {
-    available.signal()
+    try writer.begin()
   }
 
   public func beginRead() throws -> any SharedReadTransaction {
     try readers.beginRead()
   }
-}
-
-private final class FileTransaction: SharedTransaction {
-  private var finished = false
-  private let database: FileDatabase
-
-  init(database: FileDatabase) { self.database = database }
-
-  func access<T: Sendable>(_ body: @Sendable (OpaquePointer) throws -> T) throws -> T {
-    precondition(!finished)
-    return try database.accessWriter { try body($0) }
-  }
-
-  func commit() throws {
-    precondition(!finished)
-    finished = true
-    defer { database.finishWriter() }
-    try database.accessWriter { handle in
-      let db = Connection(borrowing: handle)
-      do { try db.execute("COMMIT") }
-      catch { try? db.execute("ROLLBACK"); throw error }
-    }
-  }
-
-  func rollback() {
-    precondition(!finished)
-    finished = true
-    try? database.accessWriter { try Connection(borrowing: $0).execute("ROLLBACK") }
-    database.finishWriter()
-  }
-
-  deinit { precondition(finished, "a held transaction must finish") }
 }

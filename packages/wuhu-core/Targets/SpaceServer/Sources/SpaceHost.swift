@@ -125,7 +125,7 @@ public actor SpaceHost {
       try registerMachineReleases(space: space, version: version, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: releaseClock))
       var listenerRoutes = Router()
       let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
-      addMachineV2Routes(&listenerRoutes, space: space, hub: hub, upgrades: upgrades, fingerprint: deployment.pin) { request in
+      addMachineV2Routes(&listenerRoutes, space: space, hub: hub, upgrades: upgrades, fingerprint: deployment.pin, log: logger) { request in
         return try await requestPrincipal(request, space: space, devPerson: devPerson, date: date)
       }
       let handler = SpaceServer.configuredHandler(

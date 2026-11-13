@@ -180,8 +180,10 @@ extension FilesCell {
     removed(path, rev: rev)
   }
 
-  private mutating func removed(_ path: SpacePath, rev: Int64) {
-    if path.isLive { ctx.send(DocumentCell.ID(group, path)).removed(rev) }
+  mutating func removed(_ path: SpacePath, rev: Int64) {
+    guard path.isLive else { return }
+    let document = DocumentCell.ID(group, path)
+    if let lineage = ctx.cell(document).lineage() { ctx.send(document).removed(rev, lineage: lineage) }
   }
 
   mutating func delete(_ path: SpacePath, ifMatch: VersionToken?, mtime: String, attribution: RevisionAttribution?) throws {

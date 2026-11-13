@@ -2,7 +2,6 @@ import Crypto
 import DeterministicDependencies
 import Fetch
 import Foundation
-import GRDB
 import JSONValue
 import MachineContract
 import OperationProtocol
@@ -54,11 +53,9 @@ extension MachineV2TunnelTests {
     }
     #expect(try await group() == f.machine.group.rawValue)
 
-    try await f.space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('team', '2026-10-15T00:00:00.000Z')")
-    }
+    let team = try await f.space.createGroup(alias: "team", owner: (try await f.space.ensureDevPerson()).account)
     let moved = try await f.http("/v1/machine/\(f.machine.id.rawValue)/group", method: .put, input: ["group": "team"])
     #expect(moved.status == .ok)
-    #expect(try await group() == "team")
+    #expect(try await group() == team.rawValue)
   }
 }

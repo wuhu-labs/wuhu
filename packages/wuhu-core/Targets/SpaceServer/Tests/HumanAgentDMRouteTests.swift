@@ -9,7 +9,6 @@ import Synchronization
   import Foundation
 #endif
 import Fetch
-import GRDB
 import JSONValue
 import SessionDomain
 import SessionTools
@@ -147,10 +146,8 @@ import struct WuhuAI.ToolCall
 
   private func legacyDM(_ harness: SessionHarness, session: SessionID, person: String) async throws -> ConversationID {
     let dm = try await harness.store.createConversation(members: [person], in: .shared)
-    // Old data, written on a connection of its own: the space's writer guards the rows a conversation's cell owns.
-    var connection = Configuration()
-    connection.busyMode = .timeout(5)
-    try await DatabaseQueue(path: harness.space.writer.path, configuration: connection).write { db in
+    // Old data, written on a connection of its own: the owner guard the space's writer carries does not see it.
+    try RawDatabase.open(harness.space.databasePath) { db in
       try db.execute(sql: "UPDATE conversations SET kind = 'dm_user' WHERE id = ?", arguments: [dm.rawValue])
       try db.execute(sql: "INSERT INTO conversation_members (conversation_id, member, member_kind, joined_at) VALUES (?, ?, 'session', '2026-01-01T00:00:00.000Z')", arguments: [dm.rawValue, session.rawValue])
     }

@@ -73,11 +73,11 @@ import Testing
       let dm = Conversations.dmID("carol", agent.rawValue)
       try await space.plant(
         """
-        INSERT INTO conversations (id, kind, window_messages, window_seconds, created_at, grp) VALUES (:id, 'dm_user', 10, 900, '2026-01-01T00:00:00.000Z', 'shared');
-        INSERT INTO conversation_members VALUES (:id, 'carol', 'user', '2026-01-01T00:00:00.000Z'), (:id, :agent, 'session', '2026-01-01T00:00:00.000Z');
-        INSERT INTO messages (id, conversation_id, sender_id, sender_timezone, kind, content, created_at) VALUES ('old', :id, 'carol', 'GMT', 'message', :content, '2026-01-01T00:00:00.000Z')
+        INSERT INTO conversations (id, kind, window_messages, window_seconds, created_at, grp) VALUES (?1, 'dm_user', 10, 900, '2026-01-01T00:00:00.000Z', 'shared');
+        INSERT INTO conversation_members VALUES (?1, 'carol', 'user', '2026-01-01T00:00:00.000Z'), (?1, ?2, 'session', '2026-01-01T00:00:00.000Z');
+        INSERT INTO messages (id, conversation_id, sender_id, sender_timezone, kind, content, created_at) VALUES ('old', ?1, 'carol', 'GMT', 'message', ?2, '2026-01-01T00:00:00.000Z')
         """,
-        arguments: ["id": dm.rawValue, "agent": agent.rawValue, "content": try Sessions.encode(MessageContent(text: "history"))],
+        arguments: [dm.rawValue, dm.rawValue, agent.rawValue, dm.rawValue, try Sessions.encode(MessageContent(text: "history"))],
       )
       for (bySession, messageID) in [(true, "new-agent"), (false, "new-person"), (true, "old"), (false, "old")] {
         await #expect(throws: SessionStoreError.humanAgentDirectMessage) {

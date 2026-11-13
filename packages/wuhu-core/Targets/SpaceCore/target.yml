@@ -26,7 +26,6 @@ dependencies:
   - JSONSchema
   - OrderedCollections
   - Crypto
-  - GRDB
   - GRDBSQLite
   - KeelObjectStore
   - StructuredQueries
@@ -75,7 +74,7 @@ tests:
     - Loro
     - WuhuAI
     - JSONValue
-    - GRDB
+    - GRDBSQLite
     - StructuredQueries
     - Dependencies
     - DependenciesTestSupport

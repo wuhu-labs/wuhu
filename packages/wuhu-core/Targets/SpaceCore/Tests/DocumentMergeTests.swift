@@ -6,7 +6,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import LiveDocument
 import Loro
 import Scratch
@@ -26,12 +25,10 @@ struct DocumentMergeTests {
     let first = try Space.open(file: file)
     _ = try await first.fs(.shared).write(plan, bytes("Before the migration\n"), ifMatch: nil)
     try await first.close()
-    let old = try DatabaseQueue(path: file.path)
-    try await old.write { db in
+    try RawDatabase.open(file.path) { db in
       try db.execute(sql: "ALTER TABLE document_state DROP COLUMN history")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '039'")
     }
-    try old.close()
     let migrated = try Space.open(file: file)
     let client = try await DocumentClient.join(migrated, plan)
     #expect(client.replica.text == "Before the migration\n")

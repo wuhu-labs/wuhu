@@ -1,6 +1,10 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import Scratch
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
@@ -12,9 +16,11 @@ import Testing
 // edge justifies.
 @Suite(.deterministicDependencies) struct SettingsMigrationTests {
   @Test func upgradeCopiesCatalogsAndDeletesTheEmptyLegacyGroup() async throws {
-    let database = try DatabaseQueue(path: "file:/settings-migration-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
-    try await database.write { db in
-      try Migration001.apply(.init(db))
+    let folder = try ScratchFolder("settings-migration")
+    let file = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: file.path)
+    try database.access { db in
+      try Migration001.apply(db)
       try db.execute(sql: """
       CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
       INSERT INTO grdb_migrations VALUES ('001');
@@ -45,13 +51,13 @@ import Testing
       }
     }
     // A row an older binary left behind: 003 must not validate what it did not write.
-    try await database.writeWithoutTransaction { db in
+    try database.access { db in
       try db.execute(sql: "PRAGMA foreign_keys = OFF")
       try db.execute(sql: "INSERT INTO group_members (grp, account_id, joined_at) VALUES ('ops', 'ghost', '2026-02-01T00:00:00Z')")
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
 
-    let space = try Space(writer: database)
+    let space = try Space.open(file: file)
     let owner = AccountID(rawValue: "person")
     let operatorAccount = AccountID(rawValue: "operator")
     let machine = AccountID(rawValue: "machine-account")
@@ -82,7 +88,7 @@ import Testing
     }
     let copied = try await space.fs(.settings).read("/models.json")
     _ = try await space.fs(.settings).write("/models.json", Data("{\"edited\":true}".utf8), ifMatch: copied.0)
-    let reopened = try Space(writer: database)
+    let reopened = try Space.open(file: file)
     #expect(try await reopened.fs(.settings).read("/models.json").1 == Data("{\"edited\":true}".utf8))
   }
 }

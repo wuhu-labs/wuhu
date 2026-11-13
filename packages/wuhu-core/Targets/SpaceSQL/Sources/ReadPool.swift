@@ -124,7 +124,11 @@ actor ReadSlot {
   private func interruptible<T>(_ token: UInt64, _ body: (ReadConnection) throws -> T) throws -> T {
     let connection = try open()
     latch.arm(token, connection.handle)
-    defer { latch.disarm() }
+    sqlite3_progress_handler(connection.handle, 1000, { _ in Task<Never, Never>.isCancelled ? 1 : 0 }, nil)
+    defer {
+      sqlite3_progress_handler(connection.handle, 0, nil, nil)
+      latch.disarm()
+    }
     try Task.checkCancellation()
     do {
       return try body(connection)
@@ -142,7 +146,7 @@ actor ReadSlot {
   private func open() throws -> ReadConnection {
     guard !closed else { throw SQLiteFailure(code: SQLITE_MISUSE, message: "read pool is closed") }
     if let connection { return connection }
-    let opened = try ReadConnection(path: path, catalog: catalog, trace: trace, log: log, label: label)
+    let opened = try ReadConnection(path: path, catalog: catalog, latch: latch, trace: trace, log: log, label: label)
     connection = opened
     return opened
   }

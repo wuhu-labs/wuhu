@@ -5,7 +5,6 @@ import LoopCore
 #else
   import Foundation
 #endif
-import GRDB
 import JSONValue
 import class MainHub.Hub
 import struct MainHub.ToolProblem
@@ -37,7 +36,7 @@ import struct WuhuAI.ToolArguments
   func makeRig() async throws -> Rig {
     let space = try Space.inMemory()
     let loop = try await ToolFixture(space: space)
-    try await space.writer.write { db in
+    try RawDatabase.open(space.databasePath) { db in
       for group in [Self.alice, Self.bob] {
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
       }

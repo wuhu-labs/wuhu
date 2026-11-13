@@ -2,8 +2,8 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// A one-connection WebSocket server on raw sockets, so a test controls frame order that ServeNIO keeps correct.
-final class RawWebSocketPeer: @unchecked Sendable {
+/// A raw peer lets tests put application messages ahead of the first pong.
+final class RawWebSocketPeer: Sendable {
   let port: UInt16
   private let listener: Int32
   private let dropped = DispatchSemaphore(value: 0)
@@ -24,21 +24,17 @@ final class RawWebSocketPeer: @unchecked Sendable {
 
   deinit { close(listener) }
 
-  /// What the peer sends right after the upgrade, ahead of any pong.
-  enum Lead {
-    /// One binary message. The client has not received it, so URLSession holds the pong back and the ping stays
-    /// pending. The peer returns once the ping arrives.
+  enum Lead: Sendable {
+    case holdUpgrade
+    case refuseUpgrade
     case message
-    /// A close frame. URLSession then never calls the ping's pong handler. The peer returns once the client's first
-    /// frame arrives, or after two seconds of silence.
-    case closeFrame
+    case messagesBeforePong
   }
 
   /// Resets the connection that `serve(_:)` holds.
   func reset() { dropped.signal() }
 
-  /// Accepts one client, completes the `wuhu-fetch-tunnel.v1` upgrade and sends `lead`. The connection stays open,
-  /// unanswered, until `reset()` aborts it with a TCP reset.
+  /// Returns after sending the lead (and a pong, when requested), holding the connection until reset.
   func serve(_ lead: Lead) async {
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       DispatchQueue.global().async {
@@ -46,18 +42,22 @@ final class RawWebSocketPeer: @unchecked Sendable {
         guard fd >= 0, let request = Self.readHead(fd) else { close(fd); continuation.resume(); return }
         let key = request.split(separator: "\r\n")
           .first { $0.lowercased().hasPrefix("sec-websocket-key:") }
-          .map { $0.dropFirst("sec-websocket-key:".count).trimmingCharacters(in: .whitespaces) } ?? ""
+          .map { $0.dropFirst("sec-websocket-key:".count).trimmingCharacters(in: .whitespaces) }!
         let answer = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
-        Self.write(fd, Array("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(answer)\r\nSec-WebSocket-Protocol: wuhu-fetch-tunnel.v1\r\n\r\n".utf8))
         switch lead {
-        case .message:
+        case .holdUpgrade: break
+        case .refuseUpgrade:
+          Self.write(fd, Array("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".utf8))
+        case .message, .messagesBeforePong:
+          Self.write(fd, Array("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(answer)\r\nSec-WebSocket-Protocol: wuhu-fetch-tunnel.v1\r\n\r\n".utf8))
           Self.write(fd, [0x82, 0x03, 0x01, 0x02, 0x03])
-          while let opcode = Self.readFrame(fd), opcode != 0x9 {}
-        case .closeFrame:
-          Self.write(fd, [0x88, 0x02, 0x03, 0xE8])
-          var timeout = timeval(tv_sec: 2, tv_usec: 0)
-          setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-          _ = Self.readFrame(fd)
+          if case .messagesBeforePong = lead {
+            Self.write(fd, [0x82, 0x03, 0x04, 0x05, 0x06])
+            if let ping = Self.readFrame(fd) {
+              precondition(ping.opcode == 0x9)
+              Self.write(fd, [0x8A, UInt8(ping.payload.count)] + ping.payload)
+            }
+          }
         }
         continuation.resume()
         self.dropped.wait()
@@ -92,9 +92,9 @@ final class RawWebSocketPeer: @unchecked Sendable {
     return String(decoding: head, as: UTF8.self)
   }
 
-  /// Reads one masked client frame with a payload under 126 bytes and returns its opcode.
-  private static func readFrame(_ fd: Int32) -> UInt8? {
-    guard let header = read(fd, 2), header[1] & 0x7F < 126, read(fd, 4 + Int(header[1] & 0x7F)) != nil else { return nil }
-    return header[0] & 0x0F
+  private static func readFrame(_ fd: Int32) -> (opcode: UInt8, payload: [UInt8])? {
+    guard let header = read(fd, 2), header[1] & 0x7F < 126,
+          let mask = read(fd, 4), let payload = read(fd, Int(header[1] & 0x7F)) else { return nil }
+    return (header[0] & 0x0F, payload.enumerated().map { $0.element ^ mask[$0.offset % 4] })
   }
 }

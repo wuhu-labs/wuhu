@@ -1,12 +1,11 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import SpaceSQL
 import Testing
 
-// The views stand on two names a caller never learns: the schema the space
-// file is attached under and the inner views that carry the filters. Nothing
-// a statement returns or fails with names either, and knowing them gets a
-// statement past no filter.
 @Suite struct SecretTests {
   static let secrets = ReadConnection.Secrets(schema: "5ec7e7a", views: "b1eedb1eed")
   static let schema = "s5ec7e7a"
@@ -15,7 +14,7 @@ import Testing
 
   @Test func noListingNamesTheSchemaOrTheViews() throws {
     let file = try Fixture()
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: Self.secrets)
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: Self.secrets)
 
     for sql in [
       "SELECT * FROM sqlite_temp_master",
@@ -39,7 +38,7 @@ import Testing
 
   @Test func noPlanIsExplained() throws {
     let file = try Fixture()
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: Self.secrets)
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: Self.secrets)
 
     for sql in [
       "EXPLAIN SELECT * FROM sessions",
@@ -54,7 +53,7 @@ import Testing
 
   @Test func errorsNameTheTablesNotTheViews() throws {
     let file = try Fixture()
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: Self.secrets)
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: Self.secrets)
 
     for sql in [
       "SELECT nope FROM sessions",
@@ -74,24 +73,24 @@ import Testing
   @Test func aBrokenFilterIsReportedWithoutItsViews() throws {
     let file = try Fixture()
     let broken = ViewCatalog { table, _ in table == "sessions" ? "nope = 1" : nil }
-    let connection = try ReadConnection(path: file.path, catalog: broken, secrets: Self.secrets)
+    let connection = try ReadConnection(path: file.path, catalog: broken, latch: InterruptLatch(), secrets: Self.secrets)
     try sealed(connection, "SELECT * FROM sessions", refusedAs: (any Error).self)
 
     let failing = ViewCatalog { table, _ in table == "sessions" ? "json('{' || id) IS NOT NULL" : nil }
-    let other = try ReadConnection(path: file.path, catalog: failing, secrets: Self.secrets)
+    let other = try ReadConnection(path: file.path, catalog: failing, latch: InterruptLatch(), secrets: Self.secrets)
     try sealed(other, "SELECT * FROM sessions", refusedAs: (any Error).self)
   }
 
-  @Test func aDroppedColumnIsReportedWithoutItsViews() async throws {
+  @Test func aDroppedColumnIsReportedWithoutItsViews() throws {
     let file = try Fixture()
     let filtering = ViewCatalog { table, _ in table == "sessions" ? "flag = 1" : nil }
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: Self.secrets)
-    let filtered = try ReadConnection(path: file.path, catalog: filtering, secrets: Self.secrets)
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: Self.secrets)
+    let filtered = try ReadConnection(path: file.path, catalog: filtering, latch: InterruptLatch(), secrets: Self.secrets)
     try sealed(connection, "SELECT flag FROM sessions")
     try sealed(filtered, "SELECT flag FROM sessions")
 
-    let writer = try DatabaseQueue(path: file.path)
-    try await writer.write { db in try db.execute(sql: "ALTER TABLE sessions DROP COLUMN flag") }
+    let writer = try FixtureWriter(path: file.path)
+    try writer.execute("ALTER TABLE sessions DROP COLUMN flag")
 
     try sealed(connection, "SELECT flag FROM sessions", refusedAs: (any Error).self)
     try sealed(filtered, "SELECT id FROM sessions", refusedAs: (any Error).self)
@@ -100,7 +99,7 @@ import Testing
 
   @Test func whatAStatementReturnsNamesOnlyTables() throws {
     let file = try Fixture()
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: Self.secrets)
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: Self.secrets)
 
     for sql in [
       "SELECT * FROM sessions",
@@ -115,10 +114,9 @@ import Testing
     }
   }
 
-  // A statement that writes either secret does not compile.
   @Test func aLeakedNameIsRefusedAsWritten() throws {
     let file = try Fixture()
-    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, secrets: Self.secrets)
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: Self.secrets)
 
     for sql in Self.bypasses + [
       "SELECT id FROM temp.\(Self.innerSessions)",
@@ -138,7 +136,7 @@ import Testing
   @Test func aLeakedSchemaGetsPastNoFilter() throws {
     let file = try Fixture()
     let connection = try ReadConnection(
-      path: file.path, catalog: Self.hiding, secrets: Self.secrets, screensText: false,
+      path: file.path, catalog: Self.hiding, latch: InterruptLatch(), secrets: Self.secrets, screensText: false,
     )
 
     for sql in Self.bypasses {

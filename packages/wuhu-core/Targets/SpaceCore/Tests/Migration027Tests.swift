@@ -1,14 +1,20 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import Scratch
 @testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct Migration027Tests {
   @Test func aKeyedRequestKeepsItsRowAndLosesKindAndKey() async throws {
-    let database = try DatabaseQueue(path: "file:/migration-027-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
-    let original = try Space(writer: database)
-    try await database.write { db in
+    let folder = try ScratchFolder("migration-027")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try Space.open(file: file)
+    let database = try RawDatabase(path: file.path)
+    try database.access { db in
       try db.execute(sql: """
       ALTER TABLE requests ADD COLUMN kind TEXT;
       ALTER TABLE requests ADD COLUMN key TEXT CHECK (key IS NULL OR kind IS NOT NULL);
@@ -19,11 +25,11 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '027';
       """)
     }
-    let upgraded = try Space(writer: DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
-    let columns = try await database.read { try String.fetchAll($0, sql: "SELECT name FROM pragma_table_info('requests')") }
+    let upgraded = try Space.open(file: file)
+    let columns = try database.access { try $0.strings("SELECT name FROM pragma_table_info('requests')") }
     #expect(!columns.contains("kind") && !columns.contains("key"))
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT name FROM pragma_index_list('requests') WHERE name LIKE 'requests_by_k%'") } == [])
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT brief FROM requests") } == ["look"])
+    #expect(try database.access { try $0.strings("SELECT name FROM pragma_index_list('requests') WHERE name LIKE 'requests_by_k%'") } == [])
+    #expect(try database.access { try $0.strings("SELECT brief FROM requests") } == ["look"])
     try await upgraded.close()
     try await original.close()
   }

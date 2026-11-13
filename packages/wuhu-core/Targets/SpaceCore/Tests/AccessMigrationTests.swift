@@ -1,7 +1,11 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import LoopCore
+import Scratch
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import Testing
@@ -9,10 +13,9 @@ import Testing
 // Migration 004 over the shape migration 003 leaves: group edges, the read
 // closure, the admin rows and personal groups become one access table.
 @Suite(.deterministicDependencies) struct AccessMigrationTests {
-  func migrated() throws -> DatabaseQueue {
-    let database = try DatabaseQueue(path: "file:/access-migration-\(UUID())?vfs=memdb", configuration: Space.makeConfiguration(journalMode: .default))
-    try database.write { db in
-      try Migration001.apply(.init(db))
+  func migrated(_ file: URL) throws {
+    try RawDatabase.open(file.path) { db in
+      try Migration001.apply(db)
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, name, created_at) VALUES
         ('person', 'human', 'Person', '2026-01-01T00:00:00Z'),
@@ -38,23 +41,24 @@ import Testing
         ('personal', 'ops', 'read', '2026-01-01T00:00:00Z', NULL);
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_box', 'machine', 'box', '2026-01-01T00:00:00Z', 'shared');
       """)
-      try Migration003.apply(.init(db))
-      try Migration004.apply(.init(db))
+      try Migration003.apply(db)
+      try Migration004.apply(db)
       // A space that opens this file finds every migration applied.
       try db.execute(sql: """
       CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
       INSERT INTO grdb_migrations VALUES ('001'), ('002'), ('003'), ('004');
       """)
     }
-    return database
   }
 
   @Test func theReachOfEveryGroupBecomesItsListAndRole() async throws {
-    let database = try migrated()
-    let rows = try await database.read { db in
-      try Row.fetchAll(
-        db,
-        sql: """
+    let folder = try ScratchFolder("access-migration")
+    let file = folder.url.appending(path: "space.sqlite")
+    try migrated(file)
+    let database = try RawDatabase(path: file.path)
+    let rows = try database.access { db in
+      try db.rows(
+        """
         SELECT CASE WHEN account_id IS NULL THEN 'group ' || source_group ELSE 'account ' || account_id END AS subject,
           grp, role FROM group_roles ORDER BY subject
         """,
@@ -74,14 +78,17 @@ import Testing
   }
 
   @Test func sharedOpensTheSettingsGroupStaysReadableAndNoEdgesRemain() async throws {
-    let database = try migrated()
-    let facts = try await database.read { db in
+    let folder = try ScratchFolder("access-migration")
+    let file = folder.url.appending(path: "space.sqlite")
+    try migrated(file)
+    let database = try RawDatabase(path: file.path)
+    let facts = try database.access { db in
       (
-        visibility: try String.fetchAll(db, sql: "SELECT id || ' ' || visibility FROM groups ORDER BY id"),
-        secrets: try String.fetchOne(db, sql: "SELECT secrets_scope FROM groups WHERE id = 'shared'"),
-        scope: try String.fetchOne(db, sql: "SELECT scope FROM machines WHERE id = 'mc_box'"),
+        visibility: try db.strings("SELECT id || ' ' || visibility FROM groups ORDER BY id"),
+        secrets: try db.string("SELECT secrets_scope FROM groups WHERE id = 'shared'"),
+        scope: try db.string("SELECT scope FROM machines WHERE id = 'mc_box'"),
         tables: try ["group_edges", "group_reads", "group_members"].filter { try db.tableExists($0) },
-        guest: try Int.fetchOne(db, sql: "SELECT guest FROM accounts WHERE id = 'person'"),
+        guest: try db.int("SELECT guest FROM accounts WHERE id = 'person'"),
       )
     }
     #expect(facts.visibility == ["ops private", "personal private", "settings private", "shared open", "team private"])
@@ -90,7 +97,7 @@ import Testing
     #expect(facts.tables == [])
     #expect(facts.guest == 0)
 
-    let space = registerSessionExecution(try Space(writer: database))
+    let space = registerSessionExecution(try Space.open(file: file))
     let team = GroupID(rawValue: "team")
     let person = AccountID(rawValue: "person")
     #expect(try await space.reads(team) == [team, GroupID(rawValue: "ops"), .settings, .shared])

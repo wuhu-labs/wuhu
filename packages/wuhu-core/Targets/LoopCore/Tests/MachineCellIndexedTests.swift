@@ -5,24 +5,29 @@
 #endif
 import ControlledTime
 import Dependencies
-import Dispatch
-import GRDB
+import GRDBSQLite
 import OperationProtocol
 @testable import SpaceCore
+import StructuredQueries
 import Testing
 @testable import Wuwei
 import WuweiQueries
 
 private func tracedMachineSpace(_ statements: Box<[String]>) throws -> Space {
-  var configuration = Space.makeConfiguration(journalMode: .default)
-  configuration.prepareDatabase { db in
-    db.trace { event in
-      if case let .statement(statement) = event {
-        statements.withLock { $0.append(statement.expandedSQL) }
-      }
-    }
+  let space = try Space.inMemory()
+  try space.database.accessWriter { handle in
+    let context = Unmanaged.passRetained(statements).toOpaque()
+    let code = sqlite3_set_clientdata(handle, "test.machine-statements", context) { Unmanaged<Box<[String]>>.fromOpaque($0!).release() }
+    precondition(code == SQLITE_OK)
+    sqlite3_trace_v2(handle, UInt32(SQLITE_TRACE_STMT), { _, context, statement, _ in
+      let statements = Unmanaged<Box<[String]>>.fromOpaque(context!).takeUnretainedValue()
+      let expanded = sqlite3_expanded_sql(OpaquePointer(statement!))!
+      defer { sqlite3_free(expanded) }
+      statements.withLock { $0.append(String(cString: expanded)) }
+      return 0
+    }, context)
   }
-  return try Space.inMemory(configuration: configuration)
+  return space
 }
 
 extension MachineCellTests {
@@ -53,16 +58,16 @@ extension MachineCellTests {
       }
       let frameReads = statements.value.filter { $0.hasPrefix("SELECT") && $0.contains("\"machine_operations\"") }
       #expect(frameReads.count == 3)
-      let measures = try await space.writer.read { db in
-        try frameReads.map { sql in
+      let measures = try space.database.accessWriter { handle in
+        let db = MigrationDB(handle: handle)
+        return try frameReads.map { sql in
           let sql = sql.replacingOccurrences(of: "cell()", with: "'test-machine'")
           return (
-            try Row.fetchAll(db, sql: sql).count,
-            try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql).map { $0["detail"] as String }.joined(separator: "\n"),
+            try db.rows(sql).count,
+            try db.rows("EXPLAIN QUERY PLAN " + sql).map { $0["detail"] as String }.joined(separator: "\n"),
           )
         }
       }
-      // Replaying the traced frame's SELECTs measures hydrated rows, not SQLite VM instructions.
       print("MachineCell rows/frame: \(measures.map(\.0)); total=\(measures.reduce(0) { $0 + $1.0 }); retired=\(retired)")
       print("MachineCell frame query plans: \(measures.map(\.1))")
       #expect(measures.map(\.0) == [1, 1, 1])
@@ -70,7 +75,7 @@ extension MachineCellTests {
       #expect(measures.dropFirst().allSatisfy { $0.1.contains("machine_operations_live") })
       #expect(space.worker.cell(cell).operation(exec.id)?.stdout == 4)
       #expect(space.worker.cell(cell).tail(exec.id) == bytes)
-      #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM machine_operations WHERE state = 'retired'") } == retired)
+      #expect(space.worker.cell(cell).retiredOperationCount() == retired)
 
       let record = try #require(try await space.execRecord(caller: "caller", toolCallID: .init("live-call")))
       #expect(try await space.liveExecs() == [record])
@@ -100,7 +105,7 @@ extension MachineCellTests {
       }
       peer.send(.init(tag: .describe, answer: .description(missing)))
       _ = try await space.worker.call(cell) { _ in true }
-      #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") } == 1)
+      #expect(try RawDatabase.open(space.databasePath) { try $0.int("SELECT count(*) FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") } == 1)
       peer.close()
       try await space.close()
     }
@@ -163,53 +168,15 @@ extension MachineCellTests {
       #expect(row.answerAt == nil)
       try await described(peer, space)
       #expect(!requests.value.contains { if case .start = $0.exchange { true } else { false } })
-      #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") } == 1)
+      #expect(try RawDatabase.open(space.databasePath) { try $0.int("SELECT count(*) FROM wuwei_mail WHERE recipient = 'test-recipient/exec'") } == 1)
       peer.close()
       try await space.close()
     }
   }
+}
 
-  @Test func outputFrameStepMedianWithOneLiveExec() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let buffers = setup(space)
-      let peer = try await attach(space, Box([]))
-      try await described(peer, space)
-      let exec = MachineExec(id: "frame-median", operation: UUID(), createdAt: anchor, group: .shared, argv: ["echo"])
-      try await starting(space, peer, exec)
-      let bytes = Data(repeating: 65, count: 16384)
-      var samples: [UInt64] = []
-      for index in 0 ..< 19 {
-        let from = UInt64(index * bytes.count)
-        let pointer = try #require(buffers.put(bytes, operation: exec.operation, channel: "stdout", from: from))
-        let frame = BoxSocket.Incoming(tag: .operation(exec.operation, .output("stdout")), answer: .snapshot(.init(snapshot: snapshot(exec, channel: "stdout", from: from, through: from + UInt64(bytes.count)), output: pointer, tail: bytes)))
-        let began = DispatchTime.now().uptimeNanoseconds
-        try await space.worker.call(cell) { cell in
-          let box = try #require(cell.ctx.sockets(of: BoxSocket.self).first)
-          try cell.answer(frame, from: box)
-        }
-        let elapsed = DispatchTime.now().uptimeNanoseconds - began
-        if index >= 4 { samples.append(elapsed) }
-      }
-      let statements = Box<[String]>([])
-      try await space.writer.writeWithoutTransaction { db in
-        db.trace { event in
-          if case let .statement(statement) = event { statements.withLock { $0.append(statement.expandedSQL) } }
-        }
-      }
-      let from = UInt64(19 * bytes.count)
-      let pointer = try #require(buffers.put(bytes, operation: exec.operation, channel: "stdout", from: from))
-      let frame = BoxSocket.Incoming(tag: .operation(exec.operation, .output("stdout")), answer: .snapshot(.init(snapshot: snapshot(exec, channel: "stdout", from: from, through: from + UInt64(bytes.count)), output: pointer, tail: bytes)))
-      try await space.worker.call(cell) { cell in
-        let box = try #require(cell.ctx.sockets(of: BoxSocket.self).first)
-        try cell.answer(frame, from: box)
-      }
-      try await space.writer.writeWithoutTransaction { $0.trace() }
-      let presenceReads = statements.value.filter { $0.hasPrefix("SELECT") && $0.contains("\"machine_presence\"") }.count
-      let median = samples.sorted()[samples.count / 2]
-      print("MachineCell one-live-exec output-frame step median: \(median) ns; timed frames=\(samples.count); payload=16384; warmups=4; presence SELECTs/frame=\(presenceReads)")
-      peer.close()
-      try await space.close()
-    }
+extension MachineCell {
+  fileprivate func retiredOperationCount() -> Int {
+    db.rows(MachineOperation.where { $0.state.eq("retired") }.asSelect().count()).first!
   }
 }

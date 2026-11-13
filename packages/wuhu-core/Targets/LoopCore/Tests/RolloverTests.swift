@@ -5,7 +5,6 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 import JSONValue
 @testable import LoopCore
 import Scratch
@@ -16,10 +15,9 @@ import Testing
 import WuhuAI
 import Wuwei
 
-private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool) async throws -> String {
-  let plant = try DatabaseQueue(path: file.path, configuration: Space.makeConfiguration(journalMode: .default))
-  let address = try await plant.write { db in
-    let stored = try String.fetchOne(db, sql: "SELECT address FROM wuwei_job WHERE address LIKE ? AND phase = 'live'", arguments: ["InferenceJob/\(sid.rawValue):%"])
+private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool) throws -> String {
+  try RawDatabase.open(file.path) { db in
+    let stored = try db.string("SELECT address FROM wuwei_job WHERE address LIKE ? AND phase = 'live'", arguments: ["InferenceJob/\(sid.rawValue):%"])
     let address = try #require(stored)
     try db.execute(sql: "UPDATE wuwei_job SET params = CAST(json_remove(CAST(params AS TEXT), '$.ping') AS BLOB) WHERE address = ?", arguments: [address])
     if held { try db.execute(sql: "UPDATE sessions SET hold = 'interrupted' WHERE id = ?", arguments: [sid.rawValue]) }
@@ -28,12 +26,10 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
     ALTER TABLE wuwei_mail DROP COLUMN lifecycle;
     DELETE FROM grdb_migrations WHERE identifier = '040';
     """)
-    #expect(try db.columns(in: "wuwei_job").allSatisfy { $0.name != "creator" })
-    #expect(try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations WHERE identifier = '040'") == nil)
+    #expect(try db.columns(in: "wuwei_job").allSatisfy { $0 != "creator" })
+    #expect(try db.string("SELECT identifier FROM grdb_migrations WHERE identifier = '040'") == nil)
     return address
   }
-  try plant.close()
-  return address
 }
 
 /// Two workers on one store, as two server processes on one database while a release rolls.
@@ -132,10 +128,10 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
         await time.advance(by: 1)
         let renewedPast = (old.worker.scheduler.now + .seconds(9)).milliseconds
         try await until("the quiesced worker renews before the next clock tick") {
-          let expiry = try await old.writer.read { db in
-            try Int64.fetchOne(db, sql: "SELECT expires_at FROM wuwei_addressable WHERE address = ? AND holder = ?", arguments: [cell.description, old.worker.id])
+          let expiry = try RawDatabase.open(old.databasePath) {
+            try $0.int("SELECT expires_at FROM wuwei_addressable WHERE address = ? AND holder = ?", arguments: [cell.description, old.worker.id])
           }
-          return try #require(expiry) > renewedPast
+          return Int64(try #require(expiry)) > renewedPast
         }
       }
       #expect(new.worker.hasMail(for: cell.recipient))
@@ -242,25 +238,25 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
       try await until("the old worker's inference starts") { script.count == 1 }
       await first.shutdown()
 
-      let address = try await plantDev38Inference(file, session: sid, held: held)
+      let address = try plantDev38Inference(file, session: sid, held: held)
       try await old.close()
       let new = try Space.open(file: file)
-      #expect(try await new.writer.read { db in
-        try String.fetchOne(db, sql: "SELECT creator FROM wuwei_job WHERE address = ?", arguments: [address]) == SessionCell.ID(sid.rawValue).description
+      #expect(try RawDatabase.open(new.databasePath) {
+        try $0.string("SELECT creator FROM wuwei_job WHERE address = ?", arguments: [address]) == SessionCell.ID(sid.rawValue).description
       })
       let second = SessionExecution(space: new, loopConfig: config)
       second.start()
       await time.advance(by: 12)
       try await until("the new worker tries to host the persisted inference") {
-        try await new.writer.read { db in
-          try Int.fetchOne(db, sql: "SELECT fence FROM wuwei_addressable WHERE address = ?", arguments: [address])! > 1
+        try RawDatabase.open(new.databasePath) {
+          try $0.int("SELECT fence FROM wuwei_addressable WHERE address = ?", arguments: [address])! > 1
         }
       }
       if held {
         try await until("the held turn's lost job ends and its mail is consumed") {
-          try await new.writer.read { db in
-            try String.fetchOne(db, sql: "SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) == "done"
-              && Int.fetchOne(db, sql: "SELECT count(*) FROM wuwei_mail WHERE recipient = ? AND lifecycle = 'lost'", arguments: [SessionCell.ID(sid.rawValue).description]) == 0
+          try RawDatabase.open(new.databasePath) { db in
+            try db.string("SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) == "done"
+              && db.int("SELECT count(*) FROM wuwei_mail WHERE recipient = ? AND lifecycle = 'lost'", arguments: [SessionCell.ID(sid.rawValue).description]) == 0
           }
         }
         #expect(try await new.sessions.record(sid).hold == .interrupted)
@@ -273,8 +269,8 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
       #expect(script.count == 2)
       #expect(try await new.sessions.lines(sid).assistantLines.map(\.text) == ["done"])
       #expect(try await new.sessions.hydrate(sid).stepTry == 1)
-      #expect(try await new.writer.read { db in
-        try String.fetchOne(db, sql: "SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) == "done"
+      #expect(try RawDatabase.open(new.databasePath) {
+        try $0.string("SELECT phase FROM wuwei_job WHERE address = ?", arguments: [address]) == "done"
       })
       await second.shutdown()
       try await new.close()
@@ -406,10 +402,7 @@ private func plantDev38Inference(_ file: URL, session sid: SessionID, held: Bool
       try await until("the call runs") { exec.calls.value.count == 1 }
 
       // What a process killed mid-call leaves: the call started, unanswered, its tool still held.
-      do {
-        let source = try DatabaseQueue(path: file.path)
-        try source.backup(to: DatabaseQueue(path: copy.path))
-      }
+      try RawDatabase.open(file.path) { try $0.execute(sql: "VACUUM INTO ?", arguments: [copy.path]) }
 
       let new = try Space.open(file: copy)
       let second = SessionExecution(space: new, loopConfig: config)

@@ -57,7 +57,7 @@ extension FilesCell {
     do {
       try requireAncestorDirectories(path)
     } catch SpaceError.notADirectory {
-      ctx.send(DocumentCell.ID(group, path)).removed(currentRevision())
+      ctx.send(DocumentCell.ID(group, path)).removed(currentRevision(), lineage: lineage)
       return nil
     }
     let rev: Int64

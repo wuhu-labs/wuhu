@@ -4,29 +4,27 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
+import Scratch
 @testable import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct MediaMigrationTests {
-  private func queue(_ path: String) throws -> DatabaseQueue {
-    try DatabaseQueue(path: path, configuration: Space.makeConfiguration(journalMode: .default))
-  }
-
   @Test func upgradeDropsBlobOwnershipAndPreservesBlobBytes() async throws {
-    let database = try queue("file:/media-migration-\(UUID())?vfs=memdb")
-    let original = try Space(writer: database)
+    let folder = try ScratchFolder("media-migration")
+    let file = folder.url.appending(path: "space.sqlite")
+    let original = try Space.open(file: file)
+    let database = try RawDatabase(path: file.path)
     let bytes = Data([1, 2, 3])
     let hash = try await original.storeImage(bytes)
-    try await database.write { db in
+    try database.access { db in
       try db.execute(sql: "CREATE TABLE session_blobs (session_id TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (session_id, hash))")
       try db.execute(sql: "INSERT INTO session_blobs VALUES (?, ?)", arguments: [UUID().uuidString, hash])
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '005'")
     }
-    let upgraded = try Space(writer: try queue(database.path))
-    #expect(try await database.read { try !$0.tableExists("session_blobs") })
+    let upgraded = try Space.open(file: file)
+    #expect(try database.access { try !$0.tableExists("session_blobs") })
     #expect(try await upgraded.blobBytes(hash) == Array(bytes))
-    let reopened = try Space(writer: try queue(database.path))
+    let reopened = try Space.open(file: file)
     #expect(try await reopened.blobBytes(hash) == Array(bytes))
     try await reopened.close()
     try await upgraded.close()

@@ -5,7 +5,6 @@ import DeterministicDependencies
 import Dispatch
 import Fetch
 import FetchTunnel
-import GRDB
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -99,8 +98,7 @@ import Wuwei
     let machine = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).machine
     let id = MachineCell.ID(machine.id.rawValue)
     await space.stopWorker()
-    let writer = await space.writer
-    let database = try WuweiDatabase(writer: writer)
+    let database = space.database
     let scheduler = HeldBoxAttachmentScheduler()
     let worker = Worker(id: "held-box-attachment", storage: .shared(database), scheduler: scheduler, registrations: [.cell(MachineCell.self)])
     let buffers = MachineBuffers(worker: worker.id)
@@ -139,8 +137,8 @@ import Wuwei
       worker.poke(id.recipient)
       await scheduler.drain()
       let recipient = id.description
-      let mail = try await writer.read { db in
-        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM wuwei_mail WHERE recipient = ?", arguments: [recipient])!
+      let mail = try RawDatabase.open(space.databasePath) {
+        try $0.int("SELECT COUNT(*) FROM wuwei_mail WHERE recipient = ?", arguments: [recipient])!
       }
       try #require(mail == 0)
       #expect(!worker.hasMail(for: id.recipient))
@@ -161,7 +159,6 @@ import Wuwei
     await worker.quiesce()
     worker.release()
     await scheduler.drain()
-    database.close()
     try await space.close()
   }
 

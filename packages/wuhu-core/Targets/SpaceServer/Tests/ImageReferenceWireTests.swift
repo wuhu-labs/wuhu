@@ -89,10 +89,7 @@ private func requestBody(_ lines: [TranscriptLine], resolver: (any MediaResolver
         let harness = try await SessionHarness(assembledModels: models)
         let session = try await harness.createSession()
         if attachment {
-          let group = GroupID(rawValue: "attachments")
-          try await harness.space.writer.write { db in
-            try db.execute(sql: "INSERT INTO groups (id, created_at, visibility) VALUES (?, '2026-01-01T00:00:00Z', 'open')", arguments: [group.rawValue])
-          }
+          let group = try await harness.space.createGroup(alias: "attachments", owner: (try await harness.space.ensureDevPerson()).account)
           _ = try await harness.space.fs(group).write("/image.png", pngBytes, ifMatch: nil)
           #expect(try await harness.space.reads(.shared).contains(group))
           let message = TranscriptItem.message(.init(

@@ -1,8 +1,11 @@
 import Crypto
 import Dependencies
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SpaceContract
 @testable import SpaceCore
 import Synchronization
@@ -71,9 +74,10 @@ import Testing
     let accounts: Int, machines: Int, members: Int, keys: Int
     init(accounts: Int, machines: Int, members: Int, keys: Int) { (self.accounts, self.machines, self.members, self.keys) = (accounts, machines, members, keys) }
     init(_ space: Space) async throws {
-      accounts = try await space.accounts().count
-      (machines, members, keys) = try await space.writer.read { db in
-        try (Int.fetchOne(db, sql: "SELECT COUNT(*) FROM machines")!, Int.fetchOne(db, sql: "SELECT COUNT(*) FROM machine_v2_members")!, Int.fetchOne(db, sql: "SELECT COUNT(*) FROM account_keys")!)
+      self = space.worker.read { reader in
+        let cell = reader.cell(SpaceCell.ID("space"))
+        let accounts = cell.accounts()
+        return Footprint(accounts: accounts.count, machines: cell.machines().count, members: cell.machineV2Members(group: .shared).count, keys: accounts.reduce(0) { $0 + reader.cell(PersonCell.ID($1.id.rawValue)).keys().count })
       }
     }
   }
@@ -181,6 +185,9 @@ import Testing
     _ = try await space.consumeMachineV2JoinToken(again.token, pubkey: last)
     #expect(try await space.revokeMachine(created.machine.id, presenting: last))
     await #expect(throws: JoinTokenRejected.self) { try await space.consumeMachineV2JoinToken(again.token, pubkey: last) }
-    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM join_token_receipts") } == 0)
+    #expect(space.worker.read { reader in
+      let cell = reader.cell(SpaceCell.ID("space"))
+      return [created.token, rotation, again].allSatisfy { cell.receipt(Space.credentialDigest($0.token.rawValue)) == nil }
+    })
   }
 }

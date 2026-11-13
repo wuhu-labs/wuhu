@@ -1,7 +1,10 @@
 import Dependencies
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 @testable import SpaceCore
 import Testing
 
@@ -126,9 +129,7 @@ private func roundTrip(_ id: Int64, words: [String]) -> (name: String, back: Int
     }
     #expect(allocations.map(\.id).sorted() == Array(1 ... 32))
     #expect(Set(allocations.map(\.name)).count == 32)
-    let freezeCount = try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM allocation_freeze")!
-    }
+    let freezeCount = try RawDatabase.open(space.databasePath) { try $0.int("SELECT COUNT(*) FROM allocation_freeze") }
     #expect(freezeCount == 1)
   }
 
@@ -138,8 +139,8 @@ private func roundTrip(_ id: Int64, words: [String]) -> (name: String, back: Int
     let second = try await space.allocate(.session, createdBy: "tester")
     #expect(first.id == 1)
     #expect(second.id == 2)
-    let secret = try await space.writer.read { db in
-      Array(try Row.fetchOne(db, sql: "SELECT secret FROM allocation_freeze WHERE id = 1")!["secret"] as Data)
+    let secret = try RawDatabase.open(space.databasePath) { db in
+      Array(try #require(try db.row("SELECT secret FROM allocation_freeze WHERE id = 1"))["secret"] as Data)
     }
     #expect(secret.count == 32)
     for allocation in [first, second] {
@@ -151,15 +152,11 @@ private func roundTrip(_ id: Int64, words: [String]) -> (name: String, back: Int
   @Test func allocationRefusesAfterVocabularyDrift() async throws {
     let space = try makeAllocationSpace()
     _ = try await space.allocate(.persona, createdBy: "tester")
-    try await space.writer.write { db in
-      try db.execute(sql: "UPDATE allocation_freeze SET vocab_sha256 = 'stale-digest'")
-    }
+    try await space.plant("UPDATE allocation_freeze SET vocab_sha256 = 'stale-digest'")
     await #expect(throws: SpaceError.vocabularyFrozen("stale-digest")) {
       _ = try await space.allocate(.session, createdBy: "tester")
     }
-    let count = try await space.writer.read { db in
-      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM allocations")!
-    }
+    let count = try RawDatabase.open(space.databasePath) { try $0.int("SELECT COUNT(*) FROM allocations") }
     #expect(count == 1)
   }
 
@@ -167,8 +164,8 @@ private func roundTrip(_ id: Int64, words: [String]) -> (name: String, back: Int
     let space = try makeAllocationSpace()
     _ = try await space.allocate(.persona, createdBy: "alice")
     _ = try await space.allocate(.session, createdBy: "bob")
-    let rows = try await space.writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT id, kind, created_by FROM allocations ORDER BY id")
+    let rows = try RawDatabase.open(space.databasePath) { db in
+      try db.rows("SELECT id, kind, created_by FROM allocations ORDER BY id")
         .map { (id: $0["id"] as Int64, kind: $0["kind"] as String, createdBy: $0["created_by"] as String) }
     }
     #expect(rows.map(\.id) == [1, 2])

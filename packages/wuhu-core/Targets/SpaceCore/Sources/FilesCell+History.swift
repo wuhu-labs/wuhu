@@ -117,7 +117,7 @@ extension FilesCell {
     try LiveFS.checkIfMatch(ifMatch, head: head, path: path)
     guard resolved != nil || head != nil else { throw SpaceError.notFound(path.rawValue) }
     if let resolved, resolved.kind == "file", let head, head.kind == "file", resolved.blobHash == head.blobHash {
-      if path.isLive { ctx.send(DocumentCell.ID(group, path)).removed(head.rev) }
+      removed(path, rev: head.rev)
       return head.rev
     }
     let rev = try mintRevision(mtime, attribution: attribution)
@@ -130,7 +130,7 @@ extension FilesCell {
       try restoreTable(path, ceiling: ceiling, rev: rev, mtime: mtime)
     default: try remove(head!, rev: rev, op: .checkout, aux: String(ceiling))
     }
-    if resolved != nil, path.isLive { ctx.send(DocumentCell.ID(group, path)).removed(rev) }
+    if resolved != nil { removed(path, rev: rev) }
     return rev
   }
 }

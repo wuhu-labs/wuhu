@@ -1,6 +1,9 @@
 import DeterministicDependencies
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import LoopCore
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -85,12 +88,11 @@ import Testing
   }
 
   @Test func legacyNamesWinOverDerivedAliasesAndSuffixesRespectTheGrammar() throws {
-    let database = try DatabaseQueue()
-    try database.write { db in
-      try Migration001.apply(.init(db))
-      try Migration002.apply(.init(db))
-      try Migration003.apply(.init(db))
-      try Migration004.apply(.init(db))
+    try RawDatabase.open(":memory:") { db in
+      try Migration001.apply(db)
+      try Migration002.apply(db)
+      try Migration003.apply(db)
+      try Migration004.apply(db)
       let long = String(repeating: "a", count: 31)
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, created_at) VALUES ('live', 'machine', '2030-01-01'), ('dead', 'machine', '2030-01-01'), ('odd', 'machine', '2030-01-01');
@@ -99,65 +101,63 @@ import Testing
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_old', 'dead', 'work-box', '2030-01-01', 'shared'), ('mc_live', 'live', 'work_box', '2030-01-02', 'shared'), ('mc_odd', 'odd', 'My Laptop (old)', '2030-01-01', 'shared');
       INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('live_key', 'live', 'exec_machine', '2030-01-01');
       """)
-      try Migration006.apply(.init(db))
-      #expect(try String.fetchOne(db, sql: "SELECT handle FROM user_profiles WHERE principal = 'owner'") == "team_space")
-      #expect(try String.fetchOne(db, sql: "SELECT alias FROM groups WHERE id = 'team-space'") == "team_space_1")
-      #expect(try String.fetchOne(db, sql: "SELECT name FROM machines WHERE id = 'mc_live'") == "work_box_1")
-      #expect(try String.fetchOne(db, sql: "SELECT target FROM aliases WHERE name = 'work-box'") == "mc_old")
-      #expect(try String.fetchOne(db, sql: "SELECT target FROM aliases WHERE name = 'work_box'") == "mc_live")
-      #expect(try Int.fetchOne(db, sql: "SELECT max(length(handle)) FROM user_profiles")! <= 32)
-      let odd = try #require(try String.fetchOne(db, sql: "SELECT name FROM machines WHERE id = 'mc_odd'"))
+      try Migration006.apply(db)
+      #expect(try db.string("SELECT handle FROM user_profiles WHERE principal = 'owner'") == "team_space")
+      #expect(try db.string("SELECT alias FROM groups WHERE id = 'team-space'") == "team_space_1")
+      #expect(try db.string("SELECT name FROM machines WHERE id = 'mc_live'") == "work_box_1")
+      #expect(try db.string("SELECT target FROM aliases WHERE name = 'work-box'") == "mc_old")
+      #expect(try db.string("SELECT target FROM aliases WHERE name = 'work_box'") == "mc_live")
+      #expect(try db.int("SELECT max(length(handle)) FROM user_profiles")! <= 32)
+      let odd = try #require(try db.string("SELECT name FROM machines WHERE id = 'mc_odd'"))
       #expect(MachineName.normalized(odd) == odd)
     }
   }
 
   @Test func liveMachineNamesTakePrecedenceOverPersonHandles() throws {
-    let database = try DatabaseQueue()
-    try database.write { db in
-      try Migration001.apply(.init(db))
-      try Migration002.apply(.init(db))
-      try Migration003.apply(.init(db))
-      try Migration004.apply(.init(db))
-      try Migration005.apply(.init(db))
+    try RawDatabase.open(":memory:") { db in
+      try Migration001.apply(db)
+      try Migration002.apply(db)
+      try Migration003.apply(db)
+      try Migration004.apply(db)
+      try Migration005.apply(db)
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, name, created_at) VALUES ('box', 'machine', 'studio', '2030-01-01');
       INSERT INTO user_profiles (principal, handle, updated_at) VALUES ('owner', 'studio', '2030-01-01');
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_box', 'box', 'studio', '2030-01-01', 'shared');
       INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('live_key', 'box', 'exec_machine', '2030-01-01');
       """)
-      try Migration006.apply(.init(db))
-      #expect(try String.fetchOne(db, sql: "SELECT name FROM machines WHERE id = 'mc_box'") == "studio")
-      #expect(try String.fetchOne(db, sql: "SELECT name FROM accounts WHERE id = 'box'") == "studio")
-      #expect(try String.fetchOne(db, sql: "SELECT handle FROM user_profiles WHERE principal = 'owner'") == "studio_1")
-      #expect(try String.fetchOne(db, sql: "SELECT target FROM aliases WHERE name = 'studio'") == "mc_box")
-      #expect(try String.fetchOne(db, sql: "SELECT target FROM aliases WHERE name = 'studio_1'") == "owner")
-      #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+      try Migration006.apply(db)
+      #expect(try db.string("SELECT name FROM machines WHERE id = 'mc_box'") == "studio")
+      #expect(try db.string("SELECT name FROM accounts WHERE id = 'box'") == "studio")
+      #expect(try db.string("SELECT handle FROM user_profiles WHERE principal = 'owner'") == "studio_1")
+      #expect(try db.string("SELECT target FROM aliases WHERE name = 'studio'") == "mc_box")
+      #expect(try db.string("SELECT target FROM aliases WHERE name = 'studio_1'") == "owner")
+      #expect(try db.rows("PRAGMA foreign_key_check").isEmpty)
     }
   }
 
   @Test func migrationNormalizesAndDisambiguatesRealLegacyLabels() throws {
-    let database = try DatabaseQueue()
-    try database.write { db in
-      try Migration001.apply(.init(db))
-      try Migration002.apply(.init(db))
-      try Migration003.apply(.init(db))
-      try Migration004.apply(.init(db))
+    try RawDatabase.open(":memory:") { db in
+      try Migration001.apply(db)
+      try Migration002.apply(db)
+      try Migration003.apply(db)
+      try Migration004.apply(db)
       try db.execute(sql: """
       INSERT INTO accounts (id, kind, name, created_at) VALUES ('human', 'human', 'Human', '2030-01-01'), ('box', 'machine', 'Box', '2030-01-01'), ('other_box', 'machine', 'Other', '2030-01-01'), ('third_box', 'machine', 'Third', '2030-01-01');
       INSERT INTO groups (id, created_at, personal_account) VALUES ('personal', '2030-01-01', 'human'), ('team', '2030-01-01', NULL);
       INSERT INTO user_profiles (principal, handle, updated_at) VALUES ('person', 'team', '2030-01-01');
       INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_one', 'box', 'team', '2030-01-01', 'shared'), ('mc_two', 'other_box', 'box-a', '2030-01-01', 'shared'), ('mc_three', 'third_box', 'box_a', '2030-01-01', 'shared');
       """)
-      try Migration006.apply(.init(db))
-      #expect(try String.fetchOne(db, sql: "SELECT alias FROM groups WHERE id = 'shared'") == "shared")
-      #expect(try String.fetchOne(db, sql: "SELECT alias FROM groups WHERE id = 'personal'") == nil)
-      #expect(try String.fetchOne(db, sql: "SELECT handle FROM user_profiles WHERE principal = 'person'") == "team_1")
-      #expect(try String.fetchOne(db, sql: "SELECT target FROM aliases WHERE name = 'team'") == "person")
-      #expect(try String.fetchOne(db, sql: "SELECT name FROM machines WHERE id = 'mc_one'") == "team_2")
-      #expect(try Int.fetchOne(db, sql: "SELECT count(DISTINCT name) FROM machines") == 3)
-      #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM machines WHERE name LIKE '%-%'") == 0)
-      #expect(try String.fetchOne(db, sql: "SELECT target FROM aliases WHERE name = 'box-a'") == "mc_two")
-      #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+      try Migration006.apply(db)
+      #expect(try db.string("SELECT alias FROM groups WHERE id = 'shared'") == "shared")
+      #expect(try db.string("SELECT alias FROM groups WHERE id = 'personal'") == nil)
+      #expect(try db.string("SELECT handle FROM user_profiles WHERE principal = 'person'") == "team_1")
+      #expect(try db.string("SELECT target FROM aliases WHERE name = 'team'") == "person")
+      #expect(try db.string("SELECT name FROM machines WHERE id = 'mc_one'") == "team_2")
+      #expect(try db.int("SELECT count(DISTINCT name) FROM machines") == 3)
+      #expect(try db.int("SELECT count(*) FROM machines WHERE name LIKE '%-%'") == 0)
+      #expect(try db.string("SELECT target FROM aliases WHERE name = 'box-a'") == "mc_two")
+      #expect(try db.rows("PRAGMA foreign_key_check").isEmpty)
     }
   }
 }

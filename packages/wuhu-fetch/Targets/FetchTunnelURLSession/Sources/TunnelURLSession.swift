@@ -7,7 +7,7 @@ public enum TunnelURLSession {
   public struct Socket: Sendable {
     public let transport: TunnelTransport
     /// Sends one transport ping and returns at its pong. The pong waits behind any message the peer sent before it that is still unread,
-    /// so ping only while a receive is pending. On a silently dead path it waits until cancelled; liveness policy is the caller's.
+    /// so run ping alongside the receive loop, never await it before starting that loop. On a silently dead path it waits until cancelled.
     public let ping: @Sendable () async throws -> Void
 
     public init(transport: TunnelTransport, ping: @escaping @Sendable () async throws -> Void) {
@@ -17,7 +17,7 @@ public enum TunnelURLSession {
   }
 
   /// The supplied session owns certificate policy. This adapter never substitutes a session or retries a request. `upgraded` is called
-  /// once the server accepts the upgrade, before the first pong.
+  /// once the server accepts the expected subprotocol, before returning.
   public static func connect(
     url: URL,
     session: URLSession,
@@ -34,16 +34,18 @@ public enum TunnelURLSession {
     let socket = session.webSocketTask(with: request)
     socket.maximumMessageSize = limits.messageBytes
     // A task delegate gets only what it implements; trust challenges still reach the session's own delegate.
-    if let upgraded { socket.delegate = Upgrade(upgraded) }
+    let upgrade = Upgrade(accepted: upgraded)
+    socket.delegate = upgrade
     socket.resume()
     do {
       try await withTaskCancellationHandler {
         try Task.checkCancellation()
-        try await firstPong { socket.sendPing(pongReceiveHandler: $0) }
-        guard (socket.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Sec-WebSocket-Protocol") == TunnelTransport.webSocketSubprotocol else { throw TunnelError.unsupportedSubprotocol }
+        try await upgrade.wait()
+        try Task.checkCancellation()
       } onCancel: { socket.cancel(with: .goingAway, reason: nil) }
     } catch {
       socket.cancel(with: .goingAway, reason: nil)
+      try Task.checkCancellation()
       throw error
     }
     let receiver = Receiver(socket: socket, limits: limits)
@@ -65,9 +67,30 @@ public enum TunnelURLSession {
 }
 
 private final class Upgrade: NSObject, URLSessionWebSocketDelegate, Sendable {
-  let accepted: @Sendable () -> Void
-  init(_ accepted: @escaping @Sendable () -> Void) { self.accepted = accepted }
-  func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didOpenWithProtocol _: String?) { self.accepted() }
+  let accepted: (@Sendable () -> Void)?
+  let outcomes: AsyncThrowingStream<Void, any Error>
+  let continuation: AsyncThrowingStream<Void, any Error>.Continuation
+
+  init(accepted: (@Sendable () -> Void)?) {
+    self.accepted = accepted
+    (outcomes, continuation) = AsyncThrowingStream.makeStream()
+  }
+
+  func wait() async throws {
+    for try await _ in outcomes { return }
+    try Task.checkCancellation()
+    preconditionFailure("Upgrade ended without an outcome")
+  }
+
+  func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didOpenWithProtocol protocolName: String?) {
+    guard protocolName == TunnelTransport.webSocketSubprotocol else { continuation.finish(throwing: TunnelError.unsupportedSubprotocol); return }
+    accepted?()
+    continuation.yield(); continuation.finish()
+  }
+
+  func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError error: (any Error)?) {
+    continuation.finish(throwing: error ?? TunnelError.connectionClosed)
+  }
 }
 
 /// Sends one transport ping through `sendPing` and returns when its first outcome arrives.
@@ -82,7 +105,8 @@ func firstPong(_ sendPing: (@escaping @Sendable ((any Error)?) -> Void) -> Void)
     }
   }
   for try await _ in outcomes { return }
-  throw CancellationError()
+  try Task.checkCancellation()
+  preconditionFailure("Ping ended without an outcome")
 }
 
 private actor Receiver {

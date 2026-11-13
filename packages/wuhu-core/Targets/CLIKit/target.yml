@@ -81,7 +81,6 @@ tests:
     - FetchSSE
     - Dependencies
     - Clocks
-    - GRDB
     - QRCode
     - Crypto
     - Scratch

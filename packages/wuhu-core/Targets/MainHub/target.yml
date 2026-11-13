@@ -13,7 +13,6 @@ dependencies:
   - Fetch
   - FetchSSE
   - FileSearch
-  - GRDB
   - HTTPTypes
   - InferenceKit
   - ModelProviders

@@ -3,12 +3,7 @@
 #else
   import Foundation
 #endif
-import Dispatch
-import GRDB
-import GRDBSQLite
-import Logging
 import SessionDomain
-import SpaceSQL
 import Synchronization
 import Wuwei
 
@@ -19,26 +14,22 @@ final class SpaceRuntime: Sendable {
     return running.withLock { $0!.buffers }
   }
 
-  private let writer: any DatabaseWriter
-  private let changes: ChangeSource
+  private let database: WuweiDatabase
   private let fileReads: @Sendable (Worker) -> FileWatchReads
   private let observations: ObservationSources
   private let documents: Documents
-  private let log: Logger
   /// Held while a worker is made, which writes — and only there: the writer's commit hooks run inside a write, so no lock they take may be held across one.
-  private let database = Mutex<WuweiDatabase?>(nil)
+  private let hosting = Mutex(())
   /// The worker this space hosts and its scheduler; a commit hook poking a cell takes it for the length of a lock.
   private let running = Mutex<(worker: Worker, scheduler: DependencyScheduler, buffers: MachineBuffers)?>(nil)
   /// Whether the space is closing, read and set for the length of a lock only: closing under the same lock a worker is handed out under keeps the two atomic without holding it across the work of making one.
   private let closing = Mutex(false)
 
-  init(writer: any DatabaseWriter, changes: ChangeSource, observations: ObservationSources, documents: Documents, log: Logger, fileReads: @escaping @Sendable (Worker) -> FileWatchReads) {
-    self.writer = writer
-    self.changes = changes
+  init(database: WuweiDatabase, observations: ObservationSources, documents: Documents, fileReads: @escaping @Sendable (Worker) -> FileWatchReads) {
+    self.database = database
     self.fileReads = fileReads
     self.observations = observations
     self.documents = documents
-    self.log = log
   }
 
   func worker() -> Worker {
@@ -51,17 +42,14 @@ final class SpaceRuntime: Sendable {
     hosted()
   }
 
-  /// The worker, made on first use; nil once the space is closing. `database` alone serializes the making, never a lock a commit hook takes: the making waits for the writer.
+  /// The worker, made on first use; nil once the space is closing. `hosting` alone serializes the making, never a lock a commit hook takes: the making waits for the writer.
   private func hosted() -> Worker? {
-    database.withLock { database in
+    hosting.withLock { _ in
       if let running = running.withLock({ $0 }) { return running.worker }
       guard !closing.withLock({ $0 }) else { return nil }
-      if database == nil {
-        do { database = try WuweiDatabase(writer: writer, changes: changes, log: log) } catch { preconditionFailure("the space database took no reader: \(error)") }
-      }
       let scheduler = DependencyScheduler()
       // A worker retakes a lease held under its own id at once, so two processes on one database never share an id.
-      let worker = Worker(id: "space-\(UUID().uuidString.lowercased())", storage: .shared(database!), scheduler: scheduler, registrations: [.cell(MachineCell.self), .cell(GroupCell.self), .cell(SpaceCell.self), .cell(PersonCell.self), .cell(ConversationCell.self), .cell(DocumentCell.self), .cell(FilesCell.self), .job(ObservationJob.self)])
+      let worker = Worker(id: "space-\(UUID().uuidString.lowercased())", storage: .shared(database), scheduler: scheduler, registrations: [.cell(MachineCell.self), .cell(GroupCell.self), .cell(SpaceCell.self), .cell(PersonCell.self), .cell(ConversationCell.self), .cell(DocumentCell.self), .cell(FilesCell.self), .job(ObservationJob.self)])
       let buffers = MachineBuffers(worker: worker.id)
       worker.provide(buffers)
       worker.provide(observations)
@@ -92,9 +80,9 @@ final class SpaceRuntime: Sendable {
     await running.worker.quiesce()
   }
 
-  /// The first act of closing. Waiting on `database` lets a making already under way settle, so the worker it installs is this space's to stop; then closing is set under the lock a worker is handed out under, and none is made after it.
+  /// The first act of closing. Waiting on `hosting` lets a making already under way settle, so the worker it installs is this space's to stop; then closing is set under the lock a worker is handed out under, and none is made after it.
   func beginClosing() {
-    database.withLock { _ in closing.withLock { $0 = true } }
+    hosting.withLock { _ in closing.withLock { $0 = true } }
   }
 
   func stop() async {
@@ -109,7 +97,7 @@ final class SpaceRuntime: Sendable {
   }
 
   func close() {
-    database.withLock { $0?.close() }
+    database.closeReaders()
   }
 }
 
@@ -129,101 +117,4 @@ extension Space {
   public nonisolated func stopWorker() async {
     await runtime.stop()
   }
-}
-
-struct WuweiDatabase: SharedDatabase {
-  let writer: any DatabaseWriter
-  let readers: SQLiteReaders
-  private let changes: WriterChanges
-  private let transactions = DispatchQueue(label: "wuwei.writer")
-
-  init(writer: any DatabaseWriter, changes: ChangeSource = ChangeSource(), log: Logger = Logger(label: "wuhu.space")) throws {
-    let collector = WriterChanges(source: changes)
-    try writer.writeWithoutTransaction { db in
-      let handle = db.sqliteConnection!
-      try prepareConnection(handle)
-      let code = sqlite3_set_clientdata(handle, "wuhu.changes", Unmanaged.passRetained(collector).toOpaque()) {
-        Unmanaged<WriterChanges>.fromOpaque($0!).release()
-      }
-      guard code == SQLITE_OK else { throw SQLiteError(code: code, message: String(cString: sqlite3_errmsg(handle))) }
-    }
-    self.writer = writer
-    self.changes = collector
-    readers = SQLiteReaders(path: writer.path, pragmas: PageCache.pragmas(cacheKiB: PageCache.readerKiB).split(separator: ";").map(String.init)) { connection, sql, milliseconds in
-      SlowStatement.log(sql, milliseconds: milliseconds, on: connection, to: log)
-    }
-  }
-
-  func write(_ body: (OpaquePointer) throws -> Void) throws {
-    try transaction { try body(try open($0)) }
-  }
-
-  private func transaction(_ body: (GRDB.Database) throws -> Void) throws {
-    try writer.writeWithoutTransaction { db in
-      do {
-        try db.inTransaction {
-          changes.arm(try open(db))
-          try body(db)
-          return .commit
-        }
-        changes.committed()
-      } catch {
-        changes.clear()
-        throw error
-      }
-    }
-  }
-
-  func begin() throws -> any SharedTransaction {
-    let transaction = WriterTransaction()
-    transactions.async { [self] in
-      let result = Result {
-        try self.transaction { try transaction.serve($0) }
-      }
-      transaction.completed(result)
-    }
-    try transaction.waitUntilOpen()
-    return transaction
-  }
-
-  func beginRead() throws -> any SharedReadTransaction {
-    try readers.beginRead()
-  }
-
-  func close() {
-    readers.close()
-  }
-
-  /// A worker's last pokes can outlive the space that closed under it: they fail instead of trapping.
-  private func open(_ db: GRDB.Database) throws -> OpaquePointer {
-    guard let handle = db.sqliteConnection else { throw DatabaseError(resultCode: .SQLITE_MISUSE, message: "the space database is closed") }
-    return handle
-  }
-}
-
-private final class WriterChanges: Sendable {
-  private let tables = Mutex<Set<String>>([])
-  private let source: ChangeSource
-
-  init(source: ChangeSource) { self.source = source }
-
-  func arm(_ handle: OpaquePointer) {
-    clear()
-    sqlite3_update_hook(handle, { context, _, database, table, _ in
-      if String(cString: database!) == "main" {
-        let changes = Unmanaged<WriterChanges>.fromOpaque(context!).takeUnretainedValue()
-        changes.tables.withLock { _ = $0.insert(String(cString: table!)) }
-      }
-    }, Unmanaged.passUnretained(self).toOpaque())
-  }
-
-  func committed() {
-    let touched = tables.withLock { tables in
-      defer { tables.removeAll() }
-      return tables
-    }
-    source.publish(touched)
-  }
-
-  func clear() { tables.withLock { $0.removeAll() } }
 }

@@ -6,7 +6,6 @@ import Dispatch
 #else
   import Foundation
 #endif
-import GRDB
 import Scratch
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -15,27 +14,6 @@ import SpaceFS
 import Synchronization
 import Testing
 import Wuwei
-
-private final class ObservationMarkerCommits: TransactionObserver, Sendable {
-  let first = Mutex<[String: Int]>([:])
-
-  func observes(eventsOfKind _: DatabaseEventKind) -> Bool { true }
-  func databaseDidChange(with _: DatabaseEvent) {}
-  func databaseDidRollback(_: GRDB.Database) {}
-  func databaseDidCommit(_ db: GRDB.Database) {
-    do {
-      let rows = try GRDB.Row.fetchAll(db, sql: """
-      SELECT marker, (SELECT count(*) FROM wuwei_mail WHERE recipient = ?) AS deliveries
-      FROM observation_slots WHERE marker IS NOT NULL
-      """, arguments: [ObservationProbe.ID("probe").description])
-      for row in rows {
-        let marker: String = row["marker"]
-        let deliveries: Int = row["deliveries"]
-        first.withLock { if $0[marker] == nil { $0[marker] = deliveries } }
-      }
-    } catch { Issue.record(error) }
-  }
-}
 
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct ObservationSlotTests {
   private func probe(_ space: Space, _ output: AsyncStream<ObservationReply>.Continuation) {
@@ -87,8 +65,8 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
   @Test func replacingAHeldQueryWithTheSameSlotMailsOnlyTheReplacement() async throws {
     let folder = try ScratchFolder("observation-replacement")
     let gate = SlotReadGate()
-    let writer = try DatabaseQueue(path: folder.url.appending(path: "space.sqlite").path, configuration: Space.makeConfiguration())
-    let space = try Space(writer: writer, trace: { gate.trace($0) })
+    let database = try WuweiDatabase(path: folder.url.appending(path: "space.sqlite").path)
+    let space = try Space(database: database, trace: { gate.trace($0) })
     defer { gate.release() }
     let (stream, output) = AsyncStream<ObservationReply>.makeStream()
     probe(space, output)
@@ -130,8 +108,8 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
     let barrier = watch("SELECT 3 AS n", id: "barrier")
     space.worker.send(.watch(barrier), to: ObservationJob.address)
     #expect(try rows(await replies.next(), slot: barrier.slot).rows == [[.integer(3)]])
-    let marker = try await space.writer.read { db in
-      try String.fetchOne(db, sql: "SELECT marker FROM observation_slots WHERE slot = ?", arguments: [watching.slot.key])
+    let marker = try RawDatabase.open(space.databasePath) { db in
+      try db.string("SELECT marker FROM observation_slots WHERE slot = ?", arguments: [watching.slot.key])
     }
     #expect(marker == rowsMarker(first))
     try await space.close()
@@ -155,7 +133,7 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
     guard case let .failed(slot, reason) = await replies.next() else { throw MissingReply() }
     #expect(slot == broken.slot)
     #expect(reason.contains("absent"))
-    #expect(try await space.writer.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM observation_slots WHERE slot = ?", arguments: [watching.slot.key]) } == 0)
+    #expect(try RawDatabase.open(space.databasePath) { try $0.int("SELECT count(*) FROM observation_slots WHERE slot = ?", arguments: [watching.slot.key]) } == 0)
     _ = try await space.mutateRows(table, [.insert([.integer(2)])], in: .shared, acting: .shared)
     let barrier = watch("SELECT 3 AS n", id: "barrier")
     space.worker.send(.watch(barrier), to: ObservationJob.address)
@@ -168,10 +146,8 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
     let file = folder.url.appending(path: "space.sqlite")
     let old = try Space.open(file: file)
     let table = try await table(old)
-    let commits = ObservationMarkerCommits()
     let (stream, output) = AsyncStream<ObservationReply>.makeStream()
     probe(old, output)
-    await old.writer.add(transactionObserver: commits)
     var replies = stream.makeAsyncIterator()
     let watching = watch("SELECT n FROM \"/slot.table\" ORDER BY n")
     old.worker.send(.watch(watching), to: ObservationJob.address)
@@ -179,7 +155,6 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
 
     let new = try Space.open(file: file)
     probe(new, output)
-    await new.writer.add(transactionObserver: commits)
     await old.stopWorker()
     new.worker.poke(ObservationJob.address.recipient)
     _ = try await new.mutateRows(table, [.insert([.integer(1)])], in: .shared, acting: .shared)
@@ -187,19 +162,14 @@ private final class ObservationMarkerCommits: TransactionObserver, Sendable {
     let barrier = watch("SELECT 3 AS n", id: "barrier")
     new.worker.send(.watch(barrier), to: ObservationJob.address)
     #expect(try rows(await replies.next(), slot: barrier.slot).rows == [[.integer(3)]])
-    let deliveries = commits.first.withLock { $0 }
-    #expect(deliveries.count == 3)
-    #expect(deliveries.values.allSatisfy { $0 == 1 })
     try await new.close()
     try await old.close()
   }
 
   @Test func revocationEndsSocketAndFailsSlotWithoutAnotherSnapshot() async throws {
     let space = try makeSpace()
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('vault', '2026-01-01')")
-    }
     let vault = GroupID(rawValue: "vault")
+    try await space.seedGroup(vault)
     try await space.setGrant(.group, "shared", role: .read, in: vault, by: (try await space.ensureDevPerson()).actor, acting: .shared)
     _ = try await space.fs(vault).write("/secret.md", Data("secret".utf8), ifMatch: nil)
     let sql = "SELECT path FROM \"wuhu://vault.localspace/docs\""

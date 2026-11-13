@@ -4,7 +4,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import Scratch
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -13,14 +12,9 @@ import enum SpaceSQL.PageCache
 import Testing
 
 @Suite(.deterministicDependencies) struct MigrationTests {
-  private func database() throws -> DatabaseQueue {
-    let configuration = Space.makeConfiguration(journalMode: .default)
-    return try DatabaseQueue(path: "file:/migration-\(UUID())?vfs=memdb", configuration: configuration)
-  }
-
-  private func baseline(_ database: DatabaseQueue) async throws -> Space {
-    let space = try Space(writer: database)
-    try await database.write { db in
+  private func baseline(_ location: URL) async throws -> Space {
+    let space = try Space.open(file: location)
+    try RawDatabase.open(location.path) { db in
       try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005', '042')")
       try db.execute(sql: """
@@ -44,20 +38,21 @@ import Testing
   }
 
   @Test func failedUpgradeRollsBackAndCanBeRetried() async throws {
-    let database = try database()
-    let original = try await baseline(database)
-    try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try await baseline(location)
+    try database.access { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     let logs = RecordedLogs()
-    #expect(throws: MigrationFailure.self) { try Space(writer: database, log: logs.logger) }
+    #expect(throws: MigrationFailure.self) { try Space.open(file: location, log: logs.logger) }
     #expect(logs.all.last { $0.message.hasPrefix("migration ") }?.message.hasSuffix(": applying") == true)
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
-    try await database.write { db in
+    #expect(try database.access { try $0.int("SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
+    #expect(try database.access { try $0.int("SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
+    try database.access { db in
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
       try db.execute(sql: "UPDATE exec_jobs SET spec = '{}'")
     }
-    let reopened = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
-    let space = try Space(writer: reopened)
+    let space = try Space.open(file: location)
     #expect(try await space.accounts().contains { $0.name == "Kept" })
     #expect(try await space.owedExecs().map(\.toolSpec) == ["{}"])
     try await original.close()
@@ -65,8 +60,10 @@ import Testing
   }
 
   @Test func upgradePreservesRowsAndRunsOnlyOnce() async throws {
-    let database = try database()
-    let original = try await baseline(database)
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try await baseline(location)
     let shared = await original.fs(.shared)
     let settings = await original.fs(.settings)
     let file = try SpacePath(validating: "/kept.md")
@@ -78,9 +75,9 @@ import Testing
     _ = try await original.createTable(table, header: TableHeader(columns: []), in: .shared, acting: .settings)
     let inserted = try await original.commitRows(table, [.insert([])], in: .shared, acting: .settings)
     let history = try await original.history(file, in: .shared)
-    let historical = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
+    let historical = database
     try await original.close()
-    try await historical.write { db in
+    try historical.access { db in
       try db.execute(sql: """
       UPDATE fs_versions SET rev = 9 WHERE grp = 'settings';
       UPDATE fs_heads SET rev = 9 WHERE grp = 'settings';
@@ -96,8 +93,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '046';
       """)
     }
-    let firstConnection = try DatabaseQueue(path: historical.path, configuration: Space.makeConfiguration(journalMode: .default))
-    let first = try Space(writer: firstConnection)
+    let first = try Space.open(file: location)
     #expect(try await first.accounts().contains { $0.name == "Kept" })
     #expect(try await first.currentRevision(in: .shared) == 12)
     #expect(try await first.currentRevision(in: .settings) == 12)
@@ -111,39 +107,38 @@ import Testing
     let actors = try await first.attributions(of: [(.shared, Rev(1)), (.settings, Rev(9))])
     #expect(actors[.shared]?[Rev(1)] == attribution)
     #expect(actors[.settings]?[Rev(9)]?.via == "page:/foreign.html")
-    #expect(try await historical.read { try String.fetchOne($0, sql: "SELECT revs FROM session_prompts WHERE session_id = 'kept-session'") }.map { try JSONDecoder().decode([String: Int].self, from: Data($0.utf8)) } == ["shared": 9, "settings": 9])
+    #expect(try historical.access { try $0.string("SELECT revs FROM session_prompts WHERE session_id = 'kept-session'") }.map { try JSONDecoder().decode([String: Int].self, from: Data($0.utf8)) } == ["shared": 9, "settings": 9])
     #expect(try await first.fs(.shared).write(file.rawValue, Data("three".utf8), ifMatch: nil).rev == 13)
     #expect(try await first.currentRevision(in: .settings) == 12)
     let owed = try #require(try await first.owedExecs().first)
     #expect(owed.toolSpec == "{}")
     let identity = try await first.identity()
     await first.stopWorker()
-    try await historical.write { db in
+    try historical.access { db in
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
       try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, 'changed')", arguments: [owed.id])
     }
-    let secondConnection = try DatabaseQueue(path: historical.path, configuration: Space.makeConfiguration(journalMode: .default))
-    let second = try Space(writer: secondConnection)
+    let second = try Space.open(file: location)
     #expect(try await second.identity() == identity)
     #expect(try await second.accounts().contains { $0.name == "Kept" })
     #expect(try await second.owedExecs() == [owed])
     try await first.close()
     try await second.close()
-    try historical.close()
   }
 
   @Test func existingForeignKeyViolationsDoNotPreventUpgrade() async throws {
-    let database = try database()
-    let original = try await baseline(database)
-    try await database.writeWithoutTransaction { db in
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try await baseline(location)
+    try database.access { db in
       try db.execute(sql: "PRAGMA foreign_keys = OFF")
       try db.execute(
         sql: "INSERT INTO read_sessions (token_hash, account_id, created_at, expires_at) VALUES ('stale', 'missing', '2026-01-01T00:00:00Z', '2027-01-01T00:00:00Z')",
       )
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
-    let connection = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
-    let upgraded = try Space(writer: connection)
+    let upgraded = try Space.open(file: location)
     #expect(try await upgraded.accounts().contains { $0.name == "Kept" })
     #expect(try await upgraded.owedExecs().map(\.toolSpec) == ["{}"])
     try await original.close()
@@ -151,19 +146,23 @@ import Testing
   }
 
   @Test func missingBaselineCompactionIsRefusedWithoutApplyingMigration() async throws {
-    let database = try database()
-    let original = try await baseline(database)
-    try await database.write { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
-    #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try await baseline(location)
+    try database.access { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
+    #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space.open(file: location) }
+    #expect(try database.access { try $0.int("SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
+    #expect(try database.access { try $0.int("SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
   }
 
   @Test func historicalMachineCellMigrationDropsExecStateButKeepsFileOperations() async throws {
-    let database = try database()
-    let original = try Space(writer: database)
-    try await database.write { db in
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try Space.open(file: location)
+    try database.access { db in
       try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
       try LegacyMachineSchema.create(in: db)
       try db.execute(sql: """
@@ -188,22 +187,24 @@ import Testing
       INSERT INTO machine_v2_retention VALUES ('exec-op', 'shared', 'exec', '2026-01-01T00:00:00Z'), ('file-op', 'shared', 'read', '2026-01-01T00:00:00Z');
       """)
     }
-    try await database.write { try Migration033.apply(.init($0)) }
+    try database.access { try Migration033.apply($0) }
     #expect(try await original.accounts().contains { $0.name == "Kept" })
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT name FROM sqlite_master WHERE name IN ('machine_execs', 'script_execs', 'machine_v2_presence')") } == [])
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM machine_operations") } == 0)
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM machine_presence") } == 0)
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_operations") } == ["file-op"])
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_channels") } == ["file-channel"])
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_output") } == ["file-output"])
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT id FROM machine_v2_retention") } == ["file-op"])
+    #expect(try database.access { try $0.strings("SELECT name FROM sqlite_master WHERE name IN ('machine_execs', 'script_execs', 'machine_v2_presence')") } == [])
+    #expect(try database.access { try $0.int("SELECT count(*) FROM machine_operations") } == 0)
+    #expect(try database.access { try $0.int("SELECT count(*) FROM machine_presence") } == 0)
+    #expect(try database.access { try $0.strings("SELECT id FROM machine_v2_operations") } == ["file-op"])
+    #expect(try database.access { try $0.strings("SELECT id FROM machine_v2_channels") } == ["file-channel"])
+    #expect(try database.access { try $0.strings("SELECT id FROM machine_v2_output") } == ["file-output"])
+    #expect(try database.access { try $0.strings("SELECT id FROM machine_v2_retention") } == ["file-op"])
     try await original.close()
   }
 
   @Test func freshBootRecordsLinksCompactionWithItsMigration() async throws {
-    let database = try database()
-    let space = try Space(writer: database)
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT name FROM schema_compactions ORDER BY name") } == ["wuhu-45", "wuhu-45-links"])
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let space = try Space.open(file: location)
+    #expect(try database.access { try $0.strings("SELECT name FROM schema_compactions ORDER BY name") } == ["wuhu-45", "wuhu-45-links"])
     try await space.close()
   }
 
@@ -212,44 +213,45 @@ import Testing
   /// its own formatting, while a fresh table declares them inline. Columns,
   /// indexes, keys and triggers can — plus the exact text of every index and
   /// trigger, which no migration rewrites.
-  static func schemaShape(_ database: DatabaseQueue) throws -> (tables: [String: [String]], indexesAndTriggers: [String]) {
-    try database.read { db in
-      var shape: [String: [String]] = [:]
-      let tables = try String.fetchAll(db, sql: """
-      SELECT name FROM sqlite_master WHERE type = 'table'
-        AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'wuhu://%' AND name NOT LIKE '%.table'
-      ORDER BY name
-      """)
-      for table in tables {
-        var lines = try Row.fetchAll(
-          db, sql: #"SELECT cid, name, type, "notnull", dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid"#,
-          arguments: [table],
-        ).map { "column \($0)" }
-        for index in try Row.fetchAll(
-          db, sql: #"SELECT name, "unique", origin, partial FROM pragma_index_list(?) ORDER BY name"#, arguments: [table],
-        ) {
-          let name: String = index["name"]
-          let keys = try Row.fetchAll(
-            db, sql: #"SELECT seqno, cid, name, "desc", coll, "key" FROM pragma_index_xinfo(?) ORDER BY seqno"#, arguments: [name],
-          ).map(\.description)
-          lines.append("index \(index) \(keys)")
-        }
-        lines += try Row.fetchAll(
-          db, sql: #"SELECT id, seq, "table", "from", "to", on_update, on_delete, "match" FROM pragma_foreign_key_list(?) ORDER BY id, seq"#,
-          arguments: [table],
-        ).map { "foreign key \($0)" }
-        lines += try String.fetchAll(
-          db, sql: "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name", arguments: [table],
-        ).map { "trigger \($0)" }
-        shape[table] = lines
+  static func schemaShape(_ db: MigrationDB) throws -> (tables: [String: [String]], indexesAndTriggers: [String]) {
+    var shape: [String: [String]] = [:]
+    let tables = try db.strings("""
+    SELECT name FROM sqlite_master WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'wuhu://%' AND name NOT LIKE '%.table'
+    ORDER BY name
+    """)
+    for table in tables {
+      var lines = try db.rows(
+        #"SELECT cid, name, type, "notnull", dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid"#,
+        arguments: [table],
+      ).map { "column \($0.values)" }
+      for index in try db.rows(
+        #"SELECT name, "unique", origin, partial FROM pragma_index_list(?) ORDER BY name"#,
+        arguments: [table],
+      ) {
+        let name: String = index["name"]
+        let keys = try db.rows(
+          #"SELECT seqno, cid, name, "desc", coll, "key" FROM pragma_index_xinfo(?) ORDER BY seqno"#,
+          arguments: [name],
+        ).map { String(describing: $0.values) }
+        lines.append("index \(index.values) \(keys)")
       }
-      let indexesAndTriggers = try String.fetchAll(db, sql: """
-      SELECT type || ' ' || name || ' ' || COALESCE(sql, '') FROM sqlite_master
-      WHERE type IN ('index', 'trigger') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'wuhu://%'
-      ORDER BY 1
-      """)
-      return (shape, indexesAndTriggers)
+      lines += try db.rows(
+        #"SELECT id, seq, "table", "from", "to", on_update, on_delete, "match" FROM pragma_foreign_key_list(?) ORDER BY id, seq"#,
+        arguments: [table],
+      ).map { "foreign key \($0.values)" }
+      lines += try db.strings(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name",
+        arguments: [table],
+      ).map { "trigger \($0)" }
+      shape[table] = lines
     }
+    let indexesAndTriggers = try db.strings("""
+    SELECT type || ' ' || name || ' ' || COALESCE(sql, '') FROM sqlite_master
+    WHERE type IN ('index', 'trigger') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'wuhu://%'
+    ORDER BY 1
+    """)
+    return (shape, indexesAndTriggers)
   }
 
   private static let dropped = [
@@ -369,10 +371,12 @@ import Testing
   """
 
   @Test func anOldSpacesDroppedStoresAndContractorIdentityLeaveTheFreshSchema() async throws {
-    let database = try database()
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
     // A space at migration 001, carrying the stores a real old space still had.
-    try await database.write { db in
-      try Migration001.apply(.init(db))
+    try database.access { db in
+      try Migration001.apply(db)
       try db.execute(sql: """
       CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
       INSERT INTO grdb_migrations VALUES ('001');
@@ -415,35 +419,36 @@ import Testing
       try db.execute(sql: "INSERT INTO session_watches (session_id, identity, armed, armed_at) VALUES ('ses_old00001', 'owner', 1, '2026-01-01T00:00:00.000Z')")
     }
     // A row an older binary left dangling: the migrations must not validate what they did not write.
-    try await database.writeWithoutTransaction { db in
+    try database.access { db in
       try db.execute(sql: "PRAGMA foreign_keys = OFF")
       try db.execute(sql: "INSERT INTO group_members (grp, account_id, joined_at) VALUES ('shared', 'ac_dangling0', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
     let kept = AccountID(rawValue: "ac_kept00001")
-    let reopened = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
-    let upgraded = try Space(writer: reopened)
+    let upgraded = try Space.open(file: location)
     #expect(try await upgraded.accounts().map(\.kind).sorted { $0.rawValue < $1.rawValue } == [.human, .machine])
     #expect(try await upgraded.accounts().contains { $0.id == kept })
-    #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT pubkey FROM account_keys") } == ["kept-key"])
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM devices") } == 0)
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM device_commands") } == 0)
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM message_devices") } == 0)
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM personas") } == 0)
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM join_tokens") } == 0)
-    #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT subscription_id FROM subscription_slots ORDER BY 1") } == ["timer.keep"])
-    #expect(try await reopened.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'ac_wrap00001'")
+    #expect(try database.access { db in try db.strings("SELECT pubkey FROM account_keys") } == ["kept-key"])
+    #expect(try database.access { db in try db.int("SELECT count(*) FROM devices") } == 0)
+    #expect(try database.access { db in try db.int("SELECT count(*) FROM device_commands") } == 0)
+    #expect(try database.access { db in try db.int("SELECT count(*) FROM message_devices") } == 0)
+    #expect(try database.access { db in try db.int("SELECT count(*) FROM personas") } == 0)
+    #expect(try database.access { db in try db.int("SELECT count(*) FROM join_tokens") } == 0)
+    #expect(try database.access { db in try db.strings("SELECT subscription_id FROM subscription_slots ORDER BY 1") } == ["timer.keep"])
+    #expect(try database.access { db in
+      try db.int("SELECT count(*) FROM group_roles WHERE account_id = 'ac_wrap00001'")
     } == 0)
-    #expect(try await reopened.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'ac_dangling0'")
+    #expect(try database.access { db in
+      try db.int("SELECT count(*) FROM group_roles WHERE account_id = 'ac_dangling0'")
     } == 0)
-    #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE name IN (\(Self.dropped.map { "'" + $0 + "'" }.joined(separator: ","))) ORDER BY 1") } == [])
-    let fresh = try self.database()
-    let freshSpace = try Space(writer: fresh)
+    #expect(try database.access { db in try db.strings("SELECT name FROM sqlite_master WHERE name IN (\(Self.dropped.map { "'" + $0 + "'" }.joined(separator: ","))) ORDER BY 1") } == [])
+    let freshFolder = try ScratchFolder("migration-fresh")
+    let freshLocation = freshFolder.url.appending(path: "space.sqlite")
+    let freshSpace = try Space.open(file: freshLocation)
+    let fresh = try RawDatabase(path: freshLocation.path)
     _ = freshSpace.worker
-    let migrated = try Self.schemaShape(reopened)
-    let expected = try Self.schemaShape(fresh)
+    let migrated = try database.access(Self.schemaShape)
+    let expected = try fresh.access(Self.schemaShape)
     #expect(migrated.tables.keys.sorted() == expected.tables.keys.sorted())
     for (table, lines) in expected.tables.sorted(by: { $0.key < $1.key }) {
       #expect(migrated.tables[table] == lines, "\(table)")
@@ -454,14 +459,16 @@ import Testing
   }
 
   @Test func groupsAreNamedAfterTheirAliasAndSharedIsShared() async throws {
-    let database = try database()
-    let original = try Space(writer: database)
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try Space.open(file: location)
     let owner = try await original.addAccount(kind: .human, name: "Morgan").id
     let lab = try await original.createGroup(alias: "lab", owner: owner)
     await original.stopWorker()
-    let offline = try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default))
+    let offline = database
     try await original.close()
-    try await offline.write { db in
+    try offline.access { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('bare', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "ALTER TABLE groups DROP COLUMN name")
       try db.execute(sql: "ALTER TABLE groups ADD COLUMN alias TEXT")
@@ -470,40 +477,44 @@ import Testing
       """)
       try db.execute(sql: "ALTER TABLE aliases DROP COLUMN current")
       try db.execute(sql: "ALTER TABLE groups ADD COLUMN personal_account TEXT")
-      try Migration015.apply(.init(db))
+      try Migration015.apply(db)
       try db.execute(sql: "ALTER TABLE groups DROP COLUMN personal_account")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '043'")
     }
-    let upgraded = try Space(writer: try DatabaseQueue(path: database.path, configuration: Space.makeConfiguration(journalMode: .default)))
+    let upgraded = try Space.open(file: location)
     let names = Dictionary(uniqueKeysWithValues: try await upgraded.groups().map { ($0.id, $0.name) })
     #expect(names == [.shared: "Shared", .settings: "settings", lab: "lab", GroupID(rawValue: "bare"): "bare"])
     try await upgraded.close()
   }
 
   @Test func newerDatabaseIsRefusedWithoutChanges() async throws {
-    let database = try database()
-    let original = try Space(writer: database)
-    let applied = { try await database.read { try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier") } }
-    let known = try await applied()
-    try await database.write { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('998'), ('999')") }
-    #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
-    #expect(try await applied() == known + ["998", "999"])
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try Space.open(file: location)
+    let applied = { try database.access { try $0.strings("SELECT identifier FROM grdb_migrations ORDER BY identifier") } }
+    let known = try applied()
+    try database.access { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('998'), ('999')") }
+    #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space.open(file: location) }
+    #expect(try applied() == known + ["998", "999"])
     try await original.close()
   }
 
   @Test(arguments: [false, true]) func machineV2IndexesUpgradeWithOrWithoutExistingIndexes(existingIndexes: Bool) async throws {
-    let database = try database()
-    let original = try Space(writer: database)
-    try await database.write { db in
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let database = try RawDatabase(path: location.path)
+    let original = try Space.open(file: location)
+    try database.access { db in
       try LegacyMachineSchema.create(in: db)
-      if existingIndexes { try Migration011.apply(.init(db)) }
-      try Migration011.apply(.init(db))
+      if existingIndexes { try Migration011.apply(db) }
+      try Migration011.apply(db)
     }
-    #expect(try await database.read { db in
-      try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_operations_admission') ORDER BY seqno")
+    #expect(try database.access { db in
+      try db.strings("SELECT name FROM pragma_index_info('machine_v2_operations_admission') ORDER BY seqno")
     } == ["machine_id", "active", "reserved_bytes"])
-    #expect(try await database.read { db in
-      try String.fetchAll(db, sql: "SELECT name FROM pragma_index_info('machine_v2_channels_by_operation') ORDER BY seqno")
+    #expect(try database.access { db in
+      try db.strings("SELECT name FROM pragma_index_info('machine_v2_channels_by_operation') ORDER BY seqno")
     } == ["operation_id"])
     try await original.close()
   }
@@ -511,9 +522,10 @@ import Testing
   @Test func fileBackedWriterHasThePageCache() async throws {
     let folder = try ScratchFolder("page-cache")
     let space = try Space.open(file: folder.url.appending(path: "space.sqlite"))
-    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "PRAGMA cache_size") } == -PageCache.writerKiB)
-    let (mmap, cap) = try await space.writer.read { db in
-      try (Int.fetchOne(db, sql: "PRAGMA mmap_size"), String.fetchOne(db, sql: Self.mmapCap))
+    #expect(try space.database.accessWriter { try MigrationDB(handle: $0).int("PRAGMA cache_size") } == -PageCache.writerKiB)
+    let (mmap, cap) = try space.database.accessWriter { handle in
+      let db = MigrationDB(handle: handle)
+      return try (db.int("PRAGMA mmap_size"), db.string(Self.mmapCap))
     }
     let limit = cap.flatMap { $0.hasPrefix("0x") ? Int($0.dropFirst(2), radix: 16) : Int($0) } ?? PageCache.mmapBytes
     #expect(mmap == min(PageCache.mmapBytes, limit))
@@ -524,15 +536,16 @@ import Testing
   @Test func fileBackedWriterDoesNotZeroFreedPages() async throws {
     let folder = try ScratchFolder("secure-delete")
     let space = try Space.open(file: folder.url.appending(path: "space.sqlite"))
-    #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "PRAGMA secure_delete") } == 0)
+    #expect(try space.database.accessWriter { try MigrationDB(handle: $0).int("PRAGMA secure_delete") } == 0)
     try await space.close()
   }
 
   @Test func eachMigrationAnUpgradeAppliesIsLoggedBeforeAndAfterWithItsDuration() async throws {
-    let database = try database()
-    let original = try await baseline(database)
+    let folder = try ScratchFolder("migration")
+    let location = folder.url.appending(path: "space.sqlite")
+    let original = try await baseline(location)
     let logs = RecordedLogs()
-    let upgraded = try Space(writer: database, log: logs.logger)
+    let upgraded = try Space.open(file: location, log: logs.logger)
     #expect(logs.all.map(\.message).filter { $0.hasPrefix("migration ") } == ["001", "002", "005", "042"].flatMap { ["migration \($0): applying", "migration \($0): applied in 0 ms"] })
     try await upgraded.close()
     try await original.close()
@@ -548,8 +561,8 @@ private struct LegacyExec: Equatable {
 
 private extension Space {
   func owedExecs() async throws -> [LegacyExec] {
-    try await writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT id, tool_spec FROM machine_execs WHERE tool_end_owed = 1 ORDER BY started_at, id").map {
+    try RawDatabase.open(databasePath) { db in
+      try db.rows("SELECT id, tool_spec FROM machine_execs WHERE tool_end_owed = 1 ORDER BY started_at, id").map {
         LegacyExec(id: $0["id"], toolSpec: $0["tool_spec"])
       }
     }

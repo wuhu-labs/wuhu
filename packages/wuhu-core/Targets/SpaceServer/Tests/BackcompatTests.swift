@@ -4,12 +4,11 @@ import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
-import GRDB
 import JSONValue
 import LoopCore
 import Scratch
 import SessionDomain
-import SpaceCore
+@testable import SpaceCore
 import SpaceTools
 import Synchronization
 import Testing
@@ -351,8 +350,7 @@ enum Backcompat {
       try await space.close()
     }
 
-    let queue = try DatabaseQueue(path: file.path)
-    try await queue.writeWithoutTransaction { db in try db.execute(sql: "VACUUM INTO ?", arguments: [destination.path]) }
+    try RawDatabase.open(file.path) { try $0.execute(sql: "VACUUM INTO ?", arguments: [destination.path]) }
     return meta
   }
 

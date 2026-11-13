@@ -242,8 +242,6 @@ import Testing
 private func person(_ id: String) -> Sender { Sender(id: id, timeZone: .gmt) }
 
 private func plainGroup(_ space: Space, _ id: String) async throws -> GroupID {
-  try await space.writer.write { db in
-    try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00Z')", arguments: [id])
-  }
+  try await space.seedGroup(GroupID(rawValue: id))
   return GroupID(rawValue: id)
 }

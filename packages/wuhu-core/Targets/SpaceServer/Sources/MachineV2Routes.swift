@@ -8,6 +8,7 @@ import Dependencies
 import Fetch
 import FetchTunnel
 import JSONValue
+import Logging
 import MachineContract
 import struct OperationProtocol.OperationError
 import Serve
@@ -17,7 +18,7 @@ import struct SpaceContract.EnrollConsumeOutput
 import struct SpaceContract.GroupID
 import SpaceCore
 
-func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, upgrades: MachineV2Upgrades, fingerprint: String?, principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
+func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, upgrades: MachineV2Upgrades, fingerprint: String?, log: Logger = Logger(label: "wuhu.serve"), principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
   let challenges = OneShotChallenges(prefix: "mv2_")
   @Sendable func enroll(_ input: MachineAddInput, pubkey: String, principal: Principal) async throws -> Response {
     guard let name = input.name, MachineName.normalized(name) != nil else {
@@ -57,7 +58,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     } catch let error as SpaceError {
       throw error
     } catch {
-      return machineAuthUnavailable()
+      return machineAuthUnavailable(error, during: "enrollment", log)
     }
   }
 
@@ -107,7 +108,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     }
     await hub.revocationGate(MachineID(rawValue: id))
     let revoked: Bool
-    do { revoked = try await space.revokeMachine(MachineID(rawValue: id), presenting: credential.pubkey) } catch { return machineAuthUnavailable() }
+    do { revoked = try await space.revokeMachine(MachineID(rawValue: id), presenting: credential.pubkey) } catch { return machineAuthUnavailable(error, during: "revoking \(id)", log) }
     guard revoked else {
       return errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not a live key of this Machine v2 identity")
     }
@@ -129,7 +130,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     } catch let error as OperationError {
       throw error
     } catch {
-      return machineAuthUnavailable()
+      return machineAuthUnavailable(error, during: "enrollment", log)
     }
   }
   // The key-signed reads a machine makes about itself: its hello (status plus
@@ -138,9 +139,9 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     guard let credential = machineV2Credential(request, challenges: challenges), let id = parameters["id"], credential.machines == [id] else {
       return .failure(.init(errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected")))
     }
-    if let refusal = await authorizationRefusal(hub, credential, message: "Not an enrolled Machine v2 identity") { return .failure(.init(refusal)) }
+    if let refusal = await authorizationRefusal(hub, credential, message: "Not an enrolled Machine v2 identity", log: log) { return .failure(.init(refusal)) }
     let resolved: MachineRecord?
-    do { resolved = try await space.resolveMachine(id) } catch { return .failure(.init(machineAuthUnavailable())) }
+    do { resolved = try await space.resolveMachine(id) } catch { return .failure(.init(machineAuthUnavailable(error, during: "resolving \(id)", log))) }
     guard let machine = resolved else {
       return .failure(.init(errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not an enrolled Machine v2 identity")))
     }
@@ -192,7 +193,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
       }
       streams = value
     }
-    if let refusal = await authorizationRefusal(hub, credential, message: "Credential cannot serve the addressed machines") { return .response(refusal) }
+    if let refusal = await authorizationRefusal(hub, credential, message: "Credential cannot serve the addressed machines", log: log) { return .response(refusal) }
     guard let boxLink = await hub.boxLink(credential, streams: streams) else {
       return .response(errorResponse(.serviceUnavailable, code: "machineNotHosted", message: "Machine owner is hosted elsewhere; retry"))
     }
@@ -216,19 +217,20 @@ private func machineV2Credential(_ request: Request, challenges: OneShotChalleng
 
 // 401 tells a machine its key is dead and may be discarded; anything that is
 // not a definitive refusal must stay retryable, or an outage destroys keys.
-private func authorizationRefusal(_ hub: MachineHub, _ credential: MachineHub.Credential, message: String) async -> Response? {
+private func authorizationRefusal(_ hub: MachineHub, _ credential: MachineHub.Credential, message: String, log: Logger) async -> Response? {
   do {
     try await hub.authorize(credential)
     return nil
   } catch let error as OperationError where error.code == .machineNotAuthorized {
     return errorResponse(.unauthorized, code: "machineNotAuthorized", message: message)
   } catch {
-    return machineAuthUnavailable()
+    return machineAuthUnavailable(error, during: "authorizing \(credential.machines.sorted().joined(separator: ","))", log)
   }
 }
 
-private func machineAuthUnavailable() -> Response {
-  errorResponse(.serviceUnavailable, code: "machineAuthUnavailable", message: "Machine v2 authorization is temporarily unavailable; retry")
+private func machineAuthUnavailable(_ error: any Error, during step: String, _ log: Logger) -> Response {
+  log.error("machine v2 authorization unavailable while \(step): \(error)")
+  return errorResponse(.serviceUnavailable, code: "machineAuthUnavailable", message: "Machine v2 authorization is temporarily unavailable; retry")
 }
 
 private struct MachineV2Status: Encodable {

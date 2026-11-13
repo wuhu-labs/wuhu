@@ -5,14 +5,12 @@ import Dispatch
 #else
   import Foundation
 #endif
-import GRDB
 @testable import SpaceCore
 import Synchronization
 import Wuwei
 
 final class MachineCellTestSpace: Sendable {
   let space: Space
-  let writer: any DatabaseWriter
   let worker: Worker
   let machineBuffers: MachineBuffers
   private let scheduler = MachineCellTestScheduler()
@@ -21,9 +19,7 @@ final class MachineCellTestSpace: Sendable {
 
   private init(_ space: Space) async throws {
     self.space = space
-    let writer = await space.writer
-    self.writer = writer
-    database = try WuweiDatabase(writer: writer)
+    database = space.database
     worker = Worker(id: "machine-cell-test-\(UUID())", storage: .shared(database), scheduler: scheduler, registrations: [.cell(MachineCell.self)])
     machineBuffers = MachineBuffers(worker: worker.id)
     worker.provide(machineBuffers)
@@ -53,7 +49,6 @@ final class MachineCellTestSpace: Sendable {
 
   func close() async throws {
     await stopWorker()
-    database.close()
     try await space.close()
   }
 }

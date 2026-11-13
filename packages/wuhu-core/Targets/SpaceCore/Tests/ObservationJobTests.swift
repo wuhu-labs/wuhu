@@ -6,7 +6,7 @@ import Dispatch
 #else
   import Foundation
 #endif
-import GRDB
+import GRDBSQLite
 import JSONValue
 import Logging
 import Scratch
@@ -185,9 +185,8 @@ import Testing
     let folder = try ScratchFolder("observation-closing")
     let file = folder.url.appending(path: "space.sqlite")
     let gate = StatementGate(sql: "expires_at = 0")
-    var configuration = Space.makeConfiguration()
-    configuration.prepareDatabase { db in db.trace(options: .statement) { gate.trace($0) } }
-    let space = try Space(writer: try DatabaseQueue(path: file.path, configuration: configuration))
+    let space = try Space.open(file: file)
+    try gate.install(on: space.database)
     let sql = "SELECT 1 AS one"
     let stream = try space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var frames = stream.makeAsyncIterator()
@@ -216,7 +215,7 @@ import Testing
     let folder = try ScratchFolder("observation-revocation")
     let file = folder.url.appending(path: "space.sqlite")
     let gate = StatementGate(sql: "")
-    let space = try Space(writer: try DatabasePool(path: file.path, configuration: Space.makeConfiguration()), fileReads: { worker in
+    let space = try Space(database: try WuweiDatabase(path: file.path), fileReads: { worker in
       let live = FileWatchReads(worker: worker)
       return FileWatchReads(read: { opening, after in
         let page = try live.page(opening, after: after)
@@ -250,7 +249,7 @@ import Testing
     let folder = try ScratchFolder("observation-rollover-closed")
     let file = folder.url.appending(path: "space.sqlite")
     let regions = RegionDouble()
-    let old = try Space(writer: try DatabaseQueue(path: file.path, configuration: Space.makeConfiguration()), regions: regions.source)
+    let old = try Space(database: try WuweiDatabase(path: file.path), regions: regions.source)
     let table = try await makeTable(old)
     _ = try await old.mutateRows(table, [.insert([.integer(1), .string("a")])], in: .shared, acting: .shared)
     let cancelled = Collector<Void>()
@@ -270,7 +269,7 @@ import Testing
     #expect(regions.cancellations == 1)
 
     await old.stopWorker()
-    let new = try Space(writer: try DatabaseQueue(path: file.path, configuration: Space.makeConfiguration()), regions: regions.source)
+    let new = try Space(database: try WuweiDatabase(path: file.path), regions: regions.source)
     #expect(regions.starts == 1)
 
     let again = try new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
@@ -378,7 +377,6 @@ private final class RegionDouble: Sendable {
   }
 }
 
-/// Blocks the first statement containing `sql` after `arm`, on the writer's own queue, until `release`.
 private final class StatementGate: Sendable {
   let sql: String
 
@@ -402,9 +400,18 @@ private final class StatementGate: Sendable {
 
   func arm() { state.withLock { $0.armed = true } }
 
-  func trace(_ event: Database.TraceEvent) {
-    guard case let .statement(statement) = event, statement.sql.contains(sql) else { return }
-    block()
+  func install(on database: WuweiDatabase) throws {
+    try database.accessWriter { handle in
+      let context = Unmanaged.passRetained(self).toOpaque()
+      let code = sqlite3_set_clientdata(handle, "test.statement-gate", context) { Unmanaged<StatementGate>.fromOpaque($0!).release() }
+      precondition(code == SQLITE_OK)
+      sqlite3_trace_v2(handle, UInt32(SQLITE_TRACE_STMT), { _, context, statement, _ in
+        let gate = Unmanaged<StatementGate>.fromOpaque(context!).takeUnretainedValue()
+        let sql = String(cString: sqlite3_sql(OpaquePointer(statement!))!)
+        if sql.contains(gate.sql) { gate.block() }
+        return 0
+      }, context)
+    }
   }
 
   func block() {
@@ -414,7 +421,7 @@ private final class StatementGate: Sendable {
       return true
     }
     guard block else { return }
-    state.withLock { $0.reached?.yield(()) }
+    _ = state.withLock { $0.reached?.yield(()) }
     state.withLock { $0.blocked }.wait()
   }
 
@@ -423,5 +430,5 @@ private final class StatementGate: Sendable {
     _ = await events.next()
   }
 
-  func release() { state.withLock { $0.blocked.signal() } }
+  func release() { _ = state.withLock { $0.blocked.signal() } }
 }

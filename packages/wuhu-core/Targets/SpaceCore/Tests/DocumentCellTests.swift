@@ -737,19 +737,21 @@ struct DocumentCellTests {
     try client.edit("Hello there\n")
     #expect(await client.next() == .control(.ack(count: 1)))
 
+    let id = DocumentCell.ID(.shared, try SpacePath(validating: plan))
+    let lineage = try #require(space.worker.cell(id).lineage())
+
     // A delete that never tells the document: its rows outlive the file until the mail comes.
     let rev = try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
       try $0.removeForDelayedDelivery(SpacePath(validating: plan), op: .delete)
     }
     try await fireIdleCheckpoint(clock)
     guard case .control(.error(code: .notFound, _))? = await client.next() else { Issue.record("a gone document kept its socket"); return }
-    let id = DocumentCell.ID(.shared, try SpacePath(validating: plan))
     space.worker.read { reader in
       let cell = reader.cell(id)
       #expect(cell.nextWake() == nil, "a gone document stayed due")
       #expect(cell.state() != nil, "the rows go only by the mail")
     }
-    space.worker.send(id).removed(rev)
+    space.worker.send(id).removed(rev, lineage: lineage)
     while space.worker.hasMail(for: id.recipient) { await Task.yield() }
     #expect(space.worker.cell(id).state() == nil)
   }
@@ -801,6 +803,9 @@ struct DocumentCellTests {
     try old.edit("Old, edited\n")
     #expect(await old.next() == .control(.ack(count: 1)))
 
+    let id = DocumentCell.ID(.shared, try SpacePath(validating: plan))
+    let lineage = try #require(space.worker.cell(id).lineage())
+
     // The delete commits, and its mail is still on the way when the path is used again.
     let rev = try await space.worker.call(FilesCell.ID(GroupID.shared.rawValue)) {
       try $0.removeForDelayedDelivery(SpacePath(validating: plan), op: .delete)
@@ -812,8 +817,7 @@ struct DocumentCellTests {
     while frame.map({ if case .control(.peers) = $0 { true } else if case .control(.checkpoint) = $0 { true } else { false } }) == true { frame = await fresh.next() }
     #expect(frame == .control(.ack(count: 1)))
 
-    let id = DocumentCell.ID(.shared, try SpacePath(validating: plan))
-    space.worker.send(id).removed(rev)
+    space.worker.send(id).removed(rev, lineage: lineage)
     // A call on the same cell lands after the mail, and commits what the recreated document holds.
     _ = try? await space.worker.call(id) { $0.checkpoint() }
     #expect(text(try await fs.read(plan).1) == "New\n", "the old document's mail deleted the new one's edits")

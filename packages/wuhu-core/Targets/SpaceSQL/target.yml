@@ -13,6 +13,5 @@ tests:
   dependencies:
     - StructuredQueries
     - SpaceContract
-    - GRDB
     - GRDBSQLite
     - Scratch

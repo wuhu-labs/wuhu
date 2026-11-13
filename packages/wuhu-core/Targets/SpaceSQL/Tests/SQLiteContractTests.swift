@@ -1,16 +1,12 @@
-import Foundation
-import GRDB
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDBSQLite
 import Scratch
 import Testing
 
-// The SQLite behavior the scoped read engine stands on, pinned against the
-// linked library on every platform CI builds: the authorizer names the view
-// a base-table read goes through, a CTE can borrow any name as that accessor,
-// TEMP views live on a read-only connection, declared types survive two view
-// levels, and a table the authorizer recorded is a region GRDB's observation
-// wakes on.
-//
 // The accessor alone cannot carry the gate: a flattened view whose columns
 // go unread leaves only a columnless read of the base table, named and
 // qualified as the FROM item was written, with no accessor. So the engine
@@ -106,8 +102,6 @@ import Testing
   }
 }
 
-// A WAL database the way Space.open leaves one, with a hidden row the views
-// filter out.
 struct Fixture: ~Copyable {
   static let views = """
   CREATE TEMP VIEW "__vS_1" AS SELECT id, flag, j FROM main.sessions WHERE id <> 'hidden';
@@ -120,16 +114,13 @@ struct Fixture: ~Copyable {
   init() throws {
     let url = try scratchURL("spacesql")
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    var configuration = Configuration()
-    configuration.journalMode = .wal
-    let queue = try DatabaseQueue(path: url.appending(path: "space.sqlite").path, configuration: configuration)
-    try queue.write { db in
-      try db.execute(sql: """
-      CREATE TABLE sessions (id TEXT PRIMARY KEY, flag BOOLEAN, j JSON_TEXT);
-      INSERT INTO sessions VALUES ('a', 1, '{}'), ('hidden', 0, '[]');
-      CREATE TABLE other (n INTEGER);
-      """)
-    }
+    let writer = try FixtureWriter(path: url.appending(path: "space.sqlite").path)
+    try writer.execute("PRAGMA journal_mode = WAL")
+    try writer.execute("""
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, flag BOOLEAN, j JSON_TEXT);
+    INSERT INTO sessions VALUES ('a', 1, '{}'), ('hidden', 0, '[]');
+    CREATE TABLE other (n INTEGER);
+    """)
     directory = url
   }
 

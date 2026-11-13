@@ -4,7 +4,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import struct Instructions.InstructionRenderer
 import struct Instructions.InstructionSourceFailure
 import JSONValue
@@ -196,10 +195,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let alice = GroupID(rawValue: "alice")
-      try await space.writer.write { db in
-        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
-      }
+      let alice = try await space.createGroup(alias: "alice", owner: (try await space.ensureDevPerson()).account)
       let studio = try await space.addMachineV2(name: "studio", scope: .reachable).machine.id.rawValue
       let miniRecord = try await space.addMachineV2(name: "mini").machine
       let mini = miniRecord.id.rawValue

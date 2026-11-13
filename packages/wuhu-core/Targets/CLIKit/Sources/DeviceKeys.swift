@@ -53,9 +53,6 @@ enum Ed25519KeyFile {
   }
 }
 
-// space identities are spc_<32 lowercase alnum>; duplicated here (rather than
-// depending on SpaceCore's SpaceIdentity) because CLIKit stays off SpaceCore's
-// GRDB-linked production dependency for this one shape check.
 func isValidSpaceIdentity(_ candidate: String) -> Bool {
   let prefix = "spc_"
   guard candidate.hasPrefix(prefix) else { return false }

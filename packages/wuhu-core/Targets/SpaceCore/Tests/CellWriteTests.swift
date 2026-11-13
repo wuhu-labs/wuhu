@@ -7,7 +7,7 @@ import Wuwei
 
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct CellWriteTests {
   private func hosting(regions: (@Sendable (@escaping RegionSource) -> RegionSource)? = nil, _ body: (Space) async throws -> Void) async throws {
-    let space = try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), regions: regions)
+    let space = try Space.inMemory(regions: regions)
     space.worker.register(.cell(Scribe.self))
     space.worker.start()
     try await body(space)
@@ -37,6 +37,36 @@ import Wuwei
       var cleared = clears.makeAsyncIterator()
       #expect(await cleared.next() != nil)
       #expect(try await space.deployment()?.certificate == nil)
+    }
+  }
+
+  @Test func `a write to a WITHOUT ROWID table wakes its subscriber`() async throws {
+    try await hosting { space in
+      let person = try await space.ensureDevPerson()
+      let (wakes, wake) = AsyncStream<Void>.makeStream()
+      let stop = await space.observations.regions(["person_hidden_sidebars"], wake)
+      defer { stop() }
+      let settings = try await space.setSidebarVisibility(principal: person.persona, group: "shared", path: "/.sidebars/test.sidebar.jsx", hidden: true)
+      #expect(settings.hidden.count == 1)
+      wake.finish()
+      var woken = wakes.makeAsyncIterator()
+      #expect(await woken.next() != nil)
+    }
+  }
+
+  @Test func `a predicate-free delete of an unowned table wakes its subscriber`() async throws {
+    try await hosting { space in
+      let scribe = Scribe.ID("a")
+      try await space.worker.call(scribe) { try $0.insertUnownedProbe() }
+      #expect(space.worker.cell(scribe).unownedProbes() == 1)
+      let (wakes, wake) = AsyncStream<Void>.makeStream()
+      let stop = await space.observations.regions(["scribe_unowned_probe"], wake)
+      defer { stop() }
+      try await space.worker.call(scribe) { try $0.deleteUnownedProbes() }
+      #expect(space.worker.cell(scribe).unownedProbes() == 0)
+      wake.finish()
+      var woken = wakes.makeAsyncIterator()
+      #expect(await woken.next() != nil)
     }
   }
 

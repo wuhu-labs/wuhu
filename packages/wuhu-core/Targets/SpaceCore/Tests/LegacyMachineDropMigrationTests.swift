@@ -4,7 +4,6 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import Scratch
 @testable import SpaceCore
 import Testing
@@ -12,10 +11,10 @@ import Testing
 @Suite(.deterministicDependencies) struct LegacyMachineDropMigrationTests {
   @Test func freshSpaceHasNoEncryptedMachineStore() async throws {
     let space = try Space.inMemory()
-    #expect(try await space.writer.read { db in
+    #expect(try RawDatabase.open(space.databasePath) { db in
       try LegacyMachineSchema.tables.filter { try db.tableExists($0) }.isEmpty
     })
-    #expect(try await space.writer.read { db in
+    #expect(try RawDatabase.open(space.databasePath) { db in
       try ["machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations"].allSatisfy { try db.tableExists($0) }
     })
     try await space.close()
@@ -24,11 +23,10 @@ import Testing
   @Test func upgradeDropsOpaqueLegacyStateAndPreservesCurrentRowsAcrossReopens() async throws {
     let folder = try ScratchFolder("machine-store-drop")
     let file = folder.url.appending(path: "space.sqlite")
-    let database = try DatabaseQueue(path: file.path)
-    try await database.write { db in
+    let (before, columns, upgradedShape) = try RawDatabase.open(file.path) { db in
       try Self.create036Fixture(in: db)
       try LegacyMachineSchema.create(in: db)
-      try Migration011.apply(.init(db))
+      try Migration011.apply(db)
       try db.execute(sql: """
       INSERT INTO machine_v2_operations VALUES
         ('opaque', 'shared', 'script', 'read', 'box', 'c1', 'digest', 1, 'opaque-sealed-record', 1, 1024, 'now'),
@@ -39,48 +37,43 @@ import Testing
       INSERT INTO machine_v2_maintenance VALUES ('receipts/shared', 'now');
       INSERT INTO machine_v2_key_check VALUES ('key', 'corrupt-key-check');
       """)
-    }
-    let tables = ["accounts", "machines", "account_keys", "join_tokens", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations"]
-    let columns = try await database.read { db in
-      try Dictionary(uniqueKeysWithValues: tables.map { table in
-        (table, try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info(?) ORDER BY cid", arguments: [table]))
+      let tables = ["accounts", "machines", "account_keys", "join_tokens", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations"]
+      let columns = try Dictionary(uniqueKeysWithValues: tables.map { table in
+        (table, try db.strings("SELECT name FROM pragma_table_info(?) ORDER BY cid", arguments: [table]))
       })
-    }
-    let before = try await snapshot(database, columns: columns)
-    let originalShape = try MigrationTests.schemaShape(database)
-    try await database.write { db in try Migration038.apply(.init(db)) }
-    #expect(try await snapshot(database, columns: columns) == before)
-    let upgradedShape = try MigrationTests.schemaShape(database)
-    #expect(Set(upgradedShape.tables.keys) == Set(tables))
-    for table in tables where table != "machine_file_operations" {
-      #expect(upgradedShape.tables[table] == originalShape.tables[table])
-    }
-    let originalFileShape = try #require(originalShape.tables["machine_file_operations"])
-    let upgradedFileShape = try #require(upgradedShape.tables["machine_file_operations"])
-    let originalFileColumns = originalFileShape.filter { $0.hasPrefix("column ") }
-    #expect(Array(upgradedFileShape.prefix(originalFileColumns.count)) == originalFileColumns)
-    #expect(upgradedFileShape.filter { !$0.hasPrefix("column ") } == originalFileShape.filter { !$0.hasPrefix("column ") })
-    try await database.read { (db: Database) throws -> Void in
+      let before = try snapshot(db, columns: columns)
+      let originalShape = try MigrationTests.schemaShape(db)
+      try Migration038.apply(db)
+      #expect(try snapshot(db, columns: columns) == before)
+      let upgradedShape = try MigrationTests.schemaShape(db)
+      #expect(Set(upgradedShape.tables.keys) == Set(tables))
+      for table in tables where table != "machine_file_operations" {
+        #expect(upgradedShape.tables[table] == originalShape.tables[table])
+      }
+      let originalFileShape = try #require(originalShape.tables["machine_file_operations"])
+      let upgradedFileShape = try #require(upgradedShape.tables["machine_file_operations"])
+      let originalFileColumns = originalFileShape.filter { $0.hasPrefix("column ") }
+      #expect(Array(upgradedFileShape.prefix(originalFileColumns.count)) == originalFileColumns)
+      #expect(upgradedFileShape.filter { !$0.hasPrefix("column ") } == originalFileShape.filter { !$0.hasPrefix("column ") })
       #expect(try LegacyMachineSchema.tables.filter { try db.tableExists($0) }.isEmpty)
-      #expect(try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE name IN ('machine_v2_operations_admission', 'machine_v2_channels_by_operation', 'machine_v2_retention_expiry')").isEmpty)
-      #expect(try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('machine_file_operations') ORDER BY cid") == columns["machine_file_operations"]! + ["inputOffsets", "inputEnded", "inputReady", "inputChannels"])
-      #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM machine_file_operations WHERE inputReady = 0 AND inputOffsets = '{}' AND inputEnded = '[]' AND inputChannels = '[]' AND received = '{\"data\":7}'") == 1)
-      #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
-      #expect(try String.fetchAll(db, sql: "PRAGMA integrity_check") == ["ok"])
+      #expect(try db.strings("SELECT name FROM sqlite_master WHERE name IN ('machine_v2_operations_admission', 'machine_v2_channels_by_operation', 'machine_v2_retention_expiry')").isEmpty)
+      #expect(try db.strings("SELECT name FROM pragma_table_info('machine_file_operations') ORDER BY cid") == columns["machine_file_operations"]! + ["inputOffsets", "inputEnded", "inputReady", "inputChannels"])
+      #expect(try db.int("SELECT count(*) FROM machine_file_operations WHERE inputReady = 0 AND inputOffsets = '{}' AND inputEnded = '[]' AND inputChannels = '[]' AND received = '{\"data\":7}'") == 1)
+      #expect(try db.rows("PRAGMA foreign_key_check").isEmpty)
+      #expect(try db.strings("PRAGMA integrity_check") == ["ok"])
+      return (before, columns, upgradedShape)
     }
-    try database.close()
-    let reopened = try DatabaseQueue(path: file.path)
-    #expect(try await snapshot(reopened, columns: columns) == before)
-    let reopenedShape = try MigrationTests.schemaShape(reopened)
-    #expect(reopenedShape.tables == upgradedShape.tables)
-    #expect(reopenedShape.indexesAndTriggers == upgradedShape.indexesAndTriggers)
-    #expect(try await reopened.read { db in
-      try Int.fetchOne(db, sql: "SELECT count(*) FROM machine_file_operations WHERE inputReady = 0 AND inputOffsets = '{}' AND inputEnded = '[]' AND inputChannels = '[]'")
-    } == 1)
-    try reopened.close()
+    try RawDatabase.open(file.path) { db in
+      #expect(try snapshot(db, columns: columns) == before)
+      let reopenedShape = try MigrationTests.schemaShape(db)
+      #expect(reopenedShape.tables == upgradedShape.tables)
+      #expect(reopenedShape.indexesAndTriggers == upgradedShape.indexesAndTriggers)
+      #expect(try db.int("SELECT count(*) FROM machine_file_operations WHERE inputReady = 0 AND inputOffsets = '{}' AND inputEnded = '[]' AND inputChannels = '[]'")
+        == 1)
+    }
   }
 
-  private static func create036Fixture(in db: Database) throws {
+  private static func create036Fixture(in db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE accounts (id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('human', 'space', 'machine', 'contractor')), name TEXT, created_at TEXT NOT NULL, removed_at TEXT, guest INTEGER NOT NULL DEFAULT 0 CHECK (guest IN (0, 1)));
     CREATE TABLE machines (id TEXT NOT NULL PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id), name TEXT, created_at TEXT NOT NULL, grp TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL DEFAULT 'owner' CHECK (scope IN ('owner', 'reachable')));
@@ -110,20 +103,18 @@ import Testing
     """)
   }
 
-  private func snapshot(_ database: DatabaseQueue, columns: [String: [String]]) async throws -> [String: [String]] {
-    try await database.read { db in
-      try Dictionary(uniqueKeysWithValues: columns.map { table, names in
-        let selection = names.map { "\"\($0)\"" }.joined(separator: ",")
-        return (table, try Row.fetchAll(db, sql: "SELECT \(selection) FROM \"\(table)\" ORDER BY \(selection)").map(\.description))
-      })
-    }
+  private func snapshot(_ db: MigrationDB, columns: [String: [String]]) throws -> [String: [String]] {
+    try Dictionary(uniqueKeysWithValues: columns.map { table, names in
+      let selection = names.map { "\"\($0)\"" }.joined(separator: ",")
+      return (table, try db.rows("SELECT \(selection) FROM \"\(table)\" ORDER BY \(selection)").map { String(describing: $0.values) })
+    })
   }
 }
 
 enum LegacyMachineSchema {
   static let tables = ["machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_retention", "machine_v2_maintenance", "machine_v2_key_check"]
 
-  static func create(in db: Database) throws {
+  static func create(in db: MigrationDB) throws {
     try db.execute(sql: """
     CREATE TABLE machine_v2_operations (id TEXT PRIMARY KEY, grp TEXT NOT NULL, owner_scope TEXT NOT NULL, invocation_key TEXT NOT NULL, machine_id TEXT NOT NULL, correlation_id TEXT NOT NULL, input_digest TEXT NOT NULL, dispatch_consumed INTEGER NOT NULL, record TEXT NOT NULL, active INTEGER NOT NULL, reserved_bytes INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(grp, owner_scope, invocation_key));
     CREATE TABLE machine_v2_channels (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES machine_v2_operations(id) ON DELETE CASCADE, name TEXT NOT NULL, committed TEXT NOT NULL, accepted TEXT NOT NULL, pending TEXT);

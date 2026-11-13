@@ -6,13 +6,13 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import GRDB
 import Logging
 import Scratch
 import struct SpaceContract.GroupID
-import SpaceCore
+@testable import SpaceCore
 import Synchronization
 import Testing
+import Wuwei
 
 // The shipped compaction over a copy of the pre-groups Backcompat fixture: the
 // same file and steps the rehearsal on a copy of a live space's database runs.
@@ -31,7 +31,7 @@ import Testing
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let file = folder.appending(path: "space.sqlite")
     try Data(contentsOf: Self.fixture).write(to: file)
-    if !sql.isEmpty { try DatabaseQueue(path: file.path).write { db in try db.execute(sql: sql) } }
+    if !sql.isEmpty { try RawDatabase.open(file.path) { db in try db.execute(sql: sql) } }
     return file
   }
 
@@ -58,8 +58,8 @@ import Testing
     let folder = try scratch()
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = try copy(to: folder, seeding: Self.people)
-    let admins = try await DatabaseQueue(path: file.path).read { db in
-      try String.fetchAll(db, sql: "SELECT id FROM accounts WHERE is_admin = 1 AND removed_at IS NULL")
+    let admins = try RawDatabase.open(file.path) {
+      try $0.strings("SELECT id FROM accounts WHERE is_admin = 1 AND removed_at IS NULL")
     }
     #expect(admins == [Self.boss.rawValue])
     try Wuhu45Migration.apply(to: file)
@@ -81,7 +81,7 @@ import Testing
       seeding: "INSERT INTO accounts (id, kind, name, is_admin, created_at) VALUES ('ac_n0pers00', 'human', 'nobody', 1, '2026-01-01T00:00:00.000Z')",
     )
     let before = try Self.snapshot(file)
-    #expect(throws: DatabaseError.self) { try Wuhu45Migration.apply(to: file) }
+    #expect(throws: MigrationFailure.self) { try Wuhu45Migration.apply(to: file) }
     #expect(try Self.snapshot(file) == before)
     #expect(try !Wuhu45Migration.isApplied(to: file))
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space.open(file: file) }
@@ -110,16 +110,15 @@ import Testing
     )
     // `groups`, `accounts`, `machines`, `messages`, `sessions` and `session_queue` are reshaped
     // by the next migrations; the reopened comparison below pins their columns.
-    for (table, lines) in expected.sorted(by: { $0.key < $1.key })
+    for (table, fresh) in expected.sorted(by: { $0.key < $1.key })
       where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles", "revisions", "session_queue"].contains(table)
     {
-      #expect(migrated[table] == lines.filter { line in
-        !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)
-          && !line.contains("_alias_insert") && !line.contains("_alias_update")
-          && !line.contains("owner_account")
-          && !(addsOwnership.contains(table) && line.contains("owner"))
-          && !(table == "session_runtime" && line.contains("step_try"))
-      }, "\(table)")
+      var wanted = fresh
+      wanted.columns = wanted.columns.filter { Self.keeps($0, for: table, addsOwnership) }
+      wanted.indexes = wanted.indexes.filter { Self.keeps($0, for: table, addsOwnership) }
+      wanted.foreignKeys = wanted.foreignKeys.filter { Self.keeps($0, for: table, addsOwnership) }
+      wanted.triggers = wanted.triggers.filter { Self.keeps($0, for: table, addsOwnership) }
+      #expect(migrated[table] == wanted, "\(table)")
     }
     try await Space.open(file: file).close()
     let reopened = try Self.shape(file)
@@ -129,7 +128,8 @@ import Testing
       #expect(reopened[table] == nil)
     }
     let fileSchema = try #require(reopened["machine_file_operations"])
-    #expect(!fileSchema.contains { $0.contains("machine_file_operations_live") })
+    #expect(fileSchema.indexes.allSatisfy { !Self.name($0.row).contains("machine_file_operations_live") })
+    #expect(fileSchema.triggers.allSatisfy { !$0.contains("machine_file_operations_live") })
     try await Space.open(file: file).close()
     #expect(try Self.shape(file) == reopened)
   }
@@ -140,40 +140,43 @@ import Testing
     let folder = try scratch()
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = try copy(to: folder, seeding: Self.people)
-    let (before, userTables, sequence) = try DatabaseQueue(path: file.path).read { db in
-      var rows: [String: (columns: [String], rows: [[DatabaseValue]])] = [:]
+    let (before, userTables, sequence) = try RawDatabase.open(file.path) { db in
+      var rows: [String: (columns: [String], rows: [[Wuwei.Value]])] = [:]
       for table in try Self.tables(db) where table != "session_scope_context" && !Self.dropped.contains(table) {
         let columns = try Self.columns(of: table, in: db).filter { !(table == "accounts" && $0 == "is_admin") }
         rows[table] = try (columns, Self.rows(table, columns, in: db))
       }
-      var userTables: [String: [[DatabaseValue]]] = [:]
-      for path in try String.fetchAll(db, sql: "SELECT path FROM tables") {
+      var userTables: [String: [[Wuwei.Value]]] = [:]
+      for path in try db.strings("SELECT path FROM tables") {
         userTables["shared:" + path] = try Self.rows(path, Self.columns(of: path, in: db), in: db)
       }
-      let sequence = try Row.fetchAll(db, sql: "SELECT name, seq FROM sqlite_sequence").reduce(into: [String: Int64]()) {
+      let sequence = try db.rows("SELECT name, seq FROM sqlite_sequence").reduce(into: [String: Int64]()) {
         let name: String = $1["name"]
-        $0[name.hasPrefix("/") ? "shared:" + name : name] = $1["seq"]
+        let seq: Int64 = $1["seq"]
+        $0[name.hasPrefix("/") ? "shared:" + name : name] = seq
       }
       return (rows, userTables, sequence)
     }
     #expect(!userTables.isEmpty)
     try Wuhu45Migration.apply(to: file)
-    try DatabaseQueue(path: file.path).read { db in
+    try RawDatabase.open(file.path) { db in
       for (table, old) in before.sorted(by: { $0.key < $1.key }) {
         #expect(try Self.rows(table, old.columns, in: db) == old.rows, "\(table)")
         if try Self.columns(of: table, in: db).contains("grp") {
-          #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM \"\(table)\" WHERE grp <> 'shared'") == 0, "\(table)")
+          #expect(try db.int("SELECT count(*) FROM \"\(table)\" WHERE grp <> 'shared'") == 0, "\(table)")
         }
       }
       for (table, rows) in userTables {
         #expect(try Self.rows(table, Self.columns(of: table, in: db), in: db) == rows, "\(table)")
       }
-      let after = try Row.fetchAll(db, sql: "SELECT name, seq FROM sqlite_sequence").reduce(into: [String: Int64]()) {
-        $0[$1["name"]] = $1["seq"]
+      let after = try db.rows("SELECT name, seq FROM sqlite_sequence").reduce(into: [String: Int64]()) {
+        let name: String = $1["name"]
+        let seq: Int64 = $1["seq"]
+        $0[name] = seq
       }
       #expect(after == sequence)
-      #expect(try String.fetchAll(db, sql: "PRAGMA integrity_check") == ["ok"])
-      #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+      #expect(try db.strings("PRAGMA integrity_check") == ["ok"])
+      #expect(try db.rows("PRAGMA foreign_key_check").isEmpty)
     }
   }
 
@@ -183,8 +186,8 @@ import Testing
     let file = try copy(to: folder)
     try Wuhu45Migration.apply(to: file)
     // The statement from the pre-groups schema script.
-    #expect(throws: DatabaseError.self) {
-      try DatabaseQueue(path: file.path).write { db in
+    #expect(throws: MigrationFailure.self) {
+      try RawDatabase.open(file.path) { db in
         try db.execute(sql: #"CREATE INDEX IF NOT EXISTS "fs_heads_by_parent" ON "fs_heads" ("parent_path");"#)
       }
     }
@@ -235,56 +238,106 @@ import Testing
     try await Space.open(file: clean).close()
   }
 
-  static func tables(_ db: Database) throws -> [String] {
-    try String.fetchAll(
-      db,
-      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%.table' ORDER BY name",
-    )
+  static func tables(_ db: MigrationDB) throws -> [String] {
+    try db.strings("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%.table' ORDER BY name")
   }
 
-  static func columns(of table: String, in db: Database) throws -> [String] {
-    try String.fetchAll(db, sql: "SELECT name FROM pragma_table_info(?) ORDER BY cid", arguments: [table])
+  static func columns(of table: String, in db: MigrationDB) throws -> [String] {
+    try db.strings("SELECT name FROM pragma_table_info(?) ORDER BY cid", arguments: [table])
   }
 
-  static func rows(_ table: String, _ columns: [String], in db: Database) throws -> [[DatabaseValue]] {
+  static func rows(_ table: String, _ columns: [String], in db: MigrationDB) throws -> [[Wuwei.Value]] {
     let list = columns.map { "\"\($0)\"" }.joined(separator: ", ")
-    return try Row.fetchAll(db, sql: "SELECT \(list) FROM \"\(table)\" ORDER BY \(list)").map { Array($0.databaseValues) }
+    return try db.rows("SELECT \(list) FROM \"\(table)\" ORDER BY \(list)").map { $0.values }
   }
 
-  static func snapshot(_ file: URL) throws -> [String] {
-    try DatabaseQueue(path: file.path).read { db in
-      let schema = try String.fetchAll(db, sql: "SELECT type || ' ' || name || ' ' || coalesce(sql, '') FROM sqlite_master ORDER BY type, name")
-      let accounts = try Row.fetchAll(db, sql: "SELECT * FROM accounts ORDER BY id").map(\.description)
-      return schema + accounts
+  /// A pragma row as its typed values by column name.
+  typealias ShapeRow = [String: Wuwei.Value]
+
+  struct IndexShape: Equatable {
+    let row: ShapeRow
+    let keys: [ShapeRow]
+  }
+
+  struct TableShape: Equatable {
+    var columns: [ShapeRow]
+    var indexes: [IndexShape]
+    var foreignKeys: [ShapeRow]
+    var triggers: [String]
+  }
+
+  struct Snapshot: Equatable {
+    let schema: [String]
+    let accounts: [ShapeRow]
+  }
+
+  static func shapeRow(_ row: MigrationRow) -> ShapeRow {
+    Dictionary(uniqueKeysWithValues: zip(row.columns, row.values))
+  }
+
+  /// The `name` a pragma row carries, for the filters the comparison applies.
+  static func name(_ row: ShapeRow) -> String {
+    guard case let .text(name)? = row["name"] else { return "" }
+    return name
+  }
+
+  static func mentions(_ row: ShapeRow, _ text: String) -> Bool {
+    row.values.contains { if case let .text(value) = $0 { value.contains(text) } else { false } }
+  }
+
+  /// Names the fresh schema has and the migrated one does not: the columns the script renames or replaces, and the indexes that name them.
+  static let laterNames = ["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content", "_alias_insert", "_alias_update", "owner_account"]
+
+  /// Whether the fresh table's component stays for comparison; `addsOwnership` tables gain `owner` and its indexes later, and `session_runtime` gains `step_try`.
+  static func keeps(_ column: ShapeRow, for table: String, _ addsOwnership: Set<String>) -> Bool {
+    laterNames.allSatisfy { !mentions(column, $0) }
+      && !(addsOwnership.contains(table) && mentions(column, "owner"))
+      && !(table == "session_runtime" && mentions(column, "step_try"))
+  }
+
+  static func keeps(_ index: IndexShape, for table: String, _ addsOwnership: Set<String>) -> Bool {
+    keeps(index.row, for: table, addsOwnership) && index.keys.allSatisfy { keeps($0, for: table, addsOwnership) }
+  }
+
+  static func keeps(_ trigger: String, for table: String, _ addsOwnership: Set<String>) -> Bool {
+    laterNames.allSatisfy { !trigger.contains($0) } && !(addsOwnership.contains(table) && trigger.contains("owner"))
+  }
+
+  static func snapshot(_ file: URL) throws -> Snapshot {
+    try RawDatabase.open(file.path) { db in
+      let schema = try db.strings("SELECT type || ' ' || name || ' ' || coalesce(sql, '') FROM sqlite_master ORDER BY type, name")
+      let accounts = try db.rows("SELECT * FROM accounts ORDER BY id").map(shapeRow)
+      return Snapshot(schema: schema, accounts: accounts)
     }
   }
 
   // Columns, indexes, foreign keys and triggers of every space table.
-  static func shape(_ file: URL) throws -> [String: [String]] {
-    try DatabaseQueue(path: file.path).read { db in
-      var shape: [String: [String]] = [:]
+  static func shape(_ file: URL) throws -> [String: TableShape] {
+    try RawDatabase.open(file.path) { db in
+      var shape: [String: TableShape] = [:]
       for table in try tables(db) where !table.contains(":/") {
-        var lines = try Row.fetchAll(
-          db, sql: #"SELECT cid, name, type, "notnull", dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid"#,
+        let columns = try db.rows(
+          #"SELECT cid, name, type, "notnull", dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid"#,
           arguments: [table],
-        ).map { "column \($0)" }
-        for index in try Row.fetchAll(
-          db, sql: #"SELECT name, "unique", origin, partial FROM pragma_index_list(?) ORDER BY name"#, arguments: [table],
+        ).map(shapeRow)
+        var indexes: [IndexShape] = []
+        for index in try db.rows(
+          #"SELECT name, "unique", origin, partial FROM pragma_index_list(?) ORDER BY name"#, arguments: [table],
         ) {
           let name: String = index["name"]
-          let keys = try Row.fetchAll(
-            db, sql: #"SELECT seqno, cid, name, "desc", coll, "key" FROM pragma_index_xinfo(?) ORDER BY seqno"#, arguments: [name],
-          ).map(\.description)
-          lines.append("index \(index) \(keys)")
+          let keys = try db.rows(
+            #"SELECT seqno, cid, name, "desc", coll, "key" FROM pragma_index_xinfo(?) ORDER BY seqno"#, arguments: [name],
+          ).map(shapeRow)
+          indexes.append(IndexShape(row: shapeRow(index), keys: keys))
         }
-        lines += try Row.fetchAll(
-          db, sql: #"SELECT id, seq, "table", "from", "to", on_update, on_delete, "match" FROM pragma_foreign_key_list(?) ORDER BY id, seq"#,
+        let foreignKeys = try db.rows(
+          #"SELECT id, seq, "table", "from", "to", on_update, on_delete, "match" FROM pragma_foreign_key_list(?) ORDER BY id, seq"#,
           arguments: [table],
-        ).map { "foreign key \($0)" }
-        lines += try String.fetchAll(
-          db, sql: "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name", arguments: [table],
-        ).map { "trigger \($0)" }
-        shape[table] = lines
+        ).map(shapeRow)
+        let triggers = try db.strings(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name", arguments: [table],
+        )
+        shape[table] = TableShape(columns: columns, indexes: indexes, foreignKeys: foreignKeys, triggers: triggers)
       }
       return shape
     }

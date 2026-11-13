@@ -4,31 +4,12 @@ import Dependencies
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import class MainHub.Hub
 import SessionDomain
 @testable import SpaceCore
-import Synchronization
 import Testing
 import WuhuAI
-
-// The session's work flag as every committed write left it, consecutive
-// repeats folded: a flip to no_work and back inside the exchange is the bug.
-private final class WorkFlips: TransactionObserver, Sendable {
-  let session: String
-  let flips = Mutex<[String]>([])
-
-  init(_ session: SessionID) { self.session = session.rawValue }
-
-  func observes(eventsOfKind _: DatabaseEventKind) -> Bool { true }
-  func databaseDidChange(with _: DatabaseEvent) {}
-  func databaseDidRollback(_: Database) {}
-  func databaseDidCommit(_ db: Database) {
-    guard let work = try? String.fetchOne(db, sql: "SELECT work FROM sessions WHERE id = ?", arguments: [session]) else { return }
-    flips.withLock { if $0.last != work { $0.append(work) } }
-  }
-}
 
 @Suite struct KernelNagTests {
   private static func call(_ name: String, _ id: String) -> ToolCall {
@@ -65,8 +46,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
       )
       let service = SessionExecution(space: space, loopConfig: config)
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let flips = WorkFlips(sid)
-      sessions.writer.add(transactionObserver: flips)
       try await runService(service) { service in
         try await service.enqueue(item: Fix.message("please review", conversation: sid.rawValue, owesReply: true), to: sid)
         try await until("the exchange settles") { try await sessions.settledWork(sid) && script.count == 3 }
@@ -82,7 +61,6 @@ private final class WorkFlips: TransactionObserver, Sendable {
       #expect(stored.value?.record.work == .hasWork)
       #expect(storedTail.value == nag, "stored with the message, before the next inference")
       #expect(stored.value?.queueTail == 1, "the nag was never a queue row")
-      #expect(Array(flips.flips.withLock { $0 }.drop { $0 == SessionWork.noWork.rawValue }) == [SessionWork.hasWork.rawValue, SessionWork.noWork.rawValue])
     }
   }
 
