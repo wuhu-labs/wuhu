@@ -11,6 +11,7 @@ import struct SpaceContract.GroupSummary
 import struct SpaceContract.GroupUpdateInput
 import SpaceCore
 import SpaceTools
+import Wuwei
 
 func addGroupRoutes(
   _ router: inout Router,
@@ -61,7 +62,7 @@ func addGroupRoutes(
     do {
       let id = try await space.createGroup(alias: input.alias, name: input.name, owner: owner)
       return try Response.json(try groupDetail(id, space.cell(of: id)), status: .created)
-    } catch { return groupErrorResponse(error) }
+    } catch { return try groupErrorResponse(error) }
   }
 
   // A group's admin state: open or private, the secrets switch, and the list.
@@ -75,7 +76,7 @@ func addGroupRoutes(
     }
     let cell = space.cell(of: group)
     guard cell.role(of: principal.actor, acting: principal.group) != nil else { return unknownGroup(parameters) }
-    do { return try Response.json(try groupDetail(group, cell)) } catch { return groupErrorResponse(error) }
+    do { return try Response.json(try groupDetail(group, cell)) } catch { return try groupErrorResponse(error) }
   }
 
   // Open/private and the secrets switch: a group admin's call.
@@ -121,7 +122,7 @@ func addGroupRoutes(
         try await space.setSecretsScope(secrets, of: group, by: principal.actor, acting: principal.group)
       }
       return try Response.json(try groupDetail(group, space.cell(of: group)))
-    } catch { return groupErrorResponse(error) }
+    } catch { return try groupErrorResponse(error) }
   }
 
   // A private group's list: put names an account or a group at a role.
@@ -148,7 +149,7 @@ func addGroupRoutes(
       let target = subject == .group ? try await space.resolveGroup(input.id)?.rawValue ?? input.id : input.id
       try await space.setGrant(subject, target, role: role, in: group, by: principal.actor, acting: principal.group)
       return jsonResponse(.object([:]))
-    } catch { return groupErrorResponse(error) }
+    } catch { return try groupErrorResponse(error) }
   }
 
   router.delete("/v1/group/:id/access") { request, parameters in
@@ -166,7 +167,7 @@ func addGroupRoutes(
       let target = kind == .group ? try await space.resolveGroup(id)?.rawValue ?? id : id
       try await space.removeGrant(kind, target, in: group, by: principal.actor, acting: principal.group)
       return jsonResponse(.object([:]))
-    } catch { return groupErrorResponse(error) }
+    } catch { return try groupErrorResponse(error) }
   }
 }
 
@@ -188,7 +189,7 @@ private func unknownGroup(_ parameters: RouteParameters) -> Response {
   errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(parameters["id"] ?? "")")
 }
 
-private func groupErrorResponse(_ error: any Error) -> Response {
+private func groupErrorResponse(_ error: any Error) throws -> Response {
   switch error {
   case AliasError.memberRequired:
     return errorResponse(.forbidden, code: "memberRequired", message: "owner must be a live non-guest space member")
@@ -210,6 +211,8 @@ private func groupErrorResponse(_ error: any Error) -> Response {
     )
   case let error as SpaceError:
     return errorResponse(.badRequest, code: "invalidArgument", message: "\(error)")
+  case is Evicted:
+    throw error
   default:
     return errorResponse(.internalServerError, code: "internal", message: "\(error)")
   }

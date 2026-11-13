@@ -95,6 +95,7 @@ func renderPrompt(space: Space, record: SessionRecord, revs: [String: Int]) asyn
     } catch {
       switch error {
       case let .undecodableInput(message), let .failed(_, message, _, _): throw InstructionSourceFailure(message)
+      case .evicted: throw InstructionSourceFailure("the space is not served by this process right now")
       }
     }
   }

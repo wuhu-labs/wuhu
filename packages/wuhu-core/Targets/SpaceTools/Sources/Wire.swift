@@ -6,6 +6,7 @@ import OrderedCollections
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import struct Wuwei.Evicted
 
 public enum Wire {
   static let staleHint = "changed since you read it — re-read"
@@ -99,6 +100,7 @@ public enum Wire {
 
   public static func failure(_ error: any Error) -> ToolRunError {
     if let error = error as? ToolRunError { return error }
+    if error is Evicted { return .evicted }
     if let error = error as? SpaceError { return failure(error) }
     if let error = error as? MachineFileFailure {
       switch error {

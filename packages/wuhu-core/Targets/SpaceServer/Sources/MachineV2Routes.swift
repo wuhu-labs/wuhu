@@ -17,6 +17,7 @@ import struct SpaceContract.EnrollConsumeInput
 import struct SpaceContract.EnrollConsumeOutput
 import struct SpaceContract.GroupID
 import SpaceCore
+import Wuwei
 
 func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, upgrades: MachineV2Upgrades, fingerprint: String?, log: Logger = Logger(label: "wuhu.serve"), principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
   let challenges = OneShotChallenges(prefix: "mv2_")
@@ -58,6 +59,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     } catch let error as SpaceError {
       throw error
     } catch {
+      if error is Evicted { throw error }
       return machineAuthUnavailable(error, during: "enrollment", log)
     }
   }
@@ -108,7 +110,10 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     }
     await hub.revocationGate(MachineID(rawValue: id))
     let revoked: Bool
-    do { revoked = try await space.revokeMachine(MachineID(rawValue: id), presenting: credential.pubkey) } catch { return machineAuthUnavailable(error, during: "revoking \(id)", log) }
+    do { revoked = try await space.revokeMachine(MachineID(rawValue: id), presenting: credential.pubkey) } catch {
+      if error is Evicted { throw error }
+      return machineAuthUnavailable(error, during: "revoking \(id)", log)
+    }
     guard revoked else {
       return errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not a live key of this Machine v2 identity")
     }
@@ -130,6 +135,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, u
     } catch let error as OperationError {
       throw error
     } catch {
+      if error is Evicted { throw error }
       return machineAuthUnavailable(error, during: "enrollment", log)
     }
   }
@@ -228,6 +234,8 @@ private func authorizationRefusal(_ hub: MachineHub, _ credential: MachineHub.Cr
   }
 }
 
+/// Every failure that is not an eviction: an `Evicted` belongs to the one HTTP
+/// mapping, which answers 503 with a retry.
 private func machineAuthUnavailable(_ error: any Error, during step: String, _ log: Logger) -> Response {
   log.error("machine v2 authorization unavailable while \(step): \(error)")
   return errorResponse(.serviceUnavailable, code: "machineAuthUnavailable", message: "Machine v2 authorization is temporarily unavailable; retry")

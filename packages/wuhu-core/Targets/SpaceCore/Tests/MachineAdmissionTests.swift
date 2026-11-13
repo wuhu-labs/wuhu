@@ -23,7 +23,9 @@ import Wuwei
     defer { box.close() }
     var frames = output.stream.makeAsyncIterator()
     #expect(try #require(await frames.next()).tag == .describe)
-    box.send(.init(tag: .describe, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec, ComputerKindSchemas.stagedWrite]))))
+    try await space.worker.call(id) { cell in
+      try cell.answer(.init(tag: .describe, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec, ComputerKindSchemas.stagedWrite]))), from: cell.box!)
+    }
     let exec = MachineExec(id: "exec", operation: UUID(), createdAt: Date(), group: .shared, argv: ["true"])
     var execution: Peer<ExecStream>?
     if execFirst {

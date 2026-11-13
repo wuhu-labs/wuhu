@@ -107,7 +107,7 @@ func sessionlessRouter(
   router.put("/v1/f/*", use: forward)
   addMachineRoutes(to: &router, space: space, hub: hub, owner: owner, machines: machines, routed: routed) { .script(script()) }
   router.get("/v1/observe") { request, _ in
-    await observeResponse(space: space, url: request.url, principal: script().principal)
+    try await observeResponse(space: space, url: request.url, principal: script().principal)
   }
   router.post("/v1/tools/:name") { request, parameters in
     let name = parameters["name"] ?? ""
@@ -123,6 +123,7 @@ func sessionlessRouter(
       switch error {
       case .undecodableInput: return jsonResponse(error.payload, status: .badRequest)
       case .failed: return jsonResponse(error.payload, status: .unprocessableContent)
+      case .evicted: throw EvictedRefusal()
       }
     }
   }

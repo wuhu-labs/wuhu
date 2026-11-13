@@ -139,7 +139,7 @@ struct ServeRoutingTests {
     )
   }
 
-  @Test func routesParsedConfigToInjectedHandlerAfterStartupLine() async throws {
+  @Test func routesParsedConfigToInjectedHandlerWithoutAnnouncing() async throws {
     let received = Received()
     let runner = self.runner(received) { config in await received.record(config) }
     #expect(await runner.run(arguments: ["serve", "/tmp/store", "--dev"]) == 0)
@@ -147,7 +147,8 @@ struct ServeRoutingTests {
       folder: "/tmp/store", host: "127.0.0.1", port: 5530, dev: true, devImport: nil, devExport: nil,
       certificate: nil, privateKey: nil,
     )])
-    #expect(await received.stderr == "serving /tmp/store on 127.0.0.1:5530 at https://localhost:5530\n")
+    // Serve announces itself once it listens, not before: the line is the bind's.
+    #expect(await received.stderr.isEmpty)
   }
 
   @Test func eachDeprecatedWebOptionWarnsOnceAndServes() async throws {
@@ -159,7 +160,6 @@ struct ServeRoutingTests {
     #expect(await received.stderr == """
     --web-port is ignored: content is served on <group>.<host> on the one port; remove it
     --web-origin is ignored: content is served on <group>.<host> on the one port; remove it
-    serving /tmp/store on 127.0.0.1:5530 at https://space.example
 
     """)
   }

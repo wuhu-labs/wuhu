@@ -4,10 +4,17 @@
   import Foundation
 #endif
 
+#if canImport(Glibc)
+  import Glibc
+#elseif canImport(Darwin)
+  import Darwin
+#endif
+
 import Fetch
 import HTTPTypes
 import NIOCore
 import NIOHTTP1
+import NIOHTTP2
 import NIOPosix
 import Serve
 import Synchronization
@@ -60,6 +67,7 @@ public final class ServeNIOServer: @unchecked Sendable {
   private let serverChannel: Channel
   private let hooks: ServeNIOHooks
   private let state: ServeNIOServerState
+  private let drain: ServeOptions.GracefulDrain?
 
   public var localAddress: SocketAddress? {
     self.boundAddress
@@ -70,11 +78,13 @@ public final class ServeNIOServer: @unchecked Sendable {
     boundAddress: SocketAddress,
     hooks: ServeNIOHooks,
     state: ServeNIOServerState,
+    drain: ServeOptions.GracefulDrain?,
   ) {
     self.serverChannel = serverChannel
     self.boundAddress = boundAddress
     self.hooks = hooks
     self.state = state
+    self.drain = drain
   }
 
   public static func bind(
@@ -123,6 +133,7 @@ public final class ServeNIOServer: @unchecked Sendable {
         boundAddress: boundAddress,
         hooks: hooks,
         state: state,
+        drain: options.gracefulDrain,
       )
       hooks.onDidBind(boundAddress)
       return server
@@ -146,6 +157,7 @@ public final class ServeNIOServer: @unchecked Sendable {
       hooks: hooks,
       state: state,
       handler: { .response(try await handler($0)) },
+      reusePort: false,
     )
 
     do {
@@ -159,6 +171,7 @@ public final class ServeNIOServer: @unchecked Sendable {
         boundAddress: boundAddress,
         hooks: hooks,
         state: state,
+        drain: options.gracefulDrain,
       )
       hooks.onDidBind(boundAddress)
       return server
@@ -181,17 +194,22 @@ public final class ServeNIOServer: @unchecked Sendable {
   ) async throws -> Self {
     let state = ServeNIOServerState()
     let bootstrap = self.makeBootstrap(eventLoopGroup: eventLoopGroup, options: options, hooks: hooks, state: state, handler: handler)
-    return try await self.adopt(bootstrap.withBoundSocket(socket), hooks: hooks, state: state)
+    return try await self.adopt(bootstrap.withBoundSocket(socket), hooks: hooks, state: state, drain: options.gracefulDrain)
   }
 
-  static func adopt(_ bound: EventLoopFuture<Channel>, hooks: ServeNIOHooks, state: ServeNIOServerState) async throws -> Self {
+  static func adopt(
+    _ bound: EventLoopFuture<Channel>,
+    hooks: ServeNIOHooks,
+    state: ServeNIOServerState,
+    drain: ServeOptions.GracefulDrain?,
+  ) async throws -> Self {
     do {
       let serverChannel = try await bound.get()
       guard let boundAddress = serverChannel.localAddress else {
         try? await serverChannel.close()
         throw BindError.missingBoundAddress
       }
-      let server = Self(serverChannel: serverChannel, boundAddress: boundAddress, hooks: hooks, state: state)
+      let server = Self(serverChannel: serverChannel, boundAddress: boundAddress, hooks: hooks, state: state, drain: drain)
       hooks.onDidBind(boundAddress)
       return server
     } catch {
@@ -220,14 +238,27 @@ public final class ServeNIOServer: @unchecked Sendable {
     }
   }
 
+  /// Stops in the order a replacement process on the same port needs. The
+  /// listener goes first, so a connection arriving from now on reaches the
+  /// other process; then every request already running answers over its own
+  /// connection, which the drain has marked to close after that response; then
+  /// what would never end by itself — sockets, streaming responses, parked
+  /// keep-alive connections — is closed, and their clients reconnect as after
+  /// any restart. A drain with a bound gives only that long before it ends the
+  /// requests still running with the rest.
   public func shutdown() async {
     switch self.state.beginShutdown() {
-    case let .start(snapshot):
+    case let .start(http2Connections):
       self.hooks.onWillShutdown(self.boundAddress)
-      snapshot.tasks.forEach { $0.cancel() }
       try? await self.serverChannel.close()
+      for connection in http2Connections {
+        try? await Self.sendGoAway(on: connection.channel)
+      }
+      await self.waitForRequestsToFinish()
+      let ending = self.state.connectionsToEnd()
+      ending.tasks.forEach { $0.cancel() }
       await withTaskGroup(of: Void.self) { group in
-        for channel in snapshot.channels {
+        for channel in ending.channels {
           group.addTask {
             try? await channel.channel.close()
           }
@@ -239,6 +270,34 @@ public final class ServeNIOServer: @unchecked Sendable {
     case .inProgress, .finished:
       await self.state.waitUntilShutdown()
     }
+  }
+
+  /// Gives the requests already running the drain's bound to answer, when one is
+  /// set; past it they are ended with the streams, sockets and idle connections
+  /// below, as they were before a graceful drain existed.
+  private func waitForRequestsToFinish() async {
+    guard let drain = self.drain else {
+      await self.state.waitForRequestsToFinish()
+      return
+    }
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask {
+        await self.state.waitForRequestsToFinish()
+      }
+      group.addTask {
+        try? await drain.wait(drain.timeout)
+      }
+      await group.next()
+      group.cancelAll()
+    }
+  }
+
+  /// The largest last stream ID, so every stream already open still gets its
+  /// response and the peer opens no new one.
+  private static func sendGoAway(on channel: Channel) async throws {
+    try await channel.writeAndFlush(
+      HTTP2Frame(streamID: .rootStream, payload: .goAway(lastStreamID: .maxID, errorCode: .noError, opaqueData: nil)),
+    )
   }
 
   public func close() async {
@@ -258,9 +317,10 @@ public final class ServeNIOServer: @unchecked Sendable {
     hooks: ServeNIOHooks,
     state: ServeNIOServerState,
     handler: @escaping UpgradingHandler,
+    reusePort: Bool = true,
   ) -> ServerBootstrap {
     self.validateOptions(options)
-    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state) { channel, connectionID, context in
+    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state, reusePort: reusePort) { channel, connectionID, context, activity in
       channel.eventLoop.makeCompletedFuture {
         try self.configureHTTP1(
           channel: channel,
@@ -269,6 +329,7 @@ public final class ServeNIOServer: @unchecked Sendable {
           state: state,
           connectionID: connectionID,
           context: context,
+          activity: activity,
           handler: handler,
         )
       }
@@ -279,13 +340,22 @@ public final class ServeNIOServer: @unchecked Sendable {
     eventLoopGroup: EventLoopGroup,
     hooks: ServeNIOHooks,
     state: ServeNIOServerState,
-    initializer: @escaping @Sendable (Channel, Int, ServeNIOConnectionContext) -> EventLoopFuture<Void>,
+    reusePort: Bool = true,
+    initializer: @escaping @Sendable (Channel, Int, ServeNIOConnectionContext, ConnectionActivity) -> EventLoopFuture<Void>,
   ) -> ServerBootstrap {
     let bootstrap = ServerBootstrap(group: eventLoopGroup)
     _ = bootstrap.serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
+    // The port of a roll: the incoming process binds it while the outgoing one
+    // is still accepting, and the kernel spreads new connections over both
+    // until the outgoing listener closes. Unix domain sockets reject the
+    // option, so a listener on one keeps `reusePort` off.
+    if reusePort {
+      _ = bootstrap.serverChannelOption(.socketOption(.reusePort), value: 1)
+    }
     return bootstrap.childChannelInitializer { channel in
       let connectionID = state.makeConnectionID()
-      guard state.registerConnection(id: connectionID, channel: channel) else {
+      let activity = ConnectionActivity(initialPhase: .receivingRequest)
+      guard state.registerConnection(id: connectionID, channel: channel, activity: activity) else {
         return channel.close()
       }
 
@@ -294,7 +364,7 @@ public final class ServeNIOServer: @unchecked Sendable {
         remoteAddress: channel.remoteAddress,
       )
       hooks.onDidAcceptConnection(context)
-      return initializer(channel, connectionID, context)
+      return initializer(channel, connectionID, context, activity)
     }
   }
 
@@ -305,6 +375,7 @@ public final class ServeNIOServer: @unchecked Sendable {
     state: ServeNIOServerState,
     connectionID: Int,
     context: ServeNIOConnectionContext,
+    activity: ConnectionActivity,
     handler: @escaping UpgradingHandler,
   ) throws {
     let pipeline = channel.pipeline.syncOperations
@@ -313,7 +384,6 @@ public final class ServeNIOServer: @unchecked Sendable {
     // is decoded, which a silent or trickling client would otherwise hold open
     // forever. On a successful WebSocket upgrade the activity is marked upgraded
     // so these events stop reaping the (long-lived) socket.
-    let activity = ConnectionActivity(initialPhase: .receivingRequest)
     let readTimeout = options.requestReadInactivityTimeout.map(timeAmount)
     let idleTimeout = options.keepAliveIdleTimeout.map(timeAmount)
     let hasTimeoutHandlers = readTimeout != nil || idleTimeout != nil
@@ -441,20 +511,28 @@ final class ServeNIOServerState: @unchecked Sendable {
     case finished
   }
 
+  private struct RequestWaiter {
+    let id: Int
+    let continuation: CheckedContinuation<Void, Never>
+  }
+
   private struct ActiveConnection {
     let channel: ChannelBox
+    let activity: ConnectionActivity
     var task: Task<Void, Never>?
     var channelClosed = false
     var taskCompleted = false
+    var streaming = false
+    var http2Connection = false
   }
 
-  struct ShutdownSnapshot {
+  struct ConnectionsToEnd {
     let channels: [ChannelBox]
     let tasks: [Task<Void, Never>]
   }
 
   enum BeginShutdownResult {
-    case start(ShutdownSnapshot)
+    case start(http2Connections: [ChannelBox])
     case inProgress
     case finished
   }
@@ -462,8 +540,13 @@ final class ServeNIOServerState: @unchecked Sendable {
   private struct State {
     var nextConnectionID = 0
     var phase: Phase = .running
+    /// Past the graceful drain: `connectionsToEnd` has taken the snapshot, so a
+    /// connection or task registered now would never be closed by it.
+    var ending = false
     var connections: [Int: ActiveConnection] = [:]
     var drainWaiters: [CheckedContinuation<Void, Never>] = []
+    var requestWaiters: [RequestWaiter] = []
+    var nextWaiterID = 0
     var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
   }
 
@@ -493,13 +576,13 @@ final class ServeNIOServerState: @unchecked Sendable {
     return connectionID
   }
 
-  func registerConnection(id: Int, channel: Channel) -> Bool {
+  func registerConnection(id: Int, channel: Channel, activity: ConnectionActivity) -> Bool {
     self.lockState()
     guard self.state.phase == .running else {
       self.unlockState()
       return false
     }
-    self.state.connections[id] = ActiveConnection(channel: ChannelBox(channel: channel))
+    self.state.connections[id] = ActiveConnection(channel: ChannelBox(channel: channel), activity: activity)
     self.unlockState()
 
     channel.closeFuture.whenComplete { _ in
@@ -508,6 +591,46 @@ final class ServeNIOServerState: @unchecked Sendable {
     return true
   }
 
+  func markHTTP2Connection(id: Int) {
+    self.withLock { $0.connections[id]?.http2Connection = true }
+  }
+
+  /// Admits a request the connection holds: refused once the drain has begun,
+  /// so no handler starts behind the shutdown wait. Whatever stream the
+  /// connection wrote before has ended.
+  func admitRequest(id: Int) -> Bool {
+    self.withLock { state in
+      guard state.phase == .running else { return false }
+      state.connections[id]?.streaming = false
+      return true
+    }
+  }
+
+  /// A body that streams is a response whose connection ends only by force:
+  /// its handler has already returned, so the drain stops waiting on the
+  /// connection and closes it with the sockets.
+  func markStreaming(id: Int) {
+    let requestWaiters = self.withLock { state -> [CheckedContinuation<Void, Never>] in
+      state.connections[id]?.streaming = true
+      return self.takeRequestWaitersIfNeeded(state: &state)
+    }
+    self.resume(requestWaiters)
+  }
+
+  /// A parked connection: the response went out, so the drain may stop waiting
+  /// on it. Parking under the state's lock is what makes a waiter's
+  /// registration unable to race past the last completion.
+  func requestDidPark(id: Int, generation: Int) {
+    let requestWaiters = self.withLock { state -> [CheckedContinuation<Void, Never>] in
+      state.connections[id]?.activity.parkIfCurrent(generation: generation)
+      return self.takeRequestWaitersIfNeeded(state: &state)
+    }
+    self.resume(requestWaiters)
+  }
+
+  /// A task registered during the graceful drain keeps running: its connection
+  /// may already have admitted a request, and the drain waits for that answer.
+  /// Only the force-close phase, or a closed channel, cancels it.
   func storeTask(_ task: Task<Void, Never>, id: Int) -> Bool {
     self.lockState()
     guard var connection = self.state.connections[id] else {
@@ -516,45 +639,78 @@ final class ServeNIOServerState: @unchecked Sendable {
     }
     connection.task = task
     self.state.connections[id] = connection
-    let shouldCancel = self.state.phase != .running || connection.channelClosed
+    let shouldCancel = self.state.ending || self.state.phase == .finished || connection.channelClosed
     self.unlockState()
     return shouldCancel
   }
 
   func taskDidComplete(id: Int) {
-    let drainWaiters = self.withLock {
-      guard var connection = $0.connections[id] else {
-        return [CheckedContinuation<Void, Never>]()
+    let (drainWaiters, requestWaiters) = self.withLock {
+      state -> ([CheckedContinuation<Void, Never>], [CheckedContinuation<Void, Never>]) in
+      guard var connection = state.connections[id] else {
+        return ([], [])
       }
       connection.taskCompleted = true
       connection.task = nil
       if connection.channelClosed {
-        $0.connections.removeValue(forKey: id)
+        state.connections.removeValue(forKey: id)
       } else {
-        $0.connections[id] = connection
+        state.connections[id] = connection
       }
-      return self.takeDrainWaitersIfNeeded(state: &$0)
+      return (self.takeDrainWaitersIfNeeded(state: &state), self.takeRequestWaitersIfNeeded(state: &state))
     }
     self.resume(drainWaiters)
+    self.resume(requestWaiters)
   }
 
   func beginShutdown() -> BeginShutdownResult {
-    self.lockState()
-    switch self.state.phase {
-    case .running:
-      self.state.phase = .shuttingDown
-      let snapshot = ShutdownSnapshot(
-        channels: self.state.connections.values.map(\.channel),
-        tasks: self.state.connections.values.compactMap(\.task),
+    self.withLock { state in
+      switch state.phase {
+      case .running:
+        state.phase = .shuttingDown
+        return .start(http2Connections: state.connections.values.filter(\.http2Connection).map(\.channel))
+      case .shuttingDown:
+        return .inProgress
+      case .finished:
+        return .finished
+      }
+    }
+  }
+
+  /// Waits for the requests in flight; a drain's bound cancels this wait, and
+  /// the wait then leaves at once so the drain can end them.
+  func waitForRequestsToFinish() async {
+    let id = self.withLock { state -> Int in
+      defer { state.nextWaiterID += 1 }
+      return state.nextWaiterID
+    }
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        let waiting = self.withLock { state -> Bool in
+          guard !Task.isCancelled, state.connections.values.contains(where: Self.isRequestInFlight) else { return false }
+          state.requestWaiters.append(RequestWaiter(id: id, continuation: continuation))
+          return true
+        }
+        if !waiting {
+          continuation.resume()
+        }
+      }
+    } onCancel: {
+      let waiter = self.withLock { state -> CheckedContinuation<Void, Never>? in
+        guard let index = state.requestWaiters.firstIndex(where: { $0.id == id }) else { return nil }
+        return state.requestWaiters.remove(at: index).continuation
+      }
+      waiter?.resume()
+    }
+  }
+
+  func connectionsToEnd() -> ConnectionsToEnd {
+    self.withLock { state in
+      state.ending = true
+      return ConnectionsToEnd(
+        channels: state.connections.values.map(\.channel),
+        tasks: state.connections.values.compactMap(\.task),
       )
-      self.unlockState()
-      return .start(snapshot)
-    case .shuttingDown:
-      self.unlockState()
-      return .inProgress
-    case .finished:
-      self.unlockState()
-      return .finished
     }
   }
 
@@ -595,18 +751,31 @@ final class ServeNIOServerState: @unchecked Sendable {
   }
 
   private func channelDidClose(id: Int) {
-    let (task, drainWaiters) = self.withLock { state -> (Task<Void, Never>?, [CheckedContinuation<Void, Never>]) in
-      guard var connection = state.connections[id] else { return (nil, []) }
+    let (task, drainWaiters, requestWaiters) = self.withLock {
+      state -> (Task<Void, Never>?, [CheckedContinuation<Void, Never>], [CheckedContinuation<Void, Never>]) in
+      guard var connection = state.connections[id] else { return (nil, [], []) }
       connection.channelClosed = true
       if connection.taskCompleted || connection.task == nil {
         state.connections.removeValue(forKey: id)
       } else {
         state.connections[id] = connection
       }
-      return (connection.task, self.takeDrainWaitersIfNeeded(state: &state))
+      return (connection.task, self.takeDrainWaitersIfNeeded(state: &state), self.takeRequestWaitersIfNeeded(state: &state))
     }
     task?.cancel()
     self.resume(drainWaiters)
+    self.resume(requestWaiters)
+  }
+
+  /// A request is in flight until its response starts or its connection goes:
+  /// a parked keep-alive connection, a silent one, and a live socket have
+  /// nothing that would finish on its own, and a streaming response outlives
+  /// the handler that produced it.
+  private static func isRequestInFlight(_ connection: ActiveConnection) -> Bool {
+    guard !connection.streaming, !connection.activity.isUpgraded, connection.activity.hasRequest else {
+      return false
+    }
+    return connection.activity.phase != .idle
   }
 
   private func takeDrainWaitersIfNeeded(state: inout State) -> [CheckedContinuation<Void, Never>] {
@@ -615,6 +784,15 @@ final class ServeNIOServerState: @unchecked Sendable {
     }
     let waiters = state.drainWaiters
     state.drainWaiters = []
+    return waiters
+  }
+
+  private func takeRequestWaitersIfNeeded(state: inout State) -> [CheckedContinuation<Void, Never>] {
+    guard !state.connections.values.contains(where: Self.isRequestInFlight) else {
+      return []
+    }
+    let waiters = state.requestWaiters.map(\.continuation)
+    state.requestWaiters = []
     return waiters
   }
 
@@ -635,6 +813,14 @@ final class ServeNIOServerState: @unchecked Sendable {
 
   private func unlockState() {
     pthread_mutex_unlock(&self.lock)
+  }
+}
+
+private extension NIOBSDSocket.Option {
+  /// The pinned NIO names no option for this: two servers, the outgoing and the
+  /// incoming release process, listen on one port through it.
+  static var reusePort: Self {
+    Self(rawValue: SO_REUSEPORT)
   }
 }
 
@@ -767,6 +953,10 @@ final class ConnectionActivity: Sendable {
 
   var isUpgraded: Bool {
     self.state.withLock { $0.upgraded }
+  }
+
+  var hasRequest: Bool {
+    self.state.withLock { $0.generation > 0 }
   }
 
   func beginRequest() -> Int {
@@ -953,7 +1143,6 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
       connectionContext: self.connectionContext,
       serverState: self.serverState,
       connectionID: self.connectionID,
-      activity: self.activity,
     )
 
     if self.serverState.storeTask(task, id: self.connectionID) {
@@ -970,7 +1159,6 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
     connectionContext: ServeNIOConnectionContext,
     serverState: ServeNIOServerState,
     connectionID: Int,
-    activity: ConnectionActivity,
   ) -> Task<Void, Never> {
     Task {
       defer {
@@ -985,6 +1173,7 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
           hooks: hooks,
           connectionContext: connectionContext,
           serverState: serverState,
+          connectionID: connectionID,
         )
         guard keepAlive, !serverState.isShuttingDown else {
           try? await channel.channel.close()
@@ -993,7 +1182,7 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
         // Park only if no newer request has already arrived (pipelining delivers
         // the next request synchronously inside the previous `.end` write, so by
         // now `activity` may already describe request N+1).
-        activity.parkIfCurrent(generation: inbound.generation)
+        serverState.requestDidPark(id: connectionID, generation: inbound.generation)
       }
     }
   }
@@ -1012,7 +1201,12 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
     hooks: ServeNIOHooks,
     connectionContext: ServeNIOConnectionContext,
     serverState: ServeNIOServerState,
+    connectionID: Int,
   ) async -> Bool {
+    guard serverState.admitRequest(id: connectionID) else {
+      try? await channel.close()
+      return false
+    }
     let response: Response
     do {
       response = try await handler(inbound.request)
@@ -1036,6 +1230,9 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
     // HTTP/2 multiplexes over streams; a stream carries a single request and
     // must be closed after its response. Keep-alive looping is HTTP/1.x only.
     let keepAlive = drained && inbound.keepAlive && inbound.version.major == 1 && !serverState.isShuttingDown
+    if !response.body.endsByItself {
+      serverState.markStreaming(id: connectionID)
+    }
 
     do {
       if !keepAlive, inbound.version.major == 1 { try await Self.prepareClosingResponse(channel: channel) }

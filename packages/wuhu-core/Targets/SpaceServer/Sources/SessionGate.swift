@@ -262,7 +262,7 @@ private func sessionRouter(
         opening: stored.opening, session: stored.session,
       ))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
   // Transcript media belongs to the worker's immutable history, not its current file access.
@@ -282,7 +282,7 @@ private func sessionRouter(
     } catch SpaceError.notFound {
       return errorResponse(.notFound, code: "notFound", message: "no media \(address)")
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
   // Only the worker reports; an exec's token would let any command bill its
@@ -294,7 +294,7 @@ private func sessionRouter(
     return try await inferenceReport(request, payer: .session(principal().session), metrics: metrics)
   }
   router.get("/v1/observe") { request, _ in
-    await observeResponse(space: space, url: request.url, principal: Principal(actor: .session(principal().session), group: principal().group))
+    try await observeResponse(space: space, url: request.url, principal: Principal(actor: .session(principal().session), group: principal().group))
   }
 
   router.post("/v1/tools/:name") { request, parameters in
@@ -323,6 +323,8 @@ private func sessionRouter(
         return jsonResponse(error.payload, status: .badRequest)
       case .failed:
         return jsonResponse(error.payload, status: .unprocessableContent)
+      case .evicted:
+        throw EvictedRefusal()
       }
     }
   }
@@ -432,7 +434,7 @@ private func sessionRouter(
           try await store.refuseControl(of: id, by: principal().session)
         }
       } catch {
-        return sessionErrorResponse(error)
+        return try sessionErrorResponse(error)
       }
       return try await forward(request, parameters)
     }

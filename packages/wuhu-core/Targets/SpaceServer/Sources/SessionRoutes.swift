@@ -125,7 +125,7 @@ func addSessionRoutes(
         member: route?.member,
       ))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -142,7 +142,7 @@ func addSessionRoutes(
         route: try route.map(modelRouteInspectionJSON),
         decisions: .array(try await store.modelRouteHistory(id).map(modelRouteInspectionJSON)),
       ))
-    } catch { return sessionErrorResponse(error) }
+    } catch { return try sessionErrorResponse(error) }
   }
 
   // A person's terminal script runs as them in the group they act in, its
@@ -186,7 +186,7 @@ func addSessionRoutes(
       }
       return try Response.json(SessionTemplatesOutput(templates: templates))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -215,7 +215,7 @@ func addSessionRoutes(
       return jsonResponse(.object([:]))
     } catch let busy as SubtreeArchiveBusy where caller == id && busy.sessions.contains(where: { $0.id == id }) {
       return errorResponse(.conflict, code: "conflict", message: "session \(id.rawValue) can't archive itself mid-turn: this call is part of its own turn, which keeps it busy; its parent, an ancestor or a human archives it; \(busy.message)")
-    } catch { return sessionErrorResponse(error) }
+    } catch { return try sessionErrorResponse(error) }
   }
 
   for (verb, action) in [
@@ -234,7 +234,7 @@ func addSessionRoutes(
         try await action(service)(id)
         return jsonResponse(.object([:]))
       } catch {
-        return sessionErrorResponse(error)
+        return try sessionErrorResponse(error)
       }
     }
   }
@@ -252,7 +252,7 @@ func addSessionRoutes(
       try await service.retag(id, to: input.tags)
       return jsonResponse(.object(["tags": .array(input.tags.map { .string($0) })]))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -268,7 +268,7 @@ func addSessionRoutes(
     do {
       return jsonResponse(.object(["title": .string(try await service.retitle(id, to: input.title))]))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -347,7 +347,7 @@ func addSessionRoutes(
         queued: queued,
       ))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -362,7 +362,7 @@ func addSessionRoutes(
         ),
       ))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -380,7 +380,7 @@ func addSessionRoutes(
         skills: listed.map { SessionHomeSkill(name: $0.name, description: $0.description, path: $0.path) },
       ))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -402,7 +402,7 @@ func addSessionRoutes(
       do {
         let id = try await store.createConversation(members: members, title: input.title, in: principal.group)
         return try Response.json(ConversationPostOutput(messageId: "", conversationId: id.rawValue, n: 0, delivered: []))
-      } catch { return sessionErrorResponse(error) }
+      } catch { return try sessionErrorResponse(error) }
     }
     switch try await identityVerdict(input.identity, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
     case let .identity(resolved):
@@ -410,7 +410,7 @@ func addSessionRoutes(
       do {
         let id = try await store.createConversation(members: members, title: input.title, in: principal.group)
         return try Response.json(ConversationPostOutput(messageId: "", conversationId: id.rawValue, n: 0, delivered: []))
-      } catch { return sessionErrorResponse(error) }
+      } catch { return try sessionErrorResponse(error) }
     case let .refused(response): return response
     }
   }
@@ -438,7 +438,7 @@ func addSessionRoutes(
           else { try await store.removeChannelMembers(id, people: input.people, as: principal) }
         }
         return try Response.json(JSONValue.object([:]))
-      } catch { return sessionErrorResponse(error) }
+      } catch { return try sessionErrorResponse(error) }
     }
   }
 
@@ -505,7 +505,7 @@ func addSessionRoutes(
         delivered: delivery.enqueued.map(\.rawValue),
       ))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -532,7 +532,7 @@ func addSessionRoutes(
       }
       return .success((principal.group, reader, reader.map { principal.speaking(as: $0) } ?? principal))
     } catch {
-      return .failure(RouteRefusal(response: sessionErrorResponse(error)))
+      return .failure(RouteRefusal(response: try sessionErrorResponse(error)))
     }
   }
 
@@ -570,7 +570,7 @@ func addSessionRoutes(
       let conversation = try await store.conversation(ConversationID(id.rawValue))
       return try Response.json(try await conversationPayloads([conversation], space: space)[0])
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -615,7 +615,7 @@ func addSessionRoutes(
       )
       return try Response.json(ConversationReadOutput(messages: try await messagePayloads(records, sessions: store, space: space, viewer: viewer)))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 
@@ -716,7 +716,7 @@ func unknownSession(_ parameters: RouteParameters) -> Response {
   errorResponse(.notFound, code: "notFound", message: "unknown session: \(parameters["id"] ?? "")")
 }
 
-func sessionErrorResponse(_ error: any Error) -> Response {
+func sessionErrorResponse(_ error: any Error) throws -> Response {
   switch error {
   case let error as ChannelError:
     switch error {
@@ -812,7 +812,7 @@ func sessionErrorResponse(_ error: any Error) -> Response {
   case let error as SpaceError:
     return jsonResponse(Wire.failure(error).payload, status: .unprocessableContent)
   case is Evicted:
-    return errorResponse(.serviceUnavailable, code: ErrorCode.unavailable.rawValue, message: "the session is not hosted here; retry")
+    throw error
   default:
     return errorResponse(.internalServerError, code: "internal", message: String(describing: error))
   }
@@ -968,7 +968,7 @@ func reader(
     }
     return .principal(principal)
   } catch {
-    return .refused(sessionErrorResponse(error))
+    return .refused(try sessionErrorResponse(error))
   }
 }
 

@@ -33,7 +33,7 @@ func addFileRoutes(_ router: inout Router, compiler: JSXCompiler, contextOf: @es
       rev = try fileRouteInteger(request.url, "rev")
       limit = try fileRouteInteger(request.url, "limit")
     } catch let error as ToolRunError {
-      return fileRouteFailure(error)
+      return try fileRouteFailure(error)
     }
     let context: SpaceToolContext
     switch try await contextOf(request) {
@@ -43,7 +43,7 @@ func addFileRoutes(_ router: inout Router, compiler: JSXCompiler, contextOf: @es
     // `?as=js` reads a `.jsx` script compiled to plain JS.
     let form = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "as" })?.value
     if let form, form != "js" || !address.hasSuffix(".jsx") {
-      return fileRouteFailure(.failed(code: .invalidArgument, message: "as=js reads a .jsx file compiled to JavaScript; nothing else has another form", hint: nil))
+      return try fileRouteFailure(.failed(code: .invalidArgument, message: "as=js reads a .jsx file compiled to JavaScript; nothing else has another form", hint: nil))
     }
     do {
       let file = try await context.readBytes(address, rev: rev, byteLimit: limit)
@@ -52,7 +52,7 @@ func addFileRoutes(_ router: inout Router, compiler: JSXCompiler, contextOf: @es
         do throws(JSXCompiler.Failure) {
           data = Data(try await compiler.javaScript(String(decoding: data, as: UTF8.self), file: address).utf8)
         } catch {
-          return fileRouteFailure(.failed(code: .invalidArgument, message: error.message, hint: nil))
+          return try fileRouteFailure(.failed(code: .invalidArgument, message: error.message, hint: nil))
         }
         token += ".js"
         contentType = "text/javascript; charset=utf-8"
@@ -64,7 +64,7 @@ func addFileRoutes(_ router: inout Router, compiler: JSXCompiler, contextOf: @es
       if let rev = file.rev { headers[fileRevisionHeader] = String(rev) }
       return Response(status: .ok, headers: headers, body: .bytes(data, contentType: contentType))
     } catch let error as ToolRunError {
-      return fileRouteFailure(error)
+      return try fileRouteFailure(error)
     }
   }
   router.put("/v1/f/*") { request, _ in
@@ -96,7 +96,7 @@ func addFileRoutes(_ router: inout Router, compiler: JSXCompiler, contextOf: @es
         "token": .string(written.token),
       ]))
     } catch let error as ToolRunError {
-      return fileRouteFailure(error)
+      return try fileRouteFailure(error)
     }
   }
 }
@@ -143,7 +143,7 @@ func fileRouteAddress(_ url: URL) -> String? {
   return named.address(path)
 }
 
-private func fileRouteFailure(_ error: ToolRunError) -> Response {
+private func fileRouteFailure(_ error: ToolRunError) throws -> Response {
   switch error {
   case .undecodableInput:
     return jsonResponse(error.payload, status: .badRequest)
@@ -163,6 +163,8 @@ private func fileRouteFailure(_ error: ToolRunError) -> Response {
     case .providerNotConfigured, .providerUnavailable: .serviceUnavailable
     }
     return jsonResponse(error.payload, status: status)
+  case .evicted:
+    throw EvictedRefusal()
   }
 }
 

@@ -74,12 +74,14 @@ struct ServeNIOTests {
   }
 
   @Test func reportsStartupFailureThroughHooks() async throws {
-    let firstServer = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0) { _ in
-      Response(status: .ok, body: .chunk(Data("ok".utf8)))
-    }
+    // A listener without SO_REUSEPORT: two of this server's processes share a
+    // port, so only a port held outside that pact can refuse it.
+    let firstChannel = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+      .bind(host: "127.0.0.1", port: 0)
+      .get()
 
     do {
-      let port = try #require(firstServer.boundAddress.port)
+      let port = try #require(firstChannel.localAddress?.port)
       let recorder = HookRecorder()
 
       var didThrow = false
@@ -100,11 +102,11 @@ struct ServeNIOTests {
       #expect(recorder.snapshot().startupFailures.count == 1)
       #expect(recorder.snapshot().didBindAddresses.isEmpty)
     } catch {
-      await firstServer.shutdown()
+      try? await firstChannel.close()
       throw error
     }
 
-    await firstServer.shutdown()
+    try? await firstChannel.close()
   }
 
   @Test func runUntilCancelledShutsTheServerDown() async throws {

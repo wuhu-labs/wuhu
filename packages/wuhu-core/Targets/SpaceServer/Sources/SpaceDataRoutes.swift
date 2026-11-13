@@ -14,6 +14,7 @@ import SpaceContract
 import SpaceCore
 import struct SpaceFS.SpacePath
 import SpaceTools
+import Wuwei
 
 // `/_/space/*`: the data API a page's `wuhu:space` speaks. Reads
 // pass the script wall of /_/query; writes take the stricter mutation
@@ -43,7 +44,7 @@ func spaceDataResponse(
       let output = try await context.typedQuery(sql, parameters: parameters)
       return revalidatedJSON(output, ifNoneMatch: request.headers[.ifNoneMatch]).viewed(by: viewer)
     } catch {
-      return failureResponse(error).viewed(by: viewer)
+      return try failureResponse(error).viewed(by: viewer)
     }
   case ("observe", .get):
     let viewer: AccountID?
@@ -56,7 +57,7 @@ func spaceDataResponse(
     }
     guard let parameters = boundParameters(query["params"]) else { return parametersRefusal() }
     let principal = try await webPrincipal(viewer, group: caller.group, space: space)
-    return await snapshotsResponse(
+    return try await snapshotsResponse(
       space: space, sql: sql, parameters: parameters, throttleMs: query["throttleMs"], principal: principal,
       refusal: failureResponse, render: Wire.typedQueryOutput,
     ).viewed(by: viewer)
@@ -70,7 +71,7 @@ func spaceDataResponse(
       return errorResponse(.badRequest, code: "invalidArgument", message: "watch takes ?glob=[&from=][&batch=1]")
     }
     let principal = try await webPrincipal(viewer, group: caller.group, space: space)
-    return await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, head: true, batch: query["batch"] == "1")
+    return try await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, head: true, batch: query["batch"] == "1")
       .viewed(by: viewer)
   case ("attributes", .get), ("attributes", .head):
     let viewer: AccountID?
@@ -82,7 +83,7 @@ func spaceDataResponse(
       return errorResponse(.badRequest, code: "invalidArgument", message: "attributes takes ?path=")
     }
     let context = SpaceToolContext(space: space, principal: try await webPrincipal(viewer, group: caller.group, space: space))
-    return await toolResponse(context, "attributes.read", input: .object(["path": .string(path)])).viewed(by: viewer)
+    return try await toolResponse(context, "attributes.read", input: .object(["path": .string(path)])).viewed(by: viewer)
   case ("find", .get), ("find", .head), ("grep", .get), ("grep", .head):
     let viewer: AccountID?
     switch try await scriptAdmission(space: space, caller: caller, devPerson: devPerson, publicRead: publicRead, request: request) {
@@ -97,7 +98,7 @@ func spaceDataResponse(
       )
     }
     let context = SpaceToolContext(space: space, principal: try await webPrincipal(viewer, group: caller.group, space: space))
-    return await toolResponse(context, route, input: input).viewed(by: viewer)
+    return try await toolResponse(context, route, input: input).viewed(by: viewer)
   case ("rows", .post):
     let write: PageWrite
     switch try await writeAdmission(space: space, caller: caller, devPerson: devPerson, request: request) {
@@ -113,7 +114,7 @@ func spaceDataResponse(
       let output: JSONValue = .object(["rev": .integer(commit.rev.value), "ids": .array(commit.ids.map { .integer(Int($0)) })])
       return jsonResponse(output).viewed(by: write.viewer.account)
     } catch {
-      return failureResponse(error).viewed(by: write.viewer.account)
+      return try failureResponse(error).viewed(by: write.viewer.account)
     }
   case ("attributes", .post):
     let write: PageWrite
@@ -123,7 +124,7 @@ func spaceDataResponse(
     }
     var input = write.body
     input.removeValue(forKey: "page")
-    return await toolResponse(write.context, "attributes.patch", input: .object(input)).viewed(by: write.viewer.account)
+    return try await toolResponse(write.context, "attributes.patch", input: .object(input)).viewed(by: write.viewer.account)
   case ("query", _), ("observe", _), ("watch", _), ("rows", _), ("attributes", _), ("find", _), ("grep", _):
     return plainStatus(.methodNotAllowed)
   default:
@@ -163,22 +164,25 @@ private func parametersRefusal() -> Response {
   errorResponse(.badRequest, code: "invalidArgument", message: "params must be a JSON array of bound values")
 }
 
-private func toolResponse(_ context: SpaceToolContext, _ name: String, input: JSONValue) async -> Response {
+private func toolResponse(_ context: SpaceToolContext, _ name: String, input: JSONValue) async throws -> Response {
   let tool = SpaceToolbox.all.first { $0.name == name }!
   do {
     return jsonResponse(try await tool.run(context, input: input))
   } catch {
-    return failureResponse(error)
+    return try failureResponse(error)
   }
 }
 
-private func failureResponse(_ error: any Error) -> Response {
+private func failureResponse(_ error: any Error) throws -> Response {
+  if error is Evicted { throw error }
   let failure = Wire.failure(error)
   switch failure {
   case .undecodableInput:
     return jsonResponse(failure.payload, status: .badRequest)
   case let .failed(code, _, _, _):
     return jsonResponse(failure.payload, status: status(of: code))
+  case .evicted:
+    throw EvictedRefusal()
   }
 }
 

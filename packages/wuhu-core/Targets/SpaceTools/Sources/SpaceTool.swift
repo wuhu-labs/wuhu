@@ -199,6 +199,10 @@ public enum ToolRunError: Error, Sendable, Equatable {
   case undecodableInput(String)
   /// `token` is a conflict's current version, when the verb knows it.
   case failed(code: ErrorCode, message: String, hint: String?, token: String? = nil)
+  /// The space refused a wuwei call: another process serves it, or this one is
+  /// draining. Not this verb's failure: a route rethrows it to the one HTTP
+  /// mapping instead of answering it.
+  case evicted
 
   public var payload: JSONValue {
     switch self {
@@ -206,6 +210,8 @@ public enum ToolRunError: Error, Sendable, Equatable {
       Wire.toolError(code: .invalidArgument, message: message, hint: nil)
     case let .failed(code, message, hint, token):
       Wire.toolError(code: code, message: message, hint: hint, token: token)
+    case .evicted:
+      Wire.toolError(code: .unavailable, message: "the space is not served by this process right now; retry", hint: nil)
     }
   }
 }

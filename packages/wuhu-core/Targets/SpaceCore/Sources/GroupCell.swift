@@ -106,6 +106,26 @@ public struct GroupCell {
 /// The space, under the one key `space`: what spans its groups.
 @Cell
 public struct SpaceCell {
+  /// Serve records how the space is deployed at boot (origin exactly as passed via `--origin`, NULL when absent — the record never lies); offline verbs read it. A start that cannot host this cell mails it, so a roll finishes with both the old and the new value equal.
+  ///
+  /// The certificate kind lives in its own row, keyed by the fingerprint it describes: a server that predates it rewrites
+  /// `space_deployment` alone, and the stale row then no longer matches, so the record reads as unknown.
+  public mutating func recordDeployment(_ record: DeploymentRecord) throws {
+    try db.execute(DeploymentRow.insert {
+      DeploymentRow(id: 1, origin: record.origin, tlsFingerprint: record.tlsFingerprint)
+    } onConflict: {
+      ($0.id)
+    } doUpdate: {
+      $0.origin = $1.origin
+      $0.tlsFingerprint = $1.tlsFingerprint
+    })
+    try db.execute(DeploymentCertificateRow.where { _ in true }.delete())
+    guard let certificate = record.certificate else { return }
+    try db.execute(DeploymentCertificateRow.insert {
+      DeploymentCertificateRow(id: 1, tlsFingerprint: record.tlsFingerprint, generated: certificate == .generated)
+    })
+  }
+
   /// Every group, removed ones too, oldest first.
   public func groups() -> [GroupRecord] {
     let aliases = Dictionary(

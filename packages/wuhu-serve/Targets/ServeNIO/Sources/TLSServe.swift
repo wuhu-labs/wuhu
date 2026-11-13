@@ -62,6 +62,7 @@ extension ServeNIOServer {
         boundAddress: boundAddress,
         hooks: hooks,
         state: state,
+        drain: options.gracefulDrain,
       )
       hooks.onDidBind(boundAddress)
       return server
@@ -86,7 +87,7 @@ extension ServeNIOServer {
     let bootstrap: ServerBootstrap
     do { bootstrap = try makeTLSBootstrap(identity: identity, subdomains: subdomains, options: options, hooks: hooks, eventLoopGroup: eventLoopGroup, state: state, handler: handler) }
     catch { hooks.onStartupFailure(error); throw error }
-    return try await self.adopt(bootstrap.withBoundSocket(socket), hooks: hooks, state: state)
+    return try await self.adopt(bootstrap.withBoundSocket(socket), hooks: hooks, state: state, drain: options.gracefulDrain)
   }
 
   private static func makeTLSBootstrap(
@@ -103,13 +104,14 @@ extension ServeNIOServer {
     options.scheme = "https"
     let secureOptions = options
     let sslContext = try makeSSLContext(identity: identity, subdomains: subdomains)
-    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state) { channel, connectionID, context in
+    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state) { channel, connectionID, context, activity in
       channel.eventLoop.makeCompletedFuture {
         try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: sslContext))
       }.flatMap {
         channel.configureHTTP2SecureUpgrade(
           h2ChannelConfigurator: { channel in
             channel.eventLoop.makeCompletedFuture {
+              state.markHTTP2Connection(id: connectionID)
               _ = try channel.pipeline.syncOperations.configureHTTP2Pipeline(
                 mode: .server,
                 connectionConfiguration: .init(),
@@ -137,6 +139,7 @@ extension ServeNIOServer {
                 state: state,
                 connectionID: connectionID,
                 context: context,
+                activity: activity,
                 handler: handler,
               )
             }
@@ -193,7 +196,8 @@ private func configureHTTP2Stream(
   handler: @escaping UpgradingHandler,
 ) throws {
   let streamID = state.makeConnectionID()
-  guard state.registerConnection(id: streamID, channel: stream) else {
+  let activity = ConnectionActivity()
+  guard state.registerConnection(id: streamID, channel: stream, activity: activity) else {
     throw TLSBindError.shuttingDown
   }
   let pipeline = stream.pipeline.syncOperations
@@ -205,7 +209,7 @@ private func configureHTTP2Stream(
       context: context,
       state: state,
       connectionID: streamID,
-      activity: ConnectionActivity(),
+      activity: activity,
       handler: httpOnly(handler),
     ),
   )

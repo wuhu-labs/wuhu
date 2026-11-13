@@ -50,7 +50,7 @@ actor HostRequests {
     if task == nil { output.finish(throwing: TaskScopeClosed()); input.finish() }
     bodies[id] = task
     output.onTermination = { _ in task?.cancel() }
-    return .stream(length: body.contentLength, contentType: body.contentType, HostBodyChunks(chunks: chunks, demand: input))
+    return body.rethreaded(over: HostBodyChunks(chunks: chunks, demand: input))
   }
 
   func shutdown(sockets: HostSockets) async {

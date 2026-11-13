@@ -118,6 +118,10 @@ externalPackages:
     url: https://github.com/apple/swift-nio.git
     exact: "2.101.3"
     products: [NIOCore, NIOPosix, NIOHTTP1]
+  swift-nio-http2:
+    url: https://github.com/apple/swift-nio-http2.git
+    from: "1.36.0"
+    products: [NIOHTTP2]
   swift-nio-ssl:
     url: https://github.com/apple/swift-nio-ssl.git
     from: "2.29.0"

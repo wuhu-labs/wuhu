@@ -135,9 +135,6 @@ public struct CommandRunner: Sendable {
         for option in config.ignoredOptions {
           await self.stderr("\(option) is ignored: content is served on <group>.<host> on the one port; remove it\n")
         }
-        await self.stderr(
-          "serving \(config.folder) on \(config.host):\(config.port) at \(config.origin ?? "https://localhost:\(config.port)")\n",
-        )
         try await serve(config)
         return 0
       }

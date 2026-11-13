@@ -8,6 +8,11 @@ public struct Body: Sendable {
   public var contentLength: Int64?
   public var contentType: String?
 
+  /// Whether the body reaches its own end. Bytes held in memory do, and so does
+  /// a wrapper whose producer re-serves them; a stream keeps producing until
+  /// the client goes away or the producer ends it.
+  public let endsByItself: Bool
+
   private let storage: BodyStorage
   private let replayFactory: (@Sendable () -> Body)?
 
@@ -16,11 +21,13 @@ public struct Body: Sendable {
     contentType: String? = nil,
     storage: BodyStorage,
     replayFactory: (@Sendable () -> Body)?,
+    endsByItself: Bool,
   ) {
     self.contentLength = contentLength
     self.contentType = contentType
     self.storage = storage
     self.replayFactory = replayFactory
+    self.endsByItself = endsByItself
   }
 
   public var isBuffered: Bool {
@@ -39,6 +46,20 @@ public struct Body: Sendable {
 
   public func replay() -> Self? {
     self.replayFactory?()
+  }
+
+  /// The same body, produced by `sequence` instead of its own storage: a host
+  /// that counts or gates the bytes keeps whether the body ends by itself.
+  public func rethreaded<S: AsyncSequence & Sendable>(over sequence: S) -> Self where S.Element == Bytes {
+    Self(
+      contentLength: self.contentLength,
+      contentType: self.contentType,
+      storage: BodyStorage(backing: .stream(makeIterator: {
+        _AnyAsyncIteratorBox(base: sequence.makeAsyncIterator())
+      })),
+      replayFactory: nil,
+      endsByItself: self.endsByItself,
+    )
   }
 
   public func asyncBytes() -> BodyStream {
@@ -111,6 +132,7 @@ extension Body {
       replayFactory: {
         Self.chunks(filteredChunks, contentType: contentType)
       },
+      endsByItself: true,
     )
   }
 
@@ -163,6 +185,7 @@ extension Body {
         _AnyAsyncIteratorBox(base: sequence.makeAsyncIterator())
       })),
       replayFactory: nil,
+      endsByItself: false,
     )
   }
 
@@ -180,6 +203,7 @@ extension Body {
       replayFactory: {
         Self.stream(length: length, contentType: contentType, replaying: makeSequence)
       },
+      endsByItself: false,
     )
   }
 }

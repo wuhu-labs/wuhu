@@ -110,6 +110,50 @@ struct TLSNIOTests {
     }
   }
 
+  @Test(.timeLimit(.minutes(1))) func aBoundEndsAHandlerThatNeverReturns() async throws {
+    // The TLS bind production serves through keeps the drain's bound: a handler
+    // that never returns is cancelled and its connection closed five seconds on
+    // the injected wait, not held open. The wait is the test's, so it drives the
+    // boundary itself.
+    let (advanced, advance) = AsyncStream<Void>.makeStream()
+    let (entered, enteredTheHandler) = AsyncStream<Void>.makeStream()
+    let (stuck, release) = AsyncStream<Void>.makeStream()
+    let (left, handlerLeft) = AsyncStream<Void>.makeStream()
+    let (stopped, shutdownFinished) = AsyncStream<Void>.makeStream()
+    let requested = Mutex<Duration?>(nil)
+    defer { release.finish() }
+    let options = ServeOptions(gracefulDrain: .init(timeout: .seconds(5)) { timeout in
+      requested.withLock { $0 = timeout }
+      for await _ in advanced { break }
+    })
+    try await withTLSServer(options: options) { _ in
+      enteredTheHandler.yield()
+      // Only the drain's cancellation ends this await; nothing else does.
+      for await _ in stuck { break }
+      handlerLeft.yield()
+      return Response(status: .ok, body: .chunk(Data("late".utf8)))
+    } operation: { server, _ in
+      try await withTLSClient(httpVersion: .automatic) { client in
+        let port = try #require(server.boundAddress.port)
+        let pending = Task {
+          try? await client.execute(HTTPClientRequest(url: "https://127.0.0.1:\(port)/stuck"), timeout: .seconds(20))
+        }
+        defer { pending.cancel() }
+        for await _ in entered { break }
+        let stopping = Task {
+          await server.shutdown()
+          shutdownFinished.yield()
+        }
+        advance.yield()
+        for await _ in stopped { break }
+        #expect(requested.withLock { $0 } == .seconds(5))
+        // The bound cancelled the handler; the drain did not wait for it.
+        for await _ in left { break }
+        await stopping.value
+      }
+    }
+  }
+
   @Test func aPausedH2UploadResumesOnceTheHandlerDrainsIt() async throws {
     let options = ServeOptions(requestBodyHighWatermarkBytes: 4096, requestBodyLowWatermarkBytes: 1024)
     let chunk = ByteBuffer(repeating: 7, count: 32 << 10)

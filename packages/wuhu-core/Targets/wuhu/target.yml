@@ -18,6 +18,7 @@ dependencies:
   - Dependencies
   - SpaceCore
   - SpaceServer
+  - ServeNIO
   - SessionTools
   - WebBundle
   - Fetch

@@ -47,7 +47,6 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     do {
       return jsonResponse(try await identity.registerNew())
     } catch let error as IdentityError { return identityFailure(error) }
-    catch is Evicted { return identityUnavailable() }
   }
   router.post("/v1/identity/rotate") { request, _ in
     guard SessionPrincipal.current == nil else { return adminRequired("rotating the server key") }
@@ -60,7 +59,6 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     do {
       return jsonResponse(try await identity.rotate())
     } catch let error as IdentityError { return identityFailure(error) }
-    catch is Evicted { return identityUnavailable() }
   }
   router.put("/v1/identity") { request, _ in
     guard SessionPrincipal.current == nil else { return adminRequired("changing the server issuer") }
@@ -79,7 +77,6 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     do {
       return jsonResponse(try await identity.set(defaultIssuer: input.defaultIssuer, audience: input.audience, choice: input.issuer))
     } catch let error as IdentityError { return identityFailure(error) }
-    catch is Evicted { return identityUnavailable() }
   }
 }
 

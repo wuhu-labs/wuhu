@@ -18,6 +18,7 @@ import struct SessionDomain.SessionID
 import struct SpaceContract.AIDisclosure
 import SpaceCore
 import WebPush
+import Wuwei
 
 public actor SpaceHost {
   public nonisolated let space: Space
@@ -63,9 +64,13 @@ public actor SpaceHost {
         contact: URL(string: "https://wuhu.ai")!,
       )
       try await provisionEverythingSidebar(space)
-      try await space.recordDeployment(deployment)
+      // Mail, not a call: while another process of a roll serves this space, its
+      // lease refuses the write, and the record lands when that process releases.
+      space.worker.send(SpaceCell.ID("space")).recordDeployment(deployment)
       if let devImport {
-        try await space.importFolder(devImport)
+        do {
+          try await space.importFolder(devImport)
+        } catch is Evicted {}
       }
       let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? fallbackOrigin, identity: serverIdentity)
       let secrets = try configDirectory.map { try secretStores(configDirectory: $0, spaceID: id) }

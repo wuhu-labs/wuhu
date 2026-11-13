@@ -58,7 +58,7 @@ func addSessionLineRoutes(
       let page = try await space.sessions.lines(id, generation: query["generation"].flatMap(Int.init), before: query["before"].flatMap(Int.init), limit: limit)
       return try Response.json(SessionLinesPageOutput(generation: page.generation, lines: page.lines.map(SessionLinePayload.init), hasEarlier: page.hasEarlier))
     } catch {
-      return sessionErrorResponse(error)
+      return try sessionErrorResponse(error)
     }
   }
 }

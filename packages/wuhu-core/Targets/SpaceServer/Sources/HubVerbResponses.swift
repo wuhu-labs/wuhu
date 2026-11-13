@@ -66,7 +66,7 @@ func sessionCreateOutput(_ created: CreateSessionResult, store: SessionStore) as
       member: created.member,
     ))
   } catch {
-    return sessionErrorResponse(error)
+    return try sessionErrorResponse(error)
   }
 }
 

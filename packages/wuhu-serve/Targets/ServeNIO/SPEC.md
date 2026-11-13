@@ -18,7 +18,11 @@ The bounded transport advertises maxMessageBytes as the minimum of BoundedWebSoc
 
 ## Shutdown completion
 
-Shutdown closes the listener, cancels connection tasks and drains active connections before invoking onDidShutdown exactly once. Completion is published only after that synchronous hook returns: waitUntilShutdown, runUntilCancelled and concurrent or repeated shutdown calls await both the drain and the completed hook.
+Shutdown closes the listener first, so a connection arriving from then on reaches another process. It then sends HTTP/2 GOAWAY (last stream ID the largest, no error) on every HTTP/2 connection, and waits for the requests already running to write their responses, for at most the drain's bound (`ServeOptions.gracefulDrain`: its timeout, waited out on the caller's own wait, so a test drives the boundary; unset waits without a bound); an HTTP/1.1 response written during the drain carries `Connection: close`, and its connection closes after it. Past the bound, or as soon as they have all answered, it closes what would never end on its own — WebSockets, responses whose body streams (`Body.endsByItself` false), and connections with no request in flight — cancelling their connection tasks and draining them before invoking onDidShutdown exactly once. A handler that never returns holds the drain only until the bound, and a cancelled bound leaves the wait at once; past the bound that handler is cancelled and its connection closed, and a handler whose await ignores cancellation — a continuation nothing resumes, a task-group wait — still holds shutdown until its task ends, as every request did before the drain had a bound. Completion is published only after that synchronous hook returns: waitUntilShutdown, runUntilCancelled and concurrent or repeated shutdown calls await both the drain and the completed hook.
+
+## Listening beside another process
+
+The listener sets `SO_REUSEADDR` and, except for a Unix domain socket, `SO_REUSEPORT`. Two servers — the outgoing and the incoming process of a release — therefore bind one address and port at once, and the kernel spreads new connections over both until the outgoing listener closes. A bind that fails is reported through onStartupFailure and thrown; nothing is listening.
 
 ## Inherited listener
 

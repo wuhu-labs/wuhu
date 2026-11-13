@@ -27,12 +27,14 @@ import ServeRouting
 import ServeTLS
 import SpaceClient
 import struct SpaceContract.AIDisclosure
+import enum SpaceContract.ErrorCode
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupID
 import enum SpaceContract.LiveChannel
 import SpaceCore
 import SpaceTools
 import WebPush
+import Wuwei
 
 public enum SpaceServer {
   public static let unstampedVersion: String = "0.0.0-unstamped"
@@ -148,6 +150,8 @@ public enum SpaceServer {
           return jsonResponse(error.payload, status: .badRequest)
         case .failed:
           return jsonResponse(error.payload, status: .unprocessableContent)
+        case .evicted:
+          throw EvictedRefusal()
         }
       }
     }
@@ -166,7 +170,7 @@ public enum SpaceServer {
       case let .principal(resolved): principal = resolved
       case let .refused(response): return response
       }
-      return await observeResponse(space: space, url: request.url, principal: principal) {
+      return try await observeResponse(space: space, url: request.url, principal: principal) {
         @Dependency(\.date) var date
         return try await identityVerdict(
           queryValues(of: request.url)["identity"], request: request, space: space, devPerson: devPerson, now: date.now,
@@ -252,11 +256,13 @@ public enum SpaceServer {
       space: space, contentHost: contentHost, advertisedOrigin: origin, devPerson: devPerson, publicRead: publicRead, webContent: webContent, pageFetch: pageFetch,
       hub: sessions?.owner,
     )
-    let api = gated(walled(routed: routed, space: space, devPerson: devPerson, webContent: webContent, keyStreams: keyStreams))
+    let api = answersEviction(gated(walled(routed: routed, space: space, devPerson: devPerson, webContent: webContent, keyStreams: keyStreams)))
     // The sessions' tools reach main through this API, in process, as the
     // session whose token they carry.
     sessions?.connection.bind(.inProcess(api), dial: inProcessDial(api: api, hub: hub))
-    return hostRouted(contentHost, api: api, content: content)
+    // Both planes: a group host's page API writes cells too, and answers the
+    // same 503 when the space is served elsewhere.
+    return answersEviction(hostRouted(contentHost, api: api, content: content))
   }
 
   private static func walled(routed: @escaping UpgradingHandler, space: Space, devPerson: ResolvedPerson?, webContent: WebContent, keyStreams: KeyStreams) -> UpgradingHandler {
@@ -428,6 +434,10 @@ public enum SpaceServer {
     var options = ServeOptions()
     options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
     options.maximumBodyBytes = maximumPostBodyBytes
+    // A roll cannot wait on a handler that never returns: the drain gives the
+    // requests already running five seconds, then ends them with the streams.
+    @Dependency(\.continuousClock) var drainClock
+    options.gracefulDrain = .init(timeout: .seconds(5)) { try await drainClock.sleep(for: $0) }
     let api: ServeNIOServer
     do {
       api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
@@ -436,16 +446,53 @@ public enum SpaceServer {
       await telemetry?.shutdown()
       throw error
     }
-    await withTaskGroup(of: Void.self) { group in
-      group.addTask { await spaceHost.run() }
-      await api.runUntilCancelled()
-      try? await spaceHost.shutdown()
-      group.cancelAll()
-    }
+    // The host keeps running, unparented by this cancelled task, until the API
+    // has drained: a handler waiting in a wuwei call answers before the worker
+    // quiesces, which is the order a roll needs.
+    let hosting = Task { await spaceHost.run() }
+    await api.runUntilCancelled()
+    try? await spaceHost.shutdown()
+    await hosting.value
     await api.shutdown()
     if let telemetry { await telemetry.shutdown() }
     try await spaceHost.shutdown()
   }
+}
+
+/// One answer for every route whose wuwei call is refused: the space is held by
+/// another serving process, or this one is draining, and a retry reaches
+/// whichever process holds it next. A layer that may only throw its own error
+/// carries the refusal as `EvictedRefusal` or `ToolRunError.evicted`; both come
+/// back here.
+func answersEviction(_ handler: @escaping UpgradingHandler) -> UpgradingHandler {
+  { request in
+    do {
+      return try await handler(request)
+    } catch {
+      guard isEviction(error) else { throw error }
+      return .response(evictionResponse())
+    }
+  }
+}
+
+/// An `Evicted` a layer could only throw as its own error crosses back to the
+/// one mapping as this.
+struct EvictedRefusal: Error {}
+
+func isEviction(_ error: any Error) -> Bool {
+  if error is Evicted || error is EvictedRefusal { return true }
+  guard let toolError = error as? ToolRunError, case .evicted = toolError else { return false }
+  return true
+}
+
+func evictionResponse() -> Response {
+  var response = errorResponse(
+    .serviceUnavailable,
+    code: ErrorCode.unavailable.rawValue,
+    message: "the space is not served by this process right now; retry",
+  )
+  response.headers[.retryAfter] = "1"
+  return response
 }
 
 /// One listener, two planes: the bare host is the API and the web app,

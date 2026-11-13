@@ -23,6 +23,7 @@ import FetchWebSocket
 import Logging
 import enum PinnedTLS.PinnedTLS
 import enum PinnedTLS.SystemTrust
+import ServeNIO
 import SessionTools
 import enum SpaceCore.UserRecovery
 import SpaceServer
@@ -110,6 +111,15 @@ enum Main {
         trust: trust,
       ),
       serve: { config in
+        // What a release watches for: the listener is bound from here, so a
+        // connection the kernel hands this process is served. A bind that
+        // fails throws, and the process ends on that error.
+        let hooks = ServeNIOHooks(onDidBind: { _ in
+          let origin = config.origin ?? "https://localhost:\(config.port)"
+          FileHandle.standardError.write(
+            Data("serving \(config.folder) on \(config.host):\(config.port) at \(origin)\n".utf8),
+          )
+        })
         let server = try rootScope.run("space-server") {
           try await SpaceServer.serve(
             folder: URL(fileURLWithPath: config.folder, isDirectory: true),
@@ -130,6 +140,7 @@ enum Main {
             webAppDirectory: config.webApp.map { URL(fileURLWithPath: $0, isDirectory: true) },
             webContent: try WebBundle.load(),
             telemetryEnvironment: ProcessInfo.processInfo.environment,
+            hooks: hooks,
           )
         }
         let sources = [SIGINT, SIGTERM].map { number in

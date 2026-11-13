@@ -20,6 +20,7 @@ import Testing
         hookCalls.withLock { $0 += 1 }
       }),
       state: state,
+      drain: nil,
     )
     let waiting = Task { @Sendable in
       await server.waitUntilShutdown()

@@ -117,7 +117,10 @@ tests:
     - FetchAsyncHTTPClient
     - AsyncHTTPClient
     - NIOCore
+    - NIOHTTP1
+    - NIOHTTP2
     - NIOPosix
+    - NIOSSL
     - Serve
     - ServeNIO
     - ServeTesting

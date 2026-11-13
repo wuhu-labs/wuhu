@@ -411,11 +411,18 @@ private func underscoreResponse(
       let output = try await tool.run(context, input: .object(["sql": .string(sql)]))
       return revalidatedJSON(output, ifNoneMatch: request.headers[.ifNoneMatch]).viewed(by: viewer)
     } catch {
-      switch error {
-      case .undecodableInput:
-        return jsonResponse(error.payload, status: .badRequest)
-      case .failed:
-        return jsonResponse(error.payload, status: .unprocessableContent)
+      switch error as? ToolRunError {
+      case .evicted:
+        throw EvictedRefusal()
+      case .some(let toolError):
+        switch toolError {
+        case .undecodableInput:
+          return jsonResponse(toolError.payload, status: .badRequest)
+        case .failed, .evicted:
+          return jsonResponse(toolError.payload, status: .unprocessableContent)
+        }
+      case .none:
+        throw error
       }
     }
   case "observe":
@@ -423,7 +430,7 @@ private func underscoreResponse(
     case let .refused(wall): return wall
     case let .admitted(viewer):
       let principal = try await webPrincipal(viewer, group: caller.group, space: space)
-      return await observeResponse(space: space, url: request.url, principal: principal).viewed(by: viewer)
+      return try await observeResponse(space: space, url: request.url, principal: principal).viewed(by: viewer)
     }
   default:
     return plainStatus(.notFound)

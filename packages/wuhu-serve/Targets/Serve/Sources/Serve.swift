@@ -27,6 +27,23 @@ public struct ServeOptions: Sendable {
   // only reap a fully silent client, and the pre-decode head-byte cap
   // (HTTPHeadLimitHandler) is armed for the first request on a connection.
   public var requestReadInactivityTimeout: Duration?
+  /// How long a shutdown lets the requests already running answer before it
+  /// ends them with the streams, sockets and idle connections; `nil` waits
+  /// without a bound.
+  public var gracefulDrain: GracefulDrain?
+
+  /// A bound on the graceful drain: the timeout, and the wait it runs on. The
+  /// caller supplies the wait, so its own clock — a test's included — decides
+  /// when the bound is up; it must end when cancelled.
+  public struct GracefulDrain: Sendable {
+    public var timeout: Duration
+    public var wait: @Sendable (Duration) async throws -> Void
+
+    public init(timeout: Duration, wait: @escaping @Sendable (Duration) async throws -> Void) {
+      self.timeout = timeout
+      self.wait = wait
+    }
+  }
 
   public init(
     scheme: String = "http",
@@ -40,6 +57,7 @@ public struct ServeOptions: Sendable {
     requestBodyLowWatermarkBytes: Int = 128 * 1024,
     keepAliveIdleTimeout: Duration? = .seconds(75),
     requestReadInactivityTimeout: Duration? = .seconds(60),
+    gracefulDrain: GracefulDrain? = nil,
   ) {
     self.scheme = scheme
     self.defaultHost = defaultHost
@@ -52,6 +70,7 @@ public struct ServeOptions: Sendable {
     self.requestBodyLowWatermarkBytes = requestBodyLowWatermarkBytes
     self.keepAliveIdleTimeout = keepAliveIdleTimeout
     self.requestReadInactivityTimeout = requestReadInactivityTimeout
+    self.gracefulDrain = gracefulDrain
   }
 }
 

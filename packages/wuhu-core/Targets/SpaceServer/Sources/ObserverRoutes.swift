@@ -16,6 +16,7 @@ import struct SpaceContract.ObserversOutput
 import enum SpaceContract.SubscriptionKindPayload
 import SpaceCore
 import SpaceTools
+import Wuwei
 
 func addObserverRoutes(
   _ router: inout Router,
@@ -37,7 +38,7 @@ func addObserverRoutes(
           return errorResponse(.forbidden, code: "forbidden", message: "\(needed.rawValue) on group \(group.rawValue) is needed for its observers")
         }
         do { return try await body(request, parameters, group) }
-        catch { return observerErrorResponse(error) }
+        catch { return try observerErrorResponse(error) }
       case let .refused(response): return response
       }
     }
@@ -72,13 +73,13 @@ func observerOutput(_ armed: ArmedSubscription, group: GroupID) -> ObserverOutpu
   )
 }
 
-private func observerErrorResponse(_ error: any Error) -> Response {
+private func observerErrorResponse(_ error: any Error) throws -> Response {
   switch error {
   case let error as ObserverRefusal:
     errorResponse(error.code == "conflict" ? .conflict : error.code == "notFound" ? .notFound : .badRequest, code: error.code, message: error.description)
   case let error as ArmingProblem:
     errorResponse(.badRequest, code: "invalidArgument", message: error.message)
   default:
-    sessionErrorResponse(error)
+    try sessionErrorResponse(error)
   }
 }

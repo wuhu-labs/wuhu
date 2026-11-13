@@ -20,7 +20,7 @@ func addProviderRoutes(_ router: inout Router, space: Space, usage: UsageBoard?)
       document = try await readModelsDocument(space: space)
     } catch SpaceError.notFound {
       document = ModelsDocument(providers: [:])
-    } catch { return sessionErrorResponse(error) }
+    } catch { return try sessionErrorResponse(error) }
     @Dependency(\.date.now) var now
     let providers = document.providers.sorted { $0.key < $1.key }.map { id, provider in
       ProviderDescriptor(

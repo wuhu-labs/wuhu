@@ -16,6 +16,7 @@ import struct SpaceFS.Entry
 import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
 import SpaceTools
+import Wuwei
 
 // `viewer` resolves the caller only for a statement that calls `viewer()`, as
 // the identity a watermark POST from the same credential would advance. A
@@ -25,11 +26,11 @@ func observeResponse(
   url: URL,
   principal: Principal,
   viewer: () async throws -> IdentityVerdict? = { nil },
-) async -> Response {
+) async throws -> Response {
   let query = queryValues(of: url)
   switch (query["glob"], query["sql"]) {
   case let (glob?, nil):
-    return await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, batch: query["batch"] == "1")
+    return try await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, batch: query["batch"] == "1")
   case let (nil, sql?):
     // `params` is a JSON array bound to the statement's placeholders; `typed=1`
     // renders each snapshot in the typed rule (see QueryInput.typed).
@@ -42,7 +43,7 @@ func observeResponse(
     } else {
       parameters = []
     }
-    return await snapshotsResponse(
+    return try await snapshotsResponse(
       space: space, sql: sql, parameters: parameters, throttleMs: query["throttleMs"], principal: principal, viewer: viewer,
       render: query["typed"] == "1" ? Wire.typedQueryOutput : Wire.queryOutput,
     )
@@ -54,7 +55,7 @@ func observeResponse(
 /// File events under `glob` as SSE, resumed after `from` when given. Without
 /// `from`, `head` opens the stream with an `event: head` frame naming the
 /// revision the subscription starts after, so a client resumes from there.
-func watchResponse(space: Space, glob: String, from rawFrom: String?, principal: Principal, head: Bool = false, batch: Bool = false) async -> Response {
+func watchResponse(space: Space, glob: String, from rawFrom: String?, principal: Principal, head: Bool = false, batch: Bool = false) async throws -> Response {
   guard !glob.isEmpty else {
     return errorResponse(.badRequest, code: "invalidArgument", message: "glob must not be empty")
   }
@@ -71,6 +72,7 @@ func watchResponse(space: Space, glob: String, from rawFrom: String?, principal:
   do {
     watched = try await WatchedGlob(glob, as: principal, in: space)
   } catch {
+    if error is Evicted { throw error }
     return jsonResponse(Wire.failure(error).payload, status: error is SpaceError ? .notFound : .badRequest)
   }
   // The subscription starts after the revision the head frame names, so a
@@ -82,6 +84,7 @@ func watchResponse(space: Space, glob: String, from rawFrom: String?, principal:
     do {
       after = Rev(try await space.currentRevision(in: watched.group))
     } catch {
+      if error is Evicted { throw error }
       return jsonResponse(Wire.failure(error).payload, status: .internalServerError)
     }
   }
@@ -93,6 +96,7 @@ func watchResponse(space: Space, glob: String, from rawFrom: String?, principal:
   do {
     events = try await space.observeFS(glob: watched.pattern, from: after, group: watched.group, as: principal)
   } catch {
+    if error is Evicted { throw error }
     return observationsUnavailable()
   }
   if batch {
@@ -126,9 +130,12 @@ func snapshotsResponse(
   throttleMs rawThrottle: String?,
   principal: Principal,
   viewer: () async throws -> IdentityVerdict? = { nil },
-  refusal: (any Error) -> Response = { jsonResponse(Wire.failure($0).payload, status: .unprocessableContent) },
+  refusal: (any Error) throws -> Response = { error in
+    if error is Evicted { throw error }
+    return jsonResponse(Wire.failure(error).payload, status: .unprocessableContent)
+  },
   render: @escaping @Sendable (Rows) -> JSONValue,
-) async -> Response {
+) async throws -> Response {
   let throttleMs: Int
   if let raw = rawThrottle {
     guard let parsed = Int(raw), parsed >= 0 else {
@@ -144,7 +151,7 @@ func snapshotsResponse(
     _ = try Space.bound(parameters)
     try await space.validateQuery(sql, as: principal)
   } catch {
-    return refusal(error)
+    return try refusal(error)
   }
   var identity: String?
   if Space.callsViewer(sql) {
@@ -155,6 +162,7 @@ func snapshotsResponse(
       case nil: identity = nil
       }
     } catch {
+      if error is Evicted { throw error }
       return jsonResponse(Wire.failure(error).payload, status: .internalServerError)
     }
   }
@@ -162,6 +170,7 @@ func snapshotsResponse(
   do {
     snapshots = try space.observeRows(sql, parameters: parameters, throttle: .milliseconds(throttleMs), viewer: identity, as: principal)
   } catch {
+    if error is Evicted { throw error }
     return observationsUnavailable()
   }
   return .sse(forwarding: snapshots) { rows in

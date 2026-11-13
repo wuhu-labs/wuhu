@@ -93,7 +93,7 @@ final class KeyStreams: Sendable {
     let id = hold(key) { output.finish(); pump?.cancel() }
     output.onTermination = { _ in pump?.cancel(); self.release(key.pubkey, id) }
     if await !isLive(key, space: space) { output.finish() }
-    return .stream(contentType: body.contentType, HostBodyChunks(chunks: chunks, demand: input))
+    return body.rethreaded(over: HostBodyChunks(chunks: chunks, demand: input))
   }
 
   func holding(_ key: KeyRecord, space: Space, end: @escaping @Sendable () -> Void, _ body: () async -> Void) async {
