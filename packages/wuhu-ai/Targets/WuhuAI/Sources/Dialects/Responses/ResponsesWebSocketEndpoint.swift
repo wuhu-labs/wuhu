@@ -30,10 +30,11 @@ extension ResponsesEndpoint {
   public func withWebSocket(
     session: ResponsesWebSocketSession,
     attemptID: String,
+    byteLimit: Int = 128 << 20,
     observer: ResponsesWebSocketObserver = .init(),
     receiveQuota: @escaping @Sendable (JSONValue) async -> Void = { _ in },
   ) -> some ModelEndpoint {
-    ResponsesWebSocketEndpoint(endpoint: self, session: session, attemptID: attemptID, observer: observer, receiveQuota: receiveQuota)
+    ResponsesWebSocketEndpoint(endpoint: self, session: session, attemptID: attemptID, byteLimit: byteLimit, observer: observer, receiveQuota: receiveQuota)
   }
 }
 
@@ -41,6 +42,7 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
   let endpoint: Base
   let session: ResponsesWebSocketSession
   let attemptID: String
+  let byteLimit: Int
   let observer: ResponsesWebSocketObserver
   let receiveQuota: @Sendable (JSONValue) async -> Void
   var providerID: String { endpoint.providerID }
@@ -77,7 +79,7 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
       default: throw WebSocketError.invalidURL(built.url.absoluteString)
       }
       guard let url = components?.url else { throw WebSocketError.invalidURL(built.url.absoluteString) }
-      let size = responsesWebSocketByteLimit
+      let size = byteLimit
       return ResponsesSocketRequest(
         handshake: WebSocketRequest(url: url, headers: headers, limits: .init(frameBytes: size, messageBytes: size, bufferedReceiveBytes: size, outboundMessageBytes: size)),
         body: body, replayScope: endpoint.replayScope, routeEpoch: endpoint.routeEpoch,
@@ -95,7 +97,7 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
           continuation.yield(.success(terminal))
         } catch is CancellationError {
         } catch {
-          continuation.yield(.failure(responsesWebSocketError(error)))
+          continuation.yield(.failure(responsesWebSocketError(error, byteLimit: byteLimit)))
         }
         continuation.finish()
       }
@@ -110,5 +112,3 @@ struct ResponsesSocketRequest: Sendable {
   var replayScope: String?
   var routeEpoch: String?
 }
-
-let responsesWebSocketByteLimit = 128 << 20

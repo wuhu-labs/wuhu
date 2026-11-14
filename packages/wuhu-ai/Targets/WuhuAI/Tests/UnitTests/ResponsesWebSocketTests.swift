@@ -14,6 +14,8 @@ import Testing
 import WuhuAI
 
 @Suite(.deterministicDependencies(clock: VirtualClock()), .timeLimit(.minutes(1))) struct ResponsesWebSocketTests {
+  private let limit = 64 << 10
+
   private func endpoint() -> OpenAIGPTEndpoint {
     OpenAIGPTEndpoint(model: "test-model", replayScope: "test-scope", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline-token")
   }
@@ -60,23 +62,23 @@ import WuhuAI
     await session.invalidate()
   }
 
-  @Test func createAbove128MiBIsTypedBeforeDialAndDoesNotFallback() async throws {
+  @Test func createAboveTheLimitIsTypedBeforeDialAndDoesNotFallback() async throws {
     let session = ResponsesWebSocketSession()
-    let context = Context(messages: [.user(.init(content: [.text(.init(text: String(repeating: "x", count: 128 << 20)))]))])
+    let context = Context(messages: [.user(.init(content: [.text(.init(text: String(repeating: "x", count: limit)))]))])
     await withDependencies {
       $0[WebSocketConnector.self] = WebSocketConnector { _ in Issue.record("oversized request dialed"); throw WebSocketError.unimplemented }
       $0.fetch = FetchClient { _ in Issue.record("SSE fallback"); throw FetchError.unimplemented }
     } operation: {
-      await #expect(throws: InferenceError.requestTooLarge(limitBytes: 128 << 20)) {
-        try await endpoint().withWebSocket(session: session, attemptID: "large").inference(context: context).collect()
+      await #expect(throws: InferenceError.requestTooLarge(limitBytes: limit)) {
+        try await endpoint().withWebSocket(session: session, attemptID: "large", byteLimit: limit).inference(context: context).collect()
       }
     }
     await session.invalidate()
   }
 
-  @Test(.timeLimit(.minutes(3)), arguments: [false, true])
+  @Test(arguments: [false, true])
   func oversizedAcknowledgedHistoryChecksPhysicalDeltaAndCorrectiveCreate(missingPrevious: Bool) async throws {
-    let largeReply = String(repeating: "y", count: 9 << 20)
+    let largeReply = String(repeating: "y", count: limit / 8)
     var firstResponse = textResponse("resp_large_history")
     firstResponse[2] = json(JSONValue.object([
       "type": .string("response.output_text.delta"), "item_id": .string("msg_1"), "delta": .string(largeReply),
@@ -86,22 +88,22 @@ import WuhuAI
       : textResponse("resp_delta")
     let server = ScriptedResponsesSocket(scripts: [firstResponse, secondResponse])
     let session = ResponsesWebSocketSession()
-    var context = Context(messages: [.user(.init(content: [.text(.init(text: String(repeating: "x", count: 120 << 20)))]))])
+    var context = Context(messages: [.user(.init(content: [.text(.init(text: String(repeating: "x", count: limit - limit / 16)))]))])
     let requests = Mutex<[Int]>([])
     try await withDependencies {
       $0[WebSocketConnector.self] = server.connector
       $0.fetch = FetchClient { _ in Issue.record("SSE fallback"); throw FetchError.unimplemented }
     } operation: {
-      let committed = try await endpoint().withWebSocket(session: session, attemptID: "large-history").inference(context: context).collect()
+      let committed = try await endpoint().withWebSocket(session: session, attemptID: "large-history", byteLimit: limit).inference(context: context).collect()
       #expect(committed.content == [.text(.init(text: largeReply))])
       context.messages.append(.assistant(committed))
       await session.acknowledge(attemptID: "large-history", committedMessage: committed, toolCallIDs: [:], renderedContext: context)
       context.messages.append(.user(.init(content: [.text("small delta")])))
-      let inference = endpoint().withWebSocket(session: session, attemptID: "delta", observer: .init(request: { number, _, _ in
+      let inference = endpoint().withWebSocket(session: session, attemptID: "delta", byteLimit: limit, observer: .init(request: { number, _, _ in
         requests.withLock { $0.append(number) }
       })).inference(context: context)
       if missingPrevious {
-        await #expect(throws: InferenceError.requestTooLarge(limitBytes: 128 << 20)) { try await inference.collect() }
+        await #expect(throws: InferenceError.requestTooLarge(limitBytes: limit)) { try await inference.collect() }
       } else {
         let completed = try await inference.collect()
         #expect(completed.content == [.text(.init(text: "hello"))])
@@ -111,7 +113,7 @@ import WuhuAI
     #expect(sent.count == 2)
     #expect(await server.handshakes.count == 1)
     #expect(requests.withLock { $0 } == [1])
-    #expect(sent[0].jsonString().utf8.count < 128 << 20)
+    #expect(sent[0].jsonString().utf8.count < limit)
     #expect(sent[1].object?["previous_response_id"] == .string("resp_large_history"))
     #expect(sent[1].object?["input"]?.array?.count == 1)
     #expect(sent[1].jsonString().utf8.count < 1024)
@@ -129,8 +131,8 @@ import WuhuAI
         }, close: { _ in }, abort: {})
       }
     } operation: {
-      await #expect(throws: InferenceError.requestTooLarge(limitBytes: 128 << 20)) {
-        try await endpoint().withWebSocket(session: session, attemptID: "overflow").inference(context: initial()).collect()
+      await #expect(throws: InferenceError.requestTooLarge(limitBytes: limit)) {
+        try await endpoint().withWebSocket(session: session, attemptID: "overflow", byteLimit: limit).inference(context: initial()).collect()
       }
     }
     #expect(sends.withLock { $0 } == 1)
@@ -418,6 +420,19 @@ import WuhuAI
     await session.invalidate()
   }
 
+  @Test func byteLimitChangeRotatesSocket() async throws {
+    let server = ScriptedResponsesSocket(scripts: [textResponse("resp_1"), textResponse("resp_2")])
+    let session = ResponsesWebSocketSession()
+    let context = Context(messages: [.user(.init(content: [.text(.init(text: String(repeating: "x", count: limit + limit / 8)))]))])
+    try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
+      _ = try await endpoint().withWebSocket(session: session, attemptID: "one", byteLimit: limit).inference(context: initial()).collect()
+      _ = try await endpoint().withWebSocket(session: session, attemptID: "two").inference(context: context).collect()
+    }
+    #expect(await server.handshakes.map(\.limits.outboundMessageBytes) == [limit, 128 << 20])
+    #expect(await server.sent.count == 2)
+    await session.invalidate()
+  }
+
   @Test func boundedConnectionExpiryRecoveryRedialsOnceWithFullContext() async throws {
     let expiry = json(#"{"type":"error","status_code":400,"error":{"code":"websocket_connection_limit_reached"}}"#)
     let server = ScriptedResponsesSocket(scripts: [[expiry], textResponse("resp_2")])
@@ -685,7 +700,9 @@ private actor ScriptedResponsesSocket {
     handshakes.append(request)
     let events = AsyncThrowingStream<WebSocketEvent, any Error>.makeStream()
     connections.append(events.continuation)
+    let outboundLimit = request.limits.outboundMessageBytes
     return WebSocketConnection(inbound: WebSocketInbound(events.stream), send: { message in
+      if case let .text(text) = message, text.utf8.count > outboundLimit { throw WebSocketError.limitExceeded(.outboundMessage) }
       try await self.send(message, into: events.continuation)
     }, close: { close in events.continuation.yield(.closed(close)); events.continuation.finish() }, abort: { self.aborts.withLock { $0 += 1 }; self.aborted.continuation.yield(()); events.continuation.finish() })
   }

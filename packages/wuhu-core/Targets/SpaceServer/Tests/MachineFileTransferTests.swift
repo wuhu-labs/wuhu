@@ -87,30 +87,70 @@ import Testing
     #expect(!token.isEmpty)
   }
 
-  /// A copy moves one piece per exchange on each side: a 100 MiB file of 4 MiB pieces is 25 of them, plus start, commit,
-  /// describe and terminal.
-  @Test func aHundredMiBCopyMovesInOnePieceExchanges() async throws {
+  /// What one exchange with a box carried.
+  enum Exchange: Hashable {
+    case describe, start(kind: String), piece(bytes: Int), inputEnd, commit, terminalAck
+    /// A poll answered without a piece: its hold ran out, or it brought the verdict or a channel's end.
+    case poll
+  }
+
+  static func exchange(_ request: Request, _ response: Response) async throws -> Exchange {
+    let path = Array(request.url.pathComponents.dropFirst(5))
+    switch (request.method, path.count) {
+    case (.get, 0): return .describe
+    case (.post, 2): return try await .start(kind: #require(request.body?.replay()).json(StartRequest.self).kind)
+    case (.get, 2):
+      if URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "terminalAck" }) == true { return .terminalAck }
+      let bytes = try await #require(response.body.replay()).json(OperationSnapshot.self).payload?.byteCount ?? 0
+      return bytes > 0 ? .piece(bytes: bytes) : .poll
+    case (.put, 4) where path[3] == "commit": return .commit
+    case (.put, 4) where path[3] == "data":
+      let write = try await #require(request.body?.replay()).json(WriteRequest.self)
+      if write.payload.byteCount > 0 { return .piece(bytes: write.payload.byteCount) }
+      #expect(write.end, "an empty input that does not end its channel")
+      return .inputEnd
+    default:
+      Issue.record("unexpected exchange \(request.method) \(request.url.path)")
+      return .poll
+    }
+  }
+
+  /// A copy moves one whole piece per exchange on each side: a 100 MiB file of 4 MiB pieces is 25 of them. Every other
+  /// exchange is one of a fixed few, except the polls whose holds a slow host lets run out.
+  @Test(.timeLimit(.minutes(1))) func aHundredMiBCopyMovesInOnePieceExchanges() async throws {
     let folder = try ScratchFolder("copy-hundred")
     let source = folder.url.appending(path: "source.bin").path, target = folder.url.appending(path: "target.bin").path
     let piece = 4 * 1024 * 1024
     var limits = OperationLimits()
     limits.filePieceBytes = piece
+    limits.leaseMs = 3_600_000
     let chunk = Data((0 ..< piece).map { UInt8(($0 * 7) % 251) })
     var content = Data(capacity: 25 * piece)
     for _ in 0 ..< 25 { content.append(chunk) }
     try content.write(to: URL(fileURLWithPath: source))
-    let exchanges = Mutex<[String: [String]]>([:])
-    let receipt = try await withMachines(["a": fileOperationKinds(), "b": fileOperationKinds()], limits: limits, intercept: { name, request in
-      exchanges.withLock { $0[name, default: []].append("\(request.method) \(request.url.path)") }
+    let exchanges = Mutex<[String: [Exchange: Int]]>([:])
+    let (acks, acked) = AsyncStream<Void>.makeStream()
+    let receipt = try await withMachines(["a": fileOperationKinds(), "b": fileOperationKinds()], limits: limits, interceptResponse: { name, request, response in
+      let exchange = try await Self.exchange(request, response)
+      if exchange != .poll { exchanges.withLock { $0[name, default: [:]][exchange, default: 0] += 1 } }
+      if exchange == .terminalAck { acked.yield() }
+      return response
     }) { transfer in
-      try await transfer.copy(from: .machine(a, path: source), to: .machine(b, path: target, replace: false))
+      let receipt = try await transfer.copy(from: .machine(a, path: source), to: .machine(b, path: target, replace: false))
+      // The copy returns on the target's verdict, before every terminal acknowledgement need have reached its box.
+      for await _ in acks.prefix(3) {}
+      return receipt
     }
     #expect(receipt.bytes == 25 * piece)
     #expect(receipt.sha256 == sha256(try Data(contentsOf: URL(fileURLWithPath: target))))
-    for (name, requests) in exchanges.withLock({ $0 }) {
-      // 25 pieces, plus the source's stat, describe, start, one control poll, commit and the terminal answers.
-      #expect(requests.count <= 34, "\(name) exchanged \(requests.count) times")
-    }
+    let counted = exchanges.withLock { $0 }
+    let sourced = try #require(counted["a"])
+    var landed = try #require(counted["b"])
+    #expect(sourced == [.describe: 1, .start(kind: "stat.v1"): 1, .start(kind: "read.v1"): 1, .piece(bytes: piece): 25, .terminalAck: 2], "\(sourced)")
+    // The data channel's end rides the last piece, or follows it alone when the source's end arrives after that piece.
+    let inputEnds = landed.removeValue(forKey: .inputEnd) ?? 0
+    #expect(inputEnds <= 1)
+    #expect(landed == [.describe: 1, .start(kind: "stagedWrite.v1"): 1, .piece(bytes: piece): 25, .commit: 1, .terminalAck: 1], "\(landed)")
   }
 
   /// A box that advertises today's limits keeps moving 64 KiB pieces: the piece is what it advertises, not a constant.

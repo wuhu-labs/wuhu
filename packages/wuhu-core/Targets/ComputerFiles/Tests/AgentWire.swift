@@ -3,11 +3,14 @@
 #else
   import Foundation
 #endif
+import ComputerFiles
+import ControlledTime
 import Crypto
 import Fetch
 import enum JSONValue.JSONValue
 import struct MachineContract.MachineEntry
 import OperationProtocol
+import OperationRuntime
 import Testing
 
 struct AgentWire: Sendable {
@@ -150,3 +153,10 @@ func sha256(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(for
 func decodeEntry(_ value: JSONValue) throws -> MachineEntry { try JSONDecoder().decode(MachineEntry.self, from: Data(value.jsonString().utf8)) }
 
 let leaseJumpRetention: Duration = .seconds(3600)
+
+/// A file agent whose time never moves: a search on a starved disk waits for it instead of reaching its deadline, and no lease lapses.
+func timelessAgent(files: ComputerFileSystem = .local) throws -> OperationAgent {
+  let clock = VirtualClock()
+  let time = OperationClock(now: { clock.now.offset }, sleep: { try await clock.sleep(for: $0) })
+  return try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files, searchClock: clock), clock: time, authorize: { _, _ in })
+}

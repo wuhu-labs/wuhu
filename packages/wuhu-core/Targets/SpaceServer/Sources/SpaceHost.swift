@@ -162,18 +162,20 @@ public actor SpaceHost {
       return SpaceHost(space: space, id: id, credentials: credentials, sockets: sockets, requests: requests, handler: owned, runBody: {
         await sessions.run()
       }, shutdownBody: {
-        await keyStreams.close()
-        await hub.callerScope.close()
-        await sessions.execution.quiesce()
-        await metricsWriter.close()
+        await shutdownStep("keyStreams") { await keyStreams.close() }
+        await shutdownStep("callerScope") { await hub.callerScope.close() }
+        await shutdownStep("execution") { await sessions.execution.quiesce() }
+        await shutdownStep("metricsWriter") { await metricsWriter.close() }
         var failure: (any Error)?
         if let devExport {
           do {
-            try await uncancellable("Export the space after serve has been cancelled") { try await space.exportFolder(devExport) }
+            try await shutdownStep("devExport") {
+              try await uncancellable("Export the space after serve has been cancelled") { try await space.exportFolder(devExport) }
+            }
           } catch { failure = error }
         }
-        do { try await space.close() } catch { if failure == nil { failure = error } }
-        do { try await webPushHTTPClient.shutdown() } catch { if failure == nil { failure = error } }
+        do { try await shutdownStep("space") { try await space.close() } } catch { if failure == nil { failure = error } }
+        do { try await shutdownStep("webPushHTTPClient") { try await webPushHTTPClient.shutdown() } } catch { if failure == nil { failure = error } }
         if let failure { throw failure }
       })
     }
@@ -213,13 +215,17 @@ public actor SpaceHost {
     background?.cancel()
     // Shutdown must finish even if its first caller is cancelled.
     let shutdown = try taskScope.run("space-shutdown") {
-      await requests.shutdown(sockets: sockets)
-      await background?.value
-      try await SpaceLogContext.$spaceID.withValue(id) { try await shutdownBody() }
+      try await SpaceLogContext.$spaceID.withValue(id) {
+        await shutdownStep("requests") { await requests.shutdown(sockets: sockets) }
+        await shutdownStep("background") { await background?.value }
+        try await shutdownStep("shutdownBody") { try await shutdownBody() }
+      }
     }
     shutdownTask = shutdown
     let result = await shutdown.result
-    await taskScope.close()
+    await SpaceLogContext.$spaceID.withValue(id) {
+      await shutdownStep("taskScope") { await taskScope.close() }
+    }
     try result.get()
   }
 }
@@ -253,4 +259,19 @@ func spaceOwnedHandler(handler: @escaping UpgradingHandler, requests: HostReques
       return .webSocket { socket in await sockets.run(session, socket: socket) }
     }
   }
+}
+
+private func shutdownStep(_ step: StaticString, _ body: @Sendable () async throws -> Void) async rethrows {
+  @Dependency(\.continuousClock) var clock
+  try await shutdownStep(step, clock: clock, body)
+}
+
+private func shutdownStep<C: Clock>(_ step: StaticString, clock: C, _ body: @Sendable () async throws -> Void) async rethrows where C.Duration == Duration {
+  let started = clock.now
+  defer {
+    let duration = started.duration(to: clock.now).components
+    let milliseconds = duration.seconds * 1000 + duration.attoseconds / 1_000_000_000_000_000
+    Logger(label: "wuhu.serve").info("space shutdown step=\(step) duration_ms=\(milliseconds)")
+  }
+  try await body()
 }

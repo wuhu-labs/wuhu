@@ -30,14 +30,14 @@ private final class TransactionSignals: Sendable {
 private struct WatchedDatabase: SharedDatabase {
   let base: WuweiDatabase
   let signals: TransactionSignals
-  func begin() throws -> any SharedTransaction {
+  func begin(label: String = "writer.begin") throws -> any SharedTransaction {
     if signals.watching.withLock({ $0 }) { signals.events.continuation.yield("begin") }
-    return try base.begin()
+    return try base.begin(label: label)
   }
 
-  func write(_ body: (OpaquePointer) throws -> Void) throws {
+  func write(label: String = "writer.write", _ body: (OpaquePointer) throws -> Void) throws {
     if signals.watching.withLock({ $0 }) { signals.events.continuation.yield("write") }
-    try base.write(body)
+    try base.write(label: label, body)
   }
 
   func beginRead() throws -> any SharedReadTransaction { try base.beginRead() }
@@ -130,7 +130,7 @@ extension JobTransactionTests {
     try database.write { handle in
       #expect(sqlite3_exec(handle, "CREATE TABLE probe (n INTEGER)", nil, nil, nil) == SQLITE_OK)
     }
-    try database.accessWriter { _ = sqlite3_commit_hook($0, { _ in 1 }, nil) }
+    try database.accessWriter(label: "test.writer") { _ = sqlite3_commit_hook($0, { _ in 1 }, nil) }
     let failed = try database.begin()
     try failed.access { handle in
       #expect(sqlite3_exec(handle, "INSERT INTO probe VALUES (1)", nil, nil, nil) == SQLITE_OK)
@@ -138,7 +138,7 @@ extension JobTransactionTests {
     #expect { try failed.commit() } throws: { error in
       ((error as? TransactionEnded)?.cause as? SQLiteError)?.code == (SQLITE_CONSTRAINT | (2 << 8))
     }
-    try database.accessWriter { _ = sqlite3_commit_hook($0, nil, nil) }
+    try database.accessWriter(label: "test.writer") { _ = sqlite3_commit_hook($0, nil, nil) }
     let rollback = try database.begin()
     try rollback.access { handle in
       #expect(sqlite3_exec(handle, "INSERT INTO probe VALUES (2)", nil, nil, nil) == SQLITE_OK)

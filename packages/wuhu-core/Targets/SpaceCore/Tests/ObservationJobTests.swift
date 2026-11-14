@@ -430,7 +430,7 @@ private final class StatementGate: Sendable {
   func arm() { state.withLock { $0.armed = true } }
 
   func install(on database: WuweiDatabase) throws {
-    try database.accessWriter { handle in
+    try database.accessWriter(label: "test.writer") { handle in
       let context = Unmanaged.passRetained(self).toOpaque()
       let code = sqlite3_set_clientdata(handle, "test.statement-gate", context) { Unmanaged<StatementGate>.fromOpaque($0!).release() }
       precondition(code == SQLITE_OK)

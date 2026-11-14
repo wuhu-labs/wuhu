@@ -522,8 +522,8 @@ import Testing
   @Test func fileBackedWriterHasThePageCache() async throws {
     let folder = try ScratchFolder("page-cache")
     let space = try Space.open(file: folder.url.appending(path: "space.sqlite"))
-    #expect(try space.database.accessWriter { try MigrationDB(handle: $0).int("PRAGMA cache_size") } == -PageCache.writerKiB)
-    let (mmap, cap) = try space.database.accessWriter { handle in
+    #expect(try space.database.accessWriter(label: "test.writer") { try MigrationDB(handle: $0).int("PRAGMA cache_size") } == -PageCache.writerKiB)
+    let (mmap, cap) = try space.database.accessWriter(label: "test.writer") { handle in
       let db = MigrationDB(handle: handle)
       return try (db.int("PRAGMA mmap_size"), db.string(Self.mmapCap))
     }
@@ -536,7 +536,7 @@ import Testing
   @Test func fileBackedWriterDoesNotZeroFreedPages() async throws {
     let folder = try ScratchFolder("secure-delete")
     let space = try Space.open(file: folder.url.appending(path: "space.sqlite"))
-    #expect(try space.database.accessWriter { try MigrationDB(handle: $0).int("PRAGMA secure_delete") } == 0)
+    #expect(try space.database.accessWriter(label: "test.writer") { try MigrationDB(handle: $0).int("PRAGMA secure_delete") } == 0)
     try await space.close()
   }
 

@@ -162,7 +162,7 @@ public actor ResponsesWebSocketSession {
       await receiveHeaders(RequestHeaders(connection.responseHeaders).values)
       try Task.checkCancellation()
       guard generation == currentGeneration, inFlight == token else { throw WebSocketError.connectionClosed }
-      let events = ResponsesEventBuffer()
+      let events = ResponsesEventBuffer(limit: request.handshake.limits.bufferedReceiveBytes)
       active = ActiveResponse(events: events, validator: .init(), observer: observer, receiveHeaders: receiveHeaders, subattempt: subattempt)
       await observer.request(subattempt, request.handshake.headers, .object(body))
       try Task.checkCancellation()
@@ -361,6 +361,7 @@ private struct SocketIdentity: Equatable, Sendable {
   var credentials: [String: String]
   var replayScope: String?
   var routeEpoch: String?
+  var limits: WebSocketLimits
 
   init(request: ResponsesSocketRequest, providerID: String, model: String) {
     self.providerID = providerID
@@ -370,5 +371,6 @@ private struct SocketIdentity: Equatable, Sendable {
     url = request.handshake.url
     headers = request.handshake.headers.values
     credentials = request.handshake.headers.sensitiveValues
+    limits = request.handshake.limits
   }
 }

@@ -17,7 +17,7 @@ import Testing
 
 @Suite(.timeLimit(.minutes(2))) struct MetadataOperationTests {
   func withClient<T: Sendable>(files: ComputerFileSystem = .local, fetch: (@Sendable (Request, @escaping @Sendable (Request) async throws -> Response) async throws -> Response)? = nil, body: (AgentWire) async throws -> T) async throws -> T {
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
+    let agent = try timelessAgent(files: files)
     let client = AgentWire { request in
       if let fetch { return try await fetch(request, agent.handler) }
       return try await agent.handler(request)
@@ -194,7 +194,7 @@ extension MetadataOperationTests {
     let folder = try ScratchFolder("metadata-abort")
     let path = folder.url.appending(path: "file").path
     try Data("original".utf8).write(to: URL(fileURLWithPath: path))
-    let time = MetadataTime()
+    let time = FileLocalTime()
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
     let client = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
@@ -361,12 +361,6 @@ extension MetadataOperationTests {
   }
 }
 
-private final class MetadataTime: Sendable {
-  private let value = Mutex<Duration>(.zero)
-  var clock: OperationClock { .init(now: { self.value.withLock { $0 } }, sleep: { try await OperationClock.continuous.sleep($0) }) }
-  func advance(_ duration: Duration) { value.withLock { $0 += duration } }
-}
-
 extension MetadataOperationTests {
   @Test(arguments: ["sync-stop", "sync-lease", "rename-stop", "rename-lease"])
   func renameCommitPointDeterminesVerdictWhenStoppedDuringCommit(_ action: String) async throws {
@@ -392,7 +386,7 @@ extension MetadataOperationTests {
       }, mkdir: local.mkdir, remove: local.remove, move: local.move)
     }
     let files = ComputerFileSystem(status: ComputerFileSystem.local.status, read: ComputerFileSystem.local.read, search: ComputerFileSystem.local.search, operations: operations)
-    let time = MetadataTime()
+    let time = FileLocalTime()
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
     // A stop is durable intent; the commit is released only once the machine holds it.
     let (stopped, stopAnswered) = AsyncStream<Void>.makeStream()

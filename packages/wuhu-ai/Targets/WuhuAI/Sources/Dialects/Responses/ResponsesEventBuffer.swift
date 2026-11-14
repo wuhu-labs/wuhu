@@ -6,7 +6,7 @@ final class ResponsesEventBuffer: Sendable {
   private let continuation: AsyncThrowingStream<SSEEvent, any Error>.Continuation
   private let bytes: ResponsesBufferedBytes
   private let terminal = Mutex<Completion?>(nil)
-  private let limit = responsesWebSocketByteLimit
+  private let limit: Int
 
   struct Completion: Sendable {
     var responseID: String
@@ -20,7 +20,8 @@ final class ResponsesEventBuffer: Sendable {
     continuation.finish()
   }
 
-  init() {
+  init(limit: Int) {
+    self.limit = limit
     let events = AsyncThrowingStream<SSEEvent, any Error>.makeStream()
     let bytes = ResponsesBufferedBytes()
     self.bytes = bytes

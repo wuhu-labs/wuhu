@@ -95,6 +95,7 @@ final class Incarnation {
     if case let .stretch(transaction) = open { transaction } else { nil }
   }
 
+  private let writerLabel: String
   private let schema: [String]
   private let lifecycle: Lifecycle
 
@@ -127,12 +128,13 @@ final class Incarnation {
   private var leaving: [CheckedContinuation<Void, Never>] = []
   private var left = false
 
-  init(address: String, key: String, lease: Lease, pageCount: UInt32, wakeAt: Instant?, worker: Worker, schema: [String], lifecycle: Lifecycle) throws {
+  init(address: String, key: String, lease: Lease, pageCount: UInt32, wakeAt: Instant?, worker: Worker, writerLabel: String, schema: [String], lifecycle: Lifecycle) throws {
     self.address = address
     self.key = key
     self.lease = lease
     self.wakeAt = wakeAt
     self.worker = worker
+    self.writerLabel = writerLabel
     self.schema = schema
     self.lifecycle = lifecycle
     if worker.store.file != nil {
@@ -252,7 +254,7 @@ final class Incarnation {
       if stretch == nil {
         finishReading()
         Lane.preconditionNoWriter("begin another writer transaction")
-        open = .stretch(try worker.store.database.begin())
+        open = .stretch(try worker.store.database.begin(label: writerLabel))
         Lane.beganWriter()
       }
       try accessOpen { try $0.write(sql, arguments).get() }
@@ -330,7 +332,7 @@ final class Incarnation {
     var epoch: Epoch?
     let value: T
     do {
-      value = try worker.store.write(owner: key) { db in
+      value = try worker.store.write(label: writerLabel, owner: key) { db in
         open = .call(db)
         defer { open = nil }
         let value = try body()

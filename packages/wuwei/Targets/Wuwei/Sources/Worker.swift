@@ -5,24 +5,25 @@ import Synchronization
 /// The addressable types a worker can host.
 public struct Registration: Sendable {
   let kind: String
+  let writerLabel: String
   let isJob: Bool
   let schema: [String]
   let owned: [String: String]
   let lifecycle: @Sendable (Claim) -> Lifecycle
 
   public static func cell<C: Cell>(_: C.Type) -> Registration {
-    Registration(kind: C.kind, isJob: false, schema: C.schema, owned: C.owned) { _ in .cell(C.self) }
+    Registration(kind: C.kind, writerLabel: "cell:\(C.kind)", isJob: false, schema: C.schema, owned: C.owned) { _ in .cell(C.self) }
   }
 
   public static func job<J: Job>(_: J.Type) -> Registration {
-    Registration(kind: J.kind, isJob: true, schema: J.schema, owned: J.owned) { .job(J.self, row: $0.job!) }
+    Registration(kind: J.kind, writerLabel: "job:\(J.kind)", isJob: true, schema: J.schema, owned: J.owned) { .job(J.self, row: $0.job!) }
   }
 
   func host(_ worker: Worker, _ claim: Claim) throws -> Host {
     try Host(
       Incarnation(
         address: "\(kind)/\(claim.key)", key: claim.key, lease: claim.lease, pageCount: claim.pageCount, wakeAt: claim.wakeAt,
-        worker: worker, schema: schema, lifecycle: lifecycle(claim),
+        worker: worker, writerLabel: writerLabel, schema: schema, lifecycle: lifecycle(claim),
       ),
       scheduler: worker.scheduler,
     )
@@ -294,13 +295,17 @@ public final class Worker: Sendable {
   public func quiesce() async {
     let task = hosts.withLock { hosts in
       if let task = hosts.quiescence { return task }
+      let holding = scheduler.now
       store.holdLeases()
+      log.info("worker quiesce step=holdLeases duration_ms=\((scheduler.now - holding).milliseconds)")
       hosts.claiming = false
+      let draining = scheduler.now
       do {
-        try store.write { try $0.execute("UPDATE wuwei_addressable SET draining = 1 WHERE holder = ? AND expires_at > ?", .text(id), .integer(scheduler.now.milliseconds)) }
+        try store.write(label: "worker.draining") { try $0.execute("UPDATE wuwei_addressable SET draining = 1 WHERE holder = ? AND expires_at > ?", .text(id), .integer(scheduler.now.milliseconds)) }
       } catch {
         preconditionFailure("could not mark the leases of \(id) draining: \(error)")
       }
+      log.info("worker quiesce step=draining duration_ms=\((scheduler.now - draining).milliseconds)")
       for hold in hosts.holds.values { hold.wake.finish() }
       hosts.holds = [:]
       let startsMaintenance = !hosts.scanning
@@ -331,7 +336,7 @@ public final class Worker: Sendable {
     maintaining.withLock { maintaining in
       if !maintaining { return }
       do {
-        try store.write { try $0.execute("UPDATE wuwei_addressable SET expires_at = 0 WHERE holder = ?", .text(id)) }
+        try store.write(label: "worker.release") { try $0.execute("UPDATE wuwei_addressable SET expires_at = 0 WHERE holder = ?", .text(id)) }
       } catch {
         preconditionFailure("could not release the leases of \(id): \(error)")
       }
@@ -407,7 +412,7 @@ public final class Worker: Sendable {
   /// Takes a free or expired lease, or one this worker held before, bumping the fence so that no earlier holder, an earlier incarnation here included, can commit again. Mail that reaches a finished job is dropped here.
   private func claim(_ address: String, key: String, isJob: Bool) throws -> Claim? {
     let now = scheduler.now
-    return try store.write { db in
+    return try store.write(label: "worker.claim") { db in
       var job: JobRow?
       if isJob {
         guard let row = try db.rows("SELECT phase, params, creator FROM wuwei_job WHERE address = ?", .text(address)).first else { return nil }
@@ -440,7 +445,7 @@ public final class Worker: Sendable {
     let again = maintaining.withLock { maintaining in
       guard maintaining else { return false }
       do {
-        try store.write {
+        try store.write(label: "worker.scan.renewLeases") {
           try $0.execute(
             "UPDATE wuwei_addressable SET expires_at = ? WHERE holder = ? AND expires_at > ?",
             .integer((now + options.leaseDuration).milliseconds), .text(id), .integer(now.milliseconds),

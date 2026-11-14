@@ -67,7 +67,7 @@ struct SpaceIdentityTests {
     let file = scratch.url.appendingPathComponent("space.sqlite")
 
     let space = try Space.open(file: file)
-    let mode = try space.database.accessWriter { try MigrationDB(handle: $0).string("PRAGMA journal_mode") }
+    let mode = try space.database.accessWriter(label: "test.writer") { try MigrationDB(handle: $0).string("PRAGMA journal_mode") }
     #expect(mode == "wal")
     try await space.close()
   }

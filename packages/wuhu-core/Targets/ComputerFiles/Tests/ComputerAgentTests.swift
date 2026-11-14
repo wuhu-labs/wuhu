@@ -39,7 +39,7 @@ private final class FakeExternal: Sendable {
   }
 }
 
-@Suite struct ComputerAgentTests {
+@Suite(.timeLimit(.minutes(2))) struct ComputerAgentTests {
   let base = "https://agent/machine/v2/machines/disk"
 
   func start(_ agent: ComputerAgent, _ id: UUID = UUID(), kind: String, input: JSONValue) async throws -> Response {
@@ -131,28 +131,31 @@ private final class FakeExternal: Sendable {
   @Test func concurrentExternalStartsShareOneBudget() async throws {
     let reservation = OperationLimits().bufferBytes * 2 / 5
     let routed = Mutex<Set<UUID>>([])
-    let held = Mutex(true)
+    let (arrivals, arrived) = AsyncStream<Void>.makeStream()
+    let held = Signal()
     let descriptor = KindDescriptor("external.v1", inputSchema: ["type": "object"], resultSchema: ["type": "object"])
     let external = ExternalKind(
       descriptor: descriptor, reservation: reservation,
       handler: { request in
         routed.withLock { _ = $0.insert(UUID(uuidString: request.url.lastPathComponent)!) }
-        while held.withLock({ $0 }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+        arrived.yield()
+        await held.wait()
         return try .json(["routed": "external"], status: .created)
       },
       usage: { ExternalUsage(operations: Dictionary(uniqueKeysWithValues: routed.withLock { $0 }.map { ($0, reservation) })) },
       owns: { id in routed.withLock { $0.contains(id) } },
     )
     let agent = try ComputerAgent(machine: "disk", external: external)
+    var arrival = arrivals.makeAsyncIterator()
     let first = Task { try await start(agent, kind: "external.v1", input: [:]) }
-    while routed.withLock({ $0.isEmpty }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    await arrival.next()
     // The first is both pending and routed: charged once, so the second fits; a third does not.
     let second = Task { try await start(agent, kind: "external.v1", input: [:]) }
-    while routed.withLock({ $0.count < 2 }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    await arrival.next()
     let third = try await start(agent, kind: "external.v1", input: [:]).body.json(ErrorEnvelope.self).error
     #expect(third.code == .capacityExceeded)
     #expect(third.message.hasPrefix("bufferBytes "))
-    held.withLock { $0 = false }
+    held.fire()
     #expect(try await first.value.status.code == 201)
     #expect(try await second.value.status.code == 201)
     await agent.shutdown()
@@ -163,8 +166,8 @@ private final class FakeExternal: Sendable {
   @Test func startsDuringASlowUsageProbeAreRefusedOnlyPastTheBudget() async throws {
     let reservation = OperationLimits().bufferBytes * 2 / 5
     let routed = Mutex<Set<UUID>>([])
-    let parked = Mutex(0)
-    let gate = Mutex(true)
+    let (parkings, parked) = AsyncStream<Void>.makeStream()
+    let gate = Signal()
     let descriptor = KindDescriptor("external.v1", inputSchema: ["type": "object"], resultSchema: ["type": "object"])
     let external = ExternalKind(
       descriptor: descriptor, reservation: reservation,
@@ -173,16 +176,16 @@ private final class FakeExternal: Sendable {
         return try .json(["routed": "external"], status: .created)
       },
       usage: {
-        parked.withLock { $0 += 1 }
-        while gate.withLock({ $0 }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+        parked.yield()
+        await gate.wait()
         return ExternalUsage(operations: Dictionary(uniqueKeysWithValues: routed.withLock { $0 }.map { ($0, reservation) }))
       },
       owns: { id in routed.withLock { $0.contains(id) } },
     )
     let agent = try ComputerAgent(machine: "disk", external: external)
     let starts = (0 ..< 3).map { _ in Task { try await start(agent, kind: "external.v1", input: [:]) } }
-    while parked.withLock({ $0 }) < 3 { try await ContinuousClock().sleep(for: .milliseconds(1)) }
-    gate.withLock { $0 = false }
+    for await _ in parkings.prefix(3) {}
+    gate.fire()
     var admitted = 0
     for start in starts {
       let response = try await start.value
@@ -256,9 +259,8 @@ extension ComputerAgentTests {
       external.usage.withLock { $0.receipts = OperationLimits().receipts }
       let hung = try #require(try await usedReceipts())
       disk.release()
-      let deadline = ContinuousClock().now.advanced(by: .seconds(2))
       var used = hung
-      while used == hung, ContinuousClock().now < deadline { used = try #require(try await usedReceipts()) }
+      while used == hung { try Task.checkCancellation(); await Task.yield(); used = try #require(try await usedReceipts()) }
       #expect(used == hung - 1)
       await agent.shutdown()
     }

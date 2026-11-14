@@ -3,8 +3,8 @@ import GRDBSQLite
 /// The database the outer tables live in, and on the shared backend every addressable's tables too: one writer, any number of readers, whose connections the host program may own. Every connection runs ``prepareConnection(_:)`` once, when it opens.
 public protocol SharedDatabase: Sendable {
   /// One write transaction on the writer: committed if `body` returns, rolled back if it throws.
-  func write(_ body: (OpaquePointer) throws -> Void) throws
-  func begin() throws -> any SharedTransaction
+  func write(label: String, _ body: (OpaquePointer) throws -> Void) throws
+  func begin(label: String) throws -> any SharedTransaction
   /// One read transaction, never on the writer: a read may run while a write is open.
   func read(_ body: (OpaquePointer) throws -> Void) throws
   func beginRead() throws -> any SharedReadTransaction
@@ -23,6 +23,9 @@ public protocol SharedReadTransaction: AnyObject {
 }
 
 extension SharedDatabase {
+  public func write(_ body: (OpaquePointer) throws -> Void) throws { try write(label: "writer.write", body) }
+  public func begin() throws -> any SharedTransaction { try begin(label: "writer.begin") }
+
   public func read(_ body: (OpaquePointer) throws -> Void) throws {
     try beginRead().access(body)
   }
@@ -82,12 +85,12 @@ public final class FileDatabase: SharedDatabase {
     "CREATE TABLE IF NOT EXISTS wuwei_schema (kind TEXT PRIMARY KEY, applied INTEGER NOT NULL)",
   ]
 
-  public func write(_ body: (OpaquePointer) throws -> Void) throws {
-    try writer.write(body)
+  public func write(label: String = "writer.write", _ body: (OpaquePointer) throws -> Void) throws {
+    try writer.write(label: label, body)
   }
 
-  public func begin() throws -> any SharedTransaction {
-    try writer.begin()
+  public func begin(label: String = "writer.begin") throws -> any SharedTransaction {
+    try writer.begin(label: label)
   }
 
   public func beginRead() throws -> any SharedReadTransaction {

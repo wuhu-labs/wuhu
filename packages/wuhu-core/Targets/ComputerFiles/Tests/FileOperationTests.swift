@@ -18,7 +18,7 @@ import Testing
 @Suite(.timeLimit(.minutes(2))) struct FileOperationTests {
   /// Runs one operation of `kind` to its end and returns its output on its one output channel.
   func run(_ input: JSONValue, kind: String, channel _: String, files: ComputerFileSystem) async throws -> (Data, [JSONValue], Ending) {
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
+    let agent = try timelessAgent(files: files)
     let operations = AgentWire(agent.handler)
     return try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
@@ -61,7 +61,7 @@ import Testing
       read: { _, _, count in Data(repeating: 7, count: count) },
       search: { _ in NoFiles() },
     )
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
+    let agent = try timelessAgent(files: files)
     func reserved(_ path: String) async throws -> Int? {
       let id = UUID()
       let url = URL(string: "https://agent/machine/v2/machines/disk/operations/\(id.uuidString)")!
@@ -75,7 +75,7 @@ import Testing
 
   @Test func fullReadWindowSuspendsEffectsAndControlStopStillAnswers() async throws {
     let files = FakeFiles(data: Data(repeating: 42, count: 1024 * 1024))
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
+    let agent = try timelessAgent(files: files.system)
     let operations = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
@@ -217,7 +217,7 @@ extension FileOperationTests {
   @Test func queryErrorsRefuseAtAdmissionWithTheirCode() async throws {
     let touched = Mutex(0)
     let files = ComputerFileSystem.local(beforeOpen: { _ in touched.withLock { $0 += 1 } })
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
+    let agent = try timelessAgent(files: files)
     for (query, code) in [(SearchQuery(mode: .grep, pattern: "[", root: "/", scope: "test"), "invalidPattern"), (.init(mode: .find, pattern: "[", root: "/", scope: "test"), "invalidGlob"), (.init(mode: .find, pattern: "*", root: "/", scope: "test", limit: 0), "invalidLimit"), (.init(mode: .find, pattern: "*", root: "/", scope: "test", step: "nope"), "invalidStep")] {
       let url = URL(string: "https://test.invalid/machine/v2/machines/disk/operations/\(UUID())")!
       let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "search.v1", input: json(query)))))
@@ -283,6 +283,14 @@ extension FileOperationTests {
     #expect(clock.now == VirtualClock.at(SearchLimits.deadline))
   }
 
+  @Test func aStalledReadReleasedStillReturnsItsHits() async throws {
+    let (folder, disk) = try stalledFolder("computer-files-stall-release")
+    let search = Task { try await page(.init(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test"), files: disk.files) }
+    for await _ in disk.entered {}
+    disk.release()
+    #expect(try await search.value.hits == [.init(path: disk.path, line: 1, text: "needle")])
+  }
+
   @Test(arguments: ["stop", "lease"])
   func stopOrLeaseEndsASearchStalledOnARead(_ action: String) async throws {
     let (folder, disk) = try stalledFolder("computer-files-stall-\(action)")
@@ -345,7 +353,7 @@ private struct PathologicalLine: SearchSource, SearchReader {
 }
 
 /// Opens once, for every waiter, now and later.
-private final class Signal: Sendable {
+final class Signal: Sendable {
   private let stream: AsyncStream<Void>
   private let continuation: AsyncStream<Void>.Continuation
   init() { (stream, continuation) = AsyncStream.makeStream() }
@@ -377,9 +385,10 @@ struct NoFiles: SearchSource {
   func isHidden(_: String) -> Bool { false }
 }
 
+/// Agent time that jumps only when told; nothing sleeping on it ever wakes.
 final class FileLocalTime: Sendable {
-  let value = Mutex<Duration>(.zero)
-  /// Agent time that jumps only when told; held polls still wait in real time.
-  var clock: OperationClock { .init(now: { self.value.withLock { $0 } }, sleep: { try await OperationClock.continuous.sleep($0) }) }
+  private let value = Mutex<Duration>(.zero)
+  private let sleeps = VirtualClock()
+  var clock: OperationClock { .init(now: { self.value.withLock { $0 } }, sleep: { try await self.sleeps.sleep(for: $0) }) }
   func advance(_ duration: Duration) { value.withLock { $0 += duration } }
 }

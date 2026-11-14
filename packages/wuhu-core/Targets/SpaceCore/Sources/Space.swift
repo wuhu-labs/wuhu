@@ -40,7 +40,7 @@ public actor Space {
     @Dependency(\.date) var date
     identityCache = try SpaceMeta.prepare(database, identity: identity, log: log, date: date)
     if database.journalMode == .wal {
-      try database.accessWriter { SlowStatement.trace(on: $0, connection: "writer", to: log) }
+      try database.accessWriter(label: "space.slowTrace") { SlowStatement.trace(on: $0, connection: "writer", to: log) }
     }
     @Dependency(\.continuousClock) var clock
     @Dependency(\.withRandomNumberGenerator) var rng

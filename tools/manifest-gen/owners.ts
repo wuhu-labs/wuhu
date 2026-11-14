@@ -1,5 +1,6 @@
 import { join, normalize } from '@std/path'
 import { parse } from '@std/yaml'
+import { testArchiveRepos, type TestArchives } from './archives.ts'
 import { moduleFragmentRepos, packageModuleFragment } from './module.ts'
 
 // docs/repo-layout.md laws 2 and 3. `shared` and `wuhu` are public and are
@@ -149,11 +150,16 @@ async function childDirs(dir: string): Promise<string[]> {
   return dirs.sort()
 }
 
+interface ManifestDoc {
+  owner?: unknown
+  tests?: { archives?: TestArchives } | false
+}
+
 async function yamlFiles(
   dir: string,
   name: string,
-): Promise<{ path: string; doc: { owner?: unknown } }[]> {
-  const docs: { path: string; doc: { owner?: unknown } }[] = []
+): Promise<{ path: string; doc: ManifestDoc }[]> {
+  const docs: { path: string; doc: ManifestDoc }[] = []
   for (const child of await childDirs(dir)) {
     const path = join(child, name)
     const text = await readTextIfPresent(path)
@@ -201,7 +207,14 @@ export async function discoverOwnedPackages(
     packages.push({
       dir,
       owner: manifest.owner,
-      repos: fragment === undefined ? [] : moduleFragmentRepos(fragment),
+      repos: [
+        ...(fragment === undefined ? [] : moduleFragmentRepos(fragment)),
+        ...targets.flatMap((target) =>
+          testArchiveRepos(
+            target.doc.tests ? target.doc.tests.archives : undefined,
+          )
+        ),
+      ],
       references: [
         ...paths,
         ...referencedLabelPackages([

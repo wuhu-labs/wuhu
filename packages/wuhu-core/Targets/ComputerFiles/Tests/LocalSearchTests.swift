@@ -4,6 +4,7 @@
   import Foundation
 #endif
 @testable import ComputerFiles
+import ControlledTime
 import FileSearch
 #if os(Linux)
   import Glibc
@@ -13,7 +14,7 @@ import FileSearch
 import Scratch
 import Testing
 
-@Suite struct LocalSearchTests {
+@Suite(.timeLimit(.minutes(2))) struct LocalSearchTests {
   @Test func aDirectoryLargerThanAPageIsWalkedWholeAcrossPages() async throws {
     let folder = try ScratchFolder("local-search-paging")
     let names = (0 ..< 10010).map { "f" + String(100_000 + $0).dropFirst() }
@@ -22,7 +23,7 @@ import Testing
     var found: [String] = []
     var step: String?
     repeat {
-      let page = try await SearchQuery(mode: .find, pattern: "*", root: folder.url.path, scope: "test", limit: 1000, step: step).run(in: source)
+      let page = try await SearchQuery(mode: .find, pattern: "*", root: folder.url.path, scope: "test", limit: 1000, step: step).run(in: source, clock: VirtualClock())
       found += page.hits.map { String($0.path.split(separator: "/").last!) }
       step = page.cursor
     } while step != nil

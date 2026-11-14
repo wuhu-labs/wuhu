@@ -28,7 +28,7 @@ final class ForeignCommits: Sendable {
   /// The value now and every table of the database, when a commit by another connection moved it since `version`; nil when nothing did.
   private func commit(since version: Int) -> (version: Int, tables: Set<String>)? {
     do {
-      return try database.accessWriter { handle in
+      return try database.accessWriter(label: "space.foreignCommits") { handle in
         let db = MigrationDB(handle: handle)
         let current = try Self.dataVersion(db)
         guard current != version else { return nil }
@@ -40,7 +40,7 @@ final class ForeignCommits: Sendable {
   }
 
   private static func dataVersion(_ database: WuweiDatabase) throws -> Int {
-    try database.accessWriter { try dataVersion(MigrationDB(handle: $0)) }
+    try database.accessWriter(label: "space.foreignCommits") { try dataVersion(MigrationDB(handle: $0)) }
   }
 
   private static func dataVersion(_ db: MigrationDB) throws -> Int {

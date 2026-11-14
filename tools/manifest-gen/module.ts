@@ -59,6 +59,18 @@ export function renderModuleBazel(options: {
   pinned: ReadonlySet<string>
   strict: boolean
 }): string {
+  const declared = new Map<string, string>()
+  for (const fragment of options.packageModules) {
+    for (const repo of moduleFragmentRepos(fragment.text)) {
+      const previous = declared.get(repo)
+      if (previous !== undefined) {
+        throw new Error(
+          `${fragment.source} declares ${repo}, which ${previous} already declares.`,
+        )
+      }
+      declared.set(repo, fragment.source)
+    }
+  }
   const configure: string[] = []
   for (const fragment of options.configure) {
     const repo = configureFragmentRepo(fragment)

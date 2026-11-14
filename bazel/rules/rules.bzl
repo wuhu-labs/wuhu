@@ -21,6 +21,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_swift_package_manager//swiftpkg:build_defs.bzl", "resource_bundle_infoplist")
 load(":docc.bzl", _wuhu_docc_archive = "wuhu_docc_archive", _wuhu_docc_site = "wuhu_docc_site")
+load(":imported_frameworks.bzl", "host_test_frameworks")
 load(":sim_runner.bzl", "wuhu_sim_test_runner")
 
 def wuhu_docc_archive(**kwargs):
@@ -565,13 +566,14 @@ def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, proce
     copy_resources = copy_resources or []
     process_resources = process_resources or []
     resource_srcs, data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources, _manual_tags(kwargs.get("tags")))
+    frameworks, frameworks_rpath = host_test_frameworks(name, deps, tags = _manual_tags(kwargs.get("tags")), target_compatible_with = kwargs.get("target_compatible_with"))
 
     swift_test(
         name = name,
         srcs = srcs + resource_srcs,
         copts = _swift_6_copts(kwargs) + floor_copts,
         swiftc_inputs = floor_inputs,
-        data = data + copy_resources + (extra_data or []),
+        data = data + copy_resources + (extra_data or []) + [frameworks],
         deps = deps,
         env = {"SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH": WUHU_SWIFT_TEST_WIDTH} | kwargs.pop("env", {}),
         module_name = name.replace("-", "_"),
@@ -582,7 +584,7 @@ def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, proce
                 "-Wl,--undefined=$s25IssueReportingTestSupport07_recordA0ypyF",
                 "-Wl,--export-dynamic",
             ],
-            "//conditions:default": [],
+            "//conditions:default": [frameworks_rpath],
         }),
         **kwargs
     )

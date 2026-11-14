@@ -223,12 +223,15 @@ import WuhuAI
       let sid = try await createRequestedTask(in: space, title: "quiet timer")
       try await runService(service) { _ in
         try await sessions.openParentRequest(on: sid)
-        try await until("handler timer does not suppress park reminder") {
-          guard script.count == 3 else { return false }
-          return try await sessions.settledWork(sid)
+        // The handler slot's row is written by its observer cell once that cell reads the arming, after the tool call returns.
+        try await until("the exchange settles and the handler timer is armed") {
+          guard script.count == 3, try await sessions.settledWork(sid) else { return false }
+          return try await sessions.armedSubscriptions(sid).count == 1
         }
-        #expect(try await sessions.armedSubscriptions(sid).count == 1)
-        #expect(Self.parkNotices(try await sessions.lines(sid)) == 1)
+        let armed = try await sessions.armedSubscriptions(sid)
+        #expect(armed.map(\.slot.id) == [timerID])
+        let parks = Self.parkNotices(try await sessions.lines(sid))
+        #expect(parks == 1)
       }
     }
   }

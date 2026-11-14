@@ -24,17 +24,17 @@ private final class StretchDatabase: SharedDatabase {
     )
   }
 
-  func write(_ body: (OpaquePointer) throws -> Void) throws {
+  func write(label: String = "writer.write", _ body: (OpaquePointer) throws -> Void) throws {
     var snapshot: StretchSnapshot?
-    try file.write { handle in
+    try file.write(label: label) { handle in
       try body(handle)
       snapshot = try Self.snapshot(handle)
     }
     if let snapshot { commits.withLock { $0.append(snapshot) } }
   }
 
-  func begin() throws -> any SharedTransaction {
-    StretchTransaction(base: try file.begin(), database: self)
+  func begin(label: String = "writer.begin") throws -> any SharedTransaction {
+    StretchTransaction(base: try file.begin(label: label), database: self)
   }
 
   func beginRead() throws -> any SharedReadTransaction { try file.beginRead() }

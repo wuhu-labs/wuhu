@@ -144,9 +144,9 @@ private final class BootLossDatabase: SharedDatabase {
     }
   }
 
-  func write(_ body: (OpaquePointer) throws -> Void) throws { try file.write(body) }
+  func write(label: String = "writer.write", _ body: (OpaquePointer) throws -> Void) throws { try file.write(label: label, body) }
   func beginRead() throws -> any SharedReadTransaction { try file.beginRead() }
-  func begin() throws -> any SharedTransaction { try file.begin() }
+  func begin(label: String = "writer.begin") throws -> any SharedTransaction { try file.begin(label: label) }
 }
 
 private final class BootFailure {

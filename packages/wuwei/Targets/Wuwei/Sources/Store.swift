@@ -20,13 +20,13 @@ final class OuterStore: Sendable {
   }
 
   /// One write transaction, with `cell()` returning `owner`.
-  func write<T>(owner: String? = nil, _ body: (Connection) throws -> T) throws -> T {
+  func write<T>(label: String = "store.write", owner: String? = nil, _ body: (Connection) throws -> T) throws -> T {
     Lane.preconditionNoWriter("acquire the writer through an outside path")
     var result: T?
     var writingThread: UInt?
     // The host runs its commit hooks after the callback returns, still on the writer.
     defer { if let writingThread { Lane.endedWriter(writingThread) } }
-    try database.write { handle in
+    try database.write(label: label) { handle in
       writingThread = Lane.beganWriter()
       result = try Self.borrow(handle: handle, owner: owner, body)
     }
@@ -66,7 +66,7 @@ final class OuterStore: Sendable {
 
   func holdLeases() {
     do {
-      try write { _ in holdingLeases.withLock { $0 = true } }
+      try write(label: "worker.holdLeases") { _ in holdingLeases.withLock { $0 = true } }
     } catch {
       preconditionFailure("could not hold leases during quiescence: \(error)")
     }

@@ -15,7 +15,7 @@ import WuweiQueries
 
 private func tracedMachineSpace(_ statements: Box<[String]>) throws -> Space {
   let space = try Space.inMemory()
-  try space.database.accessWriter { handle in
+  try space.database.accessWriter(label: "test.writer") { handle in
     let context = Unmanaged.passRetained(statements).toOpaque()
     let code = sqlite3_set_clientdata(handle, "test.machine-statements", context) { Unmanaged<Box<[String]>>.fromOpaque($0!).release() }
     precondition(code == SQLITE_OK)
@@ -58,7 +58,7 @@ extension MachineCellTests {
       }
       let frameReads = statements.value.filter { $0.hasPrefix("SELECT") && $0.contains("\"machine_operations\"") }
       #expect(frameReads.count == 3)
-      let measures = try space.database.accessWriter { handle in
+      let measures = try space.database.accessWriter(label: "test.writer") { handle in
         let db = MigrationDB(handle: handle)
         return try frameReads.map { sql in
           let sql = sql.replacingOccurrences(of: "cell()", with: "'test-machine'")

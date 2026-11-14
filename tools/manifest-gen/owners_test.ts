@@ -128,7 +128,7 @@ Deno.test('discovery reads Swift and deno owners and their edges', async () => {
     await writeFile(
       root,
       'core/Targets/Server/target.yml',
-      'name: Server\nembeddedResources:\n  - target: //packages/web/app:bundle\n',
+      'name: Server\nembeddedResources:\n  - target: //packages/web/app:bundle\ntests:\n  archives:\n    fixtures:\n      url: u\n',
     )
     await writeFile(root, 'json/package.yml', 'name: json\nowner: shared\n')
     await writeFile(
@@ -150,6 +150,7 @@ Deno.test('discovery reads Swift and deno owners and their edges', async () => {
       join(root, 'json'),
       'packages/web/app',
     ])
+    assertEquals(byDir.get(join(root, 'core'))?.repos, ['fixtures'])
     assertEquals(byDir.get(join(root, 'json'))?.repos, ['corpus'])
     assertEquals(byDir.get(join(root, 'web'))?.references, [
       join(root, 'web/app'),

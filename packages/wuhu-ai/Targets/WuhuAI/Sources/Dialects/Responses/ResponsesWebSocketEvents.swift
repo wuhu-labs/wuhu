@@ -148,7 +148,7 @@ struct ResponsesWebSocketEvents {
   }
 }
 
-func responsesWebSocketError(_ error: any Error) -> InferenceError {
+func responsesWebSocketError(_ error: any Error, byteLimit: Int) -> InferenceError {
   guard let socketError = error as? WebSocketError else {
     if let recovery = error as? ResponsesRecovery {
       return .transient(status: nil, body: recovery == .previousMissing ? "previous_response_not_found" : "websocket_connection_limit_reached")
@@ -164,7 +164,7 @@ func responsesWebSocketError(_ error: any Error) -> InferenceError {
   case .tls(let message): return .invalidInput(status: 400, body: String(message.prefix(8192)))
   case .protocolViolation(let message): return ResponsesWebSocketEvents.invalid(String(message.prefix(8192)))
   case .multipleConsumers: return .invalidInput(status: 400, body: "Multiple WebSocket receive consumers")
-  case .limitExceeded(.outboundMessage): return .requestTooLarge(limitBytes: responsesWebSocketByteLimit)
+  case .limitExceeded(.outboundMessage): return .requestTooLarge(limitBytes: byteLimit)
   case .limitExceeded: return ResponsesWebSocketEvents.invalid("WebSocket inbound payload limit exceeded")
   case .unimplemented, .invalidURL, .invalidConfiguration:
     return .invalidInput(status: 400, body: String(describing: socketError))

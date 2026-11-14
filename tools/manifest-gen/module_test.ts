@@ -103,3 +103,26 @@ Deno.test('a template missing a placeholder is rejected', () => {
     'must contain {{package_modules}} exactly once',
   )
 })
+
+Deno.test('a repository is declared by one package module only', () => {
+  const archive = (source: string) => ({
+    source,
+    text: `http_archive(\n    name = "corpus",\n)\n`,
+  })
+  assertThrows(
+    () =>
+      renderModuleBazel({
+        template,
+        swiftDepsRepos: [],
+        packageModules: [
+          archive('packages/a/MODULE.fragment.bazel'),
+          archive('packages/b/Targets/T/target.yml'),
+        ],
+        configure: [],
+        pinned: new Set(),
+        strict: true,
+      }),
+    Error,
+    'packages/b/Targets/T/target.yml declares corpus, which packages/a/MODULE.fragment.bazel already declares.',
+  )
+})

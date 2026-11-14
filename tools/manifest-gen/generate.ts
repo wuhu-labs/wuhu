@@ -33,7 +33,9 @@ import {
 } from './platform-floors.ts'
 import { assertManualBoundaries, validateManual } from './manual.ts'
 import { assertBuildLaneEdges, type BuildLaneTarget } from './build-lanes.ts'
+import { testArchiveFragment, type TestArchives } from './archives.ts'
 import {
+  type ModuleFragment,
   pinnedRepos,
   readConfigureFragments,
   readPackageModules,
@@ -270,7 +272,7 @@ export interface TargetManifest {
   dependencies?: Dependency[]
   resources?: Resource[]
   embeddedResources?: EmbeddedResource[]
-  tests?: TestConfig | false
+  tests?: (TestConfig & { archives?: TestArchives }) | false
   additionalTestTargets?: AdditionalTestTarget[]
   openapiGenerate?: OpenApiGenerateConfig
   swiftSettings?: SwiftSetting[]
@@ -3508,6 +3510,22 @@ function collectPackageMetadata(
   }
 }
 
+async function testArchiveModules(
+  packageDirs: string[],
+): Promise<ModuleFragment[]> {
+  const fragments: ModuleFragment[] = []
+  for (const packageDir of [...packageDirs].sort()) {
+    for (const target of await discoverTargets(packageDir)) {
+      const archives = target.tests ? target.tests.archives : undefined
+      if (archives === undefined) continue
+      fragments.push(
+        testArchiveFragment(archives, `${target.manifestDir}/target.yml`),
+      )
+    }
+  }
+  return fragments
+}
+
 async function generateModuleBazel(
   packageDirs: string[],
   denoPackageDirs: string[],
@@ -3535,9 +3553,12 @@ async function generateModuleBazel(
   return renderModuleBazel({
     template: await Deno.readTextFile('MODULE.bazel.template'),
     swiftDepsRepos: repos,
-    packageModules: await readPackageModules([
-      ...new Set([...packageDirs, ...denoPackageDirs]),
-    ]),
+    packageModules: [
+      ...await readPackageModules([
+        ...new Set([...packageDirs, ...denoPackageDirs]),
+      ]),
+      ...await testArchiveModules(packageDirs),
+    ],
     configure: await readConfigureFragments(),
     pinned: pinnedRepos(
       await Deno.readTextFile('bazel/umbrella/Package.resolved'),

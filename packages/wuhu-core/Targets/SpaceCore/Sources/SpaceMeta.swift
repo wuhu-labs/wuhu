@@ -33,7 +33,7 @@ enum SpaceMeta {
 
   static func cloneMemorySchema(to database: WuweiDatabase) throws {
     try memorySchema.get().access { source in
-      try database.accessWriter { destination in
+      try database.accessWriter(label: "space.cloneSchema") { destination in
         guard let backup = sqlite3_backup_init(destination, "main", source, "main") else {
           throw SQLiteError(code: sqlite3_errcode(destination), message: String(cString: sqlite3_errmsg(destination)))
         }
@@ -47,7 +47,7 @@ enum SpaceMeta {
   }
 
   static func prepare(_ database: WuweiDatabase, identity: SpaceIdentity? = nil, log: Logger, date: DateGenerator) throws -> SpaceIdentity {
-    try database.accessWriter { handle in
+    try database.accessWriter(label: "space.prepare") { handle in
       let db = MigrationDB(handle: handle)
       if let identity, try db.tableExists("space_meta"),
          let actual = try db.string("SELECT space_id FROM space_meta WHERE id = 1"), actual != identity.rawValue

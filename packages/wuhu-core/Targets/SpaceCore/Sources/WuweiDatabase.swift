@@ -56,15 +56,15 @@ struct WuweiDatabase: SharedDatabase {
     }
   }
 
-  func accessWriter<T: Sendable>(_ body: (OpaquePointer) throws -> T) throws -> T {
-    try writer.access(body)
+  func accessWriter<T: Sendable>(label: String, _ body: (OpaquePointer) throws -> T) throws -> T {
+    try writer.access(label: label, body)
   }
 
-  func write(_ body: (OpaquePointer) throws -> Void) throws { try writer.write(body) }
-  func begin() throws -> any SharedTransaction { try writer.begin() }
+  func write(label: String = "space.write", _ body: (OpaquePointer) throws -> Void) throws { try writer.write(label: label, body) }
+  func begin(label: String = "space.begin") throws -> any SharedTransaction { try writer.begin(label: label) }
   func beginRead() throws -> any SharedReadTransaction { try readers.beginRead() }
   func closeReaders() { readers.close() }
-  func closeWriter() throws { try writer.close() }
+  func closeWriter() throws { try writer.close(label: "space.close") }
 }
 
 private final class WriterChanges: Sendable {
