@@ -150,10 +150,15 @@ extension ServeNIOServer {
   }
 }
 
+/// One second, the drain's own bound: a peer that never answers `close_notify` must not hold a
+/// stop for NIO SSL's default of five.
+let tlsShutdownTimeout: TimeAmount = .seconds(1)
+
 private func makeSSLContext(identity: TLSIdentity, subdomains: [String: TLSIdentity]) throws -> NIOSSLContext {
   let (certificates, privateKey) = try sources(identity)
   var configuration = TLSConfiguration.makeServerConfiguration(certificateChain: certificates, privateKey: privateKey)
   configuration.applicationProtocols = ["h2", "http/1.1"]
+  configuration.shutdownTimeout = tlsShutdownTimeout
   if !subdomains.isEmpty {
     var overrides: [String: NIOSSLContextConfigurationOverride] = [:]
     for (parent, subdomainIdentity) in subdomains {

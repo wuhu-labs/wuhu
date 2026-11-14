@@ -462,6 +462,19 @@ public enum SpaceServer {
         }
       }
     }
+    let upstreamShutdown = hooks.onShutdownProgress
+    hooks.onShutdownProgress = { progress in
+      upstreamShutdown(progress)
+      switch progress {
+      case let .step(name, after):
+        logger.notice("serve shutdown step=\(name) duration_ms=\(after.milliseconds)")
+      case let .stillClosing(after, connections):
+        logger.warning("serve shutdown waiting on connections=\(connections.count) duration_ms=\(after.milliseconds)")
+        for connection in connections {
+          logger.warning("serve shutdown waiting on kind=\(connection.kind.rawValue) method=\(connection.method ?? "-") path=\(connection.path ?? "-") age_ms=\(connection.age.map { "\($0.milliseconds)" } ?? "-") channel_closed=\(connection.channelClosed) task_completed=\(connection.taskCompleted)")
+        }
+      }
+    }
     let api: ServeNIOServer
     do {
       api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)

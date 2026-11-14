@@ -68,6 +68,31 @@ public enum ServeNIOGracefulDrainOutcome: Sendable {
   case cancelled(after: Duration, leaving: [ServeNIOInFlightRequest])
 }
 
+/// One connection the close phase is still waiting on, as the registered state knows it.
+public struct ServeNIOClosingConnection: Sendable, Equatable {
+  public enum Kind: String, Sendable {
+    case request
+    case stream
+    case upgraded
+  }
+
+  public var kind: Kind
+  /// The request the connection last served; nil where no head reached the handler — an upgrade
+  /// NIO negotiated, or a keep-alive connection between requests.
+  public var method: String?
+  public var path: String?
+  public var age: Duration?
+  public var channelClosed: Bool
+  public var taskCompleted: Bool
+}
+
+/// One await of the shutdown, timed, or the connections a wait is still holding.
+public enum ServeNIOShutdownProgress: Sendable {
+  case step(_ name: String, after: Duration)
+  /// The wait is still running, one second or ten seconds in, with the connections still registered.
+  case stillClosing(after: Duration, connections: [ServeNIOClosingConnection])
+}
+
 public struct ServeNIOHooks: Sendable {
   public var onDidBind: @Sendable (SocketAddress) -> Void
   public var onStartupFailure: @Sendable (any Error) -> Void
@@ -77,6 +102,7 @@ public struct ServeNIOHooks: Sendable {
   public var onConnectionError: @Sendable (ServeNIOConnectionContext, any Error) -> Void
   public var onHandlerError: @Sendable (ServeNIOConnectionContext, any Error) -> Void
   public var onGracefulDrain: @Sendable (ServeNIOGracefulDrainOutcome) -> Void
+  public var onShutdownProgress: @Sendable (ServeNIOShutdownProgress) -> Void
 
   public init(
     onDidBind: @escaping @Sendable (SocketAddress) -> Void = { _ in },
@@ -87,6 +113,7 @@ public struct ServeNIOHooks: Sendable {
     onConnectionError: @escaping @Sendable (ServeNIOConnectionContext, any Error) -> Void = { _, _ in },
     onHandlerError: @escaping @Sendable (ServeNIOConnectionContext, any Error) -> Void = { _, _ in },
     onGracefulDrain: @escaping @Sendable (ServeNIOGracefulDrainOutcome) -> Void = { _ in },
+    onShutdownProgress: @escaping @Sendable (ServeNIOShutdownProgress) -> Void = { _ in },
   ) {
     self.onDidBind = onDidBind
     self.onStartupFailure = onStartupFailure
@@ -96,6 +123,7 @@ public struct ServeNIOHooks: Sendable {
     self.onConnectionError = onConnectionError
     self.onHandlerError = onHandlerError
     self.onGracefulDrain = onGracefulDrain
+    self.onShutdownProgress = onShutdownProgress
   }
 }
 
@@ -284,31 +312,47 @@ public final class ServeNIOServer: @unchecked Sendable {
   /// what would never end by itself — sockets, streaming responses, parked
   /// keep-alive connections — is closed, and their clients reconnect as after
   /// any restart. A drain with a bound gives only that long before it ends the
-  /// requests still running with the rest.
+  /// requests still running with the rest. GOAWAYs are written without waiting —
+  /// a write still queued behind backpressure fails when the connection is
+  /// force-closed — and every remaining await on a peer is bounded by the TLS
+  /// shutdown timeout or the drain's bound.
   public func shutdown() async {
     switch self.state.beginShutdown() {
     case let .start(http2Connections):
       self.hooks.onWillShutdown(self.boundAddress)
-      try? await self.serverChannel.close()
-      for connection in http2Connections {
-        try? await Self.sendGoAway(on: connection.channel)
+      await self.step("listener close") {
+        try? await self.serverChannel.close()
       }
-      await self.waitForRequestsToFinish()
+      await self.step("goaway") {
+        for connection in http2Connections { Self.sendGoAway(on: connection.channel) }
+      }
+      await self.step("drain") {
+        await self.waitForRequestsToFinish()
+      }
       let ending = self.state.connectionsToEnd()
       ending.tasks.forEach { $0.cancel() }
-      await withTaskGroup(of: Void.self) { group in
-        for channel in ending.channels {
-          group.addTask {
-            try? await channel.channel.close()
+      await self.step("channel closes") {
+        await withTaskGroup(of: Void.self) { group in
+          for channel in ending.channels {
+            group.addTask { try? await channel.channel.close() }
           }
         }
       }
-      await self.state.waitForConnectionsToDrain()
+      await self.step("connection wait") {
+        await self.waitForConnectionsToDrain()
+      }
       self.hooks.onDidShutdown(self.boundAddress)
       self.state.finishShutdown()
     case .inProgress, .finished:
       await self.state.waitUntilShutdown()
     }
+  }
+
+  /// Times one await of the shutdown and reports it.
+  private func step(_ name: String, _ body: @escaping @Sendable () async -> Void) async {
+    let started = NIODeadline.now()
+    await body()
+    self.hooks.onShutdownProgress(.step(name, after: elapsed(since: started)))
   }
 
   /// Gives the requests already running the drain's bound to answer, when one is
@@ -347,11 +391,35 @@ public final class ServeNIOServer: @unchecked Sendable {
     .nanoseconds(max(0, (NIODeadline.now() - start).nanoseconds))
   }
 
+  /// Waits out the connections the force-close ended; a bound's own clock marks one and ten
+  /// seconds, and the watcher only reports — it never ends or shortens the wait.
+  private func waitForConnectionsToDrain() async {
+    let started = NIODeadline.now()
+    guard let drain = self.drain else {
+      await self.state.waitForConnectionsToDrain()
+      return
+    }
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await self.state.waitForConnectionsToDrain() }
+      group.addTask {
+        do {
+          try await drain.wait(.seconds(1))
+          self.hooks.onShutdownProgress(.stillClosing(after: self.elapsed(since: started), connections: self.state.closingConnections()))
+          try await drain.wait(.seconds(9))
+          self.hooks.onShutdownProgress(.stillClosing(after: self.elapsed(since: started), connections: self.state.closingConnections()))
+        } catch {}
+      }
+      await group.next()
+      group.cancelAll()
+    }
+  }
+
   /// The largest last stream ID, so every stream already open still gets its
   /// response and the peer opens no new one.
-  private static func sendGoAway(on channel: Channel) async throws {
-    try await channel.writeAndFlush(
+  private static func sendGoAway(on channel: Channel) {
+    channel.writeAndFlush(
       HTTP2Frame(streamID: .rootStream, payload: .goAway(lastStreamID: .maxID, errorCode: .noError, opaqueData: nil)),
+      promise: nil,
     )
   }
 
@@ -791,6 +859,30 @@ final class ServeNIOServerState: @unchecked Sendable {
         return state.requestWaiters.remove(at: index).continuation
       }
       waiter?.resume()
+    }
+  }
+
+  /// Every connection still registered, for the close wait's one- and ten-second reports.
+  func closingConnections() -> [ServeNIOClosingConnection] {
+    self.withLock { state in
+      state.connections.values.map { connection in
+        let kind: ServeNIOClosingConnection.Kind = if connection.activity.isUpgraded {
+          .upgraded
+        } else if connection.streaming {
+          .stream
+        } else {
+          .request
+        }
+        return ServeNIOClosingConnection(
+          kind: kind,
+          method: connection.served?.method,
+          path: connection.served?.path,
+          age: connection.served.map { .nanoseconds(max(0, (NIODeadline.now() - $0.startedAt).nanoseconds)) },
+          channelClosed: connection.channelClosed,
+          taskCompleted: connection.taskCompleted,
+        )
+      }
+      .sorted { ($0.path ?? "", $0.method ?? "") < ($1.path ?? "", $1.method ?? "") }
     }
   }
 

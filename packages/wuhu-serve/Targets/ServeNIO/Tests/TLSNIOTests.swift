@@ -114,16 +114,17 @@ struct TLSNIOTests {
     // The TLS bind production serves through keeps the drain's bound: a handler
     // that never returns is cancelled and its connection closed five seconds on
     // the injected wait, not held open. The wait is the test's, so it drives the
-    // boundary itself.
+    // boundary itself; the shutdown's later marks ask the same clock for one and
+    // ten seconds, so the bound is the first request it sees.
     let (advanced, advance) = AsyncStream<Void>.makeStream()
     let (entered, enteredTheHandler) = AsyncStream<Void>.makeStream()
     let (stuck, release) = AsyncStream<Void>.makeStream()
     let (left, handlerLeft) = AsyncStream<Void>.makeStream()
     let (stopped, shutdownFinished) = AsyncStream<Void>.makeStream()
-    let requested = Mutex<Duration?>(nil)
+    let requested = Mutex<[Duration]>([])
     defer { release.finish() }
     let options = ServeOptions(gracefulDrain: .init(timeout: .seconds(5)) { timeout in
-      requested.withLock { $0 = timeout }
+      requested.withLock { $0.append(timeout) }
       for await _ in advanced { break }
     })
     try await withTLSServer(options: options) { _ in
@@ -146,7 +147,7 @@ struct TLSNIOTests {
         }
         advance.yield()
         for await _ in stopped { break }
-        #expect(requested.withLock { $0 } == .seconds(5))
+        #expect(requested.withLock { $0.first } == .seconds(5))
         // The bound cancelled the handler; the drain did not wait for it.
         for await _ in left { break }
         await stopping.value
