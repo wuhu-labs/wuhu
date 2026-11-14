@@ -87,9 +87,8 @@ import Testing
     #expect(!token.isEmpty)
   }
 
-  /// What one exchange with a box carried.
   enum Exchange: Hashable {
-    case describe, start(kind: String), piece(bytes: Int), inputEnd, commit, terminalAck
+    case describe, start(kind: String), piece(offset: Offset, bytes: Int), blockedPiece(offset: Offset, bytes: Int), inputEnd, commit, terminalAck
     /// A poll answered without a piece: its hold ran out, or it brought the verdict or a channel's end.
     case poll
   }
@@ -101,12 +100,18 @@ import Testing
     case (.post, 2): return try await .start(kind: #require(request.body?.replay()).json(StartRequest.self).kind)
     case (.get, 2):
       if URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "terminalAck" }) == true { return .terminalAck }
-      let bytes = try await #require(response.body.replay()).json(OperationSnapshot.self).payload?.byteCount ?? 0
-      return bytes > 0 ? .piece(bytes: bytes) : .poll
+      let snapshot = try await #require(response.body.replay()).json(OperationSnapshot.self)
+      let bytes = snapshot.payload?.byteCount ?? 0
+      return bytes > 0 ? try .piece(offset: #require(snapshot.from), bytes: bytes) : .poll
     case (.put, 4) where path[3] == "commit": return .commit
     case (.put, 4) where path[3] == "data":
       let write = try await #require(request.body?.replay()).json(WriteRequest.self)
-      if write.payload.byteCount > 0 { return .piece(bytes: write.payload.byteCount) }
+      if write.payload.byteCount > 0 {
+        let receipt = try await #require(response.body.replay()).json(WriteReceipt.self)
+        let accepted = try write.offset.advanced(by: write.payload.byteCount)
+        #expect(receipt.acceptedThrough == (receipt.blocked ? write.offset : accepted))
+        return receipt.blocked ? .blockedPiece(offset: write.offset, bytes: write.payload.byteCount) : .piece(offset: write.offset, bytes: write.payload.byteCount)
+      }
       #expect(write.end, "an empty input that does not end its channel")
       return .inputEnd
     default:
@@ -115,8 +120,7 @@ import Testing
     }
   }
 
-  /// A copy moves one whole piece per exchange on each side: a 100 MiB file of 4 MiB pieces is 25 of them. Every other
-  /// exchange is one of a fixed few, except the polls whose holds a slow host lets run out.
+  /// Only an unchanged, blocked receipt permits a piece retry; an accepted duplicate still fails.
   @Test(.timeLimit(.minutes(1))) func aHundredMiBCopyMovesInOnePieceExchanges() async throws {
     let folder = try ScratchFolder("copy-hundred")
     let source = folder.url.appending(path: "source.bin").path, target = folder.url.appending(path: "target.bin").path
@@ -124,15 +128,28 @@ import Testing
     var limits = OperationLimits()
     limits.filePieceBytes = piece
     limits.leaseMs = 3_600_000
-    let chunk = Data((0 ..< piece).map { UInt8(($0 * 7) % 251) })
+    var chunk = Data((0 ..< piece).map { UInt8(($0 * 7) % 251) })
     var content = Data(capacity: 25 * piece)
-    for _ in 0 ..< 25 { content.append(chunk) }
+    for index in 0 ..< 25 { chunk[0] = UInt8(index); content.append(chunk) }
     try content.write(to: URL(fileURLWithPath: source))
+    let expectedHash = sha256(content)
     let exchanges = Mutex<[String: [Exchange: Int]]>([:])
     let (acks, acked) = AsyncStream<Void>.makeStream()
     let receipt = try await withMachines(["a": fileOperationKinds(), "b": fileOperationKinds()], limits: limits, interceptResponse: { name, request, response in
       let exchange = try await Self.exchange(request, response)
-      if exchange != .poll { exchanges.withLock { $0[name, default: [:]][exchange, default: 0] += 1 } }
+      exchanges.withLock { counts in
+        switch exchange {
+        case .poll: break
+        case let .blockedPiece(offset, bytes):
+          #expect(bytes == piece && offset.rawValue % UInt64(piece) == 0 && offset.rawValue < UInt64(25 * piece))
+          #expect(counts[name]?[.piece(offset: offset, bytes: bytes)] == nil, "a piece repeated after acceptance")
+        default: counts[name, default: [:]][exchange, default: 0] += 1
+        }
+      }
+      if exchange == .commit {
+        let commit = try await #require(request.body?.replay()).json(WriteRequest.self)
+        #expect(commit.payload.records == [["bytes": .string(String(25 * piece)), "sha256": .string(expectedHash)]])
+      }
       if exchange == .terminalAck { acked.yield() }
       return response
     }) { transfer in
@@ -142,15 +159,18 @@ import Testing
       return receipt
     }
     #expect(receipt.bytes == 25 * piece)
-    #expect(receipt.sha256 == sha256(try Data(contentsOf: URL(fileURLWithPath: target))))
+    #expect(receipt.sha256 == expectedHash)
+    #expect(sha256(try Data(contentsOf: URL(fileURLWithPath: target))) == expectedHash)
     let counted = exchanges.withLock { $0 }
     let sourced = try #require(counted["a"])
     var landed = try #require(counted["b"])
-    #expect(sourced == [.describe: 1, .start(kind: "stat.v1"): 1, .start(kind: "read.v1"): 1, .piece(bytes: piece): 25, .terminalAck: 2], "\(sourced)")
+    var expected: [Exchange: Int] = [.describe: 1]
+    for index in 0 ..< 25 { expected[.piece(offset: .init(rawValue: UInt64(index * piece)), bytes: piece)] = 1 }
+    #expect(sourced == expected.merging([.start(kind: "stat.v1"): 1, .start(kind: "read.v1"): 1, .terminalAck: 2], uniquingKeysWith: +), "\(sourced)")
     // The data channel's end rides the last piece, or follows it alone when the source's end arrives after that piece.
     let inputEnds = landed.removeValue(forKey: .inputEnd) ?? 0
     #expect(inputEnds <= 1)
-    #expect(landed == [.describe: 1, .start(kind: "stagedWrite.v1"): 1, .piece(bytes: piece): 25, .commit: 1, .terminalAck: 1], "\(landed)")
+    #expect(landed == expected.merging([.start(kind: "stagedWrite.v1"): 1, .commit: 1, .terminalAck: 1], uniquingKeysWith: +), "\(landed)")
   }
 
   /// A box that advertises today's limits keeps moving 64 KiB pieces: the piece is what it advertises, not a constant.

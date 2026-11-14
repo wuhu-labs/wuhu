@@ -33,9 +33,8 @@ extension MachineCell {
     case let .want(channel, offset):
       guard let before = row.offsets[channel], let offered = row.offered[channel], offset >= before, offset <= offered else { socket.close(); return }
       row.offsets[channel] = offset
-      let buffers = buffers
       let operation = row.request.operation
-      ctx.emit { buffers.release(operation, channel: channel, before: offset) }
+      buffers.release(operation, channel: channel, before: offset)
       let received = row.received[channel]!
       if offset < received {
         guard var pointer = buffers.get(operation, channel: channel, from: offset) else {
