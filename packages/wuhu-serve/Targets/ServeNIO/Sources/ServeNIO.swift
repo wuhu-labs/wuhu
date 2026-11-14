@@ -312,10 +312,10 @@ public final class ServeNIOServer: @unchecked Sendable {
   /// what would never end by itself — sockets, streaming responses, parked
   /// keep-alive connections — is closed, and their clients reconnect as after
   /// any restart. A drain with a bound gives only that long before it ends the
-  /// requests still running with the rest. GOAWAYs are written without waiting —
-  /// a write still queued behind backpressure fails when the connection is
-  /// force-closed — and every remaining await on a peer is bounded by the TLS
-  /// shutdown timeout or the drain's bound.
+  /// requests still running with the rest; the GOAWAY writes queued before them
+  /// are delivered inside that same bound, and with no bound they are queued and
+  /// not waited for — no wait on a peer is ever without one. Every remaining await
+  /// on a peer is bounded by the TLS shutdown timeout or the drain's bound.
   public func shutdown() async {
     switch self.state.beginShutdown() {
     case let .start(http2Connections):
@@ -323,11 +323,11 @@ public final class ServeNIOServer: @unchecked Sendable {
       await self.step("listener close") {
         try? await self.serverChannel.close()
       }
-      await self.step("goaway") {
-        for connection in http2Connections { Self.sendGoAway(on: connection.channel) }
+      let goAways = await self.step("goaway") {
+        http2Connections.map { Self.sendGoAway(on: $0.channel) }
       }
       await self.step("drain") {
-        await self.waitForRequestsToFinish()
+        await self.waitForRequestsToFinish(goAways: goAways)
       }
       let ending = self.state.connectionsToEnd()
       ending.tasks.forEach { $0.cancel() }
@@ -349,34 +349,77 @@ public final class ServeNIOServer: @unchecked Sendable {
   }
 
   /// Times one await of the shutdown and reports it.
-  private func step(_ name: String, _ body: @escaping @Sendable () async -> Void) async {
+  @discardableResult
+  private func step<Value>(_ name: String, _ body: () async -> Value) async -> Value {
     let started = NIODeadline.now()
-    await body()
+    let value = await body()
     self.hooks.onShutdownProgress(.step(name, after: elapsed(since: started)))
+    return value
   }
 
-  /// Gives the requests already running the drain's bound to answer, when one is
-  /// set; past it they are ended with the streams, sockets and idle connections
-  /// below, as they were before a graceful drain existed.
-  private func waitForRequestsToFinish() async {
+  private enum DrainSignal: Hashable {
+    case requests
+    case writes
+    case expired
+  }
+
+  /// Completes when every GOAWAY write has landed; a cancelled wait leaves the writes alone.
+  private static func delivered(_ goAways: [EventLoopFuture<Void>]) async {
+    let (landed, continuation) = AsyncStream<Void>.makeStream()
+    let count = Mutex(0)
+    for future in goAways {
+      future.whenComplete { _ in
+        let finished = count.withLock { count in
+          count += 1
+          return count
+        }
+        if finished == goAways.count { continuation.finish() }
+      }
+    }
+    for await _ in landed { break }
+  }
+
+  /// Gives the requests already running, and the GOAWAY writes queued before them, the drain's
+  /// bound to finish when one is set; past it they are ended with the streams, sockets and idle
+  /// connections below, as they were before a graceful drain existed. With no bound the writes
+  /// are queued and not waited for.
+  private func waitForRequestsToFinish(goAways: [EventLoopFuture<Void>]) async {
     let started = NIODeadline.now()
     guard let drain = self.drain else {
       await self.state.waitForRequestsToFinish()
       self.hooks.onGracefulDrain(.drained(after: elapsed(since: started)))
       return
     }
-    let expired = await withTaskGroup(of: Bool.self) { group in
+    let expired = await withTaskGroup(of: DrainSignal.self) { group in
       group.addTask {
         await self.state.waitForRequestsToFinish()
-        return false
+        return .requests
+      }
+      if !goAways.isEmpty {
+        // A future a stalled peer never completes is left behind at the bound: cancelled, never
+        // joined, so the force-close below is what ends it.
+        group.addTask {
+          await Self.delivered(goAways)
+          return .writes
+        }
       }
       group.addTask {
-        do { try await drain.wait(drain.timeout) } catch { return false }
-        return true
+        do { try await drain.wait(drain.timeout) } catch { return .expired }
+        return .expired
       }
-      let expired = await group.next()!
-      group.cancelAll()
-      return expired
+      var outstanding: Set<DrainSignal> = goAways.isEmpty ? [.requests] : [.requests, .writes]
+      while let signal = await group.next() {
+        guard signal != .expired else {
+          group.cancelAll()
+          return true
+        }
+        outstanding.remove(signal)
+        guard !outstanding.isEmpty else {
+          group.cancelAll()
+          return false
+        }
+      }
+      return false
     }
     if Task.isCancelled {
       self.hooks.onGracefulDrain(.cancelled(after: elapsed(since: started), leaving: self.state.inFlightRequests()))
@@ -416,11 +459,8 @@ public final class ServeNIOServer: @unchecked Sendable {
 
   /// The largest last stream ID, so every stream already open still gets its
   /// response and the peer opens no new one.
-  private static func sendGoAway(on channel: Channel) {
-    channel.writeAndFlush(
-      HTTP2Frame(streamID: .rootStream, payload: .goAway(lastStreamID: .maxID, errorCode: .noError, opaqueData: nil)),
-      promise: nil,
-    )
+  private static func sendGoAway(on channel: Channel) -> EventLoopFuture<Void> {
+    channel.writeAndFlush(HTTP2Frame(streamID: .rootStream, payload: .goAway(lastStreamID: .maxID, errorCode: .noError, opaqueData: nil)))
   }
 
   public func close() async {
