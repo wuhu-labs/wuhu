@@ -83,6 +83,7 @@ final class MachineCLIHarness: Sendable {
       stderrBytes: { bytes in await io.appendErr(bytes) },
       environment: ["HOME": home.path],
       currentDirectory: cwd.path,
+      walletSearchRoot: scratch.url,
     )
     return await withDependencies {
       $0.continuousClock = ContinuousClock()

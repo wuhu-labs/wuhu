@@ -197,6 +197,7 @@ enum Main {
       dial: SpaceTransport.webSocketTransport(trust: trust, maxFrameBytes: MachineHub.maximumFrameBytes),
       environment: ProcessInfo.processInfo.environment,
       currentDirectory: FileManager.default.currentDirectoryPath,
+      walletSearchRoot: URL(fileURLWithPath: "/", isDirectory: true),
       version: BuildStamp.version,
       machineV2ServiceCommand: { try await capturedProcessOutput($0) },
     )

@@ -1,0 +1,19 @@
+run: //tools:deno
+args:
+  - run
+  - --cached-only
+  - --allow-read
+  - --allow-write=iconamoon.svg,names.json
+  - sprite.ts
+  - svg
+  - aliases.json
+  - iconamoon.svg
+  - names.json
+inputs:
+  - sprite.ts
+  - svg/*.svg
+  - aliases.json
+  - //deno.json
+outputs:
+  - iconamoon.svg
+  - names.json

@@ -329,6 +329,7 @@ import Testing
         stdin: { "" }, stdout: { _ in }, stderr: { await io.appendErr(Array($0.utf8)) },
         environment: ["HOME": rig.root.appendingPathComponent("home").path, "WUHU_CONFIG_DIR": rig.configDirectory.path],
         currentDirectory: rig.root.appendingPathComponent("work").path,
+        walletSearchRoot: rig.root,
       )
       let code = await withDependencies {
         $0.date = rig.clock.generator
@@ -366,6 +367,7 @@ import Testing
         },
         environment: ["HOME": rig.root.appendingPathComponent("home").path, "WUHU_CONFIG_DIR": rig.configDirectory.path],
         currentDirectory: rig.root.appendingPathComponent("work").path,
+        walletSearchRoot: rig.root,
       )
       let termination = try await withDependencies {
         $0.date = rig.clock.generator

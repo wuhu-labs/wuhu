@@ -123,6 +123,7 @@ private struct ExportHarness {
       stderr: { text in await stderr.append(text) },
       environment: environment ?? ["HOME": self.home.path],
       currentDirectory: root.path,
+      walletSearchRoot: root,
     )
   }
 

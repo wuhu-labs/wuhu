@@ -25,6 +25,7 @@ private func idToken(_ arguments: [String], environment: [String: String], reply
     stderr: { await stderr.append($0) },
     environment: ["HOME": scratch.path].merging(environment) { _, new in new },
     currentDirectory: scratch.path,
+    walletSearchRoot: scratch.url,
   )
   let code = await runner.run(arguments: ["id-token"] + arguments)
   return (code, await stdout.text, await stderr.text, seen.withLock { $0 })

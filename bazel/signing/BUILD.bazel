@@ -5,7 +5,6 @@ string_flag(
     build_setting_default = "dev",
     values = [
         "dev",
-        "adhoc",
         "store",
     ],
     visibility = ["//visibility:public"],
@@ -14,12 +13,6 @@ string_flag(
 config_setting(
     name = "dev",
     flag_values = {":variant": "dev"},
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "adhoc",
-    flag_values = {":variant": "adhoc"},
     visibility = ["//visibility:public"],
 )
 
@@ -42,13 +35,6 @@ config_setting(
 )
 
 config_setting(
-    name = "adhoc_simulator",
-    constraint_values = ["@build_bazel_apple_support//constraints:simulator"],
-    flag_values = {":variant": "adhoc"},
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
     name = "store_simulator",
     constraint_values = ["@build_bazel_apple_support//constraints:simulator"],
     flag_values = {":variant": "store"},
@@ -59,5 +45,12 @@ config_setting(
     name = "store_unsigned",
     define_values = {"wuhu_unsigned_release": "true"},
     flag_values = {":variant": "store"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "dev_unsigned",
+    define_values = {"wuhu_unsigned_release": "true"},
+    flag_values = {":variant": "dev"},
     visibility = ["//visibility:public"],
 )

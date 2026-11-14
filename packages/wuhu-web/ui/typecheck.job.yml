@@ -1,0 +1,15 @@
+run: :check
+inputs:
+  - '**'
+  - //deno.json
+  - job: //packages/wuhu-web:dependencies
+    output: dependencies
+    at: dependencies
+  - //packages/wuhu-web/deno.lock
+  - //packages/widget-script-kit/Targets/WidgetScriptSource/Sources/Resources/allowance.json
+  - //packages/wuhu-web/deno.json
+  - //packages/vite-deno-resolver/**
+  - //packages/wuhu-web/app/deno.json
+environment:
+  DENO_DIR: dependencies
+  DENO_NO_UPDATE_CHECK: '1'

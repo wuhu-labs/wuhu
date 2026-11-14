@@ -362,63 +362,60 @@ extension MetadataOperationTests {
 }
 
 extension MetadataOperationTests {
-  @Test(arguments: ["sync-stop", "sync-lease", "rename-stop", "rename-lease"])
-  func renameCommitPointDeterminesVerdictWhenStoppedDuringCommit(_ action: String) async throws {
+  @Test(arguments: ["before-stop", "before-lease", "after-stop", "after-lease"])
+  func commitPointDeterminesVerdictWhenStopped(_ action: String) async throws {
     let folder = try ScratchFolder("metadata-commit-stop")
     let path = folder.url.appending(path: "file").path
     try Data("original".utf8).write(to: URL(fileURLWithPath: path))
-    let reached = AsyncStream<Void>.makeStream()
-    let release = DispatchSemaphore(value: 0)
-    defer { release.signal(); reached.continuation.finish() }
-    var operations = ComputerFileOperations.local(synchronize: { _ in
-      if action.hasPrefix("sync") { reached.continuation.yield(); release.wait() }
-    })
-    if action.hasPrefix("rename") {
-      let local = operations
-      operations = .init(stat: local.stat, list: local.list, write: { path, token in
-        let writer = try await local.write(path, token)
-        return .init(append: writer.append, prepare: writer.prepare, commit: {
-          let version = try await writer.commit()
-          reached.continuation.yield()
-          await diskIO { release.wait() }
-          return version
-        }, close: writer.close)
-      }, mkdir: local.mkdir, remove: local.remove, move: local.move)
-    }
+    let reached = Signal(), release = Signal(), cancelled = Signal()
+    defer { release.fire() }
+    let local = ComputerFileSystem.local.operations
+    let operations = ComputerFileOperations(stat: local.stat, list: local.list, write: { path, token in
+      let writer = try await local.write(path, token)
+      return .init(append: writer.append, prepare: writer.prepare, commit: {
+        if action.hasPrefix("before") {
+          await withTaskCancellationHandler {
+            reached.fire()
+            await release.wait()
+          } onCancel: { cancelled.fire() }
+          try Task.checkCancellation()
+        }
+        let version = try await writer.commit()
+        if action.hasPrefix("after") {
+          reached.fire()
+          await release.wait()
+        }
+        return version
+      }, close: writer.close)
+    }, mkdir: local.mkdir, remove: local.remove, move: local.move)
     let files = ComputerFileSystem(status: ComputerFileSystem.local.status, read: ComputerFileSystem.local.read, search: ComputerFileSystem.local.search, operations: operations)
     let time = FileLocalTime()
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
-    // A stop is durable intent; the commit is released only once the machine holds it.
-    let (stopped, stopAnswered) = AsyncStream<Void>.makeStream()
-    let client = AgentWire { request in
-      let response = try await agent.handler(request)
-      if request.method == .put, request.url.lastPathComponent == "stop" { stopAnswered.yield() }
-      return response
-    }
+    let client = AgentWire(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
       let bytes = Data("replacement".utf8)
       let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
       let operation = try await client.start(.init(kind: "write.v1", input: ["path": .string(path), "bytes": .string(String(bytes.count)), "digest": .string(digest)]))
       try await operation.write("data", .init(data: bytes), end: true)
-      for await _ in reached.stream { break }
+      await reached.wait()
       if action.hasSuffix("stop") {
         try await operation.stop("commitStop")
-        for await _ in stopped { break }
       } else {
         time.advance(.seconds(61))
         _ = try await operation.poll()
       }
-      release.signal()
+      if action.hasPrefix("before") { await cancelled.wait() }
+      release.fire()
       let verdict = try await operation.verdict()
-      #expect(verdict.tag == (action.hasPrefix("sync") ? .stopped : .completed))
-      if action.hasPrefix("rename") {
+      #expect(verdict.tag == (action.hasPrefix("before") ? .stopped : .completed))
+      if action.hasPrefix("after") {
         #expect(verdict.reason == nil)
         #expect(verdict.result != nil)
       }
       await agent.shutdown()
     }
-    #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data((action.hasPrefix("sync") ? "original" : "replacement").utf8))
+    #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data((action.hasPrefix("before") ? "original" : "replacement").utf8))
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path) == ["file"])
   }
 

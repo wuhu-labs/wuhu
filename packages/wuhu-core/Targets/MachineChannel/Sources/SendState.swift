@@ -1,10 +1,6 @@
-import enum MachineContract.ExecOutputStream
-import enum MachineContract.ExitStatus
-
 struct SendState {
   struct Chunk {
     let cursor: Int
-    let stream: ExecOutputStream?
     let bytes: [UInt8]
     var end: Int { cursor + bytes.count }
   }
@@ -14,7 +10,6 @@ struct SendState {
   private(set) var nextCursor: Int = 0
   private(set) var ackedThrough: Int = 0
   var eofCursor: Int?
-  var exit: ExitStatus?
   private var waiters: [AsyncStream<Void>.Continuation] = []
 
   init(window: Int, cursor: Int = 0) {
@@ -25,8 +20,8 @@ struct SendState {
 
   var room: Int { window - (nextCursor - ackedThrough) }
 
-  mutating func append(stream: ExecOutputStream?, bytes: [UInt8]) -> Chunk {
-    let chunk = Chunk(cursor: nextCursor, stream: stream, bytes: bytes)
+  mutating func append(bytes: [UInt8]) -> Chunk {
+    let chunk = Chunk(cursor: nextCursor, bytes: bytes)
     chunks.append(chunk)
     nextCursor = chunk.end
     return chunk
@@ -40,7 +35,7 @@ struct SendState {
       chunks.removeFirst()
     }
     if let first = chunks.first, first.cursor < cursor {
-      chunks[0] = Chunk(cursor: cursor, stream: first.stream, bytes: Array(first.bytes[(cursor - first.cursor)...]))
+      chunks[0] = Chunk(cursor: cursor, bytes: Array(first.bytes[(cursor - first.cursor)...]))
     }
     resumeWaiters()
   }

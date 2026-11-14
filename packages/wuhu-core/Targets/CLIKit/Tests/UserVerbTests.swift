@@ -307,6 +307,7 @@ private struct RecoveryHarness {
       stderr: { text in await stderr.append(text) },
       environment: [:],
       currentDirectory: self.scratch.path,
+      walletSearchRoot: self.scratch.url,
     )
   }
 

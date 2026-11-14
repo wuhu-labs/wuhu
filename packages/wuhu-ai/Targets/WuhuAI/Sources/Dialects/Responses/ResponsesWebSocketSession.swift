@@ -129,6 +129,7 @@ public actor ResponsesWebSocketSession {
 
   private func cancel(_ token: UUID) {
     guard inFlight == token else { return }
+    active?.events.finish(throwing: CancellationError())
     invalidate()
     inFlight = nil
   }
@@ -179,6 +180,7 @@ public actor ResponsesWebSocketSession {
           }
           if case .done = event { terminal = event } else { yield(event) }
         }
+        try Task.checkCancellation()
         guard let terminal, case let .done(completed, _) = terminal, let completion = events.completion else {
           throw ResponsesWebSocketEvents.invalid("Missing terminal response identity")
         }

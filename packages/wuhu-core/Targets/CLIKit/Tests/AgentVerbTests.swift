@@ -45,6 +45,7 @@ private func agent(_ arguments: [String], stdin: String, terminal: Bool = false,
     stdinIsTerminal: terminal,
     environment: ["HOME": scratch.path].merging(environment) { _, new in new },
     currentDirectory: scratch.path,
+    walletSearchRoot: scratch.url,
     version: "0.1.0-dev.1",
   )
   let code = await withDependencies { $0.fetch = FetchClient { _ in reply } } operation: { await runner.run(arguments: ["agent"] + arguments) }

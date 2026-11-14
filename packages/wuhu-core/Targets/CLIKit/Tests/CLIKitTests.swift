@@ -398,6 +398,42 @@ struct WalletTests {
     #expect(localConfirmation.hasPrefix("pinned 127.0.0.1:6650 -> \(local.path)"))
   }
 
+  // The folder wallet walk stops at the search root the composition supplies: a
+  // `.wuhu` above it stays invisible whatever the host's home holds.
+  @Test func theWalletWalkStopsAtTheSearchRoot() async throws {
+    let temp = try TemporaryDirectory()
+    let outside = temp.root.appendingPathComponent(".wuhu", isDirectory: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try writeJSON(["space": "127.0.0.1:6650"], to: outside.appendingPathComponent("config.json"))
+    try writeJSON(
+      ["127.0.0.1:6650": PinnedTLS.fingerprint(certificateDER: [1, 2, 3])],
+      to: outside.appendingPathComponent("trust.json"),
+    )
+    let inside = temp.root.appendingPathComponent("inside", isDirectory: true)
+    let cwd = inside.appendingPathComponent("work", isDirectory: true)
+    try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+    let recorder = Recorder { _ in try Response.json(JSONValue.object(["token": "t", "content": "ok"])) }
+    let stderr = TextSink()
+    func run(searchRoot: URL) async -> Int32 {
+      let runner = CommandRunner(
+        fetch: FetchClient { request in try await recorder.fetch(request) },
+        stdin: { "" },
+        stdout: { _ in },
+        stderr: { text in await stderr.append(text) },
+        environment: ["HOME": temp.home.path],
+        currentDirectory: cwd.path,
+        walletSearchRoot: searchRoot,
+      )
+      return await runner.run(arguments: ["read", "/a"])
+    }
+    #expect(await run(searchRoot: temp.root) == 0)
+    #expect(await recorder.requests.compactMap(\.url.host) == ["127.0.0.1"])
+    #expect(await stderr.text.contains("ignoring \(outside.appendingPathComponent("trust.json").path)"))
+    #expect(await run(searchRoot: inside) == 64)
+    #expect(await recorder.requests.count == 1)
+    #expect(await stderr.text.hasSuffix("no space pinned; run: wuhu use <host:port>\n"))
+  }
+
   @Test func useFailedWriteExitsNonzeroWithNoSuccessLine() async throws {
     let temp = try TemporaryDirectory(withLocalWallet: true)
     let config = temp.cwd.appendingPathComponent(".wuhu/config.json")
@@ -517,6 +553,7 @@ struct WalletTests {
       stdoutBytes: { _ in },
       environment: ["HOME": temp.home.path],
       currentDirectory: temp.cwd.path,
+      walletSearchRoot: temp.root,
     )
     #expect(await runner.run(arguments: ["cat", "wuhu://team.localspace/logo.png"]) == 0)
     let request = try #require(await recorder.requests.first)
@@ -578,6 +615,7 @@ struct WalletTests {
       },
       environment: ["HOME": temp.home.path],
       currentDirectory: temp.cwd.path,
+      walletSearchRoot: temp.root,
     )
     #expect(await runner.run(arguments: ["put", "/a"]) == 1)
     #expect(await stderr.text == "refusing to overwrite /a: read it first, or pass --force\n")
@@ -696,6 +734,7 @@ struct FormattingAndErrorTests {
       stdinIsTerminal: false,
       environment: ["HOME": temp.home.path],
       currentDirectory: temp.cwd.path,
+      walletSearchRoot: temp.root,
     )
     #expect(await runner.run(arguments: ["login"]) == 1)
     #expect(await stderr.text == "stdin is not valid UTF-8\n")
@@ -722,6 +761,7 @@ struct FormattingAndErrorTests {
       stdinChunks: { AsyncStream { $0.yield(payload); $0.finish() } },
       environment: ["HOME": temp.home.path],
       currentDirectory: temp.cwd.path,
+      walletSearchRoot: temp.root,
     )
     #expect(await runner.run(arguments: ["put", "--force", "/logo.png"]) == 0)
     let request = try #require(await recorder.requests.first)
@@ -745,6 +785,7 @@ struct FormattingAndErrorTests {
       stdoutBytes: { chunk in await bytes.append(chunk) },
       environment: ["HOME": temp.home.path],
       currentDirectory: temp.cwd.path,
+      walletSearchRoot: temp.root,
     )
     #expect(await runner.run(arguments: ["cat", "/logo.png"]) == 0)
     let request = try #require(await recorder.requests.first)
@@ -861,6 +902,7 @@ private struct Harness {
       stderr: { text in await stderr.append(text) },
       environment: ["HOME": temp.home.path],
       currentDirectory: temp.cwd.path,
+      walletSearchRoot: temp.root,
     )
   }
 }
@@ -992,6 +1034,7 @@ struct TrustVerbTests {
       stderr: { text in await stderr.append(text) },
       environment: ["HOME": link.path],
       currentDirectory: temp.home.path,
+      walletSearchRoot: temp.root,
     )
     #expect(await runner.run(arguments: ["read", "/a"]) == 0)
     #expect(await stderr.text == "")

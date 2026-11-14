@@ -6,7 +6,7 @@ HTTPS server spellings with an implicit scheme, case-insensitive host, omitted d
 
 ## Wallet location and read tokens
 
-`use` pins `./.wuhu/config.json` in the current directory and reads only that folder's previous pin: a new wallet under an ancestor's starts with no group and no clearing note. Every other verb locates the wallet from cwd up (never `~/.wuhu`). `cat`, like `read` without `--rev`, records the file's version token, so a following `put`, `write` or `edit` overwrites it without `--force`.
+`use` pins `./.wuhu/config.json` in the current directory and reads only that folder's previous pin: a new wallet under an ancestor's starts with no group and no clearing note. Every other verb locates the wallet from cwd up, stopping at the search root the composition supplies (`/` in the shipped CLI), and never reads `~/.wuhu` as a folder wallet. `cat`, like `read` without `--rev`, records the file's version token, so a following `put`, `write` or `edit` overwrites it without `--force`.
 
 ## Session transcripts
 

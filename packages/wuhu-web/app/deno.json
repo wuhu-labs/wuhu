@@ -60,5 +60,10 @@
     "fmt": "deno fmt --check .",
     "lint": "deno lint app",
     "test": "deno task gen-contract && deno test --sloppy-imports --allow-read --allow-env=NODE_ENV,WS_NO_BUFFER_UTIL --quiet app/lib app/sdk"
+  },
+  "lint": {
+    "include": [
+      "app"
+    ]
   }
 }

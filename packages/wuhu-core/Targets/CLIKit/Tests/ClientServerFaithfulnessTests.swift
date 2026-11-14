@@ -225,6 +225,7 @@ private struct ServerHarness {
       stderr: { text in await stderr.append(text) },
       environment: ["HOME": self.temp.home.path],
       currentDirectory: self.temp.cwd.path,
+      walletSearchRoot: self.temp.root,
     )
   }
 
@@ -240,6 +241,7 @@ private struct ServerHarness {
       stdoutBytes: { chunk in await self.bytes.append(chunk) },
       environment: ["HOME": self.temp.home.path],
       currentDirectory: self.temp.cwd.path,
+      walletSearchRoot: self.temp.root,
     )
     return await runner.run(arguments: arguments)
   }

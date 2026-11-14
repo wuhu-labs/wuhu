@@ -1,0 +1,12 @@
+run: :build-bundle
+inputs:
+  - src/**
+  - deno.json
+  - deno.lock
+  - job: :dependencies
+    output: dependencies
+    at: dependencies
+environment:
+  DENO_DIR: dependencies
+outputs:
+  - compile.js

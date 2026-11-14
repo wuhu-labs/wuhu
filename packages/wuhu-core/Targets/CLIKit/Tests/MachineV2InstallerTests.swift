@@ -179,7 +179,7 @@ import Testing
     try enrollment.save(.init(machine: "mc_test-v2", name: "box-v2", server: "https://example.test"), key: .init())
     let runner = CommandRunner(
       fetch: FetchClient { _ in Response(status: .ok) }, stdin: { "" }, stdout: { _ in }, stderr: { _ in },
-      environment: ["HOME": home.path], currentDirectory: home.path,
+      environment: ["HOME": home.path], currentDirectory: home.path, walletSearchRoot: home,
       machineV2ServiceCommand: { arguments in
         // The Linux installer runs every service-manager command under `/usr/bin/env XDG_RUNTIME_DIR=…`.
         let arguments = arguments.first == "/usr/bin/env" ? Array(arguments.dropFirst(2)) : arguments

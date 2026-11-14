@@ -58,6 +58,8 @@ public struct CommandRunner: Sendable {
   public var dial: (@Sendable (URL, [(String, String)]) async throws -> any FrameTransport)?
   public var environment: [String: String]
   public var currentDirectory: String
+  /// How far above `currentDirectory` the CLI may look for a folder-local wallet: `/` in the shipped CLI.
+  public var walletSearchRoot: URL
   public var version: String
   public var machineV2ServiceCommand: (@Sendable ([String]) async throws -> String)?
 
@@ -76,6 +78,7 @@ public struct CommandRunner: Sendable {
     dial: (@Sendable (URL, [(String, String)]) async throws -> any FrameTransport)? = nil,
     environment: [String: String],
     currentDirectory: String,
+    walletSearchRoot: URL,
     version: String = "0.0.0-unstamped",
     machineV2ServiceCommand: (@Sendable ([String]) async throws -> String)? = nil,
   ) {
@@ -93,6 +96,7 @@ public struct CommandRunner: Sendable {
     self.dial = dial
     self.environment = environment
     self.currentDirectory = currentDirectory
+    self.walletSearchRoot = walletSearchRoot
     self.version = version
     self.machineV2ServiceCommand = machineV2ServiceCommand
   }
@@ -159,7 +163,11 @@ public struct CommandRunner: Sendable {
       if case let .session(credential) = identity {
         return try await self.runAsSession(command, credential: credential)
       }
-      var wallet = try Wallet.locate(currentDirectory: self.currentDirectory, environment: self.environment)
+      var wallet = try Wallet.locate(
+        currentDirectory: self.currentDirectory,
+        root: self.walletSearchRoot,
+        environment: self.environment,
+      )
       let folderTrust = wallet.directory.appendingPathComponent("trust.json")
       // With cwd = HOME the fallback folder wallet is ~/.wuhu itself, whose
       // trust.json is the live user-level store, not a legacy leftover.

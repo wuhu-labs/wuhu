@@ -388,7 +388,6 @@ export interface DevIdentityManifest {
 
 export interface AppBundleManifest {
   distribution?: 'store' | 'direct'
-  releaseChannels?: Record<string, { [key: string]: PlistValue }>
   name: string
   platform: 'macOS' | 'iOS' | 'tvOS' | 'visionOS' | 'watchOS'
   bundleID: string
@@ -417,6 +416,8 @@ export type AppExtensionManifest = AppBundleManifest
 export interface AppTargetManifest extends AppBundleManifest {
   extensions?: string[]
   watchApplication?: string
+  // The name `deno task preview publish` offers this iOS target under.
+  tryLink?: string
 }
 
 export interface AppReleaseManifest {
@@ -445,6 +446,7 @@ export interface AppManifest {
 
 const teamIDPattern = /^[A-Z0-9]{10}$/
 const releaseNamePattern = /^[a-z0-9]+(-[a-z0-9]+)*$/
+const tryLinkNamePattern = /^[a-z][a-z0-9-]*$/
 
 export function validateTargetRelease(target: TargetManifest): void {
   const release = target.release
@@ -497,35 +499,27 @@ export function validateTargetInfo(target: TargetManifest): void {
   }
 }
 
+export function validateAppTryLinks(app: AppManifest, source: string): void {
+  for (const target of app.targets) {
+    const name = target.tryLink
+    if (name === undefined) continue
+    if (target.platform !== 'iOS') {
+      throw new Error(
+        `${source}: ${target.name}.tryLink requires an iOS target`,
+      )
+    }
+    if (!tryLinkNamePattern.test(name)) {
+      throw new Error(
+        `${source}: ${target.name}.tryLink must be kebab-case, got ${
+          JSON.stringify(name)
+        }`,
+      )
+    }
+  }
+}
+
 export function validateAppRelease(app: AppManifest, source: string): void {
   for (const target of appBundles(app)) {
-    if (target.releaseChannels !== undefined) {
-      if (
-        target.distribution !== 'direct' || !target.releaseChannels.stable ||
-        Object.keys(target.releaseChannels).some((channel) =>
-          !/^[a-z][a-z0-9-]*$/.test(channel)
-        )
-      ) {
-        throw new Error(
-          `${source}: ${target.name}.releaseChannels requires direct distribution and a stable default`,
-        )
-      }
-      for (const [channel, info] of Object.entries(target.releaseChannels)) {
-        assertPlistValues(
-          info,
-          `${source}: ${target.name}.releaseChannels.${channel}`,
-        )
-        if (
-          Object.keys(info).some((key) =>
-            key.startsWith('CFBundle') || stampedInfoKeys.includes(key)
-          )
-        ) {
-          throw new Error(
-            `${source}: releaseChannels cannot change bundle identity or version`,
-          )
-        }
-      }
-    }
     if (target.distribution === undefined || target.distribution === 'store') {
       continue
     }
@@ -872,6 +866,21 @@ export function assertReleaseNamespacesDistinct(
     if (owner !== undefined) {
       throw new Error(
         `release namespace ${name} is claimed by both ${owner} and ${source}`,
+      )
+    }
+    seen.set(name, source)
+  }
+}
+
+export function assertTryLinkNamesDistinct(
+  names: { name: string; source: string }[],
+): void {
+  const seen = new Map<string, string>()
+  for (const { name, source } of names) {
+    const owner = seen.get(name)
+    if (owner !== undefined) {
+      throw new Error(
+        `try link ${name} is claimed by both ${owner} and ${source}`,
       )
     }
     seen.set(name, source)
@@ -2449,50 +2458,6 @@ export async function generateBuildBazel(
   const kindByName = new Map(
     targets.map((target) => [target.name, target.kind]),
   )
-  const doccCatalogs = new Map<string, string>()
-  for (const target of targets) {
-    const sourceDirectory = join(target.manifestDir, target.sources)
-    let catalogs: string[] = []
-    try {
-      catalogs = (await Array.fromAsync(Deno.readDir(sourceDirectory)))
-        .filter((entry) => entry.isDirectory && entry.name.endsWith('.docc'))
-        .map((entry) => entry.name)
-        .sort()
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error
-    }
-    if (catalogs.length > 1) {
-      throw new Error(
-        `${sourceDirectory} contains multiple .docc catalogs: ${
-          catalogs.join(', ')
-        }`,
-      )
-    }
-    if (catalogs.length === 1) {
-      if (
-        target.kind === 'systemLibrary' || target.kind === 'objcLibrary' ||
-        target.kind === 'cLibrary'
-      ) {
-        throw new Error(
-          `${sourceDirectory}/${catalogs[0]} cannot document a ${target.kind}`,
-        )
-      }
-      doccCatalogs.set(
-        target.name,
-        `Targets/${target.name}/${target.sources}/${catalogs[0]}`,
-      )
-    }
-  }
-  if (targetNames.has('swiftlint')) {
-    throw new Error(
-      'generated SwiftLint test :swiftlint conflicts with a source target',
-    )
-  }
-  if (doccCatalogs.size > 0 && targetNames.has('docs')) {
-    throw new Error(
-      'generated DocC site target :docs conflicts with a source target',
-    )
-  }
   const loadSymbols = [
     'wuhu_platforms',
     'wuhu_swift_binary',
@@ -2500,9 +2465,6 @@ export async function generateBuildBazel(
     'wuhu_swift_test',
     'wuhu_macos_test',
   ]
-  if (doccCatalogs.size > 0) {
-    loadSymbols.push('wuhu_docc_archive', 'wuhu_docc_site')
-  }
   if (targets.some((target) => target.kind === 'macro')) {
     loadSymbols.push('wuhu_swift_macro')
   }
@@ -2545,7 +2507,6 @@ export async function generateBuildBazel(
     `load("//bazel/rules:rules.bzl", ${
       loadSymbols.map((symbol) => `"${symbol}"`).join(', ')
     })`,
-    'load("//bazel/swiftlint:defs.bzl", "swiftlint_test")',
     `\npackage(default_visibility = ["//visibility:public"])\n`,
     // Release tooling reads these manifests as test inputs, and a source file
     // is only a label once the package exports it.
@@ -2575,8 +2536,6 @@ export async function generateBuildBazel(
         `${pkg.name} package.yml`,
       )]
       : []),
-    // Run together by //packages:swiftlint, the lint CI lane.
-    `swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)\n`,
   ]
 
   if (targets.some((target) => target.kind === 'objcLibrary')) {
@@ -2883,68 +2842,6 @@ ${platformFloorAttr(pkg)}${
     }
   }
 
-  if (doccCatalogs.size > 0) {
-    const targetsByName = new Map(
-      targets.map((target) => [target.name, target]),
-    )
-    const dependenciesFor = (target: TargetManifest): string[] => {
-      const found = new Set<string>()
-      const visit = (candidate: TargetManifest) => {
-        for (const dependency of candidate.dependencies ?? []) {
-          if (!bazelEnabled(dependency)) continue
-          const name = dependencyName(dependency)
-          const local = targetsByName.get(name)
-          if (!local || !doccCatalogs.has(name) || found.has(name)) continue
-          found.add(name)
-          visit(local)
-        }
-      }
-      visit(target)
-      return [...found].sort()
-    }
-
-    for (const target of targets) {
-      const catalog = doccCatalogs.get(target.name)
-      if (!catalog) continue
-      const dependencies = dependenciesFor(target)
-      chunks.push(
-        `wuhu_docc_archive(
-    name = "${target.name}DocC",
-    target = ":${target.name}",
-    module_name = "${target.name}",
-    catalog_path = "${catalog}",
-    catalog = glob(["${catalog}/**"]),
-${
-          dependencies.length
-            ? `    dependencies = ${
-              starlarkList(
-                dependencies.map((name) => `":${name}DocC"`),
-              )
-            },
-`
-            : ''
-        }    target_compatible_with = wuhu_platforms(["mac"]),
-    tags = ["manual"],
-)
-`,
-      )
-    }
-    chunks.push(
-      `wuhu_docc_site(
-    name = "docs",
-    archives = ${
-        starlarkList(
-          [...doccCatalogs.keys()].sort().map((name) => `":${name}DocC"`),
-        )
-      },
-    landing_page_name = "${pkg.packageName}",
-    target_compatible_with = wuhu_platforms(["mac"]),
-    tags = ["manual"],
-)
-`,
-    )
-  }
-
   return chunks.join('\n')
 }
 
@@ -2982,13 +2879,8 @@ export interface DenoTest {
   manual?: boolean
 }
 
-// A tree output `deno task <task> <out dir>` produces, keyed by target name.
-// `inputs` maps an environment variable to the label of a file (normally an
-// `http_file` from the package's MODULE.fragment.bazel) whose absolute path
-// the task receives in it; `platforms` are the check lanes that build it.
 export interface DenoArtifact {
   task: string
-  inputs?: Record<string, string>
   platforms?: CheckPlatform[]
 }
 
@@ -3177,9 +3069,6 @@ function denoTaskTags(
   return tags.length === 1 ? '["requires-network"]' : quotedStarlarkList(tags)
 }
 
-// A deno package is one atomic Bazel target per workspace (repo-layout law 4):
-// a `bundle` tree output when the manifest declares a `build` task, plus one
-// test per checking task. All key on sources + deno.lock + the pinned toolchain.
 export function generateDenoBuildBazel(
   packageDir: string,
   manifest: DenoPackageManifest,
@@ -3219,18 +3108,12 @@ export function generateDenoBuildBazel(
       `deno_bundle(\n    name = "bundle",\n    srcs = ${srcs},\n${generatedAttr}${workspaceAttr}    output_dir = "build/client",\n    tags = ["requires-network"],\n${denoPlatformsAttr})\n`,
     )
   }
-  const standard = ['fmt', 'typecheck', 'lint', 'test']
-  const checking: [string, string, boolean][] = standard
-    .filter((task) => tasks[task])
-    .map((task) => [task, denoPlatformsAttr, false])
+  const checking: [string, string, boolean][] = []
   for (
     const [task, test] of Object.entries(manifest.tests ?? {})
       .sort(([lhs], [rhs]) => lhs.localeCompare(rhs))
   ) {
     const location = `${packageDir}/deno.json tests.${task}`
-    if (standard.includes(task)) {
-      throw new Error(`${location}: ${task} is a standard checking task`)
-    }
     if (!tasks[task]) {
       throw new Error(`${location} names a task deno.json does not declare`)
     }
@@ -3270,25 +3153,10 @@ export function generateDenoBuildBazel(
       )
     }
     if (!symbols.includes('deno_artifact')) symbols.push('deno_artifact')
-    const inputs = Object.entries(artifact.inputs ?? {})
-      .sort(([lhs], [rhs]) => lhs.localeCompare(rhs))
-      .map(([variable, label]) => {
-        if (!/^[A-Z_][A-Z0-9_]*$/.test(variable)) {
-          throw new Error(
-            `${location}: ${variable} is not an environment variable name`,
-          )
-        }
-        return `        ${JSON.stringify(label)}: ${
-          JSON.stringify(variable)
-        },\n`
-      })
-      .join('')
     chunks.push(
       `deno_artifact(\n    name = ${
         JSON.stringify(name)
-      },\n    srcs = ${srcs},\n${generatedAttr}${
-        inputs ? `    inputs = {\n${inputs}    },\n` : ''
-      }    tags = ["requires-network"],\n    task = ${
+      },\n    srcs = ${srcs},\n${generatedAttr}    tags = ["requires-network"],\n    task = ${
         JSON.stringify(artifact.task)
       },\n${
         platformsAttr(artifact.platforms ?? ['linux', 'mac'], location)
@@ -3314,9 +3182,13 @@ export function generateDenoBuildBazel(
     )
   }
   return [
-    `load("//bazel/rules:deno.bzl", ${
-      symbols.sort().map((symbol) => `"${symbol}"`).join(', ')
-    })`,
+    ...(symbols.length
+      ? [
+        `load("//bazel/rules:deno.bzl", ${
+          symbols.sort().map((symbol) => `"${symbol}"`).join(', ')
+        })`,
+      ]
+      : []),
     `load("//bazel/rules:rules.bzl", "wuhu_platforms")`,
     `\npackage(default_visibility = ["//visibility:public"])\n`,
     ...chunks,
@@ -4012,6 +3884,7 @@ export async function testHostVariant(
 }
 
 export type SigningVariant = 'dev' | 'adhoc' | 'store'
+type BuildVariant = Exclude<SigningVariant, 'adhoc'>
 
 export function isPreviewBundle(bundle: { bundleID: string }): boolean {
   return bundle.bundleID.startsWith('tech.lakeridge.previews.')
@@ -4162,17 +4035,11 @@ function shellPath(prefix: string, path: string): string {
   return prefix.length === 0 ? path : `${prefix}/${path}`
 }
 
-// adhoc shares the store file unless a devIdentity gives it its own identity.
 export function entitlementPath(
   target: AppBundleManifest,
-  variant: SigningVariant,
+  variant: BuildVariant,
 ): string {
-  const file = variant === 'dev'
-    ? 'dev'
-    : variant === 'adhoc' && target.devIdentity !== undefined
-    ? 'adhoc'
-    : 'release'
-  return `${target.name}-${file}.entitlements`
+  return `${target.name}-${variant === 'dev' ? 'dev' : 'release'}.entitlements`
 }
 
 // Each entitlements file the bundle's variants select, with the first variant
@@ -4180,8 +4047,8 @@ export function entitlementPath(
 export function entitlementSourcesByVariant(
   app: AppManifest,
   target: AppBundleManifest,
-): Map<string, SigningVariant> {
-  const sources = new Map<string, SigningVariant>()
+): Map<string, BuildVariant> {
+  const sources = new Map<string, BuildVariant>()
   for (const variant of variantsFor(app, target)) {
     const path = entitlementPath(target, variant)
     if (!sources.has(path)) sources.set(path, variant)
@@ -4200,23 +4067,20 @@ export function releaseInfoPlistPath(path: string): string {
   return siblingPlistPath(path, 'release')
 }
 
-// The dev plist is the one app.yml names and carries the ViewPilot keys; store
-// and, with a devIdentity, adhoc get `-release` and `-adhoc` siblings whenever
-// their content differs from it.
 export function infoPlistPaths(
   target: AppBundleManifest,
   embedsViewPilot: boolean,
-): Record<SigningVariant, string> {
+): Record<BuildVariant | 'dev_unsigned', string> {
   const dev = target.infoPlist
   const store = embedsViewPilot || target.devIdentity !== undefined
     ? releaseInfoPlistPath(dev)
     : dev
-  const adhoc = target.devIdentity === undefined
+  const dev_unsigned = target.devIdentity === undefined
     ? store
     : embedsViewPilot
-    ? siblingPlistPath(dev, 'adhoc')
+    ? siblingPlistPath(dev, 'unsigned')
     : dev
-  return { dev, adhoc, store }
+  return { dev, store, dev_unsigned }
 }
 
 /** The platforms an `hmr: true` app's shells get HMR on; `hmrPlatforms` (build-pool `hmr-workload.ts`) starts sessions on each. */
@@ -4226,7 +4090,7 @@ export const hmrAppPlatforms: ReadonlySet<AppBundleManifest['platform']> =
 
 function profileName(
   target: AppBundleManifest,
-  variant: SigningVariant,
+  variant: BuildVariant,
   platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>>,
   hmr = false,
 ): string | undefined {
@@ -4241,14 +4105,9 @@ function profileName(
     if (target.platform !== 'iOS' && !(hmr && target.platform === 'visionOS')) {
       return undefined
     }
-    return variant === 'dev' ? 'Wuhu Dev Previews' : 'Wuhu AdHoc Previews'
+    return variant === 'dev' ? 'Wuhu Dev Previews' : undefined
   }
-  if (target.platform === 'macOS' && variant === 'adhoc') return undefined
-  const label = variant === 'dev'
-    ? 'Dev'
-    : variant === 'adhoc'
-    ? 'AdHoc'
-    : 'Store'
+  const label = variant === 'dev' ? 'Dev' : 'Store'
   const identifier = variantBundle(target, variant).bundleID
   const platforms = platformsByIdentifier.get(identifier)
   const suffix = (platforms?.size ?? 0) > 1 ||
@@ -4261,7 +4120,7 @@ function profileName(
 export function appProfileName(
   app: AppManifest,
   target: AppBundleManifest,
-  variant: SigningVariant,
+  variant: BuildVariant,
 ): string | undefined {
   return profileName(target, variant, profilePlatforms([app]), app.hmr)
 }
@@ -4281,20 +4140,17 @@ export function referencedProfileNames(
 
 function profileTargetName(
   target: AppBundleManifest,
-  variant: SigningVariant,
+  variant: BuildVariant,
 ): string {
   return `${target.name}_${variant}_profile__run_deno_task_prepare_profiles`
 }
 
-// An iOS preview builds adhoc on the wildcard AdHoc profile so it can be
-// published as a try link; no preview ever builds store.
 function variantsFor(
   _app: AppManifest,
   target: AppBundleManifest,
-): SigningVariant[] {
+): BuildVariant[] {
   if (target.distribution === 'direct') return ['store']
-  if (!isPreviewBundle(target)) return ['dev', 'adhoc', 'store']
-  return target.platform === 'iOS' ? ['dev', 'adhoc'] : ['dev']
+  return isPreviewBundle(target) ? ['dev'] : ['dev', 'store']
 }
 
 function selectExpr(
@@ -4312,20 +4168,20 @@ function selectExpr(
 
 // One value when every variant agrees, a select over the variants otherwise.
 function variantExpr(
-  values: Record<SigningVariant, string>,
+  values: Record<BuildVariant, string> & { dev_unsigned?: string },
   render: (value: string) => string,
   renderInSelect: (value: string) => string = render,
 ): string {
-  const entries = Object.entries(values) as [SigningVariant, string][]
+  const entries = Object.entries(values) as [string, string][]
   return entries.every(([_, value]) => value === values.dev)
     ? render(values.dev)
     : selectExpr(entries, renderInSelect)
 }
 
 function perVariant<T>(
-  map: (variant: SigningVariant) => T,
-): Record<SigningVariant, T> {
-  return { dev: map('dev'), adhoc: map('adhoc'), store: map('store') }
+  map: (variant: BuildVariant) => T,
+): Record<BuildVariant, T> {
+  return { dev: map('dev'), store: map('store') }
 }
 
 function generateAppBundleRule(
@@ -4354,7 +4210,7 @@ function generateAppBundleRule(
         : [[`${variant}_simulator`, null], [variant, profile]]
     },
   )
-  if (variants.includes('store')) profiles.push(['store_unsigned', null])
+  for (const variant of variants) profiles.push([`${variant}_unsigned`, null])
   const entitlements = variants.map((variant): [string, string] => [
     variant,
     shellPath(pathPrefix, entitlementPath(target, variant)),
@@ -4366,21 +4222,8 @@ function generateAppBundleRule(
     )
   )
   const plists = infoPlistPaths(target, embedsViewPilot)
-  const channelPlist = (channel: string) =>
-    channel === 'stable'
-      ? plists.store
-      : siblingPlistPath(plists.store, channel)
-  const directPlists = target.releaseChannels === undefined
-    ? `["${shellPath(pathPrefix, plists.store)}"]`
-    : `select({\n${
-      Object.keys(target.releaseChannels).map((channel) =>
-        `        ":${target.name}_channel_${channel}": ["${
-          shellPath(pathPrefix, channelPlist(channel))
-        }"],\n`
-      ).join('')
-    }    })`
   const ordinaryPlists = direct
-    ? directPlists
+    ? `["${shellPath(pathPrefix, plists.store)}"]`
     : variantExpr(plists, (path) => `["${shellPath(pathPrefix, path)}"]`)
   const hmrPlist = hmr
     ? `wuhu_hmr_plist(\n    name = "${target.name}_hmr_plist",\n${
@@ -4452,7 +4295,7 @@ function generateAppBundleRule(
       : ''
   }    deps = ${quotedStarlarkList(target.dependencies)}${
     embedsViewPilot
-      ? ` + select({\n        "//bazel/signing:dev": [\n            "//packages/view-pilot:ViewPilot",\n            "//packages/view-pilot:ViewPilotBootstrap",\n        ],\n        "//conditions:default": [],\n    })`
+      ? ` + select({\n        "//bazel/signing:dev_unsigned": [],\n        "//bazel/signing:dev": [\n            "//packages/view-pilot:ViewPilot",\n            "//packages/view-pilot:ViewPilotBootstrap",\n        ],\n        "//conditions:default": [],\n    })`
       : ''
   },\n${
     platformsAttr(
@@ -4622,11 +4465,6 @@ export function generateAppBuildBazel(
     `load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")`,
   ]
   const bundles = appBundles(app)
-  if (bundles.some((target) => target.releaseChannels !== undefined)) {
-    loads.push(
-      'load("@bazel_skylib//rules:common_settings.bzl", "string_flag")',
-    )
-  }
   if (
     app.signingTeamID &&
     bundles.some((target) =>
@@ -4682,18 +4520,6 @@ export function generateAppBuildBazel(
   ]
 
   for (const target of bundles) {
-    if (target.releaseChannels !== undefined) {
-      chunks.push(
-        `string_flag(\n    name = "${target.name}_release_channel",\n    build_setting_default = "stable",\n    values = ${
-          quotedStarlarkList(Object.keys(target.releaseChannels))
-        },\n)\n`,
-      )
-      for (const channel of Object.keys(target.releaseChannels)) {
-        chunks.push(
-          `config_setting(\n    name = "${target.name}_channel_${channel}",\n    flag_values = {":${target.name}_release_channel": "${channel}"},\n)\n`,
-        )
-      }
-    }
     if (!app.signingTeamID) continue
     for (const variant of variantsFor(app, target)) {
       const name = profileName(target, variant, platformsByIdentifier, app.hmr)
@@ -4963,7 +4789,6 @@ export function appBundleInfo(
       : { ITSAppUsesNonExemptEncryption: app.usesNonExemptEncryption }),
     ...platformDefaults,
     ...target.info,
-    ...target.releaseChannels?.stable,
     ...(capabilities === undefined
       ? {}
       : { UIRequiredDeviceCapabilities: capabilities }),
@@ -5161,6 +4986,7 @@ async function prepareApp(
   validateManual(app.manual, source)
   validateAppTransportSecurity(app, source)
   validateAppRelease(app, source)
+  validateAppTryLinks(app, source)
   validateAppExtensions(app, source)
   validateAppIntents(app, source)
   validateAppEntitlements(app, source)
@@ -5175,11 +5001,14 @@ async function prepareApp(
     const embedsViewPilot = bundleEmbedsViewPilot(app, target)
     const plists = infoPlistPaths(target, embedsViewPilot)
     const written = new Set<string>()
-    for (const variant of ['dev', 'store', 'adhoc'] as const) {
+    for (const variant of ['dev', 'store', 'dev_unsigned'] as const) {
       const path = plists[variant]
       if (written.has(path)) continue
       written.add(path)
-      const bundle = variantBundle(target, variant)
+      const bundle = variantBundle(
+        target,
+        variant === 'dev_unsigned' ? 'dev' : variant,
+      )
       const output = join(appDir, path)
       await Deno.mkdir(dirname(output), { recursive: true })
       await writeIfChanged(
@@ -5190,16 +5019,6 @@ async function prepareApp(
             : bundle.info,
           output,
         ),
-      )
-    }
-    for (
-      const [channel, info] of Object.entries(target.releaseChannels ?? {})
-    ) {
-      if (channel === 'stable') continue
-      const output = join(appDir, siblingPlistPath(plists.store, channel))
-      await writeIfChanged(
-        output,
-        generatePlist({ ...target.info, ...info }, output),
       )
     }
     const sources = entitlementSourcesByVariant(app, target)
@@ -5460,19 +5279,6 @@ async function removeLegacyPackagesIfNeeded(): Promise<void> {
   console.log('removed stale legacy Packages/')
 }
 
-export function swiftlintSuiteBuildBazel(packageDirs: string[]): string {
-  return `test_suite(
-    name = "swiftlint",
-    tags = ["manual"],
-    tests = [
-${
-    [...packageDirs].sort().map((dir) => `        "//${dir}:swiftlint",\n`)
-      .join('')
-  }    ],
-)
-`
-}
-
 export async function assertNoManualDependencies(root = '.'): Promise<void> {
   const packages = await Promise.all(
     (await discoverPackageDirs(join(root, 'packages'))).map(async (dir) => ({
@@ -5488,6 +5294,25 @@ export async function assertNoManualDependencies(root = '.'): Promise<void> {
     })),
   )
   assertManualBoundaries(packages)
+}
+
+async function assertTryLinkNames(): Promise<void> {
+  const names: { name: string; source: string }[] = []
+  for (const packageDir of await discoverPackageDirs('packages')) {
+    for (const appDir of await discoverAppDirs(packageDir)) {
+      const source = join(appDir, 'app.yml')
+      const app = await readYaml<AppManifest>(source)
+      for (const target of app.targets) {
+        if (target.tryLink !== undefined) {
+          names.push({
+            name: target.tryLink,
+            source: `${source}:${target.name}`,
+          })
+        }
+      }
+    }
+  }
+  assertTryLinkNamesDistinct(names)
 }
 
 async function assertSwiftOrDeno(packageDirs: string[]): Promise<void> {
@@ -5509,6 +5334,7 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
   configure(rawArgs)
   await removeLegacyPackagesIfNeeded()
   await assertNoManualDependencies()
+  await assertTryLinkNames()
 
   swiftPMPackages = workspacePackage
     ? await localPathClosure(workspacePackage)
@@ -5544,7 +5370,7 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
     assertPublicEdges(await discoverOwnedPackages('packages'))
     await writeIfChanged(
       join('packages', apply ? 'BUILD.bazel' : 'BUILD.generated.bazel'),
-      swiftlintSuiteBuildBazel(packageDirs),
+      'package(default_visibility = ["//visibility:public"])\n',
     )
     const denoWorkspaces = await discoverDenoWorkspaces('packages')
     const denoPackageDirs = await discoverDenoPackageDirs('packages')

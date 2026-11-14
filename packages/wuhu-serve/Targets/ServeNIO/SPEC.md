@@ -35,3 +35,7 @@ NIO retains an upstream debug-build assertion on the Darwin F_SETFL EINVAL path:
 
 
 ## Exportable public TLS listener
+
+## HTTP/1 channel pipeline
+
+`ServeNIOServer.configureHTTP1(channel:options:handler:)` installs the same HTTP/1 pipeline used by a bound listener on a caller-owned channel. The channel owns connection lifetime; no listener or socket bind is created. Read-idle events do not reap uploads paused by request-body backpressure. The grace interval after reads resume uses the channel event loop's time.

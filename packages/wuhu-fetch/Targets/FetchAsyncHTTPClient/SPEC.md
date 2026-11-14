@@ -8,7 +8,7 @@ Buffered request bodies, including empty and JSON bodies, are consumed into AHC'
 
 ## Opt-in HTTP/2 health checks
 
-Call `HTTPClient.Configuration.enableHTTP2HealthChecks(idleInterval:acknowledgementTimeout:)` before constructing the client. Both intervals must be positive; defaults are 30 seconds and 10 seconds. The helper preserves the existing HTTP/2 connection initializer and propagates its failure. Repeated configuration installs one detector per connection, using the most recently supplied intervals. HTTP version negotiation, HTTP/1 connections, stream initializers, and request deadlines are unchanged.
+Call `HTTPClient.Configuration.enableHTTP2HealthChecks(idleInterval:acknowledgementTimeout:deadlineLoop:)` before constructing the client. Both intervals must be positive; defaults are 30 seconds and 10 seconds. The helper preserves the existing HTTP/2 connection initializer and propagates its failure. Repeated configuration installs one detector per connection, using the most recently supplied intervals. HTTP version negotiation, HTTP/1 connections, stream initializers, and request deadlines are unchanged.
 
 The detector attaches to each physical HTTP/2 parent channel, after its HTTP/2 codec and before AHC's stream accounting and multiplexer. It only probes connections with active streams. The first active stream starts a quiet interval; any inbound HTTP/2 frame postpones the next probe. Outbound traffic does not establish peer liveness. Connections with no active streams are left to AHC's normal pool-idle policy.
 
@@ -19,3 +19,5 @@ A write failure or acknowledgement timeout closes the parent channel, failing it
 The `FetchAsyncHTTPClient.HTTP2Health` logger records PING sends/ACKs at info, retirement at warning, GOAWAY error code and last-stream ID at notice, and connection/stream lifecycle at debug. Logs include a connection identifier and do not include headers or payloads. GOAWAY frames and stream lifecycle events are observed and forwarded unchanged; this helper does not change AHC's GOAWAY handling.
 
 Wuhu's inference client opts in using the defaults. Its other HTTP clients do not.
+
+`enableHTTP2HealthChecks` accepts an optional `deadlineLoop` clock for its idle and acknowledgement deadlines; by default it uses each connection’s event loop. A supplied clock drives only health timers; channel actions still run on the connection’s own loop.

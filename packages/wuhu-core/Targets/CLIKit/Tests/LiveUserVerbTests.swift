@@ -208,6 +208,7 @@ import Testing
           stderr: { await io.appendErr(Array($0.utf8)) },
           environment: ["WUHU_CONFIG_DIR": rig.configDirectory.path],
           currentDirectory: rig.root.appendingPathComponent("work").path,
+          walletSearchRoot: rig.root,
         )
         let code = await withDependencies { $0.date = rig.clock.generator } operation: {
           await runner.run(arguments: ["user", "add", "--name", "bob"])
@@ -245,6 +246,7 @@ import Testing
       stderr: { await io.appendErr(Array($0.utf8)) },
       environment: ["WUHU_CONFIG_DIR": rig.configDirectory.path],
       currentDirectory: rig.root.appendingPathComponent("work").path,
+      walletSearchRoot: rig.root,
     )
     return await withDependencies { $0.date = rig.clock.generator } operation: {
       await runner.run(arguments: args)

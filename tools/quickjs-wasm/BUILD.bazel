@@ -1,6 +1,5 @@
 load("@emsdk//emscripten_toolchain:wasm_rules.bzl", "wasm_cc_binary")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-load("//bazel/rules:deno.bzl", "deno_command_test")
 load("//bazel/rules:rules.bzl", "wuhu_platforms")
 load(":defs.bzl", "wasm_files")
 
@@ -94,41 +93,6 @@ genrule(
     srcs = [":wasm_files"],
     outs = ["emscripten-module.browser.mjs", "emscripten-module.wasm"],
     cmd = "for f in $(SRCS); do case $$f in *.js) cp $$f $(location emscripten-module.browser.mjs) ;; *.wasm) cp $$f $(location emscripten-module.wasm) ;; esac; done",
-    target_compatible_with = wuhu_platforms(["linux", "mac"]),
-)
-
-genrule(
-    name = "ffi",
-    srcs = ["@quickjs_ffi//:dist/ffi.mjs"],
-    outs = ["ffi.mjs"],
-    cmd = "cp $< $@",
-)
-
-genrule(
-    name = "core",
-    srcs = ["@quickjs_core//:modules"],
-    outs = [
-        "core/chunk-TAV5CUKK.mjs",
-        "core/chunk-V2S4ZYJR.mjs",
-        "core/index.mjs",
-        "core/module-ES6BEMUI.mjs",
-        "core/module-asyncify-2EFITU5U.mjs",
-    ],
-    cmd = "cp $(SRCS) $(RULEDIR)/core/",
-)
-
-genrule(
-    name = "ffi_types",
-    srcs = ["@quickjs_ffi_types//:dist/index.mjs"],
-    outs = ["ffi-types.mjs"],
-    cmd = "cp $< $@",
-)
-
-deno_command_test(
-    name = "smoke",
-    size = "small",
-    srcs = ["smoke.ts", "smoke-worker.ts", "imports.json", ":quickjs", ":ffi", ":core", ":ffi_types"],
-    command = ["run", "--allow-read", "--allow-net=127.0.0.1", "--allow-import=127.0.0.1", "--import-map=tools/quickjs-wasm/imports.json", "tools/quickjs-wasm/smoke.ts"],
     target_compatible_with = wuhu_platforms(["linux", "mac"]),
 )
 

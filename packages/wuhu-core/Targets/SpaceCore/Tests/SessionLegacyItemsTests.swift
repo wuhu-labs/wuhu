@@ -75,7 +75,7 @@ import Testing
     ] {
       await #expect(throws: SpaceError.queryNotReadOnly) { try await space.query(sql) }
     }
-    for table in ["session_pointers", "session_contents", "session_generations"] {
+    for table in ["session_pointers", "session_contents"] {
       for sql in [
         "SELECT * FROM \(table)",
         "SELECT count(*) FROM \(table)",

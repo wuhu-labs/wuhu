@@ -1,7 +1,7 @@
 // Apple floors as `package.yml` and `app.yml` spell them, keyed to the
 // `wuhu_platform_floor` attribute and the rc lines that set the minimum of the
 // platform's lanes. macOS sets it for every build, not only `--config=mac`:
-// a bare build on a Mac (`deno task test`, DocC, a direct `bazel test`) is the
+// a bare build on a Mac (`deno task test`, a direct `bazel test`) is the
 // mac lane. visionOS has no `--visionos_minimum_os`: apple_support reads the
 // generic `--minimum_os_version` for it.
 const platformFloors = {

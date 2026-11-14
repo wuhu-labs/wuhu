@@ -101,6 +101,7 @@ private final class UpgradeHarness: Sendable {
       stderr: { [stderr] text in await stderr.append(text) },
       environment: ["HOME": self.home.path, "TMPDIR": self.scratch.path].merging(extraEnvironment) { _, new in new },
       currentDirectory: self.home.path,
+      walletSearchRoot: self.home,
       version: version,
     )
     return await withDependencies {

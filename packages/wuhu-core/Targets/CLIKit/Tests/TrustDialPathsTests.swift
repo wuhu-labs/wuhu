@@ -82,6 +82,7 @@ import Testing
           "WUHU_CONFIG_DIR": trust.directory.path,
         ],
         currentDirectory: work.path,
+        walletSearchRoot: root,
       )
       let code = await runner.run(arguments: ["read", "wuhu://127.0.0.1:\(port)/x"])
       #expect(code == 1)
@@ -114,6 +115,7 @@ import Testing
         "WUHU_CONFIG_DIR": configDir.path,
       ],
       currentDirectory: work.path,
+      walletSearchRoot: root,
     )
     let code = await runner.run(arguments: ["read", "wuhu://127.0.0.1:5640/x"])
     #expect(code == 1)

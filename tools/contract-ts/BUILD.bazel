@@ -1,5 +1,4 @@
-load("//bazel/rules:deno.bzl", "deno_command_test", "deno_generate")
-load("//bazel/rules:rules.bzl", "wuhu_platforms")
+load("//bazel/rules:deno.bzl", "deno_generate")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -167,22 +166,6 @@ deno_generate(
     out = "contract.gen.ts",
 )
 
-deno_command_test(
-    name = "emit-test",
-    srcs = [
-        "emit.ts",
-        "emit_test.ts",
-        "//:deno.json",
-        "//:deno.lock",
-    ],
-    command = [
-        "test",
-        "--allow-read",
-        "tools/contract-ts/emit_test.ts",
-    ],
-    tags = ["requires-network"],
-    target_compatible_with = wuhu_platforms(["linux", "mac"]),
-)
 
 # Every file here, for //tools:fmt-test and :lint-test, which cover all of tools/.
 filegroup(

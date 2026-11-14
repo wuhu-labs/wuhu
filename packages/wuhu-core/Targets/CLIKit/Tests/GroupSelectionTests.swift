@@ -651,6 +651,7 @@ private struct GroupHarness {
       stderr: { text in await stderr.append(text) },
       environment: environment.merging(["HOME": self.home.path, "TMPDIR": self.scratch.path]) { $1 },
       currentDirectory: self.cwd.path,
+      walletSearchRoot: self.scratch.url,
     )
     // The certificate check is `use`'s, and this fake has no certificate.
     let code = await withDependencies {

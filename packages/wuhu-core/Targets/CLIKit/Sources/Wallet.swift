@@ -26,9 +26,14 @@ struct Wallet {
   private var etags: [String: String]?
   private var warnings: [String]
 
-  static func locate(currentDirectory: String, environment: [String: String]) throws -> Self {
+  static func locate(currentDirectory: String, root: URL, environment: [String: String]) throws -> Self {
     let manager = FileManager.default
     let cwd = URL(fileURLWithPath: currentDirectory, isDirectory: true).standardizedFileURL
+    let root = root.standardizedFileURL
+    precondition(
+      cwd.pathComponents.starts(with: root.pathComponents),
+      "the wallet search root \(root.path) does not contain the current directory \(cwd.path)",
+    )
     let home = environment["HOME"].map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
       ?? FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
     let homeWallet = home.appendingPathComponent(".wuhu", isDirectory: true).standardizedFileURL
@@ -43,9 +48,8 @@ struct Wallet {
         }
         return Self(directory: wallet, pinTarget: localWallet)
       }
-      let parent = candidate.deletingLastPathComponent()
-      if parent.path == candidate.path { break }
-      candidate = parent
+      guard candidate.pathComponents.count > root.pathComponents.count else { break }
+      candidate = candidate.deletingLastPathComponent()
     }
 
     return Self(directory: localWallet, pinTarget: localWallet)

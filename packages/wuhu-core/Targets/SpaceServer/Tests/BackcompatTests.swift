@@ -190,7 +190,6 @@ enum Backcompat {
     defer { try? FileManager.default.removeItem(at: scratch) }
     let file = scratch.appending(path: "space.sqlite")
     try Data(contentsOf: fixture).write(to: file)
-    if try !Wuhu45Migration.isApplied(to: file) { try Wuhu45Migration.apply(to: file) }
     let web = switch probe {
     case .tool, .observe: false
     case .webQuery, .webObserve: true

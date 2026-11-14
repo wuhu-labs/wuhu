@@ -201,7 +201,7 @@ private func configureHTTP2Stream(
   handler: @escaping UpgradingHandler,
 ) throws {
   let streamID = state.makeConnectionID()
-  let activity = ConnectionActivity()
+  let activity = ConnectionActivity(eventLoop: stream.eventLoop)
   guard state.registerConnection(id: streamID, channel: stream, activity: activity) else {
     throw TLSBindError.shuttingDown
   }

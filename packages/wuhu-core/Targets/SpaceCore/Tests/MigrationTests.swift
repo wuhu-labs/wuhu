@@ -18,6 +18,10 @@ import Testing
       try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005', '042')")
       try db.execute(sql: """
+      CREATE TABLE schema_compactions (name TEXT NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_compactions VALUES ('wuhu-45', '2026-01-01T00:00:00Z');
+      """)
+      try db.execute(sql: """
       CREATE TABLE machine_execs (
         id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, stream_id INTEGER NOT NULL,
         command TEXT NOT NULL, caller TEXT, tool_call_id TEXT, started_at TEXT NOT NULL,
@@ -197,15 +201,6 @@ import Testing
     #expect(try database.access { try $0.strings("SELECT id FROM machine_v2_output") } == ["file-output"])
     #expect(try database.access { try $0.strings("SELECT id FROM machine_v2_retention") } == ["file-op"])
     try await original.close()
-  }
-
-  @Test func freshBootRecordsLinksCompactionWithItsMigration() async throws {
-    let folder = try ScratchFolder("migration")
-    let location = folder.url.appending(path: "space.sqlite")
-    let database = try RawDatabase(path: location.path)
-    let space = try Space.open(file: location)
-    #expect(try database.access { try $0.strings("SELECT name FROM schema_compactions ORDER BY name") } == ["wuhu-45", "wuhu-45-links"])
-    try await space.close()
   }
 
   /// What a schema comparison can hold to. The `CREATE TABLE` text cannot:

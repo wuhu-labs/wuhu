@@ -1,0 +1,33 @@
+run: //tools:check-deno
+args:
+  - test
+inputs:
+  - '**'
+  - //deno.json
+  - job: :dependencies
+    output: dependencies
+    at: dependencies
+environment:
+  DENO_DIR: dependencies
+  DENO_NO_UPDATE_CHECK: '1'
+uses:
+  - //tools:bash
+  - //tools:tar
+  - //tools:curl
+  - //tools:shasum
+  - //tools:sha256sum
+  - //tools:uname
+  - //tools:mkdir
+  - //tools:chmod
+  - //tools:rm
+  - //tools:cp
+  - //tools:mv
+  - //tools:cat
+  - //tools:dirname
+  - //tools:mktemp
+  - //tools:sed
+  - //tools:grep
+  - //tools:find
+  - //tools:sh
+  - //tools:tr
+  - //tools:cut

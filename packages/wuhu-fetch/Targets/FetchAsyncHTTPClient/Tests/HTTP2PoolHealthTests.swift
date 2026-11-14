@@ -1,6 +1,7 @@
 import AsyncHTTPClient
 import FetchAsyncHTTPClient
 import NIOCore
+import NIOEmbedded
 import NIOHTTP2
 import NIOPosix
 import NIOSSL
@@ -10,6 +11,9 @@ import Testing
 @Suite struct HTTP2PoolHealthTests {
   @Test(arguments: [true, false])
   func onlyAnUnresponsiveParentIsEvicted(dropsAcknowledgements: Bool) async throws {
+    let clock = NIOAsyncTestingEventLoop()
+    let probes = AsyncStream<Void>.makeStream()
+    let parents = AsyncStream<any Channel>.makeStream()
     let accepted = Mutex(0)
     let requests = Mutex(0)
     let tls = try healthTestTLSContext()
@@ -40,33 +44,41 @@ import Testing
     configuration.tlsConfiguration = .makeClientConfiguration()
     configuration.tlsConfiguration?.certificateVerification = .none
     configuration.http2ConnectionDebugInitializer = { channel in
+      parents.continuation.yield(channel)
       let drop = initialized.withLock { count in
         count += 1
         return count == 1 && dropsAcknowledgements
       }
       return channel.eventLoop.makeCompletedFuture {
-        if drop {
-          let codec = try channel.pipeline.syncOperations.handler(type: NIOHTTP2Handler.self)
-          try channel.pipeline.syncOperations.addHandler(DropHealthPings(), position: .after(codec))
-        }
+        let codec = try channel.pipeline.syncOperations.handler(type: NIOHTTP2Handler.self)
+        try channel.pipeline.syncOperations.addHandler(HealthPings(drop: drop, probes: probes.continuation), position: .after(codec))
       }
     }
-    configuration.enableHTTP2HealthChecks(idleInterval: .milliseconds(100), acknowledgementTimeout: .seconds(2))
+    configuration.enableHTTP2HealthChecks(idleInterval: .milliseconds(100), acknowledgementTimeout: .seconds(2), deadlineLoop: clock)
     let client = HTTPClient(eventLoopGroupProvider: .singleton, configuration: configuration)
     do {
       let port = try #require(server.localAddress?.port)
       let request = HTTPClientRequest(url: "https://localhost:\(port)/")
-      let stalled = try await client.execute(request, timeout: .seconds(10))
+      let stalled = try await client.execute(request, deadline: .distantFuture)
       #expect(stalled.version == .http2)
       #expect(stalled.status.code == 200)
+      var connections = parents.stream.makeAsyncIterator()
+      let parent = try #require(await connections.next())
+      var observed = probes.stream.makeAsyncIterator()
+      await clock.advanceTime(by: .milliseconds(100))
+      _ = await observed.next()
       if dropsAcknowledgements {
+        await clock.advanceTime(by: .seconds(2))
         await #expect(throws: HTTPClientError.remoteConnectionClosed) {
           _ = try await stalled.body.collect(upTo: 1024)
         }
+        try await parent.closeFuture.get()
       } else {
+        await clock.advanceTime(by: .milliseconds(100))
+        _ = await observed.next()
         _ = try await stalled.body.collect(upTo: 1024)
       }
-      let response = try await client.execute(request, timeout: .seconds(10))
+      let response = try await client.execute(request, deadline: .distantFuture)
       #expect(response.version == .http2)
       #expect(response.status.code == 204)
       _ = try await response.body.collect(upTo: 1024)
@@ -82,12 +94,30 @@ import Testing
   }
 }
 
-private final class DropHealthPings: ChannelOutboundHandler {
+private final class HealthPings: ChannelDuplexHandler {
+  typealias InboundIn = HTTP2Frame
   typealias OutboundIn = HTTP2Frame
 
+  let drop: Bool
+  let probes: AsyncStream<Void>.Continuation
+
+  init(drop: Bool, probes: AsyncStream<Void>.Continuation) {
+    self.drop = drop
+    self.probes = probes
+  }
+
+  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    let acknowledged: Bool
+    if case .ping(_, ack: true) = unwrapInboundIn(data).payload { acknowledged = true }
+    else { acknowledged = false }
+    context.fireChannelRead(data)
+    if acknowledged { probes.yield(()) }
+  }
+
   func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-    if case .ping = unwrapOutboundIn(data).payload {
+    if drop, case .ping = unwrapOutboundIn(data).payload {
       promise?.succeed(())
+      probes.yield(())
     } else {
       context.write(data, promise: promise)
     }

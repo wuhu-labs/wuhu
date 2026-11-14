@@ -517,7 +517,7 @@ public final class ServeNIOServer: @unchecked Sendable {
     }
     return bootstrap.childChannelInitializer { channel in
       let connectionID = state.makeConnectionID()
-      let activity = ConnectionActivity(initialPhase: .receivingRequest)
+      let activity = ConnectionActivity(eventLoop: channel.eventLoop)
       guard state.registerConnection(id: connectionID, channel: channel, activity: activity) else {
         return channel.close()
       }
@@ -528,6 +528,26 @@ public final class ServeNIOServer: @unchecked Sendable {
       )
       hooks.onDidAcceptConnection(context)
       return initializer(channel, connectionID, context, activity)
+    }
+  }
+
+  public static func configureHTTP1(
+    channel: Channel,
+    options: ServeOptions = .init(),
+    handler: @escaping Handler,
+  ) -> EventLoopFuture<Void> {
+    channel.eventLoop.submit {
+      self.validateOptions(options)
+      let state = ServeNIOServerState()
+      let connectionID = state.makeConnectionID()
+      let activity = ConnectionActivity(eventLoop: channel.eventLoop)
+      precondition(state.registerConnection(id: connectionID, channel: channel, activity: activity))
+      try self.configureHTTP1(
+        channel: channel, options: options, hooks: .init(), state: state,
+        connectionID: connectionID,
+        context: .init(localAddress: channel.localAddress, remoteAddress: channel.remoteAddress),
+        activity: activity, handler: { .response(try await handler($0)) },
+      )
     }
   }
 
@@ -1164,9 +1184,11 @@ final class ConnectionActivity: Sendable {
   }
 
   private let state: Mutex<State>
+  private let eventLoop: any EventLoop
 
-  init(initialPhase: Phase = .receivingRequest) {
-    self.state = Mutex(State(phase: initialPhase))
+  init(eventLoop: any EventLoop) {
+    self.eventLoop = eventLoop
+    self.state = Mutex(State(phase: .receivingRequest))
   }
 
   var phase: Phase {
@@ -1219,7 +1241,7 @@ final class ConnectionActivity: Sendable {
       // so record when it happened and require a full idle interval since then
       // before read-idle may reap (`readIdleShouldReap`).
       if !paused {
-        state.lastUnpause = .now()
+        state.lastUnpause = self.eventLoop.now
       }
     }
   }
@@ -1233,7 +1255,7 @@ final class ConnectionActivity: Sendable {
       guard state.phase == .receivingRequest, !state.backpressurePaused else {
         return false
       }
-      return NIODeadline.now() - state.lastUnpause >= interval
+      return self.eventLoop.now - state.lastUnpause >= interval
     }
   }
 

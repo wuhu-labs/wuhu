@@ -177,6 +177,7 @@ private final class SessionCLIHarness: Sendable {
       stderr: { [stderr] text in await stderr.append(text) },
       environment: ["HOME": home.path],
       currentDirectory: cwd.path,
+      walletSearchRoot: root,
     )
     return await runner.run(arguments: arguments)
   }

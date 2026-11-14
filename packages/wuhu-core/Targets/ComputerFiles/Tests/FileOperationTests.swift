@@ -5,7 +5,6 @@ import ControlledTime
   import Foundation
 #endif
 @testable import ComputerFiles
-import Dispatch
 import Fetch
 import FileSearch
 import enum JSONValue.JSONValue
@@ -238,25 +237,42 @@ extension FileOperationTests {
   }
 }
 
-/// Stalls on the real disk: a read that never returns must not hold a search
-/// past its deadline, a stop, or a lease.
 extension FileOperationTests {
-  /// A disk whose first effect on `path` blocks until released, telling `entered` when it does.
   final class StalledDisk: Sendable {
     let path: String
     let (entered, writer) = AsyncStream<Void>.makeStream()
-    private let gate = DispatchSemaphore(value: 0)
+    private let gate = Signal()
     private let first = Mutex(true)
     init(_ path: String) { self.path = path }
-    var files: ComputerFileSystem { .local(beforeOpen: hook) }
-    var hook: @Sendable (String) throws -> Void {
-      { [self] addressed in
-        guard addressed == path, first.withLock({ let was = $0; $0 = false; return was }) else { return }
-        writer.yield(()); writer.finish(); gate.wait()
-      }
+    var files: ComputerFileSystem {
+      let local = ComputerFileSystem.local
+      return .init(status: local.status, read: { path, offset, count in
+        try await self.wait(path)
+        return try await local.read(path, offset, count)
+      }, search: { GatedSearch(source: local.search($0), disk: self) })
     }
 
-    func release() { gate.signal() }
+    func wait(_ addressed: String) async throws {
+      guard addressed == path, first.withLock({ let was = $0; $0 = false; return was }) else { return }
+      writer.finish()
+      await gate.wait()
+      try Task.checkCancellation()
+    }
+
+    func release() { gate.fire() }
+  }
+
+  private struct GatedSearch: SearchSource {
+    let source: any SearchSource
+    let disk: StalledDisk
+    func kind(_ path: String) async throws -> SearchEntryKind? { try await source.kind(path) }
+    func children(of path: String, from start: String, limit: Int) async throws -> SearchListing { try await source.children(of: path, from: start, limit: limit) }
+    func open(_ path: String) async throws -> any SearchReader {
+      try await disk.wait(path)
+      return try await source.open(path)
+    }
+
+    func isHidden(_ path: String) -> Bool { source.isHidden(path) }
   }
 
   func stalledFolder(_ name: String) throws -> (ScratchFolder, StalledDisk) {
@@ -270,7 +286,7 @@ extension FileOperationTests {
     let (folder, disk) = try stalledFolder("computer-files-stall-deadline")
     defer { disk.release() }
     let clock = VirtualClock()
-    let source = LocalSearchSource(root: folder.url.path, effects: DiskEffects(), beforeIO: disk.hook)
+    let source = disk.files.search(folder.url.path)
     let search = Task {
       try await SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test").run(in: source, clock: clock)
     }

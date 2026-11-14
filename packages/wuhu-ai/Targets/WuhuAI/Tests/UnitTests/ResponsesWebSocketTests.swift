@@ -762,8 +762,8 @@ private actor MutableSocketMedia: MediaResolver {
     await session.invalidate()
   }
 
-  @Test(arguments: ["upgrade-header", "metadata-header", "request-observer", "event-observer", "quota"])
-  func cancellationWhileCallbackSuspendsFinishesAndNextInferenceIsFresh(stage: String) async throws {
+  @Test(arguments: ["upgrade-header", "metadata-header", "request-observer", "event-observer", "quota"], [false, true])
+  func cancellationWhileCallbackSuspendsFinishesAndNextInferenceIsFresh(stage: String, streaming: Bool) async throws {
     let gate = CallbackSuspension()
     let metadata = json(#"{"type":"codex.response.metadata","headers":{"x-suspend":"metadata"}}"#)
     let scripts = stage == "metadata-header" ? [[metadata] + textResponse("resp_1"), textResponse("resp_2")] : (stage == "quota" ? [[json(#"{"type":"codex.rate_limits"}"#)] + textResponse("resp_1"), textResponse("resp_2")] : [textResponse("resp_1"), textResponse("resp_2")])
@@ -774,13 +774,18 @@ private actor MutableSocketMedia: MediaResolver {
     })
     try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
       let first = Task {
-        try await endpoint.withWebSocket(session: session, attemptID: "one", observer: .init(request: { _, _, _ in
+        let inference = endpoint.withWebSocket(session: session, attemptID: "one", observer: .init(request: { _, _, _ in
           if stage == "request-observer" { await gate.suspendOnce() }
         }, event: { _, _ in
           if stage == "event-observer" { await gate.suspendOnce() }
         }), receiveQuota: { _ in
           if stage == "quota" { await gate.suspendOnce() }
-        }).inference(context: initial()).collect()
+        }).inference(context: initial())
+        if streaming {
+          for try await _ in inference.stream() {}
+        } else {
+          _ = try await inference.collect()
+        }
       }
       for await _ in gate.entered.stream { break }
       first.cancel()

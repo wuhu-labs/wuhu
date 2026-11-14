@@ -163,6 +163,7 @@ struct EnrollRig {
         "WUHU_CONFIG_DIR": configDirectory.path,
       ].merging(environment) { $1 },
       currentDirectory: root.appendingPathComponent("work").path,
+      walletSearchRoot: root,
     )
     return await withDependencies {
       $0.date = self.clock.generator

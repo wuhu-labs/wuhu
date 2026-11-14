@@ -6,7 +6,9 @@
   },
   "lint": {
     "rules": {
-      "include": ["no-sparse-arrays"]
+      "include": [
+        "no-sparse-arrays"
+      ]
     }
   },
   "imports": {

@@ -3,6 +3,11 @@ import MachineChannel
 import MachineContract
 import Testing
 
+private func execID(_ n: Int) -> ExecID {
+  let digits = String(n)
+  return ExecID(rawValue: "ex_t" + String(repeating: "0", count: 7 - digits.count) + digits)
+}
+
 @Suite(.deterministicDependencies)
 struct CodecTests {
   @Test func framesRoundTripThroughWireBytes() throws {

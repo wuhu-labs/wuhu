@@ -98,9 +98,9 @@ import Wuwei
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "session_command_tokens", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "wmd_snapshots", "wmd_log", "wmd_checkpoints", "document_state", "document_snapshot", "document_log", "document_checkpoint", "document_lineage", "document_pending_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "notifications_retired", "session_lines", "bucket_objects", "person_hidden_sidebars"]
+    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "document_state", "document_snapshot", "document_log", "document_checkpoint", "document_lineage", "document_pending_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "session_lines", "bucket_objects", "person_hidden_sidebars"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
-    let dropped: Set = ["session_receipts", "session_api_receipts", "session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs", "blobs", "blob_objects"]
+    let dropped: Set = ["session_receipts", "session_api_receipts", "session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs", "blobs", "blob_objects", "schema_compactions", "fs_heads_by_parent", "session_context", "session_generations"]
     let addsOwnership: Set = ["accounts", "account_keys", "join_tokens", "read_sessions", "personas", "devices", "join_token_receipts"]
     let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)
     let expectedKeys = Set(expected.keys).subtracting(later)
@@ -177,19 +177,6 @@ import Wuwei
       #expect(after == sequence)
       #expect(try db.strings("PRAGMA integrity_check") == ["ok"])
       #expect(try db.rows("PRAGMA foreign_key_check").isEmpty)
-    }
-  }
-
-  @Test func aPreGroupsBinaryFailsToOpenTheMigratedFile() throws {
-    let folder = try scratch()
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let file = try copy(to: folder)
-    try Wuhu45Migration.apply(to: file)
-    // The statement from the pre-groups schema script.
-    #expect(throws: MigrationFailure.self) {
-      try RawDatabase.open(file.path) { db in
-        try db.execute(sql: #"CREATE INDEX IF NOT EXISTS "fs_heads_by_parent" ON "fs_heads" ("parent_path");"#)
-      }
     }
   }
 

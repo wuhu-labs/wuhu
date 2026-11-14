@@ -206,7 +206,7 @@ import Testing
     try await withTLSEcho(identity: identity, body: #"{"token":"t1","content":"hi"}"#) { port in
       let host = "127.0.0.1:\(port)"
       let trust = try ServerTrust(environment: environment)
-      let cliA = CLI(environment: environment, currentDirectory: folderA.path, trust: trust)
+      let cliA = CLI(environment: environment, currentDirectory: folderA.path, walletSearchRoot: root, trust: trust)
       let pinCode = await withDependencies {
         $0[ServerTrustProbe.self] = ServerTrustProbe(
           validateSystem: { _, _ in throw UnimplementedProbe(endpoint: "validateSystem") },
@@ -222,7 +222,7 @@ import Testing
 
       // Folder B honors the pin without re-pinning: use skips system
       // validation, and the actual dial verifies the pinned certificate.
-      let cliB = CLI(environment: environment, currentDirectory: folderB.path, trust: trust)
+      let cliB = CLI(environment: environment, currentDirectory: folderB.path, walletSearchRoot: root, trust: trust)
       let useCode = await withDependencies {
         $0[ServerTrustProbe.self] = ServerTrustProbe(
           validateSystem: { _, _ in throw UnimplementedProbe(endpoint: "validateSystem") },
@@ -276,7 +276,7 @@ private struct CLI {
   let stdout: TextSink
   let stderr: TextSink
 
-  init(environment: [String: String], currentDirectory: String, trust: ServerTrust? = nil) {
+  init(environment: [String: String], currentDirectory: String, walletSearchRoot: URL, trust: ServerTrust? = nil) {
     let stdout = TextSink()
     let stderr = TextSink()
     self.stdout = stdout
@@ -292,6 +292,7 @@ private struct CLI {
       stderr: { text in await stderr.append(text) },
       environment: environment,
       currentDirectory: currentDirectory,
+      walletSearchRoot: walletSearchRoot,
     )
   }
 }

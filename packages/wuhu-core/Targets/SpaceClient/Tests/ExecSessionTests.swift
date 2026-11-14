@@ -10,7 +10,6 @@ import Testing
   @Test func manualExitAcknowledgementKeepsTheCallerLegUntilSettlement() async throws {
     let (caller, peer) = InMemoryTransport.pair()
     let transport = RecordingTransport(caller)
-    let machine = ChannelEndpoint()
     let events = Mutex<[ExecEvent]>([])
     let output = Mutex<[UInt8]>([])
     let (ended, end) = AsyncStream<Void>.makeStream()
@@ -22,14 +21,6 @@ import Testing
     }, dial: { _, _ in transport })
     let session = ExecSession(client: client, start: start)
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await machine.run(peer) }
-      group.addTask {
-        for await exec in machine.incomingExecs {
-          try await exec.send(.stdout, [1, 2, 3])
-          await exec.stopOutput()
-          await exec.exit(.signaled(signal: 9), timedOut: .killed)
-        }
-      }
       group.addTask {
         let termination = try await session.run(autoAcknowledge: false, input: .closed, output: { _, bytes in
           output.withLock { $0 += bytes }
@@ -43,6 +34,13 @@ import Testing
           #expect(transport.terminalAck.withLock { $0 })
         })
         #expect(termination == .signaled(9, outputLimitReached: false))
+      }
+      for frame in [
+        Frame(streamID: 1, opcode: .ack, payload: Ack(id: start.id, cursor: 0)),
+        Frame(streamID: 1, opcode: .output, payload: OutputChunk(id: start.id, stream: .stdout, cursor: 0, data: Base64Data([1, 2, 3]))),
+        Frame(streamID: 1, opcode: .execExit, payload: ExecExit(id: start.id, cursor: 3, status: .signaled(signal: 9), outputCut: true, timedOut: .killed)),
+      ] {
+        try await peer.send(FrameCodec.encode(frame))
       }
       for await _ in ended { break }
       #expect(!transport.closed.withLock { $0 })

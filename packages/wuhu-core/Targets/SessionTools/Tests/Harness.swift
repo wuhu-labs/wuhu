@@ -23,9 +23,15 @@ import struct MachineContract.ExecExit
 import struct MachineContract.ExecID
 import struct MachineContract.ExecMintInput
 import struct MachineContract.ExecMintOutput
+import enum MachineContract.ExecOutputStream
+import struct MachineContract.ExecStart
+import enum MachineContract.ExitStatus
+import struct MachineContract.Frame
 import struct MachineContract.MachineEntry
 import struct MachineContract.MachineError
 import struct MachineContract.MachineID
+import struct MachineContract.OutputChunk
+import struct MachineContract.StdinChunk
 import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
@@ -433,11 +439,8 @@ final class FakeMachineFS: Sendable {
 
 let machineA = MachineID(rawValue: "mc_aaaaaaaa")
 
-// A machine side for execs: `serve` plays each started exec. Every exec gets
-// its own machine endpoint, kept across re-dials so a rejoin finds the stream
-// it left, and execs run side by side as they do behind the hub.
+// A machine side for execs: `serve` plays each started exec with the scripted receiver below.
 final class ScriptedExecMachine: Sendable {
-  let startCount = Box(0)
   /// Script execs minted: a spawn returns once minted, while its start reaches `serve` later, if ever.
   let scriptMints = Box(0)
   let kills = Box<[ExecID]>([])
@@ -445,27 +448,23 @@ final class ScriptedExecMachine: Sendable {
   /// Whether each dial was made in a trace.
   let tracedDials = Box<[Bool]>([])
 
-  private let endpoints = Mutex<[ExecID: ChannelEndpoint]>([:])
   private let owners = Mutex<[ExecID: MachineID]>([:])
   private let links = Mutex<[ExecID: InMemoryTransport]>([:])
   private let space = Mutex<Space?>(nil)
-  private let transports: AsyncStream<(ChannelEndpoint, InMemoryTransport)>
-  private let transportsContinuation: AsyncStream<(ChannelEndpoint, InMemoryTransport)>.Continuation
-  private let fresh: AsyncStream<ChannelEndpoint>
-  private let freshContinuation: AsyncStream<ChannelEndpoint>.Continuation
+  private let transports: AsyncStream<InMemoryTransport>
+  private let transportsContinuation: AsyncStream<InMemoryTransport>.Continuation
 
   private let onTerminalAck: @Sendable (Ack) async throws -> Void
 
   init(onTerminalAck: @escaping @Sendable (Ack) async throws -> Void = { _ in }) {
     self.onTerminalAck = onTerminalAck
     (transports, transportsContinuation) = AsyncStream.makeStream()
-    (fresh, freshContinuation) = AsyncStream.makeStream()
   }
 
   func dial(_ id: ExecID) -> any FrameTransport {
     let (caller, machineSide) = InMemoryTransport.pair()
     links.withLock { $0[id] = machineSide }
-    transportsContinuation.yield((endpoint(for: id), machineSide))
+    transportsContinuation.yield(machineSide)
     return TerminalAckTransport(base: caller, observe: onTerminalAck, closed: { [self] in
       let store = self.space.withLock { $0 }!
       let cell = MachineCell.ID(owners.withLock { $0[id]! }.rawValue)
@@ -563,17 +562,6 @@ final class ScriptedExecMachine: Sendable {
     }
   }
 
-  private func endpoint(for id: ExecID) -> ChannelEndpoint {
-    let (endpoint, created) = endpoints.withLock { endpoints in
-      if let endpoint = endpoints[id] { return (endpoint, false) }
-      let endpoint = ChannelEndpoint()
-      endpoints[id] = endpoint
-      return (endpoint, true)
-    }
-    if created { freshContinuation.yield(endpoint) }
-    return endpoint
-  }
-
   func lose(_ id: ExecID) async {
     do {
       let store = try #require(space.withLock { $0 })
@@ -588,30 +576,85 @@ final class ScriptedExecMachine: Sendable {
     links.withLock { $0[id] }?.sever()
   }
 
-  func pump() async {
+  func serve(_ script: @escaping @Sendable (ScriptedExec) async -> Void) async {
     await withDiscardingTaskGroup { group in
-      for await (endpoint, transport) in transports {
-        group.addTask { [self] in
-          guard let store = self.space.withLock({ $0 }) else { return }
-          await endpoint.run(ExecRecordingTransport(base: transport, space: store))
+      for await transport in transports {
+        guard let store = space.withLock({ $0 }) else { return }
+        group.addTask {
+          await ScriptedExecReceiver(script: script).run(ExecRecordingTransport(base: transport, space: store))
         }
       }
     }
   }
+}
 
-  func serve(_ script: @escaping @Sendable (IncomingExec) async -> Void) async {
-    await withDiscardingTaskGroup { group in
-      for await endpoint in fresh {
-        group.addTask { [startCount] in
-          await withDiscardingTaskGroup { execs in
-            for await exec in endpoint.incomingExecs {
-              startCount.withLock { $0 += 1 }
-              execs.addTask { await script(exec) }
-            }
-          }
+/// Plays the receiver half of the exec wire the way `ExecSocketLink` does: hello in, then one
+/// `exec-start`, then acks, output and exit out. No dedupe, no retention.
+struct ScriptedExecReceiver: Sendable {
+  let script: @Sendable (ScriptedExec) async -> Void
+
+  func run(_ transport: some FrameTransport) async {
+    let exec = Mutex<ScriptedExec?>(nil)
+    await withTaskGroup(of: Void.self) { group in
+      for await bytes in transport.inbound {
+        guard let frame = try? FrameCodec.decode(bytes) else { continue }
+        if frame.opcode == .execStart, exec.withLock({ $0 == nil }), let start = try? frame.payload(ExecStart.self) {
+          let created = ScriptedExec(start: start, streamID: frame.streamID, transport: transport)
+          exec.withLock { $0 = created }
+          try? await transport.send(FrameCodec.encode(Frame(streamID: frame.streamID, opcode: .ack, payload: Ack(id: start.id, cursor: 0))))
+          group.addTask { await script(created) }
+        } else if let created = exec.withLock({ $0 }) {
+          await created.receive(frame)
         }
       }
     }
+  }
+}
+
+final class ScriptedExec: Sendable {
+  let start: ExecStart
+  let stdin: AsyncStream<(cursor: Int, bytes: [UInt8])>
+  let kills: AsyncStream<Void>
+  private let feed: AsyncStream<(cursor: Int, bytes: [UInt8])>.Continuation
+  private let stop: AsyncStream<Void>.Continuation
+  private let streamID: Int
+  private let transport: any FrameTransport
+  private let cursor = Mutex(0)
+
+  init(start: ExecStart, streamID: Int, transport: any FrameTransport) {
+    self.start = start
+    self.streamID = streamID
+    self.transport = transport
+    (stdin, feed) = AsyncStream.makeStream()
+    (kills, stop) = AsyncStream.makeStream()
+  }
+
+  func receive(_ frame: Frame) async {
+    switch frame.opcode {
+    case .stdin:
+      guard let chunk = try? frame.payload(StdinChunk.self) else { return }
+      feed.yield((chunk.cursor, chunk.data.bytes))
+    case .stdinEof:
+      feed.finish()
+    case .kill:
+      stop.yield(())
+    default:
+      break
+    }
+  }
+
+  func acknowledgeStdin(through cursor: Int) async {
+    try? await transport.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .ack, payload: Ack(id: start.id, cursor: cursor))))
+  }
+
+  func send(_ stream: ExecOutputStream, _ bytes: [UInt8]) async throws {
+    let cursor = cursor.withLock { cursor in defer { cursor += bytes.count }; return cursor }
+    try await transport.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .output, payload: OutputChunk(id: start.id, stream: stream, cursor: cursor, data: Base64Data(bytes)))))
+  }
+
+  func exit(_ status: ExitStatus) async {
+    let cursor = cursor.withLock { $0 }
+    try? await transport.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .execExit, payload: ExecExit(id: start.id, cursor: cursor, status: status))))
   }
 }
 

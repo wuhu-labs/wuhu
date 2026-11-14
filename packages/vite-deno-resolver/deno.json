@@ -8,8 +8,13 @@
   },
   "lint": {
     "rules": {
-      "include": ["no-sparse-arrays"]
-    }
+      "include": [
+        "no-sparse-arrays"
+      ]
+    },
+    "include": [
+      "src"
+    ]
   },
   "exports": {
     ".": "./src/mod.ts"

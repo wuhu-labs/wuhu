@@ -13,6 +13,7 @@ import {
   validateAppExtensions,
   validateAppIntents,
   validateAppRelease,
+  validateAppTryLinks,
   validateTargetInfo,
   validateTargetRelease,
 } from '../manifest-gen/generate.ts'
@@ -33,6 +34,7 @@ export async function loadAppManifest(dir: string): Promise<AppManifest> {
   const source = join(dir, 'app.yml')
   const app = parse(await Deno.readTextFile(source)) as AppManifest
   validateAppRelease(app, source)
+  validateAppTryLinks(app, source)
   validateAppExtensions(app, source)
   validateAppIntents(app, source)
   validateAppEntitlements(app, source)

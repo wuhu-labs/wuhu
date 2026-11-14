@@ -15,6 +15,7 @@ import {
   assertNoMacroProductExport,
   assertNoManualDependencies,
   assertNoViewPilotDependency,
+  assertTryLinkNamesDistinct,
   collectLoweredDependencies,
   combineBuildBazel,
   type ExternalPackage,
@@ -34,7 +35,6 @@ import {
   rawLabelLowering,
   referencedProfileNames,
   resolvedEntitlements,
-  swiftlintSuiteBuildBazel,
   swiftPMIdentityFromUrl,
   type TargetKind,
   type TargetManifest,
@@ -44,6 +44,7 @@ import {
   validateAppIntents,
   validateAppRelease,
   validateAppTransportSecurity,
+  validateAppTryLinks,
   validateTargetInfo,
   validateTargetLinkedFrameworks,
   validateTargetRelease,
@@ -510,7 +511,7 @@ Deno.test('generated app BUILD embeds ViewPilot only in the development signing 
   })
   assertStringIncludes(
     build,
-    '"//bazel/signing:dev": [\n            "//packages/view-pilot:ViewPilot",\n            "//packages/view-pilot:ViewPilotBootstrap",',
+    '"//bazel/signing:dev_unsigned": [],\n        "//bazel/signing:dev": [\n            "//packages/view-pilot:ViewPilot",\n            "//packages/view-pilot:ViewPilotBootstrap",',
   )
   assertStringIncludes(
     build,
@@ -523,6 +524,18 @@ Deno.test('generated app BUILD embeds ViewPilot only in the development signing 
   ) {
     throw new Error('store branch reaches ViewPilot')
   }
+})
+
+Deno.test('unsigned development omits UI control while ordinary dev and HMR keep their defines', async () => {
+  const rules = await Deno.readTextFile('bazel/rules/rules.bzl')
+  assertStringIncludes(
+    rules,
+    'WUHU_UI_CONTROL_COPTS = select({\n    "//bazel/signing:dev_unsigned": [],\n    "//bazel/signing:dev": ["-D", "BUILD_WITH_UI_CONTROL"],\n    "//conditions:default": [],\n})',
+  )
+  assertStringIncludes(
+    rules,
+    'WUHU_HMR_COPTS = select({\n    "//bazel/rules:hmr_enabled": ["-D", "BUILD_WITH_HMR"],\n    "//conditions:default": [],\n})',
+  )
 })
 
 Deno.test('app signing variant selects profiles and generated entitlements at build time', () => {
@@ -563,6 +576,7 @@ Deno.test('app signing variant selects profiles and generated entitlements at bu
   )
   assertStringIncludes(build, 'tags = ["manual"]')
   assertStringIncludes(build, '"//bazel/signing:store_unsigned": None,')
+  assertStringIncludes(build, '"//bazel/signing:dev_unsigned": None,')
   assertStringIncludes(
     build,
     '"//bazel/signing:dev_simulator": None,\n        "//bazel/signing:dev": ":ExampleiOS_dev_profile',
@@ -648,18 +662,9 @@ Deno.test('native platforms select their complete profile-backed variants', () =
     build,
     '"//bazel/signing:dev": ":ExampleMac_dev_profile',
   )
-  assertStringIncludes(
-    build,
-    '"//bazel/signing:adhoc": None,\n        "//bazel/signing:store": ":ExampleMac_store_profile',
-  )
-  for (const absent of ['ExampleMac_adhoc_profile']) {
-    if (build.includes(absent)) {
-      throw new Error(`did not expect a ${absent} target`)
-    }
-  }
 })
 
-Deno.test('a devIdentity signs dev and adhoc as a second app beside store', () => {
+Deno.test('a devIdentity builds a second app beside store', () => {
   const app: AppManifest = {
     name: 'Example',
     signingTeamID: 'TEAM123456',
@@ -718,11 +723,11 @@ Deno.test('a devIdentity signs dev and adhoc as a second app beside store', () =
   const build = generateAppBuildBazel(app, undefined, 'Apps/example')
   assertStringIncludes(
     build,
-    'bundle_id = select({\n        "//bazel/signing:dev": "tech.example.app.dev",\n        "//bazel/signing:adhoc": "tech.example.app.dev",\n        "//bazel/signing:store": "tech.example.app",\n    })',
+    'bundle_id = select({\n        "//bazel/signing:dev": "tech.example.app.dev",\n        "//bazel/signing:store": "tech.example.app",\n    })',
   )
   assertStringIncludes(
     build,
-    '"//bazel/signing:adhoc": "Apps/example/ExampleiOS-adhoc.entitlements"',
+    '"//bazel/signing:dev": "Apps/example/ExampleiOS-dev.entitlements"',
   )
   assertStringIncludes(
     build,
@@ -730,22 +735,20 @@ Deno.test('a devIdentity signs dev and adhoc as a second app beside store', () =
   )
   assertStringIncludes(
     build,
-    '"//bazel/signing:adhoc": ["Apps/example/Sources/Info-adhoc.plist"]',
+    '"//bazel/signing:dev_unsigned": ["Apps/example/Sources/Info-unsigned.plist"]',
   )
   assertStringIncludes(
     build,
-    '"//bazel/signing:dev": ["Apps/example/Widgets/Info.plist"],\n        "//bazel/signing:adhoc": ["Apps/example/Widgets/Info.plist"],\n        "//bazel/signing:store": ["Apps/example/Widgets/Info-release.plist"]',
+    '"//bazel/signing:dev": ["Apps/example/Widgets/Info.plist"],\n        "//bazel/signing:store": ["Apps/example/Widgets/Info-release.plist"]',
   )
   assertStringIncludes(
     build,
-    '"//bazel/signing:adhoc": glob(["Apps/example/Dev/AppIcon.icon/**"])',
+    '"//bazel/signing:dev": glob(["Apps/example/Dev/AppIcon.icon/**"])',
   )
   for (
     const name of [
       'Wuhu Dev tech.example.app.dev',
-      'Wuhu AdHoc tech.example.app.dev',
       'Wuhu Store tech.example.app',
-      'Wuhu AdHoc tech.example.app.dev.Widgets',
       'Wuhu Store tech.example.app.Widgets',
     ]
   ) assertStringIncludes(build, `profile_name = "${name}"`)
@@ -870,36 +873,6 @@ Deno.test('a devIdentity must cover the whole app and extend its bundle ID', () 
     'must extend tech.example.app.dev',
   )
   validateAppEntitlements(app('tech.example.app.dev.Widgets'), 'app.yml')
-})
-
-Deno.test('an iOS preview builds adhoc on the wildcard AdHoc profile', () => {
-  const preview: AppManifest['targets'][number] = {
-    name: 'ExamplePreviewiOS',
-    platform: 'iOS',
-    bundleID: 'tech.lakeridge.previews.example',
-    bundleName: 'ExamplePreview',
-    entitlements: {},
-    families: ['iphone'],
-    appIcons: [],
-    infoPlist: 'Sources/Info.plist',
-    minimumOSVersion: '18.0',
-    dependencies: [],
-    info: {},
-  }
-  const build = generateAppBuildBazel(
-    { name: 'ExamplePreview', signingTeamID: 'TEAM123456', targets: [preview] },
-    undefined,
-    'Apps/example-preview',
-  )
-  assertStringIncludes(build, 'profile_name = "Wuhu AdHoc Previews"')
-  assertStringIncludes(
-    build,
-    '"//bazel/signing:adhoc": "Apps/example-preview/ExamplePreviewiOS-release.entitlements"',
-  )
-  assertEquals(resolvedEntitlements(preview, 'adhoc', 'TEAM123456'), {
-    'application-identifier': 'TEAM123456.tech.lakeridge.previews.example',
-    'com.apple.developer.team-identifier': 'TEAM123456',
-  })
 })
 
 Deno.test('a tvOS preview device build signs dev on the tvOS wildcard profile', () => {
@@ -1647,6 +1620,63 @@ Deno.test('release blocks are validated at parse', () => {
   )
 })
 
+Deno.test('one try-link name claimed across two shells is rejected', () => {
+  assertThrows(
+    () =>
+      assertTryLinkNamesDistinct([
+        {
+          name: 'arcroom',
+          source: 'packages/arcroom/Apps/arcroom/app.yml:ArcroomiOS',
+        },
+        {
+          name: 'arcroom',
+          source:
+            'packages/arcroom/Apps/arcroom-preview/app.yml:ArcroomPreviewiOS',
+        },
+      ]),
+    Error,
+    'try link arcroom is claimed by both packages/arcroom/Apps/arcroom/app.yml:ArcroomiOS and packages/arcroom/Apps/arcroom-preview/app.yml:ArcroomPreviewiOS',
+  )
+})
+
+Deno.test('a try link needs an iOS target and a kebab-case name', () => {
+  const target = (
+    tryLink: string,
+    platform: AppManifest['targets'][number]['platform'],
+  ): AppManifest['targets'][number] => ({
+    name: 'ExampleIOS',
+    platform,
+    bundleID: 'tech.example.app',
+    bundleName: 'Example',
+    entitlements: {},
+    families: ['iphone'],
+    appIcons: [],
+    infoPlist: 'Sources/Info.plist',
+    minimumOSVersion: '26.0',
+    dependencies: [],
+    info: {},
+    tryLink,
+  })
+  assertThrows(
+    () =>
+      validateAppTryLinks(
+        { name: 'Example', targets: [target('example', 'macOS')] },
+        'packages/example/Apps/example',
+      ),
+    Error,
+    'ExampleIOS.tryLink requires an iOS target',
+  )
+  assertThrows(
+    () =>
+      validateAppTryLinks(
+        { name: 'Example', targets: [target('Example App', 'iOS')] },
+        'packages/example/Apps/example',
+      ),
+    Error,
+    'ExampleIOS.tryLink must be kebab-case, got "Example App"',
+  )
+})
+
 Deno.test('an app-shell library no app target depends on is rejected', () => {
   const manifest: AppManifest = {
     name: 'Orphan',
@@ -2008,51 +2038,6 @@ Deno.test('an executable may expose a product name without changing its target m
   )
 })
 
-Deno.test('generateBuildBazel discovers DocC catalogs and emits a merged site', async () => {
-  const root = await Deno.makeTempDir()
-  try {
-    const targets = [
-      {
-        ...minimalTarget('Base', 'library'),
-        manifestDir: join(root, 'Targets/Base'),
-      },
-      {
-        ...minimalTarget('Feature', 'library'),
-        dependencies: ['Base'],
-        manifestDir: join(root, 'Targets/Feature'),
-      },
-    ]
-    for (const target of targets) {
-      const catalog = join(
-        target.manifestDir,
-        'Sources',
-        `${target.name}.docc`,
-      )
-      await Deno.mkdir(catalog, { recursive: true })
-      await Deno.writeTextFile(join(catalog, 'index.md'), '# Documentation')
-    }
-
-    const build = await generateBuildBazel(basePkg, targets)
-    assertStringIncludes(build, '"wuhu_docc_archive"')
-    assertStringIncludes(build, '"wuhu_docc_site"')
-    assertStringIncludes(build, 'name = "BaseDocC"')
-    assertStringIncludes(build, 'name = "FeatureDocC"')
-    assertStringIncludes(build, 'dependencies = [\n        ":BaseDocC",\n    ]')
-    assertStringIncludes(build, 'name = "docs"')
-    assertEquals(build.match(/tags = \["manual"\]/g)?.length, 4)
-    assertStringIncludes(
-      build,
-      'archives = [\n        ":BaseDocC",\n        ":FeatureDocC",\n    ]',
-    )
-    assertStringIncludes(
-      build,
-      'catalog = glob(["Targets/Feature/Sources/Feature.docc/**"])',
-    )
-  } finally {
-    await Deno.remove(root, { recursive: true })
-  }
-})
-
 Deno.test('generateBuildBazel stamps an executable with a status genrule and define', async () => {
   const build = await generateBuildBazel(basePkg, [
     { ...minimalTarget('wuhu', 'executable'), stamp: true },
@@ -2256,29 +2241,6 @@ Deno.test('package swiftSettings lead every Swift target and test target', async
   assertStringIncludes(
     generatePackageSwift(basePkg, '.', [lib]),
     '.enableUpcomingFeature("NonisolatedNonsendingByDefault")',
-  )
-})
-
-Deno.test('every Swift package gets a manual SwiftLint test, run together by //packages:swiftlint', async () => {
-  const build = await generateBuildBazel(basePkg, [
-    minimalTarget('Lib', 'library'),
-  ])
-  assertStringIncludes(
-    build,
-    'load("//bazel/swiftlint:defs.bzl", "swiftlint_test")',
-  )
-  assertStringIncludes(
-    build,
-    'swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)',
-  )
-  await assertRejects(
-    () => generateBuildBazel(basePkg, [minimalTarget('swiftlint', 'library')]),
-    Error,
-    'generated SwiftLint test :swiftlint conflicts with a source target',
-  )
-  assertEquals(
-    swiftlintSuiteBuildBazel(['packages/b', 'packages/a']),
-    'test_suite(\n    name = "swiftlint",\n    tags = ["manual"],\n    tests = [\n        "//packages/a:swiftlint",\n        "//packages/b:swiftlint",\n    ],\n)\n',
   )
 })
 
@@ -2724,34 +2686,6 @@ Deno.test('objcLibrary kind emits an always-linked Objective-C target', async ()
   assertStringIncludes(bazel, `deps = [\n        ":Native",`)
 })
 
-Deno.test('generateDenoBuildBazel emits bundle and task tests from deno.json tasks', () => {
-  const build = generateDenoBuildBazel('packages/wuhu-web', {
-    owner: 'wuhu',
-    tasks: {
-      build: 'x',
-      fmt: 'f',
-      typecheck: 'y',
-      lint: 'z',
-      test: 't',
-      dev: 'ignored',
-    },
-  })
-  assertStringIncludes(
-    build,
-    `load("//bazel/rules:deno.bzl", "deno_bundle", "deno_task_test")`,
-  )
-  assertStringIncludes(build, `deno_bundle(\n    name = "bundle"`)
-  assertStringIncludes(build, `output_dir = "build/client"`)
-  assertStringIncludes(build, `tags = ["requires-network"]`)
-  assertStringIncludes(build, `task = "fmt"`)
-  assertStringIncludes(build, `task = "typecheck"`)
-  assertStringIncludes(build, `task = "lint"`)
-  assertStringIncludes(build, `task = "test"`)
-  if (build.includes(`"dev"`)) {
-    throw new Error('did not expect a target for the dev task')
-  }
-})
-
 Deno.test('generateDenoBuildBazel emits exported_dir targets', () => {
   const build = generateDenoBuildBazel('packages/wuhu-web', {
     owner: 'wuhu',
@@ -2760,7 +2694,7 @@ Deno.test('generateDenoBuildBazel emits exported_dir targets', () => {
   })
   assertStringIncludes(
     build,
-    `load("//bazel/rules:deno.bzl", "deno_task_test", "exported_dir")`,
+    `load("//bazel/rules:deno.bzl", "exported_dir")`,
   )
   assertStringIncludes(
     build,
@@ -2768,28 +2702,24 @@ Deno.test('generateDenoBuildBazel emits exported_dir targets', () => {
   )
 })
 
-Deno.test('generateDenoBuildBazel emits deno_artifact targets with declared inputs', () => {
-  const build = generateDenoBuildBazel('packages/wuhu-desktop', {
-    owner: 'wuhu-app',
-    tasks: { package: 'p', lint: 'z' },
+Deno.test('generateDenoBuildBazel emits deno_artifact targets', () => {
+  const build = generateDenoBuildBazel('packages/jsx-compile', {
+    owner: 'wuhu',
+    tasks: { bundle: 'p', lint: 'z' },
     artifacts: {
-      dist: {
-        task: 'package',
+      bundle: {
+        task: 'bundle',
         platforms: ['linux'],
-        inputs: {
-          TOOL_B: '@tool_b//file',
-          TOOL_A: '@tool_a//file',
-        },
       },
     },
   })
   assertStringIncludes(
     build,
-    `load("//bazel/rules:deno.bzl", "deno_artifact", "deno_task_test")`,
+    `load("//bazel/rules:deno.bzl", "deno_artifact")`,
   )
   assertStringIncludes(
     build,
-    `deno_artifact(\n    name = "dist",\n    srcs = [":srcs"],\n    inputs = {\n        "@tool_a//file": "TOOL_A",\n        "@tool_b//file": "TOOL_B",\n    },\n    tags = ["requires-network"],\n    task = "package",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
+    `deno_artifact(\n    name = "bundle",\n    srcs = [":srcs"],\n    tags = ["requires-network"],\n    task = "bundle",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
   )
 })
 
@@ -2807,75 +2737,6 @@ Deno.test('generateDenoBuildBazel rejects an artifact naming an undeclared task'
   if (!failed) {
     throw new Error('expected an undeclared artifact task to be rejected')
   }
-})
-
-Deno.test('generateDenoBuildBazel narrows every target to declared platforms and reserves DENO_JOBS CPUs', () => {
-  const build = generateDenoBuildBazel('packages/build-pool', {
-    owner: 'internal',
-    platforms: ['linux'],
-    tasks: { lint: 'z', test: 'DENO_JOBS=6 deno test --parallel tests' },
-  })
-  assertStringIncludes(
-    build,
-    `deno_task_test(\n    name = "test",\n    srcs = [":srcs"],\n    tags = [\n        "cpu:6",\n        "requires-network",\n    ],\n    task = "test",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
-  )
-  assertStringIncludes(
-    build,
-    `deno_task_test(\n    name = "lint",\n    srcs = [":srcs"],\n    tags = ["requires-network"],\n    task = "lint",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
-  )
-})
-
-Deno.test('generateDenoBuildBazel gives an extra checking task its own platforms and tags a manual one', () => {
-  const build = generateDenoBuildBazel('packages/build-pool', {
-    owner: 'internal',
-    platforms: ['linux'],
-    tasks: {
-      test: 'DENO_JOBS=6 deno test --parallel tests',
-      'test-mac': 'm',
-      contract: 'c',
-    },
-    tests: { 'test-mac': { platforms: ['mac'] }, contract: { manual: true } },
-  })
-  assertStringIncludes(
-    build,
-    `deno_task_test(\n    name = "test-mac",\n    srcs = [":srcs"],\n    tags = ["requires-network"],\n    task = "test-mac",\n    target_compatible_with = wuhu_platforms([\n        "mac",\n    ]),\n)`,
-  )
-  assertStringIncludes(
-    build,
-    `deno_task_test(\n    name = "contract",\n    srcs = [":srcs"],\n    tags = [\n        "manual",\n        "requires-network",\n    ],\n    task = "contract",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
-  )
-  assertThrows(
-    () =>
-      generateDenoBuildBazel('packages/p', {
-        owner: 'internal',
-        tasks: { test: 't' },
-        tests: { test: { platforms: ['mac'] } },
-      }),
-    Error,
-    'tests.test: test is a standard checking task',
-  )
-  assertThrows(
-    () =>
-      generateDenoBuildBazel('packages/p', {
-        owner: 'internal',
-        tasks: { test: 't' },
-        tests: { 'test-ios': { platforms: ['ios'] } },
-      }),
-    Error,
-    'tests.test-ios names a task deno.json does not declare',
-  )
-})
-
-Deno.test('generateDenoBuildBazel rejects a parallel deno test without DENO_JOBS', () => {
-  assertThrows(
-    () =>
-      generateDenoBuildBazel('packages/p', {
-        owner: 'internal',
-        tasks: { test: 'deno test --parallel tests' },
-      }),
-    Error,
-    'packages/p/deno.json tasks.test runs deno test --parallel without DENO_JOBS',
-  )
 })
 
 Deno.test('generateDenoBuildBazel injects generated inputs and excludes their paths', () => {
@@ -2919,62 +2780,6 @@ Deno.test('generateDenoBuildBazel leaves a non-member package byte-identical', (
     if (standalone.includes(attr)) {
       throw new Error(`a non-member package must not gain ${attr}`)
     }
-  }
-})
-
-Deno.test('generateDenoBuildBazel makes a linking standalone package its own cluster', () => {
-  const build = generateDenoBuildBazel('packages/build-pool', {
-    owner: 'internal',
-    tasks: { test: 't' },
-    links: ['../space-oidc'],
-  })
-  assertStringIncludes(
-    build,
-    `    workspace_root_files = [
-        "//packages/build-pool:deno.json",
-        "//packages/build-pool:deno.lock",
-    ],
-    link_srcs = [
-        "//packages/space-oidc:srcs",
-    ],
-`,
-  )
-  if (build.includes('workspace_member_srcs')) {
-    throw new Error('a one-member cluster has no sibling members')
-  }
-})
-
-Deno.test('generateDenoBuildBazel wires a workspace member to the cluster', () => {
-  const build = generateDenoBuildBazel(
-    'packages/wuhu-web/ui',
-    { owner: 'wuhu', tasks: { typecheck: 'y', lint: 'z' } },
-    {
-      dir: 'packages/wuhu-web',
-      members: ['packages/wuhu-web/lab', 'packages/wuhu-web/ui'],
-      links: [],
-    },
-  )
-  assertStringIncludes(
-    build,
-    'workspace_root_files = [\n        "//packages/wuhu-web:deno.json",\n        "//packages/wuhu-web:deno.lock",\n    ]',
-  )
-  assertStringIncludes(
-    build,
-    'workspace_member_srcs = [\n        "//packages/wuhu-web/lab:srcs",\n    ]',
-  )
-  assertEquals(build.includes('"//packages/wuhu-web/ui:srcs"'), false)
-})
-
-Deno.test('generateDenoBuildBazel omits workspace_member_srcs for a lone member', () => {
-  const build = generateDenoBuildBazel(
-    'packages/wuhu-web/ui',
-    { owner: 'wuhu', tasks: { typecheck: 'y' } },
-    { dir: 'packages/wuhu-web', members: ['packages/wuhu-web/ui'], links: [] },
-  )
-  assertStringIncludes(build, `srcs = [":srcs"]`)
-  assertStringIncludes(build, `workspace_root_files = [`)
-  if (build.includes('workspace_member_srcs')) {
-    throw new Error('a lone workspace member has no siblings to pull in')
   }
 })
 
@@ -3297,26 +3102,6 @@ Deno.test('compiler-plugin edges reject platform conditions, including test depe
   }
 })
 
-Deno.test('compiled C targets reject DocC catalogs', async () => {
-  const root = await Deno.makeTempDir()
-  try {
-    const target: TargetManifest = {
-      ...minimalTarget('Codec', 'cLibrary'),
-      manifestDir: join(root, 'Targets/Codec'),
-    }
-    await Deno.mkdir(join(target.manifestDir, 'Sources', 'Codec.docc'), {
-      recursive: true,
-    })
-    await assertRejects(
-      () => generateBuildBazel(basePkg, [target]),
-      Error,
-      'cannot document a cLibrary',
-    )
-  } finally {
-    await Deno.remove(root, { recursive: true })
-  }
-})
-
 Deno.test('unsigned Store profile bypass covers every real Wuhu app and embedded bundle', async () => {
   const source = new URL(
     '../../packages/wuhu-app/Apps/wuhu/app.yml',
@@ -3398,7 +3183,7 @@ Deno.test('platform runtime rejects platforms outside the test lanes', async () 
   )
 })
 
-Deno.test('direct distribution rejects mobile, development identity and channel identity overrides', async () => {
+Deno.test('direct distribution rejects mobile and development identity', async () => {
   const source = await Deno.readTextFile(
     new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
   )
@@ -3420,20 +3205,6 @@ Deno.test('direct distribution rejects mobile, development identity and channel 
     }),
     Error,
     'release-only app identity',
-  )
-  assertThrows(
-    change((target) => {
-      delete target.releaseChannels!.stable
-    }),
-    Error,
-    'stable default',
-  )
-  assertThrows(
-    change((target) => {
-      target.releaseChannels!.staging.CFBundleIdentifier = 'wrong'
-    }),
-    Error,
-    'cannot change bundle identity',
   )
 })
 

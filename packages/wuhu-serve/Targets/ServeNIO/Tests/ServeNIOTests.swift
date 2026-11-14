@@ -8,6 +8,7 @@ import AsyncHTTPClient
 import Fetch
 import FetchAsyncHTTPClient
 import NIOCore
+import NIOEmbedded
 import NIOPosix
 import Serve
 import ServeNIO
@@ -562,10 +563,8 @@ struct ServeNIOTests {
     }
   }
 
-  @Test func backpressurePauseIsNotReapedByReadTimeout() async throws {
-    // A short read-inactivity timeout with a consumer that stalls far longer
-    // than it while the buffer is paused: the pause is our own doing, so the
-    // healthy upload must survive and deliver in full.
+  @Test(arguments: [false, true])
+  func backpressurePauseIsNotReapedByReadTimeout(stallsAfterResume: Bool) async throws {
     let options = ServeOptions(
       requestBodyHighWatermarkBytes: 4096,
       requestBodyLowWatermarkBytes: 1024,
@@ -573,28 +572,44 @@ struct ServeNIOTests {
       requestReadInactivityTimeout: .milliseconds(150),
     )
     let payloadSize = 64 * 1024
-
-    try await withTCPServer(options: options) { request in
+    let release = AsyncStream<Void>.makeStream()
+    let drained = AsyncStream<Void>.makeStream()
+    let channel = try await NIOAsyncTestingChannel { _ in }
+    try await ServeNIOServer.configureHTTP1(channel: channel, options: options) { request in
+      for await _ in release.stream { break }
       var total = 0
-      var stalledOnce = false
       for try await chunk in (request.body ?? .empty).asyncBytes() {
         total += chunk.count
-        if !stalledOnce {
-          stalledOnce = true
-          // Hold the buffer full and paused well past the read timeout.
-          try? await Task.sleep(nanoseconds: 600_000_000)
-        }
+        drained.continuation.yield(())
       }
-      return Response(status: .ok, body: .chunk(Data("received \(total)".utf8)))
-    } operation: { server in
-      let port = try #require(server.boundAddress.port)
-      let payload = String(repeating: "x", count: payloadSize)
-      let response = try await sendRawTCPRequest(
-        port: port,
-        request: rawRequest(path: "/upload", method: .post, body: payload),
-      )
+      return Response(status: .ok, body: .string("received \(total)"))
+    }.get()
+    try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 80))
+    let head = "POST /upload HTTP/1.1\r\nHost: local\r\nConnection: close\r\nContent-Length: \(payloadSize)\r\n\r\n"
+    try await channel.writeInbound(channel.allocator.buffer(string: head + String(repeating: "x", count: 8192)))
+    let paused = channel.eventLoop.scheduleTask(in: .milliseconds(600)) {
+      channel.pipeline.fireUserInboundEventTriggered(IdleStateHandler.IdleStateEvent.read)
+      return channel.isActive
+    }
+    await channel.testingEventLoop.advanceTime(by: .milliseconds(600))
+    #expect(try await paused.futureResult.get())
+    release.continuation.yield(())
+    for await _ in drained.stream { break }
+    channel.pipeline.fireUserInboundEventTriggered(IdleStateHandler.IdleStateEvent.read)
+    await channel.testingEventLoop.run()
+    #expect(channel.isActive)
+    if stallsAfterResume {
+      await channel.testingEventLoop.advanceTime(by: .milliseconds(150))
+      channel.pipeline.fireUserInboundEventTriggered(IdleStateHandler.IdleStateEvent.read)
+      try await channel.closeFuture.get()
+      #expect(!channel.isActive)
+    } else {
+      try await channel.writeInbound(channel.allocator.buffer(string: String(repeating: "x", count: payloadSize - 8192)))
+      try await channel.closeFuture.get()
+      let response = try await embeddedResponse(channel)
       #expect(response.contains("received \(payloadSize)"))
     }
+    _ = try await channel.finish(acceptAlreadyClosed: true)
   }
 
   @Test func pipelinedStreamingResponseKeepsCorrectPhaseUnderShortTimeouts() async throws {
@@ -634,37 +649,39 @@ struct ServeNIOTests {
 
   @Test func cancelledBodyReadClosesOrdinaryResponseAndCannotServeSecondRequest() async throws {
     let requests = Mutex(0)
-    try await withTCPServer { request in
+    let reading = AsyncStream<Void>.makeStream()
+    let cancel = AsyncStream<Void>.makeStream()
+    let channel = try await NIOAsyncTestingChannel { _ in }
+    try await ServeNIOServer.configureHTTP1(channel: channel) { request in
       requests.withLock { $0 += 1 }
       let cancelled = await withTaskGroup(of: Bool.self) { tasks in
         tasks.addTask {
+          reading.continuation.yield(())
           do { _ = try await request.body?.data(); return false }
           catch is CancellationError { return true }
           catch { return false }
         }
-        tasks.addTask {
-          try? await ContinuousClock().sleep(for: .milliseconds(100))
-          return false
-        }
-        _ = await tasks.next()
+        for await _ in cancel.stream { break }
         tasks.cancelAll()
-        return await tasks.next() ?? false
+        return await tasks.next()!
       }
       return Response(status: .ok, body: .string(cancelled ? "cancelled" : "unexpected read result"))
-    } operation: { server in
-      let port = try #require(server.boundAddress.port)
-      try await withRawConnection(port: port) { channel, accumulator in
-        let head = "POST /one HTTP/1.1\r\nHost: local\r\nContent-Length: 1048576\r\n\r\nx"
-        try await channel.writeAndFlush(channel.allocator.buffer(string: head))
-        try await waitUntil(timeout: .seconds(3)) { accumulator.isInactive }
-        #expect(accumulator.text.contains("HTTP/1.1 200"))
-        #expect(accumulator.text.contains("cancelled"))
-        #expect(accumulator.text.lowercased().contains("connection: close"))
-        try? await channel.writeAndFlush(channel.allocator.buffer(bytes: rawRequest(path: "/two", keepAlive: true)))
-        #expect(requests.withLock { $0 } == 1)
-        #expect(accumulator.isInactive)
-      }
-    }
+    }.get()
+    try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 80))
+    let head = "POST /one HTTP/1.1\r\nHost: local\r\nContent-Length: 1048576\r\n\r\nx"
+    try await channel.writeInbound(channel.allocator.buffer(string: head))
+    for await _ in reading.stream { break }
+    _ = channel.eventLoop.scheduleTask(in: .milliseconds(100)) { cancel.continuation.yield(()) }
+    await channel.testingEventLoop.advanceTime(by: .milliseconds(100))
+    try await channel.closeFuture.get()
+    let response = try await embeddedResponse(channel)
+    #expect(response.contains("HTTP/1.1 200"))
+    #expect(response.contains("cancelled"))
+    #expect(response.lowercased().contains("connection: close"))
+    try? await channel.writeInbound(channel.allocator.buffer(bytes: rawRequest(path: "/two", keepAlive: true)))
+    #expect(requests.withLock { $0 } == 1)
+    #expect(!channel.isActive)
+    _ = try await channel.finish(acceptAlreadyClosed: true)
   }
 
   @Test func explicitCloseResponseSkipsUnreadTricklingBodyDrain() async throws {
@@ -1193,4 +1210,15 @@ private func waitUntil(
   guard condition() else {
     throw TimeoutError.timedOut(seconds: 0)
   }
+}
+
+private func embeddedResponse(_ channel: NIOAsyncTestingChannel) async throws -> String {
+  var response = Data()
+  while let data = try await channel.readOutbound(as: IOData.self) {
+    switch data {
+    case let .byteBuffer(buffer): response.append(contentsOf: buffer.readableBytesView)
+    case .fileRegion: Issue.record("unexpected file response")
+    }
+  }
+  return String(decoding: response, as: UTF8.self)
 }

@@ -12,7 +12,6 @@ bazel_dep(name = "rules_apple", version = "4.5.3", repo_name = "build_bazel_rule
 bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_swift", version = "3.6.1", repo_name = "build_bazel_rules_swift")
 bazel_dep(name = "rules_swift_package_manager", version = "1.17.1")
-bazel_dep(name = "swiftlint", version = "0.65.1")
 
 single_version_override(
     module_name = "rules_apple",
@@ -47,9 +46,7 @@ single_version_override(
 # disabled at 20 seconds or less). Without TEST_TIMEOUT it uses 60 seconds. Upstream reads `--test_filter`
 # as one unanchored regex (`Suite/a()` also selects `Suite/ab()`); the filter patch gives it the
 # identifier-list grammar the macOS bundle runner hands to xcodebuild, so one filter means the
-# same on every host lane. Symbol graph extraction takes the toolchain's flags only; the
-# response-file patches hand it the target's `@file` copts too, so DocC reads a package at the
-# same platform floor its compile raised it to (docs/bazel.md, "Platform floors").
+# same on every host lane.
 single_version_override(
     module_name = "rules_swift",
     patch_strip = 1,
@@ -59,9 +56,6 @@ single_version_override(
         "//bazel/patches:rules-swift-test-runner-completion.patch",
         "//bazel/patches:rules-swift-stalled-test-watchdog.patch",
         "//bazel/patches:rules-swift-test-filter-identifiers.patch",
-        "//bazel/patches:rules-swift-symbol-graph-response-files-aspect.patch",
-        "//bazel/patches:rules-swift-symbol-graph-response-files-extracting.patch",
-        "//bazel/patches:rules-swift-symbol-graph-response-files-config.patch",
     ],
     version = "3.6.1",
 )
@@ -344,30 +338,6 @@ http_archive(
     sha256 = "cf3f2aa0d27ab3be9c1599682c2815de6ad8e9498daeca6eecd2434850b6c4b1",
     strip_prefix = "quickjs-emscripten-0.32.0",
     url = "https://github.com/justjake/quickjs-emscripten/archive/refs/tags/v0.32.0.tar.gz",
-)
-
-http_archive(
-    name = "quickjs_ffi",
-    build_file_content = 'exports_files(["dist/ffi.mjs"], visibility = ["//visibility:public"])',
-    sha256 = "feb879d9c539f03717afe939d798defc40632642e91eccccbcabe54fafbe0025",
-    strip_prefix = "package",
-    url = "https://registry.npmjs.org/@jitl/quickjs-ng-wasmfile-release-sync/-/quickjs-ng-wasmfile-release-sync-0.32.0.tgz",
-)
-
-http_archive(
-    name = "quickjs_core",
-    build_file_content = 'filegroup(name = "modules", srcs = glob(["dist/*.mjs"]), visibility = ["//visibility:public"])',
-    sha256 = "2ea4461a54e87217adf3f2b327c130d8f6b034e334f9e7d87c0580d0406a206e",
-    strip_prefix = "package",
-    url = "https://registry.npmjs.org/quickjs-emscripten-core/-/quickjs-emscripten-core-0.32.0.tgz",
-)
-
-http_archive(
-    name = "quickjs_ffi_types",
-    build_file_content = 'exports_files(["dist/index.mjs"], visibility = ["//visibility:public"])',
-    sha256 = "d7bf18745d8fb2144587fcfd15982a1a87347f6675538615623c3267c51965b1",
-    strip_prefix = "package",
-    url = "https://registry.npmjs.org/@jitl/quickjs-ffi-types/-/quickjs-ffi-types-0.32.0.tgz",
 )
 
 # Apple CC toolchain configuration.

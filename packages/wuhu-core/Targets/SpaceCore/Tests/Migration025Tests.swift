@@ -23,7 +23,6 @@ import Testing
       INSERT INTO session_queue (session_id, id, input_id, payload, enqueued_at) VALUES ('s', 1, 'i', ?, 'now');
       INSERT INTO notifications (recipient, source, kind, payload, created_at, grp) VALUES
         ('owner', 's', 'child_failed', '{}', 'now', 'shared'), ('owner', 's', 'request_deadline', '{}', 'now', 'shared'), ('owner', 's', 'session_settled', '{}', 'now', 'shared');
-      DROP TABLE notifications_retired;
       DELETE FROM grdb_migrations WHERE identifier = '025';
       """, arguments: [failed, deadline, head, deadline])
     }
@@ -35,7 +34,6 @@ import Testing
       try db.string("SELECT json_extract(payload, '$.generationHead._0.snapshot.subscriptions') FROM session_contents WHERE id = 'head'")
     } == #"["obs.kept",{"observe":{"sql":"SELECT 1"}}]"#)
     #expect(try database.access { try $0.strings("SELECT kind FROM notifications") } == ["session_settled"])
-    #expect(try database.access { try $0.strings("SELECT kind FROM notifications_retired ORDER BY kind") } == ["child_failed", "request_deadline"])
     try await upgraded.close()
     try await original.close()
   }

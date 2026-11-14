@@ -20,15 +20,8 @@ load("@build_bazel_rules_swift//swift:swift_test.bzl", "swift_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_swift_package_manager//swiftpkg:build_defs.bzl", "resource_bundle_infoplist")
-load(":docc.bzl", _wuhu_docc_archive = "wuhu_docc_archive", _wuhu_docc_site = "wuhu_docc_site")
 load(":imported_frameworks.bzl", "host_test_frameworks")
 load(":sim_runner.bzl", "wuhu_sim_test_runner")
-
-def wuhu_docc_archive(**kwargs):
-    _wuhu_docc_archive(**kwargs)
-
-def wuhu_docc_site(**kwargs):
-    _wuhu_docc_site(**kwargs)
 
 _PLATFORM_SETTINGS = {
     "linux": "//bazel/constraints:linux",
@@ -394,6 +387,7 @@ WUHU_CONTROLLABLE_CLOCK_COPTS = select({
 
 # Development-signing-only compile define gating the in-process UI pilot.
 WUHU_UI_CONTROL_COPTS = select({
+    "//bazel/signing:dev_unsigned": [],
     "//bazel/signing:dev": ["-D", "BUILD_WITH_UI_CONTROL"],
     "//conditions:default": [],
 })

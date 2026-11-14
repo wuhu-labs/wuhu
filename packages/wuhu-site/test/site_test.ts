@@ -30,7 +30,11 @@ async function sh(
   const result = await new Deno.Command(command[0], {
     args: command.slice(1),
     cwd: options.cwd,
-    env: { PATH: Deno.env.get('PATH') ?? '/usr/bin:/bin', ...options.env },
+    env: {
+      PATH: Deno.env.get('PATH') ?? '/usr/bin:/bin',
+      TMPDIR: Deno.env.get('TMPDIR') ?? '/tmp',
+      ...options.env,
+    },
     clearEnv: true,
   }).output()
   const decoder = new TextDecoder()

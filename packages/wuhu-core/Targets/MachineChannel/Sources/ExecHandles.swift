@@ -6,7 +6,7 @@ public struct OutgoingExec: Sendable {
   let endpoint: ChannelEndpoint
 
   public func sendStdin(_ bytes: [UInt8]) async throws {
-    try await endpoint.sendData(exec: id, stream: nil, bytes: bytes)
+    try await endpoint.sendData(exec: id, bytes: bytes)
   }
 
   public func closeStdin() async {
@@ -28,41 +28,6 @@ public struct OutgoingExec: Sendable {
 
   public func acknowledge(through cursor: Int) async {
     await endpoint.acknowledgeConsumption(exec: id, through: cursor)
-  }
-}
-
-public struct IncomingExec: Sendable {
-  public let start: ExecStart
-  public let stdin: StdinStream
-  public let kills: AsyncStream<Void>
-  /// The caller's output acknowledgements as combined cursors, keeping only the newest: everything through it reached the caller.
-  public let acknowledgements: AsyncStream<Int>
-  let endpoint: ChannelEndpoint
-
-  /// Acknowledges stdin through `cursor` under an `IncomingResume`, once it is durable.
-  public func acknowledgeStdin(through cursor: Int) async {
-    await endpoint.acknowledgeConsumption(exec: start.id, through: cursor)
-  }
-
-  public func send(_ stream: ExecOutputStream, _ bytes: [UInt8], waitForCapacity: Bool = true) async throws {
-    try await endpoint.sendData(exec: start.id, stream: stream, bytes: bytes, waitForCapacity: waitForCapacity)
-  }
-
-  /// Returns the combined cursor the caller's output ends at; nil once the exec is retired.
-  @discardableResult
-  public func stopOutput() async -> Int? {
-    await endpoint.stopOutput(exec: start.id)
-  }
-
-  /// Stops waiting for the caller's window: sends go on while it has room, and the first that finds it short sends what fits and
-  /// stops the output, like `stopOutput()`.
-  public func drainOutput() async {
-    await endpoint.drainOutput(exec: start.id)
-  }
-
-  /// `timedOut` says the exec's `timeout` ended it, and how.
-  public func exit(_ status: ExitStatus, timedOut: ExecTimeout? = nil) async {
-    await endpoint.finish(exec: start.id, status: status, timedOut: timedOut)
   }
 }
 
@@ -174,75 +139,6 @@ public struct ExecEvents: AsyncSequence, Sendable {
           }
           if autoAcknowledge { await endpoint.acknowledgeExit(exec: id) }
           return .exit(status: exit.status)
-        default:
-          continue
-        }
-      }
-      return nil
-    }
-  }
-}
-
-public struct StdinStream: AsyncSequence, Sendable {
-  public typealias Element = [UInt8]
-
-  let endpoint: ChannelEndpoint
-  let id: ExecID
-  let frames: AsyncStream<Frame>
-  var initialConsumed = 0
-  var autoAcknowledge = true
-
-  public func makeAsyncIterator() -> Iterator {
-    Iterator(endpoint: endpoint, id: id, frames: frames.makeAsyncIterator(), consumed: initialConsumed, autoAcknowledge: autoAcknowledge)
-  }
-
-  public struct Iterator: AsyncIteratorProtocol {
-    let endpoint: ChannelEndpoint
-    let id: ExecID
-    var frames: AsyncStream<Frame>.AsyncIterator
-    var consumed: Int
-    let autoAcknowledge: Bool
-    var finished: Bool = false
-
-    public mutating func next() async throws -> [UInt8]? {
-      guard !finished else { return nil }
-      while let frame = await frames.next() {
-        switch frame.opcode {
-        case .stdin:
-          let chunk: StdinChunk
-          do {
-            chunk = try frame.payload(StdinChunk.self)
-          } catch {
-            finished = true
-            throw error
-          }
-          // Same tolerance as output: an above-consumed chunk raced a replay
-          // and will be redelivered by it.
-          guard chunk.cursor <= consumed else { continue }
-          let end = chunk.cursor + chunk.data.count
-          guard end > consumed else {
-            if autoAcknowledge { await endpoint.acknowledgeConsumption(exec: id, through: consumed) }
-            continue
-          }
-          let skip = consumed - chunk.cursor
-          let bytes = skip == 0 ? chunk.data.bytes : Array(chunk.data.bytes[skip...])
-          consumed = end
-          if autoAcknowledge { await endpoint.acknowledgeConsumption(exec: id, through: end) }
-          return bytes
-        case .stdinEof:
-          let eof: StdinEOF
-          do {
-            eof = try frame.payload(StdinEOF.self)
-          } catch {
-            finished = true
-            throw error
-          }
-          if eof.cursor > consumed { continue }
-          finished = true
-          guard eof.cursor == consumed else {
-            throw ChannelError.protocolViolation("stdin eof at \(eof.cursor) with stdin consumed through \(consumed)")
-          }
-          return nil
         default:
           continue
         }

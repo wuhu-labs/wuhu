@@ -4,6 +4,7 @@
   import Foundation
 #endif
 @testable import ComputerFiles
+import Dispatch
 import Fetch
 import FileSearch
 import enum JSONValue.JSONValue
@@ -228,10 +229,17 @@ extension ComputerAgentTests {
     let folder = try ScratchFolder("computer-agent-abandoned-effect")
     let file = folder.url.appending(path: "stuck.txt")
     try Data("needle\n".utf8).write(to: file)
-    let disk = FileOperationTests.StalledDisk(file.path)
-    defer { disk.release() }
+    let entered = AsyncStream<Void>.makeStream()
+    let release = DispatchSemaphore(value: 0)
+    defer { release.signal() }
+    let first = Mutex(true)
+    let files = ComputerFileSystem.local(beforeOpen: { path in
+      guard path == file.path, first.withLock({ let was = $0; $0 = false; return was }) else { return }
+      entered.continuation.finish()
+      release.wait()
+    })
     let external = FakeExternal()
-    let agent = try ComputerAgent(machine: "disk", files: disk.files, kinds: [AnyOperationKind(EchoKind())], external: external.kind)
+    let agent = try ComputerAgent(machine: "disk", files: files, kinds: [AnyOperationKind(EchoKind())], external: external.kind)
     let (released, releasedNow) = AsyncStream<Void>.makeStream()
     let operations = AgentWire { request in
       let response = try await agent.handler(request)
@@ -252,13 +260,13 @@ extension ComputerAgentTests {
       _ = try await operations.describe()
       let query = SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test")
       let operation = try await operations.start(.init(kind: "search.v1", input: json(query)))
-      for await _ in disk.entered {}
+      for await _ in entered.stream {}
       try await operation.stop("testStop")
       _ = try await operation.drain()
       for await _ in released { break }
       external.usage.withLock { $0.receipts = OperationLimits().receipts }
       let hung = try #require(try await usedReceipts())
-      disk.release()
+      release.signal()
       var used = hung
       while used == hung { try Task.checkCancellation(); await Task.yield(); used = try #require(try await usedReceipts()) }
       #expect(used == hung - 1)

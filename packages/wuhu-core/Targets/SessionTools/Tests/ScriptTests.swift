@@ -931,7 +931,7 @@ final class MachineWorld: Sendable {
 }
 
 // What each command does on the scripted machine.
-private let playbook: @Sendable (IncomingExec, ScriptedExecMachine) async -> Void = { exec, machine in
+private let playbook: @Sendable (ScriptedExec, ScriptedExecMachine) async -> Void = { exec, machine in
   switch exec.start.command.last ?? "" {
   case "build":
     try? await exec.send(.stdout, Array("compiling\nlink".utf8))
@@ -952,7 +952,8 @@ private let playbook: @Sendable (IncomingExec, ScriptedExecMachine) async -> Voi
   case "upper":
     do {
       for try await chunk in exec.stdin {
-        try await exec.send(.stdout, Array(String(decoding: chunk, as: UTF8.self).uppercased().utf8))
+        await exec.acknowledgeStdin(through: chunk.cursor + chunk.bytes.count)
+        try await exec.send(.stdout, Array(String(decoding: chunk.bytes, as: UTF8.self).uppercased().utf8))
       }
       try await exec.send(.stdout, [0x0A])
     } catch {}
@@ -1060,7 +1061,6 @@ func withRig(
           await whenCancelled { await worker.shutdown() }
         }
         if let world {
-          group.addTask { await world.execs.pump() }
           group.addTask { await world.execs.serve { await playbook($0, world.execs) } }
         }
         defer { group.cancelAll() }

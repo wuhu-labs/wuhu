@@ -329,6 +329,7 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
           }
         }
 
+        try Task.checkCancellation()
         guard sawResponseCompleted else {
           throw InferenceError.streamCut
         }

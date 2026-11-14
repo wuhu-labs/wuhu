@@ -7,12 +7,14 @@ final class HTTP2HealthCheckHandler: ChannelDuplexHandler {
   typealias OutboundIn = HTTP2Frame
   typealias OutboundOut = HTTP2Frame
 
+  private let deadlineLoop: any EventLoop
   private var state: HTTP2HealthCheckState
   private var timer: Scheduled<Void>?
   private var scheduledDeadline: NIODeadline?
   private var logger = Logger(label: "FetchAsyncHTTPClient.HTTP2Health")
 
-  init(idleInterval: TimeAmount, acknowledgementTimeout: TimeAmount) {
+  init(idleInterval: TimeAmount, acknowledgementTimeout: TimeAmount, deadlineLoop: any EventLoop) {
+    self.deadlineLoop = deadlineLoop
     let nonce = UInt64.random(in: .min ... .max)
     state = HTTP2HealthCheckState(
       idleInterval: idleInterval,
@@ -28,7 +30,7 @@ final class HTTP2HealthCheckHandler: ChannelDuplexHandler {
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     let frame = unwrapInboundIn(data)
-    if state.received(frame, now: context.eventLoop.now) {
+    if state.received(frame, now: deadlineLoop.now) {
       logger.info("HTTP/2 health PING acknowledged")
       updateTimer(context: context)
     }
@@ -44,7 +46,7 @@ final class HTTP2HealthCheckHandler: ChannelDuplexHandler {
   func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
     switch event {
     case let event as NIOHTTP2StreamCreatedEvent:
-      state.streamOpened(event.streamID, now: context.eventLoop.now)
+      state.streamOpened(event.streamID, now: deadlineLoop.now)
       logger.debug("HTTP/2 stream opened", metadata: ["stream-id": .stringConvertible(event.streamID)])
     case let event as StreamClosedEvent:
       state.streamClosed(event.streamID)
@@ -73,16 +75,20 @@ final class HTTP2HealthCheckHandler: ChannelDuplexHandler {
     scheduledDeadline = state.deadline
     guard let deadline = scheduledDeadline else { return }
     let bound = NIOLoopBound((self, context), eventLoop: context.eventLoop)
-    timer = context.eventLoop.scheduleTask(deadline: deadline) {
-      let (handler, context) = bound.value
-      handler.timerFired(context: context)
+    let eventLoop = context.eventLoop
+    timer = deadlineLoop.scheduleTask(deadline: deadline) {
+      eventLoop.execute {
+        let (handler, context) = bound.value
+        guard handler.scheduledDeadline == deadline else { return }
+        handler.timerFired(context: context)
+      }
     }
   }
 
   private func timerFired(context: ChannelHandlerContext) {
     timer = nil
     scheduledDeadline = nil
-    state.timerFired(now: context.eventLoop.now)
+    state.timerFired(now: deadlineLoop.now)
     updateTimer(context: context)
     switch state.phase {
     case let .probing(id, _):

@@ -1,6 +1,11 @@
 @testable import CLIKit
 import DeterministicDependencies
 import Fetch
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import Testing
 
 @Suite(.deterministicDependencies)
@@ -136,6 +141,7 @@ struct ServeRoutingTests {
       stderr: { text in await received.append(text) },
       environment: [:],
       currentDirectory: "/",
+      walletSearchRoot: URL(fileURLWithPath: "/", isDirectory: true),
     )
   }
 

@@ -194,6 +194,7 @@ final class IdentityHarness: Sendable {
       stderr: { [stderr] text in await stderr.append(text) },
       environment: environment.merging(["TMPDIR": self.scratch.path]) { old, _ in old },
       currentDirectory: self.cwd.path,
+      walletSearchRoot: self.scratch.url,
     )
     let code = await runner.run(arguments: arguments)
     return (code, await self.stdout.take(), await self.stderr.take(), self.hosts.list.withLock { $0 })
@@ -295,6 +296,7 @@ final class IdentityHarness: Sendable {
         stderr: { await error.append($0) },
         environment: ["HOME": h.home.path, "WUHU_EXEC": "1", "WUHU_IDENTITY": "wallet"],
         currentDirectory: nested.path,
+        walletSearchRoot: h.scratch.url,
       )
       #expect(await runner.run(arguments: ["ls", "/"]) == 0)
       #expect(await error.take() == "acting as \(try await h.space.ensureDevPerson().persona) (wallet)\n")

@@ -6,6 +6,7 @@ extension HTTPClient.Configuration {
   public mutating func enableHTTP2HealthChecks(
     idleInterval: TimeAmount = .seconds(30),
     acknowledgementTimeout: TimeAmount = .seconds(10),
+    deadlineLoop: (any EventLoop)? = nil,
   ) {
     precondition(idleInterval > .zero)
     precondition(acknowledgementTimeout > .zero)
@@ -19,6 +20,7 @@ extension HTTPClient.Configuration {
             HTTP2HealthCheckHandler(
               idleInterval: idleInterval,
               acknowledgementTimeout: acknowledgementTimeout,
+              deadlineLoop: deadlineLoop ?? channel.eventLoop,
             ),
             position: .after(codec),
           )

@@ -1,0 +1,17 @@
+run: :run-smoke
+inputs:
+  - smoke.ts
+  - smoke-worker.ts
+  - imports.json
+  - job: :build
+    output: emscripten-module.browser.mjs
+    at: emscripten-module.browser.mjs
+  - job: :build
+    output: emscripten-module.wasm
+    at: emscripten-module.wasm
+  - fetch: :ffi
+    at: ffi.tgz
+  - fetch: :core
+    at: core.tgz
+  - fetch: :ffi-types
+    at: ffi-types.tgz

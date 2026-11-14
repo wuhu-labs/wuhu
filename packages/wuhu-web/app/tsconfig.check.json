@@ -1,4 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["app/**/*.test.ts", "app/**/*.test.tsx"]
+  "exclude": [
+    "app/**/*.test.ts",
+    "app/**/*.test.tsx",
+    "check.ts",
+    "copy-sdk.ts"
+  ]
 }
