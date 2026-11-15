@@ -1,3 +1,4 @@
+import { profileSelection } from '../signing/model.ts'
 import {
   type CTargetLowering,
   ensureUpstreamCheckout,
@@ -1783,19 +1784,6 @@ export async function targetCheckPlatforms(
   return result
 }
 
-export async function targetAppPlatforms(
-  packageDir: string,
-): Promise<Map<string, CheckPlatform>> {
-  const result = new Map<string, CheckPlatform>()
-  for (const appDir of await discoverAppDirs(packageDir)) {
-    const app = await readYaml<AppManifest>(join(appDir, 'app.yml'))
-    for (const target of app.targets) {
-      result.set(target.name, appTargetPlatform(target))
-    }
-  }
-  return result
-}
-
 export async function testSnapshotReferences(
   packageDir: string,
 ): Promise<Map<string, string>> {
@@ -2472,6 +2460,11 @@ export async function generateBuildBazel(
   const kindByName = new Map(
     targets.map((target) => [target.name, target.kind]),
   )
+  if (targetNames.has('swiftlint')) {
+    throw new Error(
+      'generated SwiftLint test :swiftlint conflicts with a source target',
+    )
+  }
   const loadSymbols = [
     'wuhu_platforms',
     'wuhu_swift_binary',
@@ -2521,6 +2514,7 @@ export async function generateBuildBazel(
     `load("//bazel/rules:rules.bzl", ${
       loadSymbols.map((symbol) => `"${symbol}"`).join(', ')
     })`,
+    'load("//bazel/swiftlint:defs.bzl", "swiftlint_test")',
     `\npackage(default_visibility = ["//visibility:public"])\n`,
     // Release tooling reads these manifests as test inputs, and a source file
     // is only a label once the package exports it.
@@ -2550,6 +2544,8 @@ export async function generateBuildBazel(
         `${pkg.name} package.yml`,
       )]
       : []),
+    // Run together by //packages:swiftlint, the lint CI lane.
+    `swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)\n`,
   ]
 
   if (targets.some((target) => target.kind === 'objcLibrary')) {
@@ -2887,7 +2883,8 @@ interface DenoPackageManifest {
 }
 
 // A checking task beyond fmt/typecheck/lint/test: its own platforms (default
-// the package's), and `manual` keeps it out of `//...` and CI.
+// the package's), and `manual` keeps it out of `deno task check` and CI.
+// `tools/check/deno.ts` runs the entries; Bazel generates nothing from them.
 export interface DenoTest {
   platforms?: CheckPlatform[]
   manual?: boolean
@@ -3062,27 +3059,6 @@ function denoWorkspaceAttrs(
   return attrs
 }
 
-// Bazel reserves one CPU for a test unless a `cpu:N` tag says otherwise, so a
-// `--parallel` run declares its width in DENO_JOBS and reserves that many.
-function denoTaskTags(
-  command: string,
-  location: string,
-  manual = false,
-): string {
-  const jobs = /(?:^|\s)DENO_JOBS=(\d+)\s/.exec(command)?.[1]
-  if (jobs === undefined && /\s--parallel\b/.test(command)) {
-    throw new Error(
-      `${location} runs deno test --parallel without DENO_JOBS=<n>, so Bazel cannot reserve its CPUs`,
-    )
-  }
-  const tags = [
-    ...jobs === undefined ? [] : [`cpu:${jobs}`],
-    ...manual ? ['manual'] : [],
-    'requires-network',
-  ]
-  return tags.length === 1 ? '["requires-network"]' : quotedStarlarkList(tags)
-}
-
 export function generateDenoBuildBazel(
   packageDir: string,
   manifest: DenoPackageManifest,
@@ -3120,35 +3096,6 @@ export function generateDenoBuildBazel(
     symbols.push('deno_bundle')
     chunks.push(
       `deno_bundle(\n    name = "bundle",\n    srcs = ${srcs},\n${generatedAttr}${workspaceAttr}    output_dir = "build/client",\n    tags = ["requires-network"],\n${denoPlatformsAttr})\n`,
-    )
-  }
-  const checking: [string, string, boolean][] = []
-  for (
-    const [task, test] of Object.entries(manifest.tests ?? {})
-      .sort(([lhs], [rhs]) => lhs.localeCompare(rhs))
-  ) {
-    const location = `${packageDir}/deno.json tests.${task}`
-    if (!tasks[task]) {
-      throw new Error(`${location} names a task deno.json does not declare`)
-    }
-    checking.push([
-      task,
-      test.platforms
-        ? platformsAttr(test.platforms, location)
-        : denoPlatformsAttr,
-      test.manual ?? false,
-    ])
-  }
-  for (const [task, platforms, manual] of checking) {
-    if (!symbols.includes('deno_task_test')) symbols.push('deno_task_test')
-    chunks.push(
-      `deno_task_test(\n    name = "${task}",\n    srcs = ${srcs},\n${generatedAttr}${workspaceAttr}    tags = ${
-        denoTaskTags(
-          tasks[task]!,
-          `${packageDir}/deno.json tasks.${task}`,
-          manual,
-        )
-      },\n    task = "${task}",\n${platforms})\n`,
     )
   }
   for (
@@ -3718,14 +3665,12 @@ async function generatePackage(
     apps.map((entry) => entry.app),
     await cachedViewPilotProducts(),
   )
-  const platformsByIdentifier = profilePlatforms(apps.map((entry) => entry.app))
   const appBuilds = apps.map((entry) =>
     generateAppBuildBazel(
       entry.app,
       entry.entitlementSources,
       entry.pathPrefix,
       false,
-      platformsByIdentifier,
     )
   )
   const releaseSources = apps.flatMap((entry) => [
@@ -4101,61 +4046,11 @@ export function infoPlistPaths(
 export const hmrAppPlatforms: ReadonlySet<AppBundleManifest['platform']> =
   new Set(['iOS', 'macOS', 'tvOS', 'visionOS'])
 
-function profileName(
-  target: AppBundleManifest,
-  variant: SigningVariant,
-  platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>>,
-  hmr = false,
-): string | undefined {
-  if (target.distribution === 'direct') return undefined
-  if (isPreviewBundle(target)) {
-    if (hmr && target.platform === 'macOS') {
-      return variant === 'dev' ? `Wuhu Dev ${target.bundleID}` : undefined
-    }
-    if (target.platform === 'tvOS') {
-      return variant === 'dev' ? 'Wuhu Dev Previews tvOS' : undefined
-    }
-    if (target.platform !== 'iOS' && !(hmr && target.platform === 'visionOS')) {
-      return undefined
-    }
-    return variant === 'dev' ? 'Wuhu Dev Previews' : undefined
-  }
-  const label = variant === 'dev' ? 'Dev' : 'Store'
-  const identifier = variantBundle(target, variant).bundleID
-  const platforms = platformsByIdentifier.get(identifier)
-  const suffix = (platforms?.size ?? 0) > 1 ||
-      target.platform === 'visionOS' || target.platform === 'watchOS'
-    ? ` ${target.platform}`
-    : ''
-  return `Wuhu ${label} ${identifier}${suffix}`
-}
-
-export function appProfileName(
-  app: AppManifest,
-  target: AppBundleManifest,
-  variant: SigningVariant,
-): string | undefined {
-  return profileName(target, variant, profilePlatforms([app]), app.hmr)
-}
-
-export function referencedProfileNames(
-  apps: readonly AppManifest[],
-): string[] {
-  const platformsByIdentifier = profilePlatforms(apps)
-  return apps.flatMap((app) =>
-    appBundles(app).flatMap((target) =>
-      variantsFor(app, target).map((variant) =>
-        profileName(target, variant, platformsByIdentifier, app.hmr)
-      )
-    )
-  ).filter((name) => name !== undefined)
-}
-
 function profileTargetName(
   target: AppBundleManifest,
   variant: SigningVariant,
 ): string {
-  return `${target.name}_${variant}_profile__run_deno_task_prepare_profiles`
+  return `${target.name}_${variant}_profile`
 }
 
 function variantsFor(
@@ -4203,7 +4098,6 @@ function generateAppBundleRule(
   rule: string,
   manifestName: string,
   pathPrefix: string,
-  platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>>,
   extensions: string[] = [],
   embedsViewPilot = false,
   watchApplication?: string,
@@ -4215,8 +4109,10 @@ function generateAppBundleRule(
   const variants = variantsFor(app, target)
   const profiles = variants.flatMap(
     (variant): [string, string | null][] => {
-      const name = profileName(target, variant, platformsByIdentifier, app.hmr)
-      if (name === undefined) return [[variant, null]]
+      const selection = target.distribution === 'direct'
+        ? undefined
+        : profileSelection(target, variant, app.hmr)
+      if (selection === undefined) return [[variant, null]]
       const profile = `:${profileTargetName(target, variant)}`
       return target.platform === 'macOS'
         ? [[variant, profile]]
@@ -4224,6 +4120,10 @@ function generateAppBundleRule(
     },
   )
   for (const variant of variants) profiles.push([`${variant}_unsigned`, null])
+  const signsWithProfile = profiles.some(([_, value]) => value !== null)
+  // The public projection has no tools/signing, so the emitter spells the
+  // keychain name the signing tooling owns (docs/signing.md).
+  const signingKeychain = ['--keychain', 'wuhu-signing.keychain-db']
   const entitlements = variants.map((variant): [string, string] => [
     variant,
     shellPath(pathPrefix, entitlementPath(target, variant)),
@@ -4279,8 +4179,24 @@ function generateAppBundleRule(
   },\n    minimum_os_version = "${target.minimumOSVersion}",\n${
     direct ? '    features = ["disable_legacy_signing"],\n' : ''
   }${
-    profiles.some(([_, value]) => value !== null)
+    signsWithProfile
       ? `    provisioning_profile = ${selectExpr(profiles)},\n`
+      : ''
+  }${
+    signsWithProfile
+      ? `    codesignopts = ${
+        selectExpr(
+          profiles.map(([variant, profile]) => [
+            variant,
+            profile === null
+              ? '[]'
+              : `[${
+                signingKeychain.map((value) => JSON.stringify(value)).join(', ')
+              }]`,
+          ]),
+          (value) => value,
+        )
+      },\n`
       : ''
   }${
     target.frameworks?.length
@@ -4413,24 +4329,6 @@ function reachesLibrary(
   return false
 }
 
-function profilePlatforms(
-  apps: readonly AppManifest[],
-): Map<string, ReadonlySet<string>> {
-  const result = new Map<string, Set<string>>()
-  for (const app of apps) {
-    for (const target of appBundles(app)) {
-      if (isPreviewBundle(target)) continue
-      for (const variant of variantsFor(app, target)) {
-        const identifier = variantBundle(target, variant).bundleID
-        const platforms = result.get(identifier) ?? new Set<string>()
-        platforms.add(target.platform)
-        result.set(identifier, platforms)
-      }
-    }
-  }
-  return result
-}
-
 export function generateAppBuildBazel(
   app: AppManifest,
   entitlementSources: readonly string[] = [
@@ -4438,8 +4336,6 @@ export function generateAppBuildBazel(
   ].flatMap((target) => [...entitlementSourcesByVariant(app, target).keys()]),
   pathPrefix = '',
   emitReleaseManifest = true,
-  platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>> =
-    profilePlatforms([app]),
 ): string {
   validateManual(app.manual, `${app.name} ${shellPath(pathPrefix, 'app.yml')}`)
   const embedsViewPilot = appEmbedsViewPilot(app)
@@ -4482,13 +4378,13 @@ export function generateAppBuildBazel(
     app.signingTeamID &&
     bundles.some((target) =>
       variantsFor(app, target).some((variant) =>
-        profileName(target, variant, platformsByIdentifier, app.hmr) !==
+        profileSelection(target, variant, app.hmr) !==
           undefined
       )
     )
   ) {
     loads.push(
-      `load("@build_bazel_rules_apple//apple:apple.bzl", "local_provisioning_profile")`,
+      `load("//bazel/rules:signing.bzl", "apple_signing_ensure")`,
     )
   }
   // Everything tools/lib/manifests.ts opens for this shell. The release-tooling
@@ -4532,19 +4428,49 @@ export function generateAppBuildBazel(
       : []),
   ]
 
+  const profileActions = new Map<string, string>()
   for (const target of bundles) {
     if (!app.signingTeamID) continue
     for (const variant of variantsFor(app, target)) {
-      const name = profileName(target, variant, platformsByIdentifier, app.hmr)
-      if (!name) continue
+      const selection = target.distribution === 'direct'
+        ? undefined
+        : profileSelection(target, variant, app.hmr)
+      if (!selection) continue
+      const family = selection.platform === 'macos'
+        ? 'MAC'
+        : selection.platform === 'tvos'
+        ? 'TVOS'
+        : 'IOS'
+      const actionKey = `${selection.identifier}/${
+        selection.variant === 'Dev' ? selection.platform : family
+      }/${selection.variant}`
+      const canonical = profileActions.get(actionKey)
+      if (canonical) {
+        chunks.push(
+          `alias(\n    name = "${
+            profileTargetName(target, variant)
+          }",\n    actual = ":${canonical}",\n)\n`,
+        )
+        continue
+      }
+      profileActions.set(actionKey, profileTargetName(target, variant))
       chunks.push(
-        `local_provisioning_profile(\n    name = "${
+        `apple_signing_ensure(\n    name = "${
           profileTargetName(target, variant)
-        }",\n${
-          target.platform === 'macOS'
-            ? `    profile_extension = ".provisionprofile",\n`
-            : ''
-        }    profile_name = "${name}",\n    team_id = "${app.signingTeamID}",\n    tags = ["manual"],\n)\n`,
+        }",\n    command = "profile",\n    out = "${
+          profileTargetName(target, variant)
+        }.${
+          target.platform === 'macOS' ? 'provisionprofile' : 'mobileprovision'
+        }",\n    manifest = "${
+          shellPath(pathPrefix, 'app.yml')
+        }",\n    target = "${target.name}",\n    variant = "${variant}",\n    devices = "//tools:signing_devices",\n    srcs = ${
+          JSON.stringify([
+            '//tools:signing_sources',
+            ...entitlementSources.map((source) =>
+              shellPath(pathPrefix, source)
+            ),
+          ])
+        },\n    target_compatible_with = wuhu_platforms(["mac", "ios", "tvos", "visionos", "watchos"]),\n    tags = ["manual"],\n)\n`,
       )
     }
   }
@@ -4557,7 +4483,6 @@ export function generateAppBuildBazel(
         extensionRule(target.platform),
         app.name,
         pathPrefix,
-        platformsByIdentifier,
         [],
         false,
       ),
@@ -4572,7 +4497,6 @@ export function generateAppBuildBazel(
         appRule(target.platform),
         app.name,
         pathPrefix,
-        platformsByIdentifier,
       ),
     )
   }
@@ -4650,7 +4574,6 @@ export function generateAppBuildBazel(
         appRule(target.platform),
         app.name,
         pathPrefix,
-        platformsByIdentifier,
         (target.extensions ?? []).map((name) => `:${name}`),
         embedsViewPilot,
         target.watchApplication,
@@ -5165,7 +5088,19 @@ async function resolveXcodegen(): Promise<string> {
   return path
 }
 
-async function generateXcodeWorkspace(packageDir: string): Promise<void> {
+export type WorkspaceProfiles = ReadonlyMap<
+  string,
+  { name: string; identity: string }
+>
+type EnsureWorkspaceProfiles = (
+  app: AppManifest,
+  manifestPath: string,
+) => Promise<WorkspaceProfiles>
+
+async function generateXcodeWorkspace(
+  packageDir: string,
+  ensureProfiles?: EnsureWorkspaceProfiles,
+): Promise<void> {
   if (!apply) {
     throw new Error(
       '--workspace needs --apply: Xcode reads Package.swift and BUILD-adjacent plists at their real paths, not the .generated preview names.',
@@ -5190,10 +5125,12 @@ async function generateXcodeWorkspace(packageDir: string): Promise<void> {
     const local = (await exists(localPath))
       ? await readYaml<WorkspaceLocalConfig>(localPath)
       : {}
+    const signingProfiles = await ensureProfiles?.(app, join(appDir, 'app.yml'))
     const spec = xcodeProjectSpec(
       app,
       await localPackageRefs(app, appDir),
       local,
+      signingProfiles,
     )
     for (const target of appBundles(app)) {
       const plistPath = join(appDir, xcodeInfoPlistPath(target))
@@ -5286,6 +5223,19 @@ async function removeLegacyPackagesIfNeeded(): Promise<void> {
   console.log('removed stale legacy Packages/')
 }
 
+export function swiftlintSuiteBuildBazel(packageDirs: string[]): string {
+  return `test_suite(
+    name = "swiftlint",
+    tags = ["manual"],
+    tests = [
+${
+    [...packageDirs].sort().map((dir) => `        "//${dir}:swiftlint",\n`)
+      .join('')
+  }    ],
+)
+`
+}
+
 export async function assertNoManualDependencies(root = '.'): Promise<void> {
   const packages = await Promise.all(
     (await discoverPackageDirs(join(root, 'packages'))).map(async (dir) => ({
@@ -5332,7 +5282,10 @@ async function assertSwiftOrDeno(packageDirs: string[]): Promise<void> {
   }
 }
 
-export async function main(rawArgs: string[] = Deno.args): Promise<void> {
+export async function main(
+  rawArgs: string[] = Deno.args,
+  ensureProfiles?: EnsureWorkspaceProfiles,
+): Promise<void> {
   if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
     console.log(manifestUsage())
     return
@@ -5377,7 +5330,7 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
     assertPublicEdges(await discoverOwnedPackages('packages'))
     await writeIfChanged(
       join('packages', apply ? 'BUILD.bazel' : 'BUILD.generated.bazel'),
-      'package(default_visibility = ["//visibility:public"])\n',
+      swiftlintSuiteBuildBazel(packageDirs),
     )
     const denoWorkspaces = await discoverDenoWorkspaces('packages')
     const denoPackageDirs = await discoverDenoPackageDirs('packages')
@@ -5421,7 +5374,7 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
   }
 
   if (workspacePackage) {
-    await generateXcodeWorkspace(workspacePackage)
+    await generateXcodeWorkspace(workspacePackage, ensureProfiles)
   }
 
   if (

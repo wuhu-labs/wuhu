@@ -277,7 +277,7 @@ private struct PrefetchFixture: Sendable {
     let box = try await PrefetchBox.attach(space, machine: machine, kind: kind)
     let operation = UUID()
     let frames = PrefetchLog<FileBulk.Outgoing>()
-    let caller = try #require(space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: operation, start: .init(kind: kind.name, input: ["path": "/file"])))) {
+    let caller = try #require(await space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: operation, start: .init(kind: kind.name, input: ["path": "/file"])))) {
       if case let .frame(frame) = $0 { frames.values.withLock { $0.append(frame) } }
     })
     await space.drain()
@@ -320,7 +320,7 @@ private struct PrefetchBox: Sendable {
   static func attach(_ space: MachineCellTestSpace, machine: String, kind: KindDescriptor) async throws -> Self {
     let pubkey = try await space.space.addMachineTestKey(machine)
     let frames = PrefetchLog<BoxSocket.Outgoing>()
-    let peer = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let peer = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { frames.values.withLock { $0.append(frame) } }
     })
     await space.drain()

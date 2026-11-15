@@ -1,5 +1,0 @@
-run: :copy-sdk
-inputs:
-  - app/lib/shell-sdk/**
-outputs:
-  - shell-sdk

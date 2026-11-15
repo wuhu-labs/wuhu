@@ -23,7 +23,7 @@ import WuweiQueries
 
   func attach(_ space: Space, _ requests: Box<[BoxSocket.Outgoing]>) async throws -> Peer<BoxSocket> {
     let pubkey = try await seedBoxKey(space: space, machine: cell.key)
-    return try #require(space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    return try #require(await space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { requests.withLock { $0.append(frame) } }
     })
   }

@@ -11,10 +11,7 @@
       "include": [
         "no-sparse-arrays"
       ]
-    },
-    "include": [
-      "src"
-    ]
+    }
   },
   "exports": {
     ".": "./src/mod.ts"

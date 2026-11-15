@@ -72,7 +72,7 @@ import struct WuhuAI.ToolCall
           try cell.show(child, owed: .inference)
         }
       }
-      try await rig.space.sessions.markErrored(children[2], message: "inference failed: overloaded")
+      try await rig.space.worker.call(SessionCell.ID(children[2].rawValue)) { try $0.markErrored("inference failed: overloaded") }
       for (child, hours) in zip(children, [1.0, 2.0, 3.0, 30.0]) {
         try await rig.activity(child, hoursAgo: hours)
       }
@@ -85,7 +85,7 @@ import struct WuhuAI.ToolCall
       }
       try await rig.time.wake("the watch's poll", after: 61.234)
       try await rig.messages(1)
-      try await rig.space.sessions.markErrored(children[1], message: "killed: out of context")
+      try await rig.space.worker.call(SessionCell.ID(children[1].rawValue)) { try $0.markErrored("killed: out of context") }
       try await rig.time.wake("the watch's next poll", after: 61.234)
       try await rig.messages(3)
       try await rig.released()
@@ -858,7 +858,7 @@ final class ScriptRig: Sendable {
 
   func messages(_ total: Int) async throws {
     do {
-      try await until("\(total) script messages", timeout: .seconds(60)) {
+      try await until("\(total) script messages") {
         try await delivered().count + seen.value >= total
       }
     } catch {

@@ -126,7 +126,7 @@ import Testing
     let space = try makeSpace(clock: ImmediateClock())
     let table = try await makeTable(space)
     let results = Collector<Rows>()
-    let stream = try space.observeRows(
+    let stream = try await space.observeRows(
       "SELECT title FROM \"/tasks.table\" WHERE n = ?", parameters: [2], throttle: .zero, as: Principal.shared(.publicReader),
     )
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
@@ -138,7 +138,7 @@ import Testing
     let expected: [[[Cell]]] = [[], [[.text("two")]]]
     #expect(collected.map(\.rows) == expected)
 
-    let refused = try space.observeRows("SELECT ?", parameters: [[1]], throttle: .zero, as: Principal.shared(.publicReader))
+    let refused = try await space.observeRows("SELECT ?", parameters: [[1]], throttle: .zero, as: Principal.shared(.publicReader))
     for try await _ in refused { Issue.record("a refused parameter must not yield") }
   }
 }

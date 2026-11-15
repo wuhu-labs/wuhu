@@ -22,15 +22,15 @@ import Wuwei
     let read = UUID(), stat = UUID()
     let readFrames = RuntimeLog<FileBulk.Outgoing>()
     let statFrames = RuntimeLog<FileBulk.Outgoing>()
-    let reader = try #require(space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: read, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
+    let reader = try #require(await space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: read, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
       if case let .frame(frame) = $0 { readFrames.values.withLock { $0.append(frame) } }
     })
-    let metadata = try #require(space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: stat, start: .init(kind: "stat.v1", input: ["path": "/file"])))) {
+    let metadata = try #require(await space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: stat, start: .init(kind: "stat.v1", input: ["path": "/file"])))) {
       if case let .frame(frame) = $0 { statFrames.values.withLock { $0.append(frame) } }
     })
     let exec = MachineExec(id: "runtime-exec", operation: UUID(), createdAt: fixedDate, group: .shared, argv: ["true"])
     _ = try await space.worker.call(id) { try $0.reserve(exec) }
-    let stream = try #require(space.worker.attach(ExecStream.self, to: id, opening: .init(exec: exec, nonce: UUID())) { _ in })
+    let stream = try #require(await space.worker.attach(ExecStream.self, to: id, opening: .init(exec: exec, nonce: UUID())) { _ in })
     await space.drain()
     #expect(box.frames.values.withLock { $0.count } == 1)
     #expect(space.worker.cell(id).fileOperation(read)?.dispatched == false)
@@ -181,7 +181,7 @@ import Wuwei
     #expect(space.worker.cell(id).presence.filePieceBytes == nil)
     #expect(try await space.worker.call(id) { $0.presence.runtime?.filePieceBytes } == 64 * 1024)
     let read = UUID()
-    let reader = try #require(space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: read, start: .init(kind: "read.v1", input: ["path": "/file"])))) { _ in })
+    let reader = try #require(await space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: read, start: .init(kind: "read.v1", input: ["path": "/file"])))) { _ in })
     await space.drain()
     try await box.answer(.init(tag: .operation(read, .start), answer: .snapshot(.init(snapshot: Self.snapshot(read)))), space: space, id: id)
     let polls = box.frames.values.withLock { $0.compactMap { frame -> (UUID, String?, Int)? in
@@ -235,7 +235,7 @@ private struct RuntimeBox {
   static func attach(_ space: MachineCellTestSpace, id: MachineCell.ID) async throws -> Self {
     let pubkey = try await space.space.addMachineTestKey(id.key)
     let frames = RuntimeLog<BoxSocket.Outgoing>()
-    let peer = try #require(space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let peer = try #require(await space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { frames.values.withLock { $0.append(frame) } }
     })
     await space.drain()

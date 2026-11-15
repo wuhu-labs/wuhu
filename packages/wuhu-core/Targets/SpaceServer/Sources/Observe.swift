@@ -168,7 +168,7 @@ func snapshotsResponse(
   }
   let snapshots: AsyncThrowingStream<Rows, any Error>
   do {
-    snapshots = try space.observeRows(sql, parameters: parameters, throttle: .milliseconds(throttleMs), viewer: identity, as: principal)
+    snapshots = try await space.observeRows(sql, parameters: parameters, throttle: .milliseconds(throttleMs), viewer: identity, as: principal)
   } catch {
     if error is Evicted { throw error }
     return observationsUnavailable()

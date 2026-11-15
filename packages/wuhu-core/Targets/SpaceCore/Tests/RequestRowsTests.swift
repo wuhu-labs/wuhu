@@ -201,7 +201,7 @@ import enum Wuwei.Value
 
   @Test func `an observation of requests sees each transition`() async throws {
     let fleet = try await Fleet(tasks: 3)
-    let stream = try fleet.rig.space.observeRows(
+    let stream = try await fleet.rig.space.observeRows(
       "SELECT id, status FROM requests ORDER BY id", throttle: .zero, as: .shared(.publicReader),
     )
     let frames = Collector<[[Cell]]>()

@@ -41,7 +41,7 @@ import Testing
         let agent = try OperationAgent(machine: name, kinds: kinds, limits: limits, authorize: { _, _ in })
         agents.append(agent)
         let pubkey = try await seedBoxKey(space: space, machine: name)
-        let link = try #require(BoxLink(worker: space.worker, machine: name, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) { _ in preconditionFailure("file-only fixture") })
+        let link = try #require(await BoxLink(worker: space.worker, machine: name, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) { _ in preconditionFailure("file-only fixture") })
         links.append((link, FetchClient { request in
           try await intercept(name, request)
           let response = try await agent.handler(request)

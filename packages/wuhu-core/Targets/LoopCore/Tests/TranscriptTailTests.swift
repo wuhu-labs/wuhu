@@ -61,7 +61,7 @@ import struct WuhuAI.ToolCall
       let execution = SessionExecution(space: space, loopConfig: config)
       let sid = try await created(space)
       try await runService(execution) { service in
-        var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
+        var tail = try await service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         let frame = await tail.next().map(Heard.init)
         #expect(frame == .reset(0, []))
         try await service.enqueue(item: Fix.message("go"), to: sid)
@@ -95,7 +95,7 @@ import struct WuhuAI.ToolCall
       let execution = SessionExecution(space: space, loopConfig: config)
       let sid = try await created(space)
       try await runService(execution) { service in
-        var live = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
+        var live = try await service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         var frame = await live.next().map(Heard.init)
         #expect(frame == .reset(0, []))
 
@@ -113,12 +113,12 @@ import struct WuhuAI.ToolCall
         let heardSecond = await hear(&live) { Self.keys($0).count >= missed.count }.map(Self.keys)
         #expect(heardSecond == missed)
 
-        var resumed = service.lines(sid, after: TranscriptCursor(generation: 0, position: left), as: Self.reader).makeAsyncIterator()
+        var resumed = try await service.lines(sid, after: TranscriptCursor(generation: 0, position: left), as: Self.reader).makeAsyncIterator()
         frame = await resumed.next().map(Heard.init)
         #expect(frame == .lines(0, ["system"] + missed))
 
         let all = try await sessions.lines(sid, generation: 0).map(\.key)
-        var stale = service.lines(sid, after: TranscriptCursor(generation: 3, position: 1), as: Self.reader).makeAsyncIterator()
+        var stale = try await service.lines(sid, after: TranscriptCursor(generation: 3, position: 1), as: Self.reader).makeAsyncIterator()
         frame = await stale.next().map(Heard.init)
         #expect(frame == .reset(0, all))
       }
@@ -131,7 +131,7 @@ import struct WuhuAI.ToolCall
       let execution = SessionExecution(space: space, loopConfig: makeConfig())
       let sid = try await created(space)
       try await runService(execution) { service in
-        var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
+        var tail = try await service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         var frame = await tail.next().map(Heard.init)
         #expect(frame == .reset(0, []))
         _ = try await service.restart(sid, executor: nil, note: "Started over.")
@@ -170,7 +170,7 @@ import struct WuhuAI.ToolCall
       let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
       let sid = try await created(space)
       try await runService(execution) { service in
-        var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
+        var tail = try await service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         #expect(await tail.next().map(Heard.init) == .reset(0, []))
         try await service.enqueue(item: Fix.message("go"), to: sid)
         let heard = await hear(&tail) { $0.contains { if case .reset(1, _) = $0 { true } else { false } } }
@@ -194,7 +194,7 @@ import struct WuhuAI.ToolCall
       let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
       let sid = try await created(space)
       try await runService(execution) { service in
-        var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
+        var tail = try await service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         #expect(await tail.next().map(Heard.init) == .reset(0, []))
 
         try await service.interrupt(sid)
@@ -224,11 +224,11 @@ import struct WuhuAI.ToolCall
       let execution = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
       let sid = try await created(space, in: group)
       try await runService(execution) { service in
-        var tail = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
+        var tail = try await service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         let frame = await tail.next().map(Heard.init)
         #expect(frame == .reset(0, []))
         try await space.setVisibility(.private, of: group, by: .person(persona: "alice", account: owner.id), acting: group)
-        var refused = service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
+        var refused = try await service.lines(sid, after: nil, as: Self.reader).makeAsyncIterator()
         #expect(await refused.next() == nil)
 
         try await service.enqueue(item: Fix.message("one"), to: sid)

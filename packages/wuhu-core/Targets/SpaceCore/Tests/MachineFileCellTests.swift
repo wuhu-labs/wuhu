@@ -18,7 +18,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     let poll = try await box.next(operation, .output("data"))
     expectPoll(poll, channel: "data", after: 0)
@@ -66,7 +66,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation, kind: "list.v1")
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation, kind: "list.v1")
     try await box.start(operation)
     expectPoll(try await box.next(operation, .output("entries")), channel: "entries", after: 0)
     let records = ChannelPayload(records: [["name": "first-long-entry"], ["name": "second-long-entry"]])
@@ -102,7 +102,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .output("data"))
     _ = try box.output(operation, payload: .init(data: Data([1, 2, 3])), channel: "data", from: 0)
@@ -128,7 +128,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .output("data"))
     let originalHistory = box.history
@@ -167,7 +167,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
     try await box.start(operation)
     _ = try await box.next(operation, .control)
     let snapshot = OperationSnapshot(operation: operation, verdict: .init(.completed, result: .string(String(repeating: "x", count: 65537))), terminalToken: UUID(), finalOffsets: [:], outputConsumed: false)
@@ -186,7 +186,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
     try await box.start(operation)
     let originalHistory = box.history
     box = try await FileTestBox.attach(space, machine: machine)
@@ -209,7 +209,7 @@ import Wuwei
     let machine = try await old.addMachineV2(name: "files").machine.id.rawValue
     var first = try await FileTestBox.attach(old, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(old, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(old, machine: machine, operation: operation)
     try await first.start(operation)
     _ = try await first.next(operation, .output("data"))
     let original = try first.output(operation, payload: .init(data: Data([1, 2, 3, 4])), channel: "data", from: 0)
@@ -225,7 +225,7 @@ import Wuwei
     #expect(caller.closed.value.withLock { $0 })
     let fresh = UUID()
     #expect(fresh != operation)
-    var restarted = try FileTestCaller.attach(new, machine: machine, operation: fresh, input: ["path": "/file", "offset": 0])
+    var restarted = try await FileTestCaller.attach(new, machine: machine, operation: fresh, input: ["path": "/file", "offset": 0])
     try await expectFileCreated(new, machine: machine, operation: fresh)
     let waiting = try #require(new.worker.cell(MachineCell.ID(machine)).fileOperation(fresh))
     #expect(!waiting.dispatched && waiting.failure == nil && !waiting.delivered)
@@ -267,7 +267,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .output("data"))
     let initial = consumerReachedOffer ? Data([1, 2]) : Data([1, 2, 3, 4])
@@ -327,7 +327,7 @@ import Wuwei
     let id = MachineCell.ID(machine)
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     expectPoll(try await box.next(operation, .output("data")), channel: "data", after: 0)
     let first = try box.output(operation, payload: .init(data: Data([1, 2])), channel: "data", from: 0)
@@ -375,7 +375,7 @@ import Wuwei
     let id = MachineCell.ID(machine)
     var first = try await FileTestBox.attach(old, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(old, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(old, machine: machine, operation: operation)
     try await first.start(operation)
     _ = try await first.next(operation, .output("data"))
     _ = try first.output(operation, payload: .init(data: Data([1, 2])), channel: "data", from: 0)
@@ -386,7 +386,7 @@ import Wuwei
     var replacement = try await FileTestBox.attach(new, machine: machine)
     expectStop(try await replacement.next(operation, .stop), operation: operation, reason: "rangeLost")
     let fresh = UUID()
-    var resumed = try FileTestCaller.attach(new, machine: machine, operation: fresh)
+    var resumed = try await FileTestCaller.attach(new, machine: machine, operation: fresh)
     try await replacement.start(fresh)
     _ = try await replacement.next(fresh, .output("data"))
     let current = try #require(new.worker.cell(id).fileOperation(fresh))
@@ -427,7 +427,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .output("data"))
     let pointer = try box.output(operation, payload: .init(data: Data([1, 2, 3, 4])), channel: "data", from: 0)
@@ -463,7 +463,7 @@ import Wuwei
     let id = MachineCell.ID(machine)
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    let caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    let caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .output("data"))
     caller.peer.close()
@@ -500,7 +500,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .output("data"))
     _ = try box.output(operation, payload: .init(data: Data([1, 2])), channel: "data", from: 0)
@@ -526,7 +526,7 @@ import Wuwei
     first.peer.close()
     try await expectBoxClosed(space, machine: machine)
     let operation = UUID()
-    let caller = try FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
+    let caller = try await FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
     try await expectFileCreated(space, machine: machine, operation: operation)
     #expect(space.worker.cell(id).fileOperation(operation)?.dispatched == false)
     try await space.worker.call(id) { $0.closeBoxes() }
@@ -548,7 +548,7 @@ import Wuwei
     let id = MachineCell.ID(machine)
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .control)
     let token = UUID()
@@ -587,7 +587,7 @@ import Wuwei
     let order = FileTestOrder()
     var box = try await FileTestBox.attach(space, machine: machine, order: order)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation, order: order)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation, order: order)
     let start = try await box.next(operation, .start)
     try await caller.started()
     #expect(order.events.withLock { $0 } == ["started", "startFile"])
@@ -614,7 +614,7 @@ import Wuwei
     first.peer.close()
     try await expectBoxClosed(old, machine: machine)
     let operation = UUID()
-    let caller = try FileTestCaller.attach(old, machine: machine, operation: operation, kind: "mkdir.v1")
+    let caller = try await FileTestCaller.attach(old, machine: machine, operation: operation, kind: "mkdir.v1")
     try await expectFileCreated(old, machine: machine, operation: operation)
     let pending = try #require(old.worker.cell(id).fileOperation(operation))
     #expect(!pending.dispatched && pending.failure == nil)
@@ -645,7 +645,7 @@ import Wuwei
     box.peer.close()
     try await expectBoxClosed(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation, kind: "mkdir.v1")
     try await expectFileCreated(space, machine: machine, operation: operation)
     let pending = try #require(space.worker.cell(id).fileOperation(operation))
     #expect(!pending.dispatched && pending.failure == nil)
@@ -671,7 +671,7 @@ import Wuwei
     let id = MachineCell.ID(machine)
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .control)
     let token = UUID()
@@ -714,7 +714,7 @@ import Wuwei
     let machine = try await space.addMachineV2(name: "files").machine.id.rawValue
     var box = try await FileTestBox.attach(space, machine: machine)
     let operation = UUID()
-    var caller = try FileTestCaller.attach(space, machine: machine, operation: operation)
+    var caller = try await FileTestCaller.attach(space, machine: machine, operation: operation)
     try await box.start(operation)
     _ = try await box.next(operation, .control)
     if reason == "callerCancelled" { caller.peer.send(.cancel) }
@@ -797,7 +797,7 @@ private struct FileTestBox {
     let pubkey = try await space.space.addMachineTestKey(machine)
     let stream = AsyncStream<BoxSocket.Outgoing>.makeStream()
     let history = FileTestHistory()
-    let peer = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let peer = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       switch $0 {
       case let .frame(frame):
         if case .startFile = frame.exchange { order?.events.withLock { $0.append("startFile") } }
@@ -873,12 +873,12 @@ private struct FileTestCaller {
   let history: FileTestBulkHistory
   var iterator: AsyncStream<FileBulk.Outgoing>.Iterator
 
-  static func attach(_ space: MachineCellTestSpace, machine: String, operation: UUID, kind: String = "read.v1", input: JSONValue = ["path": "/file"], order: FileTestOrder? = nil) throws -> Self {
+  static func attach(_ space: MachineCellTestSpace, machine: String, operation: UUID, kind: String = "read.v1", input: JSONValue = ["path": "/file"], order: FileTestOrder? = nil) async throws -> Self {
     let stream = AsyncStream<FileBulk.Outgoing>.makeStream()
     let closed = FileTestClosed()
     let history = FileTestBulkHistory()
     let request = MachineFile(operation: operation, start: StartRequest(kind: kind, input: input))
-    let peer = try #require(space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: request)) {
+    let peer = try #require(await space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: request)) {
       switch $0 {
       case let .frame(frame):
         if case .started = frame { order?.events.withLock { $0.append("started") } }

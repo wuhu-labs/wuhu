@@ -165,14 +165,3 @@ deno_generate(
     fixtures_dir = "packages/wuhu-core/Targets/SpaceContract/Tests/contract",
     out = "contract.gen.ts",
 )
-
-
-# Every file here, for //tools:fmt-test and :lint-test, which cover all of tools/.
-filegroup(
-    name = "srcs",
-    srcs = glob(
-        ["**"],
-        exclude = ["BUILD.bazel", "**/.DS_Store"],
-    ),
-    visibility = ["//tools:__pkg__"],
-)

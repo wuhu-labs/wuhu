@@ -1,2 +1,0 @@
-script: bundle.ts
-uses: ['//tools:deno']

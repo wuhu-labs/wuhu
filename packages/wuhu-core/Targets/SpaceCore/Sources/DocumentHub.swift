@@ -137,7 +137,7 @@ extension Space {
     let (ended, ends) = AsyncStream.makeStream(of: Void.self)
     let socket = Mutex<Peer<DocumentChannel>?>(nil)
     let id = DocumentCell.ID(group, stored)
-    guard let attached = worker.attach(
+    guard let attached = try? await worker.attach(
       DocumentChannel.self, to: id,
       opening: .init(peer: peer, name: name, access: access, create: create),
       output: { output in

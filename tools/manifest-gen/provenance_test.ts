@@ -16,6 +16,7 @@ Deno.test('provenance covers module fragments and configure fragments', async ()
         'packages/media/Sources/Media.swift',
         'packages/media/package.yml',
         'tools/manifest-gen/generate.ts',
+        'tools/signing/model.ts',
       ]
     ) {
       await Deno.mkdir(join(root, path, '..'), { recursive: true })
@@ -30,6 +31,7 @@ Deno.test('provenance covers module fragments and configure fragments', async ()
       'packages/media/MODULE.fragment.bazel',
       'packages/media/package.yml',
       'tools/manifest-gen/generate.ts',
+      'tools/signing/model.ts',
     ])
   } finally {
     await Deno.remove(root, { recursive: true })

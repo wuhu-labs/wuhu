@@ -40,7 +40,7 @@ import Testing
     let hidden = try #require(space.worker.cell(FilesCell.ID("shared")).tableState(table, ceiling: Int64.max).1.first { $0.cells["n"] == .integer(99) }).id
 
     let results = Collector<Rows>()
-    let stream = try space.observeRows(Self.count, throttle: .zero)
+    let stream = try await space.observeRows(Self.count, throttle: .zero)
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
     #expect(try await awaitItems(results, atLeast: 1).map(\.rows) == [[[.integer(1)]]])
@@ -82,7 +82,7 @@ import Testing
     }
     let rows = try await space.query("SELECT * FROM \"/t.table\"")
     #expect(!"\(rows)".contains(secret))
-    for try await frame in try space.observeRows("SELECT * FROM \"/t.table\"", throttle: .zero) {
+    for try await frame in try await space.observeRows("SELECT * FROM \"/t.table\"", throttle: .zero) {
       #expect(!"\(frame)".contains(secret))
       break
     }

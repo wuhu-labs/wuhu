@@ -240,7 +240,7 @@ func withMachineBox<R>(
   _ body: () async throws -> R,
 ) async throws -> R {
   let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
-  let link = try #require(BoxLink(worker: space.worker, machine: machine.rawValue, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
+  let link = try #require(await BoxLink(worker: space.worker, machine: machine.rawValue, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
     try await hub.prepare($0, machine: machine.rawValue)
   })
   return try await withThrowingTaskGroup(of: Void.self) { tasks in

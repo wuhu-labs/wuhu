@@ -81,7 +81,6 @@ dist/
 # any nested directory named bazel-*, such as ci/images/bazel-linux.
 /bazel-*
 .bazel/
-/.scarif/
 
 # Wallet state written by `wuhu use` in any checkout or worktree. Only the
 # skills symlink is tracked.

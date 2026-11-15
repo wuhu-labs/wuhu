@@ -20,7 +20,7 @@ struct SlowCancellation {
 
 @Suite struct QuiescenceTests {
   @Test(arguments: [false, true], 1 ... 12 as ClosedRange<UInt64>)
-  func aDueWakeCannotWriteAfterQuiescence(shared: Bool, seed: UInt64) throws {
+  func aDueWakeCannotWriteAfterQuiescence(shared: Bool, seed: UInt64) async throws {
     let world = World(seed: seed, shared: shared)
     let a = try world.node("a", [.cell(Alarm.self)])
     let alarm = Alarm.ID("due")
@@ -50,7 +50,7 @@ struct SlowCancellation {
         Issue.record(error)
       }
     }
-    #expect(a.worker.attach(Feed.self, to: alarm, opening: 0) { _ in } == nil)
+    #expect(try await a.worker.attach(Feed.self, to: alarm, opening: 0) { _ in } == nil)
     world.run(for: .seconds(15))
     #expect(refused.withLock { $0 })
     #expect(a.worker.cell(alarm).rang().isEmpty)

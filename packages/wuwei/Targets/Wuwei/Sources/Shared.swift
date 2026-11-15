@@ -56,7 +56,7 @@ public final class FileDatabase: SharedDatabase {
       pragmas: ["PRAGMA page_size = 8192", "PRAGMA journal_mode = WAL", synchronous ? "PRAGMA synchronous = FULL" : "PRAGMA synchronous = OFF"],
       prepare: { handle in
         let db = Connection(borrowing: handle)
-        for statement in Self.schema { try db.execute(statement) }
+        for statement in Self.tables { try db.execute(statement) }
         try db.transaction {
           for (table, column, type) in [("wuwei_job", "creator", "TEXT"), ("wuwei_mail", "lifecycle", "TEXT"), ("wuwei_addressable", "draining", "INTEGER NOT NULL DEFAULT 0")] {
             if try !db.rows("PRAGMA table_info(\(table))").contains(where: { $0["name"].text == column }) {
@@ -64,13 +64,14 @@ public final class FileDatabase: SharedDatabase {
             }
           }
         }
+        for statement in Self.indexes { try db.execute(statement) }
       },
     )
     readers = SQLiteReaders(path: path)
   }
 
-  /// The outer tables. A host program that keeps its own database creates them itself, `wuwei_pages` aside, which only the layered backend uses.
-  static let schema = [
+  /// The outer tables, and after them their indexes, which may name a column added to an older file. A host program that keeps its own database creates both itself, `wuwei_pages` aside, which only the layered backend uses.
+  private static let tables = [
     """
     CREATE TABLE IF NOT EXISTS wuwei_addressable (
       id INTEGER PRIMARY KEY, address TEXT NOT NULL UNIQUE,
@@ -78,12 +79,17 @@ public final class FileDatabase: SharedDatabase {
     """,
     "CREATE TABLE IF NOT EXISTS wuwei_pages (key INTEGER PRIMARY KEY, data BLOB NOT NULL)",
     "CREATE TABLE IF NOT EXISTS wuwei_mail (id INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT NOT NULL, payload BLOB NOT NULL)",
-    "CREATE INDEX IF NOT EXISTS wuwei_mail_recipient ON wuwei_mail (recipient)",
     "CREATE TABLE IF NOT EXISTS wuwei_job (address TEXT PRIMARY KEY, params BLOB NOT NULL, phase TEXT NOT NULL DEFAULT 'new', wake_at INTEGER)",
+    "CREATE TABLE IF NOT EXISTS wuwei_schema (kind TEXT PRIMARY KEY, applied INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS wuwei_successor (id INTEGER PRIMARY KEY CHECK (id = 1), worker TEXT NOT NULL, announced_at INTEGER NOT NULL)",
+  ]
+
+  private static let indexes = [
+    "CREATE INDEX IF NOT EXISTS wuwei_mail_recipient ON wuwei_mail (recipient)",
     "CREATE INDEX IF NOT EXISTS wuwei_job_pending ON wuwei_job (address, wake_at) WHERE phase != 'done'",
     "CREATE INDEX IF NOT EXISTS wuwei_addressable_wake ON wuwei_addressable (wake_at) WHERE wake_at IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS wuwei_addressable_holder ON wuwei_addressable (holder, expires_at)",
-    "CREATE TABLE IF NOT EXISTS wuwei_schema (kind TEXT PRIMARY KEY, applied INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS wuwei_addressable_draining ON wuwei_addressable (expires_at) WHERE draining = 1",
   ]
 
   public func write(label: String = "writer.write", _ body: (OpaquePointer) throws -> Void) throws {

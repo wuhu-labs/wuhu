@@ -31,7 +31,7 @@ import Testing
     let space = try makeSpace()
     let table = try await makeTable(space)
     let snapshots = Collector<Rows>()
-    let stream = try space.observeRows("SELECT n FROM \"/t.table\" ORDER BY n", throttle: .zero, as: .shared(.publicReader))
+    let stream = try await space.observeRows("SELECT n FROM \"/t.table\" ORDER BY n", throttle: .zero, as: .shared(.publicReader))
     let consumer = Task { do { for try await rows in stream { await snapshots.append(rows) } } catch {} }
     defer { consumer.cancel() }
 
@@ -61,11 +61,11 @@ import Testing
     let table = try await makeTable(space)
 
     let slow = Collector<Rows>()
-    let slowStream = try space.observeRows("SELECT n FROM \"/t.table\"", throttle: .seconds(10), as: .shared(.publicReader))
+    let slowStream = try await space.observeRows("SELECT n FROM \"/t.table\"", throttle: .seconds(10), as: .shared(.publicReader))
     let slowConsumer = Task { do { for try await rows in slowStream { await slow.append(rows) } } catch {} }
     defer { slowConsumer.cancel() }
     let fast = Collector<Rows>()
-    let fastStream = try space.observeRows("SELECT n FROM \"/t.table\"", throttle: .zero, as: .shared(.publicReader))
+    let fastStream = try await space.observeRows("SELECT n FROM \"/t.table\"", throttle: .zero, as: .shared(.publicReader))
     let fastConsumer = Task { do { for try await rows in fastStream { await fast.append(rows) } } catch {} }
     defer { fastConsumer.cancel() }
     _ = try await awaitItems(slow, atLeast: 1)
@@ -83,7 +83,7 @@ import Testing
 
   @Test func aRefusedStatementClosesItsStream() async throws {
     let space = try makeSpace()
-    let stream = try space.observeRows("SELECT rev FROM revisions", throttle: .zero, as: .shared(.publicReader))
+    let stream = try await space.observeRows("SELECT rev FROM revisions", throttle: .zero, as: .shared(.publicReader))
     var frames = 0
     for try await _ in stream { frames += 1 }
     #expect(frames == 0)
@@ -112,7 +112,7 @@ import Testing
     defer { cancellations.cancel() }
 
     let first = Collector<Rows>()
-    let firstStream = try space.observeRows(sql, throttle: .seconds(10), as: .shared(.publicReader))
+    let firstStream = try await space.observeRows(sql, throttle: .seconds(10), as: .shared(.publicReader))
     let firstConsumer = Task { do { for try await rows in firstStream { await first.append(rows) } } catch {} }
     _ = try await awaitItems(first, atLeast: 1)
     _ = try await space.mutateRows(table, [.insert([.integer(1), .string("a")])], in: .shared, acting: .shared)
@@ -130,7 +130,7 @@ import Testing
     let regions = RegionDouble()
     let space = try makeSpace(regions: regions.source)
     _ = try await makeTable(space)
-    let stream = try space.observeRows("SELECT n FROM \"/t.table\"", throttle: .zero, as: .shared(.publicReader))
+    let stream = try await space.observeRows("SELECT n FROM \"/t.table\"", throttle: .zero, as: .shared(.publicReader))
     var frames = 0
     for try await _ in stream {
       frames += 1
@@ -150,7 +150,7 @@ import Testing
     for _ in 0 ..< streams {
       let snapshots = Collector<Rows>()
       collectors.append(snapshots)
-      let stream = try space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+      let stream = try await space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
       consumers.append(Task { do { for try await rows in stream { await snapshots.append(rows) } } catch {} })
     }
     for snapshots in collectors { _ = try await awaitItems(snapshots, atLeast: 1, timeout: .seconds(10)) }
@@ -175,7 +175,7 @@ import Testing
     for _ in 0 ..< streams {
       let snapshots = Collector<Rows>()
       collectors.append(snapshots)
-      let stream = try space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+      let stream = try await space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
       consumers.append(Task { do { for try await rows in stream { await snapshots.append(rows) } } catch {} })
     }
     for snapshots in collectors { _ = try await awaitItems(snapshots, atLeast: 1, timeout: .seconds(20)) }
@@ -189,7 +189,7 @@ import Testing
     let space = try Space.open(file: file)
     try gate.install(on: space.database)
     let sql = "SELECT 1 AS one"
-    let stream = try space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    let stream = try await space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var frames = stream.makeAsyncIterator()
     #expect(try await frames.next()?.rows == [[.integer(1)]])
     defer { gate.release() }
@@ -198,15 +198,15 @@ import Testing
     gate.arm()
     let closing = Task { try await space.close() }
     await gate.reached()
-    #expect(throws: ObservationsUnavailable.self) {
-      _ = try space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    await #expect(throws: ObservationsUnavailable.self) {
+      _ = try await space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     }
     gate.release()
     try await closing.value
 
     // And the job is free for the next process on the file.
     let next = try Space.open(file: file)
-    let again = try next.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    let again = try await next.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var after = again.makeAsyncIterator()
     #expect(try await after.next()?.rows == [[.integer(1)]])
     try await next.close()
@@ -223,7 +223,7 @@ import Testing
     _ = try await space.mutateRows(table, [.insert([.integer(1), .string("a")])], in: .shared, acting: .shared)
 
     let snapshots = Collector<Rows>()
-    let stream = try space.observeRows("SELECT n FROM \"/t.table\" ORDER BY n", throttle: .zero, as: .shared(.publicReader))
+    let stream = try await space.observeRows("SELECT n FROM \"/t.table\" ORDER BY n", throttle: .zero, as: .shared(.publicReader))
     let consumer = Task { do { for try await rows in stream { await snapshots.append(rows) } } catch {} }
     defer { consumer.cancel() }
     #expect(try await awaitItems(snapshots, atLeast: 1).first?.rows == [[.integer(1)]])
@@ -287,7 +287,7 @@ import Testing
 
     let sql = "SELECT n FROM \"/t.table\""
     let first = Collector<Rows>()
-    let firstStream = try old.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    let firstStream = try await old.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     let firstConsumer = Task { do { for try await rows in firstStream { await first.append(rows) } } catch {} }
     _ = try await awaitItems(first, atLeast: 1)
     #expect(regions.starts == 1)
@@ -301,7 +301,7 @@ import Testing
     let new = try Space(database: try WuweiDatabase(path: file.path), regions: regions.source)
     #expect(regions.starts == 1)
 
-    let again = try new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    let again = try await new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var rows = again.makeAsyncIterator()
     #expect(try await rows.next()?.rows == [[.integer(1)]])
     #expect(regions.starts == 2)
@@ -317,7 +317,7 @@ import Testing
     _ = try await old.mutateRows(table, [.insert([.integer(1), .string("a")])], in: .shared, acting: .shared)
     let sql = "SELECT n FROM \"/t.table\" ORDER BY n"
 
-    let rows = try old.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    let rows = try await old.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var snapshots = rows.makeAsyncIterator()
     #expect(try await snapshots.next()?.rows == [[.integer(1)]])
     let files = try await old.observeFS(glob: "**", group: .shared, as: .shared(.publicReader))
@@ -327,15 +327,15 @@ import Testing
     await #expect(throws: ObservationsUnavailable.self) {
       _ = try await new.observeFS(glob: "**", group: .shared, as: .shared(.publicReader))
     }
-    #expect(throws: ObservationsUnavailable.self) {
-      _ = try new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    await #expect(throws: ObservationsUnavailable.self) {
+      _ = try await new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     }
 
     await old.stopWorker()
     #expect(try await snapshots.next() == nil)
     #expect(await commits.next() == nil)
 
-    let again = try new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    let again = try await new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var after = again.makeAsyncIterator()
     #expect(try await after.next()?.rows == [[.integer(1)]])
     let commitsAgain = try await new.observeFS(glob: "**", group: .shared, as: .shared(.publicReader))
@@ -348,6 +348,55 @@ import Testing
     #expect(commit.events.map(\.path) == ["/t.table"])
     try await new.close()
     try await old.close()
+  }
+
+  /// A successor that takes over opens its streams while the outgoing worker drains: they wait for the job instead of being refused, the outgoing worker's streams keep serving until it stops, and the waiting stream then starts from the rows as they are.
+  /// The date is frozen, so no lease expires however far the clock runs ahead of the workers' scans.
+  @Test(.timeLimit(.minutes(1))) func aStreamOpenedDuringAHandoverWaitsForTheJob() async throws {
+    let clock = VirtualClock()
+    func scan() async throws {
+      try await clock.sleeping { $0 > .zero }
+      await clock.advance(by: .seconds(1))
+    }
+    try await withDependencies {
+      $0.date = .constant(fixedDate)
+      $0.continuousClock = clock
+    } operation: {
+      let folder = try ScratchFolder("observation-handover")
+      let file = folder.url.appending(path: "space.sqlite")
+      let old = try Space.open(file: file)
+      let table = try await makeTable(old)
+      _ = try await old.mutateRows(table, [.insert([.integer(1), .string("a")])], in: .shared, acting: .shared)
+      let sql = "SELECT n FROM \"/t.table\" ORDER BY n"
+      let rows = try await old.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+      var snapshots = rows.makeAsyncIterator()
+      #expect(try await snapshots.next()?.rows == [[.integer(1)]])
+      old.worker.start()
+
+      let new = try Space.open(file: file)
+      let tookOver = Mutex(false)
+      Task {
+        await new.worker.takeOver()
+        tookOver.withLock { $0 = true }
+      }
+      while !tookOver.withLock({ $0 }) { try await scan() }
+
+      let opened = Mutex(false)
+      let opening = Task {
+        defer { opened.withLock { $0 = true } }
+        return try await new.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+      }
+      _ = try await old.mutateRows(table, [.insert([.integer(2), .string("b")])], in: .shared, acting: .shared)
+      #expect(try await snapshots.next()?.rows == [[.integer(1)], [.integer(2)]])
+
+      await old.stopWorker()
+      #expect(try await snapshots.next() == nil)
+      while !opened.withLock({ $0 }) { try await scan() }
+      var after = try await opening.value.makeAsyncIterator()
+      #expect(try await after.next()?.rows == [[.integer(1)], [.integer(2)]])
+      try await new.close()
+      try await old.close()
+    }
   }
 }
 

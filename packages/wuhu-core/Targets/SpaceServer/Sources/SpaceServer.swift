@@ -475,6 +475,15 @@ public enum SpaceServer {
         }
       }
     }
+    let worker = spaceHost.space.worker
+    let upstreamWillShutdown = hooks.onWillShutdown
+    hooks.onWillShutdown = { address in
+      upstreamWillShutdown(address)
+      worker.endHolds()
+    }
+    // Last before the listener, past every call of the host's own: from here a
+    // call waits for the outgoing process, which only stops once this one serves.
+    await worker.takeOver()
     let api: ServeNIOServer
     do {
       api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)

@@ -50,7 +50,7 @@ import Wuwei
       #expect(initial.observedAt == fixedDate)
       let pubkey = try await space.addMachineTestKey(machine.rawValue)
       let (frames, continuation) = AsyncStream<BoxSocket.Outgoing>.makeStream()
-      let peer = try #require(space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+      let peer = try #require(await space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
         if case let .frame(frame) = $0 { continuation.yield(frame) }
       })
       var framesIterator = frames.makeAsyncIterator()

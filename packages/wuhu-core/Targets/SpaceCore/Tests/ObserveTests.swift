@@ -121,7 +121,7 @@ import Testing
     let space = try makeSpace(clock: clock)
 
     let results = Collector<Rows>()
-    let stream = try space.observeRows("SELECT path FROM docs ORDER BY path", throttle: .zero)
+    let stream = try await space.observeRows("SELECT path FROM docs ORDER BY path", throttle: .zero)
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
 
@@ -142,7 +142,7 @@ import Testing
     _ = try await space.mutateRows(table, [.insert([.integer(1)])], in: .shared, acting: .shared)
 
     let results = Collector<Rows>()
-    let stream = try space.observeRows("SELECT n FROM \"/t.table\" UNION ALL SELECT 0 FROM docs", throttle: .zero)
+    let stream = try await space.observeRows("SELECT n FROM \"/t.table\" UNION ALL SELECT 0 FROM docs", throttle: .zero)
     let outcome = Task { for try await rows in stream { await results.append(rows) } }
 
     _ = try await awaitItems(results, atLeast: 1)

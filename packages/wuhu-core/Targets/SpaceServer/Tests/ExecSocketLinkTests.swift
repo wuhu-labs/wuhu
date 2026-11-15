@@ -22,7 +22,7 @@ import Wuwei
     let cell = MachineCell.ID(machine.rawValue)
     let described = Gate()
     let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
-    let box = try #require(space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 2)) {
+    let box = try #require(await space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 2)) {
       if case let .frame(frame) = $0, frame.tag == .describe { described.open() }
     })
     defer { box.close() }

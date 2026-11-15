@@ -23,9 +23,9 @@ extension MachineHub {
     else { throw OperationError(.machineNotAuthorized) }
   }
 
-  func boxLink(_ credential: Credential, streams: Int) -> BoxLink? {
+  func boxLink(_ credential: Credential, streams: Int) async -> BoxLink? {
     let machine = credential.machines.first!
-    return BoxLink(worker: space.worker, machine: machine, pubkey: credential.pubkey, connection: UUID(), streams: streams, buffers: space.machineBuffers, authorizeStart: {
+    return await BoxLink(worker: space.worker, machine: machine, pubkey: credential.pubkey, connection: UUID(), streams: streams, buffers: space.machineBuffers, authorizeStart: {
       try await self.authorize(credential)
     }, prepare: { exec in
       try await self.prepare(exec, machine: machine)

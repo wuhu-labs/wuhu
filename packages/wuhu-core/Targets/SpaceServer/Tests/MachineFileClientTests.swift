@@ -31,7 +31,7 @@ func withFileBox<R: Sendable>(
   let (requests, continuation) = AsyncStream<BoxSocket.Outgoing>.makeStream()
   let ready = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
   let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
-  let peer = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine.rawValue), opening: .init(connection: UUID(), pubkey: pubkey, streams: 64)) {
+  let peer = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine.rawValue), opening: .init(connection: UUID(), pubkey: pubkey, streams: 64)) {
     if case let .frame(frame) = $0 { continuation.yield(frame) }
   })
   space.worker.start()
@@ -91,7 +91,7 @@ private func waitForFileConsumption(_ operation: UUID, channel: String, through:
       default: break
       }
     }, operation: { client in
-      let connection = try client.connect(.init(kind: "stagedWrite.v1", input: ["path": "/target", "replace": false]))
+      let connection = try await client.connect(.init(kind: "stagedWrite.v1", input: ["path": "/target", "replace": false]))
       defer { connection.close() }
       try await connection.ready()
       var operations = started.stream.makeAsyncIterator()
@@ -339,7 +339,7 @@ private func waitForFileConsumption(_ operation: UUID, channel: String, through:
     let starts = Mutex(0)
     let (requests, continuation) = AsyncStream<BoxSocket.Outgoing>.makeStream()
     let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
-    let box = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine.rawValue), opening: .init(connection: UUID(), pubkey: pubkey, streams: 64)) {
+    let box = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine.rawValue), opening: .init(connection: UUID(), pubkey: pubkey, streams: 64)) {
       if case let .frame(frame) = $0 {
         if case .startFile = frame.exchange { starts.withLock { $0 += 1 } }
         continuation.yield(frame)
@@ -351,7 +351,7 @@ private func waitForFileConsumption(_ operation: UUID, channel: String, through:
     guard case .describe = description.exchange else { Issue.record("expected description request"); return }
     box.send(.init(tag: description.tag, answer: .description(.init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.mkdir]))))
     try await waitForMachineDescription(MachineCell.ID(machine.rawValue), in: space)
-    let replacement = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine.rawValue), opening: .init(connection: UUID(), pubkey: pubkey, streams: 64)) {
+    let replacement = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine.rawValue), opening: .init(connection: UUID(), pubkey: pubkey, streams: 64)) {
       if case let .frame(frame) = $0 {
         if case .startFile = frame.exchange { starts.withLock { $0 += 1 } }
         continuation.yield(frame)

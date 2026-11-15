@@ -133,7 +133,7 @@ final class Story: Sendable {
     let work = try ScratchFolder("story-work")
     scratch.withLock { $0.append(work) }
     let agent = try OperationAgent(machine: added.id.rawValue, kinds: fileOperationKinds() + [.init(ExecKind())], authorize: { _, _ in })
-    let link = try #require(BoxLink(worker: space.worker, machine: added.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
+    let link = try #require(await BoxLink(worker: space.worker, machine: added.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
       try await self.hub.prepare($0, machine: added.id.rawValue)
     })
     let client = FetchClient { request in seeing(request); return try await agent.handler(request) }

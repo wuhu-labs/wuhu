@@ -122,7 +122,7 @@ private final class BootProbe: Sendable {
   }
 
   @Test(arguments: [false, true], [false, true])
-  func aBootDecodeFailureEndsAndDurablyNotifiesItsCreatorOnce(shared: Bool, hydrate: Bool) throws {
+  func aBootDecodeFailureEndsAndDurablyNotifiesItsCreatorOnce(shared: Bool, hydrate: Bool) async throws {
     let world = World(shared: shared)
     let a = try world.node("creator", [.cell(BootCreator.self)])
     let creator = BootCreator.ID("creator")
@@ -138,7 +138,7 @@ private final class BootProbe: Sendable {
 
     let b = try world.node("jobs", [.job(UndecodableJob.self)])
     let closed = Mutex(0)
-    _ = try #require(b.worker.attach(Feed.self, to: child, opening: 0) { output in
+    _ = try #require(await b.worker.attach(Feed.self, to: child, opening: 0) { output in
       if case .closed = output { closed.withLock { $0 += 1 } }
     })
     world.run(for: .seconds(15))
@@ -222,6 +222,8 @@ private final class BootProbe: Sendable {
       let db = Connection(borrowing: handle)
       try db.execute("ALTER TABLE wuwei_job DROP COLUMN creator")
       try db.execute("ALTER TABLE wuwei_mail DROP COLUMN lifecycle")
+      try db.execute("DROP INDEX wuwei_addressable_draining")
+      try db.execute("DROP TABLE wuwei_successor")
       try db.execute("ALTER TABLE wuwei_addressable DROP COLUMN draining")
       try db.execute("INSERT INTO wuwei_addressable (address, holder, fence, expires_at) VALUES ('Counter/old', 'before', 7, 0)")
       try db.execute("INSERT INTO wuwei_job (address, params) VALUES ('old/job', ?)", .blob(Array("{}".utf8)))

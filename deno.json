@@ -12,13 +12,95 @@
     }
   },
   "tasks": {
-    "generate-manifests": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com --allow-run=git,tar,which,xcodegen tools/manifest-gen/generate.ts --apply --all --umbrella --module --public-tree",
+    "generate-manifests": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com,api.appstoreconnect.apple.com --allow-env=HOME --allow-run=git,tar,which,xcodegen,security tools/manifest-gen/generate.ts --apply --all --umbrella --module --public-tree",
     "fmt-test": "deno fmt --check --ignore=tools/iconamoon/svg tools",
     "lint-test": "deno lint tools",
-    "contract-ts-emit-test": "deno test --allow-read tools/contract-ts/emit_test.ts",
-    "swiftlint": "swiftlint lint --strict --quiet --no-cache --config .swiftlint.yml packages",
-    "swiftlint-rules-test": "deno test -A bazel/swiftlint/rules_test.ts",
-    "swiftformat-lint": "swiftformat --lint . --cache ignore"
+    "contract-ts-emit-test": "deno test --allow-read tools/contract-ts/emit_test.ts"
+  },
+  "tests": {
+    "fmt-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "lint-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "release-tooling-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "skill-bench-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "ci-prune-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "ci-lanes-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "module-profile-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "ci-failure-labels-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "check-tooling-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "signing-tooling-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "public-links-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "mac-worker-xcode-pin-test": {
+      "platforms": [
+        "linux"
+      ]
+    },
+    "machine-v2-driver-smoke-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    },
+    "contract-ts-emit-test": {
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    }
   },
   "imports": {
     "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",

@@ -220,6 +220,10 @@ struct Epoch: Sendable {
 /// The incarnation is gone: its lease was taken, or one of its epochs failed to commit. What it held back never went out.
 public struct Evicted: Error {
   public let address: String
+
+  public init(address: String) {
+    self.address = address
+  }
 }
 
 /// The layered backend's single writer of epochs. Whatever is sealed while a batch is being written becomes the next batch, in one outer transaction: no timer, and no wait when idle.

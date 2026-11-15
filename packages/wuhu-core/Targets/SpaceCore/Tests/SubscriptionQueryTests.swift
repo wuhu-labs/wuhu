@@ -77,7 +77,7 @@ import Testing
       let tests = ObserverRowsTests()
       let id = try await tests.owner(space.sessions)
       let collected = Collector<Rows>()
-      let stream = try space.observeRows("SELECT id, last_fired_at, last_error FROM subscriptions", throttle: .zero)
+      let stream = try await space.observeRows("SELECT id, last_fired_at, last_error FROM subscriptions", throttle: .zero)
       let task = Task { do { for try await rows in stream { await collected.append(rows) } } catch { Issue.record(error) } }
       defer { task.cancel() }
       _ = try await awaitItems(collected, atLeast: 1)

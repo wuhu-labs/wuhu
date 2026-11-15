@@ -1,8 +1,0 @@
-script: build.ts
-uses: [
-  '//tools:deno',
-  '//tools:python3',
-  '//tools:node',
-  '//tools:tar',
-  '//tools:patch',
-]

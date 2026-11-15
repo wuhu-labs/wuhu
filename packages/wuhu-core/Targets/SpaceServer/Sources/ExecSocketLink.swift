@@ -37,7 +37,7 @@ struct ExecSocketLink: Sendable {
         request.attribution = await space.startCaller(leg.session)
         let buffers = space.machineBuffers
         let (events, continuation) = AsyncStream<ExecStream.Outgoing>.makeStream()
-        guard let peer = space.worker.attach(ExecStream.self, to: MachineCell.ID(record.machine.rawValue), opening: .init(exec: request, nonce: nonce), output: {
+        guard let peer = try await space.worker.attach(ExecStream.self, to: MachineCell.ID(record.machine.rawValue), opening: .init(exec: request, nonce: nonce), output: {
           switch $0 {
           case let .frame(frame): continuation.yield(frame)
           case .closed: continuation.finish()

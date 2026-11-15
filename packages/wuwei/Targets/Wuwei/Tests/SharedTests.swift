@@ -205,14 +205,14 @@ struct Clock {
   }
 
   @Test(arguments: [false, true])
-  func aSocketThatAttachesLateHearsWhatItMissedFirst(shared: Bool) throws {
+  func aSocketThatAttachesLateHearsWhatItMissedFirst(shared: Bool) async throws {
     let world = World(shared: shared)
     let a = try node("a", in: world)
     let clock = Clock.ID("c")
     try a.worker.create(clock, params: 4)
     world.run(for: .milliseconds(2500))
     let client = Client<Ticks>()
-    _ = try #require(a.worker.attach(Ticks.self, to: clock) { client.hear($0, durable: []) })
+    _ = try #require(await a.worker.attach(Ticks.self, to: clock) { client.hear($0, durable: []) })
     world.run(for: .seconds(5))
     #expect(client.heard == [.frame(.missed([1, 2, 3])), .frame(.tick(4)), .closed])
   }

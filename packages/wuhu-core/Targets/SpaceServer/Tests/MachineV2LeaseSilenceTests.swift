@@ -127,7 +127,7 @@ private struct LeaseBox {
     let (requests, continuation) = AsyncStream<BoxSocket.Outgoing>.makeStream()
     let closed = Gate()
     let pubkey = try await seedBoxKey(space: space, machine: cell.key)
-    peer = try #require(space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) { event in
+    peer = try #require(await space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) { event in
       switch event {
       case let .frame(request): continuation.yield(request)
       case .closed: closed.open(); continuation.finish()

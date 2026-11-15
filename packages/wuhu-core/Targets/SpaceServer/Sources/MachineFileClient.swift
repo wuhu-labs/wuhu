@@ -22,12 +22,12 @@ struct MachineFileClient: Sendable {
   let machine: MachineID
   let caller: StartRequest.Caller?
 
-  func connect(_ start: StartRequest) throws -> MachineFileConnection {
-    try MachineFileConnection(space: space, machine: machine, start: start)
+  nonisolated(nonsending) func connect(_ start: StartRequest) async throws -> MachineFileConnection {
+    try await MachineFileConnection(space: space, machine: machine, start: start)
   }
 
   nonisolated(nonsending) func call(_ start: StartRequest, consume: (ChannelPayload) async throws -> Void = { _ in }) async throws -> JSONValue {
-    let connection = try connect(start)
+    let connection = try await connect(start)
     defer { connection.close() }
     return try await connection.result(consume: consume)
   }
@@ -38,7 +38,7 @@ struct MachineFileClient: Sendable {
       "digest": .string(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()),
     ]
     if let ifMatch { input["ifMatch"] = .string(ifMatch) }
-    let connection = try connect(.init(kind: "write.v1", input: object(input), caller: caller))
+    let connection = try await connect(.init(kind: "write.v1", input: object(input), caller: caller))
     defer { connection.close() }
     do {
       try await connection.write("data", .init(data: data), end: true)
@@ -177,11 +177,11 @@ final class MachineFileConnection {
   private var offset: UInt64 = 0
   private var terminal: Result<JSONValue, MachineFileFailure>?
 
-  init(space: Space, machine: MachineID, start: StartRequest) throws {
+  nonisolated(nonsending) init(space: Space, machine: MachineID, start: StartRequest) async throws {
     request = MachineFile(operation: UUID(), start: start)
     buffers = space.machineBuffers
     let (events, continuation) = AsyncStream<FileBulk.Outgoing>.makeStream()
-    guard let peer = space.worker.attach(FileBulk.self, to: MachineCell.ID(machine.rawValue), opening: .init(request: request), output: {
+    guard let peer = try await space.worker.attach(FileBulk.self, to: MachineCell.ID(machine.rawValue), opening: .init(request: request), output: {
       switch $0 {
       case let .frame(frame): continuation.yield(frame)
       case .closed: continuation.finish()

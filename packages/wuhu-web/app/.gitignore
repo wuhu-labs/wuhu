@@ -18,6 +18,11 @@
 # QuickJS for scripts (in-graph via //tools/quickjs-wasm:quickjs)
 /app/lib/widgets/quickjs/emscripten-module.browser.mjs
 /app/lib/widgets/quickjs/emscripten-module.wasm
+# Widget script sources (in-graph from //packages/widget-script-kit)
+/app/lib/widgets/shared/prelude.js
+/app/lib/widgets/shared/tree.js
+/app/lib/widgets/shared/prelude.d.ts
+/app/lib/widgets/shared/tree.d.ts
 # IconaMoon (in-graph via //tools/iconamoon:sprite)
 /public/_/iconamoon.svg
 /app/lib/widgets/iconamoon-names.json

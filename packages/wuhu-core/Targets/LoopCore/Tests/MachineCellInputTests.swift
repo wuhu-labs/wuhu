@@ -22,7 +22,7 @@ extension MachineCellTests {
       _ = try await space.worker.call(cell) { try $0.reserve(exec) }
       let accepted = Box<[UInt64]>([])
       @Dependency(\.uuid) var uuid
-      let stream = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
+      let stream = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
         if case let .frame(.accepted(offset)) = $0 { accepted.withLock { $0.append(offset) } }
       })
       try await until("stdin stream starts") { space.worker.cell(cell).operation(exec.id)?.dispatched == true }
@@ -89,7 +89,7 @@ extension MachineCellTests {
       _ = try await space.worker.call(cell) { try $0.reserve(exec) }
       let events = Box<[ExecStream.Outgoing]>([])
       @Dependency(\.uuid) var uuid
-      let stream = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
+      let stream = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
         if case let .frame(event) = $0 { events.withLock { $0.append(event) } }
       })
       try await until("finishing stream starts") { space.worker.cell(cell).operation(exec.id)?.dispatched == true }

@@ -1,3 +1,0 @@
-script: copy-sdk.ts
-uses:
-  - //tools:deno

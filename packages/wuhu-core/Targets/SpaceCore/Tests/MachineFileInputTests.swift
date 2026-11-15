@@ -419,7 +419,7 @@ struct FileLaneFixture {
     let pubkey = try await space.addMachineTestKey(machine)
     let boxStream = AsyncStream<BoxSocket.Outgoing>.makeStream(), callerStream = AsyncStream<FileBulk.Outgoing>.makeStream()
     let boxFrames = FileLaneHistory<BoxSocket.Outgoing>(), callerFrames = FileLaneHistory<FileBulk.Outgoing>()
-    let box = try #require(worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let box = try #require(await worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { boxFrames.frames.withLock { $0.append(frame) }; boxStream.continuation.yield(frame) }
       else { boxStream.continuation.finish() }
     })
@@ -428,7 +428,7 @@ struct FileLaneFixture {
     try await Self.describe(worker: worker, machine: machine)
     let request = MachineFile(operation: operation, start: .init(kind: kind, input: kind == "stagedWrite.v1" ? ["path": "/target", "replace": false] : ["path": "/target"]))
     let callerMachine = attachCaller ? machine : try await space.addMachineV2(name: "unused").machine.id.rawValue
-    let caller = try #require(worker.attach(FileBulk.self, to: MachineCell.ID(callerMachine), opening: .init(request: request)) {
+    let caller = try #require(await worker.attach(FileBulk.self, to: MachineCell.ID(callerMachine), opening: .init(request: request)) {
       if case let .frame(frame) = $0 { callerFrames.frames.withLock { $0.append(frame) }; callerStream.continuation.yield(frame) }
       else { callerStream.continuation.finish() }
     })
@@ -497,7 +497,7 @@ struct FileLaneFixture {
   mutating func replaceBox() async throws {
     let stream = AsyncStream<BoxSocket.Outgoing>.makeStream()
     let frames = boxFrames
-    box = try #require(worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    box = try #require(await worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { frames.frames.withLock { $0.append(frame) }; stream.continuation.yield(frame) }
       else { stream.continuation.finish() }
     })

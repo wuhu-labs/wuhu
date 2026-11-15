@@ -1,4 +1,0 @@
-script: run-smoke.ts
-uses:
-  - //tools:deno
-  - //tools:tar

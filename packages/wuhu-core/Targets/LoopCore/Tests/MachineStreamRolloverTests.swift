@@ -27,7 +27,7 @@ extension MachineCellTests {
       _ = try await old.worker.call(cell) { try $0.reserve(x) }
       let oldEvents = Box<[ExecStream.Outgoing]>([])
       let oldCloses = Box(0)
-      let oldStream = try #require(old.worker.attach(ExecStream.self, to: cell, opening: .init(exec: x, nonce: xNonce)) {
+      let oldStream = try #require(await old.worker.attach(ExecStream.self, to: cell, opening: .init(exec: x, nonce: xNonce)) {
         switch $0 {
         case let .frame(event): oldEvents.withLock { $0.append(event) }
         case .closed: oldCloses.withLock { $0 += 1 }
@@ -46,7 +46,7 @@ extension MachineCellTests {
       let buffers = setup(new)
       let attached = AsyncStream<Void>.makeStream()
       let pubkey = try await seedBoxKey(space: new, machine: cell.key)
-      let newBox = try #require(new.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: uuid(), pubkey: pubkey, streams: 32)) {
+      let newBox = try #require(await new.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: uuid(), pubkey: pubkey, streams: 32)) {
         if case let .frame(request) = $0, case .describe = request.tag {
           attached.continuation.yield(); attached.continuation.finish()
         }
@@ -58,7 +58,7 @@ extension MachineCellTests {
       _ = try await new.worker.call(cell) { try $0.reserve(y) }
       let events = Box<[ExecStream.Outgoing]>([])
       let closes = Box(0)
-      let newStream = try #require(new.worker.attach(ExecStream.self, to: cell, opening: .init(exec: y, nonce: yNonce)) {
+      let newStream = try #require(await new.worker.attach(ExecStream.self, to: cell, opening: .init(exec: y, nonce: yNonce)) {
         switch $0 {
         case let .frame(event): events.withLock { $0.append(event) }
         case .closed: closes.withLock { $0 += 1 }

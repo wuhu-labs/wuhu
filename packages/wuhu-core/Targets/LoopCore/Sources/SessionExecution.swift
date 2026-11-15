@@ -225,18 +225,17 @@ public struct SessionExecution: Sendable {
     return answer
   }
 
-  /// The session's lines as `viewer` reads them, past `after` (`TranscriptTail`); the stream ends when the cell closes the socket.
-  public func lines(_ session: SessionID, after: TranscriptCursor?, as viewer: Principal) -> AsyncStream<TranscriptTail.Outgoing> {
-    AsyncStream { [loops] continuation in
-      let peer = loops.attach(TranscriptTail.self, to: SessionCell.ID(session.rawValue), opening: .init(after: after, viewer: viewer)) { output in
-        switch output {
-        case let .frame(frame): continuation.yield(frame)
-        case .closed: continuation.finish()
-        }
+  /// The session's lines as `viewer` reads them, past `after` (`TranscriptTail`); the stream ends when the cell closes the socket, and an attach this worker refuses throws `Evicted`.
+  public func lines(_ session: SessionID, after: TranscriptCursor?, as viewer: Principal) async throws -> AsyncStream<TranscriptTail.Outgoing> {
+    let (stream, continuation) = AsyncStream.makeStream(of: TranscriptTail.Outgoing.self)
+    guard let peer = try await loops.attach(TranscriptTail.self, to: SessionCell.ID(session.rawValue), opening: .init(after: after, viewer: viewer), output: { output in
+      switch output {
+      case let .frame(frame): continuation.yield(frame)
+      case .closed: continuation.finish()
       }
-      continuation.onTermination = { _ in peer?.close() }
-      if peer == nil { continuation.finish() }
-    }
+    }) else { throw Evicted(address: SessionCell.ID(session.rawValue).description) }
+    continuation.onTermination = { _ in peer.close() }
+    return stream
   }
 
   /// Runs `script` until it ends, `output` taking what it says as it says it; cancelling the call kills it.

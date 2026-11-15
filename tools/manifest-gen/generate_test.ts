@@ -33,8 +33,8 @@ import {
   populateAppBundleInfo,
   productTargets,
   rawLabelLowering,
-  referencedProfileNames,
   resolvedEntitlements,
+  swiftlintSuiteBuildBazel,
   swiftPMIdentityFromUrl,
   type TargetKind,
   type TargetManifest,
@@ -556,15 +556,19 @@ Deno.test('app signing variant selects profiles and generated entitlements at bu
     {
       name: 'Example',
       signingTeamID: 'TEAM123456',
-      release: { name: 'example', platforms: ['ios'] },
-      targets: [target],
+      release: { name: 'example', platforms: ['ios', 'visionos'] },
+      targets: [target, {
+        ...target,
+        name: 'ExampleVision',
+        platform: 'visionOS',
+      }],
     },
     ['ExampleiOS-dev.entitlements', 'ExampleiOS-release.entitlements'],
     'Apps/example',
   )
   assertStringIncludes(
     build,
-    'profile_name = "Wuhu Store tech.example.app"',
+    'command = "profile"',
   )
   assertStringIncludes(
     build,
@@ -572,7 +576,18 @@ Deno.test('app signing variant selects profiles and generated entitlements at bu
   )
   assertStringIncludes(
     build,
-    '"//bazel/signing:store": ":ExampleiOS_store_profile__run_deno_task_prepare_profiles"',
+    '"//bazel/signing:store": ":ExampleiOS_store_profile"',
+  )
+  assertStringIncludes(
+    build,
+    'alias(\n    name = "ExampleVision_store_profile",\n    actual = ":ExampleiOS_store_profile",\n)',
+  )
+  assertEquals(build.match(/apple_signing_ensure\(/g)?.length, 3)
+  assertEquals(
+    build.match(
+      /target_compatible_with = wuhu_platforms\(\["mac", "ios", "tvos", "visionos", "watchos"\]\)/g,
+    )?.length,
+    3,
   )
   assertStringIncludes(build, 'tags = ["manual"]')
   assertStringIncludes(build, '"//bazel/signing:store_unsigned": None,')
@@ -584,83 +599,6 @@ Deno.test('app signing variant selects profiles and generated entitlements at bu
   assertStringIncludes(
     build,
     '"//bazel/signing:store_simulator": None,\n        "//bazel/signing:store": ":ExampleiOS_store_profile',
-  )
-})
-
-Deno.test('native platforms select their complete profile-backed variants', () => {
-  const mac: AppManifest['targets'][number] = {
-    name: 'ExampleMac',
-    platform: 'macOS',
-    bundleID: 'tech.example.app',
-    bundleName: 'Example',
-    entitlements: {},
-    families: ['mac'],
-    appIcons: [],
-    infoPlist: 'Info-Mac.plist',
-    minimumOSVersion: '15.0',
-    dependencies: [],
-    info: {},
-  }
-  const ios: AppManifest['targets'][number] = {
-    ...mac,
-    name: 'ExampleiOS',
-    platform: 'iOS',
-    families: ['iphone'],
-    infoPlist: 'Info-iOS.plist',
-    minimumOSVersion: '18.0',
-  }
-  const tv: AppManifest['targets'][number] = {
-    ...mac,
-    name: 'ExampleTV',
-    platform: 'tvOS',
-    families: ['tv'],
-    infoPlist: 'Info-tvOS.plist',
-    minimumOSVersion: '18.0',
-  }
-  const vision: AppManifest['targets'][number] = {
-    ...mac,
-    name: 'ExampleVision',
-    platform: 'visionOS',
-    families: ['vision'],
-    infoPlist: 'Info-visionOS.plist',
-    minimumOSVersion: '26.0',
-  }
-  const build = generateAppBuildBazel(
-    {
-      name: 'Example',
-      signingTeamID: 'TEAM123456',
-      release: { name: 'example', platforms: ['mac', 'ios'] },
-      targets: [mac, ios, tv, vision],
-    },
-    [
-      'ExampleMac-dev.entitlements',
-      'ExampleMac-release.entitlements',
-      'ExampleiOS-dev.entitlements',
-      'ExampleiOS-release.entitlements',
-      'ExampleTV-dev.entitlements',
-      'ExampleTV-release.entitlements',
-      'ExampleVision-dev.entitlements',
-      'ExampleVision-release.entitlements',
-    ],
-    'Apps/example',
-  )
-  assertStringIncludes(
-    build,
-    'profile_name = "Wuhu Store tech.example.app macOS"',
-  )
-  assertStringIncludes(build, 'profile_name = "Wuhu Dev tech.example.app iOS"')
-  assertStringIncludes(build, 'profile_name = "Wuhu Dev tech.example.app tvOS"')
-  assertStringIncludes(
-    build,
-    'profile_name = "Wuhu Dev tech.example.app visionOS"',
-  )
-  assertStringIncludes(
-    build,
-    'profile_name = "Wuhu Dev tech.example.app macOS"',
-  )
-  assertStringIncludes(
-    build,
-    '"//bazel/signing:dev": ":ExampleMac_dev_profile',
   )
 })
 
@@ -745,16 +683,6 @@ Deno.test('a devIdentity builds a second app beside store', () => {
     build,
     '"//bazel/signing:dev": glob(["Apps/example/Dev/AppIcon.icon/**"])',
   )
-  for (
-    const name of [
-      'Wuhu Dev tech.example.app.dev',
-      'Wuhu Store tech.example.app',
-      'Wuhu Store tech.example.app.Widgets',
-    ]
-  ) assertStringIncludes(build, `profile_name = "${name}"`)
-  if (build.includes('profile_name = "Wuhu Dev tech.example.app"')) {
-    throw new Error('store identity must not get a Dev profile')
-  }
 
   const target = app.targets[0]!
   assertEquals(resolvedEntitlements(target, 'dev', 'TEAM123456'), {
@@ -872,39 +800,6 @@ Deno.test('a devIdentity must cover the whole app and extend its bundle ID', () 
     'must extend tech.example.app.dev',
   )
   validateAppEntitlements(app('tech.example.app.dev.Widgets'), 'app.yml')
-})
-
-Deno.test('a tvOS preview device build signs dev on the tvOS wildcard profile', () => {
-  const preview: AppManifest['targets'][number] = {
-    name: 'ExamplePreviewTV',
-    platform: 'tvOS',
-    bundleID: 'tech.lakeridge.previews.example',
-    bundleName: 'ExamplePreview',
-    entitlements: {},
-    families: ['tv'],
-    appIcons: [],
-    infoPlist: 'Sources/Info.plist',
-    minimumOSVersion: '26.0',
-    dependencies: [],
-    info: {},
-  }
-  const app: AppManifest = {
-    name: 'ExamplePreview',
-    signingTeamID: 'TEAM123456',
-    targets: [preview],
-  }
-  const build = generateAppBuildBazel(app)
-  assertStringIncludes(build, 'profile_name = "Wuhu Dev Previews tvOS"')
-  assertStringIncludes(
-    build,
-    '"//bazel/signing:dev": ":ExamplePreviewTV_dev_profile__run_deno_task_prepare_profiles"',
-  )
-  assertStringIncludes(build, '"//bazel/signing:dev_simulator": None')
-  assertEquals(referencedProfileNames([app]), ['Wuhu Dev Previews tvOS'])
-  assertEquals(resolvedEntitlements(preview, 'dev', 'TEAM123456'), {
-    'application-identifier': 'TEAM123456.tech.lakeridge.previews.example',
-    'get-task-allow': true,
-  })
 })
 
 Deno.test('entitlement overlays inject only variant-owned signing values', () => {
@@ -1386,7 +1281,7 @@ Deno.test('watch applications compile and embed from declarative companion metad
   )
   assertStringIncludes(
     build,
-    'profile_name = "Wuhu Store tech.example.app.watchkitapp watchOS"',
+    'name = "ExampleWatch_store_profile"',
   )
   assertStringIncludes(build, 'watch_application = ":ExampleWatch",')
   assertStringIncludes(
@@ -2243,6 +2138,29 @@ Deno.test('package swiftSettings lead every Swift target and test target', async
   )
 })
 
+Deno.test('every Swift package gets a manual SwiftLint test, run together by //packages:swiftlint', async () => {
+  const build = await generateBuildBazel(basePkg, [
+    minimalTarget('Lib', 'library'),
+  ])
+  assertStringIncludes(
+    build,
+    'load("//bazel/swiftlint:defs.bzl", "swiftlint_test")',
+  )
+  assertStringIncludes(
+    build,
+    'swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)',
+  )
+  await assertRejects(
+    () => generateBuildBazel(basePkg, [minimalTarget('swiftlint', 'library')]),
+    Error,
+    'generated SwiftLint test :swiftlint conflicts with a source target',
+  )
+  assertEquals(
+    swiftlintSuiteBuildBazel(['packages/b', 'packages/a']),
+    'test_suite(\n    name = "swiftlint",\n    tags = ["manual"],\n    tests = [\n        "//packages/a:swiftlint",\n        "//packages/b:swiftlint",\n    ],\n)\n',
+  )
+})
+
 Deno.test('generateBuildBazel threads a test size into swift_test and rejects an invalid one', async () => {
   const sized = await generateBuildBazel(basePkg, [
     { ...minimalTarget('Lib', 'library'), tests: { size: 'large' } },
@@ -2685,6 +2603,20 @@ Deno.test('objcLibrary kind emits an always-linked Objective-C target', async ()
   assertStringIncludes(bazel, `deps = [\n        ":Native",`)
 })
 
+Deno.test('generateDenoBuildBazel emits the bundle target for a build task', () => {
+  const build = generateDenoBuildBazel('packages/wuhu-web', {
+    owner: 'wuhu',
+    tasks: { build: 'x', dev: 'ignored' },
+  })
+  assertStringIncludes(build, `load("//bazel/rules:deno.bzl", "deno_bundle")`)
+  assertStringIncludes(build, `deno_bundle(\n    name = "bundle"`)
+  assertStringIncludes(build, `output_dir = "build/client"`)
+  assertStringIncludes(build, `tags = ["requires-network"]`)
+  if (build.includes(`"dev"`)) {
+    throw new Error('did not expect a target for the dev task')
+  }
+})
+
 Deno.test('generateDenoBuildBazel emits exported_dir targets', () => {
   const build = generateDenoBuildBazel('packages/wuhu-web', {
     owner: 'wuhu',
@@ -3124,7 +3056,7 @@ Deno.test('unsigned Store profile bypass covers every real Wuhu app and embedded
   for (const bundle of bundles) {
     assertStringIncludes(
       build,
-      `"//bazel/signing:store": ":${bundle.name}_store_profile__run_deno_task_prepare_profiles"`,
+      `"//bazel/signing:store": ":${bundle.name}_store_profile"`,
     )
   }
 })
@@ -3284,60 +3216,6 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
     generateAppBuildBazel({ ...app, hmr: false }).includes('HMRRuntime'),
     false,
   )
-})
-
-Deno.test('HMR preview variants support visionOS and tvOS without enabling the ordinary target', () => {
-  for (
-    const [platform, lane, family, profile] of [
-      ['visionOS', 'visionos', 'vision', 'Wuhu Dev Previews'],
-      ['tvOS', 'tvos', 'tv', 'Wuhu Dev Previews tvOS'],
-    ] as const
-  ) {
-    const app: AppManifest = {
-      name: 'Preview',
-      hmr: true,
-      libraries: [{
-        name: 'PreviewLibrary',
-        sources: 'Sources',
-        dependencies: [],
-      }],
-      targets: [{
-        name: `Preview${platform}`,
-        platform,
-        bundleID: 'tech.lakeridge.previews.example',
-        bundleName: 'Preview',
-        entitlements: {},
-        families: [family],
-        appIcons: [],
-        infoPlist: 'Info.plist',
-        minimumOSVersion: '26.0',
-        info: {},
-        dependencies: [':PreviewLibrary'],
-      }],
-    }
-    const build = generateAppBuildBazel(app)
-    assertStringIncludes(
-      build,
-      `wuhu_hmr_app(\n    name = "Preview${platform}HMR",\n    app = ":Preview${platform}",\n    tags = ["manual"],\n    target_compatible_with = wuhu_platforms([\n        "${lane}",\n    ]),\n)`,
-    )
-    assertStringIncludes(
-      build,
-      `infoplists = [":Preview${platform}_hmr_plist"],`,
-    )
-    assertEquals(referencedProfileNames([app]), [profile])
-    assertEquals(
-      resolvedEntitlements(app.targets[0]!, 'dev', 'TEAM123456', true)[
-        'get-task-allow'
-      ],
-      true,
-    )
-    assertEquals(
-      generateAppBuildBazel({ ...app, hmr: false }).includes(
-        `Preview${platform}HMR`,
-      ),
-      false,
-    )
-  }
 })
 
 Deno.test('Dev honors an explicit CloudKit environment and Store forces Production', () => {
@@ -3571,10 +3449,13 @@ Deno.test('HMR preview Mac and visionOS builds select development profiles and l
   const build = generateAppBuildBazel(app)
   assertStringIncludes(
     build,
-    'profile_name = "Wuhu Dev tech.lakeridge.previews.example"',
+    'name = "ExamplePreviewmacOS_dev_profile"',
   )
-  assertStringIncludes(build, 'profile_extension = ".provisionprofile"')
-  assertStringIncludes(build, 'profile_name = "Wuhu Dev Previews"')
+  assertStringIncludes(
+    build,
+    'out = "ExamplePreviewmacOS_dev_profile.provisionprofile"',
+  )
+  assertStringIncludes(build, 'name = "ExamplePreviewvisionOS_dev_profile"')
   assertEquals(resolvedEntitlements(mac, 'dev', 'TEAM123456', true), {
     'com.apple.application-identifier':
       'TEAM123456.tech.lakeridge.previews.example',
@@ -3588,7 +3469,7 @@ Deno.test('HMR preview Mac and visionOS builds select development profiles and l
   assertEquals(resolvedEntitlements(mac, 'dev', 'TEAM123456'), {})
   const local = generateAppBuildBazel({ ...app, hmr: false })
   assertEquals(
-    local.includes('profile_name = "Wuhu Dev tech.lakeridge.previews.example"'),
+    local.includes('name = "ExamplePreviewmacOS_dev_profile"'),
     false,
   )
 })

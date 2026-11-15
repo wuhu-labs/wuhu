@@ -82,7 +82,7 @@ extension MachineCellTests {
       let emissions = AsyncStream<Void>.makeStream()
       defer { emissions.continuation.finish() }
       let pubkey = try await seedBoxKey(space: space, machine: cell.key)
-      let peer = try #require(space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+      let peer = try #require(await space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
         if case let .frame(frame) = $0 {
           requests.withLock { $0.append(frame) }
           if frame.tag == stdoutTag { emissions.continuation.yield(()) }
@@ -121,7 +121,7 @@ extension MachineCellTests {
       _ = try await space.worker.call(cell) { try $0.reserve(exec) }
       let outputs = Box<[ExecStream.Outgoing]>([])
       @Dependency(\.uuid) var uuid
-      let stream = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) { if case let .frame(frame) = $0 { outputs.withLock { $0.append(frame) } } })
+      let stream = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) { if case let .frame(frame) = $0 { outputs.withLock { $0.append(frame) } } })
       try await until("stream start commits") { space.worker.cell(cell).operation(exec.id)?.dispatched == true }
       peer.send(.init(tag: .operation(exec.operation, .start), answer: .snapshot(.init(snapshot: snapshot(exec)))))
       try await until("stream start answers") { space.worker.cell(cell).operation(exec.id)?.state == "running" }
@@ -246,7 +246,7 @@ extension MachineCellTests {
       try await described(first, space)
       let requests = Box<[BoxSocket.Outgoing]>([])
       let pubkey = try await seedBoxKey(space: space, machine: cell.key)
-      let peer = try #require(space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 5)) {
+      let peer = try #require(await space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 5)) {
         if case let .frame(frame) = $0 { requests.withLock { $0.append(frame) } }
       })
       try await until("box attach commits before pending starts") { requests.value.contains { $0.tag == .describe } }

@@ -40,7 +40,7 @@ func addSessionLineRoutes(
     case let .refused(response):
       return response
     case let .principal(viewer):
-      return linesStreamResponse(runtime.execution.lines(id, after: after, as: viewer), scope: runtime.streamScope, clock: clock)
+      return linesStreamResponse(try await runtime.execution.lines(id, after: after, as: viewer), scope: runtime.streamScope, clock: clock)
     }
   }
 

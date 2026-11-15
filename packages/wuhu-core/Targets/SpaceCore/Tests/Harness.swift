@@ -83,8 +83,8 @@ extension Space {
     try await query(sql, arguments: arguments, byteLimit: byteLimit, viewer: viewer, as: .shared(.publicReader))
   }
 
-  nonisolated func observeRows(_ sql: String, throttle: Duration, viewer: String? = nil) throws -> AsyncThrowingStream<Rows, any Error> {
-    try observeRows(sql, throttle: throttle, viewer: viewer, as: .shared(.publicReader))
+  nonisolated func observeRows(_ sql: String, throttle: Duration, viewer: String? = nil) async throws -> AsyncThrowingStream<Rows, any Error> {
+    try await observeRows(sql, throttle: throttle, viewer: viewer, as: .shared(.publicReader))
   }
 
   func observeFS(glob: String, from: Rev? = nil, group: GroupID) async throws -> AsyncStream<FSCommit> {

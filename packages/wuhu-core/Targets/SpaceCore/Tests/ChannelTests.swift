@@ -181,20 +181,20 @@ import Testing
           let bob = Principal.shared(.person(persona: "bob", account: AccountID(rawValue: "bob")))
           let carol = Principal.shared(.person(persona: "carol", account: AccountID(rawValue: "carol")))
           #expect(try await space.query(sql, as: carol).rows.isEmpty)
-          for try await snapshot in try space.observeRows(sql, throttle: .zero, as: carol) {
+          for try await snapshot in try await space.observeRows(sql, throttle: .zero, as: carol) {
             #expect(snapshot.rows.isEmpty)
             break
           }
           // The inbox row is mail to bob's cell: it is there once that cell has taken it, not when the post returns.
           let frames = Collector<Rows>()
-          let stream = try space.observeRows(sql, throttle: .zero, as: bob)
+          let stream = try await space.observeRows(sql, throttle: .zero, as: bob)
           let consumer = Task { do { for try await frame in stream { await frames.append(frame) } } catch { Issue.record(error) } }
           defer { consumer.cancel() }
           let landed = try #require(await awaitItem(frames) { !$0.rows.isEmpty })
           #expect(landed.rows.count == 1)
           if group == .shared || name != "notifications" {
             let readerFrames = Collector<Rows>()
-            let readerStream = try space.observeRows(sql, throttle: .zero, as: .shared(.session(agent)))
+            let readerStream = try await space.observeRows(sql, throttle: .zero, as: .shared(.session(agent)))
             let reader = Task { do { for try await frame in readerStream { await readerFrames.append(frame) } } catch { Issue.record(error) } }
             defer { reader.cancel() }
             #expect(try #require(await awaitItem(readerFrames) { !$0.rows.isEmpty }).rows.count == 1)

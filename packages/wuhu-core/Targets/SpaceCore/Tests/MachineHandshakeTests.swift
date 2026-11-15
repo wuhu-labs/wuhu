@@ -200,7 +200,7 @@ import Wuwei
     let operation = UUID()
     let frames = HandshakeLog<[FileBulk.Outgoing]>([])
     let closed = HandshakeLog(false)
-    let peer = try #require(space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
+    let peer = try #require(await space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
       switch $0 {
       case let .frame(frame): frames.value.withLock { $0.append(frame) }
       case .closed: closed.value.withLock { $0 = true }
@@ -229,7 +229,7 @@ import Wuwei
     let request = MachineExec(id: UUID().uuidString, operation: UUID(), createdAt: fixedDate, group: .shared, argv: ["true"])
     _ = try await space.worker.call(id) { try $0.reserve(request) }
     let frames = HandshakeLog<[ExecStream.Outgoing]>([])
-    let peer = try #require(space.worker.attach(ExecStream.self, to: id, opening: .init(exec: request, nonce: UUID())) {
+    let peer = try #require(await space.worker.attach(ExecStream.self, to: id, opening: .init(exec: request, nonce: UUID())) {
       if case let .frame(frame) = $0 { frames.value.withLock { $0.append(frame) } }
     })
     await space.drain()
@@ -246,7 +246,7 @@ private struct HandshakeBox {
     let pubkey = try await space.space.addMachineTestKey(id.key)
     let frames = HandshakeLog<[BoxSocket.Outgoing]>([])
     let closed = HandshakeLog(false)
-    let peer = try #require(space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let peer = try #require(await space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       switch $0 {
       case let .frame(frame): frames.value.withLock { $0.append(frame) }
       case .closed: closed.value.withLock { $0 = true }

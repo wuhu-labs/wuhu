@@ -173,7 +173,7 @@ import Wuwei
     try await space.setGrant(.group, "shared", role: .read, in: vault, by: (try await space.ensureDevPerson()).actor, acting: .shared)
     _ = try await space.fs(vault).write("/secret.md", Data("secret".utf8), ifMatch: nil)
     let sql = "SELECT path FROM \"wuhu://vault.localspace/docs\""
-    let socket = try space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
+    let socket = try await space.observeRows(sql, throttle: .zero, as: .shared(.publicReader))
     var snapshots = socket.makeAsyncIterator()
     #expect(try await snapshots.next()?.rows == [[.text("/secret.md")]])
     let (stream, output) = AsyncStream<ObservationReply>.makeStream()

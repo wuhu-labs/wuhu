@@ -260,7 +260,7 @@ func withMixedExecAgents(
       for (id, agent) in agents {
         tasks.addTask { await agent.run() }
         let pubkey = try await seedBoxKey(space: server.space, machine: id)
-        let link = try #require(BoxLink(worker: server.space.worker, machine: id, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: server.space.machineBuffers) {
+        let link = try #require(await BoxLink(worker: server.space.worker, machine: id, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: server.space.machineBuffers) {
           try await server.hub.prepare($0, machine: id)
         })
         links.append(link)

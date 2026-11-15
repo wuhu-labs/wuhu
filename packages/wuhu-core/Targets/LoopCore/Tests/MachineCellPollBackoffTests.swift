@@ -76,7 +76,7 @@ extension MachineCellTests {
       let exec = MachineExec(id: "verdict-backpressure", operation: UUID(), createdAt: anchor, group: .shared, argv: ["echo"], window: 131_072)
       _ = try await space.worker.call(cell) { try $0.reserve(exec) }
       @Dependency(\.uuid) var uuid
-      let stream = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) { _ in })
+      let stream = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) { _ in })
       try await until("stream dispatches") { space.worker.cell(cell).operation(exec.id)?.dispatched == true }
       try await reply(snapshot(exec), purpose: .start, in: space)
       let control = BoxTag.operation(exec.operation, .control)
@@ -193,7 +193,7 @@ extension MachineCellTests {
       let exec = MachineExec(id: "input-stalled", operation: UUID(), createdAt: anchor, group: .shared, argv: ["cat"])
       _ = try await space.worker.call(cell) { try $0.reserve(exec) }
       @Dependency(\.uuid) var uuid
-      let stream = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) { _ in })
+      let stream = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) { _ in })
       try await until("input stream dispatches") { space.worker.cell(cell).operation(exec.id)?.dispatched == true }
       try await reply(snapshot(exec), purpose: .start, in: space)
       let pointer = try #require(buffers.put(Data("data".utf8), operation: exec.operation, channel: "stdin", from: 0))
@@ -239,7 +239,7 @@ extension MachineCellTests {
       _ = try await space.worker.call(cell) { try $0.reserve(exec) }
       let events = Box<[ExecStream.Outgoing]>([])
       @Dependency(\.uuid) var uuid
-      let stream = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
+      let stream = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
         if case let .frame(frame) = $0 { events.withLock { $0.append(frame) } }
       })
       try await until("reordered-finals stream dispatches") { space.worker.cell(cell).operation(exec.id)?.dispatched == true }

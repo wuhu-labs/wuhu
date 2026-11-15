@@ -135,7 +135,7 @@ import Testing
     try await space.seedGroup(vault)
     try await space.setGrant(.group, Self.alice.rawValue, role: .write, in: vault, by: (try await space.ensureDevPerson()).actor, acting: vault)
     _ = try await space.fs(vault).write("/readme.md", bytes("# Vault\n"), ifMatch: nil)
-    let stream = try space.observeRows(
+    let stream = try await space.observeRows(
       "SELECT path FROM \"wuhu://vault.localspace/docs\"", throttle: .zero, as: reader(space, in: Self.alice),
     )
     let frames = Collector<Rows>()

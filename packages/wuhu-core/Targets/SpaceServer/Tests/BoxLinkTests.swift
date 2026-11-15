@@ -123,7 +123,7 @@ import Tracing
     let entered = Gate(), resume = Gate()
     let dispatched = Mutex(0)
     let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
-    let box = try #require(BoxLink(worker: space.worker, machine: machine.rawValue, pubkey: pubkey, connection: UUID(), streams: 32, buffers: space.machineBuffers) { _ in
+    let box = try #require(await BoxLink(worker: space.worker, machine: machine.rawValue, pubkey: pubkey, connection: UUID(), streams: 32, buffers: space.machineBuffers) { _ in
       entered.open()
       await resume.wait()
       try Task.checkCancellation()
@@ -153,7 +153,7 @@ import Tracing
     let space = try Space.inMemory()
     let machine = try await space.addMachineV2(name: "box").machine.id.rawValue
     let pubkey = try await seedBoxKey(space: space, machine: machine)
-    let candidate = BoxLink(worker: space.worker, machine: machine, pubkey: pubkey, connection: UUID(), streams: 32, buffers: buffers, authorizeStart: authorizeStart, prepare: { _ in
+    let candidate = await BoxLink(worker: space.worker, machine: machine, pubkey: pubkey, connection: UUID(), streams: 32, buffers: buffers, authorizeStart: authorizeStart, prepare: { _ in
       Issue.record("File requests must not prepare exec secrets")
       return StartRequest(kind: "exec.v1", input: [:])
     })

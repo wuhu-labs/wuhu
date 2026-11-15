@@ -228,55 +228,6 @@ DENO_BIN="$PWD/{deno}"
     runfiles = ctx.runfiles(files = ctx.files.srcs + extra_runfiles + [ctx.file._deno])
     return [DefaultInfo(executable = script, runfiles = runfiles)]
 
-def _deno_task_test_impl(ctx):
-    if ctx.files.workspace_root_files:
-        app = "$TEST_TMPDIR/ws/" + ctx.label.package
-        materialize = _materialize_workspace(
-            ctx.files.srcs + ctx.files.workspace_root_files +
-            ctx.files.workspace_member_srcs + ctx.files.link_srcs,
-            "$TEST_TMPDIR/ws",
-            "$PWD",
-        )
-        inject, gen_inputs = _inject_generated(ctx, app, lambda f: "$PWD/" + f.short_path)
-        body = """mkdir -p "$TEST_TMPDIR/ws"
-{materialize}
-{inject}
-cd "{app}"
-"$DENO_BIN" install --frozen
-"$DENO_BIN" task {task}
-""".format(materialize = materialize, inject = inject, app = app, task = ctx.attr.task)
-        return _deno_test_script(
-            ctx,
-            body,
-            extra_runfiles = gen_inputs + ctx.files.workspace_root_files +
-                             ctx.files.workspace_member_srcs +
-                             ctx.files.link_srcs,
-        )
-    inject, gen_inputs = _inject_generated(ctx, "$TEST_TMPDIR/app", lambda f: "$PWD/" + f.short_path)
-    body = """mkdir -p "$TEST_TMPDIR/app"
-cp -RL "{pkg_dir}/." "$TEST_TMPDIR/app/"
-rm -rf "$TEST_TMPDIR/app/node_modules" "$TEST_TMPDIR/app/build" "$TEST_TMPDIR/app/.react-router" "$TEST_TMPDIR/app/BUILD.bazel"
-{inject}
-cd "$TEST_TMPDIR/app"
-"$DENO_BIN" install --frozen
-"$DENO_BIN" task {task}
-""".format(pkg_dir = ctx.label.package, task = ctx.attr.task, inject = inject)
-    return _deno_test_script(ctx, body, extra_runfiles = gen_inputs)
-
-deno_task_test = rule(
-    implementation = _deno_task_test_impl,
-    test = True,
-    attrs = {
-        "srcs": attr.label_list(allow_files = True, mandatory = True),
-        "task": attr.string(mandatory = True),
-        "generated": _GENERATED_ATTR,
-        "workspace_root_files": _WORKSPACE_ROOT_ATTR,
-        "workspace_member_srcs": _WORKSPACE_MEMBER_ATTR,
-        "link_srcs": _LINK_ATTR,
-        "_deno": _DENO_ATTR,
-    },
-)
-
 def _deno_command_test_impl(ctx):
     body = "\"$DENO_BIN\" {}\n".format(" ".join(ctx.attr.command))
     return _deno_test_script(ctx, body)

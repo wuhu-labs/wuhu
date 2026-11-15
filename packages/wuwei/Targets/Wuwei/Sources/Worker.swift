@@ -52,18 +52,31 @@ public final class Worker: Sendable {
   private struct Hosts: Sendable {
     var live: [String: Host] = [:]
     var claiming = true
+    var holding = true
     var started = false
     var scanning = false
     var quiescence: Task<Void, Never>?
     var quiesced = false
-    var holds: [UInt64: (address: String, wake: AsyncStream<Void>.Continuation)] = [:]
+    var holds: [UInt64: (address: String?, wake: AsyncStream<Void>.Continuation)] = [:]
     var nextHold: UInt64 = 0
+
+    mutating func endHolds() {
+      holding = false
+      for hold in holds.values { hold.wake.finish() }
+      holds = [:]
+    }
   }
 
   private enum Hosting: Sendable {
     case live(Host)
     case draining
     case unavailable
+  }
+
+  private enum Claimed {
+    case claimed(Claim)
+    case draining
+    case refused
   }
 
   private struct Sockets {
@@ -73,6 +86,7 @@ public final class Worker: Sendable {
 
   public let id: String
   public let scheduler: any Scheduler
+  private let born: Instant
   let store: OuterStore
   let shipper: Shipper
   let options: Options
@@ -88,6 +102,7 @@ public final class Worker: Sendable {
     self.scheduler = scheduler
     self.dependencies = Mutex(dependencies)
     self.options = options
+    born = scheduler.now
     store = OuterStore(storage)
     shipper = Shipper(store: store, scheduler: scheduler, leaseDuration: options.leaseDuration)
     for registration in registrations {
@@ -200,7 +215,7 @@ public final class Worker: Sendable {
   public func call<C: Cell, Value: Sendable>(_ id: C.ID, _ body: @Sendable (inout C) throws -> Value) async throws -> Value {
     let address = id.description
     while true {
-      let host = try await callHost(address)
+      guard let host = try await heldHost(address) else { throw Evicted(address: address) }
       let answer: Result<Value?, any Error> = await host.run { incarnation in
         do { return .success(try await incarnation.answer(C.self, body)) } catch { return .failure(error) }
       }
@@ -208,21 +223,29 @@ public final class Worker: Sendable {
     }
   }
 
-  private func callHost(_ address: String) async throws -> Host {
-    switch hosting(address) {
-    case let .live(host): return host
-    case .unavailable: throw Evicted(address: address)
-    case .draining: break
+  /// The live host of an address here, waiting out a draining holder; `nil` when the address is not this worker's to host.
+  private func heldHost(_ address: String) async throws(CancellationError) -> Host? {
+    let host = try await held(address) { () -> Host?? in
+      switch hosting(address) {
+      case let .live(host): host
+      case .unavailable: .some(nil)
+      case .draining: nil
+      }
     }
+    return host ?? nil
+  }
+
+  /// The first value `settle` gives, asking again on every poke of `address` and every scan (only scans for `nil`); `nil` once this worker ends its holds or quiesces.
+  private func held<Value>(_ address: String?, _ settle: () -> Value?) async throws(CancellationError) -> Value? {
+    if let value = settle() { return value }
     let (stream, wake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-    let (token, startsScan) = try hosts.withLock { hosts in
-      guard hosts.claiming else { throw Evicted(address: address) }
+    guard let (token, startsScan) = hosts.withLock({ hosts -> (UInt64, Bool)? in
+      guard hosts.holding else { return nil }
       hosts.nextHold += 1
       hosts.holds[hosts.nextHold] = (address, wake)
-      let startsScan = !hosts.scanning
-      hosts.scanning = true
-      return (hosts.nextHold, startsScan)
-    }
+      defer { hosts.scanning = true }
+      return (hosts.nextHold, !hosts.scanning)
+    }) else { return nil }
     defer {
       hosts.withLock { $0.holds[token] = nil }
       wake.finish()
@@ -230,39 +253,62 @@ public final class Worker: Sendable {
     if startsScan { scan() }
     var iterator = stream.makeAsyncIterator()
     while true {
-      try Task.checkCancellation()
-      switch hosting(address) {
-      case let .live(host): return host
-      case .unavailable: throw Evicted(address: address)
-      case .draining:
-        guard await iterator.next() != nil else {
-          try Task.checkCancellation()
-          throw Evicted(address: address)
-        }
+      if Task.isCancelled { throw CancellationError() }
+      if let value = settle() { return value }
+      guard await iterator.next() != nil else {
+        if Task.isCancelled { throw CancellationError() }
+        return nil
       }
     }
   }
 
-  /// Takes a socket to a cell. `nil` when the cell is not this worker's to host: it lives elsewhere, or this worker does not register its kind. The cell hears `attached` first; `output` runs on the cell's lane, in order, and must not block.
-  public func attach<S: Socket, C: Cell>(_ socket: S.Type, to id: C.ID, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? {
-    attach(socket, to: id.description, opening: opening, output: output)
+  /// Announces this worker as the successor of every worker created before it. One of those that runs this build marks its leases draining at its next scan and claims draining from then on, so that calls and sockets here wait for it instead of being refused, and it keeps serving what it holds until it quiesces. Returns once no other worker holds a lease that is not draining, or two scan intervals after the announcement: a holder that never answers is an older build or a dead process.
+  public func takeOver() async {
+    let announced = scheduler.now
+    do {
+      try store.write(label: "worker.takeOver") {
+        try $0.execute(
+          "INSERT INTO wuwei_successor (id, worker, announced_at) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET worker = excluded.worker, announced_at = excluded.announced_at",
+          .text(id), .integer(announced.milliseconds),
+        )
+      }
+    } catch {
+      preconditionFailure("could not announce \(id) as the successor: \(error)")
+    }
+    defer { log.info("worker takeOver duration_ms=\((scheduler.now - announced).milliseconds)") }
+    let deadline = announced + options.scanInterval * 2
+    scheduler.at(deadline) { [self] in wakeHeldCalls() }
+    _ = try? await held(nil) { () -> Void? in
+      if scheduler.now >= deadline { return () }
+      do {
+        let serving = try store.read { try !$0.rows("SELECT 1 FROM wuwei_addressable WHERE expires_at > ? AND draining = 0 AND holder != ? LIMIT 1", .integer(scheduler.now.milliseconds), .text(id)).isEmpty }
+        return serving ? nil : ()
+      } catch {
+        preconditionFailure("could not read the leases \(id) takes over: \(error)")
+      }
+    }
   }
 
-  public func attach<S: Socket, C: Cell>(_ socket: S.Type, to id: C.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? where S.Opening == Void {
-    attach(socket, to: id.description, opening: (), output: output)
+  /// Takes a socket to a cell, waiting out a draining holder as a call does. `nil` when the cell is not this worker's to host: it lives elsewhere, or this worker does not register its kind, or quiesces. The cell hears `attached` first; `output` runs on the cell's lane, in order, and must not block.
+  public func attach<S: Socket, C: Cell>(_ socket: S.Type, to id: C.ID, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) async throws(CancellationError) -> Peer<S>? {
+    try await attach(socket, to: id.description, opening: opening, output: output)
+  }
+
+  public func attach<S: Socket, C: Cell>(_ socket: S.Type, to id: C.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) async throws(CancellationError) -> Peer<S>? where S.Opening == Void {
+    try await attach(socket, to: id.description, opening: (), output: output)
   }
 
   /// Takes a socket to a job, which only publishes to it.
-  public func attach<S: Socket, J: Job>(_ socket: S.Type, to id: J.ID, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? where S.Incoming == Never {
-    attach(socket, to: id.description, opening: opening, output: output)
+  public func attach<S: Socket, J: Job>(_ socket: S.Type, to id: J.ID, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) async throws(CancellationError) -> Peer<S>? where S.Incoming == Never {
+    try await attach(socket, to: id.description, opening: opening, output: output)
   }
 
-  public func attach<S: Socket, J: Job>(_ socket: S.Type, to id: J.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? where S.Incoming == Never, S.Opening == Void {
-    attach(socket, to: id.description, opening: (), output: output)
+  public func attach<S: Socket, J: Job>(_ socket: S.Type, to id: J.ID, output: @escaping @Sendable (SocketOutput<S>) -> Void) async throws(CancellationError) -> Peer<S>? where S.Incoming == Never, S.Opening == Void {
+    try await attach(socket, to: id.description, opening: (), output: output)
   }
 
-  private func attach<S: Socket>(_ socket: S.Type, to address: String, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) -> Peer<S>? {
-    guard host(address) != nil else { return nil }
+  private func attach<S: Socket>(_ socket: S.Type, to address: String, opening: S.Opening, output: @escaping @Sendable (SocketOutput<S>) -> Void) async throws(CancellationError) -> Peer<S>? {
+    guard try await heldHost(address) != nil else { return nil }
     let attachment = sockets.withLock { sockets in
       sockets.count += 1
       let attachment = Attachment(id: sockets.count, address: address, worker: self, socket, opening: opening, output: output)
@@ -292,6 +338,11 @@ public final class Worker: Sendable {
     attachment.end()
   }
 
+  /// Ends every call and attach waiting out a draining holder as refused, and refuses such a wait from now on, while what this worker hosts keeps serving. A server calls it as it stops taking requests, so that a waiting request answers before the drain ends it.
+  public func endHolds() {
+    hosts.withLock { $0.endHolds() }
+  }
+
   public func quiesce() async {
     let task = hosts.withLock { hosts in
       if let task = hosts.quiescence { return task }
@@ -306,8 +357,7 @@ public final class Worker: Sendable {
         preconditionFailure("could not mark the leases of \(id) draining: \(error)")
       }
       log.info("worker quiesce step=draining duration_ms=\((scheduler.now - draining).milliseconds)")
-      for hold in hosts.holds.values { hold.wake.finish() }
-      hosts.holds = [:]
+      hosts.endHolds()
       let startsMaintenance = !hosts.scanning
       hosts.scanning = true
       let live = Array(hosts.live.values)
@@ -373,13 +423,14 @@ public final class Worker: Sendable {
       guard hosts.claiming else { return .unavailable }
       if let live = hosts.live[address] { return .live(live) }
       do {
-        guard let claim = try claim(address, key: String(address[address.index(after: slash)...]), isJob: registration.isJob) else {
-          let draining = try store.read { try $0.rows("SELECT draining FROM wuwei_addressable WHERE address = ?", .text(address)).first?["draining"].integer == 1 }
-          return draining ? .draining : .unavailable
+        switch try claim(address, key: String(address[address.index(after: slash)...]), isJob: registration.isJob) {
+        case let .claimed(claim):
+          let host = try registration.host(self, claim)
+          hosts.live[address] = host
+          return .live(host)
+        case .draining: return .draining
+        case .refused: return .unavailable
         }
-        let host = try registration.host(self, claim)
-        hosts.live[address] = host
-        return .live(host)
       } catch {
         log.error("could not host \(address): \(error)")
         return .unavailable
@@ -409,37 +460,42 @@ public final class Worker: Sendable {
     Task(executorPreference: scheduler, operation: operation)
   }
 
-  /// Takes a free or expired lease, or one this worker held before, bumping the fence so that no earlier holder, an earlier incarnation here included, can commit again. Mail that reaches a finished job is dropped here.
-  private func claim(_ address: String, key: String, isJob: Bool) throws -> Claim? {
+  /// Takes a free or expired lease, or one this worker held before, bumping the fence so that no earlier holder, an earlier incarnation here included, can commit again. A worker with a successor claims draining; any other takes no lease of another's while another worker drains one, so that the outgoing worker keeps every address it reaches. Mail that reaches a finished job is dropped here.
+  private func claim(_ address: String, key: String, isJob: Bool) throws -> Claimed {
     let now = scheduler.now
     return try store.write(label: "worker.claim") { db in
       var job: JobRow?
       if isJob {
-        guard let row = try db.rows("SELECT phase, params, creator FROM wuwei_job WHERE address = ?", .text(address)).first else { return nil }
+        guard let row = try db.rows("SELECT phase, params, creator FROM wuwei_job WHERE address = ?", .text(address)).first else { return .refused }
         guard row["phase"].text != "done" else {
           try db.execute("DELETE FROM wuwei_mail WHERE recipient = ?", .text(address))
-          return nil
+          return .refused
         }
         job = JobRow(phase: row["phase"].text!, params: row["params"].blob!, creator: row["creator"].text)
       }
-      let claimed = try db.rows(
+      let lease = try db.rows("SELECT holder = ? AS mine, expires_at > ? AS live, draining FROM wuwei_addressable WHERE address = ?", .text(id), .integer(now.milliseconds), .text(address)).first
+      let mine = lease?["mine"].integer == 1
+      if let lease, !mine, lease["live"].integer == 1 { return lease["draining"].integer == 1 ? .draining : .refused }
+      let handingOver = try !db.rows("SELECT 1 FROM wuwei_successor WHERE worker != ? AND announced_at >= ?", .text(id), .integer(born.milliseconds)).isEmpty
+      if !mine, !handingOver, try !db.rows("SELECT 1 FROM wuwei_addressable WHERE draining = 1 AND expires_at > ? AND holder != ? LIMIT 1", .integer(now.milliseconds), .text(id)).isEmpty {
+        return .draining
+      }
+      let row = try db.rows(
         """
-        INSERT INTO wuwei_addressable (address, holder, fence, expires_at) VALUES (?, ?, 1, ?)
-        ON CONFLICT (address) DO UPDATE SET holder = excluded.holder, fence = fence + 1, expires_at = excluded.expires_at, draining = 0
-        WHERE expires_at <= ? OR holder = excluded.holder
+        INSERT INTO wuwei_addressable (address, holder, fence, expires_at, draining) VALUES (?, ?, 1, ?, ?)
+        ON CONFLICT (address) DO UPDATE SET holder = excluded.holder, fence = fence + 1, expires_at = excluded.expires_at, draining = excluded.draining
         RETURNING id, fence, page_count, wake_at
         """,
-        .text(address), .text(id), .integer((now + options.leaseDuration).milliseconds), .integer(now.milliseconds),
-      )
-      guard let row = claimed.first else { return nil }
-      return Claim(
+        .text(address), .text(id), .integer((now + options.leaseDuration).milliseconds), .integer(handingOver ? 1 : 0),
+      )[0]
+      return .claimed(Claim(
         key: key, lease: Lease(id: row["id"].integer!, fence: row["fence"].integer!), pageCount: UInt32(row["page_count"].integer!),
         wakeAt: row["wake_at"].integer.map(Instant.init(milliseconds:)), job: job,
-      )
+      ))
     }
   }
 
-  /// The backstop behind every poke: renews this worker's leases, then pokes every recipient with mail, every job nobody holds or whose wake time has come, and every cell whose wake time has come and that nobody else holds.
+  /// The backstop behind every poke: renews this worker's leases, marking them draining once it has a successor, then pokes every recipient with mail, every job nobody holds or whose wake time has come, and every cell whose wake time has come and that nobody else holds.
   private func scan() {
     let now = scheduler.now
     let again = maintaining.withLock { maintaining in
@@ -447,8 +503,12 @@ public final class Worker: Sendable {
       do {
         try store.write(label: "worker.scan.renewLeases") {
           try $0.execute(
-            "UPDATE wuwei_addressable SET expires_at = ? WHERE holder = ? AND expires_at > ?",
-            .integer((now + options.leaseDuration).milliseconds), .text(id), .integer(now.milliseconds),
+            """
+            UPDATE wuwei_addressable SET expires_at = ?1,
+              draining = draining OR EXISTS (SELECT 1 FROM wuwei_successor WHERE worker != ?2 AND announced_at >= ?3)
+            WHERE holder = ?2 AND expires_at > ?4
+            """,
+            .integer((now + options.leaseDuration).milliseconds), .text(id), .integer(born.milliseconds), .integer(now.milliseconds),
           )
         }
         wakeHeldCalls()

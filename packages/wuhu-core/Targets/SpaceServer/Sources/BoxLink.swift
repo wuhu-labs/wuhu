@@ -26,9 +26,9 @@ struct BoxLink: Sendable {
   private let authorizeStart: @Sendable () async throws -> Void
   private let prepare: @Sendable (MachineExec) async throws -> StartRequest
 
-  init?(worker: Worker, machine: String, pubkey: String, connection: UUID, streams: Int, buffers: MachineBuffers, authorizeStart: @escaping @Sendable () async throws -> Void = {}, prepare: @escaping @Sendable (MachineExec) async throws -> StartRequest) {
+  init?(worker: Worker, machine: String, pubkey: String, connection: UUID, streams: Int, buffers: MachineBuffers, authorizeStart: @escaping @Sendable () async throws -> Void = {}, prepare: @escaping @Sendable (MachineExec) async throws -> StartRequest) async {
     let (events, continuation) = AsyncStream<Event>.makeStream()
-    guard let peer = worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: connection, pubkey: pubkey, streams: streams), output: {
+    guard let peer = try? await worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: connection, pubkey: pubkey, streams: streams), output: {
       switch $0 {
       case let .frame(frame): continuation.yield(.request(frame))
       case .closed: continuation.finish()

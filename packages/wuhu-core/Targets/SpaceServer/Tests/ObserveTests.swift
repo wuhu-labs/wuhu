@@ -1,3 +1,5 @@
+import ControlledTime
+import Dependencies
 import DeterministicDependencies
 import Fetch
 import FetchSSE
@@ -9,6 +11,7 @@ import SpaceContract
 import struct SpaceContract.GroupID
 import struct SpaceCore.Principal
 import class SpaceCore.Space
+import Synchronization
 import Testing
 
 @Suite(.deterministicDependencies) struct ObserveTests {
@@ -65,6 +68,102 @@ import Testing
     }
     try await harness.space.close()
     try await holder.close()
+  }
+
+  /// The date stands still, so no lease expires and the successor's takeover can only end by the holder handing over.
+  @Test(.timeLimit(.minutes(1))) func anObserveOnTheSuccessorDuringAHandoverWaitsThenAnswers() async throws {
+    let clock = VirtualClock()
+    func turn(until done: borrowing Mutex<Bool>) async throws {
+      while !done.withLock({ $0 }) {
+        try await clock.sleeping { $0 > .zero }
+        await clock.advance(by: .seconds(1))
+      }
+    }
+    try await withDependencies {
+      $0.date = .constant(fixedDate)
+      $0.continuousClock = clock
+    } operation: {
+      let folder = try ScratchFolder("observe-handover")
+      let file = folder.url.appending(path: "space.sqlite")
+      let holder = try Space.open(file: file)
+      _ = try await holder.observeFS(glob: "**", group: .shared, as: .shared(.publicReader))
+      holder.worker.start()
+      let harness = try await Harness(clock: clock, opening: { try Space.open(file: file) })
+      let tookOver = Mutex(false)
+      Task {
+        await harness.space.worker.takeOver()
+        tookOver.withLock { $0 = true }
+      }
+      try await turn(until: tookOver)
+
+      let answered = Mutex(false)
+      let observing = Task {
+        defer { answered.withLock { $0 = true } }
+        return try await harness.get(harness.api, "/v1/observe", query: ["sql": "SELECT 1 AS n", "throttleMs": "0"])
+      }
+      for _ in 0 ..< 3 {
+        try await clock.sleeping { $0 > .zero }
+        await clock.advance(by: .seconds(1))
+      }
+      #expect(!answered.withLock { $0 })
+      await holder.stopWorker()
+      try await turn(until: answered)
+      let response = try await observing.value
+      #expect(response.status == .ok)
+      for try await frame in response.sse() {
+        #expect(try JSONValueDecoder().decode(QueryOutput.self, from: #require(JSONValue.parse(frame.data))).rows == [[.integer(1)]])
+        break
+      }
+      try await harness.space.close()
+      try await holder.close()
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1))) func requestsHeldThroughAHandoverAnswerUnavailableOnceTheHoldsEnd() async throws {
+    let clock = VirtualClock()
+    try await withDependencies {
+      $0.date = .constant(fixedDate)
+      $0.continuousClock = clock
+    } operation: {
+      let folder = try ScratchFolder("observe-held-ended")
+      let file = folder.url.appending(path: "space.sqlite")
+      let holder = try Space.open(file: file)
+      _ = try await holder.observeFS(glob: "**", group: .shared, as: .shared(.publicReader))
+      holder.worker.start()
+      let harness = try await Harness(clock: clock, opening: { try Space.open(file: file) })
+      let tookOver = Mutex(false)
+      Task {
+        await harness.space.worker.takeOver()
+        tookOver.withLock { $0 = true }
+      }
+      while !tookOver.withLock({ $0 }) {
+        try await clock.sleeping { $0 > .zero }
+        await clock.advance(by: .seconds(1))
+      }
+
+      let answered = Mutex(0)
+      func held(_ request: @escaping @Sendable () async throws -> Response) -> Task<Response, any Error> {
+        Task {
+          defer { answered.withLock { $0 += 1 } }
+          return try await request()
+        }
+      }
+      let observing = held { try await harness.get(harness.api, "/v1/observe", query: ["sql": "SELECT 1 AS n", "throttleMs": "0"]) }
+      let writing = held { try await harness.post("write", ["path": "/held.md", "content": "x"]) }
+      for _ in 0 ..< 3 {
+        try await clock.sleeping { $0 > .zero }
+        await clock.advance(by: .seconds(1))
+      }
+      #expect(answered.withLock { $0 } == 0)
+      harness.space.worker.endHolds()
+      for response in [try await observing.value, try await writing.value] {
+        #expect(response.status == .serviceUnavailable)
+        #expect(response.headers[.retryAfter] == "1")
+      }
+      await holder.stopWorker()
+      try await harness.space.close()
+      try await holder.close()
+    }
   }
 
   @Test func discoveryAdvertisesBatchObservation() async throws {

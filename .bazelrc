@@ -126,3 +126,5 @@ test --test_env=WUHU_RELEASE_CACHE
 
 # Local SwiftUI injection. Store signing never enables its hooks.
 common:hmr --//bazel/rules:hmr=true
+
+# Signing ensures read the per-user App Store Connect credential directory.

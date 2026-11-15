@@ -27,10 +27,5 @@
   ],
   "generated": {
     "src/shared/allowance.json": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/allowance.json"
-  },
-  "lint": {
-    "include": [
-      "src"
-    ]
   }
 }

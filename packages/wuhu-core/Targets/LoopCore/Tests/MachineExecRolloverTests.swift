@@ -53,7 +53,7 @@ import struct Wuwei.Database
 @Suite struct MachineExecRolloverTests {
   func attach(_ space: Space, machine: String, requests: Box<[BoxSocket.Outgoing]>) async throws -> Peer<BoxSocket> {
     let pubkey = try await seedBoxKey(space: space, machine: machine)
-    return try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    return try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { requests.withLock { $0.append(frame) } }
     })
   }
@@ -410,7 +410,7 @@ extension MachineExecRolloverTests {
       reservedRequest.argv = ["sh", "-c", "sleep 1000"]
       reservedRequest.window = 1 << 20
       let request = reservedRequest
-      let stream = try #require(old.worker.attach(ExecStream.self, to: cell, opening: .init(exec: request, nonce: UUID())) { _ in })
+      let stream = try #require(await old.worker.attach(ExecStream.self, to: cell, opening: .init(exec: request, nonce: UUID())) { _ in })
       try await until("the stream starts the process") { old.worker.cell(cell).operation(request.id)?.dispatched == true }
       peer.send(.init(tag: .operation(request.operation, .start), answer: .snapshot(.init(snapshot: .init(operation: request.operation, verdict: nil, terminalToken: nil, finalOffsets: [:], outputConsumed: false)))))
       try await until("the start is answered") { old.worker.cell(cell).operation(request.id)?.state == "running" }

@@ -26,7 +26,7 @@ import Wuwei
     default: preconditionFailure()
     }
     let events = Mutex((frames: 0, closes: 0))
-    let peer = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(target), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let peer = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(target), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       switch $0 {
       case .frame: events.withLock { $0.frames += 1 }
       case .closed: events.withLock { $0.closes += 1 }
@@ -49,7 +49,7 @@ import Wuwei
     let pubkey = try await space.space.addMachineTestKey(machine)
     let otherKey = try await space.space.addMachineTestKey(other)
     let acceptedEvents = Mutex((frames: 0, closes: 0))
-    let accepted = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let accepted = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       switch $0 {
       case .frame: acceptedEvents.withLock { $0.frames += 1 }
       case .closed: acceptedEvents.withLock { $0.closes += 1 }
@@ -58,7 +58,7 @@ import Wuwei
     await space.drain()
     let before = space.worker.cell(MachineCell.ID(machine)).presence
     let refusedEvents = Mutex((frames: 0, closes: 0))
-    let refused = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: otherKey, streams: 32)) {
+    let refused = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: otherKey, streams: 32)) {
       switch $0 {
       case .frame: refusedEvents.withLock { $0.frames += 1 }
       case .closed: refusedEvents.withLock { $0.closes += 1 }
@@ -84,7 +84,7 @@ import Wuwei
     try await space.space.removeKey(pubkey: oldKey)
     let newKey = try await space.space.addMachineTestKey(machine)
     let oldEvents = Mutex((frames: 0, closes: 0))
-    let old = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: oldKey, streams: 32)) {
+    let old = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: oldKey, streams: 32)) {
       switch $0 {
       case .frame: oldEvents.withLock { $0.frames += 1 }
       case .closed: oldEvents.withLock { $0.closes += 1 }
@@ -94,7 +94,7 @@ import Wuwei
     #expect(oldEvents.withLock { $0.frames } == 0)
     #expect(oldEvents.withLock { $0.closes } == 1)
     let newEvents = Mutex((frames: 0, closes: 0))
-    let new = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: newKey, streams: 32)) {
+    let new = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: newKey, streams: 32)) {
       switch $0 {
       case .frame: newEvents.withLock { $0.frames += 1 }
       case .closed: newEvents.withLock { $0.closes += 1 }

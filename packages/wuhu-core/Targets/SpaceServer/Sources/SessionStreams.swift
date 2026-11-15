@@ -39,7 +39,7 @@ func conversationStreamResponse(
   clock: any Clock<Duration>,
 ) -> Response {
   return sseResponse("conversation-events", scope: scope, clock: clock) { send in
-    for try await batch in store.observeConversation(conversation, after: after, as: principal) {
+    for try await batch in try await store.observeConversation(conversation, after: after, as: principal) {
       for payload in try await messagePayloads(batch, sessions: store, space: space, viewer: principal.group) {
         send(try .json(payload))
       }

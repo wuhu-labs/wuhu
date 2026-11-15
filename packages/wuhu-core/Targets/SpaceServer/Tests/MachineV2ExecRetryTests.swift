@@ -29,7 +29,7 @@ final class CellExecFixture: Sendable {
     self.space = space
     self.log = log
     let pubkey = try await seedBoxKey(space: space, machine: cell.key)
-    box = try #require(space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    box = try #require(await space.worker.attach(BoxSocket.self, to: cell, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { log.requests.withLock { $0.append(frame) } }
     })
   }
@@ -55,7 +55,7 @@ final class CellExecFixture: Sendable {
     @Dependency(\.uuid) var uuid
     _ = try await space.worker.call(cell) { try $0.reserve(exec) }
     let log = self.log
-    let stream = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
+    let stream = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
       if case let .frame(frame) = $0 { log.frames.withLock { $0.append(frame) } }
     })
     try await wait { self.count(.operation(exec.operation, .start)) == 1 }

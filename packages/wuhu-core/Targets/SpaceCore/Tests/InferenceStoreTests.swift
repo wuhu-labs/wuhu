@@ -54,7 +54,7 @@ import Testing
     let space = try makeSpace()
     let session = try await space.sessions.createSession(group: .shared, title: "coder", kind: .agent, createdBy: "owner", model: .test)
     let rows = Collector<Rows>()
-    let stream = try space.observeRows("SELECT count(*) FROM inferences", throttle: .zero)
+    let stream = try await space.observeRows("SELECT count(*) FROM inferences", throttle: .zero)
     let consumer = Task { for try await value in stream { await rows.append(value) } }
     defer { consumer.cancel() }
     #expect(try await awaitItems(rows, atLeast: 1).map(\.rows) == [[[.integer(0)]]])

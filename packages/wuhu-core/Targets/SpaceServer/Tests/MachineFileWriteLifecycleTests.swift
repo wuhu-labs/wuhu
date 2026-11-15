@@ -99,7 +99,7 @@ extension MachineFileTransferTests {
         group.addTask {
           defer { prefixAccepted.continuation.finish() }
           do {
-            let connection = try MachineFileClient(space: transfer.space, machine: b, caller: nil).connect(.init(kind: "write.v1", input: ["path": .string(target.path), "bytes": "131072", "digest": .string(sha256(prefix + prefix))]))
+            let connection = try await MachineFileClient(space: transfer.space, machine: b, caller: nil).connect(.init(kind: "write.v1", input: ["path": .string(target.path), "bytes": "131072", "digest": .string(sha256(prefix + prefix))]))
             defer { connection.close() }
             try await connection.write("data", .init(data: prefix))
             prefixAccepted.continuation.yield()
@@ -158,7 +158,7 @@ extension MachineFileTransferTests {
       try await withThrowingTaskGroup(of: Result<Void, any Error>.self) { group in
         group.addTask {
           do {
-            let connection = try client.connect(.init(kind: "write.v1", input: ["path": .string(target.path), "bytes": .string(String(2 * prefix.count)), "digest": .string(sha256(prefix + prefix))]))
+            let connection = try await client.connect(.init(kind: "write.v1", input: ["path": .string(target.path), "bytes": .string(String(2 * prefix.count)), "digest": .string(sha256(prefix + prefix))]))
             defer {
               connection.close()
               callerClosed.continuation.yield()

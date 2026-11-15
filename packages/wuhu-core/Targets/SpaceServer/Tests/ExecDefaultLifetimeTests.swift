@@ -133,7 +133,7 @@ private struct LifetimeExec: Sendable {
     request.argv = plan.argv; request.cwd = plan.cwd; request.env = plan.env; request.secrets = plan.secrets
     request.timeout = plan.lifetime; request.maxOutput = plan.maxOutput
     let events = self.events
-    peer = try #require(space.worker.attach(ExecStream.self, to: MachineCell.ID(machine.rawValue), opening: .init(exec: request, nonce: uuid())) {
+    peer = try #require(await space.worker.attach(ExecStream.self, to: MachineCell.ID(machine.rawValue), opening: .init(exec: request, nonce: uuid())) {
       switch $0 {
       case let .frame(frame):
         switch frame {

@@ -43,6 +43,7 @@ export async function manifestInputPaths(root = '.'): Promise<string[]> {
     'bazel/umbrella/Package.resolved',
     'deno.json',
     'deno.lock',
+    'tools/signing/model.ts',
   ]
   // Signing identities stay in the monorepo; a tree exported without them
   // generates no signed app shells and so has nothing here to fingerprint.

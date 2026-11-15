@@ -17,13 +17,7 @@
       "include": [
         "no-sparse-arrays"
       ]
-    },
-    "include": [
-      "guide.ts",
-      "guide.js",
-      "preview.ts",
-      "test"
-    ]
+    }
   },
   "tasks": {
     "fmt": "deno fmt --check",

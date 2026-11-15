@@ -94,7 +94,7 @@ func withHandlerFiring(
       export default async ({rows}) => { await mutateRows('/throttle-output.table', [{insert: {n: rows.at(-1).n}}]); };
       """.utf8), ifMatch: nil)
       try await withHandlerFiring(loop) { worker, _ in
-        let stream = try space.observeRows("SELECT n FROM \"/throttle-output.table\" ORDER BY id", throttle: .zero, as: .shared(.publicReader))
+        let stream = try await space.observeRows("SELECT n FROM \"/throttle-output.table\" ORDER BY id", throttle: .zero, as: .shared(.publicReader))
         var snapshots = stream.makeAsyncIterator()
         #expect(try await snapshots.next()?.rows.isEmpty == true)
         var world = ToolWorld(worker: worker, session: session)

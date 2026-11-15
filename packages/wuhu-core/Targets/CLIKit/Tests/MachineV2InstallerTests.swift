@@ -103,20 +103,9 @@ import Testing
     defer { scratch.remove() }
     try await installer.install(candidate: candidate)
     let lockPath = installer.root.appendingPathComponent(".install-lock").path
-    let fd = open(lockPath, O_RDWR | O_CLOEXEC)
-    #expect(fd >= 0)
-    guard fd >= 0 else { return }
-    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { close(fd); Issue.record("cannot hold installer lock"); return }
-    let holder = Process()
-    holder.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    holder.arguments = ["100"]
-    let inherited = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-    holder.standardInput = inherited
-    do { try holder.run() } catch { try inherited.close(); throw error }
-    try inherited.close()
-    defer {
-      if holder.isRunning { kill(holder.processIdentifier, SIGKILL); holder.waitUntilExit() }
-    }
+    let holder = open(lockPath, O_RDWR | O_CLOEXEC)
+    try #require(holder >= 0)
+    try #require(flock(holder, LOCK_EX | LOCK_NB) == 0)
     let count = effects.commands.withLock { $0.count }
     for action in 0 ..< 3 {
       do {
@@ -129,8 +118,10 @@ import Testing
       } catch let error as MachineV2InstallError { #expect(error.code == .busy) }
     }
     #expect(effects.commands.withLock { Array($0.dropFirst(count)) } == [["/usr/bin/id", "-un"], ["/usr/bin/loginctl", "show-user", "recording-user", "-p", "Linger", "--value"], ["/usr/bin/systemctl", "--user", "show-environment"]])
-    kill(holder.processIdentifier, SIGKILL)
-    holder.waitUntilExit()
+    // A crash closes the holder's descriptor without LOCK_UN. A child another test forks meanwhile holds a copy until
+    // its exec, so the lock is free once every copy is gone, not at the close.
+    close(holder)
+    try waitUntilUnlocked(lockPath)
     #expect(FileManager.default.fileExists(atPath: lockPath))
     try Data("updated after crash".utf8).write(to: candidate)
     try await installer.install(candidate: candidate)
@@ -460,4 +451,14 @@ private func duplicateOpenDescriptor(path: String) throws -> Int32 {
     return duplicate
   }
   throw CLIError(message: "installer lock descriptor not found")
+}
+
+private func waitUntilUnlocked(_ path: String) throws {
+  let descriptor = open(path, O_RDWR | O_CLOEXEC)
+  guard descriptor >= 0 else { throw CLIError(message: "cannot open lock fixture") }
+  defer { close(descriptor) }
+  while flock(descriptor, LOCK_EX) != 0 {
+    guard errno == EINTR else { throw CLIError(message: "cannot wait for lock fixture") }
+  }
+  flock(descriptor, LOCK_UN)
 }

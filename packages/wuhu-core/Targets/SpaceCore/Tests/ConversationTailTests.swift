@@ -17,7 +17,7 @@ import Testing
     func person(_ name: String) -> Principal {
       Principal(actor: .person(persona: name, account: AccountID(rawValue: name)), group: .shared)
     }
-    var tail = store.observeConversation(channel, after: 1, as: person("bob")).makeAsyncIterator()
+    var tail = try await store.observeConversation(channel, after: 1, as: person("bob")).makeAsyncIterator()
     #expect(try await tail.next()?.map(\.id.rawValue) == ["two"])
     try await say("three")
     #expect(try await tail.next()?.map(\.id.rawValue) == ["three"])
@@ -39,7 +39,7 @@ import Testing
     let channel = try await store.createConversation(members: ["alice", "bob"], title: "plans", in: .shared)
     let carol = Principal(actor: .person(persona: "carol", account: AccountID(rawValue: "carol")), group: .shared)
     await #expect(throws: SessionStoreError.unknownConversation(channel.rawValue)) {
-      for try await _ in store.observeConversation(channel, as: carol) {}
+      for try await _ in try await store.observeConversation(channel, as: carol) {}
     }
   }
 }

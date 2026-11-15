@@ -137,9 +137,9 @@ Deno.test('an app target becomes an application target linking the package produ
     GENERATE_INFOPLIST_FILE: 'NO',
     CODE_SIGN_ENTITLEMENTS: 'ExampleiOS-dev.entitlements',
     CODE_SIGN_STYLE: 'Manual',
+    CODE_SIGNING_ALLOWED: 'NO',
     SWIFT_VERSION: '6.0',
     DEVELOPMENT_TEAM: 'TEAM123456',
-    PROVISIONING_PROFILE_SPECIFIER: 'Wuhu Dev tech.example.app',
     TARGETED_DEVICE_FAMILY: '1,2',
     ASSETCATALOG_COMPILER_APPICON_NAME: 'AppIcon',
   })
@@ -250,7 +250,15 @@ Deno.test('sibling platform shells keep one bundle id and one team', () => {
     infoPlist: 'Sources/BazelInfo-tvOS.plist',
     minimumOSVersion: '26.0',
   })
-  const spec = xcodeProjectSpec(app, packages)
+  const spec = xcodeProjectSpec(
+    app,
+    packages,
+    {},
+    new Map([['ExampleTV', {
+      name: 'Ensured TV Profile',
+      identity: 'Apple Development',
+    }]]),
+  )
   const targets = spec.targets as Record<
     string,
     { settings: { base: Record<string, string> } }
@@ -262,11 +270,11 @@ Deno.test('sibling platform shells keep one bundle id and one team', () => {
   assertEquals(targets.ExampleTV.settings.base.DEVELOPMENT_TEAM, 'TEAM123456')
   assertEquals(
     targets.ExampleTV.settings.base.PROVISIONING_PROFILE_SPECIFIER,
-    'Wuhu Dev tech.example.app tvOS',
+    'Ensured TV Profile',
   )
   assertEquals(
     targets.ExampleiOS.settings.base.PROVISIONING_PROFILE_SPECIFIER,
-    'Wuhu Dev tech.example.app iOS',
+    undefined,
   )
 })
 
@@ -289,7 +297,7 @@ Deno.test('a native visionOS shell never reuses the iOS profile name', () => {
   >
   assertEquals(
     targets.ExampleVision.settings.base.PROVISIONING_PROFILE_SPECIFIER,
-    'Wuhu Dev tech.example.app visionOS',
+    undefined,
   )
 })
 

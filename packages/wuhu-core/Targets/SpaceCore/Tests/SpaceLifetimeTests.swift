@@ -6,7 +6,7 @@ import Testing
 
 @Test(.deterministicDependencies) func closingSpaceEndsObservationKindsAndRefusesNewOnes() async throws {
   let space = try Space.inMemory()
-  let query = try space.observeRows("SELECT path FROM docs", throttle: .zero, as: .shared(.publicReader))
+  let query = try await space.observeRows("SELECT path FROM docs", throttle: .zero, as: .shared(.publicReader))
   var queryRows = query.makeAsyncIterator()
   #expect(try await queryRows.next() != nil)
   let live = try await space.observeFS(glob: "**", group: .shared)

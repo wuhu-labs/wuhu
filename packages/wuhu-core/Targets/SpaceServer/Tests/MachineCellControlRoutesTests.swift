@@ -30,7 +30,7 @@ import Wuwei
     let id = MachineCell.ID(machine.rawValue)
     let closed = Gate()
     let closes = Mutex(0)
-    let socket = try #require(space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: key.pubkeyLabel, streams: 32)) {
+    let socket = try #require(await space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: key.pubkeyLabel, streams: 32)) {
       switch $0 {
       case .frame: break
       case .closed: closes.withLock { $0 += 1 }; closed.open()
@@ -111,7 +111,7 @@ import Wuwei
     scheduler.holdNextTask()
     let hub = MachineHub(space: space)
     let credential = MachineHub.Credential(pubkey: key.pubkeyLabel, machines: [machine.id.rawValue])
-    let link = BoxLink(worker: worker, machine: machine.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 32, buffers: buffers, authorizeStart: {
+    let link = await BoxLink(worker: worker, machine: machine.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 32, buffers: buffers, authorizeStart: {
       try await hub.authorize(credential)
     }, prepare: { _ in preconditionFailure("describe-only fixture") })
     let box = try #require(link)

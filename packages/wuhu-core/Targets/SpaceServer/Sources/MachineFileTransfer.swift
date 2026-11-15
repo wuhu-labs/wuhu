@@ -50,7 +50,7 @@ struct MachineFileTransfer: Sendable {
         .kinds.first { $0.name == "stagedWrite.v1" }?.inputSchema.object?["properties"]?.object?["length"] != nil
       if advertisesLength ?? false { input["length"] = .string(String(size)) }
       let start = StartRequest(kind: "stagedWrite.v1", input: object(input), caller: caller)
-      sink = (try client.connect(start), machine)
+      sink = (try await client.connect(start), machine)
     }
     defer { sink?.connection.close() }
     if let sink { try await refusing(.target, sink.machine) { try await sink.connection.ready() } }

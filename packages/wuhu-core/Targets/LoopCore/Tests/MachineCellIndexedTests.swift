@@ -121,7 +121,7 @@ extension MachineCellTests {
       _ = try await space.worker.call(cell) { try $0.reserve(exec) }
       let events = Box<[ExecStream.Outgoing]>([])
       @Dependency(\.uuid) var uuid
-      let first = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
+      let first = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: uuid())) {
         if case let .frame(frame) = $0 { events.withLock { $0.append(frame) } }
       })
       try await until("the admitted stream starts") { space.worker.cell(cell).operation(exec.id)?.dispatched == true }
@@ -131,7 +131,7 @@ extension MachineCellTests {
       let pointer = try #require(buffers.put(bytes, operation: exec.operation, channel: "stdout", from: 0))
       let secondEvents = Box<[ExecStream.Outgoing]>([])
       let secondNonce = uuid()
-      let second = try #require(space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: secondNonce)) {
+      let second = try #require(await space.worker.attach(ExecStream.self, to: cell, opening: .init(exec: exec, nonce: secondNonce)) {
         if case let .frame(frame) = $0 { secondEvents.withLock { $0.append(frame) } }
       })
       try await space.worker.call(cell) { cell in

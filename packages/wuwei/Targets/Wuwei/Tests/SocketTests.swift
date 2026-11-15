@@ -248,19 +248,19 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     return try (world ?? self.world).node(id, [.cell(Room.self), .job(Ticker.self)], dependencies: dependencies)
   }
 
-  func join(_ worker: Worker) throws -> (peer: Peer<Chat>, client: Client<Chat>) {
+  func join(_ worker: Worker) async throws -> (peer: Peer<Chat>, client: Client<Chat>) {
     let client = Client<Chat>()
     let room = room
-    let peer = try #require(worker.attach(Chat.self, to: room) { output in
+    let peer = try #require(await worker.attach(Chat.self, to: room) { output in
       client.hear(output, durable: worker.cell(room).lines())
     })
     return (peer, client)
   }
 
-  @Test func aFrameIsACallWhoseRepliesWaitForItsWrites() throws {
+  @Test func aFrameIsACallWhoseRepliesWaitForItsWrites() async throws {
     let a = try node("a")
-    let (alice, aliceHears) = try join(a.worker)
-    let (_, bobHears) = try join(a.worker)
+    let (alice, aliceHears) = try await join(a.worker)
+    let (_, bobHears) = try await join(a.worker)
     alice.send(.say("hi"))
     world.run(for: .seconds(2))
     #expect(aliceHears.heard == [.frame(.history([])), .frame(.said("hi"))])
@@ -269,21 +269,21 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
   }
 
   @Test(arguments: 1 ... 20 as ClosedRange<UInt64>)
-  func aSocketHearsNothingBeforeItsAttached(seed: UInt64) throws {
+  func aSocketHearsNothingBeforeItsAttached(seed: UInt64) async throws {
     let world = World(seed: seed)
     let a = try node("a", in: world)
     let client = Client<Chat>()
-    _ = try #require(a.worker.attach(Chat.self, to: room) { client.hear($0, durable: []) })
+    _ = try #require(await a.worker.attach(Chat.self, to: room) { client.hear($0, durable: []) })
     a.worker.send(room).announce("early")
     world.run(for: .seconds(2))
     #expect([[.frame(.history(["early"]))], [.frame(.history([])), .frame(.said("early"))]].contains(client.heard))
   }
 
   @Test(arguments: 1 ... 5 as ClosedRange<UInt64>)
-  func framesFromOneSocketArriveInOrder(seed: UInt64) throws {
+  func framesFromOneSocketArriveInOrder(seed: UInt64) async throws {
     let world = World(seed: seed)
     let a = try node("a", in: world)
-    let peer = try #require(a.worker.attach(Chat.self, to: room) { _ in })
+    let peer = try #require(await a.worker.attach(Chat.self, to: room) { _ in })
     let said = (0 ..< 20).map { "\($0)" }
     for text in said {
       peer.send(.say(text))
@@ -293,21 +293,21 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
   }
 
   @Test(arguments: 1 ... 20 as ClosedRange<UInt64>)
-  func aFrameThatMeetsAnEvictionReachesTheNextIncarnation(seed: UInt64) throws {
+  func aFrameThatMeetsAnEvictionReachesTheNextIncarnation(seed: UInt64) async throws {
     let world = World(seed: seed)
     let a = try node("a", in: world)
-    let (alice, hears) = try join(a.worker)
+    let (alice, hears) = try await join(a.worker)
     a.process.at(world.simulation.now + .seconds(5)) { alice.send(.say("hi")) }
     world.run(for: .seconds(20))
     #expect(hears.heard == [.frame(.history([])), .frame(.said("hi"))])
     #expect(a.worker.cell(room).lines() == ["hi"])
     let b = try node("b", in: world)
-    #expect(b.worker.attach(Chat.self, to: room) { _ in } != nil)
+    #expect(try await b.worker.attach(Chat.self, to: room) { _ in } != nil)
   }
 
-  @Test func aFrameWhoseCallThrowsSendsNothing() throws {
+  @Test func aFrameWhoseCallThrowsSendsNothing() async throws {
     let a = try node("a")
-    let (alice, hears) = try join(a.worker)
+    let (alice, hears) = try await join(a.worker)
     alice.send(.say("boom"))
     alice.send(.say("ok"))
     world.run(for: .seconds(2))
@@ -315,20 +315,20 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(a.worker.cell(room).lines() == ["ok"])
   }
 
-  @Test func membershipOutlivesTheIncarnation() throws {
+  @Test func membershipOutlivesTheIncarnation() async throws {
     let a = try node("a")
-    let (_, hears) = try join(a.worker)
+    let (_, hears) = try await join(a.worker)
     world.run(for: .seconds(20))
     try world.client().send(room).announce("news")
     world.run(for: .seconds(3))
     #expect(hears.heard == [.frame(.history([])), .frame(.said("news"))])
   }
 
-  @Test func eitherSideCanClose() throws {
+  @Test func eitherSideCanClose() async throws {
     let a = try node("a")
-    let (alice, aliceHears) = try join(a.worker)
-    let (bob, bobHears) = try join(a.worker)
-    let (carol, carolHears) = try join(a.worker)
+    let (alice, aliceHears) = try await join(a.worker)
+    let (bob, bobHears) = try await join(a.worker)
+    let (carol, carolHears) = try await join(a.worker)
     world.run(for: .seconds(1))
     alice.close()
     a.worker.send(room).kick(2)
@@ -342,9 +342,9 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(a.worker.cell(room).lines() == ["1 left", "2 left", "hello"])
   }
 
-  @Test func aFailedEpochDropsItsFramesAndClosesTheSocket() throws {
+  @Test func aFailedEpochDropsItsFramesAndClosesTheSocket() async throws {
     let a = try node("a")
-    let (_, hears) = try join(a.worker)
+    let (_, hears) = try await join(a.worker)
     world.run(for: .seconds(1))
     tripwire.arm { [world] in world.simulation.freeze(a.process) }
     try world.client().send(room).announce("news")
@@ -357,19 +357,19 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(b.worker.cell(room).lines() == ["news"])
   }
 
-  @Test func onlyTheWorkerHoldingTheCellTakesItsSockets() throws {
+  @Test func onlyTheWorkerHoldingTheCellTakesItsSockets() async throws {
     let a = try node("a")
-    _ = try join(a.worker)
+    _ = try await join(a.worker)
     let b = try node("b")
-    #expect(b.worker.attach(Chat.self, to: room) { _ in } == nil)
+    #expect(try await b.worker.attach(Chat.self, to: room) { _ in } == nil)
   }
 
-  @Test func aJobPublishesWhatItWroteAndClosesWhenDone() throws {
+  @Test func aJobPublishesWhatItWroteAndClosesWhenDone() async throws {
     let a = try node("a")
     let ticker = Ticker.ID("t")
     try a.worker.create(ticker, params: 3)
     let client = Client<Feed>()
-    _ = try #require(a.worker.attach(Feed.self, to: ticker, opening: 0) { output in
+    _ = try #require(await a.worker.attach(Feed.self, to: ticker, opening: 0) { output in
       client.hear(output, durable: a.worker.job(ticker).ticks().map(String.init))
     })
     world.run(for: .seconds(5))
@@ -384,12 +384,12 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
   }
 
   @Test(arguments: 1 ... 20 as ClosedRange<UInt64>)
-  func aFrameQueuedBehindTheSocketsOwnCloseIsNotDelivered(seed: UInt64) throws {
+  func aFrameQueuedBehindTheSocketsOwnCloseIsNotDelivered(seed: UInt64) async throws {
     let world = World(seed: seed)
     let a = try world.node("a", [.cell(ShortLived.self)])
     let short = ShortLived.ID("s")
     let client = Client<Wire>()
-    let peer = try #require(a.worker.attach(Wire.self, to: short) { client.hear($0, durable: []) })
+    let peer = try #require(await a.worker.attach(Wire.self, to: short) { client.hear($0, durable: []) })
     peer.send(.hit(1))
     peer.send(.hit(2))
     world.run(for: .seconds(2))
@@ -398,11 +398,11 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
   }
 
   /// A frame handed to the host before another call closed the socket reaches nothing: eligibility is the attachment's, read on the lane.
-  @Test func aFrameHandedToTheHostBeforeTheCloseIsNotDelivered() throws {
+  @Test func aFrameHandedToTheHostBeforeTheCloseIsNotDelivered() async throws {
     let world = World()
     let a = try world.node("a", [.cell(Closer.self)])
     let closer = Closer.ID("c")
-    _ = try #require(a.worker.attach(Wire.self, to: closer) { _ in })
+    _ = try #require(await a.worker.attach(Wire.self, to: closer) { _ in })
     world.run(for: .seconds(1))
     let attachment = try #require(a.worker.attachments(at: closer.description).first)
     attachment.discardFrames()
@@ -411,12 +411,12 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(a.worker.cell(closer).seen() == [])
   }
 
-  @Test func aJobHearsAClosedSocketOnceAfterItsAttached() throws {
+  @Test func aJobHearsAClosedSocketOnceAfterItsAttached() async throws {
     let recorder = Recorder()
     let a = try recorded(recorder, "a")
     let listener = Listener.ID("l")
     try a.worker.create(listener, params: 0)
-    let peer = try #require(a.worker.attach(Feed.self, to: listener, opening: 0) { _ in })
+    let peer = try #require(await a.worker.attach(Feed.self, to: listener, opening: 0) { _ in })
     world.run(for: .seconds(2))
     #expect(recorder.events == ["attached 1"])
     peer.close()
@@ -424,37 +424,37 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(recorder.events == ["attached 1", "closed 1"])
   }
 
-  @Test func aJobHearsASocketItClosesItself() throws {
+  @Test func aJobHearsASocketItClosesItself() async throws {
     let recorder = Recorder()
     let a = try recorded(recorder, "a")
     let dropper = Dropper.ID("d")
     try a.worker.create(dropper, params: 0)
     let client = Client<Feed>()
-    _ = try #require(a.worker.attach(Feed.self, to: dropper, opening: 0) { client.hear($0, durable: []) })
+    _ = try #require(await a.worker.attach(Feed.self, to: dropper, opening: 0) { client.hear($0, durable: []) })
     world.run(for: .seconds(5))
     #expect(recorder.events == ["attached 1", "closed 1"])
     #expect(client.heard == [.closed])
   }
 
-  @Test func aJobHearsNoClosedWhenItIsDone() throws {
+  @Test func aJobHearsNoClosedWhenItIsDone() async throws {
     let world = World()
     let recorder = Recorder()
     let a = try recorded(recorder, "a", in: world)
     let once = Once.ID("o")
     try a.worker.create(once, params: 0)
     let client = Client<Feed>()
-    _ = try #require(a.worker.attach(Feed.self, to: once, opening: 0) { client.hear($0, durable: []) })
+    _ = try #require(await a.worker.attach(Feed.self, to: once, opening: 0) { client.hear($0, durable: []) })
     world.run(for: .seconds(3))
     #expect(recorder.events == ["attached 1"])
     #expect(client.heard == [.closed])
   }
 
-  @Test func aSocketClosedBetweenIncarnationsIsNotGreetedOrClosed() throws {
+  @Test func aSocketClosedBetweenIncarnationsIsNotGreetedOrClosed() async throws {
     let recorder = Recorder()
     let a = try recorded(recorder, "a")
     let listener = Listener.ID("l")
     try a.worker.create(listener, params: 0)
-    let peer = try #require(a.worker.attach(Feed.self, to: listener, opening: 0) { _ in })
+    let peer = try #require(await a.worker.attach(Feed.self, to: listener, opening: 0) { _ in })
     world.run(for: .seconds(2))
     #expect(recorder.events == ["attached 1"])
 
@@ -465,12 +465,12 @@ final class Client<S: Socket>: Sendable where S.Outgoing: Equatable {
     #expect(recorder.events == ["attached 1"])
   }
 
-  @Test func aSocketCarriesWhatItOpenedWith() throws {
+  @Test func aSocketCarriesWhatItOpenedWith() async throws {
     let a = try node("a")
     let ticker = Ticker.ID("t")
     try a.worker.create(ticker, params: 3)
     let client = Client<Feed>()
-    _ = try #require(a.worker.attach(Feed.self, to: ticker, opening: 2) { client.hear($0, durable: []) })
+    _ = try #require(await a.worker.attach(Feed.self, to: ticker, opening: 2) { client.hear($0, durable: []) })
     world.run(for: .seconds(5))
     #expect(client.heard == [.frame(3), .closed])
   }

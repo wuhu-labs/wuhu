@@ -432,14 +432,14 @@ private struct ChannelEndFixture: Sendable {
     let filePeer: Peer<FileBulk>?
     if file {
       execPeer = nil
-      let peer: Peer<FileBulk> = try #require(space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: request.operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
+      let peer: Peer<FileBulk> = try #require(await space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: request.operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
         if case let .frame(frame) = $0 { fileFrames.values.withLock { $0.append(frame) } }
       })
       filePeer = peer
     } else {
       filePeer = nil
       _ = try await space.worker.call(MachineCell.ID(machine)) { try $0.reserve(request) }
-      let peer: Peer<ExecStream> = try #require(space.worker.attach(ExecStream.self, to: MachineCell.ID(machine), opening: .init(exec: request, nonce: UUID())) {
+      let peer: Peer<ExecStream> = try #require(await space.worker.attach(ExecStream.self, to: MachineCell.ID(machine), opening: .init(exec: request, nonce: UUID())) {
         if case let .frame(frame) = $0 { execFrames.values.withLock { $0.append(frame) } }
       })
       execPeer = peer
@@ -452,7 +452,7 @@ private struct ChannelEndFixture: Sendable {
 
   static func connect(_ space: MachineCellTestSpace, machine: String, frames: ChannelEndLog<BoxSocket.Outgoing>) async throws -> Peer<BoxSocket> {
     let pubkey = try await space.space.addMachineTestKey(machine)
-    let box: Peer<BoxSocket> = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let box: Peer<BoxSocket> = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { frames.values.withLock { $0.append(frame) } }
     })
     await space.drain()

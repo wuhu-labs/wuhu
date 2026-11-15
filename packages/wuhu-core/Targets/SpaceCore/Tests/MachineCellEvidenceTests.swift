@@ -52,7 +52,7 @@ import Wuwei
     _ = try await box.next(.operation(caller.request.operation, .start))
     let operation = UUID()
     let fileFrames = AsyncStream<FileBulk.Outgoing>.makeStream()
-    let file = try #require(space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
+    let file = try #require(await space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
       switch $0 {
       case let .frame(frame): fileFrames.continuation.yield(frame)
       case .closed: fileFrames.continuation.finish()
@@ -97,7 +97,7 @@ import Wuwei
     var box = try await EvidenceBox.attach(space, machine: machine)
     let operation = UUID()
     let fileFrames = AsyncStream<FileBulk.Outgoing>.makeStream()
-    let file = try #require(space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
+    let file = try #require(await space.worker.attach(FileBulk.self, to: MachineCell.ID(machine), opening: .init(request: MachineFile(operation: operation, start: .init(kind: "read.v1", input: ["path": "/file"])))) {
       switch $0 {
       case let .frame(frame): fileFrames.continuation.yield(frame)
       case .closed: fileFrames.continuation.finish()
@@ -132,7 +132,7 @@ private struct EvidenceBox {
   static func attach(_ space: MachineCellTestSpace, machine: String) async throws -> Self {
     let pubkey = try await space.space.addMachineTestKey(machine)
     let frames = AsyncStream<BoxSocket.Outgoing>.makeStream()
-    let peer = try #require(space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let peer = try #require(await space.worker.attach(BoxSocket.self, to: MachineCell.ID(machine), opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       switch $0 {
       case let .frame(frame): frames.continuation.yield(frame)
       case .closed: frames.continuation.finish()
@@ -172,7 +172,7 @@ private struct EvidenceExec {
     let request = MachineExec(id: UUID().uuidString.lowercased(), operation: UUID(), createdAt: fixedDate, group: .shared, argv: ["true"])
     _ = try await space.worker.call(MachineCell.ID(machine)) { try $0.reserve(request) }
     let frames = AsyncStream<ExecStream.Outgoing>.makeStream()
-    let peer = try #require(space.worker.attach(ExecStream.self, to: MachineCell.ID(machine), opening: .init(exec: request, nonce: UUID())) {
+    let peer = try #require(await space.worker.attach(ExecStream.self, to: MachineCell.ID(machine), opening: .init(exec: request, nonce: UUID())) {
       switch $0 {
       case let .frame(frame): frames.continuation.yield(frame)
       case .closed: frames.continuation.finish()

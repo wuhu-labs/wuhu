@@ -16,7 +16,7 @@ import Wuwei
     let id = MachineCell.ID(machine)
     let pubkey = try await space.space.addMachineTestKey(machine)
     let output = AsyncStream<BoxSocket.Outgoing>.makeStream()
-    let box = try #require(space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
+    let box = try #require(await space.worker.attach(BoxSocket.self, to: id, opening: .init(connection: UUID(), pubkey: pubkey, streams: 32)) {
       if case let .frame(frame) = $0 { output.continuation.yield(frame) }
       else { output.continuation.finish() }
     })
@@ -42,7 +42,7 @@ import Wuwei
     for index in 0 ..< acceptedFiles {
       let operation = UUID()
       let callerOutput = AsyncStream<FileBulk.Outgoing>.makeStream()
-      let caller = try #require(space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: operation, start: .init(kind: "stagedWrite.v1", input: ["path": .string("/file-\(index)"), "replace": false])))) {
+      let caller = try #require(await space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: operation, start: .init(kind: "stagedWrite.v1", input: ["path": .string("/file-\(index)"), "replace": false])))) {
         if case let .frame(frame) = $0 { callerOutput.continuation.yield(frame) }
         else { callerOutput.continuation.finish() }
       })
@@ -55,7 +55,7 @@ import Wuwei
     if execFirst {
       let operation = UUID()
       let refusedOutput = AsyncStream<FileBulk.Outgoing>.makeStream()
-      let refused = try #require(space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: operation, start: .init(kind: "stagedWrite.v1", input: ["path": "/overflow", "replace": false])))) {
+      let refused = try #require(await space.worker.attach(FileBulk.self, to: id, opening: .init(request: .init(operation: operation, start: .init(kind: "stagedWrite.v1", input: ["path": "/overflow", "replace": false])))) {
         if case let .frame(frame) = $0 { refusedOutput.continuation.yield(frame) }
         else { refusedOutput.continuation.finish() }
       })
@@ -77,6 +77,6 @@ import Wuwei
 
   private func attachExec(_ request: MachineExec, space: MachineCellTestSpace, id: MachineCell.ID) async throws -> Peer<ExecStream> {
     _ = try await space.worker.call(id) { try $0.reserve(request) }
-    return try #require(space.worker.attach(ExecStream.self, to: id, opening: .init(exec: request, nonce: UUID())) { _ in })
+    return try #require(await space.worker.attach(ExecStream.self, to: id, opening: .init(exec: request, nonce: UUID())) { _ in })
   }
 }

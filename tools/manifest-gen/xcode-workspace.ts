@@ -4,7 +4,7 @@ import type {
   AppManifest,
   PlistValue,
 } from './generate.ts'
-import { appProfileName, entitlementPath, variantBundle } from './generate.ts'
+import { entitlementPath, variantBundle } from './generate.ts'
 
 export interface LocalPackageRef {
   // The SwiftPM package name, which is also the xcodegen `packages:` key.
@@ -168,7 +168,6 @@ function resolveDependencies(
 }
 
 function targetSpec(
-  app: AppManifest,
   declared: AppBundleManifest,
   resolved: ResolvedDependencies,
   teamID: string | undefined,
@@ -208,8 +207,6 @@ function targetSpec(
     SWIFT_VERSION: '6.0',
   }
   if (teamID) settings.DEVELOPMENT_TEAM = teamID
-  const profile = appProfileName(app, declared, 'dev')
-  if (profile) settings.PROVISIONING_PROFILE_SPECIFIER = profile
   // app.yml `linkopts:` are linker arguments (the ffmpeg frameworks' flat
   // `@rpath/<name>` install names need one -rpath per framework directory, for
   // one). Bazel hands them to the linker; Xcode gets the same list through
@@ -262,6 +259,7 @@ export function xcodeProjectSpec(
   app: AppManifest,
   packages: Record<string, LocalPackageRef>,
   local: WorkspaceLocalConfig = {},
+  signingProfiles?: ReadonlyMap<string, { name: string; identity: string }>,
 ): Record<string, unknown> {
   const libraries = new Map(
     (app.libraries ?? []).map((library) => [library.name, library]),
@@ -276,7 +274,6 @@ export function xcodeProjectSpec(
       usedPackages.add(entry.package)
     }
     targets[extension.name] = targetSpec(
-      app,
       extension,
       resolved,
       teamID,
@@ -291,7 +288,6 @@ export function xcodeProjectSpec(
       usedPackages.add(entry.package)
     }
     targets[watch.name] = targetSpec(
-      app,
       watch,
       resolved,
       teamID,
@@ -306,7 +302,6 @@ export function xcodeProjectSpec(
       usedPackages.add(entry.package)
     }
     targets[target.name] = targetSpec(
-      app,
       target,
       resolved,
       teamID,
@@ -330,6 +325,23 @@ export function xcodeProjectSpec(
     }
   }
 
+  if (signingProfiles === undefined) {
+    for (const target of Object.values(targets)) {
+      const spec = target as { settings: { base: Record<string, string> } }
+      spec.settings.base.CODE_SIGNING_ALLOWED = 'NO'
+    }
+  }
+  for (const [target, profile] of signingProfiles ?? []) {
+    const spec = targets[target] as {
+      settings: { base: Record<string, string> }
+    } | undefined
+    if (spec) {
+      spec.settings.base.PROVISIONING_PROFILE_SPECIFIER = profile.name
+      spec.settings.base.CODE_SIGN_IDENTITY = profile.identity
+      spec.settings.base.OTHER_CODE_SIGN_FLAGS =
+        '--keychain wuhu-signing.keychain-db'
+    }
+  }
   return {
     name: app.name,
     options: {

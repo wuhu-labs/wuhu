@@ -22,7 +22,7 @@ import Testing
   @Test func deleteClosesTheBoxSocketAndRefusesItsOldKey() async throws {
     let f = try await MachineV2TunnelTests.Fixture()
     let opened = Gate(), closed = Gate()
-    let box = try #require(f.space.worker.attach(BoxSocket.self, to: MachineCell.ID(f.machine.id.rawValue), opening: .init(connection: UUID(), pubkey: f.key.pubkeyLabel, streams: 32)) {
+    let box = try #require(await f.space.worker.attach(BoxSocket.self, to: MachineCell.ID(f.machine.id.rawValue), opening: .init(connection: UUID(), pubkey: f.key.pubkeyLabel, streams: 32)) {
       switch $0 {
       case .frame: opened.open()
       case .closed: closed.open()
