@@ -37,6 +37,21 @@ const pieces = []
 for await (const { text } of flood.lines()) pieces.push(text.length)
 out.push(`flood: ${pieces.join(", ")}`)
 
+// A line that ends right at a cut has no empty last piece; the blank line after it is a line.
+const cut = await box.spawn("cut")
+const cutPieces = []
+for await (const { text } of cut.lines()) cutPieces.push(text.length)
+out.push(`cut: ${cutPieces.join(", ")}`)
+
+// Nor at the process's end, nor as a cut that leaves only a carriage return;
+// the \r\n split around that cut is still one blank line.
+for (const command of ["cut-then-cr", "err-cr-cut"]) {
+  const process = await box.spawn(command)
+  const seen = []
+  for await (const { stream, text } of process.lines()) seen.push(`${stream} ${text.length}`)
+  out.push(`${command}: ${seen.join(", ")}`)
+}
+
 const sleeper = await box.spawn("sleep")
 await sleeper.kill()
 out.push(`killed: ${JSON.stringify(await sleeper.wait())}`)

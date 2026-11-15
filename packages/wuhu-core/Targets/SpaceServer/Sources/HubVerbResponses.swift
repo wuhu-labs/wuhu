@@ -135,6 +135,9 @@ func postMessage(_ request: Request, as caller: Caller, callID: ToolCallID, owne
   if case let .object(fields) = body, fields["viewing"] != nil {
     return errorResponse(.badRequest, code: "invalidArgument", message: "viewing is set only on a person's message, never by a session")
   }
+  if input.messageId != nil {
+    return errorResponse(.badRequest, code: "invalidArgument", message: "messageId is set only on a person's message; a session's comes from its call")
+  }
   if case let .object(fields) = body, fields["user"] != nil {
     return errorResponse(.unprocessableContent, code: "refused", message: SessionStoreError.humanAgentDirectMessageExplanation)
   }

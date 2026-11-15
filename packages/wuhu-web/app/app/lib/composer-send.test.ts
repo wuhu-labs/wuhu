@@ -32,15 +32,15 @@ const unenrolled = {
 async function recording(
   responses: Response[],
   run: () => Promise<void>,
+  ids: string[] = [],
 ): Promise<{ group: string | null; body: Record<string, unknown> }[]> {
   const fetch = globalThis.fetch
   const indexedDB = globalThis.indexedDB
   const sent: { group: string | null; body: Record<string, unknown> }[] = []
   globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
-    sent.push({
-      group: new Headers(init?.headers).get('wuhu-group'),
-      body: JSON.parse(String(init?.body)),
-    })
+    const { messageId, ...body } = JSON.parse(String(init?.body))
+    ids.push(messageId)
+    sent.push({ group: new Headers(init?.headers).get('wuhu-group'), body })
     return Promise.resolve(responses.shift() ?? new Response('{}'))
   }
   globalThis.indexedDB = unenrolled
@@ -98,12 +98,15 @@ const post = (extra: Record<string, string>) => ({
 })
 
 Deno.test('Send names the page the node page shows', async () => {
+  const ids: string[] = []
   const sent = await recording([], async () => {
     await sendFrom({ '/notes/plan.md': '# Plan' }, '/notes/plan.md')
     // The root resolves to its homepage; its own listing names no page.
     await sendFrom({ '/index.md': '# Home' }, '/')
     await sendFrom({}, '/')
-  })
+  }, ids)
+  // Each Send is a message of its own.
+  equal(new Set(ids).size, 3)
   equal(sent, [
     post({ viewing: 'wuhu://shared.localspace/notes/plan.md' }),
     post({ viewing: 'wuhu://shared.localspace/index.md' }),
@@ -143,14 +146,18 @@ Deno.test('a refused viewing is sent again without it, once', async () => {
   const logged: unknown[][] = []
   const warn = console.warn
   console.warn = (...line: unknown[]) => logged.push(line)
+  const ids: string[] = []
   const sent = await recording(
     [refusal('viewing')],
     () => sendFrom({ '/gone.md': '# Gone' }, '/gone.md'),
+    ids,
   ).finally(() => console.warn = warn)
   equal(sent, [
     post({ viewing: 'wuhu://shared.localspace/gone.md' }),
     post({}),
   ])
+  // The second try is the same message.
+  equal(ids.length === 2 && ids[0] === ids[1], true)
   // The server's message names the path; the log carries neither.
   equal(logged, [[
     'The server refused viewing (reason viewing); sending without it',

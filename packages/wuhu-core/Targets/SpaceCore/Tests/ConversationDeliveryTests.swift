@@ -268,6 +268,65 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     #expect(try await rig.store.messages(conversation: .init(owner.rawValue)).count == 1)
   }
 
+  @Test func `a resent post with uploads stores one message and one attachment`() async throws {
+    let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
+    let owner = try await agent(rig.store)
+    let send = {
+      try await rig.store.post(
+        .box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "look"),
+        uploads: [AttachmentUpload(name: "note.txt", bytes: Array("bytes".utf8))],
+      )
+    }
+    let first = try await send()
+    let resent = try await send()
+    #expect(resent.replayed)
+    #expect(resent.message == first.message)
+    #expect(try await rig.store.messages(conversation: .init(owner.rawValue)).count == 1)
+    let path = try #require(first.message.content.attachments.first?.path)
+    let folder = String(path[..<path.lastIndex(of: "/")!])
+    #expect(try await rig.space.fs(.shared).list(folder).1.map(\.name) == ["note.txt"])
+  }
+
+  @Test func `another sender's message id in the same conversation is refused`() async throws {
+    let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
+    try await rig.space.registerPerson("dave")
+    let owner = try await agent(rig.store)
+    _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "mine"))
+    await #expect(throws: SessionStoreError.messageIDTaken("m1")) {
+      _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("dave"), content: .init(text: "also mine"))
+    }
+    #expect(try await rig.store.messages(conversation: .init(owner.rawValue)).map(\.content.text) == ["mine"])
+  }
+
+  @Test func `a message id from another conversation is refused`() async throws {
+    let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
+    let a = try await agent(rig.store, "a")
+    let b = try await agent(rig.store, "b")
+    _ = try await rig.store.post(.box(a), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "for a"))
+    await #expect(throws: SessionStoreError.messageIDTaken("m1")) {
+      _ = try await rig.store.post(.box(b), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "for b"))
+    }
+    #expect(try await rig.store.messages(conversation: .init(b.rawValue)).isEmpty)
+  }
+
+  @Test func `a message the database fails to store is not an id conflict`() async throws {
+    let rig = try MovingClockSpace()
+    try await rig.space.registerPerson("carol")
+    let owner = try await agent(rig.store)
+    try await rig.space.plant("CREATE TRIGGER reject_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END")
+    await #expect {
+      _ = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "lost"))
+    } throws: { error in
+      !(error is SessionStoreError)
+    }
+    try await rig.space.plant("DROP TRIGGER reject_message")
+    let kept = try await rig.store.post(.box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "kept"))
+    #expect(!kept.replayed && kept.message.content.text == "kept")
+  }
+
   @Test func `a reply target in another conversation is refused`() async throws {
     let rig = try MovingClockSpace()
     try await rig.space.registerPerson("carol")

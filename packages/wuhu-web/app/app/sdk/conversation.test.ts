@@ -56,6 +56,13 @@ Deno.test('viewing rides along only when a page is on screen', () => {
   }
 })
 
+Deno.test('a message id rides along when the sender minted one', () => {
+  assertEquals(
+    conversationPostInput({ session: 's' }, 'hi', 'UTC', null, 'a1b2'),
+    { session: 's', message: 'hi', timezone: 'UTC', messageId: 'a1b2' },
+  )
+})
+
 Deno.test('the observe stream is cursored on the space-global ordinal', () => {
   const subscription = conversationSubscription('cave-lime-otter', 'shared')
   assertEquals(subscription.from, 0)

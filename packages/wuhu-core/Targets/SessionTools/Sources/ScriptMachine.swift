@@ -292,7 +292,7 @@ final class ScriptMachineBindings: Sendable {
       "items": .array(take.items.map { output in
         let bytes = output.bytes
         let data: JSONValue = if lines {
-          .string(String(decoding: bytes.last == 0x0D ? bytes.dropLast() : bytes[...], as: UTF8.self))
+          .string(String(decoding: bytes, as: UTF8.self))
         } else {
           .string(Data(bytes).base64EncodedString())
         }

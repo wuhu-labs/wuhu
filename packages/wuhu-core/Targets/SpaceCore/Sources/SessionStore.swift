@@ -140,6 +140,8 @@ public enum SessionStoreError: Error, Equatable, Sendable {
   case unknownMessage(String)
   case unknownConversation(String)
   case replyTargetInAnotherConversation(String)
+  /// The message id is another sender's in this conversation, or a message's in another one.
+  case messageIDTaken(String)
   case selfDirectMessage(String)
   case humanAgentDirectMessage
   case taskHasNoBox(String)

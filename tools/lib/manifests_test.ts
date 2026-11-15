@@ -156,7 +156,7 @@ Deno.test('every wuhu iOS bundle names its own app group in both identities', as
   let checked = 0
   for (const bundle of appBundles(manifest)) {
     if (bundle.platform !== 'iOS') continue
-    for (const variant of ['dev', 'adhoc', 'store'] as const) {
+    for (const variant of ['dev', 'store'] as const) {
       const signed = variantBundle(bundle, variant)
       const groups = resolvedEntitlements(bundle, variant, 'TEAM123456')[
         'com.apple.security.application-groups'

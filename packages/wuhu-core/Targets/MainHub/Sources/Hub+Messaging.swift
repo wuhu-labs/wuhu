@@ -268,6 +268,8 @@ extension Hub {
       ToolProblem("unknown conversation: \(id)")
     case let .replyTargetInAnotherConversation(id):
       ToolProblem("message \(id) is in another conversation; reply_target names a message in the one you are posting to")
+    case let .messageIDTaken(id):
+      ToolProblem("message id \(id) names another message", code: "conflict")
     case .humanAgentDirectMessage:
       ToolProblem(SessionStoreError.humanAgentDirectMessageExplanation)
     case let .selfDirectMessage(id):

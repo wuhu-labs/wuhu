@@ -83,7 +83,7 @@ final class ScriptProcess: Sendable {
     case lost(String)
   }
 
-  // A line (without its newline) or a raw chunk, by the reading mode.
+  // A line (without its line ending) or a raw chunk, by the reading mode.
   struct Output: Sendable, Equatable {
     var stream: ExecOutputStream
     var bytes: [UInt8]
@@ -110,6 +110,7 @@ final class ScriptProcess: Sendable {
     var received = 0
     var acknowledged = 0
     var partials: [ExecOutputStream: Partial] = [:]
+    var handedOver: Set<ExecOutputStream> = []
     var maskers: [ExecOutputStream: SecretMasker] = [:]
     var ready: [Output] = []
     var end: End?
@@ -211,7 +212,8 @@ final class ScriptProcess: Sendable {
   // Complete lines in arrival order. A line still open holds its bytes
   // un-acknowledged; when the held bytes fill the whole window with no line
   // complete, the oldest open line is handed over as it stands, so a process
-  // that never prints a newline cannot stall its reader.
+  // that never prints a newline cannot stall its reader; the rest of that line
+  // follows as its next piece.
   func lines(masking secrets: () -> SecretMasker) async throws -> Take<Output> {
     let taken: Take<Output> = try await take { state in
       state.split()
@@ -220,9 +222,9 @@ final class ScriptProcess: Sendable {
         return (Take(items: state.ready, done: false), state.heldFrom)
       }
       if let end = state.end {
-        let rest = state.partials.sorted { $0.value.start < $1.value.start }
-          .map { Output(stream: $0.key, bytes: $0.value.bytes) }
+        let open = state.partials.sorted { $0.value.start < $1.value.start }
         state.partials = [:]
+        let rest = open.compactMap { state.lineEnd($0.key, $0.value.bytes) }
         switch end {
         case .exited:
           return (Take(items: rest, done: true), state.received)
@@ -235,7 +237,8 @@ final class ScriptProcess: Sendable {
             let oldest = state.partials.min(by: { $0.value.start < $1.value.start })
       else { return nil }
       state.partials[oldest.key] = nil
-      return (Take(items: [Output(stream: oldest.key, bytes: oldest.value.bytes)], done: false), state.heldFrom)
+      let piece = state.cut(oldest.key, oldest.value.bytes)
+      return (Take(items: piece.map { [$0] } ?? [], done: false), state.heldFrom)
     }
     let masker = secrets()
     return Take(items: taken.items.map { Output(stream: $0.stream, bytes: masker.masked($0.bytes)) }, done: taken.done)
@@ -328,6 +331,7 @@ final class ScriptProcess: Sendable {
       state.discarding = true
       state.pending = []
       state.partials = [:]
+      state.handedOver = []
       state.maskers = [:]
       state.ready = []
       guard state.received > state.acknowledged else { return nil }
@@ -371,14 +375,38 @@ final class ScriptProcess: Sendable {
 }
 
 extension ScriptProcess.State {
+  // An empty piece reaches the script only as a blank line: never as the end
+  // of a line already handed over in pieces, nor as a cut that leaves nothing
+  // once its trailing carriage return is dropped.
+
+  // The last piece of a line its newline or the process's end closes.
+  fileprivate mutating func lineEnd(_ stream: ExecOutputStream, _ bytes: [UInt8]) -> ScriptProcess.Output? {
+    let piece = Self.piece(stream, bytes)
+    let continued = handedOver.remove(stream) != nil
+    return continued && piece.bytes.isEmpty ? nil : piece
+  }
+
+  // A piece of a line still open, handed over because the window is full.
+  fileprivate mutating func cut(_ stream: ExecOutputStream, _ bytes: [UInt8]) -> ScriptProcess.Output? {
+    let piece = Self.piece(stream, bytes)
+    guard !piece.bytes.isEmpty else { return nil }
+    handedOver.insert(stream)
+    return piece
+  }
+
+  private static func piece(_ stream: ExecOutputStream, _ bytes: [UInt8]) -> ScriptProcess.Output {
+    .init(stream: stream, bytes: bytes.last == 0x0D ? Array(bytes.dropLast()) : bytes)
+  }
+
   // Moves every complete line out of the pending chunks into `ready`; the
   // bytes after a stream's last newline wait in its partial line.
   fileprivate mutating func split() {
     for chunk in pending {
       var rest = chunk.bytes[...]
       while let newline = rest.firstIndex(of: 0x0A) {
-        let head = rest[..<newline]
-        ready.append(.init(stream: chunk.stream, bytes: (partials.removeValue(forKey: chunk.stream)?.bytes ?? []) + head))
+        if let line = lineEnd(chunk.stream, (partials.removeValue(forKey: chunk.stream)?.bytes ?? []) + rest[..<newline]) {
+          ready.append(line)
+        }
         rest = rest[(newline + 1)...]
       }
       if !rest.isEmpty {

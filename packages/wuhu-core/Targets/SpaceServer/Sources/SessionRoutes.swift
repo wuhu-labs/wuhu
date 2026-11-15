@@ -457,6 +457,17 @@ func addSessionRoutes(
     case let .refused(response):
       return response
     }
+    @Dependency(\.uuid) var uuid
+    let messageID: MessageID
+    switch input.messageId {
+    case nil:
+      messageID = MessageID(uuid().uuidString.lowercased())
+    case let raw?:
+      guard let minted = UUID(uuidString: raw) else {
+        return errorResponse(.badRequest, code: "invalidArgument", message: "messageId must be a UUID, not \(raw)")
+      }
+      messageID = MessageID(minted.uuidString.lowercased())
+    }
     let target: ConversationTarget
     switch (input.conversation, input.session, input.user) {
     case let (id?, nil, nil):
@@ -486,11 +497,10 @@ func addSessionRoutes(
     case let .viewing(resolved): viewing = resolved
     case let .refused(response): return response
     }
-    @Dependency(\.uuid) var uuid
     do {
       let delivery = try await store.post(
         target,
-        messageID: MessageID(uuid().uuidString.lowercased()),
+        messageID: messageID,
         sender: sender,
         replyTarget: input.replyTarget.map { MessageID($0) },
         viewing: viewing,
@@ -751,6 +761,8 @@ func sessionErrorResponse(_ error: any Error) throws -> Response {
       return errorResponse(.notFound, code: "notFound", message: "unknown conversation: \(id)")
     case let .replyTargetInAnotherConversation(id):
       return errorResponse(.unprocessableContent, code: "invalidArgument", message: "message \(id) is in another conversation")
+    case let .messageIDTaken(id):
+      return errorResponse(.conflict, code: "conflict", message: "message id \(id) names another message; mint a new one")
     case .humanAgentDirectMessage:
       return errorResponse(.forbidden, code: "humanAgentDM", message: SessionStoreError.humanAgentDirectMessageExplanation)
     case let .selfDirectMessage(id):

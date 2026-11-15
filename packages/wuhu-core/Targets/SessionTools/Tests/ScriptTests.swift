@@ -971,6 +971,21 @@ private let playbook: @Sendable (ScriptedExec, ScriptedExecMachine) async -> Voi
     }
     try? await exec.send(.stdout, Array("\nend\n".utf8))
     await exec.exit(.exited(code: 0))
+  case "cut":
+    try? await exec.send(.stdout, [UInt8](repeating: 0x78, count: 1 << 20) + Array("\r\n\r\nnext\n".utf8))
+    await exec.exit(.exited(code: 0))
+  case "cut-then-cr":
+    try? await exec.send(.stdout, [UInt8](repeating: 0x78, count: 1 << 20) + [0x0D])
+    await exec.exit(.exited(code: 0))
+  case "err-cr-cut":
+    try? await exec.send(.stderr, [0x0D])
+    try? await exec.send(.stdout, [UInt8](repeating: 0x78, count: 1 << 20) + [0x0A])
+    try? await exec.send(.stderr, [0x0A])
+    await exec.exit(.exited(code: 0))
+  case "vanish-after-cut":
+    try? await exec.send(.stdout, [UInt8](repeating: 0x78, count: 1 << 20) + [0x0D])
+    await machine.lose(exec.start.id)
+    for await _ in exec.kills {}
   case "noisy":
     // Stops at maxOutput as the agent does.
     let text = Array("maxOutput \(exec.start.maxOutput.map(String.init) ?? "none")\n".utf8)

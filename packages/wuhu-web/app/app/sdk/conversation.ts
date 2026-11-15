@@ -19,12 +19,14 @@ export function conversationPostInput(
   message: string,
   timezone: string,
   viewing?: string | null,
+  messageId?: string,
 ): ConversationPostInput {
   return {
     ...address,
     message,
     timezone,
     ...(viewing == null ? {} : { viewing }),
+    ...(messageId === undefined ? {} : { messageId }),
   }
 }
 
@@ -45,7 +47,8 @@ export function markReadInput(conversation: string): { source: string } {
 // message is recorded as sent from there. `viewing` names the doc or page on
 // screen at Send (lib/viewing.ts), omitted when there is none. A server that
 // refuses it (gone, or no longer readable) gets the message once more
-// without it: the page is optional context, the message is not.
+// without it: the page is optional context, the message is not. One Send is
+// one `messageId`, so the server takes that second try as the same message.
 export async function postConversationMessage(
   address: MessageAddress,
   group: string,
@@ -53,12 +56,19 @@ export async function postConversationMessage(
   viewing: string | null = null,
 ): Promise<ConversationPostOutput> {
   await requireAISharing()
+  const messageId = crypto.randomUUID()
   const send = (viewing: string | null) =>
     api<ConversationPostOutput>('/v1/conversation/message', {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...inGroup(group) },
       body: JSON.stringify(
-        conversationPostInput(address, message, browserTimezone(), viewing),
+        conversationPostInput(
+          address,
+          message,
+          browserTimezone(),
+          viewing,
+          messageId,
+        ),
       ),
     })
   try {

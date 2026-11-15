@@ -254,7 +254,9 @@ public struct SessionRestartOutput: Codable, Equatable, Sendable {
 
 // Posted as JSON, `attachments` names files already in the space. Posted as
 // multipart/form-data, this is the part named `message` and every part named
-// `file` is uploaded as one more attachment.
+// `file` is uploaded as one more attachment. `messageId`, a UUID the poster
+// mints, makes a resend the same message: its conversation answers it with the
+// original receipt.
 @Contract
 public struct ConversationPostInput: Codable, Equatable, Sendable {
   public let message: String
@@ -266,6 +268,7 @@ public struct ConversationPostInput: Codable, Equatable, Sendable {
   public let timezone: String?
   public let attachments: [String]?
   public let viewing: String?
+  public let messageId: String?
 }
 
 @Contract

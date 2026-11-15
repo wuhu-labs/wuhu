@@ -757,11 +757,11 @@ Deno.test('a devIdentity builds a second app beside store', () => {
   }
 
   const target = app.targets[0]!
-  assertEquals(resolvedEntitlements(target, 'adhoc', 'TEAM123456'), {
+  assertEquals(resolvedEntitlements(target, 'dev', 'TEAM123456'), {
     'com.apple.security.application-groups': ['group.example.dev'],
-    'aps-environment': 'production',
+    'aps-environment': 'development',
     'application-identifier': 'TEAM123456.tech.example.app.dev',
-    'com.apple.developer.team-identifier': 'TEAM123456',
+    'get-task-allow': true,
   })
   assertEquals(
     resolvedEntitlements(target, 'store', 'TEAM123456')[
@@ -810,10 +810,9 @@ Deno.test('a devIdentity can drop common entitlements it must not claim', () => 
   ])
   validateAppEntitlements(valid, 'app.yml')
   const target = valid.targets[0]!
-  assertEquals(resolvedEntitlements(target, 'adhoc', 'TEAM123456'), {
-    'aps-environment': 'production',
+  assertEquals(resolvedEntitlements(target, 'dev', 'TEAM123456'), {
     'application-identifier': 'TEAM123456.tech.example.app.dev',
-    'com.apple.developer.team-identifier': 'TEAM123456',
+    'get-task-allow': true,
   })
   assertEquals(
     resolvedEntitlements(target, 'store', 'TEAM123456')[
@@ -3341,7 +3340,7 @@ Deno.test('HMR preview variants support visionOS and tvOS without enabling the o
   }
 })
 
-Deno.test('ad hoc honors an explicit Dev CloudKit environment without changing Store or Direct', () => {
+Deno.test('Dev honors an explicit CloudKit environment and Store forces Production', () => {
   const target: AppManifest['targets'][number] = {
     name: 'ExampleiOS',
     platform: 'iOS',
@@ -3369,27 +3368,7 @@ Deno.test('ad hoc honors an explicit Dev CloudKit environment without changing S
     'Development',
   )
   assertEquals(
-    resolvedEntitlements(target, 'adhoc', 'TEAM123456')[key],
-    'Development',
-  )
-  assertEquals(
     resolvedEntitlements(target, 'store', 'TEAM123456')[key],
-    'Production',
-  )
-  assertEquals(
-    resolvedEntitlements(
-      { ...target, devIdentity: undefined },
-      'adhoc',
-      'TEAM123456',
-    )[key],
-    'Production',
-  )
-  assertEquals(
-    resolvedEntitlements(
-      { ...target, platform: 'macOS', distribution: 'direct' },
-      'adhoc',
-      'TEAM123456',
-    )[key],
     'Production',
   )
 })

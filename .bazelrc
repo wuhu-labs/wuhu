@@ -124,5 +124,5 @@ test --test_summary=terse
 test --test_env=DENO_DIR
 test --test_env=WUHU_RELEASE_CACHE
 
-# Local SwiftUI injection. Store/AdHoc signing never enables its hooks.
+# Local SwiftUI injection. Store signing never enables its hooks.
 common:hmr --//bazel/rules:hmr=true

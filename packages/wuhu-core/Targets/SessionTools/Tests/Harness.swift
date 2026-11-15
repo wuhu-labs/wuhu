@@ -19,6 +19,7 @@ import struct MachineContract.CopyReceipt
 import enum MachineContract.CopyRefusal
 import enum MachineContract.CopySource
 import enum MachineContract.CopyTarget
+import enum MachineContract.ExecDefaults
 import struct MachineContract.ExecExit
 import struct MachineContract.ExecID
 import struct MachineContract.ExecMintInput
@@ -607,6 +608,8 @@ struct ScriptedExecReceiver: Sendable {
           await created.receive(frame)
         }
       }
+      let created = exec.withLock { $0 }
+      created?.close()
     }
   }
 }
@@ -619,7 +622,20 @@ final class ScriptedExec: Sendable {
   private let stop: AsyncStream<Void>.Continuation
   private let streamID: Int
   private let transport: any FrameTransport
-  private let cursor = Mutex(0)
+  private let flow = Mutex(Flow())
+
+  // The agent's flow control: output goes out only within the window the caller has acknowledged.
+  private struct Flow {
+    var sent = 0
+    var acknowledged = 0
+    var closed = false
+    var waiters: [AsyncStream<Void>.Continuation] = []
+
+    mutating func takeWaiters() -> [AsyncStream<Void>.Continuation] {
+      defer { waiters = [] }
+      return waiters
+    }
+  }
 
   init(start: ExecStart, streamID: Int, transport: any FrameTransport) {
     self.start = start
@@ -638,6 +654,13 @@ final class ScriptedExec: Sendable {
       feed.finish()
     case .kill:
       stop.yield(())
+    case .ack:
+      guard let ack = try? frame.payload(Ack.self) else { return }
+      let waiters = flow.withLock { flow in
+        flow.acknowledged = max(flow.acknowledged, ack.cursor)
+        return flow.takeWaiters()
+      }
+      for waiter in waiters { waiter.finish() }
     default:
       break
     }
@@ -648,12 +671,39 @@ final class ScriptedExec: Sendable {
   }
 
   func send(_ stream: ExecOutputStream, _ bytes: [UInt8]) async throws {
-    let cursor = cursor.withLock { cursor in defer { cursor += bytes.count }; return cursor }
-    try await transport.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .output, payload: OutputChunk(id: start.id, stream: stream, cursor: cursor, data: Base64Data(bytes)))))
+    let window = start.window ?? ExecDefaults.window
+    var rest = bytes[...]
+    while !rest.isEmpty {
+      let (signal, waiter) = AsyncStream<Void>.makeStream()
+      let piece = try flow.withLock { flow -> (cursor: Int, bytes: ArraySlice<UInt8>)? in
+        guard !flow.closed else { throw ChannelError.severed }
+        let room = window - (flow.sent - flow.acknowledged)
+        guard room > 0 else {
+          flow.waiters.append(waiter)
+          return nil
+        }
+        defer { flow.sent += min(room, rest.count) }
+        return (flow.sent, rest.prefix(room))
+      }
+      guard let piece else {
+        for await _ in signal {}
+        continue
+      }
+      rest = rest.dropFirst(piece.bytes.count)
+      try await transport.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .output, payload: OutputChunk(id: start.id, stream: stream, cursor: piece.cursor, data: Base64Data(Array(piece.bytes))))))
+    }
+  }
+
+  func close() {
+    let waiters = flow.withLock { flow in
+      flow.closed = true
+      return flow.takeWaiters()
+    }
+    for waiter in waiters { waiter.finish() }
   }
 
   func exit(_ status: ExitStatus) async {
-    let cursor = cursor.withLock { $0 }
+    let cursor = flow.withLock { $0.sent }
     try? await transport.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .execExit, payload: ExecExit(id: start.id, cursor: cursor, status: status))))
   }
 }

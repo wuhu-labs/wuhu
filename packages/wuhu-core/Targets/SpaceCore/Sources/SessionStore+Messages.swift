@@ -81,20 +81,15 @@ extension SessionStore {
     let me = senderSession?.rawValue ?? sender.id
     let conversation: ConversationID
     let place: Post.Target
-    let existing = spaceCell.message(messageID)
-    if let existing {
-      (conversation, place) = (existing.conversation, .conversation)
-    } else {
-      switch target {
-      case let .conversation(id):
-        (conversation, place) = (id, .conversation)
-      case let .box(owner):
-        (conversation, place) = (ConversationID(owner.rawValue), .box)
-      case let .dm(spelling):
-        guard let other = spaceCell.directMessageTarget(spelling) else { throw SessionStoreError.unknownPerson(spelling) }
-        guard me != other else { throw SessionStoreError.selfDirectMessage(me) }
-        (conversation, place) = (Conversations.dmID(me, other), .dm(with: other))
-      }
+    switch target {
+    case let .conversation(id):
+      (conversation, place) = (id, .conversation)
+    case let .box(owner):
+      (conversation, place) = (ConversationID(owner.rawValue), .box)
+    case let .dm(spelling):
+      guard let other = spaceCell.directMessageTarget(spelling) else { throw SessionStoreError.unknownPerson(spelling) }
+      guard me != other else { throw SessionStoreError.selfDirectMessage(me) }
+      (conversation, place) = (Conversations.dmID(me, other), .dm(with: other))
     }
     var post = Post(
       target: place, messageID: messageID, sender: sender, senderSession: senderSession, kind: kind, requestID: requestID, replyTarget: replyTarget,

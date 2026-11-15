@@ -373,10 +373,11 @@ export interface EntitlementOverlays {
   release?: { [key: string]: PlistValue }
 }
 
-// The identity the dev and adhoc variants sign as, so a development build
-// installs beside the store app instead of replacing it. Each field overrides
-// the bundle's own; `entitlements` merges over `entitlements.common`, after
-// the `omitEntitlements` keys of `entitlements.common` are dropped.
+// The identity the dev variant signs as, so a development build — a remote
+// preview or a try link — installs beside the store app instead of replacing
+// it. Each field overrides the bundle's own; `entitlements` merges over
+// `entitlements.common`, after the `omitEntitlements` keys of
+// `entitlements.common` are dropped.
 export interface DevIdentityManifest {
   bundleID: string
   displayName?: string
@@ -3896,15 +3897,14 @@ export async function testHostVariant(
   )
 }
 
-export type SigningVariant = 'dev' | 'adhoc' | 'store'
-type BuildVariant = Exclude<SigningVariant, 'adhoc'>
+export type SigningVariant = 'dev' | 'store'
 
 export function isPreviewBundle(bundle: { bundleID: string }): boolean {
   return bundle.bundleID.startsWith('tech.lakeridge.previews.')
 }
 
-// The bundle as one signing variant builds it: dev and adhoc take its
-// devIdentity, store keeps the declared identity.
+// The bundle as one signing variant builds it: dev takes its devIdentity,
+// store keeps the declared identity.
 export function variantBundle<T extends AppBundleManifest>(
   target: T,
   variant: SigningVariant,
@@ -4050,7 +4050,7 @@ function shellPath(prefix: string, path: string): string {
 
 export function entitlementPath(
   target: AppBundleManifest,
-  variant: BuildVariant,
+  variant: SigningVariant,
 ): string {
   return `${target.name}-${variant === 'dev' ? 'dev' : 'release'}.entitlements`
 }
@@ -4060,8 +4060,8 @@ export function entitlementPath(
 export function entitlementSourcesByVariant(
   app: AppManifest,
   target: AppBundleManifest,
-): Map<string, BuildVariant> {
-  const sources = new Map<string, BuildVariant>()
+): Map<string, SigningVariant> {
+  const sources = new Map<string, SigningVariant>()
   for (const variant of variantsFor(app, target)) {
     const path = entitlementPath(target, variant)
     if (!sources.has(path)) sources.set(path, variant)
@@ -4083,7 +4083,7 @@ export function releaseInfoPlistPath(path: string): string {
 export function infoPlistPaths(
   target: AppBundleManifest,
   embedsViewPilot: boolean,
-): Record<BuildVariant | 'dev_unsigned', string> {
+): Record<SigningVariant | 'dev_unsigned', string> {
   const dev = target.infoPlist
   const store = embedsViewPilot || target.devIdentity !== undefined
     ? releaseInfoPlistPath(dev)
@@ -4103,7 +4103,7 @@ export const hmrAppPlatforms: ReadonlySet<AppBundleManifest['platform']> =
 
 function profileName(
   target: AppBundleManifest,
-  variant: BuildVariant,
+  variant: SigningVariant,
   platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>>,
   hmr = false,
 ): string | undefined {
@@ -4133,7 +4133,7 @@ function profileName(
 export function appProfileName(
   app: AppManifest,
   target: AppBundleManifest,
-  variant: BuildVariant,
+  variant: SigningVariant,
 ): string | undefined {
   return profileName(target, variant, profilePlatforms([app]), app.hmr)
 }
@@ -4153,7 +4153,7 @@ export function referencedProfileNames(
 
 function profileTargetName(
   target: AppBundleManifest,
-  variant: BuildVariant,
+  variant: SigningVariant,
 ): string {
   return `${target.name}_${variant}_profile__run_deno_task_prepare_profiles`
 }
@@ -4161,7 +4161,7 @@ function profileTargetName(
 function variantsFor(
   _app: AppManifest,
   target: AppBundleManifest,
-): BuildVariant[] {
+): SigningVariant[] {
   if (target.distribution === 'direct') return ['store']
   return isPreviewBundle(target) ? ['dev'] : ['dev', 'store']
 }
@@ -4181,7 +4181,7 @@ function selectExpr(
 
 // One value when every variant agrees, a select over the variants otherwise.
 function variantExpr(
-  values: Record<BuildVariant, string> & { dev_unsigned?: string },
+  values: Record<SigningVariant, string> & { dev_unsigned?: string },
   render: (value: string) => string,
   renderInSelect: (value: string) => string = render,
 ): string {
@@ -4192,8 +4192,8 @@ function variantExpr(
 }
 
 function perVariant<T>(
-  map: (variant: BuildVariant) => T,
-): Record<BuildVariant, T> {
+  map: (variant: SigningVariant) => T,
+): Record<SigningVariant, T> {
   return { dev: map('dev'), store: map('store') }
 }
 
@@ -4962,11 +4962,7 @@ export function resolvedEntitlements(
   } else {
     values['com.apple.developer.team-identifier'] = teamID
     if (usesICloud) {
-      values['com.apple.developer.icloud-container-environment'] =
-        signing === 'adhoc'
-          ? values['com.apple.developer.icloud-container-environment'] ??
-            'Production'
-          : 'Production'
+      values['com.apple.developer.icloud-container-environment'] = 'Production'
     }
   }
   return values
@@ -5049,10 +5045,8 @@ async function prepareApp(
         ),
       )
     }
-    for (const file of ['adhoc', 'release']) {
-      const path = `${target.name}-${file}.entitlements`
-      if (!sources.has(path)) await removeIfPresent(join(appDir, path))
-    }
+    const release = entitlementPath(target, 'store')
+    if (!sources.has(release)) await removeIfPresent(join(appDir, release))
   }
   await removeGeneratedNestedBuild(appDir)
   return {

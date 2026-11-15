@@ -19,7 +19,15 @@ try {
   out.push(`wait: ${clean(error.message, gone.id)}`)
 }
 
-// The lost process no longer holds one of the 8 slots.
+// A loss after a cut fails the read: the bare \r left behind is no piece.
+const cut = await box.spawn("vanish-after-cut")
+try {
+  for await (const { text } of cut.lines()) out.push(`cut piece: ${text.length}`)
+} catch (error) {
+  out.push(`cut lines: ${clean(error.message, cut.id)}`)
+}
+
+// The lost processes no longer hold one of the 8 slots.
 const sleepers = []
 for (let i = 0; i < 8; i++) sleepers.push(await box.spawn("sleep"))
 out.push(`running after the loss: ${sleepers.length}`)

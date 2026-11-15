@@ -96,8 +96,8 @@ struct ConversationCell {
     if !missed.isEmpty { socket.send(missed) }
   }
 
+  /// A repeated message id is the same post when its sender repeats it, answered with the original and storing nothing.
   mutating func post(_ post: Post, storing blobs: [Blob] = []) throws -> MessageDelivery {
-    for blob in blobs { try Bucket.put(blob, in: &db) }
     if case let .open(requester, task, _, _, _)? = post.request, let id = post.requestID { try mayOpen(id, on: task, from: requester) }
     let poster = poster(of: post)
     let conversation = try admit(post, poster: poster)
@@ -105,8 +105,12 @@ struct ConversationCell {
       throw SessionStoreError.humanAgentDirectMessage
     }
     if let existing = message(post.messageID) {
+      guard existing.sender.id == post.sender.id, existing.senderSession == post.senderSession else {
+        throw SessionStoreError.messageIDTaken(post.messageID.rawValue)
+      }
       return MessageDelivery(message: existing, enqueued: [], replayed: true)
     }
+    for blob in blobs { try Bucket.put(blob, in: &db) }
     if let replyTarget = post.replyTarget, message(replyTarget) == nil {
       throw db.one("SELECT 1 FROM messages WHERE id = ?", .text(replyTarget.rawValue)) == nil
         ? SessionStoreError.unknownMessage(replyTarget.rawValue)
@@ -119,17 +123,22 @@ struct ConversationCell {
     }
     var content = post.content
     content.attachments += try attach(post.uploads, at: post.at)
-    try db.execute(
-      """
-      INSERT INTO messages
-        (id, conversation_id, sender_id, sender_session_id, sender_timezone,
-         reply_target, kind, request_id, content, created_at, firing)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      """,
-      .text(post.messageID.rawValue), .text(id.key), .text(post.sender.id), text(post.senderSession?.rawValue),
-      .text(post.sender.timeZone.identifier), text(post.replyTarget?.rawValue), .text(post.kind.rawValue), text(post.requestID?.rawValue),
-      .text(try Sessions.encode(content)), .text(now), text(poster.firing),
-    )
+    let encoded = try Sessions.encode(content)
+    do {
+      try db.execute(
+        """
+        INSERT INTO messages
+          (id, conversation_id, sender_id, sender_session_id, sender_timezone,
+           reply_target, kind, request_id, content, created_at, firing)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        .text(post.messageID.rawValue), .text(id.key), .text(post.sender.id), text(post.senderSession?.rawValue),
+        .text(post.sender.timeZone.identifier), text(post.replyTarget?.rawValue), .text(post.kind.rawValue), text(post.requestID?.rawValue),
+        .text(encoded), .text(now), text(poster.firing),
+      )
+    } catch where error.message == "UNIQUE constraint failed: messages.id" {
+      throw SessionStoreError.messageIDTaken(post.messageID.rawValue)
+    }
     if let device = post.sender.device {
       try db.execute("INSERT OR IGNORE INTO message_devices (message_id, device_id) VALUES (?, ?)", .text(post.messageID.rawValue), .text(device))
     }
