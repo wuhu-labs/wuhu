@@ -16,6 +16,8 @@ final class MessageBridge: ChannelInboundHandler {
   private var closed: Bool { termination != nil }
   private var closing = false
   private var pendingControlWrites = 0
+  private var sending: EventLoopFuture<Void>?
+  static let fragmentBytes = 64 << 10
 
   init(limits: WebSocketLimits) {
     self.limits = limits
@@ -40,19 +42,14 @@ final class MessageBridge: ChannelInboundHandler {
           try await channel.eventLoop.submit {
             guard !bridge.value.closed && !bridge.value.closing else { throw WebSocketError.connectionClosed }
             guard message.byteCount <= bridge.value.limits.outboundMessageBytes else { throw WebSocketError.limitExceeded(.outboundMessage) }
-            var buffer = channel.allocator.buffer(bytes: message.bytes)
+            let buffer = channel.allocator.buffer(bytes: message.bytes)
             let opcode: WebSocketOpcode = if case .text = message { .text } else { .binary }
-            var writes: [EventLoopFuture<Void>] = []
-            var first = true
-            repeat {
-              let length = min(buffer.readableBytes, 16 << 20)
-              let data = buffer.readSlice(length: length)!
-              let frame = WebSocketFrame(fin: buffer.readableBytes == 0, opcode: first ? opcode : .continuation, maskKey: .random(), data: data)
-              writes.append(channel.write(frame))
-              first = false
-            } while buffer.readableBytes > 0
-            channel.flush()
-            return EventLoopFuture.andAllSucceed(writes, on: channel.eventLoop).flatMapErrorThrowing { throw bridge.value.termination ?? $0 }
+            return try bridge.value.afterEarlierSends(on: channel.eventLoop) {
+              if let termination = bridge.value.termination { return channel.eventLoop.makeFailedFuture(termination) }
+              let written = writeFragments(of: buffer, opcode: opcode, to: channel)
+              written.whenFailure { bridge.value.abort(afterFailedWrite: $0, channel: channel) }
+              return written
+            }.flatMapErrorThrowing { throw bridge.value.termination ?? $0 }
           }.flatMap { $0 }.get()
         } onCancel: { channel.close(promise: nil) }
       } catch {
@@ -70,7 +67,9 @@ final class MessageBridge: ChannelInboundHandler {
           var buffer = channel.allocator.buffer(capacity: 125)
           buffer.writeInteger(close.code)
           buffer.writeString(close.reason)
-          try bridge.value.writeControl(.connectionClose, data: buffer, channel: channel)
+          try bridge.value.afterEarlierSends(on: channel.eventLoop) { () throws(WebSocketError) in
+            try bridge.value.writeControl(.connectionClose, data: buffer, channel: channel)
+          }
           let timeout = channel.eventLoop.scheduleTask(in: closeTimeout.nioAmount) { channel.close(promise: nil) }
           channel.closeFuture.whenComplete { _ in timeout.cancel() }
         }.get()
@@ -118,13 +117,18 @@ final class MessageBridge: ChannelInboundHandler {
           guard bytes.isEmpty || validCloseCode(code), let reason = String(validating: bytes.dropFirst(2), as: UTF8.self) else {
             throw WebSocketError.protocolViolation("invalid close code or UTF-8")
           }
-          if !closing {
-            try writeControl(.connectionClose, data: frame.unmaskedData, channel: context.channel)
-          }
           termination = .connectionClosed
           continuation.yield(.closed(.init(code: code, reason: reason)))
           continuation.finish()
-          context.close(promise: nil)
+          if closing {
+            context.close(promise: nil)
+          } else {
+            let channel = context.channel
+            let reply = frame.unmaskedData
+            try afterEarlierSends(on: channel.eventLoop) { () throws(WebSocketError) in
+              try self.writeControl(.connectionClose, data: reply, channel: channel)
+            }.whenComplete { _ in channel.close(promise: nil) }
+          }
         }
       default: throw WebSocketError.protocolViolation("unknown opcode")
       }
@@ -148,10 +152,28 @@ final class MessageBridge: ChannelInboundHandler {
     context.close(promise: nil)
   }
 
-  private func writeControl(_ opcode: WebSocketOpcode, data: ByteBuffer, channel: any Channel) throws(WebSocketError) {
+  /// Sends serialize here, so data frames of two messages never interleave; a pong skips this queue and goes out between fragments.
+  @discardableResult
+  private func afterEarlierSends(
+    on loop: any EventLoop, _ write: @escaping () throws(WebSocketError) -> EventLoopFuture<Void>,
+  ) throws(WebSocketError) -> EventLoopFuture<Void> {
+    let written: EventLoopFuture<Void>
+    if let sending {
+      let promise = loop.makePromise(of: Void.self)
+      sending.assumeIsolated().whenComplete { _ in
+        do throws(WebSocketError) { try promise.completeWith(write()) } catch { promise.fail(error) }
+      }
+      written = promise.futureResult
+    } else { written = try write() }
+    sending = written
+    written.assumeIsolated().whenComplete { _ in if self.sending === written { self.sending = nil } }
+    return written
+  }
+
+  @discardableResult
+  private func writeControl(_ opcode: WebSocketOpcode, data: ByteBuffer, channel: any Channel) throws(WebSocketError) -> EventLoopFuture<Void> {
     if limits.messageBytes == Int.max, limits.bufferedReceiveBytes == Int.max, limits.outboundMessageBytes == Int.max {
-      channel.writeAndFlush(WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: data), promise: nil)
-      return
+      return channel.writeAndFlush(WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: data))
     }
     guard pendingControlWrites < 16 else {
       let error = WebSocketError.limitExceeded(.outboundMessage)
@@ -164,12 +186,16 @@ final class MessageBridge: ChannelInboundHandler {
     let promise = channel.eventLoop.makePromise(of: Void.self)
     promise.futureResult.whenComplete { result in
       bridge.value.pendingControlWrites -= 1
-      if case .failure(let error) = result, !bridge.value.closed {
-        bridge.value.fail(WebSocketError.io(String(describing: error)))
-        channel.close(promise: nil)
-      }
+      if case .failure(let error) = result { bridge.value.abort(afterFailedWrite: error, channel: channel) }
     }
     channel.writeAndFlush(WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: data), promise: promise)
+    return promise.futureResult
+  }
+
+  private func abort(afterFailedWrite error: any Error, channel: any Channel) {
+    guard !closed else { return }
+    fail(error as? WebSocketError ?? .io(String(describing: error)))
+    channel.close(promise: nil)
   }
 
   private func append(_ bytes: [UInt8]) throws(WebSocketError) {
@@ -207,6 +233,15 @@ private final class ReceiveBudget: Sendable {
   let minimumMessageCost: Int
   init(minimumMessageCost: Int) { self.minimumMessageCost = minimumMessageCost }
   func cost(_ count: Int) -> Int { max(minimumMessageCost, count) }
+}
+
+/// Each fragment is written only once the previous one is, so a pong written meanwhile waits behind at most one fragment.
+private func writeFragments(of message: ByteBuffer, opcode: WebSocketOpcode, to channel: any Channel) -> EventLoopFuture<Void> {
+  var buffer = message
+  let fragment = buffer.readSlice(length: min(buffer.readableBytes, MessageBridge.fragmentBytes))!
+  let rest = buffer
+  let written = channel.writeAndFlush(WebSocketFrame(fin: rest.readableBytes == 0, opcode: opcode, maskKey: .random(), data: fragment))
+  return rest.readableBytes == 0 ? written : written.flatMap { writeFragments(of: rest, opcode: .continuation, to: channel) }
 }
 
 private func validCloseCode(_ code: UInt16) -> Bool {

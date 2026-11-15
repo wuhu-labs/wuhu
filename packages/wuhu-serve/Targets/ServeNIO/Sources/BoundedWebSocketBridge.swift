@@ -92,7 +92,7 @@ final class BoundedWebSocketBridge: ChannelInboundHandler {
   }
 
   private func writePong(_ data: ByteBuffer, channel: any Channel) throws {
-    guard channel.isWritable, pendingControlWrites < 16 else { throw TunnelError.capacityExceeded }
+    guard pendingControlWrites < 16 else { throw TunnelError.capacityExceeded }
     pendingControlWrites += 1
     let bridge = NIOLoopBound(self, eventLoop: channel.eventLoop)
     let promise = channel.eventLoop.makePromise(of: Void.self)

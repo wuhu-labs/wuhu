@@ -154,20 +154,21 @@ struct BoundedWebSocketTests {
     _ = try channel.finish()
   }
 
-  @Test func pongsRefuseNonWritableChannels() async throws {
+  @Test func pongsQueueBehindAMessageOnANonWritableChannel() async throws {
     let writes = StalledBoundedControlWrites()
     let bridge = BoundedWebSocketBridge(limits: .init())
     let channel = EmbeddedChannel(handlers: [writes, bridge])
     try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).get()
-    let transport = bridge.transport(channel: channel)
+    channel.writeAndFlush(WebSocketFrame(fin: true, opcode: .binary, data: channel.allocator.buffer(bytes: Array(repeating: 42, count: 2 << 20))), promise: nil)
     channel.isWritable = false
     try channel.writeInbound(frame(.ping, []))
     channel.embeddedEventLoop.run()
-    #expect(!channel.isActive)
-    #expect(writes.count == 0)
-    if channel.isActive { try await channel.close().get() }
-    await #expect(throws: TunnelError.capacityExceeded) { try await transport.receive() }
-    _ = try channel.finish(acceptAlreadyClosed: true)
+    #expect(channel.isActive)
+    #expect(writes.count == 2)
+    writes.complete()
+    channel.embeddedEventLoop.run()
+    #expect(channel.isActive)
+    _ = try channel.finish()
   }
 
   @Test func unexpectedContinuationIsTyped() async throws {

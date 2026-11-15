@@ -30,7 +30,7 @@ struct ControlWriteBoundsTests {
     let writes = StalledControlWrites()
     let (channel, _) = try connection(writes: writes)
     for _ in 0 ..< 16 { try channel.writeInbound(control(.ping)) }
-    writes.complete()
+    writes.release()
     channel.embeddedEventLoop.run()
     for _ in 0 ..< 16 { try channel.writeInbound(control(.ping)) }
     #expect(channel.isActive)
@@ -38,25 +38,52 @@ struct ControlWriteBoundsTests {
     _ = try channel.finish()
   }
 
-  @Test func pongToAPingDuringALargeSendFollowsTheMessage() async throws {
+  @Test func pingDuringAFragmentedSendIsAnsweredBeforeTheLastFragment() async throws {
     let writes = StalledControlWrites()
-    let channel = await NIOAsyncTestingChannel(handler: writes)
-    try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).get()
-    let socket = try await channel.testingEventLoop.executeInContext {
-      let bridge = MessageBridge(limits: .init(outboundMessageBytes: 4 << 20))
-      try channel.pipeline.syncOperations.addHandler(bridge)
-      return bridge.connection(channel: channel, headers: Headers(), closeTimeout: .seconds(1))
-    }
-    let send = Task { try await socket.send(.binary(Array(repeating: 42, count: 2 << 20))) }
-    #expect(try await channel.waitForOutboundWrite(as: WebSocketFrame.self).opcode == .binary)
-    channel.isWritable = false
+    let (channel, _, send) = try await largeSendOnNonWritableChannel(writes: writes)
     try await channel.writeInbound(control(.ping))
     #expect(channel.isActive)
     #expect(try await channel.readOutbound(as: WebSocketFrame.self)?.opcode == .pong)
-    writes.complete()
+    writes.release()
     try await send.value
+    #expect(try await remainingFrames(channel) == [.init(opcode: .continuation, fin: false), .init(opcode: .continuation, fin: true)])
     #expect(channel.isActive)
     _ = try await channel.finish()
+  }
+
+  @Test func closeReplyDuringALargeSendFollowsTheMessageBeforeClosing() async throws {
+    let writes = StalledControlWrites()
+    let (channel, _, send) = try await largeSendOnNonWritableChannel(writes: writes)
+    try await channel.writeInbound(control(.connectionClose))
+    #expect(channel.isActive)
+    #expect(try await channel.readOutbound(as: WebSocketFrame.self) == nil)
+    writes.release()
+    try await send.value
+    try await channel.closeFuture.get()
+    #expect(try await remainingFrames(channel).map(\.opcode) == [.continuation, .continuation, .connectionClose])
+    _ = try await channel.finish(acceptAlreadyClosed: true)
+  }
+
+  @Test func sendFailsWithTheControlSaturationError() async throws {
+    let (channel, _, send) = try await largeSendOnNonWritableChannel(writes: StalledControlWrites())
+    for _ in 0 ..< 17 { try await channel.writeInbound(control(.ping)) }
+    #expect(!channel.isActive)
+    await #expect(throws: WebSocketError.limitExceeded(.outboundMessage)) { try await send.value }
+    _ = try await channel.finish(acceptAlreadyClosed: true)
+  }
+
+  @Test func sendQueuedBehindAFailedFragmentWriteFailsWithoutWriting() async throws {
+    let writes = StalledControlWrites()
+    let (channel, socket, first) = try await largeSendOnNonWritableChannel(writes: writes)
+    let failure = WebSocketError.io("injected fragment write failure")
+    let second = Task { try await socket.send(.binary([7])) }
+    writes.fail(failure)
+    await #expect(throws: failure) { try await first.value }
+    let error = await #expect(throws: WebSocketError.self) { try await second.value }
+    #expect(error == failure || error == .connectionClosed)
+    #expect(!channel.isActive)
+    #expect(try await channel.readOutbound(as: WebSocketFrame.self) == nil)
+    _ = try await channel.finish(acceptAlreadyClosed: true)
   }
 
   @Test(arguments: [WebSocketOpcode.ping, .connectionClose])
@@ -82,21 +109,47 @@ private func connection(writes: StalledControlWrites, limits: WebSocketLimits = 
   return (channel, bridge.connection(channel: channel, headers: Headers(), closeTimeout: .seconds(1)))
 }
 
+private func largeSendOnNonWritableChannel(writes: StalledControlWrites) async throws -> (NIOAsyncTestingChannel, WebSocketConnection, Task<Void, any Error>) {
+  let channel = await NIOAsyncTestingChannel(handler: writes)
+  try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).get()
+  let socket = try await channel.testingEventLoop.executeInContext {
+    let bridge = MessageBridge(limits: .init())
+    try channel.pipeline.syncOperations.addHandler(bridge)
+    return bridge.connection(channel: channel, headers: Headers(), closeTimeout: .seconds(1))
+  }
+  let send = Task { try await socket.send(.binary(Array(repeating: 42, count: 2 * MessageBridge.fragmentBytes + 1))) }
+  #expect(try await channel.waitForOutboundWrite(as: WebSocketFrame.self).opcode == .binary)
+  channel.isWritable = false
+  return (channel, socket, send)
+}
+
+private struct FrameShape: Equatable {
+  let opcode: WebSocketOpcode
+  let fin: Bool
+}
+
+private func remainingFrames(_ channel: NIOAsyncTestingChannel) async throws -> [FrameShape] {
+  var frames: [FrameShape] = []
+  while let frame = try await channel.readOutbound(as: WebSocketFrame.self) { frames.append(.init(opcode: frame.opcode, fin: frame.fin)) }
+  return frames
+}
+
 private func control(_ opcode: WebSocketOpcode) -> WebSocketFrame {
   WebSocketFrame(fin: true, opcode: opcode, data: ByteBufferAllocator().buffer(capacity: 0))
 }
 
 private final class StalledControlWrites: ChannelOutboundHandler, Sendable {
   typealias OutboundIn = WebSocketFrame
-  private let state = Mutex((count: 0, pending: [EventLoopPromise<Void>]()))
+  private let state = Mutex((count: 0, stalled: true, pending: [EventLoopPromise<Void>]()))
   var count: Int { state.withLock { $0.count } }
 
   func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-    state.withLock {
+    let stalled = state.withLock {
       $0.count += 1
-      if let promise { $0.pending.append(promise) }
+      if $0.stalled, let promise { $0.pending.append(promise) }
+      return $0.stalled
     }
-    context.write(data, promise: nil)
+    context.write(data, promise: stalled ? nil : promise)
   }
 
   func close(context: ChannelHandlerContext, mode: CloseMode, promise: EventLoopPromise<Void>?) {
@@ -104,7 +157,12 @@ private final class StalledControlWrites: ChannelOutboundHandler, Sendable {
     for pending in takePending() { pending.fail(ChannelError.ioOnClosedChannel) }
   }
 
-  func complete() {
+  func fail(_ error: any Error) {
+    for pending in takePending() { pending.fail(error) }
+  }
+
+  func release() {
+    state.withLock { $0.stalled = false }
     for pending in takePending() { pending.succeed(()) }
   }
 

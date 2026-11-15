@@ -16,13 +16,13 @@ import Testing
 struct FetchWebSocketFragmentationTests {
   @Test func concurrentFragmentedSendsKeepDataMessagesContiguousWithControlFrames() async throws {
     let captured = CapturedFrames()
-    try await withControlledWrites(captured: captured, messages: 2, failContinuation: false) { socket in
+    try await withControlledWrites(captured: captured, failContinuation: false) { socket in
       let gate = AsyncStream<Void>.makeStream()
       try await withThrowingTaskGroup(of: Void.self) { group in
         for byte: UInt8 in [17, 29] {
           group.addTask {
             for await _ in gate.stream { break }
-            try await socket.send(.binary(Array(repeating: byte, count: (32 << 20) + 1)))
+            try await socket.send(.binary(Array(repeating: byte, count: 2 * fragment + 1)))
           }
         }
         gate.continuation.yield(())
@@ -50,19 +50,19 @@ struct FetchWebSocketFragmentationTests {
     }
   }
 
-  @Test func failingMiddleContinuationWriteFailsSendEvenWhenFinalWriteSucceeds() async throws {
+  @Test func failingContinuationWriteFailsSendAndStopsTheMessage() async throws {
     let captured = CapturedFrames()
-    try await withControlledWrites(captured: captured, messages: 1, failContinuation: true) { socket in
+    try await withControlledWrites(captured: captured, failContinuation: true) { socket in
       await #expect(throws: WebSocketError.io("injected continuation write failure")) {
-        try await socket.send(.binary(Array(repeating: 31, count: (32 << 20) + 1)))
+        try await socket.send(.binary(Array(repeating: 31, count: 2 * fragment + 1)))
       }
       let data = captured.frames.withLock { $0.filter { $0.opcode == .binary || $0.opcode == .continuation } }
-      #expect(data.map(\.opcode) == [.binary, .continuation, .continuation])
-      #expect(data.map(\.fin) == [false, false, true])
+      #expect(data.map(\.opcode) == [.binary, .continuation])
+      #expect(data.map(\.fin) == [false, false])
     }
   }
 
-  @Test(arguments: [0, (16 << 20) - 1, 16 << 20, (16 << 20) + 1, 32 << 20, (32 << 20) + 1], [false, true])
+  @Test(arguments: [0, fragment - 1, fragment, fragment + 1, 2 * fragment, 2 * fragment + 1], [false, true])
   func largeMessagesUseContinuationFramesWithoutChangingSmallMessages(size: Int, text: Bool) async throws {
     let captured = CapturedFrames()
     let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
@@ -83,13 +83,13 @@ struct FetchWebSocketFragmentationTests {
       var inbound = socket.inbound.makeAsyncIterator()
       #expect(try await inbound.next() == .message(.text("accepted")))
       let frames = captured.frames.withLock { $0 }
-      #expect(frames.count == max(1, (size + (16 << 20) - 1) / (16 << 20)))
+      #expect(frames.count == max(1, (size + fragment - 1) / fragment))
       var bytes: [UInt8] = []
       for (index, frame) in frames.enumerated() {
         #expect(frame.maskKey != nil)
         #expect(frame.opcode == (index == 0 ? (text ? .text : .binary) : .continuation))
         #expect(frame.fin == (index == frames.count - 1))
-        #expect(frame.data.readableBytes == min(16 << 20, size - bytes.count))
+        #expect(frame.data.readableBytes == min(fragment, size - bytes.count))
         #expect(!frame.rsv1 && !frame.rsv2 && !frame.rsv3)
         var data = frame.unmaskedData
         bytes += data.readBytes(length: data.readableBytes) ?? []
@@ -103,6 +103,8 @@ struct FetchWebSocketFragmentationTests {
     }
   }
 }
+
+private let fragment = MessageBridge.fragmentBytes
 
 private final class CaptureFragments: ChannelInboundHandler, Sendable {
   typealias InboundIn = WebSocketFrame
@@ -124,7 +126,7 @@ private final class CaptureFragments: ChannelInboundHandler, Sendable {
 private final class CapturedFrames: Sendable { let frames = Mutex<[WebSocketFrame]>([]) }
 
 private func withControlledWrites(
-  captured: CapturedFrames, messages: Int, failContinuation: Bool,
+  captured: CapturedFrames, failContinuation: Bool,
   operation: (WebSocketConnection) async throws -> Void,
 ) async throws {
   let group = MultiThreadedEventLoopGroup.singleton
@@ -133,12 +135,13 @@ private func withControlledWrites(
   do {
     let connection = try await channel.eventLoop.submit {
       let bridge = MessageBridge(limits: .init(outboundMessageBytes: 128 << 20))
-      try channel.pipeline.syncOperations.addHandler(ControlledFragmentWrites(captured: captured, messages: messages, failContinuation: failContinuation))
+      try channel.pipeline.syncOperations.addHandler(ControlledFragmentWrites(captured: captured, failContinuation: failContinuation))
       try channel.pipeline.syncOperations.addHandler(bridge)
       return bridge.connection(channel: channel, headers: Headers(), closeTimeout: .seconds(1))
     }.get()
     try await operation(connection)
-    try await channel.close().get()
+    channel.close(promise: nil)
+    try await channel.closeFuture.get()
     try await server.close().get()
   } catch {
     try? await channel.close().get()
@@ -152,14 +155,10 @@ private final class ControlledFragmentWrites: ChannelOutboundHandler {
   let captured: CapturedFrames
   let failContinuation: Bool
   private var continuationCount = 0
-  private var completedMessages = 0
-  private var pendingWrites: [EventLoopPromise<Void>] = []
-  private let messages: Int
 
-  init(captured: CapturedFrames, messages: Int, failContinuation: Bool) {
+  init(captured: CapturedFrames, failContinuation: Bool) {
     self.captured = captured
     self.failContinuation = failContinuation
-    self.messages = messages
   }
 
   func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
@@ -169,15 +168,8 @@ private final class ControlledFragmentWrites: ChannelOutboundHandler {
     if failContinuation && frame.opcode == .continuation && continuationCount == 1 {
       promise?.fail(WebSocketError.io("injected continuation write failure"))
     } else if frame.opcode == .pong { promise?.succeed(()) }
-    else if let promise { pendingWrites.append(promise) }
-    if frame.fin && (frame.opcode == .binary || frame.opcode == .continuation) {
-      completedMessages += 1
-      if completedMessages == messages {
-        // Neither concurrent send can finish before both complete frame batches arrive.
-        for pending in pendingWrites { pending.succeed(()) }
-        pendingWrites.removeAll()
-      }
-    }
+    // A later tick lets the other concurrent send reach the event loop between fragments.
+    else if let promise { context.eventLoop.execute { promise.succeed(()) } }
     if frame.opcode == .binary {
       let control = context.channel.allocator.buffer(string: "probe")
       context.fireChannelRead(NIOAny(WebSocketFrame(fin: true, opcode: .ping, data: control)))
