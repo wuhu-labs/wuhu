@@ -858,7 +858,7 @@ final class ScriptRig: Sendable {
 
   func messages(_ total: Int) async throws {
     do {
-      try await until("\(total) script messages") {
+      try await until("\(total) script messages", timeout: .seconds(60)) {
         try await delivered().count + seen.value >= total
       }
     } catch {

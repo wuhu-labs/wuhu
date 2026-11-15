@@ -12,7 +12,8 @@ final class MessageBridge: ChannelInboundHandler {
   private let budget: ReceiveBudget
   private var accumulated: [UInt8] = []
   private var opcode: WebSocketOpcode?
-  private var closed = false
+  private var termination: WebSocketError?
+  private var closed: Bool { termination != nil }
   private var closing = false
   private var pendingControlWrites = 0
 
@@ -51,7 +52,7 @@ final class MessageBridge: ChannelInboundHandler {
               first = false
             } while buffer.readableBytes > 0
             channel.flush()
-            return EventLoopFuture.andAllSucceed(writes, on: channel.eventLoop)
+            return EventLoopFuture.andAllSucceed(writes, on: channel.eventLoop).flatMapErrorThrowing { throw bridge.value.termination ?? $0 }
           }.flatMap { $0 }.get()
         } onCancel: { channel.close(promise: nil) }
       } catch {
@@ -91,7 +92,7 @@ final class MessageBridge: ChannelInboundHandler {
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     guard !closed else { return }
     let frame = unwrapInboundIn(data)
-    do {
+    do throws(WebSocketError) {
       guard !frame.rsv1 && !frame.rsv2 && !frame.rsv3 else { throw WebSocketError.protocolViolation("unnegotiated extension") }
       guard frame.maskKey == nil else { throw WebSocketError.protocolViolation("masked server frame") }
       guard frame.data.readableBytes <= limits.frameBytes else { throw WebSocketError.limitExceeded(.frame) }
@@ -120,7 +121,7 @@ final class MessageBridge: ChannelInboundHandler {
           if !closing {
             try writeControl(.connectionClose, data: frame.unmaskedData, channel: context.channel)
           }
-          closed = true
+          termination = .connectionClosed
           continuation.yield(.closed(.init(code: code, reason: reason)))
           continuation.finish()
           context.close(promise: nil)
@@ -147,12 +148,12 @@ final class MessageBridge: ChannelInboundHandler {
     context.close(promise: nil)
   }
 
-  private func writeControl(_ opcode: WebSocketOpcode, data: ByteBuffer, channel: any Channel) throws {
+  private func writeControl(_ opcode: WebSocketOpcode, data: ByteBuffer, channel: any Channel) throws(WebSocketError) {
     if limits.messageBytes == Int.max, limits.bufferedReceiveBytes == Int.max, limits.outboundMessageBytes == Int.max {
       channel.writeAndFlush(WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: data), promise: nil)
       return
     }
-    guard channel.isWritable, pendingControlWrites < 16 else {
+    guard pendingControlWrites < 16 else {
       let error = WebSocketError.limitExceeded(.outboundMessage)
       fail(error)
       channel.close(promise: nil)
@@ -171,12 +172,12 @@ final class MessageBridge: ChannelInboundHandler {
     channel.writeAndFlush(WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: data), promise: promise)
   }
 
-  private func append(_ bytes: [UInt8]) throws {
+  private func append(_ bytes: [UInt8]) throws(WebSocketError) {
     guard bytes.count <= limits.messageBytes - accumulated.count else { throw WebSocketError.limitExceeded(.message) }
     accumulated += bytes
   }
 
-  private func emit() throws {
+  private func emit() throws(WebSocketError) {
     let message: WebSocketMessage
     if opcode == .text {
       guard let text = String(validating: accumulated, as: UTF8.self) else { throw WebSocketError.protocolViolation("invalid text UTF-8") }
@@ -193,9 +194,9 @@ final class MessageBridge: ChannelInboundHandler {
     continuation.yield(.message(message))
   }
 
-  private func fail(_ error: any Error) {
+  private func fail(_ error: WebSocketError) {
     guard !closed else { return }
-    closed = true
+    termination = error
     accumulated = []
     continuation.finish(throwing: error)
   }

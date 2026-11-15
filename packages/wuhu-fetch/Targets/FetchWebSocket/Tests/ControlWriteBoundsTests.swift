@@ -3,6 +3,7 @@ import Fetch
 import NIOCore
 import NIOEmbedded
 import NIOWebSocket
+import Synchronization
 import Testing
 
 @Suite(.serialized)
@@ -37,16 +38,25 @@ struct ControlWriteBoundsTests {
     _ = try channel.finish()
   }
 
-  @Test(arguments: [WebSocketOpcode.ping, .connectionClose])
-  func controlRepliesRefuseNonWritableChannels(opcode: WebSocketOpcode) throws {
+  @Test func pongToAPingDuringALargeSendFollowsTheMessage() async throws {
     let writes = StalledControlWrites()
-    let (channel, _) = try connection(writes: writes)
+    let channel = await NIOAsyncTestingChannel(handler: writes)
+    try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).get()
+    let socket = try await channel.testingEventLoop.executeInContext {
+      let bridge = MessageBridge(limits: .init(outboundMessageBytes: 4 << 20))
+      try channel.pipeline.syncOperations.addHandler(bridge)
+      return bridge.connection(channel: channel, headers: Headers(), closeTimeout: .seconds(1))
+    }
+    let send = Task { try await socket.send(.binary(Array(repeating: 42, count: 2 << 20))) }
+    #expect(try await channel.waitForOutboundWrite(as: WebSocketFrame.self).opcode == .binary)
     channel.isWritable = false
-    try channel.writeInbound(control(opcode))
-    channel.embeddedEventLoop.run()
-    #expect(!channel.isActive)
-    #expect(writes.count == 0)
-    _ = try channel.finish(acceptAlreadyClosed: true)
+    try await channel.writeInbound(control(.ping))
+    #expect(channel.isActive)
+    #expect(try await channel.readOutbound(as: WebSocketFrame.self)?.opcode == .pong)
+    writes.complete()
+    try await send.value
+    #expect(channel.isActive)
+    _ = try await channel.finish()
   }
 
   @Test(arguments: [WebSocketOpcode.ping, .connectionClose])
@@ -76,26 +86,32 @@ private func control(_ opcode: WebSocketOpcode) -> WebSocketFrame {
   WebSocketFrame(fin: true, opcode: opcode, data: ByteBufferAllocator().buffer(capacity: 0))
 }
 
-private final class StalledControlWrites: ChannelOutboundHandler {
+private final class StalledControlWrites: ChannelOutboundHandler, Sendable {
   typealias OutboundIn = WebSocketFrame
-  var count = 0
-  var pending: [EventLoopPromise<Void>] = []
+  private let state = Mutex((count: 0, pending: [EventLoopPromise<Void>]()))
+  var count: Int { state.withLock { $0.count } }
 
   func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-    count += 1
-    if let promise { pending.append(promise) }
+    state.withLock {
+      $0.count += 1
+      if let promise { $0.pending.append(promise) }
+    }
+    context.write(data, promise: nil)
   }
-
-  func flush(context: ChannelHandlerContext) {}
 
   func close(context: ChannelHandlerContext, mode: CloseMode, promise: EventLoopPromise<Void>?) {
     context.close(mode: mode, promise: promise)
-    for pending in pending { pending.fail(ChannelError.ioOnClosedChannel) }
-    pending.removeAll()
+    for pending in takePending() { pending.fail(ChannelError.ioOnClosedChannel) }
   }
 
   func complete() {
-    for pending in pending { pending.succeed(()) }
-    pending.removeAll()
+    for pending in takePending() { pending.succeed(()) }
+  }
+
+  private func takePending() -> [EventLoopPromise<Void>] {
+    state.withLock { state in
+      defer { state.pending = [] }
+      return state.pending
+    }
   }
 }

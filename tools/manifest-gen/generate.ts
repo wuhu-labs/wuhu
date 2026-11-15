@@ -1782,6 +1782,19 @@ export async function targetCheckPlatforms(
   return result
 }
 
+export async function targetAppPlatforms(
+  packageDir: string,
+): Promise<Map<string, CheckPlatform>> {
+  const result = new Map<string, CheckPlatform>()
+  for (const appDir of await discoverAppDirs(packageDir)) {
+    const app = await readYaml<AppManifest>(join(appDir, 'app.yml'))
+    for (const target of app.targets) {
+      result.set(target.name, appTargetPlatform(target))
+    }
+  }
+  return result
+}
+
 export async function testSnapshotReferences(
   packageDir: string,
 ): Promise<Map<string, string>> {
