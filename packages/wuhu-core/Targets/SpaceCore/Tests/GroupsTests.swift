@@ -78,8 +78,9 @@ import Testing
     defer { consumer.cancel() }
     _ = try await space.fs(Self.alice).write("/late.md", bytes("alice"), ifMatch: nil)
     _ = try await space.fs(.shared).write("/after.md", bytes("shared"), ifMatch: nil)
-    let collected = try await awaitItems(events, atLeast: 2)
+    _ = try await awaitItems(events, atLeast: 2)
     await settle()
+    let collected = await events.items
     #expect(collected.map(\.path) == ["/readme.md", "/after.md"])
     #expect(collected.allSatisfy { $0.group == .shared })
   }
@@ -95,11 +96,13 @@ import Testing
     ]
     defer { consumers.forEach { $0.cancel() } }
     try await space.move("/readme.md", in: .shared, to: "/docs/readme.md", in: Self.alice, replacing: false, acting: Self.alice)
-    let deleted = try await awaitItems(left, atLeast: 1)
-    let written = try await awaitItems(arrived, atLeast: 1)
+    _ = try await awaitItems(left, atLeast: 1)
+    _ = try await awaitItems(arrived, atLeast: 2)
     await settle()
+    let (deleted, written) = await (left.items, arrived.items)
     #expect(deleted.map(\.kind) == [.delete] && deleted.map(\.path) == ["/readme.md"])
-    #expect(written.map(\.path).last == "/docs/readme.md" && written.last?.kind == .write)
+    #expect(written.map(\.path) == ["/docs", "/docs/readme.md"] && written.map(\.entry) == [.directory, .file])
+    #expect(written.allSatisfy { $0.kind == .write && $0.rev == written[0].rev })
     #expect(try await space.fs(Self.alice).read("/docs/readme.md").1 == bytes("# Readme\n"))
     #expect((try? await space.fs(.shared).read("/readme.md")) == nil)
     #expect(try await space.history(path("/readme.md"), in: .shared).last?.2 == .delete)

@@ -509,7 +509,10 @@ extension SessionGateTests {
       let id = output.conversationId
       let channel = try await t.harness.store.conversation(ConversationID(id))
       #expect(channel.kind == .users)
-      #expect(channel.title == "People")
+      let title = try await t.harness.space.query(
+        "SELECT title FROM conversations WHERE id = '\(id)'", as: Principal(actor: .session(t.parent), group: .shared),
+      ).rows.first?.first
+      #expect(title == .text("People"))
       #expect(Set(channel.members.map(\.member)) == [alice, bob])
       let add = try await t.harness.post("/v1/channel/\(id)/add", ["people": .array([.string(carol)])], bearer: t.token)
       #expect(add.status == .ok)
@@ -536,9 +539,7 @@ extension SessionGateTests {
       #expect(try await t.harness.get("/v1/conversation/\(id)/messages", bearer: aliceBearer).status == .ok)
       let read = try await t.harness.get("/v1/conversation/\(id)/messages", bearer: t.token)
       #expect(read.status == .ok)
-      let list = try await t.harness.get("/v1/conversations", bearer: t.token)
-      #expect(list.status == .ok)
-      #expect(try await list.text().contains("Team"))
+      #expect(try await t.harness.get("/v1/conversation/\(id)", bearer: t.token).status == .forbidden)
     }
   }
 }

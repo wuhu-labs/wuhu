@@ -27,7 +27,10 @@ import Testing
       """)
       let id = try #require(result.object?["id"]?.stringValue)
       let record = try await rig.space.sessions.conversation(ConversationID(id))
-      #expect(record.title == "Team")
+      let rows = try await rig.space.query(
+        "SELECT title FROM conversations WHERE id = '\(id)'", as: Principal(actor: .session(rig.session), group: rig.group),
+      ).rows
+      #expect(rows.first?.first == .text("Team"))
       #expect(Set(record.members.map(\.member)) == Set(people.prefix(2)))
       #expect(record.members.allSatisfy { $0.kind == .user })
       #expect(result.object?["code"] == "invalidArgument")

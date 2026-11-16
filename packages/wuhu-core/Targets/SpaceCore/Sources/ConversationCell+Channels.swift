@@ -16,7 +16,7 @@ extension ConversationCell {
     try check(title)
     let now = SQLiteDateFormat.string(from: date)
     try make(ConversationRecord(
-      id: ConversationID(id.key), kind: .users, ownerSession: nil, title: nil, group: group,
+      id: ConversationID(id.key), kind: .users, ownerSession: nil, group: group,
       windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
       members: people.map { ConversationMember(member: $0, kind: .user) }, createdAt: date,
     ), now: now)

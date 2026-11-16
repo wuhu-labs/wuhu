@@ -1,6 +1,10 @@
 import { sessionPresentation } from './session-model.ts'
 import { canCompose, sessionCapability } from './session-capability.ts'
-import { conversationCapability } from './use-conversation-access.ts'
+import {
+  accessFailureMessage,
+  conversationCapability,
+} from './use-conversation-access.ts'
+import { ApiError } from '../sdk/errors.ts'
 
 function equal(actual: unknown, expected: unknown) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -71,6 +75,22 @@ Deno.test('conversation access waits for membership and roster, and excludes tas
     ),
     false,
   )
+})
+
+Deno.test('a conversation the reader is not in is unknown, not an error', () => {
+  equal(
+    accessFailureMessage(
+      new ApiError(404, { code: 'notFound', message: 'unknown conversation' }),
+    ),
+    null,
+  )
+  equal(
+    accessFailureMessage(
+      new ApiError(403, { code: 'forbidden', message: 'no' }),
+    ),
+    'no',
+  )
+  equal(accessFailureMessage(new Error('offline')), 'offline')
 })
 
 Deno.test('session route presentation opens tasks directly and agents only on their transcript journey', () => {

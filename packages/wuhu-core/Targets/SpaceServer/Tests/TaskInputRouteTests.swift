@@ -126,11 +126,9 @@ import Testing
         .object(["title": "helper", "template": "coder", "expects_reply": true, "message": "go"]),
       )
       #expect(!isToolError(spawned))
-      let dm = try #require(t.harness.store.conversations(member: t.parent.rawValue).first {
-        $0.kind == .dmSession && !$0.members.contains { $0.member == t.task.rawValue }
-      })
-      let child = try #require(dm.members.first { $0.member != t.parent.rawValue })
-      let record = try await t.harness.store.record(SessionID(child.member))
+      let child = try #require(t.harness.store.awaitedRequests(t.parent).first?.task)
+      #expect(try await t.harness.store.directMessage(between: t.parent.rawValue, and: child.rawValue) != nil)
+      let record = try await t.harness.store.record(child)
       #expect(record.kind == .task)
       #expect(record.parent == t.parent)
     }
@@ -151,8 +149,8 @@ import Testing
       )
       #expect(!isToolError(followed))
 
-      let dm = try #require(t.harness.store.conversations(member: task).first { $0.kind == .dmSession })
-      let request = try #require(try await t.harness.store.messages(conversation: dm.id).first?.requestID)
+      let dm = try #require(try await t.harness.store.directMessage(between: task, and: parent))
+      let request = try #require(try await t.harness.store.messages(conversation: dm).first?.requestID)
       // The task has seen its request once its queue drains; only then may it report.
       _ = try await t.harness.store.drainQueue(t.task)
       for kind in ["progress", "final"] {
@@ -163,7 +161,7 @@ import Testing
         #expect(!isToolError(reported), "\(kind)")
       }
 
-      let messages = try await t.harness.store.messages(conversation: dm.id)
+      let messages = try await t.harness.store.messages(conversation: dm)
       #expect(messages.map(\.kind) == [.request, .message, .progress, .final])
       #expect(messages.map(\.senderSession) == [t.parent, t.parent, t.task, t.task])
     }

@@ -54,7 +54,6 @@ public struct ConversationRecord: Hashable, Sendable {
   public var id: ConversationID
   public var kind: ConversationKind
   public var ownerSession: SessionID?
-  public var title: String?
   public var group: GroupID
   public var windowMessages: Int
   public var windowSeconds: Int
@@ -105,7 +104,6 @@ enum Conversations {
       id: ConversationID(row.id),
       kind: ConversationKind(rawValue: row.kind)!,
       ownerSession: row.ownerSession.map { SessionID($0) },
-      title: db.rows(ConversationTitleRow.where { $0.conversationID.eq(id) }).first?.title,
       group: GroupID(rawValue: row.group),
       windowMessages: row.windowMessages,
       windowSeconds: row.windowSeconds,

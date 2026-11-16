@@ -206,14 +206,11 @@ import Testing
         .dm(with: second.name), messageID: MessageID("m1"), sender: Sender(id: foreign.name, timeZone: .gmt),
         content: .init(text: "hi"), acting: Principal(actor: .publicReader, group: p.bob),
       )
-      func listed(_ query: String) async throws -> [String] {
-        let response = try await send(p, .get, "/v1/conversations\(query)", group: p.alice)
-        return try JSONValueDecoder().decode(ConversationsOutput.self, from: try await json(response)).conversations.map(\.id)
-      }
-      #expect(try await listed("") == [dm.message.conversation.rawValue])
-      // Homed in bob, which alice does not read: listed and notified because
-      // the persona is a member.
-      #expect(try await listed("?identity=\(second.name)") == [dm.message.conversation.rawValue])
+      // Homed in bob, which alice does not read: read and notified because the
+      // persona is a member.
+      let conversation = "/v1/conversation/\(dm.message.conversation.rawValue)"
+      #expect(try await send(p, .get, conversation, group: p.alice).status == .ok)
+      #expect(try await send(p, .get, conversation + "?identity=\(second.name)", group: p.alice).status == .ok)
       let notified = try await send(
         p, .post, "/v1/tools/query?identity=\(second.name)", .object(["sql": "SELECT source FROM notifications"]), group: p.alice,
       )

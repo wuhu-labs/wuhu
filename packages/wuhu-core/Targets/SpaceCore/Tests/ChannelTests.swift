@@ -33,7 +33,6 @@ import Testing
     await #expect(throws: ChannelError.unknownPerson("missing")) {
       try await space.sessions.createConversation(members: ["minsheng", "missing"], in: .shared)
     }
-    #expect(try await space.sessions.conversations(reader: persona.name, group: .shared).map(\.id) == [id])
   }
 
   @Test func removingPeopleAlsoRemovesLegacyRawAliasesAndUnknownStoredMembers() async throws {
@@ -57,7 +56,7 @@ import Testing
       let principal = Principal.shared(.session(agent))
       try await space.registerPeople(["alice", "bob", "carol"])
       let id = try await store.createConversation(members: ["alice", "bob"], title: "Team", in: .shared)
-      #expect(try await store.conversation(id).title == "Team")
+      #expect(try await title(of: id, in: space, as: principal) == "Team")
       #expect(try await store.conversation(id).members.map(\.member) == ["alice", "bob"])
       await #expect(throws: ChannelError.sessionMember(agent.rawValue)) {
         try await store.addChannelMembers(id, people: ["carol", agent.rawValue], as: principal)
@@ -74,9 +73,9 @@ import Testing
       try await store.removeChannelMembers(id, people: ["bob"], as: principal)
       try await store.renameChannel(id, title: "Renamed", as: principal)
       #expect(try await store.conversation(id).members.map(\.member) == ["alice", "carol"])
-      #expect(try await store.conversation(id).title == "Renamed")
+      #expect(try await title(of: id, in: space, as: principal) == "Renamed")
       try await store.renameChannel(id, title: nil, as: principal)
-      #expect(try await store.conversation(id).title == nil)
+      #expect(try await title(of: id, in: space, as: principal) == nil)
       await #expect(throws: ChannelError.invalidTitle) { try await store.renameChannel(id, title: "  ", as: principal) }
       _ = try await store.post(.conversation(id), messageID: MessageID("reply"), sender: person(agent.rawValue), senderSession: agent, content: .init(text: "hello"))
       #expect(try await store.conversation(id).members.allSatisfy { $0.kind == .user })
@@ -208,13 +207,12 @@ import Testing
     }
   }
 
-  @Test func anonymousCannotReadManageOrQueryChannelsAndListsStayRecentActive() async throws {
+  @Test func anonymousCannotReadManageOrQueryChannels() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
       let store = space.sessions
       try await space.registerPeople(["alice", "bob"])
       let older = try await store.createConversation(members: ["alice"], title: "Older", in: .shared)
-      let newer = try await store.createConversation(members: ["alice"], title: "Newer", in: .shared)
       let foreign = try await plainGroup(space, "foreign")
       let remote = try await store.createConversation(members: ["alice"], in: foreign)
       try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: (try await space.ensureDevPerson()).actor, acting: foreign)
@@ -231,15 +229,17 @@ import Testing
       #expect(try await !store.reads(store.conversation(remote), reader: nil, group: .shared))
       #expect(try await space.query("SELECT title FROM conversations WHERE id = '\(older.rawValue)'", as: .shared(.publicReader)).rows.isEmpty)
       #expect(try await space.query("SELECT id FROM \"wuhu://*.localspace/conversations\" WHERE id = '\(remote.rawValue)'", as: .shared(.publicReader)).rows.isEmpty)
-      _ = try await store.post(.conversation(newer), messageID: MessageID("newer"), sender: person("alice"), content: .init(text: "newer"))
-      _ = try await store.post(.conversation(older), messageID: MessageID("older"), sender: person("alice"), content: .init(text: "older"))
-      #expect(try await store.conversations(reader: nil, group: .shared).isEmpty)
-      #expect(try await store.conversations(reader: "alice", group: .shared).prefix(2).map(\.id) == [older, newer])
     }
   }
 }
 
 private func person(_ id: String) -> Sender { Sender(id: id, timeZone: .gmt) }
+
+private func title(of conversation: ConversationID, in space: Space, as principal: Principal) async throws -> String? {
+  let rows = try await space.query("SELECT title FROM conversations WHERE id = '\(conversation.rawValue)'", as: principal).rows
+  guard case let .text(title)? = rows.first?.first else { return nil }
+  return title
+}
 
 private func plainGroup(_ space: Space, _ id: String) async throws -> GroupID {
   try await space.seedGroup(GroupID(rawValue: id))

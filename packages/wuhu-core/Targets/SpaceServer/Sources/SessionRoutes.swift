@@ -488,8 +488,7 @@ func addSessionRoutes(
   }
 
   // A conversation the caller does not read answers as a missing one.
-  // The group the reader acts in, which names the attachments it is handed.
-  @Sendable func readingSeat(_ id: ConversationID, _ request: Request) async throws -> Result<(group: GroupID, reader: String?, principal: Principal), RouteRefusal> {
+  @Sendable func readingSeat(_ id: ConversationID, _ request: Request) async throws -> Result<(conversation: ConversationRecord, group: GroupID, reader: String?, principal: Principal), RouteRefusal> {
     let principal: Principal
     switch try await principalOf(request) {
     case let .principal(resolved): principal = resolved
@@ -508,28 +507,27 @@ func addSessionRoutes(
       guard try await store.reads(conversation, reader: reader, group: principal.group) else {
         throw SessionStoreError.unknownConversation(id.rawValue)
       }
-      return .success((principal.group, reader, reader.map { principal.speaking(as: $0) } ?? principal))
+      return .success((conversation, principal.group, reader, reader.map { principal.speaking(as: $0) } ?? principal))
     } catch {
       return .failure(RouteRefusal(response: try sessionErrorResponse(error)))
     }
   }
 
-  router.get("/v1/conversations") { request, _ in
-    let principal: Principal
-    switch try await principalOf(request) {
-    case let .principal(resolved): principal = resolved
-    case let .refused(response): return response
-    }
-    let reader: String?
-    if case .session = principal.actor { reader = principal.member }
-    else {
-      switch try await identityVerdict(queryValues(of: request.url)["identity"], request: request, space: space, devPerson: devPerson, now: dateGen.now) {
-      case let .identity(resolved): reader = resolved
-      case let .refused(response): return response
+  // What the old list answered for one id: a channel the reader reads, or any other conversation that names the reader.
+  router.get("/v1/conversation/:id") { request, parameters in
+    guard let raw = parameters["id"] else { return unknownConversation(parameters) }
+    switch try await readingSeat(ConversationID(raw), request) {
+    case let .failure(refusal): return refusal.response
+    case let .success(seat):
+      let conversation = seat.conversation
+      guard conversation.kind == .users || conversation.members.contains(where: { $0.member == seat.reader }) else {
+        return unknownConversation(parameters)
       }
+      return try Response.json(ConversationDetail(
+        kind: ConversationKindPayload(rawValue: conversation.kind.rawValue)!,
+        members: conversation.members.map { ConversationMemberPayload(member: $0.member, kind: $0.kind.rawValue) },
+      ))
     }
-    let records = try await store.conversations(reader: reader, group: principal.group)
-    return try Response.json(ConversationsOutput(conversations: try await conversationPayloads(records, space: space)))
   }
 
   router.get("/v1/conversation/:id/messages") { request, parameters in
@@ -538,7 +536,7 @@ func addSessionRoutes(
     let query = queryValues(of: request.url)
     let viewer: GroupID
     switch try await readingSeat(id, request) {
-    case let .success(group): viewer = group.group
+    case let .success(seat): viewer = seat.group
     case let .failure(refusal): return refusal.response
     }
     do {
@@ -584,8 +582,8 @@ func addSessionRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "after must be a non-negative integer")
     }
     switch try await readingSeat(id, request) {
-    case let .success(viewer):
-      return conversationStreamResponse(space: space, scope: runtime.streamScope, store: store, conversation: id, after: after, principal: viewer.principal, clock: clock)
+    case let .success(seat):
+      return conversationStreamResponse(space: space, scope: runtime.streamScope, store: store, conversation: id, after: after, principal: seat.principal, clock: clock)
     case let .failure(refusal):
       return refusal.response
     }
@@ -836,27 +834,6 @@ private func attachmentPayload(_ attachment: Attachment) -> AttachmentPayload {
   case let .image(path, mimeType, size, _): AttachmentPayload(kind: .image, path: path, mimeType: mimeType, size: size)
   case let .file(path, mimeType, size): AttachmentPayload(kind: .file, path: path, mimeType: mimeType, size: size)
   }
-}
-
-func conversationPayloads(_ records: [ConversationRecord], space: Space) async throws -> [ConversationPayload] {
-  let handles = try await handles(for: records.flatMap { $0.members.map(\.member) }, space: space)
-  return records.map { conversationPayload($0, handles: handles) }
-}
-
-private func conversationPayload(_ record: ConversationRecord, handles: [String: String]) -> ConversationPayload {
-  ConversationPayload(
-    title: record.title,
-    id: record.id.rawValue,
-    kind: ConversationKindPayload(rawValue: record.kind.rawValue)!,
-    ownerSession: record.ownerSession?.rawValue,
-    members: record.members.map {
-      ConversationMemberPayload(member: $0.member, memberHandle: handles[$0.member], kind: $0.kind.rawValue)
-    },
-    windowMessages: record.windowMessages,
-    windowSeconds: record.windowSeconds,
-    lastMessageN: nil,
-    lastMessageAt: nil,
-  )
 }
 
 func unknownConversation(_ parameters: RouteParameters) -> Response {

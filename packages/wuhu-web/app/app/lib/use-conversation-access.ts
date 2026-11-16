@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react'
-import type {
-  ConversationPayload,
-  ConversationsOutput,
-} from './contract.gen.ts'
+import type { ConversationDetail } from './contract.gen.ts'
 import type { SessionSummary } from '~/lib/session-model'
 import type { SessionCapability } from './session-capability.ts'
 import { api } from '~/sdk/http'
-import { errorMessage } from '~/sdk/errors'
+import { ApiError, errorMessage } from '~/sdk/errors'
 
 type Access = {
   id: string
-  conversation: ConversationPayload | null
+  conversation: ConversationDetail | null
   error: string | null
 }
 
+// The list this replaced answered a conversation the reader was not in as absent, not as an error.
+export function accessFailureMessage(failure: unknown): string | null {
+  return failure instanceof ApiError && failure.status === 404
+    ? null
+    : errorMessage(failure)
+}
+
 export function conversationCapability(
-  conversation: Pick<ConversationPayload, 'kind' | 'members'> | null,
+  conversation: Pick<ConversationDetail, 'kind' | 'members'> | null,
   sessions: SessionSummary[] | null,
 ): SessionCapability {
   if (conversation === null) return { kind: 'unknown' }
@@ -46,17 +50,17 @@ export function useConversationAccess(
   useEffect(() => {
     if (id === null) return
     let cancelled = false
-    api<ConversationsOutput>('/v1/conversations').then(
-      (output) => {
-        if (cancelled) return
-        const conversation = output.conversations.find((found) =>
-          found.id === id
-        )
-        setAccess({ id, conversation: conversation ?? null, error: null })
+    api<ConversationDetail>(`/v1/conversation/${encodeURIComponent(id)}`).then(
+      (conversation) => {
+        if (!cancelled) setAccess({ id, conversation, error: null })
       },
       (failure: unknown) => {
         if (!cancelled) {
-          setAccess({ id, conversation: null, error: errorMessage(failure) })
+          setAccess({
+            id,
+            conversation: null,
+            error: accessFailureMessage(failure),
+          })
         }
       },
     )

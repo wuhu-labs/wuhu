@@ -48,22 +48,6 @@ extension SpaceCell {
 // requester they name, and the documents a move would carry under a path. A question about one
 // conversation, person, group or document is that addressable's own read.
 extension SpaceCell {
-  /// Every conversation, or those naming a session member, most recently written first.
-  func conversations(member: String? = nil) -> [ConversationID] {
-    db.rows(
-      ConversationRow.where {
-        #sql("""
-        \(bind: member) IS NULL OR EXISTS (
-          SELECT 1 FROM conversation_members
-          WHERE conversation_id = \($0.id) AND member_kind = 'session' AND member = \(bind: member)
-        )
-        """, as: Bool.self)
-      }.order {
-        #sql("COALESCE((SELECT MAX(n) FROM messages WHERE conversation_id = \($0.id)), 0)", as: Int64.self).desc()
-      }.select { $0.id },
-    ).map { ConversationID($0) }
-  }
-
   /// The conversation a DM spelling names: a session's id, a persona's name or an alias; nil for nobody.
   func directMessageTarget(_ spelling: String) -> String? {
     directoryTarget(spelling, sessions: true)

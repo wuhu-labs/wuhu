@@ -99,7 +99,7 @@ func sessionlessRouter(
 
   for path in [
     "/v1/server", "/v1/context", "/v1/groups", "/v1/group/:id", "/v1/secret", "/v1/secret/:name",
-    "/v1/conversation/:id/messages", "/v1/conversation/:id/observe", "/v1/conversation/:id/page", "/v1/conversations", "/v1/dm",
+    "/v1/conversation/:id/messages", "/v1/conversation/:id/observe", "/v1/conversation/:id/page", "/v1/dm",
   ] {
     router.get(path, use: forward)
   }

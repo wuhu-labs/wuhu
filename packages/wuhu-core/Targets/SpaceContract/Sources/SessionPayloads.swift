@@ -309,26 +309,13 @@ public struct ConversationReadOutput: Codable, Equatable, Sendable {
 @Contract
 public struct ConversationMemberPayload: Codable, Equatable, Sendable {
   public let member: String
-  public let memberHandle: String?
   public let kind: String
 }
 
 @Contract
-public struct ConversationPayload: Codable, Equatable, Sendable {
-  public let title: String?
-  public let id: String
+public struct ConversationDetail: Codable, Equatable, Sendable {
   public let kind: ConversationKindPayload
-  public let ownerSession: String?
   public let members: [ConversationMemberPayload]
-  public let windowMessages: Int
-  public let windowSeconds: Int
-  public let lastMessageN: Int?
-  public let lastMessageAt: Double?
-}
-
-@Contract
-public struct ConversationsOutput: Codable, Equatable, Sendable {
-  public let conversations: [ConversationPayload]
 }
 
 @Contract

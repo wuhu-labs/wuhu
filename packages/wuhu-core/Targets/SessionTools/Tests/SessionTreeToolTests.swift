@@ -28,13 +28,10 @@ private func created(_ payload: ToolResultPayload) throws -> CreateSessionResult
   return result
 }
 
-// The messages a session holds in its DMs with other sessions.
-private func directMessages(_ space: Space, to session: SessionID) async throws -> [MessageRecord] {
-  var found: [MessageRecord] = []
-  for conversation in space.sessions.conversations(member: session.rawValue) where conversation.kind == .dmSession {
-    found += try await space.sessions.messages(conversation: conversation.id)
-  }
-  return found
+// The messages in the DM between two sessions.
+private func directMessages(_ space: Space, between a: SessionID, and b: SessionID) async throws -> [MessageRecord] {
+  let id = try #require(try await space.sessions.directMessage(between: a.rawValue, and: b.rawValue))
+  return try await space.sessions.messages(conversation: id)
 }
 
 @Suite(.deterministicDependencies)
@@ -171,7 +168,7 @@ struct SessionTreeToolTests {
       #expect(record.parent == nil)
       #expect(record.createdBy == researcher.rawValue)
       #expect(infra.requestID == nil)
-      let brief = try #require(try await directMessages(space, to: infra.sessionID).first)
+      let brief = try #require(try await directMessages(space, between: researcher, and: infra.sessionID).first)
       #expect(brief.senderSession == researcher)
       #expect(brief.kind == .message)
       #expect(brief.content.text == "your brief")
@@ -236,7 +233,7 @@ struct SessionTreeToolTests {
       ))
       #expect(first.title == "primed")
       #expect(try await space.sessions.record(first.sessionID).title == "primed")
-      let messages = try await directMessages(space, to: first.sessionID)
+      let messages = try await directMessages(space, between: parent, and: first.sessionID)
       #expect(messages.map(\.content.text) == ["context for a human"])
       #expect(messages.map(\.kind) == [.message])
 

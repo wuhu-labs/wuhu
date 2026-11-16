@@ -74,7 +74,6 @@ struct ConversationCell {
       id: ConversationID(row.id),
       kind: kind,
       ownerSession: row.ownerSession.map { SessionID($0) },
-      title: db.rows(ConversationTitleRow.where { $0.conversationID.eq(id.key) }).first?.title,
       group: GroupID(rawValue: row.group),
       windowMessages: row.windowMessages,
       windowSeconds: row.windowSeconds,

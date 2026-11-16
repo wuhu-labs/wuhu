@@ -121,7 +121,7 @@ import struct WuhuAI.ToolCall
           }
         }
       }
-      #expect(t.harness.store.conversations(member: person).isEmpty)
+      #expect(try await t.harness.store.directMessage(between: person, and: t.parent.rawValue) == nil)
       #expect(try await t.harness.store.messages(conversation: .init(t.parent.rawValue)).isEmpty)
     }
   }

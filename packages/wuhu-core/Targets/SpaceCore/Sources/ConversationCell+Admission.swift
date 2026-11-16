@@ -107,7 +107,7 @@ extension ConversationCell {
       let mine: MemberKind = session(me) == nil ? .user : .session
       let their: MemberKind = theirs == nil ? .user : .session
       return ConversationRecord(
-        id: ConversationID(id.key), kind: mine == .session && their == .session ? .dmSession : .dmUser, ownerSession: nil, title: nil,
+        id: ConversationID(id.key), kind: mine == .session && their == .session ? .dmSession : .dmUser, ownerSession: nil,
         group: poster.group, windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
         members: [ConversationMember(member: me, kind: mine), ConversationMember(member: other, kind: their)].sorted { $0.member < $1.member },
         createdAt: post.at,

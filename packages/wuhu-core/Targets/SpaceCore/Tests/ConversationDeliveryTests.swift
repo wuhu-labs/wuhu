@@ -103,7 +103,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
       )
     }
     #expect(rig.store.message(MessageID("m2")) == nil)
-    #expect(rig.store.conversations(member: "carol").isEmpty)
+    #expect(try await rig.store.directMessage(between: "carol", and: task.rawValue) == nil)
   }
 
   @Test func `a session reaches a task in its DM, never its box`() async throws {

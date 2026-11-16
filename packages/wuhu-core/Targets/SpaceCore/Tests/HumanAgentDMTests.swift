@@ -59,7 +59,8 @@ import Testing
         }
         #expect(try await store.undrainedInputs(session).isEmpty)
       }
-      #expect(store.conversations(member: "carol").isEmpty)
+      #expect(try await store.directMessage(between: "carol", and: agent.rawValue) == nil)
+      #expect(try await store.directMessage(between: "carol", and: task.rawValue) == nil)
       #expect(try await store.inbox("carol").isEmpty)
     }
   }

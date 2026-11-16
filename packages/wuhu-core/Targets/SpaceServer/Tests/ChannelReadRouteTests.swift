@@ -114,7 +114,7 @@ import Testing
     }
   }
 
-  @Test func theDevPersonCannotImpersonateChannelMembersAndMembersListRecentActivity() async throws {
+  @Test func theDevPersonCannotImpersonateChannelMembers() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let (aliceBearer, aliceKey) = try await harness.enrolledBearer()
@@ -138,14 +138,46 @@ import Testing
       #expect(try await json(impersonated).object?["code"] == "identityNotYours")
       let created = try await harness.call("/v1/conversation", ["members": .array([]), "title": "Identified"], as: ConversationPostOutput.self, bearer: aliceBearer)
       #expect(try await harness.store.conversation(ConversationID(created.conversationId)).members.map(\.member) == [alice])
-      for (id, message) in [(second, "second"), (first, "first")] {
-        _ = try await harness.store.post(.conversation(id), messageID: MessageID(message), sender: Sender(id: alice, timeZone: .gmt), content: .init(text: message))
-      }
-      let devList = try await harness.get("/v1/conversations")
-      #expect(try await devList.json(ConversationsOutput.self).conversations.map(\.id) == [devCreated.conversationId])
-      let response = try await harness.get("/v1/conversations", bearer: aliceBearer)
-      let rows = try await response.json(ConversationsOutput.self)
-      #expect(rows.conversations.prefix(2).map(\.id) == [first.rawValue, second.rawValue])
+      #expect(try await harness.get("/v1/conversation/\(devCreated.conversationId)").status == .ok)
+      #expect(try await harness.get("/v1/conversation/\(first.rawValue)", bearer: aliceBearer).status == .ok)
+      #expect(try await harness.get("/v1/conversation/\(second.rawValue)", bearer: aliceBearer).status == .ok)
+      #expect(try await harness.get("/v1/conversation/\(first.rawValue)").status == .notFound)
+      #expect(try await harness.get("/v1/conversation/\(created.conversationId)").status == .notFound)
+    }
+  }
+
+  @Test func aConversationDetailAnswersKindAndMembersToItsReader() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let (aliceBearer, aliceKey) = try await harness.enrolledBearer()
+      let alice = try await harness.space.adoptPersona(key: aliceKey).name
+      let bob = try await harness.adoptPersona()
+      let id = try await harness.store.createConversation(members: [alice, bob], in: .shared)
+
+      let read = try await harness.get("/v1/conversation/\(id.rawValue)", bearer: aliceBearer)
+      #expect(read.status == .ok)
+      let detail = try await read.json(ConversationDetail.self)
+      #expect(detail.kind == .users)
+      #expect(Set(detail.members.map(\.member)) == [alice, bob])
+      #expect(detail.members.allSatisfy { $0.kind == "user" })
+
+      let unreadable = try await harness.get("/v1/conversation/\(id.rawValue)")
+      #expect(unreadable.status == .notFound)
+      #expect(try await json(unreadable).object?["code"] == "notFound")
+
+      let unknown = try await harness.get("/v1/conversation/nowhere")
+      #expect(unknown.status == .notFound)
+      #expect(try await json(unknown).object?["code"] == "notFound")
+
+      // Readable by its home group, but the dev seat is no member: the list would never have named it.
+      let carol = try await harness.adoptPersona()
+      let dave = try await harness.adoptPersona()
+      let dm = try await harness.store.post(
+        .dm(with: dave), messageID: MessageID("between-two-others"), sender: Sender(id: carol, timeZone: .gmt),
+        content: .init(text: "hi"), acting: Principal(actor: .publicReader, group: .shared),
+      )
+      #expect(try await harness.get("/v1/conversation/\(dm.message.conversation.rawValue)/messages").status == .ok)
+      #expect(try await harness.get("/v1/conversation/\(dm.message.conversation.rawValue)").status == .notFound)
     }
   }
 }

@@ -33,29 +33,6 @@ extension SessionStore {
     return conversation?.members.contains { $0.member == member } == true
   }
 
-  public func conversations(member: String) -> [ConversationRecord] {
-    runtime.worker().read { reader in
-      let space = reader.cell(SpaceCell.ID("space"))
-      let ids: [ConversationID]
-      if let person = space.personCell(member) { ids = reader.cell(person).conversations() }
-      else { ids = space.conversations(member: member) }
-      return ids.compactMap { reader.cell(ConversationCell.ID($0.rawValue)).record() }
-    }
-  }
-
-  public func conversations(reader: String?, group: GroupID) async throws -> [ConversationRecord] {
-    var readable: [ConversationRecord] = []
-    let records = runtime.worker().read { reader in
-      reader.cell(SpaceCell.ID("space")).conversations().compactMap { reader.cell(ConversationCell.ID($0.rawValue)).record() }
-    }
-    for record in records {
-      if record.kind == .users {
-        if try await reads(record, reader: reader, group: group) { readable.append(record) }
-      } else if record.members.contains(where: { $0.member == reader }) { readable.append(record) }
-    }
-    return readable
-  }
-
   /// A post is a call to its conversation's cell.
   public func post(
     _ target: ConversationTarget,

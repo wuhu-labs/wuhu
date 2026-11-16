@@ -334,7 +334,7 @@ import Testing
     #expect(conversations == [[.text(dm.message.conversation.rawValue)]])
     let notifications = try await rig.space.query("SELECT source FROM notifications", as: asBob).rows
     #expect(notifications.contains([.text(dm.message.conversation.rawValue)]))
-    #expect(rig.store.conversations(member: persona).map(\.id) == [dm.message.conversation])
+    #expect(try await rig.store.directMessage(between: persona, and: "alice-person") == dm.message.conversation)
   }
 
   // One inbox across a person's groups: each row names its group, and a

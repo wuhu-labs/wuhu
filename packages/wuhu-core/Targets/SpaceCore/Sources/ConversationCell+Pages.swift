@@ -65,7 +65,7 @@ extension ConversationCell {
   func unopenedBox() -> ConversationRecord? {
     guard let owner = session(id.key), owner.kind == .agent else { return nil }
     return ConversationRecord(
-      id: ConversationID(id.key), kind: .box, ownerSession: SessionID(id.key), title: nil, group: GroupID(rawValue: owner.group),
+      id: ConversationID(id.key), kind: .box, ownerSession: SessionID(id.key), group: GroupID(rawValue: owner.group),
       windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
       members: [ConversationMember(member: id.key, kind: .session)], createdAt: owner.createdAt,
     )
