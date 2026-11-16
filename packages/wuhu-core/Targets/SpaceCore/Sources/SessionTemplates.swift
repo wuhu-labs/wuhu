@@ -1,3 +1,4 @@
+import enum AgentsContract.SessionKind
 import Foundation
 import JSONValue
 import SessionDomain

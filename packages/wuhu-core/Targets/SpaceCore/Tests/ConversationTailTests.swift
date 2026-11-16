@@ -1,3 +1,6 @@
+import struct AgentsContract.AgentCells
+import protocol AgentsContract.SessionReading
+import struct AgentsContract.SessionSummary
 import DeterministicDependencies
 import SessionDomain
 @testable import SpaceCore
@@ -6,6 +9,7 @@ import Testing
 @Suite(.deterministicDependencies) struct ConversationTailTests {
   @Test func aTailCatchesUpThenHearsEachPostUntilItsViewerStopsReading() async throws {
     let space = try Space.inMemory()
+    space.worker.provide(AgentCells(session: { _, _ in NoSession() }))
     let store = space.sessions
     try await space.registerPeople(["alice", "bob"])
     let channel = try await store.createConversation(members: ["alice", "bob"], title: "plans", in: .shared)
@@ -34,6 +38,7 @@ import Testing
 
   @Test func aTailOfAConversationItsViewerDoesNotReadIsClosed() async throws {
     let space = try Space.inMemory()
+    space.worker.provide(AgentCells(session: { _, _ in NoSession() }))
     let store = space.sessions
     try await space.registerPeople(["alice", "bob", "carol"])
     let channel = try await store.createConversation(members: ["alice", "bob"], title: "plans", in: .shared)
@@ -42,4 +47,8 @@ import Testing
       for try await _ in try await store.observeConversation(channel, as: carol) {}
     }
   }
+}
+
+private struct NoSession: SessionReading {
+  var summary: SessionSummary? { nil }
 }

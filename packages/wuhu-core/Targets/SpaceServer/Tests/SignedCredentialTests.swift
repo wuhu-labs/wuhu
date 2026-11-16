@@ -65,19 +65,17 @@ import Testing
     }
   }
 
-  @Test func aRetainedClientCanBackgroundAnExecAfterItsFirstBearerExpires() async throws {
+  @Test func aRetainedClientMintsAFreshBearerForEachRequest() async throws {
     try await withSessionDeps {
       let now = Mutex(Date())
       try await withDependencies { $0.date = DateGenerator { now.withLock { $0 } } } operation: {
         let t = try await SessionGateTests().tree()
-        let record = try #require(try await t.harness.space.execRecord(t.exec))
         let executor = SessionRuntime.toolExecutor(owner: t.harness.runtime.owner, execution: t.harness.runtime.execution, tokens: t.tokens, hub: t.harness.hub)
         let client = executor.client(t.parent)
-        let _: JSONValue = try await client.api(.get, "/v1/machine")
+        let before: JSONValue = try await client.api(.get, "/v1/machine")
         now.withLock { $0 = $0.addingTimeInterval(301) }
-        let exec = try await t.harness.space.reserveExec(machine: record.machine, caller: t.parent.rawValue, toolCall: ToolCallID(rawValue: "tc-retained-client")).id
-        let _: JSONValue = try await client.api(.post, "/v1/exec/\(exec.rawValue)/background")
-        #expect(try await t.harness.space.execRecord(exec)?.background == true)
+        let after: JSONValue = try await client.api(.get, "/v1/machine")
+        #expect(before == after)
       }
     }
   }

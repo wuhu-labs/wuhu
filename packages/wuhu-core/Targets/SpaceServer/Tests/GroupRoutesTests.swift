@@ -84,7 +84,7 @@ import Testing
     return try await p.harness.store.createSession(group: group, title: title, kind: .agent, createdBy: "owner", executor: model)
   }
 
-  @Test func everySurfaceThatReturnsAMessageCarriesTheSenderGroup() async throws {
+  @Test func messagesLoadAndOnlyAgentsExposeTheirGroupInScriptAndSQL() async throws {
     try await withSessionDeps {
       let p = try await people()
       let s = try await session(p, in: .shared)
@@ -96,18 +96,30 @@ import Testing
       let read = try await send(p, .get, "/v1/conversation/\(s.rawValue)/messages")
       #expect(read.status == .ok)
       let messages = try JSONValueDecoder().decode(ConversationReadOutput.self, from: try await json(read)).messages
-      #expect(messages.map(\.senderGroup) == [p.alice.rawValue])
+      #expect(messages.map(\.text) == ["from alice"])
 
       let observed = try await send(p, .get, "/v1/conversation/\(s.rawValue)/observe")
       #expect(observed.status == .ok)
       for try await frame in observed.sse() {
         let entry = try JSONValueDecoder().decode(ConversationMessagePayload.self, from: #require(JSONValue.parse(frame.data)))
-        #expect(entry.senderGroup == p.alice.rawValue)
+        #expect(entry.text == "from alice")
         break
       }
 
-      let senders = try await send(p, .post, "/v1/tools/query", .object(["sql": "SELECT sender_grp FROM message_senders"]))
-      #expect(try await json(senders).object?["rows"] == .array([.array([.string(p.alice.rawValue)])]))
+      try await p.harness.space.registerPerson("visitor")
+      _ = try await p.harness.store.post(
+        .box(s), messageID: MessageID("m2"), sender: Sender(id: "visitor", timeZone: .gmt),
+        content: .init(text: "a person"),
+      )
+      let senders = try await send(p, .post, "/v1/tools/query", .object(["sql": "SELECT sender_grp FROM message_senders ORDER BY n"]))
+      #expect(try await json(senders).object?["rows"] == .array([.array([.string(p.alice.rawValue)]), .array([.null])]))
+      let token = try await p.harness.runtime.tokens.sessionToken(s)
+      let page = try await send(p, .get, "/v1/conversation/\(s.rawValue)/page", bearer: token)
+      #expect(page.status == .ok)
+      let entries = try #require(try await json(page).object?["messages"]?.array)
+      #expect(entries.first?.object?["sender"]?.object?["group"] == .string(p.alice.rawValue))
+      #expect(entries.first?.object?["sender"]?.object?["title"] == .string("s"))
+      #expect(entries.last?.object?["sender"]?.object?["group"] == nil)
     }
   }
 
@@ -119,7 +131,7 @@ import Testing
       let before = try await p.harness.store.promptRevisions(theirs)
       _ = try await p.harness.space.fs(.shared).write("/bump.md", Data("x".utf8), ifMatch: nil)
 
-      for path in ["lines/page", "lines", "context", "home"] {
+      for path in ["lines/page", "lines"] {
         let response = try await send(p, .get, "/v1/session/\(id)/\(path)", group: p.alice)
         #expect(response.status == .notFound, "\(path)")
         #expect(try await code(response) == "notFound", "\(path)")

@@ -67,7 +67,7 @@ extension ConversationCell {
     return ConversationRecord(
       id: ConversationID(id.key), kind: .box, ownerSession: SessionID(id.key), title: nil, group: GroupID(rawValue: owner.group),
       windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
-      members: [ConversationMember(member: id.key, kind: .session)], createdAt: try! SQLiteDateFormat.date(from: owner.createdAt),
+      members: [ConversationMember(member: id.key, kind: .session)], createdAt: owner.createdAt,
     )
   }
 

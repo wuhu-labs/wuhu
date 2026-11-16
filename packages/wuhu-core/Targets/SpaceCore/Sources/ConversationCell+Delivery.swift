@@ -1,3 +1,4 @@
+import AgentsContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -33,7 +34,7 @@ extension ConversationCell {
         requestID: handed ? message.requestID : nil,
         replyTarget: message.replyTarget,
         owesReply: kind == .message && snapshot.sessions[key]?.kind == .agent && conversation.ownerSession == key,
-        senderGroup: poster.group == home ? nil : poster.group,
+        senderGroup: message.senderSession == nil || poster.group == home ? nil : poster.group,
         senderAdmin: isAdmin(poster, of: home),
         viewing: message.viewing?.named(for: home),
         content: message.content.attachments(in: conversation.group, for: home),
@@ -45,7 +46,7 @@ extension ConversationCell {
       source: conversation.id.rawValue, group: conversation.group, kind: .conversationMessage,
       payload: try Notifications.conversationPayload(
         messageID: message.id, conversation: conversation.id,
-        sender: message.sender.id, senderGroup: poster.group == conversation.group ? nil : poster.group,
+        sender: message.sender.id, senderGroup: message.senderSession == nil || poster.group == conversation.group ? nil : poster.group,
         text: message.content.text,
       ),
       createdAt: SQLiteDateFormat.string(from: now),
@@ -60,7 +61,7 @@ extension ConversationCell {
   /// Mails the session's cell an input, unless the session is gone or archived past its grace.
   mutating func put(_ put: SessionPut, to session: String, at now: Date) throws -> Bool {
     guard let row = self.session(session) else { return false }
-    if row.lifecycle != "live", let grace = row.graceExpiresAt, now >= (try SQLiteDateFormat.date(from: grace)) { return false }
+    if case let .archived(graceExpiresAt) = row.lifecycle, now >= graceExpiresAt { return false }
     ctx.send(.put(put), to: Recipient<SessionMail>(kind: SessionMail.kind, key: session))
     return true
   }
@@ -94,8 +95,8 @@ extension ConversationCell {
     if let owner = conversation.ownerSession { candidates.append(owner.rawValue) }
     if case let .session(parent) = replySender { candidates.append(parent.rawValue) }
     let readable = readable(by: poster)
-    let sessions = db.rows(PostSessionRow.where { $0.id.in(candidates) }).map { row in
-      (SessionID(row.id), (kind: row.kind, reachable: reaches(row.id, from: readable, in: conversation)))
+    let sessions = Set(candidates).compactMap { ctx.session(SessionID($0)).summary }.map { row in
+      (row.id, (kind: row.kind, reachable: reaches(row.id.rawValue, from: readable, in: conversation)))
     }
     let postedByPerson: Bool = if case .observer? = poster.actor { false } else { message.senderSession == nil }
     let writes = try conversation.kind == .box ? boxWrites(

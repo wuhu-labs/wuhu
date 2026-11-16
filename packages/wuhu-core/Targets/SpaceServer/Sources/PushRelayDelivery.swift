@@ -4,7 +4,6 @@
   import Foundation
 #endif
 import JSONValue
-import struct SessionDomain.MessageID
 import SpaceCore
 
 // Permanent refusals from the gateway. 410 is the revocation contract: the
@@ -47,9 +46,6 @@ func render(_ delivery: PushRelayDelivery, space: Space) async throws -> PushRel
     // space's front door.
     data["session"] = delivery.ownerSession
     data["message"] = payload?["messageID"]?.stringValue
-    if let message = payload?["messageID"]?.stringValue {
-      data["senderGroup"] = space.sessions.message(MessageID(message))?.senderGroup.rawValue
-    }
   case .sessionSettled, .sessionErrored,
        .sessionDisconnected, .contractorDisconnected:
     data["session"] = notification.source

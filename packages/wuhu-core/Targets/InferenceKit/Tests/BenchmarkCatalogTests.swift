@@ -11,11 +11,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct BenchmarkCatalogTests {
   @Test func benchmarkModelsSupportTheirDeclaredEfforts() throws {
-    let file = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
-      .appendingPathComponent("SystemFiles/Benchmark/models.json")
+    let file = URL(fileURLWithPath: "packages/wuhu-core/Targets/SystemFiles/Benchmark/models.json")
     let document = try ModelsDocument(json: Data(contentsOf: file))
     let catalog = ProviderCatalog(document: document, credentials: .unavailable)
     #expect(!document.providers.isEmpty)

@@ -2,6 +2,7 @@ import { SpaceClient, SpaceServer } from './client.ts'
 import {
   bounded,
   type EventStream,
+  graced,
   type Network,
   observeStore,
   type Subscription,
@@ -37,7 +38,9 @@ class FakeStream implements EventStream {
   private openHandler: (() => void) | null = null
   private messageHandler: ((data: string) => void) | null = null
   private activityHandler: (() => void) | null = null
-  private errorHandler: ((status?: number) => void) | null = null
+  private errorHandler:
+    | ((status?: number, retryAfterMs?: number) => void)
+    | null = null
 
   constructor(readonly url: string) {}
 
@@ -50,7 +53,7 @@ class FakeStream implements EventStream {
   onActivity(handler: () => void) {
     this.activityHandler = handler
   }
-  onError(handler: (status?: number) => void) {
+  onError(handler: (status?: number, retryAfterMs?: number) => void) {
     this.errorHandler = handler
   }
   close() {
@@ -66,8 +69,8 @@ class FakeStream implements EventStream {
   heartbeat() {
     this.activityHandler?.()
   }
-  fail(status?: number) {
-    this.errorHandler?.(status)
+  fail(status?: number, retryAfterMs?: number) {
+    this.errorHandler?.(status, retryAfterMs)
   }
 }
 
@@ -209,14 +212,89 @@ Deno.test('backoff escalates and resets on a successful open', () => {
   net.last.fail()
   timer.fire()
   net.last.fail()
-  assertEquals(backoffs(timer), [250, 500, 1000])
+  assertEquals(backoffs(timer), [1000, 2000, 4000])
 
   timer.fire()
   net.last.fireOpen()
   net.last.fail()
   // A live open resets the backoff to the first step.
-  assertEquals(backoffs(timer), [250, 500, 1000, 250])
+  assertEquals(backoffs(timer), [1000, 2000, 4000, 1000])
   assertEquals(store.getSnapshot().liveness, 'reconnecting')
+})
+
+Deno.test('a refused open retries when the server says, not on the backoff', () => {
+  const net = new FakeNet()
+  const timer = new FakeTimer()
+  collectStore(net, timer, revSubscription(0))
+  net.last.fail(503, 3000)
+  timer.fire()
+  net.last.fail(503)
+  assertEquals(backoffs(timer), [3000, 2000])
+})
+
+// Timers that fire in time order as the test moves the clock.
+class Clock implements Timer {
+  now = 0
+  private pending: { at: number; run: () => void }[] = []
+  schedule = (delayMs: number, run: () => void) => {
+    const entry = { at: this.now + delayMs, run }
+    this.pending.push(entry)
+    return () => {
+      const index = this.pending.indexOf(entry)
+      if (index >= 0) this.pending.splice(index, 1)
+    }
+  }
+  advance(ms: number) {
+    this.now += ms
+    for (;;) {
+      const due = this.pending.filter((entry) => entry.at <= this.now)
+        .sort((a, b) => a.at - b.at)[0]
+      if (due === undefined) return
+      this.pending.splice(this.pending.indexOf(due), 1)
+      due.run()
+    }
+  }
+}
+
+Deno.test('a dropped store reads as reconnecting, and as offline only once the grace lapses', () => {
+  const net = new FakeNet()
+  const clock = new Clock()
+  const store = graced(
+    observeStore<RevEvent[], RevEvent>({
+      subscription: revSubscription(0),
+      fold: (data, event) => [...data, event],
+      initial: [],
+      open: net.open,
+      timer: clock,
+    }),
+    clock,
+  )
+  store.subscribe(() => {})
+  assertEquals(store.getSnapshot().liveness, 'reconnecting')
+  net.last.fireOpen()
+  net.last.send({ rev: 1, path: '/a' })
+  net.last.fail(503)
+  clock.advance(9_900)
+  assertEquals(net.streams.length, 2)
+  assertEquals(store.getSnapshot().liveness, 'reconnecting')
+  assertEquals(store.getSnapshot().data, [{ rev: 1, path: '/a' }])
+  clock.advance(100)
+  assertEquals(store.getSnapshot().liveness, 'offline')
+
+  net.last.fireOpen()
+  assertEquals(store.getSnapshot().liveness, 'live')
+  net.last.fail()
+  clock.advance(9_000)
+  // A reopen inside the grace gives the next drop a grace of its own.
+  net.last.fireOpen()
+  net.last.fail()
+  clock.advance(9_900)
+  assertEquals(store.getSnapshot().liveness, 'reconnecting')
+  clock.advance(100)
+  assertEquals(store.getSnapshot().liveness, 'offline')
+  assert(store.getSnapshot() === store.getSnapshot(), 'snapshots are stable')
+  store.close()
+  assertEquals(net.last.closed, true)
 })
 
 Deno.test('a connection attempt that never opens times out and retries', () => {
@@ -547,7 +625,7 @@ Deno.test('a subscription that stops on refusal never retries a refused query, b
   timer.fire()
   assertEquals(net.streams.length, 2)
   net.last.fail(422)
-  assertEquals(backoffs(timer), [250])
+  assertEquals(backoffs(timer), [1000])
   assertEquals(timer.pendingCount, 0)
   assertEquals(store.getSnapshot().liveness, 'reconnecting')
   assertEquals(net.streams.length, 2)

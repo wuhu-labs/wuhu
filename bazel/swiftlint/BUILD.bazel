@@ -17,6 +17,18 @@ swiftlint_test(
 )
 
 swiftlint_test(
+    name = "bare_temporary_path_test",
+    srcs = [
+        "testdata/wuhu-core/Targets/Lint/Sources/BareTemporaryPath.swift",
+        "testdata/wuhu-core/Targets/Lint/Tests/BareTemporaryPathTests.swift",
+    ],
+    expected_violations = [
+        "no_bare_temporary_path",
+        "no_bare_temporary_path",
+    ],
+)
+
+swiftlint_test(
     name = "test_sources_test",
     srcs = glob(["testdata/Tests/*.swift"]),
 )

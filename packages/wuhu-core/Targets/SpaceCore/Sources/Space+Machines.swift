@@ -114,11 +114,6 @@ extension Space {
     worker.cell(MachineCell.ID(id.rawValue)).record()
   }
 
-  /// The group whose tree holds the machine's notes.
-  public func machineGroup(_ id: MachineID) async throws -> GroupID {
-    worker.cell(MachineCell.ID(id.rawValue)).record()?.group ?? .shared
-  }
-
   public func machine(account: AccountID) async throws -> MachineRecord? {
     cell.machine(account: account)
   }

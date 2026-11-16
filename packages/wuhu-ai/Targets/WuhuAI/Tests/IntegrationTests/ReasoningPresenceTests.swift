@@ -32,7 +32,7 @@ private let nonReasoningModels: [ModelEntry] = [
 
   @Test(arguments: reasoningModels)
   func reasoningBlocksArePresent(entry: ModelEntry) async throws {
-    try await withRecording(entry.recordingName) {
+    try await withRecording(entry.recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(entry)
       let context = Context(messages: [
         .user(UserMessage(content: [.text(TextContent(text: reasoningPrompt))])),
@@ -79,7 +79,7 @@ private let nonReasoningModels: [ModelEntry] = [
 
   @Test(arguments: nonReasoningModels)
   func nonReasoningModelProducesZeroReasoningBlocks(entry: ModelEntry) async throws {
-    try await withRecording(entry.recordingName) {
+    try await withRecording(entry.recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(entry)
       let context = Context(messages: [
         .user(UserMessage(content: [.text(TextContent(text: reasoningPrompt))])),
@@ -116,7 +116,7 @@ private let opaqueModels: [ModelEntry] = [
 @Suite(.deterministicDependencies) struct ReasoningOpaqueTests {
   @Test(arguments: opaqueModels)
   func opaqueBlobHasCorrectShape(entry: ModelEntry) async throws {
-    try await withRecording(entry.recordingName) {
+    try await withRecording(entry.recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(entry)
       let context = Context(messages: [
         .user(UserMessage(content: [.text(TextContent(text: reasoningPrompt))])),

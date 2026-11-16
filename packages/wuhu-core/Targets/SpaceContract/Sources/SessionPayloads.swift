@@ -128,22 +128,6 @@ public struct SessionTemplatesOutput: Codable, Equatable, Sendable {
   public let templates: [SessionTemplateDescriptor]
 }
 
-@Contract
-public struct SessionHomeSkill: Codable, Equatable, Sendable {
-  public let name: String
-  public let description: String
-  public let path: String
-}
-
-// What the session sees: `chain` is every AGENTS.md that resolves for it, in
-// injection order; `home` is its own directory whether or not it exists yet.
-@Contract
-public struct SessionHomeOutput: Codable, Equatable, Sendable {
-  public let home: String
-  public let chain: [String]
-  public let skills: [SessionHomeSkill]
-}
-
 // requestId is the request a session's create opened with expectsReply;
 // member is the model group member the new session was routed to.
 @Contract
@@ -181,26 +165,6 @@ public enum ConversationKindPayload: String, Codable, Equatable, Sendable {
   case box
   case dmUser = "dm_user"
   case dmSession = "dm_session"
-}
-
-@Contract
-public enum SessionContextSource: String, Codable, Equatable, Sendable {
-  case estimate
-  case reported
-}
-
-@Contract
-public struct SessionContext: Codable, Equatable, Sendable {
-  public let usedTokens: Int
-  public let maxTokens: Int
-  public let percentage: Double
-  public let updatedAt: Double?
-  public let source: SessionContextSource
-}
-
-@Contract
-public struct SessionContextOutput: Codable, Equatable, Sendable {
-  public let context: SessionContext?
 }
 
 @Contract
@@ -332,8 +296,6 @@ public struct ConversationMessagePayload: Codable, Equatable, Sendable {
   public let senderKind: SenderKind?
   public let senderTimezone: String
   public let senderSession: String?
-  /// The group the message was posted from; absent from servers before groups.
-  public let senderGroup: String?
   public let text: String
   public let attachments: [AttachmentPayload]?
   public let createdAt: Double
@@ -455,11 +417,6 @@ public struct PushRelayGrantInput: Codable, Equatable, Sendable {
   public let endpoint: String
   public let grant: String
   public let token: String
-}
-
-@Contract
-public struct PushRelayGrantDeleteInput: Codable, Equatable, Sendable {
-  public let grant: String
 }
 
 @Contract

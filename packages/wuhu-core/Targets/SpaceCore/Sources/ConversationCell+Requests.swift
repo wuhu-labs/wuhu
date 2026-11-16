@@ -42,7 +42,7 @@ extension ConversationCell {
   func mayOpen(_ id: RequestID, on task: SessionID, from requester: Caller) throws {
     guard let record = session(task.rawValue) else { throw SessionStoreError.unknownSession(task.rawValue) }
     let asks = switch requester {
-    case let .session(parent): record.parent == parent.rawValue
+    case let .session(parent): record.parent == parent
     case let .person(person): record.parent == nil && record.createdBy == person.persona && record.group == person.group.rawValue
     case let .observer(observer): record.parent == nil && record.createdBy == observer.member && record.group == observer.group.rawValue
     }
@@ -148,7 +148,7 @@ extension ConversationCell {
 
   /// Puts the requester's reminder that the task has reported nothing on the request for its stall seconds since `from`; a later put moves it, the request's end takes it back. Only a live requesting session gets one.
   private mutating func remindQuiet(_ row: RequestRow, from: Date) throws {
-    guard let seconds = row.stallSeconds, session(row.requester)?.lifecycle == "live" else { return }
+    guard let seconds = row.stallSeconds, session(row.requester)?.lifecycle == .live else { return }
     _ = try put(Sessions.quietReminder(row, seconds: seconds, from: from), to: row.requester, at: from)
   }
 }

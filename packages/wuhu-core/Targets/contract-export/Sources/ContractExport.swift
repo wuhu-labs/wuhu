@@ -36,8 +36,8 @@ struct ContractExport {
   }
 
   // The schema fixtures live under each contract target's test target so the
-  // golden test can read them as a declared Bazel input (a sandboxed test only
-  // sees its own resources; a package-level dir is not reachable via #filePath).
+  // golden test reads them from its own bundle (a test sees only its own
+  // resources; another target's folder is not reachable through `Bundle.module`).
   static let registries: [(directory: String, schemas: [(name: String, schema: JSONValue)])] = [
     ("packages/wuhu-core/Targets/SpaceContract/Tests/contract", ContractSchemas.all),
     ("packages/wuhu-core/Targets/MachineContract/Tests/contract", MachineContractSchemas.all),

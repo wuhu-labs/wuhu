@@ -1,3 +1,4 @@
+import enum AgentsContract.SessionLifecycle
 import Foundation
 @testable import LoopCore
 import struct MainHub.ArchiveBusySession

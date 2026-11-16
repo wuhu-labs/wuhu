@@ -28,47 +28,44 @@ func addLiveRoutes(
   @Dependency(\.date) var dateGen
   @Dependency(\.continuousClock) var continuousClock
   let clock = continuousClock
-  for prefix in liveRoutePrefixes {
-    let legacy = prefix == legacyLiveRoutePrefix
-    router.webSocket(prefix + "/*") { request, _ in
-      .webSocket { socket in
-        let (frames, sink) = AsyncStream.makeStream(of: LiveInbound.self, bufferingPolicy: .bufferingNewest(liveInboundLimit))
-        var inbound = socket.inbound.makeAsyncIterator()
-        let hello = await withTaskGroup(of: Void.self) { deadline in
-          deadline.addTask {
-            guard (try? await clock.sleep(for: liveHelloDeadline)) != nil else { return }
+  router.webSocket(LiveChannel.routePrefix + "/*") { request, _ in
+    .webSocket { socket in
+      let (frames, sink) = AsyncStream.makeStream(of: LiveInbound.self, bufferingPolicy: .bufferingNewest(liveInboundLimit))
+      var inbound = socket.inbound.makeAsyncIterator()
+      let hello = await withTaskGroup(of: Void.self) { deadline in
+        deadline.addTask {
+          guard (try? await clock.sleep(for: liveHelloDeadline)) != nil else { return }
+          socket.close()
+        }
+        defer { deadline.cancelAll() }
+        return await inbound.next()
+      }
+      guard let first = hello else { return }
+      let (outbound, key) = await liveOpen(
+        first, upgrade: request, space: space, now: dateGen.now, devPerson: devPerson, contextOf: contextOf, frames: frames,
+      )
+      let relay = { [inbound] in
+        var inbound = inbound
+        await withDiscardingTaskGroup { group in
+          group.addTask {
+            for await message in outbound {
+              try? await socket.send(liveMessage(message))
+            }
             socket.close()
           }
-          defer { deadline.cancelAll() }
-          return await inbound.next()
-        }
-        guard let first = hello else { return }
-        let (outbound, key) = await liveOpen(
-          first, upgrade: request, space: space, now: dateGen.now, devPerson: devPerson, contextOf: contextOf, frames: frames,
-        )
-        let relay = { [inbound] in
-          var inbound = inbound
-          await withDiscardingTaskGroup { group in
-            group.addTask {
-              for await message in outbound {
-                try? await socket.send(liveMessage(message, legacy: legacy))
-              }
-              socket.close()
+          while let message = await inbound.next() {
+            let result = switch message {
+            case let .binary(bytes): sink.yield(.binary(bytes))
+            case let .text(text): sink.yield(.text(text))
             }
-            while let message = await inbound.next() {
-              let result = switch message {
-              case let .binary(bytes): sink.yield(.binary(bytes))
-              case let .text(text): sink.yield(.text(text))
-              }
-              // A client outrunning its node has lost frames: it reconnects and syncs anew.
-              if case .dropped = result { socket.close() }
-            }
-            sink.finish()
+            // A client outrunning its node has lost frames: it reconnects and syncs anew.
+            if case .dropped = result { socket.close() }
           }
+          sink.finish()
         }
-        guard let key else { return await relay() }
-        await keyStreams.holding(key, space: space, end: socket.close) { await relay() }
       }
+      guard let key else { return await relay() }
+      await keyStreams.holding(key, space: space, end: socket.close) { await relay() }
     }
   }
 }
@@ -121,9 +118,6 @@ private func liveOpen(
 }
 
 let liveHelloDeadline = Duration.seconds(10)
-/// The channel's name in clients built before `.canvas`; they decode `notLive` as `notWmd`.
-let legacyLiveRoutePrefix = "/v1/wmd"
-let liveRoutePrefixes = [LiveChannel.routePrefix, legacyLiveRoutePrefix]
 private let liveInboundLimit = 256
 
 private func liveTargetRefusal(_ error: any Error, address: String) -> (code: LiveErrorCode, message: String) {
@@ -143,17 +137,12 @@ private func liveRefusal(_ code: LiveErrorCode, _ message: String) -> AsyncStrea
   }
 }
 
-private func liveMessage(_ outbound: LiveOutbound, legacy: Bool) -> WebSocketMessage {
+private func liveMessage(_ outbound: LiveOutbound) -> WebSocketMessage {
   switch outbound {
   case let .frame(frame):
     return .binary(frame.bytes)
   case let .control(control):
     // Encoding a closed enum of strings and integers cannot fail.
-    var json = try! JSONValueEncoder().encode(control)
-    if legacy, case .error(code: .notLive, _) = control, case var .object(fields) = json {
-      fields["code"] = .string("notWmd")
-      json = .object(fields)
-    }
-    return .text(json.jsonString())
+    return .text(try! JSONValueEncoder().encode(control).jsonString())
   }
 }

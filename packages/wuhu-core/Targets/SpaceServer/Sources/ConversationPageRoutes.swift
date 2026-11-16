@@ -138,12 +138,13 @@ private func pageLimit(_ value: String?) throws -> Int {
 
 private struct Senders {
   var handles: [String: String]
-  var titles: [SessionID: String] = [:]
+  var sessions: [SessionID: (title: String, group: GroupID)] = [:]
 
   init(_ messages: [MessageRecord], in space: Space) async throws {
     handles = try await space.handlesByPrincipal()
     for session in Set(messages.compactMap(\.senderSession)) {
-      titles[session] = try await space.sessions.record(session).title
+      let record = try await space.sessions.record(session)
+      sessions[session] = (record.title, record.group)
     }
   }
 }
@@ -161,8 +162,8 @@ private func scriptMessage(_ message: MessageRecord, senders: Senders, names: (h
       ("id", .string(message.sender.id)),
       ("handle", senders.handles[message.sender.id].map(JSONValue.string)),
       ("session", message.senderSession.map { .string($0.rawValue) }),
-      ("group", .string(message.senderGroup.rawValue)),
-      ("title", message.senderSession.flatMap { senders.titles[$0] }.map(JSONValue.string)),
+      ("group", message.senderSession.flatMap { senders.sessions[$0] }.map { .string($0.group.rawValue) }),
+      ("title", message.senderSession.flatMap { senders.sessions[$0]?.title }.map(JSONValue.string)),
     ])),
     ("kind", .string(message.kind.rawValue)),
     ("text", .string(message.content.text)),

@@ -10,6 +10,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - AgentsContract
   - ContentLane
   - MainHub
   - TaskLifetime
@@ -137,10 +138,12 @@ tests:
     - ScratchTesting
     - WmdDocument
     - LiveDocument
-  data:
-    - Targets/SpaceContract/Tests/contract
+  exclude:
+    - Fixtures/**
   resources:
     - path: Recordings
       mode: copy
     - path: Backcompat
+      mode: copy
+    - path: Fixtures
       mode: copy

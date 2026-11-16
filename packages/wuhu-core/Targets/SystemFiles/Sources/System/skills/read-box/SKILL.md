@@ -15,7 +15,7 @@ const { messages, next } = await conversation(id, { after, before, limit })
 ```
 
 - `id` is a conversation id. An agent's box id is its session id, so `conversation(import.meta.session)` is your own box. A message header's `<source>conversation/<id></source>` names the conversation it came from. `dm(a, b)` returns the DM id between two sessions, or `null` when no readable DM exists; it never creates one.
-- Each message is `{ id, sender: { id, handle?, session?, title?, group }, kind, text, attachments: [path], replyTarget, requestId, createdAt }`. `handle` names a person, `session` and `title` a session. `attachments` are space paths: `read` them. `createdAt` is ISO 8601 in the sender's zone, to the millisecond.
+- Each message is `{ id, sender: { id, handle?, session?, title?, group? }, kind, text, attachments: [path], replyTarget, requestId, createdAt }`. `handle` names a person, `session`, `title` and `group` name an agent, its current title and its group, resolved from the agent lookup; all three are absent for a person. The SQL view `message_senders` likewise exposes the sending agent's group as `sender_grp`, null for a person. `attachments` are space paths: `read` them. `createdAt` is ISO 8601 in the sender's zone, to the millisecond.
 - `after` and `before` each take a message id, as a header's `<message-id>` or a `replyTarget` shows it, or an ISO time with a zone (`"2026-09-26T11:00+08:00"`, seconds optional, or a `Date`). Pass one of them, never both. An unknown message id is an error, not an empty page.
 - Messages always come oldest first. `limit` defaults to 50, at most 500.
   - No cursor: the latest `limit` messages. `next` is the oldest id, to pass as `before`.

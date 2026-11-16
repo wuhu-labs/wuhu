@@ -7,7 +7,3 @@ checks:
 tests:
   dependencies:
     - ScratchTesting
-  # The lint reads every target's sources and tests back by path.
-  data:
-    - Targets/*/Sources
-    - Targets/*/Tests

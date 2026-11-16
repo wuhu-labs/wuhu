@@ -40,6 +40,7 @@ import WebPush
     #expect(message.body == "answer")
     #expect(message.destination.path.hasPrefix("/_/conversations/"))
     #expect(try await space.dueWebPushDeliveries(at: fixedDate).isEmpty)
+    registerSessionCells(in: space)
     _ = try await space.sessions.post(
       .box(owner),
       messageID: MessageID("reply-2"),

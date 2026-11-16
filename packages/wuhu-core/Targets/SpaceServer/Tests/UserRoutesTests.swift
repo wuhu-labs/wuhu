@@ -73,12 +73,6 @@ import Testing
       // The handle is resolved at read time, so a rename rewrites history.
       _ = try await harness.space.setUserProfile(principal: alice, handle: "alicia", displayName: nil)
       #expect(try await readHandle() == "alicia")
-
-      let members = try JSONValueDecoder().decode(
-        ConversationPayload.self,
-        from: try await json(try await harness.get("/v1/session/\(id.rawValue)/conversation")),
-      ).members
-      #expect(members.first { $0.member == alice }?.memberHandle == "alicia")
     }
   }
 

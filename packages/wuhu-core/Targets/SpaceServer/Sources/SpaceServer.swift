@@ -282,7 +282,7 @@ public enum SpaceServer {
           || (request.method == .post && v2Path.count == 4 && v2Path[3] == "revoke")
       )
       // A live socket's first frame carries its assertion: browsers put no header on an upgrade.
-      let liveUpgrade = request.method == .get && liveRoutePrefixes.contains { request.url.path.hasPrefix($0 + "/") }
+      let liveUpgrade = request.method == .get && request.url.path.hasPrefix(LiveChannel.routePrefix + "/")
       if selfAuthenticating.contains(request.url.path) || (request.method == .get && request.url.path == "/v1/groups") || v2KeySigned || liveUpgrade {
         return try await routed(request)
       }

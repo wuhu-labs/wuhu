@@ -53,3 +53,27 @@ export function isFileRefusal(failure: unknown): boolean {
     'conflict',
   ].includes(failure.code)
 }
+
+// A status that passes on its own (a timeout, throttling, a gateway or a
+// server between owners), the `unavailable` code, or a connection that broke:
+// something to wait out and retry. Only a refusal code overrides the status.
+const transientStatuses = [408, 429, 502, 503, 504]
+const refusalCodes = ['fetchRedirectInvalid']
+
+export function isTransient(failure: unknown): boolean {
+  if (failure instanceof ApiError) {
+    return !refusalCodes.includes(failure.code) &&
+      (failure.code === 'unavailable' ||
+        transientStatuses.includes(failure.status))
+  }
+  return failure instanceof TypeError ||
+    (failure instanceof DOMException && failure.name === 'TimeoutError')
+}
+
+const maxRetryAfterMs = 30_000
+
+export function retryAfterMs(headers: Headers): number | undefined {
+  const value = headers.get('retry-after')?.trim()
+  if (value === undefined || !/^\d+$/.test(value)) return undefined
+  return Math.min(Number(value) * 1000, maxRetryAfterMs)
+}

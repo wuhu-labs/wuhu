@@ -5,8 +5,7 @@ import Foundation
 // exact file, with the user-table renames generated from the file itself
 // spliced over its marker line.
 enum Wuhu45Migration {
-  static let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-    .appending(path: "Backcompat/wuhu-45-migration.sql")
+  static let script = Bundle.module.resourceURL!.appending(path: "Backcompat/wuhu-45-migration.sql")
 
   static let renamesSQL = """
   SELECT 'ALTER TABLE "' || replace(path,'"','""') || '" RENAME TO "shared:' || replace(path,'"','""') || '";' FROM tables ORDER BY path

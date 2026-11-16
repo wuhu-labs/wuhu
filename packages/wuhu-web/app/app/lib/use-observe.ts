@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from 'react'
 import {
   browserNetwork,
   type Fold,
+  graced,
   observeStore,
   realTimer,
   type Snapshot,
@@ -36,16 +37,19 @@ export function useObserve<Data, Event>(
         close: () => {},
       }
     }
-    return observeStore({
-      ...events,
-      subscription,
-      fold,
-      initial,
-      open: (url) => openAuthorizedStream(url, inGroup(subscription.group)),
-      timer: realTimer,
-      cache,
-      network: browserNetwork,
-    })
+    return graced(
+      observeStore({
+        ...events,
+        subscription,
+        fold,
+        initial,
+        open: (url) => openAuthorizedStream(url, inGroup(subscription.group)),
+        timer: realTimer,
+        cache,
+        network: browserNetwork,
+      }),
+      realTimer,
+    )
     // The initial URL keys the store: a new session/query rebuilds it; a
     // re-render with the same target keeps the cursor and the live connection.
   }, [key, cache])

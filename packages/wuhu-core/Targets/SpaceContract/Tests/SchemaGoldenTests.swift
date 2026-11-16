@@ -5,9 +5,7 @@ import Testing
 
 @Suite
 struct SchemaGoldenTests {
-  private static let contractDir = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent() // Tests
-    .appendingPathComponent("contract")
+  private static let contractDir = Bundle.module.resourceURL!.appending(path: "contract")
 
   @Test func everySchemaMatchesCheckedInFile() throws {
     for (name, schema) in ContractSchemas.all {

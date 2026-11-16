@@ -46,21 +46,40 @@ public struct SpaceClient: Sendable {
 
   public struct ToolFailure: Error, CustomStringConvertible {
     public let error: ToolError
+    public let status: Int
+    /// The wait the server's `Retry-After` asked for.
+    public let retryAfter: Duration?
     public var description: String { error.message }
+    public var isTransient: Bool { SpaceClient.isTransient(status: self.status, code: self.error.code.rawValue) }
   }
+
+  /// The one rule for whether a failure is worth another try: no answer at all, `unavailable`, or a 408, 429, 502, 503 or
+  /// 504 whatever its code, unless the code names a refusal. Every other answer is final, a 500 `internal` included.
+  public static func isTransient(status: Int?, code: String?) -> Bool {
+    if let code, refusalCodes.contains(code) { return false }
+    guard let status else { return true }
+    return code == ErrorCode.unavailable.rawValue || transientStatuses.contains(status)
+  }
+
+  private static let transientStatuses: Set<Int> = [408, 429, 502, 503, 504]
+  private static let refusalCodes: Set<String> = ["fetchRedirectInvalid"]
 
   public struct TransportFailure: Error, CustomStringConvertible {
     public let message: String
     public let status: Int?
     public let code: String?
+    /// The wait the server's `Retry-After` asked for.
+    public let retryAfter: Duration?
     public var description: String { message }
     /// The server's error code, when it is one the contract names.
     public var errorCode: ErrorCode? { code.flatMap(ErrorCode.init(rawValue:)) }
+    public var isTransient: Bool { SpaceClient.isTransient(status: self.status, code: self.code) }
 
-    init(message: String, status: Int? = nil, code: String? = nil) {
+    init(message: String, status: Int? = nil, code: String? = nil, retryAfter: Duration? = nil) {
       self.message = message
       self.status = status
       self.code = code
+      self.retryAfter = retryAfter
     }
   }
 
@@ -235,13 +254,14 @@ public struct SpaceClient: Sendable {
   static func failure(from response: Response) async -> any Error {
     let text = (try? await response.text()) ?? ""
     let body = JSONValue.parse(text)
+    let retryAfter = response.retryAfter
     if let body, let error = try? JSONValueDecoder().decode(ToolError.self, from: body) {
-      return ToolFailure(error: error)
+      return ToolFailure(error: error, status: response.status.code, retryAfter: retryAfter)
     }
     if let code = body?.object?["code"]?.stringValue, let message = body?.object?["message"]?.stringValue {
-      return TransportFailure(message: message, status: response.status.code, code: code)
+      return TransportFailure(message: message, status: response.status.code, code: code, retryAfter: retryAfter)
     }
-    return TransportFailure(message: "HTTP \(response.status.code): \(text)", status: response.status.code, code: nil)
+    return TransportFailure(message: "HTTP \(response.status.code): \(text)", status: response.status.code, code: nil, retryAfter: retryAfter)
   }
 }
 

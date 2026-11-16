@@ -22,18 +22,30 @@
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        ".gitignore"
       ]
     },
     "lint-test": {
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        ".gitignore"
       ]
     },
     "release-tooling-test": {
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        "packages/*/package.yml",
+        "packages/*/Apps/*/app.yml",
+        "packages/wuhu-core/Targets/wuhu/target.yml",
+        "packages/wuhu-desktop/deno.json"
       ]
     },
     "skill-bench-test": {
@@ -52,12 +64,20 @@
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        ".forgejo/workflows/ci.yml"
       ]
     },
     "module-profile-test": {
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        ".agents/skills/mac-worker-setup/pin.env",
+        "packages/build-pool/src",
+        "packages/space-oidc/src"
       ]
     },
     "ci-failure-labels-test": {
@@ -70,23 +90,52 @@
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        "packages/*/package.yml",
+        "packages/*/Apps/*/app.yml",
+        "packages/*/Targets/*/target.yml",
+        ".agents/skills/mac-worker-setup/pin.env",
+        ".gitattributes",
+        ".githooks/pre-commit",
+        ".gitignore",
+        "MODULE.bazel.template",
+        "bazel/rules",
+        "bazel/umbrella/Package.resolved",
+        "packages/build-pool/src",
+        "packages/hmr-sidecar/src",
+        "packages/space-oidc/src",
+        "packages/wuhu-app/Targets/Application/Sources/HotReload.swift"
       ]
     },
     "signing-tooling-test": {
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        "packages/*/package.yml",
+        "packages/*/Apps/*/app.yml"
       ]
     },
     "public-links-test": {
       "platforms": [
         "linux",
         "mac"
+      ],
+      "inputs": [
+        "products/wuhu/public",
+        "packages/wuhu-core/Targets/*/SPEC.md",
+        "packages/wuhu-core/Targets/*/Tests/contract",
+        "packages/wuhu-core/Targets/SpaceToolReference/Tests/reference"
       ]
     },
     "mac-worker-xcode-pin-test": {
       "platforms": [
         "linux"
+      ],
+      "inputs": [
+        ".agents/skills/mac-worker-setup"
       ]
     },
     "machine-v2-driver-smoke-test": {

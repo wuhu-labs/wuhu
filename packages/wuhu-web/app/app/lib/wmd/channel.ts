@@ -6,7 +6,7 @@ import type {
   LivePeer,
   LiveServerControl,
 } from '~/lib/contract.gen'
-import type { Timer } from '~/sdk/observe'
+import { offlineGraceMs, type Timer } from '~/sdk/observe'
 import type { PresenceStore } from './collab.ts'
 
 // The live channel of /design/wmd-wire.md, one socket per open document.
@@ -49,6 +49,46 @@ export function channelStatus(state: ChannelState): string {
       return 'Closed'
     case 'offline':
       return 'Offline — reconnecting…'
+  }
+}
+
+// What a page shows of its channel: through the first `offlineGraceMs` of a
+// drop it keeps showing what it showed before, so a rollover passes unseen.
+export function graceChannel(
+  timer: Timer,
+  show: (state: ChannelState) => void,
+): { changed: (state: ChannelState) => void; close: () => void } {
+  let shown: ChannelState | null = null
+  let latest: ChannelState | null = null
+  let held: ChannelState | null = null
+  let lapsed = false
+  let cancel = () => {}
+  const present = (state: ChannelState) => {
+    shown = held == null
+      ? state
+      : { ...held, editable: state.editable, lostEdits: state.lostEdits }
+    show(shown)
+  }
+  return {
+    changed: (state) => {
+      latest = state
+      if (state.phase === 'offline') {
+        if (held == null && !lapsed && shown != null) {
+          held = shown
+          cancel = timer.schedule(offlineGraceMs, () => {
+            held = null
+            lapsed = true
+            present(latest!)
+          })
+        }
+      } else if (state.phase === 'live' || state.phase === 'refused') {
+        cancel()
+        held = null
+        lapsed = false
+      }
+      present(state)
+    },
+    close: () => cancel(),
   }
 }
 

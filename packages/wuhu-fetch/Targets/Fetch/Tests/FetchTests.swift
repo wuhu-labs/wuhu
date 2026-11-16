@@ -11,6 +11,22 @@ import HTTPTypes
 import Testing
 
 @Suite struct FetchTests {
+  @Test func retryAfterReadsDeltaSecondsAndHTTPDates() {
+    withDependencies { $0.date.now = Date(timeIntervalSince1970: 1_445_412_480) } operation: {
+      func waited(_ value: String?) -> Duration? {
+        var headers = Headers()
+        if let value { headers[.retryAfter] = value }
+        return Response(status: .serviceUnavailable, headers: headers).retryAfter
+      }
+      #expect(waited("7") == .seconds(7))
+      #expect(waited("-3") == .zero)
+      #expect(waited("Wed, 21 Oct 2015 07:28:30 GMT") == .seconds(30))
+      #expect(waited("Wed, 21 Oct 2015 07:27:00 GMT") == .zero)
+      #expect(waited("soon") == nil)
+      #expect(waited(nil) == nil)
+    }
+  }
+
   @Test func requestHeadersSeparateNormalAndSensitiveValues() throws {
     var headers = RequestHeaders(values: ["Content-Type": "application/json"])
 

@@ -33,12 +33,6 @@ extension SessionStore {
     return conversation?.members.contains { $0.member == member } == true
   }
 
-  /// Whether `principal` may write `path` in `group`: it reads it and holds a write role there.
-  public func writesFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
-    guard try await readsFile(path, in: group, as: principal) else { return false }
-    return (groupCell(group).role(of: principal.actor, acting: principal.group) ?? .read) >= .write
-  }
-
   public func conversations(member: String) -> [ConversationRecord] {
     runtime.worker().read { reader in
       let space = reader.cell(SpaceCell.ID("space"))

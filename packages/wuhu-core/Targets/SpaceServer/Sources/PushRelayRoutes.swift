@@ -60,22 +60,4 @@ func addPushRelayRoutes(
       return Response(status: .noContent)
     }
   }
-
-  router.delete("/v1/push-relay/grant") { request, _ in
-    let input: PushRelayGrantDeleteInput
-    do {
-      input = try await request.json(PushRelayGrantDeleteInput.self)
-    } catch {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a push-relay deletion body: \(error)")
-    }
-    switch try await personaCredentialVerdict(nil, request: request, space: space, now: date.now) {
-    case .missing:
-      return errorResponse(.unauthorized, code: "unauthorized", message: "a bearer assertion is required")
-    case let .refused(response):
-      return response
-    case let .verified(_, key):
-      try await space.removePushRelayGrant(input.grant, devicePublicKey: key.pubkey)
-      return Response(status: .noContent)
-    }
-  }
 }

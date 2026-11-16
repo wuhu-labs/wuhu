@@ -7,5 +7,10 @@ checks:
   build: [linux, mac]
 resources:
   - path: Resources/integration_server.py
-    mode: process
+    mode: copy
+embeddedResources:
+  - name: IntegrationServer
+    path: Resources
+    typeName: EmbeddedIntegrationServer
+    symbolName: integration
 tests: false

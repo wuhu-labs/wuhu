@@ -234,22 +234,6 @@ interface AdditionalTestTarget extends TestConfig {
   sources: string
 }
 
-// A target whose `Sources/*.swift` are produced by apple/swift-openapi-generator
-// from the canonical OpenAPI document. The BUILD emitter replaces the usual
-// `srcs = glob(...)` with `srcs = [":<name>_gen"]` pointing at a `wuhu_openapi_sources`
-// rule (see bazel/rules/rules.bzl); the SwiftPM emitter is unchanged (it globs
-// `Sources/`, which the `deno task generate-openapi` escape hatch materializes).
-interface OpenApiGenerateConfig {
-  // Path to the OpenAPI document, relative to the package root.
-  document: string
-  // Path to the swift-openapi-generator config, relative to the target directory.
-  config: string
-  // The single `.swift` file the generator writes into the output directory for
-  // this config's `generate` mode (types -> Types.swift, client -> Client.swift,
-  // server -> Server.swift).
-  output: string
-}
-
 export type TargetKind =
   | 'library'
   | 'executable'
@@ -275,7 +259,6 @@ export interface TargetManifest {
   embeddedResources?: EmbeddedResource[]
   tests?: (TestConfig & { archives?: TestArchives }) | false
   additionalTestTargets?: AdditionalTestTarget[]
-  openapiGenerate?: OpenApiGenerateConfig
   swiftSettings?: SwiftSetting[]
   checks?: Checks
   // Extra copts-symbol names loaded from //bazel/rules:rules.bzl.
@@ -408,7 +391,6 @@ export interface AppBundleManifest {
   // — App Shortcuts, widget and Live Activity `Button(intent:)` — is inert at
   // runtime while still compiling and linking fine.
   appIntents?: string[]
-  frameworks?: string[]
   linkopts?: string[]
   info: { [key: string]: PlistValue }
 }
@@ -2507,9 +2489,6 @@ export async function generateBuildBazel(
   if (targets.some((target) => target.kind === 'systemLibrary')) {
     loadSymbols.push('wuhu_system_library')
   }
-  if (targets.some((target) => target.openapiGenerate)) {
-    loadSymbols.push('wuhu_openapi_sources')
-  }
   const chunks = [
     `load("//bazel/rules:rules.bzl", ${
       loadSymbols.map((symbol) => `"${symbol}"`).join(', ')
@@ -2664,26 +2643,12 @@ export async function generateBuildBazel(
       const sentinel = target.resources?.length
         ? await resourceSentinel(target, sourceRoot, target.resources)
         : undefined
-      // When a target's sources are OpenAPI-generated, emit the producing rule
-      // and feed its declared output as `srcs` instead of globbing `Sources/`
-      // (which is gitignored and materialized only by the manual escape hatch).
-      const openapi = target.openapiGenerate
-      if (openapi) {
-        chunks.push(
-          `wuhu_openapi_sources(\n    name = "${target.name}_gen",\n    document = ":${openapi.document}",\n    config = ":Targets/${target.name}/${openapi.config}",\n    output = "${openapi.output}",\n${
-            manualAttr(target.manual)
-          })\n\n`,
-        )
-      }
-      const librarySrcs = openapi
-        ? starlarkList([`":${target.name}_gen"`])
-        : bazelSourceGlob(sourceRoot)
       chunks.push(
         `wuhu_swift_library(\n    name = "${target.name}",\n${
           target.testOnly ? '    testonly = True,\n' : ''
-        }${
-          target.hmr ? '    hmr = True,\n' : ''
-        }    srcs = ${librarySrcs},\n${await bazelResourceAttrs(
+        }${target.hmr ? '    hmr = True,\n' : ''}    srcs = ${
+          bazelSourceGlob(sourceRoot)
+        },\n${await bazelResourceAttrs(
           target,
           sourceRoot,
           target.resources,
@@ -2885,9 +2850,13 @@ interface DenoPackageManifest {
 // A checking task beyond fmt/typecheck/lint/test: its own platforms (default
 // the package's), and `manual` keeps it out of `deno task check` and CI.
 // `tools/check/deno.ts` runs the entries; Bazel generates nothing from them.
+// `inputs` names what a test reads beyond its package (for a root entry,
+// beyond deno.json, deno.lock and tools/), as root-relative paths where `*`
+// matches within one component: Scarif runs it in a copy holding just those.
 export interface DenoTest {
   platforms?: CheckPlatform[]
   manual?: boolean
+  inputs?: string[]
 }
 
 export interface DenoArtifact {
@@ -4199,10 +4168,6 @@ function generateAppBundleRule(
       },\n`
       : ''
   }${
-    target.frameworks?.length
-      ? `    frameworks = ${quotedStarlarkList(target.frameworks)},\n`
-      : ''
-  }${
     target.linkopts?.length || (app.hmr && app.targets.includes(target))
       ? `    linkopts = ${quotedStarlarkList(target.linkopts ?? [])}${
         app.hmr && app.targets.includes(target)
@@ -5005,21 +4970,13 @@ function appDependencyLabels(app: AppManifest): string[] {
   ]
 }
 
-function appFrameworkLabels(app: AppManifest): string[] {
-  return [
-    ...app.targets,
-    ...(app.extensions ?? []),
-    ...(app.watchApplications ?? []),
-  ].flatMap((target) => target.frameworks ?? [])
-}
-
 async function localPackageRefs(
   app: AppManifest,
   appDir: string,
 ): Promise<Record<string, LocalPackageRef>> {
   const refs: Record<string, LocalPackageRef> = {}
   for (
-    const label of [...appDependencyLabels(app), ...appFrameworkLabels(app)]
+    const label of appDependencyLabels(app)
   ) {
     const match = /^\/\/(.+):(.+)$/.exec(label)
     if (!match || refs[match[1]]) continue
@@ -5040,7 +4997,7 @@ async function localPackageRefs(
 // Every app dependency must exist in the SwiftPM graph too, as target.yml
 // requires of its own: a //pkg:X is a product of a local package, and a raw
 // Bazel label is a swiftpkg or one a target of those packages lowers with
-// `swiftpm:`. `frameworks:` only says what Bazel embeds and is not checked.
+// `swiftpm:`.
 async function validateAppDependencies(
   app: AppManifest,
   source: string,

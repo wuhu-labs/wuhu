@@ -1,3 +1,5 @@
+import AgentsContract
+import struct AgentsContract.SessionSummary
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -61,8 +63,8 @@ extension ConversationCell {
     db.rows(PersonaRow.where { $0.name.eq(persona) }).first.map { AccountID(rawValue: $0.accountID) }
   }
 
-  func session(_ key: String) -> PostSessionRow? {
-    db.rows(PostSessionRow.where { $0.id.eq(key) }).first
+  func session(_ key: String) -> SessionSummary? {
+    ctx.session(SessionID(key)).summary
   }
 
   func group(ofSession key: String) -> GroupID {
@@ -128,17 +130,3 @@ extension ConversationCell {
     })
   }
 }
-
-@Table("sessions")
-struct PostSessionRow {
-  @Column(primaryKey: true) var id: String
-  var kind: SessionKind
-  var parent: String?
-  @Column("created_by") var createdBy: String
-  @Column("grp") var group: String
-  var lifecycle: String
-  @Column("grace_expires_at") var graceExpiresAt: String?
-  @Column("created_at") var createdAt: String
-}
-
-extension SessionKind: QueryBindable {}

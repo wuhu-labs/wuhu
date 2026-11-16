@@ -34,13 +34,6 @@ bazel/lane-floors.bazelrc
 # Per-package Package.resolved files churn locally and are derived
 # state; they're re-resolved from each package's manifest.
 packages/*/Package.resolved
-# OpenAPI-generated contract sources. Produced in the Bazel build graph by the
-# `wuhu_openapi_sources` rule (bazel/rules/rules.bzl) into the output tree, and
-# materialized into Sources/ only by the manual `deno task generate-openapi`
-# SwiftPM escape hatch. Never checked in — the document is the source of truth.
-packages/wuhu-contract/Targets/ContractTypes/Sources/Types.swift
-packages/wuhu-contract/Targets/ContractClient/Sources/Client.swift
-packages/wuhu-contract/Targets/ContractServer/Sources/Server.swift
 # Scenario content compiled from packages/*/Scenarios/ by tools/scenario-compile,
 # run as part of `deno task generate-manifests`. The YAML/Markdown is the source
 # of truth.

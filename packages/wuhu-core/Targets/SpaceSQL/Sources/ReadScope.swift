@@ -215,14 +215,12 @@ public struct ViewCatalog: Sendable {
             name: "message_senders", table: table,
             select: """
             SELECT m.n AS n, m.sender_session_id AS sender_session_id,
-              COALESCE(g.grp, se.grp, c.grp) AS sender_grp, se.title AS sender_title
+              se.grp AS sender_grp, se.title AS sender_title
             FROM \(s)."messages" m
-            LEFT JOIN \(s)."message_groups" g ON g.message_id = m.id
             LEFT JOIN \(s)."sessions" se ON se.id = m.sender_session_id
-            LEFT JOIN \(s)."conversations" c ON c.id = m.conversation_id
             WHERE m.\(inVisible)
             """,
-            joins: ["message_groups", "sessions", "conversations", "conversation_members"],
+            joins: ["sessions", "conversations", "conversation_members"],
           ))
         }
       } else if table == "watermarks" {

@@ -1,5 +1,10 @@
-import type { ObserveStore, Snapshot, StoreConfig } from './observe'
-import { ApiError, errorMessage } from './errors'
+import {
+  defaultBackoff,
+  type ObserveStore,
+  type Snapshot,
+  type StoreConfig,
+} from './observe'
+import { ApiError, errorMessage, isTransient } from './errors'
 import {
   appendHistory,
   boundHistory,
@@ -49,7 +54,7 @@ export function pagedObserveStore<Data, Event>(
   const retention = subscription.retention!
   const network = config.network ??
     { online: () => true, onChange: () => () => {} }
-  const backoff = config.backoff ?? [250, 500, 1000, 2000, 4000, 8000]
+  const backoff = config.backoff ?? defaultBackoff
   let window = emptyWindow<Event>()
   let data = initial
   let status: HistoryEdge['status'] = 'loading'
@@ -129,13 +134,16 @@ export function pagedObserveStore<Data, Event>(
     cancelRetry = null
   }
 
-  function schedule(preparingBefore?: number | null) {
+  function schedule(preparingBefore?: number | null, retryAfterMs?: number) {
     if (closed || listeners.size === 0 || !network.online()) return
     cancelRetry?.()
+    let delay = 250
+    if (preparingBefore === undefined) {
+      delay = backoff[Math.min(attempt++, backoff.length - 1)]!
+      delay = retryAfterMs ?? delay
+    }
     cancelRetry = timer.schedule(
-      preparingBefore !== undefined
-        ? 250
-        : backoff[Math.min(attempt++, backoff.length - 1)]!,
+      delay,
       () => {
         cancelRetry = null
         if (preparingBefore !== undefined) void fetchPage(preparingBefore)
@@ -206,7 +214,7 @@ export function pagedObserveStore<Data, Event>(
       } else data = fold(data, event)
       emit()
     })
-    opened.onError(() => {
+    opened.onError((_, retryAfterMs) => {
       if (stream !== opened) return
       stopStream()
       // A tail refresh owns the only request slot; abort any backfill first.
@@ -215,7 +223,7 @@ export function pagedObserveStore<Data, Event>(
       request = null
       liveness = 'reconnecting'
       emit()
-      schedule()
+      schedule(undefined, retryAfterMs)
     })
   }
 
@@ -282,10 +290,14 @@ export function pagedObserveStore<Data, Event>(
         void bootstrap()
         return
       }
-      status =
-        failure instanceof ApiError && failure.code === 'transcriptPreparing'
-          ? 'preparing'
-          : 'error'
+      const preparing = failure instanceof ApiError &&
+        failure.code === 'transcriptPreparing'
+      if (!preparing && before === null && isTransient(failure)) {
+        status = window.ranges.length > 0 ? 'ready' : 'loading'
+        schedule()
+        return
+      }
+      status = preparing ? 'preparing' : 'error'
       error = errorMessage(failure)
       if (status === 'preparing') schedule(before)
       else if (before === null) schedule()

@@ -27,7 +27,7 @@ public struct SpaceIdentity: Hashable, Sendable {
 enum SpaceMeta {
   private static let memorySchema: Result<SQLiteWriter, any Error> = Result {
     let writer = try SQLiteWriter(path: ":memory:", flags: WuweiDatabase.openFlags, pragmas: ["PRAGMA foreign_keys = ON", "PRAGMA busy_timeout = 0"])
-    try writer.access { try Migrations.apply(handle: $0, log: Logger(label: "wuhu.migration") { _ in SwiftLogNoOpLogHandler() }, date: .constant(Date(timeIntervalSince1970: 0))) }
+    try writer.access { try Migrations.apply(db: MigrationDB(handle: $0), log: Logger(label: "wuhu.migration") { _ in SwiftLogNoOpLogHandler() }, date: .constant(Date(timeIntervalSince1970: 0))) }
     return writer
   }
 
@@ -54,7 +54,7 @@ enum SpaceMeta {
       {
         throw SpaceIdentityError.mismatch(expected: identity.rawValue, actual: actual)
       }
-      try Migrations.apply(handle: handle, log: log, date: date)
+      try Migrations.apply(db: db, log: log, date: date)
       try db.inImmediateTransaction { try seedIfAbsent(in: db, identity: identity) }
       return SpaceIdentity(rawValue: try db.string("SELECT space_id FROM space_meta WHERE id = 1")!)
     }

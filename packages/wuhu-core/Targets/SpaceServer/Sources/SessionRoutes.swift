@@ -1,3 +1,4 @@
+import enum AgentsContract.SessionKind
 import Dependencies
 import Fetch
 import Foundation
@@ -351,39 +352,6 @@ func addSessionRoutes(
     }
   }
 
-  router.get("/v1/session/:id/context") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
-    do {
-      let record = try await store.record(id)
-      return try Response.json(SessionContextOutput(
-        context: try await sessionContext(
-          record, store: store, budget: runtime.budget,
-        ),
-      ))
-    } catch {
-      return try sessionErrorResponse(error)
-    }
-  }
-
-  router.get("/v1/session/:id/home") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
-    do {
-      // What the session's prompt holds, in its order, as of its prompt revision.
-      let home = try await space.sessionHome(id, at: try await store.promptRevisions(id))
-      let layers = [SystemFiles.instructions, home.groupLayer, SystemFiles.session, home.home]
-      let listed = InstructionScope.listings(layers, for: PromptSession(try await store.record(id))).joined()
-      return try Response.json(SessionHomeOutput(
-        home: home.path,
-        chain: layers.flatMap { $0.sections.map(\.path) },
-        skills: listed.map { SessionHomeSkill(name: $0.name, description: $0.description, path: $0.path) },
-      ))
-    } catch {
-      return try sessionErrorResponse(error)
-    }
-  }
-
   router.post("/v1/conversation") { request, _ in
     let input: ConversationCreateInput
     do {
@@ -546,11 +514,6 @@ func addSessionRoutes(
     }
   }
 
-  @Sendable func refusingUnread(_ id: ConversationID, _ request: Request) async throws -> Response? {
-    if case let .failure(refusal) = try await readingSeat(id, request) { return refusal.response }
-    return nil
-  }
-
   router.get("/v1/conversations") { request, _ in
     let principal: Principal
     switch try await principalOf(request) {
@@ -567,21 +530,6 @@ func addSessionRoutes(
     }
     let records = try await store.conversations(reader: reader, group: principal.group)
     return try Response.json(ConversationsOutput(conversations: try await conversationPayloads(records, space: space)))
-  }
-
-  router.get("/v1/session/:id/conversation") { request, parameters in
-    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
-    do {
-      let record = try await store.record(id)
-      guard record.kind == .agent else {
-        return errorResponse(.conflict, code: "noBox", message: "session \(id.rawValue) is a task and has no box")
-      }
-      if let refused = try await refusingUnread(ConversationID(id.rawValue), request) { return refused }
-      let conversation = try await store.conversation(ConversationID(id.rawValue))
-      return try Response.json(try await conversationPayloads([conversation], space: space)[0])
-    } catch {
-      return try sessionErrorResponse(error)
-    }
   }
 
   router.get("/v1/conversation/:id/messages") { request, parameters in
@@ -871,7 +819,6 @@ func messagePayloads(
       senderKind: kind,
       senderTimezone: record.sender.timeZone.identifier,
       senderSession: record.senderSession?.rawValue,
-      senderGroup: record.senderGroup.rawValue,
       text: record.content.text,
       attachments: record.content.attachments.isEmpty ? nil : record.content.attachments.map { attachmentPayload($0.named(in: home, for: viewer)) },
       createdAt: record.createdAt.timeIntervalSince1970,

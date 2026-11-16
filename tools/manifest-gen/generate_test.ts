@@ -969,7 +969,6 @@ Deno.test('app-shell library copts thread extra rule symbols and load them', () 
         minimumOSVersion: '26.0',
         info: {},
         dependencies: [':GatedLibrary'],
-        frameworks: ['@example//:DynamicFramework'],
       },
       {
         name: 'ExampleAppIOS',
@@ -1002,10 +1001,6 @@ Deno.test('app-shell library copts thread extra rule symbols and load them', () 
   assertStringIncludes(
     build,
     'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + ["@$(location :PlainLibrary.platform_floor)"],',
-  )
-  assertStringIncludes(
-    build,
-    'frameworks = [\n        "@example//:DynamicFramework",\n    ],',
   )
   // Each shell library is constrained to the lanes of the app targets that
   // actually depend on it, not to the union across the whole shell: that is what
@@ -1604,7 +1599,7 @@ Deno.test('swiftPMIdentityFromUrl lowercases the last segment and strips .git', 
     'grdb.swift',
   )
   assertEquals(
-    swiftPMIdentityFromUrl('git@github.com:wuhu-labs/tca26.git'),
+    swiftPMIdentityFromUrl('git@example.com:owner/tca26.git'),
     'tca26',
   )
   assertEquals(
@@ -2739,7 +2734,7 @@ Deno.test('isRemovableLegacyPackages refuses when Packages and packages are the 
 Deno.test('assertLockfileHonorsPins catches a stale revision pin', () => {
   const externals = new Map<string, ExternalPackage>([
     ['tca26', {
-      url: 'git@github.com:wuhu-labs/tca26.git',
+      url: 'https://example.com/owner/tca26.git',
       revision: 'newrevision',
       products: ['ComposableArchitecture'],
     }],
@@ -2775,7 +2770,7 @@ Deno.test('assertLockfileHonorsPins catches a stale exact version', () => {
 Deno.test('assertLockfileHonorsPins catches a pinned package missing from the lockfile', () => {
   const externals = new Map<string, ExternalPackage>([
     ['tca26', {
-      url: 'git@github.com:wuhu-labs/tca26.git',
+      url: 'https://example.com/owner/tca26.git',
       revision: 'somerevision',
       products: ['ComposableArchitecture'],
     }],
@@ -2790,7 +2785,7 @@ Deno.test('assertLockfileHonorsPins catches a pinned package missing from the lo
 Deno.test('assertLockfileHonorsPins passes matching pins and ignores range, branch, and local externals', () => {
   const externals = new Map<string, ExternalPackage>([
     ['tca26', {
-      url: 'git@github.com:wuhu-labs/tca26.git',
+      url: 'https://example.com/owner/tca26.git',
       revision: 'matching',
       products: ['ComposableArchitecture'],
     }],
@@ -3623,21 +3618,6 @@ Deno.test('manual executables include stamped twins, aliases and all owned test 
     namedRule(plain, 'integration-tool'),
     'tags = ["manual"]',
   )
-})
-
-Deno.test('manual generated-source targets also mark the producing action', async () => {
-  const build = await generateBuildBazel(basePkg, [{
-    ...minimalTarget('Generated', 'library'),
-    manual: true,
-    openapiGenerate: {
-      document: 'openapi.yml',
-      config: 'generator.yml',
-      output: 'Types.swift',
-    },
-  }])
-  for (const name of ['Generated', 'Generated_gen']) {
-    assertStringIncludes(namedRule(build, name), 'tags = ["manual"]')
-  }
 })
 
 Deno.test('manual app shells cover libraries, bundles and HMR helpers without changing platforms', () => {

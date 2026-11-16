@@ -22,9 +22,7 @@ struct ViewingVectors: Decodable {
   let omitted: Paths
 
   static let shared: ViewingVectors = {
-    let file = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent()
-      .appendingPathComponent("contract/viewing-vectors.json")
+    let file = Bundle.module.resourceURL!.appending(path: "contract/viewing-vectors.json")
     return try! JSONDecoder().decode(ViewingVectors.self, from: Data(contentsOf: file))
   }()
 }

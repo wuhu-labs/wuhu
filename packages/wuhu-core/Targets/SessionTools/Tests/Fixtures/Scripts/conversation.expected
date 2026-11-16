@@ -4,8 +4,7 @@
     "id": "m1",
     "sender": {
       "id": "u_morgan",
-      "handle": "morgan",
-      "group": "shared"
+      "handle": "morgan"
     },
     "kind": "message",
     "text": "look",

@@ -8,12 +8,13 @@ import {
   ScriptHost,
   type ScriptResult,
 } from './host.ts'
+import { ApiError } from '../../sdk/errors.ts'
 
 // A host whose "scripts" are TypeScript functions over the same calls a
 // QuickJS run makes, with a clock and timers the test moves.
 function rig(
   script: (calls: ScriptHostCalls) => Promise<unknown>,
-  options: { failFetch?: number } = {},
+  options: { failFetch?: number[]; fetchError?: unknown } = {},
 ) {
   let now = 0
   const timers: { at: number; run: () => void }[] = []
@@ -40,8 +41,10 @@ function rig(
     },
     fetch(_page, request) {
       fetched.push(request)
-      if (fetched.length === options.failFetch) {
-        return Promise.reject(new Error('the pool is down'))
+      if (options.failFetch?.includes(fetched.length)) {
+        return Promise.reject(
+          options.fetchError ?? new Error('the pool is down'),
+        )
       }
       return Promise.resolve({
         status: 200,
@@ -213,7 +216,7 @@ Deno.test('a failure lasts one run, an answer without every lasts one run, and a
     const first = await fetchCall(calls, { every })
     const again = await fetchCall(calls, { every })
     return [first.error ?? first.body, again.error ?? again.body]
-  }, { failFetch: 1 })
+  }, { failFetch: [1] })
   const first = r.watch()
   await settle()
   assertEquals(r.results.at(-1), {
@@ -234,6 +237,137 @@ Deno.test('a failure lasts one run, an answer without every lasts one run, and a
   r.watch(true, 'export default () => 2')
   await settle()
   assertEquals(r.fetched.length, 4)
+})
+
+Deno.test('a drawn script keeps its drawing through a transient fetch failure and retries on the backoff', async () => {
+  const r = rig(
+    async (calls) => {
+      const answer = await fetchCall(calls)
+      return answer.error ?? answer.body
+    },
+    { failFetch: [2, 3], fetchError: new TypeError('Failed to fetch') },
+  )
+  r.watch()
+  await settle()
+  await r.advance(30_000)
+  assertEquals(r.fetched.length, 2)
+  await r.advance(999)
+  assertEquals(r.fetched.length, 2)
+  await r.advance(1)
+  assertEquals(r.fetched.length, 3)
+  await r.advance(2_000)
+  assertEquals(r.fetched.length, 4)
+  assertEquals(r.results.map((result) => result.ok && result.value), [
+    'answer 1',
+    'answer 4',
+  ])
+})
+
+Deno.test('a drawn pool widget keeps its drawing through a fetch route failure that passes on its own', async () => {
+  for (
+    const [status, code] of [
+      [502, 'fetchUpstreamUnavailable'],
+      [504, 'fetchTimeout'],
+      [503, 'fetchIdentityUnavailable'],
+    ] as const
+  ) {
+    const r = rig(
+      async (calls) => {
+        const answer = await fetchCall(calls)
+        return answer.error ?? answer.body
+      },
+      {
+        failFetch: [2],
+        fetchError: new ApiError(status, { code, message: code }),
+      },
+    )
+    r.watch()
+    await settle()
+    await r.advance(30_000)
+    await r.advance(1_000)
+    assertEquals(r.results.map((result) => result.ok && result.value), [
+      'answer 1',
+      'answer 3',
+    ])
+  }
+})
+
+Deno.test('a script that never drew draws its own fallback for a transient failure and still retries', async () => {
+  const r = rig(
+    async (calls) => {
+      const answer = await fetchCall(calls)
+      return answer.error ?? answer.body
+    },
+    { failFetch: [1], fetchError: new TypeError('Failed to fetch') },
+  )
+  r.watch()
+  await settle()
+  await r.advance(1_000)
+  assertEquals(r.results.map((result) => result.ok && result.value), [
+    'Failed to fetch',
+    'answer 2',
+  ])
+})
+
+Deno.test('a drawn script keeps its drawing through a transient failure it did not catch', async () => {
+  const r = rig(
+    async (calls) =>
+      (await fetchCall(calls)).body ??
+        Promise.reject(new Error('no status')),
+    { failFetch: [2], fetchError: new TypeError('Failed to fetch') },
+  )
+  r.watch()
+  await settle()
+  await r.advance(30_000)
+  await r.advance(1_000)
+  assertEquals(r.fetched.length, 3)
+  assertEquals(r.results.map((result) => result.ok && result.value), [
+    'answer 1',
+    'answer 3',
+  ])
+})
+
+Deno.test('a script that never drew shows nothing for a transient failure it threw on until the grace lapses', async () => {
+  const r = rig(
+    async (calls) =>
+      (await fetchCall(calls)).body ??
+        Promise.reject(new Error('no status')),
+    {
+      failFetch: [1, 2, 3, 4],
+      fetchError: new TypeError('Failed to fetch'),
+    },
+  )
+  r.watch()
+  await settle()
+  await r.advance(1_000)
+  await r.advance(2_000)
+  await r.advance(4_000)
+  await r.advance(2_999)
+  assertEquals(r.fetched.length, 4)
+  assertEquals(r.results, [])
+  await r.advance(1)
+  assertEquals(r.results.map((result) => result.ok), [false])
+  await r.advance(5_000)
+  assertEquals(r.results.map((result) => result.ok && result.value), [
+    false,
+    'answer 5',
+  ])
+})
+
+Deno.test('a script that draws inside the grace never shows the failure it held', async () => {
+  const r = rig(
+    async (calls) =>
+      (await fetchCall(calls)).body ??
+        Promise.reject(new Error('no status')),
+    { failFetch: [1], fetchError: new TypeError('Failed to fetch') },
+  )
+  r.watch()
+  await settle()
+  await r.advance(1_000)
+  await r.advance(10_000)
+  assertEquals(r.results.map((result) => result.ok && result.value), [
+    'answer 2',
+  ])
 })
 
 Deno.test('a refused query fails the run with its message, from one read', async () => {

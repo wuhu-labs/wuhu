@@ -283,58 +283,6 @@ def _wuhu_embedded_directory_srcs(name, directories, tags):
         deps.append(":{}".format(cc_name))
     return (swift_srcs, deps)
 
-# Generates a single `*.swift` source from the canonical OpenAPI document by
-# running apple/swift-openapi-generator as a Bazel action. The generator binary
-# is resolved by rules_swift_package_manager (declared via the umbrella
-# `externalPackages` in packages/wuhu-contract/package.yml) and exposed as the
-# executable product `@swiftpkg_swift_openapi_generator//:swift-openapi-generator`.
-#
-# Each OpenAPI module (ContractTypes / ContractClient / ContractServer) is one
-# `wuhu_openapi_sources` target feeding one `wuhu_swift_library` via
-# `srcs = [":<name>_gen"]`. A change to the document or config re-runs only the
-# affected action; the produced `.swift` is input-gated and lives in the Bazel
-# output tree (never in the working `Sources/`), so the disk / LAN remote cache
-# serves it across fresh clones. This is the in-graph sibling of the manual
-# `deno task generate-openapi` escape hatch, which resolves the *same* generator
-# from the isolated tools/openapi-gen manifest and writes into `Sources/` for the
-# SwiftPM path. Both derive from the same document + config, so their output is
-# byte-identical.
-def _wuhu_openapi_sources_impl(ctx):
-    out = ctx.actions.declare_file(
-        "{}/{}".format(ctx.label.name, ctx.attr.output),
-    )
-    args = ctx.actions.args()
-    args.add("generate")
-    args.add("--config", ctx.file.config)
-    args.add("--output-directory", out.dirname)
-    args.add(ctx.file.document)
-    ctx.actions.run(
-        executable = ctx.executable._generator,
-        inputs = [ctx.file.config, ctx.file.document],
-        outputs = [out],
-        arguments = [args],
-        mnemonic = "WuhuOpenAPIGen",
-        progress_message = "Generating OpenAPI {} for {}".format(
-            ctx.attr.output,
-            ctx.label.name,
-        ),
-    )
-    return [DefaultInfo(files = depset([out]))]
-
-wuhu_openapi_sources = rule(
-    implementation = _wuhu_openapi_sources_impl,
-    attrs = {
-        "document": attr.label(allow_single_file = True, mandatory = True),
-        "config": attr.label(allow_single_file = True, mandatory = True),
-        "output": attr.string(mandatory = True),
-        "_generator": attr.label(
-            default = Label("@swiftpkg_swift_openapi_generator//:swift-openapi-generator"),
-            executable = True,
-            cfg = "exec",
-        ),
-    },
-)
-
 def _wuhu_resource_bundle(name, bundle_name, resource_root, copy_resources, process_resources, tags):
     infoplist_name = "{}_resource_bundle_infoplist".format(name)
     resource_bundle_infoplist(

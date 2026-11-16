@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - AgentsContract
   - TaskLifetime
   - name: CImageCodec
     platforms: [linux]
@@ -39,10 +40,8 @@ dependencies:
 tests:
   exclude:
     - Fixtures/**
-  # The storage lint reads the sources back by path; the viewing vector test
-  # reads the clients' contract fixture.
+  # The viewing vector test reads the other contract target's fixture.
   data:
-    - Targets/SpaceCore/Sources
     - Targets/SpaceContract/Tests/contract
   resources:
     - path: Fixtures

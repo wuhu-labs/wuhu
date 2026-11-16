@@ -1,8 +1,0 @@
-name: FetchOpenAPI
-kind: library
-sources: Sources
-dependencies:
-  - Fetch
-  - HTTPTypes
-  - OpenAPIRuntime
-tests: false

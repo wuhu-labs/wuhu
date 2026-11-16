@@ -19,16 +19,14 @@ private let imageModels: [ModelEntry] = [
 
 /// Load the test panda image as a base64 data URI.
 private func pandaDataURI() -> String {
-  let sourceFile = URL(fileURLWithPath: #filePath)
-  let imageFile = sourceFile.deletingLastPathComponent().appendingPathComponent("panda.jpg")
-  let data = try! Data(contentsOf: imageFile)
+  let data = try! Data(contentsOf: Bundle.module.resourceURL!.appending(path: "panda.jpg"))
   return "data:image/jpeg;base64,\(data.base64EncodedString())"
 }
 
 @Suite(.deterministicDependencies) struct ImageRecognitionTests {
   @Test(arguments: imageModels)
   func identifiesPanda(entry: ModelEntry) async throws {
-    try await withRecording(entry.recordingName) {
+    try await withRecording(entry.recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(entry)
 
       let imageURL = URL(string: pandaDataURI())!

@@ -44,13 +44,6 @@ import Testing
     let due = try #require(try await harness.space.duePushRelayDeliveries(at: fixedDate).only)
     #expect(due.grant == grant.grant)
     #expect(due.token == grant.token)
-
-    #expect(try await request(
-      "/v1/push-relay/grant",
-      method: .delete,
-      body: PushRelayGrantDeleteInput(grant: grant.grant),
-    ).status == .noContent)
-    #expect(try await harness.space.duePushRelayDeliveries(at: fixedDate).isEmpty)
   }
 
   // The device republishes the same credential on every trigger, so this runs
@@ -103,6 +96,7 @@ import Testing
     }).drain()
     #expect(try await harness.space.duePushRelayDeliveries(at: fixedDate).isEmpty)
 
+    registerSessionCells(in: harness.space)
     #expect(try await request("/v1/push-relay/grant", method: .put, body: grant).status == .noContent)
     let revived = try #require(try await harness.space.duePushRelayDeliveries(at: fixedDate).only)
     #expect(revived.notification.n == pending.notification.n)

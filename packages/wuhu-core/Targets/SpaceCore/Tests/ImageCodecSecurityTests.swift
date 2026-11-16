@@ -1,9 +1,5 @@
 import DeterministicDependencies
-#if canImport(FoundationEssentials)
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
+import Foundation
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
@@ -116,6 +112,6 @@ import Testing
   #endif
 
   static func fixture(_ name: String) throws -> Data {
-    try Data(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/image-fitting/\(name)"))
+    try Data(contentsOf: Bundle.module.resourceURL!.appending(path: "Fixtures/image-fitting/\(name)"))
   }
 }

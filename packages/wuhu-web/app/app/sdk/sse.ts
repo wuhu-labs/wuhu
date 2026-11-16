@@ -1,4 +1,4 @@
-import { errorDetail } from './errors'
+import { errorDetail, retryAfterMs } from './errors'
 import { notifyUnauthorized, signsOut, withAssertion } from './http'
 import type { EventStream } from './observe'
 import { sseParser } from '~/lib/shell-sdk/open-cache.js'
@@ -15,12 +15,12 @@ export function openAuthorizedStream(
     open?: () => void
     message?: (data: string) => void
     activity?: () => void
-    error?: (status?: number) => void
+    error?: (status?: number, retryAfterMs?: number) => void
   } = {}
   let closed = false
 
-  const fail = (status?: number) => {
-    if (!closed) handlers.error?.(status)
+  const fail = (status?: number, retryAfter?: number) => {
+    if (!closed) handlers.error?.(status, retryAfter)
   }
   ;(async () => {
     const response = await withAssertion((auth) =>
@@ -40,7 +40,8 @@ export function openAuthorizedStream(
         response.status === 401 &&
         signsOut(401, errorDetail(401, await response.text()))
       ) notifyUnauthorized()
-      fail(response.ok ? undefined : response.status)
+      if (response.ok) fail()
+      else fail(response.status, retryAfterMs(response.headers))
       return
     }
     handlers.open?.()

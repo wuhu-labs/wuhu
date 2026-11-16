@@ -1,3 +1,4 @@
+import AgentsContract
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceFS
@@ -9,7 +10,7 @@ import WuweiQueries
 extension SpaceCell {
   /// Whether `account` may own a group: a live person, not a guest.
   func canOwnGroup(_ account: AccountID) -> Bool {
-    guard let row = GroupAccess.ActorRows(db).account(account) else { return false }
+    guard let row = GroupAccess.ActorRows(ctx).account(account) else { return false }
     return row.kind == "human" && row.removedAt == nil && !row.guest
   }
 
@@ -34,12 +35,12 @@ extension SpaceCell {
   }
 
   func isGuest(_ account: AccountID) -> Bool {
-    GroupAccess.ActorRows(db).account(account)?.guest ?? false
+    GroupAccess.ActorRows(ctx).account(account)?.guest ?? false
   }
 
   /// The group a session acts in.
   func group(of session: SessionID) -> GroupID {
-    db.rows(GroupSessionRow.where { $0.id.eq(session.rawValue) }).first.map { GroupID(rawValue: $0.grp) } ?? .shared
+    ctx.session(session).summary.map { GroupID(rawValue: $0.group) } ?? .shared
   }
 }
 

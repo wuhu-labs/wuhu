@@ -111,6 +111,7 @@ extension CommandRunner {
   // The TMPDIR in the exec's environment, which Darwin's Foundation would ignore.
   func sessionStateDirectory(_ credential: SessionCredential) -> URL {
     let tmp = self.environment["TMPDIR"].flatMap { $0.isEmpty ? nil : URL(filePath: $0, directoryHint: .isDirectory) }
+    // swiftlint:disable:next no_bare_temporary_path - a session exec's state, the fallback when its environment has no TMPDIR
     return (tmp ?? FileManager.default.temporaryDirectory)
       .appendingPathComponent("wuhu-exec-" + SHA256.hex(credential.token).prefix(24), isDirectory: true)
   }

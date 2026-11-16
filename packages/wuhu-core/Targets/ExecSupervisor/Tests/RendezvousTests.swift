@@ -38,6 +38,7 @@ struct MachineHome {
 
   init(padding: Int = 0) throws {
     var template = Array("/tmp/w252-XXXXXX".utf8CString)
+    // swiftlint:disable:next no_bare_temporary_path - a short /tmp machine home for ctl.sock, since $TMPDIR scratch exceeds the 103-byte Unix socket path on macOS; each test removes it
     guard let made = mkdtemp(&template) else { throw OperationError(.invalidConfiguration) }
     var path = String(cString: made)
     if padding > 0 {

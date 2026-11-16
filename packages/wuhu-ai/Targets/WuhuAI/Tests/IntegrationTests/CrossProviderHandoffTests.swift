@@ -30,7 +30,7 @@ private let sameDialectPairs: [(String, String, String, String)] = [
     targetProvider: String, targetModel: String,
   ) async throws {
     let recordingName = "\(sourceModel)-to-\(targetModel)-handoff"
-    try await withRecording(recordingName) {
+    try await withRecording(recordingName, recordings: recordings) {
       let sourceEndpoint = makeEndpoint(providerID: sourceProvider, model: sourceModel)
       let targetEndpoint = makeEndpoint(providerID: targetProvider, model: targetModel)
 
@@ -75,7 +75,7 @@ private let crossDialectPairs: [(String, String, String, String)] = [
     targetProvider: String, targetModel: String,
   ) async throws {
     let recordingName = "\(sourceModel)-to-\(targetModel)-cross-dialect"
-    try await withRecording(recordingName) {
+    try await withRecording(recordingName, recordings: recordings) {
       let sourceEndpoint = makeEndpoint(providerID: sourceProvider, model: sourceModel)
       let targetEndpoint = makeEndpoint(providerID: targetProvider, model: targetModel)
 
@@ -111,7 +111,7 @@ private let crossDialectPairs: [(String, String, String, String)] = [
   @Test
   func reasoningCrossProviderHandoff() async throws {
     let recordingName = "claude-sonnet-4-6-to-deepseek-v4-pro-reasoning-handoff"
-    try await withRecording(recordingName) {
+    try await withRecording(recordingName, recordings: recordings) {
       let sourceEndpoint = makeEndpoint(providerID: "anthropic", model: "claude-sonnet-4-6")
       let targetEndpoint = makeEndpoint(providerID: "deepseek", model: "deepseek-v4-pro")
 
@@ -179,7 +179,7 @@ private let crossDialectPairs: [(String, String, String, String)] = [
   /// Black-box on purpose: a straight `.infer` with no manual normalization, so
   /// the live path's normalization is what's exercised.
   @Test func gptReasoningReplaysToAnthropic() async throws {
-    try await withRecording("gpt-5.4-reasoning-to-claude-sonnet-4-6-handoff") {
+    try await withRecording("gpt-5.4-reasoning-to-claude-sonnet-4-6-handoff", recordings: recordings) {
       let gpt = makeEndpoint(providerID: "openai", model: "gpt-5.4")
       let claude = makeEndpoint(providerID: "anthropic", model: "claude-sonnet-4-6")
 

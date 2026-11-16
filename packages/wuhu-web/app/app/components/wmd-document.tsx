@@ -8,6 +8,7 @@ import {
   browserSocket,
   type ChannelState,
   channelStatus,
+  graceChannel,
   liveChannelURL,
   openChannel,
 } from '~/lib/wmd/channel'
@@ -107,6 +108,7 @@ export default function WmdDocument({
           },
         },
       })
+      const shown = graceChannel(realTimer, setChannel)
       const close = openChannel({
         url: liveChannelURL(path, globalThis.location),
         group,
@@ -123,7 +125,7 @@ export default function WmdDocument({
         open: browserSocket,
         timer: realTimer,
         changed: (state) => {
-          setChannel(state)
+          shown.changed(state)
           if (state.phase === 'live' || state.phase === 'syncing') {
             setWelcomed(true)
             const color = colorOf(doc.peerIdStr)
@@ -138,6 +140,7 @@ export default function WmdDocument({
       setLive({ editor, collab })
       teardown = () => {
         close()
+        shown.close()
         editor.destroy()
         presence.destroy()
         doc.free()

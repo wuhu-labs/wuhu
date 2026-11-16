@@ -6,15 +6,15 @@ import FetchWebSocket
   import Foundation
 #endif
 
-// Replay by default; record when `RECORDING` matches `name`. Fixtures live in
-// `Recordings/<name>` next to the calling file, or under `RECORDINGS_ROOT`
-// when set — a Bazel test runs from runfiles, and a recording has to land in
-// the source tree to be committed.
+// Replay by default; record when `RECORDING` matches `name`. The caller names
+// the folder holding the fixtures, normally its own bundle's `Recordings`;
+// `RECORDINGS_ROOT` overrides it while recording, since a re-recording has to
+// land in the source tree to be committed.
 public func withRecording(
   _ name: String,
+  recordings: URL,
   matchIgnoringBodyFields: Set<String> = [],
   matchIgnoringSystemPrompt: Bool = false,
-  file: String = #filePath,
   body: () async throws -> Void,
 ) async throws {
   let envMode = RecordingMode.fromEnvironment
@@ -24,9 +24,7 @@ public func withRecording(
   let recordingsRoot = if mode.isRecording, let root = environment["RECORDINGS_ROOT"], !root.isEmpty {
     URL(fileURLWithPath: root)
   } else {
-    URL(fileURLWithPath: file)
-      .deletingLastPathComponent()
-      .appendingPathComponent("Recordings")
+    recordings
   }
   let connector: WebSocketConnector
   if mode.isRecording {

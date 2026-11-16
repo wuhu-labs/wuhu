@@ -29,9 +29,7 @@ import Testing
   }
 
   private let vectors: Vectors = {
-    let file = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent("SpaceContract/Tests/contract/viewing-vectors.json")
+    let file = URL(fileURLWithPath: "packages/wuhu-core/Targets/SpaceContract/Tests/contract/viewing-vectors.json")
     return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: file))
   }()
 

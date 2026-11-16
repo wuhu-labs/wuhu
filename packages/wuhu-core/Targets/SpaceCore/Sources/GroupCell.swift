@@ -1,4 +1,6 @@
+import AgentsContract
 import struct MachineContract.MachineID
+import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import SpaceFS
 import StructuredQueries
@@ -14,16 +16,16 @@ public struct GroupCell {
 
   /// What `actor` may do here acting out of `acting`; nil for no access.
   public func role(of actor: Actor, acting: GroupID) -> GroupRole? {
-    rows.role(of: actor, in: GroupID(rawValue: id.key), acting: acting, rows: GroupAccess.ActorRows(db))
+    rows.role(of: actor, in: GroupID(rawValue: id.key), acting: acting, rows: GroupAccess.ActorRows(ctx))
   }
 
   public func reads(_ principal: Principal) -> Bool {
-    rows.reads(rows.reader(principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(db)), id.key)
+    rows.reads(rows.reader(principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(ctx)), id.key)
   }
 
   /// Whether the person behind `account` administers the group: its owner, a space admin, or an admin on its list.
   public func isHumanAdmin(_ account: AccountID) -> Bool {
-    GroupAccess.ActorRows(db).account(account).map { rows.isHumanAdmin($0, of: id.key) } ?? false
+    GroupAccess.ActorRows(ctx).account(account).map { rows.isHumanAdmin($0, of: id.key) } ?? false
   }
 
   /// Whether `group` may write here: the switch a machine's or a secret's scope reads.
@@ -140,17 +142,17 @@ public struct SpaceCell {
   }
 
   public func readable(by principal: Principal) -> Set<GroupID> {
-    rows.readable(by: principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(db))
+    rows.readable(by: principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(ctx))
   }
 
   /// The groups `principal` may write: its role in each is write or admin.
   public func writable(by principal: Principal) -> Set<GroupID> {
-    rows.writable(by: principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(db))
+    rows.writable(by: principal.actor, acting: principal.group, rows: GroupAccess.ActorRows(ctx))
   }
 
   /// Every group `principal` administers, by the rule `GroupCell.role` answers `admin` by.
   public func administered(by principal: Principal) -> Set<GroupID> {
-    rows.administered(by: principal.actor, rows: GroupAccess.ActorRows(db))
+    rows.administered(by: principal.actor, rows: GroupAccess.ActorRows(ctx))
   }
 
   /// Spreads an account's removal over every group it lists: each drops the account's rows from its own list.
@@ -180,12 +182,11 @@ public struct SpaceCell {
   func person(_ spelling: String) -> String? { directoryTarget(spelling, sessions: false) }
 
   func directoryTarget(_ spelling: String, sessions: Bool) -> String? {
-    db.rows(#sql("""
+    if sessions, ctx.session(SessionID(spelling)).summary != nil { return spelling }
+    return db.rows(#sql("""
     WITH person(principal) AS (
       SELECT COALESCE((SELECT target FROM aliases WHERE name = \(bind: spelling.lowercased()) AND kind = 'person'), \(bind: spelling))
     )
-    SELECT \(bind: spelling) WHERE \(bind: sessions) AND EXISTS (SELECT 1 FROM sessions WHERE id = \(bind: spelling))
-    UNION ALL
     SELECT principal FROM person
     WHERE EXISTS (SELECT 1 FROM personas WHERE name = person.principal)
       OR EXISTS (SELECT 1 FROM aliases WHERE kind = 'person' AND current AND target = person.principal)
@@ -203,10 +204,15 @@ public struct SpaceCell {
 }
 
 extension GroupAccess.ActorRows<Never> {
-  init(_ db: Database) {
+  init<C>(_ ctx: CellContext<C>) {
     self.init(
-      session: { session in db.rows(GroupSessionRow.where { $0.id.eq(session.rawValue) }).first },
-      account: { account in db.rows(GroupAccountRow.where { $0.id.eq(account.rawValue) }).first },
+      session: { session in
+        ctx.session(session).summary.map {
+          let lifecycle: String = switch $0.lifecycle { case .live: "live"; case .archived: "archived" }
+          return GroupSessionRow(id: $0.id.rawValue, grp: $0.group, kind: $0.kind.rawValue, parent: $0.parent?.rawValue, lifecycle: lifecycle)
+        }
+      },
+      account: { account in ctx.db.rows(GroupAccountRow.where { $0.id.eq(account.rawValue) }).first },
     )
   }
 }

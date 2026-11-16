@@ -1,9 +1,5 @@
-#if canImport(FoundationEssentials)
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
 import CanvasDocument
+import Foundation
 import Loro
 import Testing
 import WmdDocument
@@ -135,7 +131,7 @@ private struct Case: Decodable, Sendable, CustomTestStringConvertible {
   var testDescription: String { self.name }
 
   static let all: [Case] = {
-    let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/editor-cases.json")
+    let file = Bundle.module.resourceURL!.appending(path: "editor-cases.json")
     return try! JSONDecoder().decode([Case].self, from: Data(contentsOf: file))
   }()
 }

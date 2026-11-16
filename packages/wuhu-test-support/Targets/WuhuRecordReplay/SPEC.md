@@ -1,6 +1,6 @@
 # WuhuRecordReplay
 
-`withRecording` injects HTTP fetch and the WebSocket connector for the duration of a passing asynchronous test body. Replay is offline and is the default. `RECORDING=1` records every scope; another nonempty value records scopes whose names start with that value. Fixtures live in `Recordings/<name>` beside the calling file, or in `RECORDINGS_ROOT/<name>` when recording. Fixtures are replaced only after the body succeeds; a thrown body leaves existing fixtures untouched.
+`withRecording` injects HTTP fetch and the WebSocket connector for the duration of a passing asynchronous test body. Replay is offline and is the default. `RECORDING=1` records every scope; another nonempty value records scopes whose names start with that value. Fixtures live in the folder the caller names — normally its own bundle's `Recordings` — or in `RECORDINGS_ROOT/<name>` when recording. Fixtures are replaced only after the body succeeds; a thrown body leaves existing fixtures untouched.
 
 HTTP fixtures remain numbered `.request.json` and `.output.sse` pairs. Matching, ignored body fields, UUID comparison and exact embedded argument strings retain their existing behavior.
 

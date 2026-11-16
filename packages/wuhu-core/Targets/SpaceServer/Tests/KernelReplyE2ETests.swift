@@ -122,8 +122,8 @@ private final class ToolsWitness: Sendable {
       // recording replays the loop, so it compares every message but the
       // system text and the opening after it.
       try await withRecording(
-        "gpt-5.6-luna-session-tree", matchIgnoringBodyFields: ["tools", "prompt_cache_key"],
-        matchIgnoringSystemPrompt: true,
+        "gpt-5.6-luna-session-tree", recordings: Bundle.module.resourceURL!.appending(path: "Recordings"),
+        matchIgnoringBodyFields: ["tools", "prompt_cache_key"], matchIgnoringSystemPrompt: true,
       ) {
         let hold = ChildHold()
         try await withDependencies {

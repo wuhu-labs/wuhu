@@ -491,7 +491,7 @@ import Testing
     let known = try applied()
     try database.access { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('998'), ('999')") }
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space.open(file: location) }
-    #expect(try applied() == known + ["998", "999"])
+    #expect(try applied() == (known + ["998", "999"]).sorted())
     try await original.close()
   }
 

@@ -5,7 +5,7 @@ import {
   observeStore,
   realTimer,
 } from '~/sdk/observe'
-import { errorDetail } from '~/sdk/errors'
+import { ApiError, errorDetail } from '~/sdk/errors'
 import { inGroup, post, withAssertion } from '~/sdk/http'
 import { openAuthorizedStream } from '~/sdk/sse'
 import { sqlSubscription } from '~/sdk/subscriptions'
@@ -83,8 +83,8 @@ function refusals(stream: EventStream, refused: () => void): EventStream {
     onMessage: (handler) => stream.onMessage(handler),
     onActivity: (handler) => stream.onActivity(handler),
     onError: (handler) =>
-      stream.onError((status) => {
-        handler(status)
+      stream.onError((status, retryAfterMs) => {
+        handler(status, retryAfterMs)
         if (status === 400 || status === 422) refused()
       }),
     close: () => stream.close(),
@@ -137,7 +137,7 @@ export function browserHostIO(group: string): HostIO {
       )
       const body = await response.text()
       if (response.headers.get('wuhu-fetch-result') !== 'upstream') {
-        throw new Error(errorDetail(response.status, body).message)
+        throw new ApiError(response.status, errorDetail(response.status, body))
       }
       return {
         status: response.status,

@@ -28,7 +28,7 @@ private let anthropicTestCases: [(model: String, recordingName: String, kind: St
   func deepseekChatEndpoint(
     model: String, recordingName: String, kind: String,
   ) async throws {
-    try await withRecording(recordingName) {
+    try await withRecording(recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(providerID: "deepseek", model: model)
 
       switch kind {
@@ -50,7 +50,7 @@ private let anthropicTestCases: [(model: String, recordingName: String, kind: St
   func deepseekAnthropicEndpoint(
     model: String, recordingName: String, kind: String,
   ) async throws {
-    try await withRecording(recordingName) {
+    try await withRecording(recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(providerID: "deepseek-anthropic", model: model)
 
       switch kind {

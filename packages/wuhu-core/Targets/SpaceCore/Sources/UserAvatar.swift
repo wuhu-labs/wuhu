@@ -30,14 +30,11 @@ extension Space {
     return try await UserAvatar(hash: hash, data: Data(bucket.bytes(hash)))
   }
 
-  public func setUserAvatar(principal: String, data: Data?) async throws {
-    if let data {
-      guard data.count <= UserAvatar.maximumBytes else { throw UserAvatarError.tooLarge }
-      guard data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) else { throw UserAvatarError.invalidPNG }
-    }
+  public func setUserAvatar(principal: String, data: Data) async throws {
+    guard data.count <= UserAvatar.maximumBytes else { throw UserAvatarError.tooLarge }
+    guard data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) else { throw UserAvatarError.invalidPNG }
     guard let owner = cell.personCell(principal) else { throw SpaceError.notFound(principal) }
-    let hash: String?
-    if let data { hash = try await bucket.put(Array(data)) } else { hash = nil }
+    let hash = try await bucket.put(Array(data))
     try await worker.call(owner) { try $0.setAvatarHash(principal: principal, hash: hash) }
   }
 }
@@ -47,7 +44,7 @@ extension PersonCell {
     db.rows(UserProfileRow.where { $0.ownerAccount.eq(id.key) && $0.principal.eq(principal) }.select { $0.avatarHash }).first ?? nil
   }
 
-  public mutating func setAvatarHash(principal: String, hash: String?) throws {
+  public mutating func setAvatarHash(principal: String, hash: String) throws {
     try requireAccount()
     try db.execute(UserProfileRow.insert {
       UserProfileRow(principal: principal, ownerAccount: id.key, displayName: nil, avatarHash: hash)

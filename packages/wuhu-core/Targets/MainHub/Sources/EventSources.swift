@@ -1,4 +1,3 @@
-import Dependencies
 import Fetch
 import FetchSSE
 #if canImport(FoundationEssentials)
@@ -46,19 +45,11 @@ public struct EventSources: Sendable {
     case 200:
       throw StreamFailure.refused("\(url) answered \(response.body.contentType ?? "no content type"), not text/event-stream")
     case 408, 429, 500 ... 599:
-      throw StreamFailure.unavailable(retryAfter: response.headers[.retryAfter].flatMap(waitFor))
+      throw StreamFailure.unavailable(retryAfter: response.retryAfter)
     default:
       throw StreamFailure.refused("\(url) answered HTTP \(response.status.code)")
     }
   }
-}
-
-/// A `Retry-After` value, in seconds or as an HTTP date.
-private func waitFor(_ retryAfter: String) -> Duration? {
-  @Dependency(\.date.now) var now
-  if let seconds = Int(retryAfter) { return .seconds(max(seconds, 0)) }
-  guard let date = try? Date.HTTPFormatStyle().parse(retryAfter) else { return nil }
-  return .seconds(max(date.timeIntervalSince(now), 0))
 }
 
 public enum StreamFailure: Error {

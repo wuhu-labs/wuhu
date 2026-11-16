@@ -1,3 +1,5 @@
+import enum AgentsContract.SessionKind
+import enum AgentsContract.SessionLifecycle
 import Dependencies
 import TaskLifetime
 #if canImport(FoundationEssentials)
@@ -12,16 +14,6 @@ import enum SpaceContract.SessionWorkPayload
 
 public typealias SessionHold = SpaceContract.SessionHoldPayload
 public typealias SessionWork = SpaceContract.SessionWorkPayload
-
-public enum SessionLifecycle: Hashable, Sendable, Codable {
-  case live
-  case archived(graceExpiresAt: Date)
-}
-
-public enum SessionKind: String, Hashable, Sendable, Codable {
-  case agent
-  case task
-}
 
 public struct SessionRecord: Hashable, Sendable, Codable {
   public var id: SessionID

@@ -10,9 +10,7 @@ import Testing
 // The checked-in inspection body: a change to the endpoint's encoding, which
 // the web and the CLI read, fails here before it reaches them.
 @Suite(.deterministicDependencies) struct ModelRouteInspectionFixtureTests {
-  static let fixture = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()
-    .appendingPathComponent("../../SpaceContract/Tests/contract/model-route-inspection.json")
+  static let fixture = Bundle.module.resourceURL!.appending(path: "Fixtures/model-route-inspection.json")
 
   static func inspection() throws -> SessionModelRouteOutput {
     let placed = Date(timeIntervalSince1970: 1_791_000_000)

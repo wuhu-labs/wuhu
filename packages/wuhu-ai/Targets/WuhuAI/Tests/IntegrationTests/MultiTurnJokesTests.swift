@@ -24,7 +24,7 @@ private let multiTurnModels: [ModelEntry] = [
 @Suite(.deterministicDependencies) struct MultiTurnJokesTests {
   @Test(arguments: multiTurnModels)
   func plainTextMultiTurn(entry: ModelEntry) async throws {
-    try await withRecording(entry.recordingName) {
+    try await withRecording(entry.recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(entry)
       let options = RequestOptions(reasoning: .effort("high"))
 

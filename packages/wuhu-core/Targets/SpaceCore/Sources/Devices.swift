@@ -93,11 +93,6 @@ extension Space {
     return try await worker.call(PersonCell.ID(row.account.rawValue)) { try $0.issueDeviceCommand(device, payload: payload, issuedBy: issuedBy, at: now) }
   }
 
-  public func issueDeviceCommand(device: String, payload: String, issuedBy session: SessionID, answering callID: ToolCallID) async throws -> ToolResultPayload {
-    let n = try await issueDeviceCommand(device: device, payload: payload, issuedBy: session.rawValue)
-    return .manipulateUI(.init(device: device, n: n))
-  }
-
   public func deviceNames() async throws -> [String: String] { Dictionary(uniqueKeysWithValues: cell.devices().map { ($0.id, $0.name) }) }
 }
 

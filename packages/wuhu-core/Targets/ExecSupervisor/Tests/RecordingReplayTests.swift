@@ -1,16 +1,12 @@
-#if canImport(FoundationEssentials)
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
 import FetchExchangeRecording
+import Foundation
 import struct OperationProtocol.OperationSnapshot
 import Testing
 
 @Suite struct RecordingReplayTests {
   @Test(arguments: ["backpressure", "daemon-detach", "process-group-stop", "agent-restart", "coordinator-cursor-handoff", "lease-expiry", "service-manager", "launchd-service-manager", "recovery-isolation"])
   func recordedAgentAnswersCarryTheOutputAndEvidence(_ name: String) async throws {
-    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Recordings/" + name + ".json")
+    let url = Bundle.module.resourceURL!.appending(path: "Recordings/" + name + ".json")
     let recording = try JSONDecoder().decode(ExchangeRecording.self, from: Data(contentsOf: url))
     var output = Data(); var committed: UInt64 = 0; var terminal: OperationSnapshot?
     for exchange in recording.exchanges where exchange.response.status == 200 {

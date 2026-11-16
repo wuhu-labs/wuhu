@@ -48,7 +48,7 @@ import WuhuRecordReplay
       tools: tools,
     )
 
-    try await withRecording(recording) {
+    try await withRecording(recording, recordings: recordings) {
       let endpoint = OpenAICodexEndpoint(
         model: "gpt-6.1-sol", replayScope: "test-scope",
         baseURL: URL(string: "https://chatgpt.com/backend-api/codex")!,

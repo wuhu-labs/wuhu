@@ -296,7 +296,7 @@ private func rendered(_ notification: NotificationPayload) -> String {
   func field(_ name: String) -> String {
     fields[name]?.stringValue ?? "?"
   }
-  // One inbox spans every group: each line names its group, and a sender
+  // One inbox spans every group: each line names its group, and an agent
   // from outside the conversation's group names theirs.
   let sender = fields["senderGroup"]?.stringValue.map { "\(field("sender")) (group \($0))" } ?? field("sender")
   let body = switch notification.kind {

@@ -211,6 +211,8 @@ export function SpaceFeedsProvider({
         liveness: members.length > 0 &&
             members.every((group) => feeds.get(group)?.liveness === 'live')
           ? 'live'
+          : members.some((group) => feeds.get(group)?.liveness === 'offline')
+          ? 'offline'
           : 'reconnecting',
         sessions,
       }}

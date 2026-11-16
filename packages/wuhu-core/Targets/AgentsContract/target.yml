@@ -1,0 +1,8 @@
+name: AgentsContract
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+dependencies:
+  - SessionDomain
+  - Wuwei

@@ -2,6 +2,8 @@
 
 Durable addressables over one SQLite file, on one of two backends. Layered (`Storage.layered(FileDatabase)`): each addressable has a SQLite database of its own, whose pages live as rows of the outer file. Shared (`Storage.shared(any SharedDatabase)`): every addressable's tables live in the outer database itself, which a host program may own (Wuhu lends `space.sqlite`). Code written against one runs on the other; the suite runs on both.
 
+`CellReading`, conformed to by `CellContext`, `JobContext` and `Reader`, supplies `cell(_:)` read handles in the caller's existing read; an injected factory can hide a cell's concrete type without opening another read.
+
 ## Addressables
 
 - An addressable type has a `kind`, a `Message` type and a `schema`, applied once per statement and tracked by `PRAGMA user_version` (layered) or the `wuwei_schema` ledger (shared, applied when the worker starts). Its address is `kind/key`.

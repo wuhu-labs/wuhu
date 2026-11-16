@@ -414,9 +414,6 @@ extension MachineExecRolloverTests {
       try await until("the stream starts the process") { old.worker.cell(cell).operation(request.id)?.dispatched == true }
       peer.send(.init(tag: .operation(request.operation, .start), answer: .snapshot(.init(snapshot: .init(operation: request.operation, verdict: nil, terminalToken: nil, finalOffsets: [:], outputConsumed: false)))))
       try await until("the start is answered") { old.worker.cell(cell).operation(request.id)?.state == "running" }
-      await #expect(throws: OperationError.self) {
-        try await old.worker.call(cell) { try $0.background(request.id) }
-      }
       if drain {
         new.worker.start()
         await old.stopWorker()

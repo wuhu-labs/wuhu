@@ -20,7 +20,7 @@ import Testing
 // --test_env=BACKCOMPAT_RECORD=1 --test_filter=BackcompatTests`, then copy
 // space.sqlite and goldens.json out of the test's undeclared outputs.
 @Suite(.deterministicDependencies) struct BackcompatTests {
-  static let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Backcompat")
+  static let folder = Bundle.module.resourceURL!.appending(path: "Backcompat")
   static let goldens = try? JSONDecoder().decode(Goldens.self, from: Data(contentsOf: folder.appending(path: "goldens.json")))
 
   @Test func everyProbeHasAGolden() throws {

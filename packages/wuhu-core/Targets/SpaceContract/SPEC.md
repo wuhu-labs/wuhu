@@ -253,18 +253,7 @@ Identity attribution: optional `identity` fields name an ordinary persona belong
   `idempotency_key`, so only a retried send of that notification replaces it,
   and its `thread_id` is the notification's source (the conversation, or the
   session), so a device stacks one conversation's pushes in one group.
-- **Notifications** (`GET /v1/notifications?identity=&after=`): append-only
-  rows above the cursor; `payload` is the kind-specific JSON object. A person
-  has one inbox across all their groups with one read position: the route
-  returns the identity's rows of every group whatever the acting group, and
-  each `NotificationPayload.group` names the row's group (a conversation's, or
-  the session's; absent from servers before groups). A `conversation_message`
-  payload carries `senderGroup` when the poster's group isn't the
-  conversation's, so an outside sender shows with its group. Pushes carry the
-  same ruling: an APNs relay push's `data` and a web push's notification
-  `data` both carry `group`, the notification's group, and an outside
-  sender's title reads `<sender> (group <senderGroup>)`, as `wuhu inbox`
-  prints it.
+- **Notifications** (`GET /v1/notifications?identity=&after=`): append-only  rows above the cursor; `payload` is the kind-specific JSON object. A person  has one inbox across all their groups with one read position: the route  returns the identity's rows of every group whatever the acting group, and  each `NotificationPayload.group` names the row's group (a conversation's, or  the session's; absent from servers before groups). A `conversation_message`  payload carries `senderGroup` only for an agent whose group isn't the  conversation's; a person's posting group never travels. An outside agent shows with its group. Pushes carry the  same ruling: an APNs relay push's `data` and a web push's notification  `data` both carry `group`, the notification's group, and an outside  sender's title reads `<sender> (group <senderGroup>)`, as `wuhu inbox`  prints it.
 
 ## Session observation streams
 
@@ -358,7 +347,7 @@ Normal machine tools use `unknownKind` when a registered v2 machine does not adv
 
 ## Live document channel
 
-`LiveChannel.routePrefix` (`/v1/live`) plus a `.wmd` or `.canvas` file path, upgraded to a WebSocket, carries one document between a client and the server's node (SpaceServer's SPEC has the route, SpaceCore's the node). Text frames are JSON controls discriminated by `type`; binary frames are a `LiveFrame`: one tag byte, then raw Loro bytes as loro-swift and loro-crdt export and import them: `0x01` sync (client → server, the client doc's encoded version vector), `0x02` update (both ways), `0x03` presence (both ways, `EphemeralStore` bytes), `0x04` synced (server → client, the server doc's version vector). Another tag, or an empty frame, is `LiveFrame.Malformed`. Clients built before `.canvas` dial `/v1/wmd` instead and know `notLive` as `notWmd`; that route keeps sending `notWmd`.
+`LiveChannel.routePrefix` (`/v1/live`) plus a `.wmd` or `.canvas` file path, upgraded to a WebSocket, carries one document between a client and the server's node (SpaceServer's SPEC has the route, SpaceCore's the node). Text frames are JSON controls discriminated by `type`; binary frames are a `LiveFrame`: one tag byte, then raw Loro bytes as loro-swift and loro-crdt export and import them: `0x01` sync (client → server, the client doc's encoded version vector), `0x02` update (both ways), `0x03` presence (both ways, `EphemeralStore` bytes), `0x04` synced (server → client, the server doc's version vector). Another tag, or an empty frame, is `LiveFrame.Malformed`.
 
 The sequence: the client's first frame is `hello` (`authorization`: the `Authorization` header value a request would carry; `group`: the `wuhu-group` header's, null for `shared`; `peer`: the client doc's Loro peer id in decimal; `create`: true to create the document, empty, when the path is missing, for a write connection only; absent or false, a missing document is refused `notFound`). The server answers `welcome` (`connection`, the `name` to show in presence, `access`, the roster `peers`, `rev`: the latest checkpoint's revision, null before the first) or `error`. The client sends `sync`. The server sends an `update` with everything the client lacks (omitted when nothing is), then `synced`. The client then sends its own missing edits as one `update`. From then on each side sends its edits as `update`s. A `read` connection sends only `sync` and `presence`, and nobody sends an `update` before `synced`.
 

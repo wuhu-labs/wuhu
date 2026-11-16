@@ -25,7 +25,7 @@ private let toggleModels: [ModelEntry] = [
 @Suite(.deterministicDependencies) struct ReasoningToggleTests {
   @Test(arguments: toggleModels)
   func reasoningOpenToClosed(entry: ModelEntry) async throws {
-    try await withRecording("\(entry.recordingName)-open-to-closed") {
+    try await withRecording("\(entry.recordingName)-open-to-closed", recordings: recordings) {
       let endpoint = makeEndpoint(entry)
 
       // Turn 1: reasoning = effort("high")
@@ -51,7 +51,7 @@ private let toggleModels: [ModelEntry] = [
 
   @Test(arguments: toggleModels)
   func reasoningClosedToOpen(entry: ModelEntry) async throws {
-    try await withRecording("\(entry.recordingName)-closed-to-open") {
+    try await withRecording("\(entry.recordingName)-closed-to-open", recordings: recordings) {
       let endpoint = makeEndpoint(entry)
 
       // Turn 1: reasoning = .none
@@ -77,7 +77,7 @@ private let toggleModels: [ModelEntry] = [
 
   @Test(arguments: toggleModels)
   func reasoningClosedToDifferent(entry: ModelEntry) async throws {
-    try await withRecording("\(entry.recordingName)-closed-to-different") {
+    try await withRecording("\(entry.recordingName)-closed-to-different", recordings: recordings) {
       let endpoint = makeEndpoint(entry)
 
       // Turn 1: reasoning = .none

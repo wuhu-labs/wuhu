@@ -57,7 +57,6 @@ export function assertManualBoundaries(
           ? [`${target.name}_unstamped`, `${target.name}_stamp`]
           : []),
         ...(target.info ? [`${target.name}_info_plist`] : []),
-        ...(target.openapiGenerate ? [`${target.name}_gen`] : []),
         ...(['cLibrary', 'systemLibrary'].includes(target.kind)
           ? [`${target.name}_swift_interop`]
           : []),
@@ -183,7 +182,6 @@ export function assertManualBoundaries(
       ) {
         check(source, bundle.name, [
           ...bundle.dependencies,
-          ...(bundle.frameworks ?? []),
           ...(bundle.appIntents ?? []),
         ])
       }

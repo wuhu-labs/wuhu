@@ -335,11 +335,6 @@ private func sessionRouter(
     let script = ScriptRun(runner: .session(principal().session, group: principal().group), source: input.source, arguments: input.arguments)
     return scriptStream(in: streams) { say in try await execution.run(script, output: say) }
   }
-  router.post("/v1/exec/:id/background") { _, parameters in
-    guard let raw = parameters["id"], let record = try await space.execRecord(ExecID(rawValue: raw)), record.caller == principal().session.rawValue else { return unknownExec(parameters) }
-    try await space.worker.call(MachineCell.ID(record.machine.rawValue)) { try $0.background(raw) }
-    return try Response.json(JSONValue.object([:]))
-  }
   router.post("/v1/session") { request, _ in
     try await postSession(request, as: .session(principal().session), callID: callID(request), owner: owner)
   }

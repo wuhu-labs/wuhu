@@ -177,10 +177,6 @@ extension FilesCell {
     if maxID > 0 { try db.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", .text(name), .integer(maxID)) }
   }
 
-  func liveRowIDs(_ path: SpacePath) -> [Int64] {
-    db.rows("SELECT id FROM \(Tables.quoted(group, path)) ORDER BY id").map { $0[0].integer! }
-  }
-
   private static func bindings(_ header: TableHeader, _ cells: [JSONValue], path: SpacePath) throws -> [Value] {
     guard cells.count == header.columns.count else { throw SpaceError.columnCountMismatch(path.rawValue) }
     return try zip(header.columns, cells).map { column, value in

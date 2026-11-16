@@ -1,3 +1,6 @@
+import AgentsContract
+import enum AgentsContract.SessionKind
+import struct SessionDomain.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -58,11 +61,6 @@ extension Space {
     }
     let now = SQLiteDateFormat.string(from: dateGen.now)
     _ = try await worker.call(owner) { try $0.registerPushRelayGrant(grant, at: now) }
-  }
-
-  public func removePushRelayGrant(_ grant: String, devicePublicKey: String) async throws {
-    guard let held = cell.pushRelayGrant(grant) else { return }
-    _ = try await worker.call(PersonCell.ID(held.ownerAccount)) { try $0.removePushRelayGrant(grant, devicePublicKey: devicePublicKey) }
   }
 
   public func pushRelayGrants(recipient: String) async throws -> [PushRelayGrant] { cell.pushRelayGrants(recipient: recipient) }
@@ -128,20 +126,29 @@ extension SpaceCell {
           PushRelayPending.Columns(
             grant: grant, notification: notification,
             ownerSession: #sql("(SELECT owner_session FROM conversations WHERE id = \(notification.source))", as: String?.self),
-            unreadConversations: #sql("""
-            (SELECT COUNT(DISTINCT u.source) FROM notifications u
-             JOIN sessions s ON s.id = u.source AND s.kind = 'agent' AND s.lifecycle != 'archived'
-             WHERE u.recipient = \(grant.recipient) AND u.kind = 'conversation_message'
-               AND u.n > COALESCE((SELECT w.last_read_n FROM watermarks w WHERE w.identity = u.recipient AND w.source = u.source), 0))
-            """, as: Int.self),
           )
         },
     ).map { row in
       PushRelayDelivery(
         grant: row.grant.grantID, endpoint: row.grant.endpoint, token: row.grant.token,
         consecutiveFailures: row.grant.consecutiveFailures, notification: NotificationRecord(row: row.notification),
-        ownerSession: row.ownerSession, unreadConversations: row.unreadConversations,
+        ownerSession: row.ownerSession, unreadConversations: unreadConversations(recipient: row.grant.recipient),
       )
+    }
+  }
+
+  func unreadConversations(recipient: String) -> Int {
+    let sources = db.rows(
+      """
+      SELECT DISTINCT u.source FROM notifications u
+      WHERE u.recipient = ? AND u.kind = 'conversation_message'
+        AND u.n > COALESCE((SELECT w.last_read_n FROM watermarks w WHERE w.identity = u.recipient AND w.source = u.source), 0)
+      """,
+      .text(recipient),
+    ).map { $0["source"].text! }
+    return sources.count {
+      guard let session = ctx.session(SessionID($0)).summary else { return false }
+      return session.kind == .agent && session.lifecycle == .live
     }
   }
 }
@@ -151,5 +158,4 @@ private struct PushRelayPending {
   var grant: PushRelayGrantRow
   var notification: NotificationRow
   var ownerSession: String?
-  var unreadConversations: Int
 }

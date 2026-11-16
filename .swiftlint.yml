@@ -63,3 +63,12 @@ custom_rules:
     match_kinds: [keyword, identifier]
     message: 'Use Swift Observation and TCA stores instead of Combine'
     severity: error
+  # The Scratch test's source scan this replaces read every target's Sources and
+  # Tests; Scratch itself owns bare temporary paths.
+  no_bare_temporary_path:
+    included: '(^|/)wuhu-core/Targets/'
+    excluded: '(^|/)wuhu-core/Targets/Scratch/'
+    regex: '\btemporaryDirectory\b|NSTemporaryDirectory|\bmkdtemp\b|\bmkstemp\b'
+    match_kinds: [identifier, typeidentifier]
+    message: 'Take a folder from ScratchFolder instead of a bare temporary path'
+    severity: error

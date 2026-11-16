@@ -136,17 +136,6 @@ public struct MachineCell {
     try finishExecStep(&row, presence: p)
   }
 
-  public mutating func background(_ exec: String) throws {
-    let p = presence
-    if p.state == "deleted" { return }
-    var row = operation(exec)!
-    guard row.request.script == nil else { throw OperationError(.invalidInput, message: "a script process cannot outlive its script") }
-    precondition(row.request.session != nil)
-    row.background = true
-    if row.terminal { try deliver(&row) }
-    try finishExecStep(&row, presence: p)
-  }
-
   public mutating func closeBoxes() {
     for socket in ctx.sockets(of: BoxSocket.self) { socket.close() }
     for socket in ctx.sockets(of: FileBulk.self) { socket.close() }

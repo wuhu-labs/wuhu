@@ -60,7 +60,7 @@ extension GroupCell {
   private func requireSubject(_ subject: GroupGrant.Subject, _ subjectID: String, role: GroupRole) throws {
     switch subject {
     case .account:
-      guard let account = GroupAccess.ActorRows(db).account(AccountID(rawValue: subjectID)), account.removedAt == nil else {
+      guard let account = GroupAccess.ActorRows(ctx).account(AccountID(rawValue: subjectID)), account.removedAt == nil else {
         throw SpaceError.notFound(subjectID)
       }
       guard !(role == .admin && account.guest) else { throw SpaceError.groupForbidden(id.key) }

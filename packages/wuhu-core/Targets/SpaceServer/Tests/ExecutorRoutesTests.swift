@@ -114,38 +114,4 @@ import Testing
       }
     }
   }
-
-  @Test func theHomeRouteReportsWhatASessionSees() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness()
-      let fs = await harness.space.fs(.shared)
-      _ = try await fs.write("/AGENTS.md", Data("root".utf8), ifMatch: nil)
-      _ = try await fs.write("/.agents/skills/review/SKILL.md", Data("# Review\nReview things\n".utf8), ifMatch: nil)
-      let agent = try await harness.call(
-        "/v1/session",
-        .object(["kind": "agent", "title": "a", "provider": "testing", "model": "test-model"]),
-        as: SessionCreateOutput.self,
-      )
-      _ = try await fs.write("/_/sessions/\(agent.id)/AGENTS.md", Data("mine".utf8), ifMatch: nil)
-      let frozen = try JSONValueDecoder().decode(
-        SessionHomeOutput.self,
-        from: try #require(JSONValue.parse(try await harness.get("/v1/session/\(agent.id)/home").text())),
-      )
-      #expect(frozen.chain == ["wuhu://system/AGENTS.md", "/AGENTS.md", "wuhu://system/SESSION.md", "/_/sessions/\(agent.id)/AGENTS.md"], "before first inference the view reads live")
-      try await harness.store.markInterrupted(SessionID(agent.id))
-      try await harness.store.restart(SessionID(agent.id))
-
-      let response = try await harness.get("/v1/session/\(agent.id)/home")
-      #expect(response.status == .ok)
-      let home = try JSONValueDecoder().decode(SessionHomeOutput.self, from: try #require(JSONValue.parse(try await response.text())))
-      #expect(home == SessionHomeOutput(
-        home: "/_/sessions/\(agent.id)",
-        chain: ["wuhu://system/AGENTS.md", "/AGENTS.md", "wuhu://system/SESSION.md", "/_/sessions/\(agent.id)/AGENTS.md"],
-        skills: SystemFiles.instructions.skills.map { .init(name: $0.name, description: $0.description, path: $0.path) }
-          + [.init(name: "review", description: "Review things", path: "/.agents/skills/review/SKILL.md")],
-      ))
-      #expect(home.skills.prefix(10).map(\.name) == ["ai-scripts", "avatar", "canvas", "data-organization", "data-views", "devices", "machine-scripts", "monitor", "observe-group-channel", "read-box"])
-      #expect(try await harness.get("/v1/session/no-such/home").status == .notFound)
-    }
-  }
 }

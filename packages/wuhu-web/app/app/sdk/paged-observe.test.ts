@@ -275,7 +275,7 @@ Deno.test('backfill is single-flight, merges overlap, keeps forward head and act
     text: 'writing',
   })
   f.streams[0]!.error()
-  f.clock.fire(250)
+  f.clock.fire(1000)
   await tick()
   f.requests[2]!.resolve(page(9, 10))
   await tick()
@@ -387,6 +387,31 @@ Deno.test('failed older page leaves rows and live stream usable; retry and exhau
   f.store.close()
 })
 
+Deno.test('a transient head failure keeps the rows, shows no error and retries on the backoff', async () => {
+  const cache = new Cache()
+  cache.value = mergePage(emptyWindow(), page(8, 9), null)
+  const f = fixture(cache)
+  await tick()
+  f.requests[0]!.reject(
+    new ApiError(503, { code: 'unavailable', message: 'unavailable' }),
+  )
+  await tick()
+  equal(f.store.getSnapshot().history!.status, 'ready')
+  equal(f.store.getSnapshot().history!.error, null)
+  equal(f.store.getSnapshot().data.rows, [8, 9])
+  f.clock.fire(1000)
+  await tick()
+  f.requests[1]!.reject(new TypeError('Failed to fetch'))
+  await tick()
+  f.clock.fire(2000)
+  await tick()
+  f.requests[2]!.resolve(page(8, 10))
+  await tick()
+  equal(f.store.getSnapshot().data.rows, [8, 9, 10])
+  equal(f.streams.length, 1)
+  f.store.close()
+})
+
 Deno.test('empty and short page do not initiate automatic history cascade', async () => {
   for (const response of [page(0, -1, false), page(9, 9)]) {
     const f = fixture()
@@ -436,7 +461,7 @@ Deno.test('network reconnect aborts older page and refreshes only tail; stale ti
   f.store.getSnapshot().history!.loadOlder()
   f.clock.fire(45000)
   check(f.requests[3]!.signal.aborted)
-  f.clock.fire(250)
+  f.clock.fire(1000)
   await tick()
   equal(f.requests[4]!.before, null)
   f.store.close()
@@ -563,7 +588,7 @@ Deno.test('in-flight older epoch response cannot resurrect old rows after a reco
   await tick()
   f.store.getSnapshot().history!.loadOlder()
   f.streams[0]!.error()
-  f.clock.fire(250)
+  f.clock.fire(1000)
   await tick()
   const refreshed = page(20, 21)
   refreshed.historyEpoch = 'new'

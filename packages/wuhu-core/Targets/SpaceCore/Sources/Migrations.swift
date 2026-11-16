@@ -1,8 +1,34 @@
 import Dependencies
 import Logging
 
+typealias MigrationBody = @Sendable (MigrationDB) throws -> Void
+
+/// One baseline migration: the identifier it is frozen under and the body that runs once.
+typealias Migration = (id: String, migrate: MigrationBody)
+
+/// A family of addressables. Its chain runs after the baseline, in this order.
+enum MigrationFamily: String, CaseIterable, Sendable {
+  case tenancy
+  case group
+  case conversations
+  case agents
+  case machines
+}
+
+/// A family's migrations, in the order they run. The runner records them by position: `<family>/0001`, `<family>/0002`, …
+struct MigrationChain {
+  let family: MigrationFamily
+  let migrations: [MigrationBody]
+
+  init(_ family: MigrationFamily, migrations: [MigrationBody] = []) {
+    self.family = family
+    self.migrations = migrations
+  }
+}
+
 enum Migrations {
-  private static let all: [(id: String, migrate: @Sendable (MigrationDB) throws -> Void)] = [
+  /// 001–056, frozen: an existing database opens as it is. A new migration goes in its family's chain below.
+  static let baseline: [Migration] = [
     ("001", Migration001.apply), ("002", Migration002.apply), ("003", Migration003.apply), ("004", Migration004.apply),
     ("005", Migration005.apply), ("006", Migration006.apply), ("007", Migration007.apply), ("008", Migration008.apply),
     ("009", Migration009.apply), ("010", Migration010.apply), ("011", Migration011.apply), ("012", Migration012.apply),
@@ -13,7 +39,16 @@ enum Migrations {
     ("055", Migration055.apply), ("056", Migration056.apply),
   ]
 
-  static func apply(handle: OpaquePointer, log: Logger, date: DateGenerator) throws {
-    try MigrationRunner(handle: handle, log: log, date: date, migrations: all).migrate()
+  /// Every family's chain; a family with nothing to migrate yet stays empty.
+  static let chains: [MigrationChain] = [
+    MigrationChain(.tenancy),
+    MigrationChain(.group),
+    MigrationChain(.conversations, migrations: [ConversationsMigration001.apply]),
+    MigrationChain(.agents),
+    MigrationChain(.machines),
+  ]
+
+  static func apply(db: MigrationDB, log: Logger, date: DateGenerator) throws {
+    try MigrationRunner(db: db, log: log, date: date, baseline: baseline, chains: chains).migrate()
   }
 }

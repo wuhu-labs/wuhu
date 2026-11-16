@@ -145,7 +145,6 @@ struct ConversationCell {
     if let viewing = post.viewing {
       try db.execute("INSERT INTO message_viewing (message_id, path) VALUES (?, ?)", .text(post.messageID.rawValue), .text(viewing.stored))
     }
-    try db.execute("INSERT OR IGNORE INTO message_groups (message_id, grp) VALUES (?, ?)", .text(post.messageID.rawValue), .text(poster.group.rawValue))
     let record = message(post.messageID)!
     if let request = post.request, let id = post.requestID {
       try step(request, of: id, at: record.createdAt)
@@ -170,7 +169,6 @@ extension MessageRecord {
       conversation: ConversationID(row["conversation_id"].text!),
       sender: Sender(id: row["sender_id"].text!, timeZone: TimeZone(identifier: row["sender_timezone"].text!)!, device: row["device_id"].text),
       senderSession: row["sender_session_id"].text.map { SessionID($0) },
-      senderGroup: GroupID(rawValue: row["sender_grp"].text ?? GroupID.shared.rawValue),
       replyTarget: row["reply_target"].text.map { MessageID($0) },
       kind: MessageKind(rawValue: row["kind"].text!)!,
       requestID: row["request_id"].text.map { RequestID($0) },

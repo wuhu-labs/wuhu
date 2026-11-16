@@ -799,6 +799,16 @@
         "no_files_written"
       ],
       "judge": "PASS only if the reply says the tool list of this generation stays as it is and the new list (with copy) arrives with the next compaction, so compacting is how to get copy; that a call to timer now gets an error result; and that the notice is routine, nothing to report as an error. Fail claiming copy is in the current list, asking the person to fix the server, retrying timer, or any tool call or file."
+    },
+    {
+      "id": "message-sender-group",
+      "issue": 933,
+      "title": "Agent-only groups in scripts, SQL and CLI inbox",
+      "prompt": "Text-only smoke: do not call tools or write files. I read a conversation with conversation() and query message_senders. Which sender fields identify an agent and its group, what do I get for a person, and is the group a saved value on each message? Whose group does wuhu inbox show as “(group X)”? Answer in at most four sentences.",
+      "required": [
+        "no_files_written"
+      ],
+      "judge": "PASS only if the reply says conversation() exposes sender.session, sender.title and sender.group for an agent, resolved from the agent lookup; sender.group is absent for a person; message_senders.sender_grp is the session group and null for a person. The group is not saved on the message. wuhu inbox shows “(group X)” only for an agent from outside the conversation’s group, from the posting-time notification payload, never for a person. Fail if a person carries their acting or posting group, if it claims a conversation-group fallback, or if it calls tools or writes files. At most four sentences."
     }
   ]
 }

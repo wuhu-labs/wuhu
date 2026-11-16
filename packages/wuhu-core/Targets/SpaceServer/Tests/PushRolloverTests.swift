@@ -7,6 +7,7 @@ import DeterministicDependencies
   import Foundation
 #endif
 import Logging
+import func LoopCore.registerSessionCells
 import Scratch
 import SessionDomain
 import SpaceCore
@@ -39,6 +40,7 @@ import Wuwei
       let file = folder.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
       let new = try Space.open(file: file)
+      registerSessionCells(in: new)
       try await closing([old, new]) {
         _ = old.worker
         _ = new.worker
@@ -128,6 +130,7 @@ import Wuwei
       let file = folder.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
       let other = try Space.open(file: file)
+      registerSessionCells(in: other)
       try await closing([old, other]) {
         _ = old.worker
         let owner: SessionID
@@ -219,6 +222,7 @@ import Wuwei
       let file = folder.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
       let new = try Space.open(file: file)
+      registerSessionCells(in: new)
       try await closing([old, new]) {
         _ = old.worker
         _ = new.worker
@@ -264,6 +268,7 @@ import Wuwei
       let file = folder.url.appending(path: "space.sqlite")
       let old = try Space.open(file: file)
       let new = try Space.open(file: file)
+      registerSessionCells(in: new)
       try await closing([old, new]) {
         _ = old.worker
         _ = new.worker

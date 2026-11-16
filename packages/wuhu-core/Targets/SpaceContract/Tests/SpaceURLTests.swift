@@ -37,9 +37,7 @@ private struct Vectors: Decodable {
   let origins: [Origin]
 
   static let shared: Vectors = {
-    let file = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent()
-      .appendingPathComponent("contract/space-url-vectors.json")
+    let file = Bundle.module.resourceURL!.appending(path: "contract/space-url-vectors.json")
     return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: file))
   }()
 }

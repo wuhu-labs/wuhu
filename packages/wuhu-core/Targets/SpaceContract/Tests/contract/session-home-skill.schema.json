@@ -1,1 +1,0 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SessionHomeSkill","type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"path":{"type":"string"}},"required":["name","description","path"],"additionalProperties":false}

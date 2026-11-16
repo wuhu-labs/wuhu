@@ -6,7 +6,8 @@ import {
   pagedObserveStore,
 } from './paged-observe'
 
-export type Liveness = 'live' | 'reconnecting'
+// 'offline' is display-only: `graced` reports it once a drop outlasts the grace.
+export type Liveness = 'live' | 'reconnecting' | 'offline'
 
 export interface Snapshot<Data> {
   readonly data: Data
@@ -73,8 +74,9 @@ export interface EventStream {
   // Fires on every received chunk, including heartbeat comments that decode
   // to no message — the liveness signal a quiet stream still carries.
   onActivity(handler: () => void): void
-  // `status` is the HTTP status of a refused open, absent for a dropped stream.
-  onError(handler: (status?: number) => void): void
+  // `status` is the HTTP status of a refused open, absent for a dropped stream;
+  // `retryAfterMs` is the server's Retry-After, capped.
+  onError(handler: (status?: number, retryAfterMs?: number) => void): void
   close(): void
 }
 
@@ -100,7 +102,7 @@ export interface StoreConfig<Data, Event> {
   onOpen?(): void
 }
 
-const defaultBackoff: readonly number[] = [250, 500, 1000, 2000, 4000, 8000]
+export const defaultBackoff: readonly number[] = [1000, 2000, 4000, 8000]
 const defaultOpenTimeoutMs = 10_000
 // The server heartbeats every 15s; three missed beats means the connection
 // is dead even though fetch reports nothing.
@@ -181,9 +183,10 @@ export function observeStore<Data, Event>(
     stream = null
   }
 
-  const scheduleReconnect = () => {
+  const scheduleReconnect = (retryAfterMs?: number) => {
     if (closed) return
-    const delay = backoff[Math.min(attempt, backoff.length - 1)]!
+    const delay = retryAfterMs ??
+      backoff[Math.min(attempt, backoff.length - 1)]!
     attempt += 1
     cancelTimer = timer.schedule(delay, () => {
       cancelTimer = null
@@ -237,7 +240,7 @@ export function observeStore<Data, Event>(
       config.onEvent?.(event)
       emit()
     })
-    opened.onError((status) => {
+    opened.onError((status, retryAfterMs) => {
       if (stream !== opened) return
       stream = null
       cancelOpenDeadline?.()
@@ -252,15 +255,15 @@ export function observeStore<Data, Event>(
         refused = true
         return
       }
-      scheduleReconnect()
+      scheduleReconnect(retryAfterMs)
     })
   }
 
   const idle = () =>
     listeners.size > 0 && !closed && stream === null && cancelTimer === null
 
-  // Offline there is nothing to wait for: the pill shows at once, and the
-  // connection is retried the moment the browser is back.
+  // Offline there is nothing to wait for: the connection is retried the
+  // moment the browser is back.
   const networkChanged = () => {
     if (!network.online()) {
       teardown()
@@ -317,6 +320,82 @@ export function observeStore<Data, Event>(
       stopListening?.()
       stopListening = null
       listeners.clear()
+    },
+  }
+}
+
+// How long a drop of a store that was live is ridden out before it shows as
+// offline: a server changing hands or a network blip never reaches the screen.
+export const offlineGraceMs = 10_000
+
+// Passes the store's own liveness through, so code that waits for 'live' sees
+// the connection as it is, and says 'offline' once a drop outlasts the grace.
+// A store that has never been live never reads as offline.
+export function graced<Data>(
+  store: ObserveStore<Data>,
+  timer: Timer,
+  graceMs = offlineGraceMs,
+): ObserveStore<Data> {
+  let wasLive = false
+  let lapsed = false
+  let cancelGrace: (() => void) | null = null
+  let seen: Snapshot<Data> | null = null
+  let shown: Snapshot<Data> | null = null
+  let unsubscribe: (() => void) | null = null
+  const listeners = new Set<() => void>()
+
+  const notify = () => {
+    for (const listener of listeners) listener()
+  }
+  const track = () => {
+    if (store.getSnapshot().liveness === 'live') {
+      wasLive = true
+      lapsed = false
+      cancelGrace?.()
+      cancelGrace = null
+    } else if (wasLive && !lapsed) {
+      cancelGrace ??= timer.schedule(graceMs, () => {
+        cancelGrace = null
+        lapsed = true
+        notify()
+      })
+    }
+  }
+  const stop = () => {
+    unsubscribe?.()
+    unsubscribe = null
+    cancelGrace?.()
+    cancelGrace = null
+  }
+
+  return {
+    subscribe(onChange) {
+      listeners.add(onChange)
+      unsubscribe ??= store.subscribe(() => {
+        track()
+        notify()
+      })
+      track()
+      return () => {
+        listeners.delete(onChange)
+        if (listeners.size === 0) stop()
+      }
+    },
+    getSnapshot() {
+      const snapshot = store.getSnapshot()
+      const liveness = lapsed ? 'offline' : snapshot.liveness
+      if (snapshot !== seen || shown!.liveness !== liveness) {
+        seen = snapshot
+        shown = snapshot.liveness === liveness
+          ? snapshot
+          : { ...snapshot, liveness }
+      }
+      return shown!
+    },
+    close() {
+      stop()
+      listeners.clear()
+      store.close()
     },
   }
 }

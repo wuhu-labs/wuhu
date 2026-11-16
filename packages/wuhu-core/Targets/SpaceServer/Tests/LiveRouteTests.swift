@@ -130,38 +130,17 @@ struct LiveRouteTests {
     }
   }
 
-  @Test func theLegacyRouteRefusesInTheCodesItsClientsKnow() async throws {
+  @Test func aPathThatIsNotALiveDocumentIsRefusedNotLive() async throws {
     let harness = try await Harness()
-    _ = try await harness.space.fs(.shared).write("/plan.wmd", Data("# Plan\n".utf8), ifMatch: nil)
     _ = try await harness.space.fs(.shared).write("/notes.md", Data("notes\n".utf8), ifMatch: nil)
-    try await dial(harness, "/plan.wmd", prefix: "/v1/wmd") { socket in
-      var inbound = socket.inbound.makeAsyncIterator()
-      guard case .welcome? = try await control(inbound.next()) else { Issue.record("no welcome"); return }
-    }
-    try await dial(harness, "/notes.md", prefix: "/v1/wmd") { socket in
-      var inbound = socket.inbound.makeAsyncIterator()
-      guard case let .text(text)? = await inbound.next(), let json = JSONValue.parse(text) else { Issue.record("no refusal"); return }
-      let refusal = try JSONValueDecoder().decode(WmdError.self, from: json)
-      #expect(refusal.type == "error" && refusal.code == .notWmd)
-    }
     try await dial(harness, "/notes.md") { socket in
       var inbound = socket.inbound.makeAsyncIterator()
       guard case .error(code: .notLive, _)? = try await control(inbound.next()) else { Issue.record("no notLive"); return }
     }
   }
 
-  /// An error frame as clients built before `.canvas` decode it: a closed set of codes.
-  private struct WmdError: Decodable {
-    enum Code: String, Decodable {
-      case unauthorized, forbidden, notFound, notWmd, protocolViolation, readOnly, invalidUpdate, missingDependencies, `internal`
-    }
-
-    let type: String
-    let code: Code
-  }
-
   private func dial(
-    _ harness: Harness, _ path: String, prefix: String = LiveChannel.routePrefix, create: Bool = false, group: String? = nil,
+    _ harness: Harness, _ path: String, create: Bool = false, group: String? = nil,
     hello: Bool = true, bearer: String? = nil,
     _ body: (WebSocket) async throws -> Void,
   ) async throws {
@@ -170,7 +149,7 @@ struct LiveRouteTests {
     headers.set("upgrade", "websocket")
     headers.set("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
     headers.set("sec-websocket-version", "13")
-    let request = Request(url: URL(string: "http://space" + prefix + path)!, headers: headers)
+    let request = Request(url: URL(string: "http://space" + LiveChannel.routePrefix + path)!, headers: headers)
     // A live connection is the first thing that makes the space's worker, which reads the injected date
     // as it is made: this scope keeps it on the test's date.
     try await withDependencies {

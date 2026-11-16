@@ -15,9 +15,7 @@ import WuhuAI
     let line: SessionLinePayload
   }
 
-  static let fixture = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()
-    .appendingPathComponent("../../SpaceContract/Tests/contract/session-line-vectors.json")
+  static let fixture = Bundle.module.resourceURL!.appending(path: "Fixtures/session-line-vectors.json")
 
   static func stored(_ position: Int, _ key: String, _ message: Message) throws -> StoredTranscriptLine {
     let encoder = JSONEncoder()

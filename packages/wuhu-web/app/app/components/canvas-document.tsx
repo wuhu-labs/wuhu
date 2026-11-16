@@ -8,6 +8,7 @@ import {
   browserSocket,
   type ChannelState,
   channelStatus,
+  graceChannel,
   liveChannelURL,
   openChannel,
 } from '~/lib/wmd/channel'
@@ -63,6 +64,7 @@ export default function CanvasDocument({ path, group, frameOrigin, find }: {
       }
       const stopChanges = doc.subscribe(redraw)
       let clock: number | null = null
+      const shown = graceChannel(realTimer, setChannel)
       const close = openChannel({
         url: liveChannelURL(path, globalThis.location),
         group,
@@ -79,7 +81,7 @@ export default function CanvasDocument({ path, group, frameOrigin, find }: {
         open: browserSocket,
         timer: realTimer,
         changed: (state) => {
-          setChannel(state)
+          shown.changed(state)
           if (state.phase === 'live' && !synced) {
             synced = true
             redraw()
@@ -88,6 +90,7 @@ export default function CanvasDocument({ path, group, frameOrigin, find }: {
       })
       teardown = () => {
         close()
+        shown.close()
         stopChanges()
         if (frame !== null) cancelAnimationFrame(frame)
         presence.destroy()

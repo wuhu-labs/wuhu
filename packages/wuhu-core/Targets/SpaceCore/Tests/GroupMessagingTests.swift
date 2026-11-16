@@ -291,7 +291,8 @@ import Testing
     )
     let fromAlice = try #require(try await queued(rig, rig.s).last)
     #expect(fromAlice.senderAdmin == false)
-    #expect(fromAlice.senderGroup == Self.alice)
+    #expect(fromAlice.senderGroup == nil)
+    #expect(!fromAlice.header.render().contains("<sender-group>"))
     #expect(fromAlice.header.render().contains("<sender-admin>no</sender-admin>"))
 
     _ = try await rig.store.post(
@@ -337,7 +338,7 @@ import Testing
   }
 
   // One inbox across a person's groups: each row names its group, and a
-  // conversation message from outside that group names the sender's.
+  // conversation message from an outside agent names that agent's group.
   @Test func aNotificationNamesItsGroupAndAnOutsideSendersGroup() async throws {
     let rig = try await makeRig()
     try await rig.space.registerPeople(["carol"])
@@ -354,13 +355,17 @@ import Testing
     _ = try await rig.store.post(
       .box(rig.s), messageID: MessageID("m4"), sender: sender(rig.s), senderSession: rig.s, content: .init(text: "insider"),
     )
+    _ = try await rig.store.post(
+      .box(rig.s), messageID: MessageID("m5"), sender: Sender(id: "alice-person", timeZone: Self.utc),
+      content: .init(text: "an outside person"), acting: Principal(actor: .person(persona: "alice-person", account: try #require(try await rig.space.persona(named: "alice-person")).account), group: Self.alice),
+    )
     let rows = try await rig.store.inbox("carol")
-    #expect(rows.map(\.source) == [dm.message.conversation.rawValue, rig.s.rawValue, rig.s.rawValue])
-    #expect(rows.map(\.group) == [Self.alice, .shared, .shared])
+    #expect(rows.map(\.source) == [dm.message.conversation.rawValue, rig.s.rawValue, rig.s.rawValue, rig.s.rawValue])
+    #expect(rows.map(\.group) == [Self.alice, .shared, .shared, .shared])
     let senderGroups = rows.map { row in
       (try? JSONSerialization.jsonObject(with: Data(row.payload.utf8)) as? [String: Any])?["senderGroup"] as? String
     }
-    #expect(senderGroups == [nil, "alice", nil])
+    #expect(senderGroups == [nil, "alice", nil, nil])
   }
 
   @Test func theViewedPageIsNamedAsEachRecipientsGroupNamesIt() async throws {

@@ -41,7 +41,6 @@ import Testing
     let sender = try #require(message.data["sender"])
     #expect(try await space.sessions.record(SessionID(sender)).title == "helper")
     #expect(message.data["senderKind"] == "session")
-    #expect(message.data["senderGroup"] == "shared")
     #expect(message.data["group"] == "shared")
     // Stable across retries: the outbox row number, not a fresh id per attempt.
     #expect(message.idempotencyKey == "g1_live:\(message.data["n"]!)")
@@ -80,7 +79,6 @@ import Testing
       let outside = try #require(await messages.values.first { $0.body == "from outside" })
       #expect(outside.title == "visitor (group \(alice.rawValue))")
       #expect(outside.data["group"] == "shared")
-      #expect(outside.data["senderGroup"] == alice.rawValue)
     }
   }
 
@@ -156,6 +154,7 @@ import Testing
       try await withDependencies {
         $0.date = .constant(at)
       } operation: {
+        if at != fixedDate { registerSessionCells(in: space) }
         if at == fixedDate {
           _ = try await space.sessions.post(
             .box(owner), messageID: MessageID("second"),
@@ -194,6 +193,7 @@ import Testing
       ).drain()
     }
 
+    registerSessionCells(in: space)
     #expect(try await space.duePushRelayDeliveries(at: fixedDate.addingTimeInterval(29)).isEmpty)
     let retried = try #require(try await space.duePushRelayDeliveries(at: fixedDate.addingTimeInterval(30)).only)
     #expect(retried.consecutiveFailures == 1)
@@ -293,6 +293,7 @@ import Testing
       }
       try await runtime.drain()
       #expect(await messages.values.map(\.badge) == [2, 2, 2])
+      registerSessionCells(in: space)
 
       try await space.sessions.advanceWatermark(identity: persona, source: owner.rawValue)
       _ = try await space.sessions.post(
@@ -321,6 +322,7 @@ import Testing
       $0.date = .constant(fixedDate)
     } operation: {
       try await runtime.drain()
+      registerSessionCells(in: space)
       try await space.registerPeople(["other-person"])
       for id in ["d1", "d2"] {
         if id == "d2" {

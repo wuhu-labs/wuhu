@@ -1923,7 +1923,7 @@ extension Command {
     prints notifications above this wallet's client cursor for the pinned
     space, then advances the cursor. empty output means nothing new. one
     inbox and one cursor span all your groups, whatever --group says: each
-    line names its group, and a sender from outside the conversation's group
+    line names its group, and an agent from outside the conversation's group
     is shown with theirs.
     \(exitCodes)
     """,

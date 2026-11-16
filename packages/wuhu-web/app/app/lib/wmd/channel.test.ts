@@ -3,6 +3,7 @@ import type { LiveAccess, LiveServerControl } from '~/lib/contract.gen'
 import type { Timer } from '~/sdk/observe'
 import {
   type ChannelState,
+  graceChannel,
   openChannel,
   type Socket,
   type SocketEvents,
@@ -551,4 +552,51 @@ Deno.test('a welcome forgets the presence of peers that left meanwhile', async (
   socket.control(welcome())
   assertEquals(h.presence.keys(), [])
   h.end()
+})
+
+Deno.test('a page shows a dropped channel as it was until the grace lapses', () => {
+  const timer = new FakeTimer()
+  const shown: ChannelState[] = []
+  const grace = graceChannel(timer, (state) => shown.push(state))
+  const live: ChannelState = {
+    phase: 'live',
+    name: 'Ada',
+    access: 'write',
+    peers: [],
+    rev: 7,
+    editable: true,
+    lostEdits: false,
+  }
+  const connecting: ChannelState = {
+    phase: 'connecting',
+    editable: true,
+    lostEdits: false,
+  }
+  grace.changed(live)
+  grace.changed(offline(500, true))
+  grace.changed(connecting)
+  assertEquals(shown, [live, live, live])
+  grace.changed({ ...offline(1000), lostEdits: true })
+  assertEquals(shown.at(-1), { ...live, editable: false, lostEdits: true })
+  timer.fire(10_000)
+  assertEquals(shown.at(-1), { ...offline(1000), lostEdits: true })
+  grace.changed(connecting)
+  grace.changed(offline(2000, true))
+  assertEquals(shown.slice(-2), [connecting, offline(2000, true)])
+  assertEquals(timer.delays(), [])
+
+  grace.changed(live)
+  grace.changed(offline(500, true))
+  assertEquals(shown.at(-1), live)
+  const refused: ChannelState = {
+    phase: 'refused',
+    code: 'forbidden',
+    message: 'no',
+    editable: false,
+    lostEdits: false,
+  }
+  grace.changed(refused)
+  assertEquals(shown.at(-1), refused)
+  assertEquals(timer.delays(), [])
+  grace.close()
 })

@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import Dependencies
 
 extension Response {
   @discardableResult
@@ -47,5 +48,15 @@ extension Response {
     decoder: JSONDecoder,
   ) async throws -> T {
     try await self.body.json(type, upTo: limit, decoder: decoder)
+  }
+
+  /// The wait `Retry-After` asks for, in delta seconds or as an HTTP date measured from `\.date.now`; never negative. Before
+  /// macOS and iOS 26, which first parse HTTP dates, a date is unreadable.
+  public var retryAfter: Duration? {
+    guard let value = self.headers[.retryAfter] else { return nil }
+    if let seconds = Int(value) { return .seconds(max(seconds, 0)) }
+    guard #available(macOS 26, iOS 26, *), let date = try? Date.HTTPFormatStyle().parse(value) else { return nil }
+    @Dependency(\.date.now) var now
+    return .seconds(max(date.timeIntervalSince(now), 0))
   }
 }

@@ -1,3 +1,5 @@
+import { isTransient } from '~/sdk/errors'
+import { defaultBackoff, offlineGraceMs } from '~/sdk/observe'
 import type { ScriptHostCalls, ScriptRun } from './engine.ts'
 
 // The page side of scripts: it runs a script, answers its queries and
@@ -5,7 +7,10 @@ import type { ScriptHostCalls, ScriptRun } from './engine.ts'
 // out of date: a query when its rows change, a fetch with `every` when its
 // time is up. Off screen a script still reruns on its queries, but a run
 // that needs the network stops there, keeps what it last drew, and runs
-// again once on screen.
+// again once on screen. A run that meets a transient fetch failure runs again
+// on the backoff and keeps the script's last good drawing, even when the script
+// caught the failure; with no good drawing yet, the script's own fallback
+// draws, and a run that threw shows nothing until the grace lapses.
 
 export interface QueryResult {
   columns: string[]
@@ -106,6 +111,7 @@ interface Answer {
   text: string
   at: number
   ok: boolean
+  transient: boolean
 }
 
 interface Kept {
@@ -213,11 +219,13 @@ export class ScriptHost {
           text: JSON.stringify(answer),
           at: this.io.now(),
           ok: true,
+          transient: false,
         }),
         (error: unknown) => ({
           text: failed(error instanceof Error ? error.message : String(error)),
           at: this.io.now(),
           ok: false,
+          transient: isTransient(error),
         }),
       ).finally(() => this.fetching.delete(key))
       this.fetching.set(key, waiting)
@@ -278,8 +286,13 @@ class Watch {
   private stopped = false
   private stale = false
   private parked = false
+  private drew = false
+  private retries = 0
   private last: string | undefined
   private cancelTimer: (() => void) | null = null
+  private cancelGrace: (() => void) | null = null
+  private graceLapsed = false
+  private unshown: ScriptResult | null = null
   private readonly version: string
 
   constructor(
@@ -308,6 +321,7 @@ class Watch {
     this.stopped = true
     this.running?.cancel()
     this.cancelTimer?.()
+    this.cancelGrace?.()
     this.host.release(
       this,
       [...this.held, ...this.asked],
@@ -337,6 +351,7 @@ class Watch {
     // This run's answers that are not kept: those without `every`, and
     // failures, which never outlive the run that saw them.
     const once = new Map<string, Promise<string>>()
+    let faltered = false
     this.asked = asked
     this.keeping = keeping
     const { file } = this.script
@@ -403,6 +418,7 @@ class Watch {
         const answering = this.host.fetch(key, file, request)
         once.set(key, answering.then((answer) => answer.text))
         const answer = await answering
+        if (answer.transient) faltered = true
         if (every != null && answer.ok && !this.stopped) {
           this.host.keep(this, key, answer)
           keeping.add(key)
@@ -427,12 +443,15 @@ class Watch {
     if (this.stopped) return
     this.asked = new Set()
     this.keeping = new Set()
-    if (this.parked) {
+    const held = faltered && !this.drew && !result.ok &&
+      this.holdFailure(result)
+    if (this.parked || (faltered && this.drew) || held) {
       this.host.release(
         this,
         [...asked].filter((key) => !this.held.has(key)),
         [...keeping].filter((key) => !this.used.has(key)),
       )
+      if (!this.parked) return this.retryLater()
       if (this.script.active) return this.rerun()
       this.stale = true
       return
@@ -446,11 +465,14 @@ class Watch {
     this.held = asked
     this.used = keeping
     this.due = due
-    const encoded = JSON.stringify(result)
-    if (encoded !== this.last) {
-      this.last = encoded
-      this.receive(result)
-    }
+    this.cancelGrace?.()
+    this.cancelGrace = null
+    this.unshown = null
+    this.show(result)
+    if (faltered) return this.retryLater()
+    this.drew = result.ok
+    this.retries = 0
+    this.graceLapsed = false
     // Rows that moved while it ran, or a change that came in meanwhile.
     const moved = [...read].some(([key, rows]) =>
       this.host.current(key) !== rows
@@ -459,16 +481,44 @@ class Watch {
     this.scheduleStale()
   }
 
+  private show(result: ScriptResult) {
+    const encoded = JSON.stringify(result)
+    if (encoded === this.last) return
+    this.last = encoded
+    this.receive(result)
+  }
+
+  // A failed run of a script with no good drawing, within the grace of its
+  // first transient failure: it shows once the grace lapses, unless a later
+  // run draws first.
+  private holdFailure(result: ScriptResult): boolean {
+    if (this.graceLapsed) return false
+    this.unshown = result
+    this.cancelGrace ??= this.io.schedule(offlineGraceMs, () => {
+      this.cancelGrace = null
+      this.graceLapsed = true
+      const failure = this.unshown
+      this.unshown = null
+      if (failure != null) this.show(failure)
+    })
+    return true
+  }
+
   private scheduleStale() {
     if (this.due.size === 0) return
-    const due = Math.min(...this.due.values())
-    this.cancelTimer = this.io.schedule(
-      Math.max(0, due - this.io.now()),
-      () => {
-        this.cancelTimer = null
-        if (this.script.active) void this.rerun()
-        else this.stale = true
-      },
-    )
+    this.later(Math.min(...this.due.values()) - this.io.now())
+  }
+
+  private retryLater() {
+    const step = Math.min(this.retries++, defaultBackoff.length - 1)
+    this.later(defaultBackoff[step]!)
+  }
+
+  private later(delayMs: number) {
+    this.cancelTimer = this.io.schedule(Math.max(0, delayMs), () => {
+      this.cancelTimer = null
+      if (this.script.active) void this.rerun()
+      else this.stale = true
+    })
   }
 }

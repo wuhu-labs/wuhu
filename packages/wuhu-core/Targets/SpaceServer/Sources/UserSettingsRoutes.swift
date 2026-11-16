@@ -43,18 +43,6 @@ func addUserSettingsRoutes(_ router: inout Router, space: Space, devPerson: Reso
     }
   }
 
-  router.delete("/v1/user/me/avatar") { request, _ in
-    let principal: String
-    switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {
-    case let .identity(resolved): principal = resolved
-    case let .refused(response): return response
-    }
-    do {
-      try await space.setUserAvatar(principal: principal, data: nil)
-      return Response(status: .noContent)
-    } catch SpaceError.notFound { return noUserAccount() }
-  }
-
   router.get("/v1/user/me/settings") { request, _ in
     let principal: String
     switch try await identityVerdict(nil, request: request, space: space, devPerson: devPerson, now: dateGen.now) {

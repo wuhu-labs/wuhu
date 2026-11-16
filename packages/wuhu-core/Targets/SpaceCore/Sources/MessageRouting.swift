@@ -1,3 +1,4 @@
+import enum AgentsContract.SessionKind
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

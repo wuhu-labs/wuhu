@@ -1,3 +1,6 @@
+import struct AgentsContract.AgentCells
+import protocol AgentsContract.SessionReading
+import struct AgentsContract.SessionSummary
 import Clocks
 import ContentLane
 import struct Credentials.CredentialResolver
@@ -57,6 +60,7 @@ struct Harness {
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 11))
     } operation: {
       let space = try opening()
+      space.worker.provide(AgentCells(session: { _, _ in NoSession() }))
       let hub = MachineHub(space: space)
       let devPerson = dev ? try await space.ensureDevPerson() : nil
       let handler = SpaceServer.configuredHandler(
@@ -165,4 +169,8 @@ extension Space {
     while worker.hasMail(for: id.recipient) { await Task.yield() }
     try await worker.call(id) { _ in () }
   }
+}
+
+private struct NoSession: SessionReading {
+  var summary: SessionSummary? { nil }
 }

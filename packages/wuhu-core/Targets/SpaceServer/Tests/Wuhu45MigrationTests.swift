@@ -1,11 +1,5 @@
 import DeterministicDependencies
-#if canImport(FoundationEssentials)
-  import class Foundation.FileHandle
-  import class Foundation.Process
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
+import Foundation
 import Logging
 import Scratch
 import struct SpaceContract.GroupID
@@ -17,7 +11,7 @@ import Wuwei
 // The shipped compaction over a copy of the pre-groups Backcompat fixture: the
 // same file and steps the rehearsal on a copy of a live space's database runs.
 @Suite(.deterministicDependencies) struct Wuhu45MigrationTests {
-  static let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Backcompat/pre-ledger.sqlite")
+  static let fixture = Bundle.module.resourceURL!.appending(path: "Backcompat/pre-ledger.sqlite")
   static let boss = AccountID(rawValue: "ac_b0ss0000")
   static let carol = AccountID(rawValue: "ac_car01000")
 
@@ -100,7 +94,7 @@ import Wuwei
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
     let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "attachments", "machine_v2_members", "machine_presence", "machine_descriptions", "machine_operations", "machine_file_operations", "aliases", "join_token_receipts", "message_viewing", "session_blobs", "group_roles", "session_prompts", "requests", "subscription_slots", "subscription_firings", "document_state", "document_snapshot", "document_log", "document_checkpoint", "document_lineage", "document_pending_checkpoint", "usage_window_resets", "wuwei_addressable", "wuwei_mail", "wuwei_job", "wuwei_schema", "wuwei_successor", "session_lines", "bucket_objects", "person_hidden_sidebars"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
-    let dropped: Set = ["session_receipts", "session_api_receipts", "session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs", "blobs", "blob_objects", "schema_compactions", "fs_heads_by_parent", "session_context", "session_generations"]
+    let dropped: Set = ["message_groups", "session_receipts", "session_api_receipts", "session_space_layer", "group_edges", "group_members", "group_reads", "group_epoch", "session_prompt_revisions", "session_subscriptions", "session_commands", "machine_execs", "script_execs", "blobs", "blob_objects", "schema_compactions", "fs_heads_by_parent", "session_context", "session_generations"]
     let addsOwnership: Set = ["accounts", "account_keys", "join_tokens", "read_sessions", "personas", "devices", "join_token_receipts"]
     let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)
     let expectedKeys = Set(expected.keys).subtracting(later)

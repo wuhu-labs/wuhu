@@ -131,13 +131,13 @@ import Testing
     defer { try? FileManager.default.removeItem(at: root) }
     let name = "websocket-public-\(UUID().uuidString)"
     let environment = ProcessInfo.processInfo.environment
-    let file = root.appendingPathComponent("probe.swift").path
+    let recordings = root.appendingPathComponent("Recordings")
     defer {
       if let value = environment["RECORDING"] { setenv("RECORDING", value, 1) } else { unsetenv("RECORDING") }
       if let value = environment["RECORDINGS_ROOT"] { setenv("RECORDINGS_ROOT", value, 1) } else { unsetenv("RECORDINGS_ROOT") }
     }
     setenv("RECORDING", name, 1)
-    setenv("RECORDINGS_ROOT", root.appendingPathComponent("Recordings").path, 1)
+    setenv("RECORDINGS_ROOT", recordings.path, 1)
     let calls = Mutex(0)
     let fake = WebSocketConnector { _ in
       calls.withLock { $0 += 1 }
@@ -154,7 +154,7 @@ import Testing
       #expect(try await inbound.next() == .message(.text("echo")))
     }
     try await withDependencies { $0[WebSocketConnector.self] = fake } operation: {
-      try await withRecording(name, file: file, body: exercise)
+      try await withRecording(name, recordings: recordings, body: exercise)
     }
     let fixturePath = root.appendingPathComponent("Recordings/\(name)/1.websocket.json")
     let recorded = try Data(contentsOf: fixturePath)
@@ -162,14 +162,14 @@ import Testing
     #expect(fixture.journal.contains { if case .scopeAbort = $0 { true } else { false } })
     setenv("RECORDING", "", 1)
     try await withDependencies { $0[WebSocketConnector.self] = fake } operation: {
-      try await withRecording(name, file: file, body: exercise)
-      await #expect(throws: WebSocketError.self) { try await withRecording(name, file: file) {} }
+      try await withRecording(name, recordings: recordings, body: exercise)
+      await #expect(throws: WebSocketError.self) { try await withRecording(name, recordings: recordings) {} }
     }
     #expect(calls.withLock { $0 } == 1)
     setenv("RECORDING", name, 1)
     await withDependencies { $0[WebSocketConnector.self] = fake } operation: {
       await #expect(throws: ScopeFailure.self) {
-        try await withRecording(name, file: file) { try await exercise(); throw ScopeFailure() }
+        try await withRecording(name, recordings: recordings) { try await exercise(); throw ScopeFailure() }
       }
     }
     #expect(try Data(contentsOf: fixturePath) == recorded)

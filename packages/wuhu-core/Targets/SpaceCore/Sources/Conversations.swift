@@ -68,9 +68,6 @@ public struct MessageRecord: Hashable, Sendable {
   public var conversation: ConversationID
   public var sender: Sender
   public var senderSession: SessionID?
-  /// The group the sender posted from: a session's own, a person's acting
-  /// group; for a person's message from before groups, the conversation's.
-  public var senderGroup: GroupID
   public var replyTarget: MessageID?
   public var kind: MessageKind
   public var requestID: RequestID?
@@ -127,15 +124,7 @@ enum Conversations {
   // spaces read correctly.
   static let selection = """
   SELECT m.*, (SELECT device_id FROM message_devices WHERE message_id = m.id) AS device_id,
-    (SELECT path FROM message_viewing WHERE message_id = m.id) AS viewing,
-    \(senderGroupSQL) AS sender_grp FROM messages m
-  """
-
-  /// A message's sender group, over a `messages` row aliased `m`.
-  static let senderGroupSQL = """
-  COALESCE((SELECT grp FROM message_groups WHERE message_id = m.id),
-    (SELECT grp FROM sessions WHERE id = m.sender_session_id),
-    (SELECT grp FROM conversations WHERE id = m.conversation_id))
+    (SELECT path FROM message_viewing WHERE message_id = m.id) AS viewing FROM messages m
   """
 
   static func message(id: String, in db: Database) -> MessageRecord? {

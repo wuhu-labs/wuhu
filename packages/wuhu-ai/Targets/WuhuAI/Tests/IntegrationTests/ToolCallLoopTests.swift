@@ -43,7 +43,7 @@ private let doubleNumberTool = Tool(
 @Suite(.deterministicDependencies) struct ToolCallLoopTests {
   @Test(arguments: toolLoopModels)
   func toolCallDoubleNumber(entry: ModelEntry) async throws {
-    try await withRecording(entry.recordingName) {
+    try await withRecording(entry.recordingName, recordings: recordings) {
       let endpoint = makeEndpoint(entry)
 
       // Turn 1: Request tool call.
@@ -109,7 +109,7 @@ private let doubleNumberTool = Tool(
   /// context straight to `infer`, exercising the same choke-point normalization
   /// the live server path relies on.
   @Test func compoundToolCallIDReplaysToAnthropic() async throws {
-    try await withRecording("compound-tool-id-anthropic-replay") {
+    try await withRecording("compound-tool-id-anthropic-replay", recordings: recordings) {
       let endpoint = makeEndpoint(providerID: "anthropic", model: "claude-sonnet-4-6")
 
       // A real OpenAI Responses compound ID — invalid for Anthropic because of `|`.

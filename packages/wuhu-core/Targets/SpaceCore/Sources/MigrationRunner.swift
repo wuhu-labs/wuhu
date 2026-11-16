@@ -8,31 +8,55 @@ import GRDBSQLite
 import Logging
 import Wuwei
 
-/// Runs the registered migrations on a raw SQLite connection, against the ledger GRDB's `DatabaseMigrator` left:
-/// `grdb_migrations(identifier TEXT NOT NULL PRIMARY KEY)`, one `BEGIN IMMEDIATE` per migration with the identifier
-/// inserted in it. Foreign keys stay as the connection was opened with them (GRDB's `.immediate` never touches the
+/// Runs the frozen baseline and then every family's chain on a raw SQLite connection, against the ledger GRDB's
+/// `DatabaseMigrator` left: `grdb_migrations(identifier TEXT NOT NULL PRIMARY KEY)`, one `BEGIN IMMEDIATE` per
+/// migration with the identifier inserted in it. A chain's migrations are recorded by position as `<family>/0001`,
+/// `<family>/0002`, … Foreign keys stay as the connection was opened with them (GRDB's `.immediate` never touches the
 /// pragma), so the writer's `foreignKeysEnabled` enforces them per statement throughout a migration.
 struct MigrationRunner {
-  let handle: OpaquePointer
+  let db: MigrationDB
   let log: Logger
   let date: DateGenerator
-  let migrations: [(id: String, migrate: @Sendable (MigrationDB) throws -> Void)]
+  let baseline: [Migration]
+  let chains: [MigrationChain]
 
   func migrate() throws {
-    let db = MigrationDB(handle: handle)
+    precondition(Set(chains.map(\.family)).count == chains.count, "two migration chains register one family")
+    let byFamily = Dictionary(uniqueKeysWithValues: chains.map { ($0.family, $0) })
+    func chain(_ family: MigrationFamily) -> [MigrationBody] {
+      byFamily[family]?.migrations ?? []
+    }
     try db.execute(sql: "CREATE TABLE IF NOT EXISTS grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
     let applied = Set(try db.strings("SELECT identifier FROM grdb_migrations"))
-    let unknown = applied.subtracting(migrations.map { $0.id }).sorted()
-    guard unknown.isEmpty else { throw SpaceError.unknownMigrations(unknown) }
-    for (id, migrate) in migrations where !applied.contains(id) {
-      log.notice("migration \(id): applying")
-      let began = date.now
-      try db.inImmediateTransaction {
-        try migrate(db)
-        try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [id])
-      }
-      log.notice("migration \(id): applied in \(Int(date.now.timeIntervalSince(began) * 1000)) ms")
+    let registered = baseline.map(\.id) + MigrationFamily.allCases.flatMap { family in
+      chain(family).indices.map { Self.identifier(family, position: $0) }
     }
+    let unknown = applied.subtracting(registered).sorted()
+    guard unknown.isEmpty else { throw SpaceError.unknownMigrations(unknown) }
+    for migration in baseline {
+      try apply(migration.migrate, as: migration.id, applied: applied)
+    }
+    for family in MigrationFamily.allCases {
+      for (position, body) in chain(family).enumerated() {
+        try apply(body, as: Self.identifier(family, position: position), applied: applied)
+      }
+    }
+  }
+
+  /// `group/0001` for a family's first migration.
+  private static func identifier(_ family: MigrationFamily, position: Int) -> String {
+    "\(family.rawValue)/\(String(format: "%04d", position + 1))"
+  }
+
+  private func apply(_ body: MigrationBody, as identifier: String, applied: Set<String>) throws {
+    guard !applied.contains(identifier) else { return }
+    log.notice("migration \(identifier): applying")
+    let began = date.now
+    try db.inImmediateTransaction {
+      try body(db)
+      try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])
+    }
+    log.notice("migration \(identifier): applied in \(Int(date.now.timeIntervalSince(began) * 1000)) ms")
   }
 }
 

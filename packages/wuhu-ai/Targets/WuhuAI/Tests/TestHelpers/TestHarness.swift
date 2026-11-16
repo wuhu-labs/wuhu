@@ -79,6 +79,9 @@ func makeEndpoint(_ entry: ModelEntry) -> any ModelEndpoint {
   makeEndpoint(providerID: entry.providerID, model: entry.model)
 }
 
+/// The replayed recordings this target's `withRecording` calls read.
+let recordings = Bundle.module.resourceURL!.appending(path: "Recordings")
+
 // MARK: - Model Entry
 
 /// A single entry in the model matrix for parameterized tests.

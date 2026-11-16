@@ -232,43 +232,6 @@ private struct Rig {
     }
   }
 
-  @Test func aBackgroundExecOutlivesItsCallerAndTellsItsSessionHowItEnded() async throws {
-    let rig = try await Rig()
-    let hub = MachineHub(space: rig.space)
-    _ = try await SessionToolFixture(space: rig.space)
-    let session = try await rig.space.sessions.createSession(group: .shared, title: "s", kind: .agent, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-    try await rig.space.sessions.markInterrupted(session)
-    let minted = try await rig.space.reserveExec(machine: rig.machine.id, caller: session.rawValue, toolCall: ToolCallID(rawValue: "call"))
-    let endpoint = ChannelEndpoint()
-    let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["gate", "a", "b"]))
-    let events = Events()
-    try await withThrowingTaskGroup(of: Void.self) { tasks in
-      tasks.addTask { await rig.agent.run() }
-      defer { tasks.cancelAll(); rig.side.release() }
-      try await withMachineBox(space: rig.space, hub: hub, machine: rig.machine.id, client: FetchClient { try await rig.agent.handler($0) }) {
-        let transport = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
-        let caller = Task { await endpoint.run(transport) }
-        let following = events.follow(outgoing)
-        defer { transport.close(); caller.cancel(); following.cancel() }
-        try await waitForInitialOutput(events) { rig.diagnostic(minted.id, events: events) }
-        try #require(events.stdout == "a", "\(rig.diagnostic(minted.id, events: events))")
-        try await rig.space.worker.call(MachineCell.ID(rig.machine.id.rawValue)) { try $0.background(minted.id.rawValue) }
-        transport.close(); caller.cancel(); following.cancel()
-        #expect(try await rig.space.execRecord(minted.id)?.terminal == nil)
-        rig.side.release()
-        #expect(try await eventually(diagnostics: { rig.diagnostic(minted.id, events: events) }) { try await rig.space.execRecord(minted.id)?.terminal == .exited(code: 5) })
-        #expect(try await eventually {
-          try await rig.space.sessions.deliverMail(session)
-          return try await rig.space.sessions.undrainedInputs(session).contains { entry in
-            guard case let .notification(n) = entry.input else { return false }
-            return n.content.text.hasPrefix("exec.\(minted.id.rawValue) ended") && n.content.text.hasSuffix("ab")
-          }
-        })
-      }
-      await rig.agent.shutdown()
-    }
-  }
-
   @Test func deleteEndsAnOpenExecCallerAndDropsDurableOperationState() async throws {
     let rig = try await Rig()
     let hub = MachineHub(space: rig.space)

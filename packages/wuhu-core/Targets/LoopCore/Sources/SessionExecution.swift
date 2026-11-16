@@ -1,3 +1,4 @@
+import struct AgentsContract.AgentCells
 import Dependencies
 import Logging
 import struct MainHub.ArchiveBusySession
@@ -250,6 +251,7 @@ public typealias ObserverRun = @Sendable (Observer, _ script: String, (String) a
 public func registerSessionCells(in space: Space) {
   let worker = space.worker
   worker.provide(space.sessions)
+  worker.provide(AgentCells(session: { reading, id in reading.cell(SessionCell.ID(id.rawValue)) }))
   for kind: Registration in [.cell(SessionCell.self), .cell(ObserverCell.self), .job(StreamJob.self)] {
     worker.register(kind)
   }

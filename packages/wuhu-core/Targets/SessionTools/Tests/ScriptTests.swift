@@ -6,11 +6,7 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import DeterministicDependencies
 import Fetch
-#if canImport(FoundationEssentials)
-  import FoundationEssentials
-#else
-  import Foundation
-#endif
+import Foundation
 import JSONValue
 @testable import LoopCore
 import MachineChannel
@@ -703,8 +699,7 @@ import struct WuhuAI.ToolCall
   }
 }
 
-private let fixtures = URL(fileURLWithPath: #filePath)
-  .deletingLastPathComponent().appendingPathComponent("Fixtures/Scripts")
+private let fixtures = Bundle.module.resourceURL!.appending(path: "Fixtures/Scripts")
 
 private func fixture(_ name: String) throws -> String {
   String(decoding: try Data(contentsOf: fixtures.appendingPathComponent(name)), as: UTF8.self)
