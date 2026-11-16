@@ -2,6 +2,7 @@ import Fetch
 import struct FetchTunnel.TunnelTransport
 import Serve
 import SpaceCore
+import struct SpaceIDs.AccountID
 import Synchronization
 import TaskLifetime
 

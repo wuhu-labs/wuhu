@@ -2,6 +2,8 @@ import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import LoopCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

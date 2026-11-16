@@ -14,9 +14,10 @@ import NIOPosix
 import OrderedCollections
 import Serve
 import ServeNIO
-import struct SessionDomain.SessionID
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import SpaceTools
 import Synchronization

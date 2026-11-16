@@ -4,8 +4,8 @@
   import Foundation
 #endif
 import JSONValue
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 extension Space {
   public func createTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil) async throws -> Rev {

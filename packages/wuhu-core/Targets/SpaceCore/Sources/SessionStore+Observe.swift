@@ -1,3 +1,4 @@
+import struct SpaceIDs.ConversationID
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials

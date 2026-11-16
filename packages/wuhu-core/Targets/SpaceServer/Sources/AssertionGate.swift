@@ -1,4 +1,5 @@
 import GroupContract
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,8 +9,8 @@ import GroupContract
 import struct Assertion.SignedAssertion
 import Fetch
 import Serve
-import struct SessionDomain.SessionID
 import SpaceCore
+import struct SpaceIDs.SessionID
 
 struct ActingCredential: Sendable {
   var key: KeyRecord
@@ -71,7 +72,7 @@ func bearerVerdict(request: Request, space: Space, now: Date) async throws -> Be
 
 struct ManagementActor: Sendable {
   let record: AccountRecord
-  func isAdmin(in space: Space) -> Bool { space.cell._context.settings().isSpaceAdmin(account: record.id.rawValue) }
+  func isAdmin(in space: Space) -> Bool { space.cell._context.settings().isSpaceAdmin(account: record.id) }
   var accountID: AccountID { record.id }
   func mayManage(_ target: AccountID, in space: Space) -> Bool { isAdmin(in: space) || record.id == target }
 }

@@ -1,5 +1,5 @@
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 /// The space path of the doc or page a person had open when sending. It is
 /// stored group-qualified and handed to each reader as its own group names it.

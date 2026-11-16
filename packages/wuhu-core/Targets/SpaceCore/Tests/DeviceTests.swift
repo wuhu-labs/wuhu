@@ -3,6 +3,7 @@ import Foundation
 import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.MessageID
 import Testing
 
 @Suite(.deterministicDependencies)

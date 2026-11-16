@@ -6,6 +6,9 @@ import LoopCore
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 import Synchronization
 import Testing
 import enum WuhuAI.InferenceError

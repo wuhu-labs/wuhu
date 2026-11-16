@@ -2,7 +2,7 @@ import enum Fetch.TransportFailureKind
 import Foundation
 import JSONValue
 import OrderedCollections
-import struct SessionDomain.SessionID
+import struct SpaceIDs.SessionID
 import enum WuhuAI.InferenceError
 import struct WuhuAI.Usage
 

@@ -10,10 +10,10 @@ import JSONValue
 import protocol MachineChannel.FrameTransport
 import enum SpaceContract.ErrorCode
 import enum SpaceContract.GroupHeader
-import struct SpaceContract.GroupID
 import struct SpaceContract.ToolError
 import struct SpaceContract.TranscriberInfo
 import struct SpaceContract.TranscriptionOutput
+import struct SpaceIDs.GroupID
 
 public struct SpaceClient: Sendable {
   public let base: String

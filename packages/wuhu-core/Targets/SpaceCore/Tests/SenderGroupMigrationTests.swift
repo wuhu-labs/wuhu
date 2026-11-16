@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import struct SpaceIDs.MessageID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

@@ -1,9 +1,9 @@
 import DeterministicDependencies
 import Foundation
 import LoopCore
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import struct SpaceFS.SpacePath
+import struct SpaceIDs.GroupID
 import Testing
 
 // The one access rule: open groups take every member in, private groups take

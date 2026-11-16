@@ -3,6 +3,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import LoopCore
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -99,6 +100,6 @@ import Testing
   }
 }
 
-private func makeEnvironmentSession(_ space: Space) async throws -> SessionDomain.SessionID {
+private func makeEnvironmentSession(_ space: Space) async throws -> SpaceIDs.SessionID {
   try await space.sessions.createSession(group: .shared, title: "exec environment", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
 }

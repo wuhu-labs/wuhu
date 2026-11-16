@@ -2,6 +2,7 @@ import Clocks
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

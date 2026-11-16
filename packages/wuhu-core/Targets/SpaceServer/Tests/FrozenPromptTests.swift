@@ -8,6 +8,7 @@ import JSONValue
 import Scratch
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Synchronization
 import Testing

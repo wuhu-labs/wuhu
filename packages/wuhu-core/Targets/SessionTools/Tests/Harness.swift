@@ -5,6 +5,8 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import Fetch
 import FileSearch
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -45,8 +47,8 @@ import struct ServerTelemetry.TraceParent
 import SessionDomain
 @testable import SessionTools
 import struct SpaceClient.SpaceClient
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import SpaceTools
 import Synchronization

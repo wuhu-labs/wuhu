@@ -1,6 +1,7 @@
 import enum JSONValue.JSONValue
 import struct MachineContract.ExecID
 import SessionDomain
+import struct SpaceIDs.SubscriptionID
 
 /// How an exec job is shown and cancelled: `exec.<exec id>`.
 public func execHandle(_ id: ExecID) -> String { SubscriptionID.exec(id.rawValue).rawValue }

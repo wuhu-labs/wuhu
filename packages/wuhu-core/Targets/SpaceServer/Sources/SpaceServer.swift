@@ -29,9 +29,9 @@ import SpaceClient
 import struct SpaceContract.AIDisclosure
 import enum SpaceContract.ErrorCode
 import enum SpaceContract.GroupHeader
-import struct SpaceContract.GroupID
 import enum SpaceContract.LiveChannel
 import SpaceCore
+import struct SpaceIDs.GroupID
 import SpaceTools
 import WebPush
 import Wuwei

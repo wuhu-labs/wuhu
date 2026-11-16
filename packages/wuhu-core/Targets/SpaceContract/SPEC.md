@@ -5,8 +5,7 @@ payload, and the error shape. Swift is the source of truth. JSON Schema is
 derived from these `@Contract` types (see the checked-in `Tests/contract/*.schema.json`
 fixtures, which are simultaneously the golden fixtures, the reviewable contract
 diff, and the LLM tool definitions); TypeScript is derived from the schema files.
-The target imports nothing beyond `Contract` and `JSONValue` so server internals
-cannot leak into wire types.
+The target imports nothing beyond `Contract`, `JSONValue`, and `SpaceIDs` so server internals cannot leak into wire types.
 
 This file pins the wire semantics the JSON Schema cannot carry. It is a contract:
 changes here are contract changes.

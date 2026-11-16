@@ -1,5 +1,6 @@
 import Foundation
 import SpaceContract
+import struct SpaceIDs.GroupID
 import Testing
 
 struct ViewingVectors: Decodable {

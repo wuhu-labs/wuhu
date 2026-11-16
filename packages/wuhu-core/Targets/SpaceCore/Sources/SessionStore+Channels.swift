@@ -1,6 +1,7 @@
 import Dependencies
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
 
 public enum ChannelError: Error, Equatable, Sendable {
   case sessionMember(String)

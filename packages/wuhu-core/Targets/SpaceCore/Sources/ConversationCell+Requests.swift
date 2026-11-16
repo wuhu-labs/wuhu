@@ -1,3 +1,6 @@
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -5,7 +8,7 @@
 #endif
 import enum JSONValue.JSONValue
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries
@@ -43,8 +46,8 @@ extension ConversationCell {
     guard let record = session(task.rawValue) else { throw SessionStoreError.unknownSession(task.rawValue) }
     let asks = switch requester {
     case let .session(parent): record.parent == parent
-    case let .person(person): record.parent == nil && record.createdBy == person.persona && record.group == person.group.rawValue
-    case let .observer(observer): record.parent == nil && record.createdBy == observer.member && record.group == observer.group.rawValue
+    case let .person(person): record.parent == nil && record.createdBy == person.persona && record.group == person.group
+    case let .observer(observer): record.parent == nil && record.createdBy == observer.member && record.group == observer.group
     }
     guard asks else { throw SessionStoreError.notTheParent(task.rawValue) }
     if message(MessageID(id.rawValue)) == nil, let other = open(task).first(where: { $0.id != id.rawValue }) {
@@ -122,7 +125,7 @@ extension ConversationCell {
       if request(id) == nil {
         try db.execute(RequestRow.insert {
           RequestRow(
-            id: id.rawValue, conversationID: self.id.key, group: session(task.rawValue)!.group, requester: requester.name, firing: requester.firing, task: task.rawValue,
+            id: id.rawValue, conversationID: self.id.key, group: session(task.rawValue)!.group.rawValue, requester: requester.name, firing: requester.firing, task: task.rawValue,
             status: RequestStatus.open.rawValue, brief: brief,
             schema: terms.schema?.jsonString(sortedKeys: true), fields: terms.fields?.jsonString(sortedKeys: true),
             result: nil, refusals: "[]", stallSeconds: stallSeconds,

@@ -1,5 +1,5 @@
-import struct SpaceContract.GroupID
 import struct SpaceFS.SpacePath
+import struct SpaceIDs.GroupID
 
 enum GroupWrites {
   static func isInstructions(_ path: SpacePath) -> Bool {

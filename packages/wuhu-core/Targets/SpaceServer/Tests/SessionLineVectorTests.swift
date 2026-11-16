@@ -3,6 +3,8 @@ import JSONValue
 @testable import SessionDomain
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SubscriptionID
 @testable import SpaceServer
 import Testing
 import WuhuAI

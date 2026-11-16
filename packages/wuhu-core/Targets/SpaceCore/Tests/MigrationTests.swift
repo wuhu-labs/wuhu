@@ -1,13 +1,14 @@
 import DeterministicDependencies
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import Scratch
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import enum SpaceSQL.PageCache
 import Testing
 

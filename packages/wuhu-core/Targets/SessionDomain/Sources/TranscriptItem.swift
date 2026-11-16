@@ -1,9 +1,14 @@
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import WuhuAI
 
 /// What one write of a session's cell adds to its transcript, while the cell holds it: its lines are what is stored (`lines(session:)`).

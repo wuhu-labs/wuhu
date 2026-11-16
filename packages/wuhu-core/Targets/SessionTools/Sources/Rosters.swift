@@ -2,6 +2,7 @@ import struct MachineContract.MachineStatus
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.SessionID
 
 // What the session may reach: the machines usable from its group, and the
 // session templates its group defines.

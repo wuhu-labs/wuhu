@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import LoopCore
+import struct SpaceIDs.MessageID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

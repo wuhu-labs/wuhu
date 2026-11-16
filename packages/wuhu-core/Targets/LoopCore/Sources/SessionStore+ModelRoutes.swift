@@ -1,7 +1,7 @@
 import struct SessionDomain.ModelRouteFailure
-import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
 import struct SpaceCore.SessionStore
+import struct SpaceIDs.SessionID
 
 public extension SessionStore {
   func modelRoute(_ id: SessionID) async throws -> SessionModelRoute? {

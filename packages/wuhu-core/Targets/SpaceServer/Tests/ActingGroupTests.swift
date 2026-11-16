@@ -7,6 +7,7 @@ import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import Testing
 

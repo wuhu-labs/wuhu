@@ -6,8 +6,8 @@ import DeterministicDependencies
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 
 @Suite(.deterministicDependencies) struct SubscriptionQueryTests {

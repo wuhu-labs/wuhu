@@ -2,8 +2,11 @@ import DeterministicDependencies
 import Foundation
 import LoopCore
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
 import Testing
 
 @Suite(.deterministicDependencies) struct ChannelTests {

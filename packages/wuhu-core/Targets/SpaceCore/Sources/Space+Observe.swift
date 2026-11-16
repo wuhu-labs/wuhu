@@ -1,6 +1,6 @@
 import JSONValue
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 extension Space {
   /// A group's file changes, one journal revision per frame, from `from` on (from the current revision when there is none). An attach waits out a worker that is handing the stream's job over, and a refused one throws before a stream exists; the stream finishes when the watch ends or the worker drains.

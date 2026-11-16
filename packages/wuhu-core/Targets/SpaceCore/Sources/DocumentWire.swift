@@ -5,13 +5,13 @@
 #endif
 import CanvasDocument
 import LiveDocument
-import struct SpaceContract.GroupID
 import enum SpaceContract.LiveAccess
 import enum SpaceContract.LiveErrorCode
 import enum SpaceContract.LiveFrame
 import struct SpaceContract.LivePeer
 import enum SpaceContract.LiveServerControl
 import SpaceFS
+import struct SpaceIDs.GroupID
 import WmdDocument
 import Wuwei
 

@@ -1,7 +1,7 @@
-import struct SessionDomain.RequestID
-import struct SessionDomain.SessionID
-import struct SessionDomain.SubscriptionID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 import Tracing
 
 /// The closed set of span attributes: GenAI semantic-convention names where one exists, `wuhu.*` for the rest. Values are numbers,

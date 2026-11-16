@@ -1,8 +1,9 @@
 import AgentsContract
 import struct MachineContract.MachineID
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import StructuredQueries
 import StructuredQueriesSQLite
 import Wuwei
@@ -209,7 +210,7 @@ extension GroupAccess.ActorRows<Never> {
       session: { session in
         ctx.session(session).summary.map {
           let lifecycle: String = switch $0.lifecycle { case .live: "live"; case .archived: "archived" }
-          return GroupSessionRow(id: $0.id.rawValue, grp: $0.group, kind: $0.kind.rawValue, parent: $0.parent?.rawValue, lifecycle: lifecycle)
+          return GroupSessionRow(id: $0.id.rawValue, grp: $0.group.rawValue, kind: $0.kind.rawValue, parent: $0.parent?.rawValue, lifecycle: lifecycle)
         }
       },
       account: { account in ctx.db.rows(GroupAccountRow.where { $0.id.eq(account.rawValue) }).first },

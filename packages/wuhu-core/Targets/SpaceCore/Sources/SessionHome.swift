@@ -1,9 +1,10 @@
 import Foundation
 import Instructions
 import SessionDomain
-import struct SpaceContract.GroupID
 import struct SpaceContract.PromptSession
 import SpaceFS
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 // One folder's instructions: its AGENTS.md, if any, and the skills under its
 // `.agents/skills/`. The system and a session's group root and home each make

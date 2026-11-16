@@ -2,6 +2,7 @@ import JSONValue
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 extension SpaceToolContext {
   func createTable(_ address: String, header: SpaceContract.TableHeader) async throws -> JSONValue {

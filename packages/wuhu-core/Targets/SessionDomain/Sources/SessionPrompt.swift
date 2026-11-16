@@ -1,4 +1,5 @@
 import Foundation
+import struct SpaceIDs.SessionID
 
 public enum SessionPrompt {
   public static let owedReplyTemplate: String =

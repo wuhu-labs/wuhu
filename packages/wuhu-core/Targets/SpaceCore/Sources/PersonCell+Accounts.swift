@@ -1,5 +1,6 @@
 import enum Assertion.VerifyingKey
-import struct SpaceContract.GroupID
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

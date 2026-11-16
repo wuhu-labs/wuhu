@@ -1,6 +1,6 @@
 import struct MachineContract.MachineID
-import struct SpaceContract.GroupID
 import struct SpaceFS.FSResolver
+import struct SpaceIDs.GroupID
 import SystemFiles
 
 public enum Address: Hashable, Sendable {

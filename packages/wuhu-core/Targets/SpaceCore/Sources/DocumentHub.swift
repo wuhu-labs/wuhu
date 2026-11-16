@@ -3,10 +3,10 @@
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
 import enum SpaceContract.LiveAccess
 import enum SpaceContract.LiveErrorCode
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Synchronization
 import Wuwei
 

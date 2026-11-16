@@ -13,8 +13,8 @@ import func MainHub.systemModulePath
 import QuickJSKit
 import SpaceClient
 import struct SpaceContract.GroupDetail
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 import SpaceTools
 import SystemFiles
 

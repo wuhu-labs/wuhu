@@ -1,5 +1,6 @@
 import struct MachineContract.MachineID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 
 /// Everything a machine's birth carries: the name the space cell reserved, the account the person cell made and the
 /// group whose tree holds its notes.

@@ -4,6 +4,10 @@ import Foundation
 import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 import Testing
 
 @Suite(.deterministicDependencies) struct SessionTreeTests {

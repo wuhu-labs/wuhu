@@ -1,5 +1,10 @@
 import Foundation
 import struct SpaceContract.PixelSize
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 
 public struct ToolResultItem: Hashable, Sendable, Codable {
   public enum Provenance: Hashable, Sendable, Codable {

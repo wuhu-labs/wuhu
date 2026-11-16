@@ -5,7 +5,7 @@
 #endif
 
 import struct SpaceContract.ContentHostPattern
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 /// The host a space's content lives under: the bare host serves the API and
 /// the web app, `<group>.<host>` serves that group's content.

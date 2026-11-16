@@ -19,6 +19,8 @@ import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionStore
 import struct SpaceCore.SpaceCell
 import struct SpaceCore.SubscriptionSlot
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 import StructuredQueries
 import enum WuhuAI.ContentBlock
 import enum WuhuAI.InferenceError

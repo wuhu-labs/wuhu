@@ -1,4 +1,7 @@
 import Foundation
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 
 public enum SettleEvent: Hashable, Sendable {
   case delivered(Delivered)

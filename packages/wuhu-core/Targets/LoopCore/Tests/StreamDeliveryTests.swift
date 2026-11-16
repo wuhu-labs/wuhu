@@ -1,4 +1,5 @@
 import Dependencies
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

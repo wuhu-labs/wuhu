@@ -4,8 +4,8 @@
   import Foundation
 #endif
 import JSONValue
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Wuwei
 
 enum Tables {

@@ -1,3 +1,5 @@
+import struct SpaceIDs.GroupID
+
 // Umbrella Foundation, unlike the rest of SpaceContract: on Linux, NFC
 // (`precomposedStringWithCanonicalMapping`) is in neither FoundationEssentials nor
 // FoundationInternationalization. The server rule this mirrors, SpaceFS `SpacePath`, imports it

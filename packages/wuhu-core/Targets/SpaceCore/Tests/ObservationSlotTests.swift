@@ -1,6 +1,7 @@
 import ControlledTime
 import DeterministicDependencies
 import Dispatch
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,9 +9,9 @@ import Dispatch
 #endif
 import Scratch
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Synchronization
 import Testing
 import Wuwei

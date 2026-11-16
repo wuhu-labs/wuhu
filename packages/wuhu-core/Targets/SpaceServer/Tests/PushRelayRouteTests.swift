@@ -9,6 +9,8 @@ import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.MessageID
 @testable import SpaceServer
 import Testing
 

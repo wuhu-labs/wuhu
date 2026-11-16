@@ -11,6 +11,7 @@ import struct MainHub.ToolProblem
 import enum MainHub.WaitCut
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.SessionID
 import struct WuhuAI.ToolCall
 #if canImport(FoundationEssentials)
   import FoundationEssentials

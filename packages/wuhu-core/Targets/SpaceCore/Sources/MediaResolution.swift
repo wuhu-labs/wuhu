@@ -5,7 +5,7 @@
 #endif
 
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 extension Space {
   public func storeImage(_ data: Data) async throws -> String {

@@ -2,6 +2,9 @@ import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 import Testing
 
 @Suite(.deterministicDependencies) struct MessageRoutingTests {
@@ -104,6 +107,8 @@ import Testing
     ("@- @a-- @a-b_", ["-", "a--", "a-b_"]),
     ("@plain @a_b @a1 @A-B", ["A-B"]), ("x@a-b _@c-d 7@e-f -@g-h", []),
     ("@a-b.c @a-b/@c-d", ["a-b", "a-b", "c-d"]), ("@a-bé@c-d", ["a-b", "c-d"]),
+    ("> @a-b said x\n\nthanks", []), ("> quote\n@a-b see above", ["a-b"]), ("  >> @a-b\n> > @c-d", []),
+    ("x @a-b\r\n>@c-d\r\n@e-f", ["a-b", "e-f"]), ("a > @a-b", ["a-b"]),
   ]) func mentionTokens(_ text: String, expected: [String]) {
     #expect(MentionScanner.candidates(in: text) == expected)
   }

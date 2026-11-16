@@ -4,6 +4,7 @@ import JSONValue
 @testable import SessionTools
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 
 // `find` and `grep` in `wuhu:space` run the find and grep tools as the

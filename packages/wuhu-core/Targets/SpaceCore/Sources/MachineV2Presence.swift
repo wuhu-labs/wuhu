@@ -3,7 +3,7 @@
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 public enum MachineV2Presence: String, Sendable { case attached, detached, lost }
 

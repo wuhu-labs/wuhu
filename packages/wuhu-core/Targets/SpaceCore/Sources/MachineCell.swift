@@ -2,7 +2,7 @@ import struct MachineContract.MachineID
 import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationSnapshot
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

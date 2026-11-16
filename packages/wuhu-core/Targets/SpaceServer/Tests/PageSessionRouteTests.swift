@@ -8,6 +8,12 @@ import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 import Testing
 
 // A page's createSession and sendMessage act as its viewer, never a guest,

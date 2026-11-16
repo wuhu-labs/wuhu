@@ -7,6 +7,8 @@ import LoopCore
 @testable import MainHub
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Testing
 

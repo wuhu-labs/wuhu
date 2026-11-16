@@ -1,3 +1,6 @@
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,8 +11,8 @@ import JSONValue
 import func MainHub.jsonObject
 import ServeRouting
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 private let pageDefault = 50
 private let pageMax = 500

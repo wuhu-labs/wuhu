@@ -1,6 +1,7 @@
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
 import SessionDomain
+import struct SpaceIDs.SessionID
 
 // A model-facing failure: rendered into the transcript as a typed tool
 // failure, never thrown past the executor.

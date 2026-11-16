@@ -5,6 +5,7 @@ import func ServerTelemetry.expectingCache
 import SessionDomain
 import SessionTools
 import SpaceCore
+import struct SpaceIDs.SessionID
 import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials

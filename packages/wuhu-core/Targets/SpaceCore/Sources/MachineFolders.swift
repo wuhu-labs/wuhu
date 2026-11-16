@@ -3,8 +3,8 @@
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Wuwei
 
 // Machine notes are stored under /_/machines/<machine id>/ and presented under

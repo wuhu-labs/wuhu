@@ -1,4 +1,4 @@
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 extension Space {
   public nonisolated func currentRevisions(for principal: Principal) -> [String: Int] {

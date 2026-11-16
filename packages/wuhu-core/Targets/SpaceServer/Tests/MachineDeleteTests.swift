@@ -3,6 +3,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import LoopCore
+import struct SpaceIDs.GroupID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

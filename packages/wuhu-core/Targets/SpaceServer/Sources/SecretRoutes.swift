@@ -3,11 +3,11 @@ import struct Credentials.SpaceSecrets
 import struct Credentials.SpaceSecretStores
 import Fetch
 import ServeRouting
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
 import struct SpaceContract.SecretSetInput
 import struct SpaceContract.SecretsOutput
 import SpaceCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 func addSecretRoutes(
   _ router: inout Router,

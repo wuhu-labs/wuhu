@@ -7,8 +7,8 @@ import JSONValue
 import LoopCore
 import struct SessionDomain.ModelSpecifier
 import enum SessionDomain.SessionExecutor
-import struct SessionDomain.SessionID
 import SpaceCore
+import struct SpaceIDs.SessionID
 import Synchronization
 import Testing
 

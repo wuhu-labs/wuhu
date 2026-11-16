@@ -1,6 +1,7 @@
 import SessionDomain
 import SessionTools
 import SpaceCore
+import struct SpaceIDs.SessionID
 import StructuredQueries
 import struct WuhuAI.ToolCall
 import Wuwei

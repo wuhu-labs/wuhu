@@ -4,6 +4,8 @@ import OrderedCollections
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 import SpaceTools
 import Testing
 

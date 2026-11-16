@@ -1,6 +1,7 @@
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
 import struct SpaceFS.SpacePath
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 /// Who asks the hub to create a session or post a message.
 public enum Caller: Hashable, Sendable {

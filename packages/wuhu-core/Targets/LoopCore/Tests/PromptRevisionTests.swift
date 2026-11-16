@@ -5,6 +5,7 @@ import Scratch
 import SessionDomain
 import struct SpaceContract.PromptSession
 @testable import SpaceCore
+import struct SpaceIDs.SessionID
 import Testing
 
 @Suite(.deterministicDependencies) struct PromptRevisionTests {

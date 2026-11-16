@@ -1,11 +1,15 @@
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 extension SessionStore {
   /// Whether `member` reads `path` in `group` because it is a member of the conversation homed there whose attachment folder holds it, whatever its own group reads.

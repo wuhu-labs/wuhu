@@ -5,8 +5,8 @@
 #endif
 import struct DocIndex.DocumentTemplate
 import JSONValue
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 extension Space {
   /// With no `destination`, the instance lands next to its template, in the template's group.

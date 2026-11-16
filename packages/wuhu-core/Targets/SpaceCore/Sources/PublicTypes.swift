@@ -2,9 +2,9 @@ import struct Foundation.Data
 import struct Foundation.Date
 import enum JSONValue.JSONValue
 import struct OrderedCollections.OrderedDictionary
-import struct SpaceContract.GroupID
 import struct SpaceFS.Entry
 import struct SpaceFS.VersionToken
+import struct SpaceIDs.GroupID
 
 public struct Rev: Hashable, Sendable, Comparable, CustomStringConvertible {
   public let value: Int

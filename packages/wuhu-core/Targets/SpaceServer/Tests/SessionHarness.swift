@@ -16,6 +16,9 @@ import SessionDomain
 import SessionTools
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Synchronization
 import Testing

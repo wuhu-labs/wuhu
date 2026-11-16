@@ -1,3 +1,4 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,10 +12,10 @@ import HTTPTypes
 import JSONValue
 import class MainHub.Hub
 import Serve
-import struct SessionDomain.ConversationID
-import struct SpaceContract.GroupID
 import SpaceCore
 import SpaceFS
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
 import SpaceTools
 
 func webResponse(

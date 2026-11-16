@@ -1,6 +1,6 @@
 import JSONValue
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 // Replays the schema journal and the row journal interleaved by revision, so a
 // column dropped and later re-added comes back NULL for rows written before the

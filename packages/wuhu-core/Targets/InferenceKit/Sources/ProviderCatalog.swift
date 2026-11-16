@@ -10,7 +10,7 @@ import ModelProviders
 #endif
 import struct SessionDomain.ContextBudget
 import struct SessionDomain.ModelSpecifier
-import struct SessionDomain.SessionID
+import struct SpaceIDs.SessionID
 import WuhuAI
 
 public struct ResolvedModel: Sendable {

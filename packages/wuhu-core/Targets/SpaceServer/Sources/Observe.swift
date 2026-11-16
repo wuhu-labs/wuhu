@@ -10,11 +10,11 @@ import JSONValue
 import Serve
 import ServeSSE
 import enum SpaceContract.ErrorCode
-import struct SpaceContract.GroupID
 import SpaceCore
 import struct SpaceFS.Entry
 import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
+import struct SpaceIDs.GroupID
 import SpaceTools
 import Wuwei
 

@@ -2,9 +2,12 @@ import DeterministicDependencies
 import Foundation
 import LoopCore
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 import Testing
 
 // P is a top-level agent in the private group alice; S is one in the open

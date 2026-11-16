@@ -1,4 +1,5 @@
 import enum AgentsContract.SessionKind
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -80,6 +81,8 @@ private func notifiable(_ snapshot: RoutingSnapshot, message: MessageRecord, now
 
 enum MentionScanner {
   static func candidates(in text: String) -> [String] {
-    text.matches(of: /(?:^|[^A-Za-z0-9_-])@([A-Za-z0-9_-]*-[A-Za-z0-9_-]*)/).map { String($0.1) }
+    text.split(whereSeparator: \.isNewline)
+      .filter { $0.drop(while: \.isWhitespace).first != ">" }
+      .flatMap { $0.matches(of: /(?:^|[^A-Za-z0-9_-])@([A-Za-z0-9_-]*-[A-Za-z0-9_-]*)/).map { String($0.1) } }
   }
 }

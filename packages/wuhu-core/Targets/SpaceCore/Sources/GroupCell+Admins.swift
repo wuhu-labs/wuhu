@@ -1,4 +1,5 @@
-import struct SpaceContract.GroupID
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

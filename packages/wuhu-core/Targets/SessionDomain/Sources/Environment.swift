@@ -1,4 +1,6 @@
 import Foundation
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.RequestID
 
 public enum Nag: Hashable, Sendable, Codable {
   case owedReply(conversations: [ConversationID])

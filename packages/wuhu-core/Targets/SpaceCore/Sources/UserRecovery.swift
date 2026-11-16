@@ -1,4 +1,5 @@
 import GroupContract
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -19,7 +20,7 @@ public enum UserRecovery {
     try requireSpaceFolder(folder)
     let (record, isAdmin) = try await withSpace(in: folder) { space in
       let record = try await add(space: space, name: name, admin: admin)
-      return (record, space.cell._context.settings().isSpaceAdmin(account: record.id.rawValue))
+      return (record, space.cell._context.settings().isSpaceAdmin(account: record.id))
     }
     return "account \(record.id.rawValue)\(name.map { " (\($0))" } ?? "")\(isAdmin ? " admin" : "")\n"
   }

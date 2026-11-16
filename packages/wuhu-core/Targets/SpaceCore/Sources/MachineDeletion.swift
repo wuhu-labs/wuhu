@@ -4,8 +4,8 @@
   import Foundation
 #endif
 import struct MachineContract.MachineID
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 extension Space {
   public func deleteMachine(_ id: MachineID, by principal: Principal) async throws {

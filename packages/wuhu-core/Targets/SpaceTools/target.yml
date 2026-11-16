@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - SpaceIDs
   - Dependencies
   - DocIndex
   - MachineContract
@@ -19,6 +20,7 @@ dependencies:
   - OrderedCollections
 tests:
   dependencies:
+    - SpaceIDs
     - SessionTools
     - LoopCore
     - ControlledTime

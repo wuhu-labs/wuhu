@@ -3,6 +3,7 @@ import Foundation
 import JSONValue
 import SessionDomain
 import SpaceContract
+import struct SpaceIDs.SessionID
 @_spi(Testing) import SpaceCore
 import SystemFiles
 import Testing

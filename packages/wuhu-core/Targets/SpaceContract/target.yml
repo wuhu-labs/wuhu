@@ -5,6 +5,7 @@ checks:
   build: [linux, mac, ios, visionos]
   test: [linux, mac]
 dependencies:
+  - SpaceIDs
   - Contract
   - JSONValue
 tests:
@@ -14,5 +15,6 @@ tests:
     - path: contract
       mode: copy
   dependencies:
+    - SpaceIDs
     - Contract
     - JSONValue

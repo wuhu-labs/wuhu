@@ -2,6 +2,7 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import DeterministicDependencies
 import LoopCore
+import struct SpaceIDs.GroupID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

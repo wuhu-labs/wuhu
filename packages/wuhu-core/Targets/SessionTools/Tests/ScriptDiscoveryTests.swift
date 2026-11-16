@@ -9,6 +9,7 @@ import SessionDomain
 @testable import SessionTools
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import SpaceTools
 import Testing

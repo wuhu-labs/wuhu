@@ -1,9 +1,10 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import WuweiQueries
 

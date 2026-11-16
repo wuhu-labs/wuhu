@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
 import Testing
 
 @Suite(.deterministicDependencies)

@@ -8,6 +8,8 @@ import NIOCore
 import Scratch
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Testing
 import WebPush

@@ -1,14 +1,15 @@
 import DeterministicDependencies
 import GroupContract
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import Scratch
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Testing
 
 // Migration 003 over a database built by the real Migration001: a team group
@@ -64,9 +65,9 @@ import Testing
     let machine = AccountID(rawValue: "machine-account")
     // The old shared admin and the team's admins carry over; a machine never
     // becomes one.
-    #expect(space.cell._context.settings().isSpaceAdmin(account: owner.rawValue) == true)
-    #expect(space.cell._context.settings().isSpaceAdmin(account: operatorAccount.rawValue) == true)
-    #expect(space.cell._context.settings().isSpaceAdmin(account: machine.rawValue) == false)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: owner) == true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: operatorAccount) == true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: machine) == false)
     let personal = GroupID(rawValue: "personal")
     let ops = GroupID(rawValue: "ops")
     #expect(try await space.group(personal) == nil)

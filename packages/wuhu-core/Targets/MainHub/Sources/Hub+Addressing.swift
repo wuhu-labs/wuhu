@@ -1,9 +1,9 @@
 import struct MachineContract.MachineID
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceCore
 import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
+import struct SpaceIDs.GroupID
 import SystemFiles
 
 public enum Addressing {

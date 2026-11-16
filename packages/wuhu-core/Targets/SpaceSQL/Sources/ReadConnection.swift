@@ -6,7 +6,7 @@
 
 import GRDBSQLite
 import Logging
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueriesCore
 
 private let multipleStatements =

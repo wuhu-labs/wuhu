@@ -7,6 +7,8 @@ import SessionDomain
 @testable import SessionTools
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import SpaceTools
 import Synchronization

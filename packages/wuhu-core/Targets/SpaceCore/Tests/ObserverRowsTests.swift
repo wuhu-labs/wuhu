@@ -1,14 +1,16 @@
 import Dependencies
 import DeterministicDependencies
 @testable import LoopCore
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 
 @Suite(.deterministicDependencies) struct ObserverRowsTests {

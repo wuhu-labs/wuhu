@@ -3,7 +3,6 @@
 #else
   import Foundation
 #endif
-import struct SessionDomain.SessionID
 import struct SessionDomain.TranscriptPreamble
 import struct SpaceContract.PromptSession
 import struct SpaceCore.PendingPrompt
@@ -14,6 +13,7 @@ import enum SpaceCore.SessionPromptState
 import struct SpaceCore.SessionStore
 import struct SpaceCore.SpaceCell
 import struct SpaceCore.StoredPrompt
+import struct SpaceIDs.SessionID
 import enum WuhuAI.Tool
 
 private enum PreparedPrompt {

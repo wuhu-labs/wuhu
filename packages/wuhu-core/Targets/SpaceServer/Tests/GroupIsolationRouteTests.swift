@@ -3,6 +3,9 @@ import Crypto
 import DeterministicDependencies
 import Fetch
 import LoopCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

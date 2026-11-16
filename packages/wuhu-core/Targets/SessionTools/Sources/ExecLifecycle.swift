@@ -4,6 +4,7 @@ import func MainHub.execHandle
 import struct MainHub.ToolProblem
 import SessionDomain
 import SpaceClient
+import struct SpaceIDs.SessionID
 
 extension ToolExecutor {
   private func ownExec(_ id: ExecID, session: SessionID) async throws -> ExecStatus? {

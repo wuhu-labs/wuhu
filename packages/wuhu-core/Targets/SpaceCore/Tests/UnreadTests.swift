@@ -5,6 +5,7 @@ import Foundation
 import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.MessageID
 import Testing
 
 // The has-unread column the app and SPA sidebars add to their session rows.

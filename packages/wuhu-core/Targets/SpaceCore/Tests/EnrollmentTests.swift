@@ -2,6 +2,7 @@ import Dependencies
 import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
 import StructuredQueries
 import Synchronization
 import Testing

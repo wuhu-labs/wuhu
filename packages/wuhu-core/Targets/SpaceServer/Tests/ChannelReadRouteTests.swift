@@ -6,6 +6,10 @@ import JSONValue
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
 @testable import SpaceServer
 import Testing
 

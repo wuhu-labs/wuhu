@@ -1,5 +1,7 @@
 import Crypto
 import Dependencies
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

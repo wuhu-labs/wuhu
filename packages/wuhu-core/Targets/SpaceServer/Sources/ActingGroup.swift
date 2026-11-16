@@ -1,3 +1,4 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,10 +8,10 @@
 import struct Dependencies.DateGenerator
 import Fetch
 import Serve
-import struct SessionDomain.SessionID
 import enum SpaceContract.GroupHeader
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 enum RequestCredential: Sendable {
   case session(SessionID, group: GroupID)

@@ -5,6 +5,8 @@ import struct MainHub.EventSources
 import enum MainHub.StreamFailure
 import SessionDomain
 import enum SpaceCore.SubscriptionOwner
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

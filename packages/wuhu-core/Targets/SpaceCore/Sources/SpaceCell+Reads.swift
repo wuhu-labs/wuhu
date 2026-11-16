@@ -1,7 +1,11 @@
 import AgentsContract
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 import StructuredQueries
 import StructuredQueriesSQLite
 import Wuwei
@@ -40,7 +44,7 @@ extension SpaceCell {
 
   /// The group a session acts in.
   func group(of session: SessionID) -> GroupID {
-    ctx.session(session).summary.map { GroupID(rawValue: $0.group) } ?? .shared
+    ctx.session(session).summary.map(\.group) ?? .shared
   }
 }
 

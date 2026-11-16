@@ -1,4 +1,8 @@
 import Dependencies
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,8 +11,8 @@ import Dependencies
 import enum ModelProviders.CatalogError
 import SessionDomain
 import struct SpaceContract.AttachmentTally
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 import SpaceTools
 import SystemFiles
 

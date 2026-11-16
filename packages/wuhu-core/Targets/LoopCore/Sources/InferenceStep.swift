@@ -2,6 +2,7 @@ import Dependencies
 import Logging
 import struct ServerTelemetry.CacheExpectation
 import SessionDomain
+import struct SpaceIDs.SessionID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

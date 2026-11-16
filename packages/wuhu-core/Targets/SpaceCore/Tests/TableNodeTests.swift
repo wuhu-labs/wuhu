@@ -1,9 +1,9 @@
 import DeterministicDependencies
 import Foundation
 import JSONValue
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Testing
 
 @Suite(.deterministicDependencies) struct TableNodeTests {

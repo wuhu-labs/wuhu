@@ -1,7 +1,7 @@
 import DeterministicDependencies
 import Foundation
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 
 // The vectors the clients build `viewing` from (SpaceContract

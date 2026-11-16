@@ -18,6 +18,7 @@ import ServeNIO
 import SessionDomain
 import SessionTools
 import SpaceCore
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import SpaceTools
 import Synchronization

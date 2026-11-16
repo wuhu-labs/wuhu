@@ -1,5 +1,5 @@
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 public struct FSCommit: Equatable, Sendable {
   public let group: GroupID

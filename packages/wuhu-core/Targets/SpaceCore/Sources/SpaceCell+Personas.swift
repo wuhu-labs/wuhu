@@ -1,3 +1,4 @@
+import struct SpaceIDs.AccountID
 import StructuredQueries
 
 extension SpaceCell {

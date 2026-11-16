@@ -7,6 +7,7 @@ import JSONValue
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.AccountID
 import SpaceServer
 import Testing
 

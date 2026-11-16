@@ -1,3 +1,5 @@
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -5,9 +7,9 @@
 #endif
 import JSONValue
 import SessionDomain
-import struct SpaceContract.GroupID
 import enum SpaceContract.ScriptOutput
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 /// How a running script is named to its session (`script.<id>`).
 public func scriptHandle(_ id: String) -> String { "script.\(id)" }

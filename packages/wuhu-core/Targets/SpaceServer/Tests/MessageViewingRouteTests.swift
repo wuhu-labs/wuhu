@@ -1,4 +1,6 @@
 import DeterministicDependencies
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,9 +10,9 @@ import Fetch
 import JSONValue
 import SessionDomain
 import struct SpaceContract.ConversationPostOutput
-import struct SpaceContract.GroupID
 import struct SpaceContract.SessionRestartOutput
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import Testing
 

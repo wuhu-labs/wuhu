@@ -12,6 +12,10 @@ import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 import SpaceTools
 import SystemFiles
 import Wuwei

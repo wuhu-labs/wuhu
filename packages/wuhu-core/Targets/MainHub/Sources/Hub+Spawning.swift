@@ -1,5 +1,8 @@
 import enum AgentsContract.SessionKind
 import Dependencies
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,8 +10,8 @@ import Dependencies
 #endif
 import enum ModelProviders.CatalogError
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 import SpaceTools
 
 extension Hub {

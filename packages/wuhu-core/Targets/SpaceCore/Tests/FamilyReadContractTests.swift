@@ -4,6 +4,9 @@ import struct AgentsContract.SessionSummary
 import ControlledTime
 import DeterministicDependencies
 import GroupContract
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,8 +14,8 @@ import GroupContract
 #endif
 import LoopCore
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 import Wuwei
 
@@ -21,7 +24,7 @@ import Wuwei
     let space = try makeSpace()
     let session = try await space.sessions.createSession(group: .shared, title: "Agent", kind: .agent, createdBy: "owner", model: .test)
     let summary = try #require(space.cell._context.session(session).summary)
-    #expect(summary.group == GroupID.shared.rawValue)
+    #expect(summary.group == GroupID.shared)
     #expect(summary.kind == .agent)
     #expect(summary.parent == nil)
     #expect(summary.createdBy == "owner")
@@ -93,9 +96,9 @@ import Wuwei
     worker.provide(GroupCells(settings: { reading in reading.cell(ReadCaller.ID("caller")) }))
     try await worker.call(ReadCaller.ID("caller")) { cell in
       try cell.write(7)
-      #expect(cell._context.session(SessionID("session")).summary?.group == "fake-7")
-      #expect(cell._context.settings().isSpaceAdmin(account: "fake-7"))
-      #expect(!cell._context.settings().isSpaceAdmin(account: "other"))
+      #expect(cell._context.session(SessionID("session")).summary?.group == GroupID(rawValue: "fake-7"))
+      #expect(cell._context.settings().isSpaceAdmin(account: AccountID(rawValue: "fake-7")))
+      #expect(!cell._context.settings().isSpaceAdmin(account: AccountID(rawValue: "other")))
     }
     await worker.quiesce()
     worker.release()
@@ -113,9 +116,9 @@ private struct ReadCaller: SessionReading, SettingsReading {
 
   private var value: String { "fake-\(db.one("SELECT value FROM read_caller")!.integer!)" }
 
-  func isSpaceAdmin(account: String) -> Bool { account == value }
+  func isSpaceAdmin(account: AccountID) -> Bool { account.rawValue == value }
 
   var summary: SessionSummary? {
-    SessionSummary(id: SessionID("session"), group: value, kind: .agent, parent: nil, createdAt: fixedDate, lifecycle: .live, createdBy: "fake")
+    SessionSummary(id: SessionID("session"), group: GroupID(rawValue: value), kind: .agent, parent: nil, createdAt: fixedDate, lifecycle: .live, createdBy: "fake")
   }
 }

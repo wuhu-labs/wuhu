@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -6,8 +7,8 @@ import DeterministicDependencies
 #endif
 import LoopCore
 import Scratch
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 
 // Migration 004 over the shape migration 003 leaves: group edges, the read

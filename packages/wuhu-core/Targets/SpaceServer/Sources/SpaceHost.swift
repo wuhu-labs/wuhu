@@ -14,9 +14,9 @@ import Fetch
 import Logging
 import Serve
 import ServeRouting
-import struct SessionDomain.SessionID
 import struct SpaceContract.AIDisclosure
 import SpaceCore
+import struct SpaceIDs.SessionID
 import WebPush
 import Wuwei
 

@@ -8,9 +8,9 @@ import struct InferenceKit.ProviderCatalog
 import JSONValue
 import struct ModelProviders.ModelsDocument
 import SpaceClient
-import struct SpaceContract.GroupID
 import struct SpaceContract.ReadOutput
 import struct SpaceContract.WriteOutput
+import struct SpaceIDs.GroupID
 
 // The published basis for `wuhu models update`. wuhu.ai/resources/
 // well-known-models.json does not exist yet; until it does, the verb syncs

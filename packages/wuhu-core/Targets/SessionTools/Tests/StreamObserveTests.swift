@@ -13,10 +13,10 @@ import JSONValue
 import ServeNIO
 import SessionDomain
 @testable import SessionTools
-import struct SpaceContract.GroupID
 import struct SpaceContract.ObserverInput
 import struct SpaceContract.SubscriptionObserveInput
 import SpaceCore
+import struct SpaceIDs.GroupID
 import Synchronization
 import Testing
 

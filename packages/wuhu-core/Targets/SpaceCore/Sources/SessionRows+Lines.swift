@@ -1,4 +1,5 @@
 import SessionDomain
+import struct SpaceIDs.SessionID
 
 extension Sessions {
   /// The lines of a generation's prompt, which the inference writes into its first positions after later lines may already stand.

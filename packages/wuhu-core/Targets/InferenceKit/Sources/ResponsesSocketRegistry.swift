@@ -2,6 +2,7 @@ import Clocks
 import enum Credentials.ProviderCredential
 import Dependencies
 import ModelProviders
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

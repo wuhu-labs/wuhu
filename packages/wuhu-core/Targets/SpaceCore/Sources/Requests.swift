@@ -1,3 +1,7 @@
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -6,7 +10,7 @@
 import JSONSchema
 import enum JSONValue.JSONValue
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

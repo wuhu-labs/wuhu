@@ -10,6 +10,7 @@ import enum ProviderCapabilities.PlanUsage
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Testing
 

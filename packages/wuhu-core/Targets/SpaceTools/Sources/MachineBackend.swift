@@ -3,8 +3,8 @@ import struct FileSearch.SearchQuery
 import struct Foundation.Data
 import struct Foundation.Date
 import MachineContract
-import struct SessionDomain.SessionID
 import SpaceFS
+import struct SpaceIDs.SessionID
 
 public struct MachineSeam: Sendable {
   public let vfs: @Sendable (MachineID, VFSOp) async throws -> VFSResult

@@ -3,9 +3,9 @@
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Wuwei
 
 extension Space {

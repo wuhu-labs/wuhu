@@ -1,5 +1,6 @@
 import SessionDomain
 import enum SpaceCore.ImageFitting
+import struct SpaceIDs.SessionID
 import struct WuhuAI.MediaContent
 import protocol WuhuAI.MediaResolver
 import enum WuhuAI.ResolvedMedia

@@ -1,10 +1,12 @@
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries
@@ -65,7 +67,7 @@ extension ConversationCell {
   func unopenedBox() -> ConversationRecord? {
     guard let owner = session(id.key), owner.kind == .agent else { return nil }
     return ConversationRecord(
-      id: ConversationID(id.key), kind: .box, ownerSession: SessionID(id.key), group: GroupID(rawValue: owner.group),
+      id: ConversationID(id.key), kind: .box, ownerSession: SessionID(id.key), group: owner.group,
       windowMessages: ConversationDefaults.windowMessages, windowSeconds: ConversationDefaults.windowSeconds,
       members: [ConversationMember(member: id.key, kind: .session)], createdAt: owner.createdAt,
     )

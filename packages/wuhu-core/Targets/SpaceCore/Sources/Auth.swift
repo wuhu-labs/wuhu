@@ -1,20 +1,6 @@
 import Dependencies
 import Foundation
-
-public struct AccountID: RawRepresentable, Hashable, Sendable, Codable {
-  static let prefix: String = "ac_"
-  static let suffixLength: Int = 8
-
-  public let rawValue: String
-
-  public init(rawValue: String) {
-    self.rawValue = rawValue
-  }
-
-  public static func isValid(_ candidate: String) -> Bool {
-    hasPrefixedAlphanumericSuffix(candidate, prefix: prefix, count: suffixLength)
-  }
-}
+import struct SpaceIDs.AccountID
 
 public struct ReadSessionToken: Hashable, Sendable {
   static let prefix: String = "rs_"

@@ -6,6 +6,7 @@ import ServeSSE
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.ConversationID
 import TaskLifetime
 
 /// Runs `produce` under `scope`, sending what it sends; its end ends the stream, and a failure is logged.

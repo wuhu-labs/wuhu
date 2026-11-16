@@ -1,4 +1,7 @@
 import LoopCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

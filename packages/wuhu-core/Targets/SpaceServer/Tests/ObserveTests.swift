@@ -8,9 +8,9 @@ import HTTPTypes
 import JSONValue
 import Scratch
 import SpaceContract
-import struct SpaceContract.GroupID
 import struct SpaceCore.Principal
 import class SpaceCore.Space
+import struct SpaceIDs.GroupID
 import Synchronization
 import Testing
 

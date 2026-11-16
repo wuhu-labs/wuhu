@@ -8,6 +8,7 @@ import struct SpaceContract.FindOutput
 import struct SpaceContract.GrepOutput
 import struct SpaceContract.SearchSkipped
 import enum SpaceContract.SearchSkipReason
+import struct SpaceIDs.SessionID
 
 // grep, find and query are main's `/v1/tools/*` verbs called as the session;
 // the worker only shapes their arguments and renders their output.

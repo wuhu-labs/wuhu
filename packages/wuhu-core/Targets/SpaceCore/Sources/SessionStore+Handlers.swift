@@ -1,4 +1,5 @@
 import Dependencies
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -6,7 +7,7 @@ import Dependencies
 #endif
 import JSONValue
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import struct Wuwei.Recipient

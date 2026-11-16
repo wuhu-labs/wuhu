@@ -1,7 +1,6 @@
 import JSONValue
 import func MainHub.handlerInput
 import SessionDomain
-import struct SpaceContract.GroupID
 import struct SpaceCore.ArmedSubscription
 import struct SpaceCore.Arming
 import struct SpaceCore.GroupCell
@@ -20,6 +19,9 @@ import enum SpaceCore.SubscriptionOwner
 import struct SpaceCore.SubscriptionRow
 import struct SpaceCore.SubscriptionSlot
 import enum SpaceCore.SubscriptionStatus
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

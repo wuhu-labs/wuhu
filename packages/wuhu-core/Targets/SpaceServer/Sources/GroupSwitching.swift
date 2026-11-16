@@ -1,6 +1,7 @@
 import enum Credentials.ChatGPTAuthError
 import Dependencies
 import SessionTools
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

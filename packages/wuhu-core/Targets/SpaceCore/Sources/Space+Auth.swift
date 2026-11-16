@@ -1,16 +1,17 @@
 import Crypto
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 extension Space {
   public func addAccount(kind: AccountKind, name: String?, admin: Bool = false, guest: Bool = false) async throws -> AccountRecord {
     if (admin || guest), kind != .human { throw SpaceError.notAPerson(name ?? kind.rawValue) }
     if admin, guest { throw SpaceError.notAPerson(name ?? kind.rawValue) }
-    let id = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
+    let id = AccountID(suffix: randomSuffix(AccountID.suffixLength))
     let createdAt = dateGen.now
     _ = try await worker.call(PersonCell.ID(id.rawValue)) { try $0.create(kind: kind, name: name, guest: guest, at: createdAt) }
     if admin { return try await setAdmin(id, admin: true) }

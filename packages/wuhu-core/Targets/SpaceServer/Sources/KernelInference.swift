@@ -15,13 +15,13 @@ import ServerTelemetry
 import struct SessionDomain.ImageLimits
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
-import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
 import struct SessionDomain.TranscriptLine
 import struct SessionDomain.WarmingSchedule
 import enum SpaceContract.SessionToolExecutor
 import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionStore
+import struct SpaceIDs.SessionID
 import WuhuAI
 
 func kernelInference(

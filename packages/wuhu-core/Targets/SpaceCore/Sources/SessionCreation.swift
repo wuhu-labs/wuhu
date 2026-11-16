@@ -1,12 +1,13 @@
 import enum AgentsContract.SessionKind
 import enum AgentsContract.SessionLifecycle
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 

@@ -1,6 +1,6 @@
 import JSONValue
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import SpaceSQL
 import StructuredQueries
 import Synchronization

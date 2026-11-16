@@ -1,6 +1,7 @@
 import Dependencies
 import struct ModelProviders.ModelPlacementEvidence
 import enum ModelProviders.ModelPlacementReason
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

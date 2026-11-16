@@ -1,6 +1,6 @@
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 extension Hub {
   nonisolated public func machineRoster(_ group: GroupID) async throws -> ToolResultPayload {

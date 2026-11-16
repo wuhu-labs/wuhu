@@ -3,6 +3,7 @@ import Foundation
 import JSONValue
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.ConversationID
 import Testing
 
 @Suite(.deterministicDependencies) struct ScriptChannelTests {

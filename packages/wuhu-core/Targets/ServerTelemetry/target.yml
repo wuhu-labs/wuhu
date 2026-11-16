@@ -2,14 +2,12 @@ name: ServerTelemetry
 kind: library
 sources: Sources
 dependencies:
+  - SpaceIDs
   - Tracing
   - Dependencies
-  - SessionDomain
-  - SpaceContract
 tests:
   dependencies:
+    - SpaceIDs
     - InMemoryTracing
     - Tracing
     - Dependencies
-    - SessionDomain
-    - SpaceContract

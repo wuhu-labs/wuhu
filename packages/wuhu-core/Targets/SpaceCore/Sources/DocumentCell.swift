@@ -4,12 +4,12 @@
   import Foundation
 #endif
 import LiveDocument
-import struct SpaceContract.GroupID
 import enum SpaceContract.LiveErrorCode
 import enum SpaceContract.LiveFrame
 import struct SpaceContract.LivePeer
 import enum SpaceContract.LiveServerControl
 import SpaceFS
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

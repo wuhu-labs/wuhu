@@ -1,3 +1,4 @@
+import struct SpaceIDs.SessionID
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -16,8 +17,8 @@ import Serve
 import func ServerTelemetry.reachedMachine
 import struct ServerTelemetry.TraceParent
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 import Wuwei
 
 public enum MachineHubError: Error, Equatable, Sendable {

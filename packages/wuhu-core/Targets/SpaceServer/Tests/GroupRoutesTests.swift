@@ -6,6 +6,10 @@ import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Testing
 

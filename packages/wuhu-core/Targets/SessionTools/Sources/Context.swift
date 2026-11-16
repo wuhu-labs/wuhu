@@ -12,9 +12,10 @@ import enum MainHub.Addressing
 import enum MainHub.RosterTool
 import SessionDomain
 import SpaceClient
-import struct SpaceContract.GroupID
 import struct SpaceContract.ListOutput
 import struct SpaceContract.ReadOutput
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import struct WuhuAI.ToolArguments
 import struct WuhuAI.ToolCall
 

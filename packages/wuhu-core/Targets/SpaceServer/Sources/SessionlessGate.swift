@@ -10,6 +10,7 @@ import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.GroupID
 import SpaceTools
 
 /// A script that runs with no session, by the token main minted for it: an

@@ -6,6 +6,7 @@ import struct FileSearch.SearchError
 import struct MainHub.EventSources
 import class MainHub.Hub
 import struct MainHub.SessionEffects
+import struct SpaceIDs.SessionID
 import TaskLifetime
 import enum Wuwei.Storage
 #if canImport(FoundationEssentials)

@@ -4,6 +4,7 @@ import JSONValue
 import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.SessionID
 import SpaceServer
 import Testing
 

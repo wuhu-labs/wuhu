@@ -5,6 +5,7 @@ checks:
   build: [linux, mac, ios, visionos]
   test: [linux, mac]
 dependencies:
+  - SpaceIDs
   - SpaceContract
   - MachineContract
   - MachineChannel

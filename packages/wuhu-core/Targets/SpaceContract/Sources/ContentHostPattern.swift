@@ -1,3 +1,4 @@
+import struct SpaceIDs.GroupID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

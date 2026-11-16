@@ -1,3 +1,5 @@
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -5,7 +7,6 @@
 #endif
 import JSONValue
 import SessionDomain
-import struct SpaceContract.GroupID
 import struct SpaceCore.ArmedSubscription
 import struct SpaceCore.Arming
 import enum SpaceCore.FiringOutcome
@@ -22,6 +23,7 @@ import enum SpaceCore.SubscriptionOwner
 import struct SpaceCore.SubscriptionRow
 import struct SpaceCore.SubscriptionSlot
 import enum SpaceCore.SubscriptionStatus
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

@@ -9,12 +9,12 @@ import class MainHub.Hub
 import Serve
 import ServeRouting
 import SessionDomain
-import struct SpaceContract.GroupID
 import struct SpaceContract.ObserverInput
 import struct SpaceContract.ObserverOutput
 import struct SpaceContract.ObserversOutput
 import enum SpaceContract.SubscriptionKindPayload
 import SpaceCore
+import struct SpaceIDs.GroupID
 import SpaceTools
 import Wuwei
 

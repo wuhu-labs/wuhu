@@ -7,7 +7,7 @@
 import Fetch
 import HTTPTypes
 import Serve
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 /// What a group host's response carries for its origin: `Vary`, the CORS reflection to the
 /// paired SPA, and the framing policy.

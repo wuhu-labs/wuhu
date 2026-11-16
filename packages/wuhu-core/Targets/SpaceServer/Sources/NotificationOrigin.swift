@@ -1,6 +1,8 @@
 import JSONValue
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SessionID
 
 enum NotificationOrigin: Hashable, Sendable {
   case message(sender: String, box: String?)

@@ -2,8 +2,9 @@ import enum AgentsContract.SessionKind
 import Foundation
 import JSONValue
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 public struct SessionTemplate: Hashable, Sendable {
   public static let root: String = "/templates"

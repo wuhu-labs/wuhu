@@ -10,13 +10,13 @@ import DeterministicDependencies
 import KeelObjectStore
 import LiveDocument
 import Scratch
-import struct SpaceContract.GroupID
 import enum SpaceContract.LiveAccess
 import enum SpaceContract.LiveErrorCode
 import enum SpaceContract.LiveFrame
 import enum SpaceContract.LiveServerControl
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Synchronization
 import Testing

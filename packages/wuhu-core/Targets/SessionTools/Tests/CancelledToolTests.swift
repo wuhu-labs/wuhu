@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Fetch
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

@@ -6,6 +6,7 @@ import enum MainHub.CancelTarget
 import enum MainHub.RosterTool
 import struct MainHub.ToolProblem
 import SessionDomain
+import struct SpaceIDs.SessionID
 import struct WuhuAI.ToolArguments
 import struct WuhuAI.ToolCall
 

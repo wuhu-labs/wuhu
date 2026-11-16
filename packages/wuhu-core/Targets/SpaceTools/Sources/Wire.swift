@@ -6,6 +6,7 @@ import OrderedCollections
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import struct Wuwei.Evicted
 
 public enum Wire {

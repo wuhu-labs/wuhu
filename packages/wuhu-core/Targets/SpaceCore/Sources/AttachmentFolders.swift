@@ -1,11 +1,12 @@
+import struct SpaceIDs.ConversationID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Wuwei
 
 /// `/_/conversations/<id>/attachments/…` in a group's tree: the attachments of the conversations homed there, files answered from each conversation's rows. A post writes one once and nothing rewrites it, so it has no revisions and reads the same at any of them.

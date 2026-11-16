@@ -5,6 +5,7 @@ import ModelProviders
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Testing
 import WuhuAI

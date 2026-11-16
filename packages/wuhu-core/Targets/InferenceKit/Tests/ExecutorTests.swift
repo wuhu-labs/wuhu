@@ -4,6 +4,8 @@ import Credentials
 import Dependencies
 import DeterministicDependencies
 import Fetch
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

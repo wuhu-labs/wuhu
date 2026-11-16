@@ -1,4 +1,5 @@
 import SessionDomain
+import struct SpaceIDs.SessionID
 
 public struct ArchiveBusySession: Equatable, Sendable {
   public var id: SessionID

@@ -1,5 +1,5 @@
-import struct SpaceContract.GroupID
 import struct SpaceContract.SpaceURL
+import struct SpaceIDs.GroupID
 
 struct RoutedPath: Equatable {
   var spaceOverride: String?

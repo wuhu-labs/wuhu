@@ -1,9 +1,10 @@
 import JSONValue
 import ServerTelemetry
 import SessionDomain
-import struct SpaceContract.GroupID
 import enum SpaceCore.HandlerOutcome
 import enum SpaceCore.SubscriptionOwner
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SubscriptionID
 import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials

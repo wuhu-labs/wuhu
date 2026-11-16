@@ -9,8 +9,8 @@ import Fetch
 import HTTPTypes
 import JSONValue
 import Serve
-import struct SpaceContract.GroupID
 import enum SpaceContract.MediaType
+import struct SpaceIDs.GroupID
 
 /// A file's bytes as a group host serves them: the shell injected into HTML when `shell` is
 /// given, tagged by `version` when it has one, and answered against the request's conditional

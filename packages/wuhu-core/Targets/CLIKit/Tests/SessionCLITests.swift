@@ -2,6 +2,8 @@
 import Dependencies
 import DeterministicDependencies
 import Fetch
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SessionID
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)

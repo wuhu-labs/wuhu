@@ -1,5 +1,6 @@
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 /// What a role lets its holder do, in order: an admin writes and reads.
 public enum GroupRole: String, Hashable, Codable, Sendable, CaseIterable, Comparable {

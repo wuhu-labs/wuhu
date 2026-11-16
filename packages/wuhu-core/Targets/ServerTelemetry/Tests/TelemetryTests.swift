@@ -1,8 +1,8 @@
 import Dependencies
 import InMemoryTracing
 import ServerTelemetry
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import Testing
 import Tracing
 

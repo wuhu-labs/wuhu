@@ -7,6 +7,7 @@ import GroupContract
 import JSONValue
 import struct SpaceContract.UserProfileInput
 import SpaceCore
+import struct SpaceIDs.AccountID
 import Testing
 
 @Suite(.deterministicDependencies) struct UserManagementRouteTests {
@@ -162,6 +163,10 @@ import Testing
       guard case let .object(fields) = account else { Issue.record("not an object: \(account)"); continue }
       #expect(Set(fields.keys).isSubset(of: ["id", "kind", "name", "admin", "createdAt", "guest"]))
     }
+    for (name, isAdmin) in [("root", true), ("alice", false), ("visitor", false)] {
+      let row = try #require(accounts.first { $0.stringValue(at: "name") == name })
+      #expect(row["admin"] == .bool(isAdmin), "\(name) admin")
+    }
 
     let refused = try await send(.get, "/v1/accounts", key: guest.key)
     #expect(refused.status == .forbidden)
@@ -209,7 +214,7 @@ import Testing
     #expect((try await json(promoted))["admin"] == .bool(true))
     let demoted = try await send(.post, "/v1/accounts/\(carolID)/admin", body: .object(["admin": .bool(false)]), key: root.key)
     #expect(demoted.status == .ok)
-    #expect(harness.space.cell._context.settings().isSpaceAdmin(account: AccountID(rawValue: carolID).rawValue) == false)
+    #expect(harness.space.cell._context.settings().isSpaceAdmin(account: AccountID(rawValue: carolID)) == false)
   }
 
   @Test func removingAnAccountKillsItsCredentialsAndKeepsTheHistory() async throws {
@@ -257,7 +262,7 @@ import Testing
       #expect(payload.stringValue(at: "code") == "lastAdmin", "\(method) \(path)")
       #expect(payload.stringValue(at: "hint")?.contains("wuhu user add") == true, "\(method) \(path)")
     }
-    #expect(harness.space.cell._context.settings().isSpaceAdmin(account: root.record.id.rawValue) == true)
+    #expect(harness.space.cell._context.settings().isSpaceAdmin(account: root.record.id) == true)
   }
 
   @Test func machineAndContractorAccountsAreNotRemovableHere() async throws {

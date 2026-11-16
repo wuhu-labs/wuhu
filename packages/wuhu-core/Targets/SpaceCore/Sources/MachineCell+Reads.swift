@@ -4,8 +4,8 @@
   import Foundation
 #endif
 import struct OperationProtocol.MachineDescription
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import WuweiQueries
 

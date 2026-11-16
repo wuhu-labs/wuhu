@@ -1,8 +1,9 @@
 import DeterministicDependencies
 @testable import LoopCore
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import StructuredQueries
 import Testing
 

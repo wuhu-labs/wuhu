@@ -1,4 +1,4 @@
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 public struct FSResolution: Sendable {
   public let backend: any SpaceVFS

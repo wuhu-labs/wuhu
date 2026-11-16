@@ -8,6 +8,8 @@ import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.SessionID
 import Testing
 
 @Suite(.deterministicDependencies) struct SessionRoutesTests {

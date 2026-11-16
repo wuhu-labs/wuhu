@@ -4,9 +4,9 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Testing
 
 private func text(_ fs: any SpaceVFS, _ path: String) async throws -> String {

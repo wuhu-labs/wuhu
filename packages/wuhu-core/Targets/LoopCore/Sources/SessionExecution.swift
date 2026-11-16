@@ -10,6 +10,8 @@ import struct MainHub.SubtreeArchiveBusy
 import struct MainHub.ToolProblem
 import SessionTools
 import enum SpaceContract.ScriptOutput
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials

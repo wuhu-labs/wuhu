@@ -2,6 +2,8 @@ import MachineContract
 import OperationProtocol
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.SessionID
 
 extension Space {
   /// `StartRequest.caller` for a start `session` caused: its id, title and group, read at start time.

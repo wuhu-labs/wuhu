@@ -5,7 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
-  - SpaceContract
+  - SpaceIDs
   - StructuredQueriesCore
   - GRDBSQLite
   - Logging

@@ -1,8 +1,8 @@
 import CLIKit
 import DeterministicDependencies
 import MachineContract
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 
 @Suite(.deterministicDependencies) struct MachineVerbFaithfulnessTests {

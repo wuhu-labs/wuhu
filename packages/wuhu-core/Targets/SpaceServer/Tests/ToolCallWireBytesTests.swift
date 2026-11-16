@@ -6,6 +6,7 @@ import JSONValue
 import LoopCore
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.SessionID
 import Synchronization
 import Testing
 import WuhuAI

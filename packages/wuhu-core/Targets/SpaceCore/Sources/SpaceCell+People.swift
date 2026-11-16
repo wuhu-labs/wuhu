@@ -1,4 +1,5 @@
 import GroupContract
+import struct SpaceIDs.AccountID
 import StructuredQueries
 import Wuwei
 import WuweiQueries
@@ -16,7 +17,7 @@ extension SpaceCell {
     }
   }
 
-  func hasAdminAccount() -> Bool { accounts().contains { ctx.settings().isSpaceAdmin(account: $0.id.rawValue) } }
+  func hasAdminAccount() -> Bool { accounts().contains { ctx.settings().isSpaceAdmin(account: $0.id) } }
   func keyRecord(pubkey: String) -> KeyRecord? { db.rows(PersonKeyRow.where { $0.pubkey.eq(pubkey) }).first?.record }
   func readSession(_ token: ReadSessionToken) -> PersonReadSessionRow? {
     let hash = Space.credentialDigest(token.rawValue)

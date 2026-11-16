@@ -1,12 +1,11 @@
 import GroupContract
-import struct SpaceContract.GroupID
-import StructuredQueries
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 import Wuwei
-import WuweiQueries
 
 extension GroupCell: SettingsReading {
-  public func isSpaceAdmin(account: String) -> Bool {
-    !db.rows(GroupRoleRow.where { $0.grp.eq(id.key) && $0.accountID.eq(account) && $0.role.eq(GroupRole.admin.rawValue) }).isEmpty
+  public func isSpaceAdmin(account: AccountID) -> Bool {
+    rows.isSpaceAdmin(account.rawValue)
   }
 }
 

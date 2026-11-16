@@ -8,6 +8,7 @@ import struct MainHub.ScriptError
 import func MainHub.seconds
 import struct MainHub.SendMessageArguments
 import struct MainHub.ToolProblem
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

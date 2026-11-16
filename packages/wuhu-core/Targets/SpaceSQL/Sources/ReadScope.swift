@@ -1,4 +1,4 @@
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 /// What one query may see: the views are bound to `acting`, `readable` and
 /// `member`, and `viewer()` answers `viewer` for this query alone.

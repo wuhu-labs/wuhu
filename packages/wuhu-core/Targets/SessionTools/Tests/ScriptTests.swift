@@ -21,10 +21,12 @@ import OrderedCollections
 import Scratch
 import SessionDomain
 @testable import SessionTools
-import struct SpaceContract.GroupID
 import enum SpaceContract.ScriptOutput
 @testable import SpaceCore
 import struct SpaceFS.SpacePath
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import struct SpaceTools.MachineSeam
 import StructuredQueries

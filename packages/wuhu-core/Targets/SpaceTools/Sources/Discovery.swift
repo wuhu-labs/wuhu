@@ -6,9 +6,9 @@
 
 import JSONValue
 import OrderedCollections
-import struct SpaceContract.GroupID
 import struct SpaceContract.GroupSummary
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 extension SpaceToolContext {
   public func discoveryContext(contentHost: String?) async throws -> JSONValue {

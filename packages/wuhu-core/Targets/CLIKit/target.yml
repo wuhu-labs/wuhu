@@ -10,6 +10,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - SpaceIDs
   - ImageRetention
   - DeploymentAdmin
   - FetchExchangeRecording
@@ -46,6 +47,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - SpaceIDs
     - GroupContract
     - Wuwei
     - ControlledTime

@@ -3,9 +3,9 @@
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
 import SpaceCore
 import struct SpaceFS.SpacePath
+import struct SpaceIDs.GroupID
 import Wuwei
 
 /// Shared's Everything sidebar is a real file. Startup writes it when it is

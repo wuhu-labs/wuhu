@@ -12,9 +12,9 @@ import struct OperationProtocol.OperationError
 import Serve
 import ServeRouting
 import struct ServerTelemetry.TraceParent
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 // A machine belongs to one group; a principal uses it (lists, execs) when its
 // group reads that group, and any other machine answers as unknown. Changing

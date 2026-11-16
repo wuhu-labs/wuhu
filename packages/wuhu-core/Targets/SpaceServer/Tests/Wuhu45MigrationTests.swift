@@ -3,8 +3,9 @@ import Foundation
 import GroupContract
 import Logging
 import Scratch
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 import Synchronization
 import Testing
 import Wuwei
@@ -59,7 +60,7 @@ import Wuwei
     #expect(admins == [Self.boss.rawValue])
     try Wuhu45Migration.apply(to: file)
     let space = try Space.open(file: file)
-    #expect(try await Set(space.accounts().filter { space.cell._context.settings().isSpaceAdmin(account: $0.id.rawValue) }.map(\.id.rawValue)) == Set(admins))
+    #expect(try await Set(space.accounts().filter { space.cell._context.settings().isSpaceAdmin(account: $0.id) }.map(\.id.rawValue)) == Set(admins))
     #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings])
     #expect(try await space.isHumanAdmin(Self.boss, of: .shared))
     #expect(try await !space.isHumanAdmin(Self.carol, of: .shared))

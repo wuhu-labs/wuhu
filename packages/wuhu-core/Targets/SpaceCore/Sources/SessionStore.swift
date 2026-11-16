@@ -1,6 +1,7 @@
 import enum AgentsContract.SessionKind
 import enum AgentsContract.SessionLifecycle
 import Dependencies
+import struct SpaceIDs.SessionID
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -8,9 +9,9 @@ import TaskLifetime
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 import enum SpaceContract.SessionHoldPayload
 import enum SpaceContract.SessionWorkPayload
+import struct SpaceIDs.GroupID
 
 public typealias SessionHold = SpaceContract.SessionHoldPayload
 public typealias SessionWork = SpaceContract.SessionWorkPayload

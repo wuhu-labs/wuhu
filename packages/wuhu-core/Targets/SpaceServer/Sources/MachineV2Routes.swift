@@ -1,3 +1,4 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -15,8 +16,8 @@ import Serve
 import ServeRouting
 import struct SpaceContract.EnrollConsumeInput
 import struct SpaceContract.EnrollConsumeOutput
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 import Wuwei
 
 func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineHub, upgrades: MachineV2Upgrades, fingerprint: String?, log: Logger = Logger(label: "wuhu.serve"), principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {

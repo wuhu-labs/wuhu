@@ -2,6 +2,7 @@ import Credentials
 import Dependencies
 import DeterministicDependencies
 import ExecutionOwner
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

@@ -1,10 +1,12 @@
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 public enum NotificationKind: String, Hashable, Sendable, Codable {
   case conversationMessage = "conversation_message"

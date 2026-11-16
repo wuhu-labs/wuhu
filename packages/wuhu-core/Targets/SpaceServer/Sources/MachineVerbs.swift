@@ -9,6 +9,8 @@ import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import SpaceTools
 
 /// Who a gated request's machine verbs act for: a session, or a script

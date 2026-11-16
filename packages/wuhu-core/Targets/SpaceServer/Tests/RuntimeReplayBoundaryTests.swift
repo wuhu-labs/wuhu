@@ -9,6 +9,7 @@ import LoopCore
 import ModelProviders
 import SessionDomain
 import struct SpaceContract.SessionCreateOutput
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Synchronization
 import Testing

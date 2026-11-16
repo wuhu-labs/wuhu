@@ -1,12 +1,13 @@
 import DeterministicDependencies
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import LoopCore
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 
 @Suite(.deterministicDependencies) struct AliasTests {

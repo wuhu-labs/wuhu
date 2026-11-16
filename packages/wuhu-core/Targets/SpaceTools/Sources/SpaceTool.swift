@@ -6,6 +6,7 @@ import MachineContract
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import SystemFiles
 
 public struct SpaceToolContext: Sendable {

@@ -1,6 +1,7 @@
 name: DeploymentAdmin
 kind: library
 sources: Sources
+tests: {}
 checks:
   build: [linux, mac]
   test: [linux, mac]

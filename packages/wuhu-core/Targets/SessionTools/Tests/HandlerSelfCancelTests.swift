@@ -1,6 +1,7 @@
 import DeterministicDependencies
 @testable import MainHub
 @testable import SessionTools
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 #if canImport(FoundationEssentials)
   import FoundationEssentials

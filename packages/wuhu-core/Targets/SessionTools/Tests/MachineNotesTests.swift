@@ -11,9 +11,9 @@ import JSONValue
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
-import struct SpaceContract.GroupID
 import struct SpaceContract.PromptSession
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import Testing
 

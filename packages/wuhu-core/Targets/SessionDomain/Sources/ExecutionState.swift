@@ -1,4 +1,6 @@
 import Foundation
+import struct SpaceIDs.RequestID
+import struct SpaceIDs.SubscriptionID
 
 public enum Subscription: Hashable, Sendable, Codable {
   case observe(sql: String)

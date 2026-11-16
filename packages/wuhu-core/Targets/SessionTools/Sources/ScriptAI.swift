@@ -5,6 +5,7 @@ import struct ProviderCapabilities.CapabilityOptions
 import enum ProviderCapabilities.FrameSelection
 import QuickJSKit
 import SessionDomain
+import struct SpaceIDs.SessionID
 import SpaceTools
 
 struct ScriptAI {

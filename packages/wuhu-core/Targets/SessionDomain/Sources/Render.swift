@@ -1,4 +1,5 @@
 import Foundation
+import struct SpaceIDs.SessionID
 import WuhuAI
 
 public enum RenderContext: Hashable, Sendable {

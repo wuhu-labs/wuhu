@@ -1,9 +1,9 @@
 import JSONValue
-import struct SpaceContract.GroupID
 import SpaceCore
 import struct SpaceFS.Entry
 import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
+import struct SpaceIDs.GroupID
 
 // A glob watches the acting group, or with a `wuhu://<group>.localspace`
 // prefix a group the actor reads; its events then carry the same prefix.

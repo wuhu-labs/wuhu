@@ -1,11 +1,12 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 public enum Actor: Hashable, Sendable {
   case session(SessionID)

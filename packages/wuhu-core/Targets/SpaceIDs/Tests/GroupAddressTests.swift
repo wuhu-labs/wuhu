@@ -1,4 +1,4 @@
-import SpaceContract
+import SpaceIDs
 import Testing
 
 // The one parser of `wuhu://<group>.localspace/<path>`: the tools, the HTTP

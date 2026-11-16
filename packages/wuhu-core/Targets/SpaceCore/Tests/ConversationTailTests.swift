@@ -4,6 +4,7 @@ import struct AgentsContract.SessionSummary
 import DeterministicDependencies
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
 import Testing
 
 @Suite(.deterministicDependencies) struct ConversationTailTests {

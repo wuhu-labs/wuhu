@@ -8,6 +8,7 @@ import struct MainHub.TerminalRun
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Testing
 

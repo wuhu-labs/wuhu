@@ -1,12 +1,13 @@
 import Dependencies
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 public struct SessionEffects: Sendable, TestDependencyKey {
   public var create: @Sendable (SessionCreation) async throws -> SessionID

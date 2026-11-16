@@ -1,4 +1,5 @@
 import SessionDomain
+import struct SpaceIDs.ConversationID
 import StructuredQueries
 
 extension GroupCell {

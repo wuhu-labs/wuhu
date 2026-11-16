@@ -2,6 +2,7 @@ name: InferenceKit
 kind: library
 sources: Sources
 dependencies:
+  - SpaceIDs
   - Clocks
   - Credentials
   - Crypto
@@ -19,6 +20,7 @@ tests:
   data:
     - Targets/SystemFiles/Benchmark
   dependencies:
+    - SpaceIDs
     - ControlledTime
     - DeterministicDependencies
     - ExecutionOwner

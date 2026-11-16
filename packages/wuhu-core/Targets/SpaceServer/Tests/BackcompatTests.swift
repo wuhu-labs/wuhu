@@ -9,6 +9,7 @@ import LoopCore
 import Scratch
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.MessageID
 import SpaceTools
 import Synchronization
 import Testing

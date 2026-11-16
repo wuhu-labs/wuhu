@@ -1,16 +1,18 @@
 import Dependencies
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 import struct SpaceCore.ArmedSubscription
 import struct SpaceCore.Arming
 import struct SpaceCore.ObserverTerms
 import struct SpaceCore.SessionStore
 import struct SpaceCore.SubscriptionSlot
+import struct SpaceIDs.GroupID
 import Wuwei
 
 extension SessionStore {

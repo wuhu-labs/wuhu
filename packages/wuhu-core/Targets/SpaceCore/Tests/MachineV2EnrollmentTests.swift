@@ -1,6 +1,8 @@
 import Crypto
 import Dependencies
 import DeterministicDependencies
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

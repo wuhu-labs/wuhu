@@ -18,8 +18,8 @@ import OperationProtocol
 @testable import OperationRuntime
 import Serve
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import Synchronization
 import Testing

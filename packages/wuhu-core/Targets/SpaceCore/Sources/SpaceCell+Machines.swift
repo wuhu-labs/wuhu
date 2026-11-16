@@ -1,7 +1,8 @@
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
 import struct SessionDomain.ToolCallID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import WuweiQueries
 

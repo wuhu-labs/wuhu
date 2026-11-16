@@ -7,6 +7,7 @@ import HTTPTypes
 import JSONValue
 import SessionDomain
 import SpaceCore
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Synchronization
 import Testing

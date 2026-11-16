@@ -8,6 +8,9 @@ import JSONValue
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.MessageID
 import SpaceServer
 import SpaceTools
 import Testing

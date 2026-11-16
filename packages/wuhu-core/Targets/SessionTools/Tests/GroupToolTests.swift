@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import LoopCore
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,9 +12,9 @@ import struct MainHub.ToolProblem
 import SessionDomain
 @testable import SessionTools
 import struct SpaceClient.SpaceClient
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import Testing
 import struct WuhuAI.ToolArguments

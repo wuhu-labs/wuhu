@@ -6,10 +6,11 @@ import struct SpaceContract.GroupAccessEntry
 import struct SpaceContract.GroupAccessInput
 import struct SpaceContract.GroupCreateInput
 import struct SpaceContract.GroupDetail
-import struct SpaceContract.GroupID
 import struct SpaceContract.GroupSummary
 import struct SpaceContract.GroupUpdateInput
 import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 import SpaceTools
 import Wuwei
 

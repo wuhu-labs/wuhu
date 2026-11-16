@@ -6,6 +6,8 @@ import LoopCore
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 import Testing
 
 // A task works for its parent. No route lets a person wake one; the parent's

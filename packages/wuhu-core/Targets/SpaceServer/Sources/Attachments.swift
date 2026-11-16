@@ -10,8 +10,8 @@ import enum SpaceContract.AttachmentLimits
 import enum SpaceContract.AttachmentRefusal
 import struct SpaceContract.AttachmentTally
 import struct SpaceContract.ConversationPostInput
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 enum PostVerdict {
   case post(ConversationPostInput, [AttachmentUpload])

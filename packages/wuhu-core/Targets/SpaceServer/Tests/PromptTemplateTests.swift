@@ -4,6 +4,7 @@ import LoopCore
 import SessionDomain
 import struct SpaceContract.PromptSession
 import SpaceCore
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import Testing
 

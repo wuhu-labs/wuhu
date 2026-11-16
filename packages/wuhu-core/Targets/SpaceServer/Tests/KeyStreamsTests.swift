@@ -8,6 +8,8 @@ import Serve
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
 @testable import SpaceServer
 import Testing
 

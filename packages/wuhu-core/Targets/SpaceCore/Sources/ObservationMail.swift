@@ -1,3 +1,5 @@
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -5,7 +7,7 @@
 #endif
 import Crypto
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import SpaceSQL
 import StructuredQueries
 import Wuwei

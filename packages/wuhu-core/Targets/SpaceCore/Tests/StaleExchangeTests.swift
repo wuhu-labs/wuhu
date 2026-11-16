@@ -5,6 +5,8 @@ import Foundation
 import Scratch
 import SessionDomain
 @testable import SpaceCore
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 import Synchronization
 import Testing
 

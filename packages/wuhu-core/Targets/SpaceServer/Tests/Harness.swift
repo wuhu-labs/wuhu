@@ -14,8 +14,10 @@ import Serve
 import ServeTesting
 import SessionDomain
 import SpaceContract
-import struct SpaceContract.GroupID
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 @testable import SpaceServer
 import SpaceTools
 import Testing

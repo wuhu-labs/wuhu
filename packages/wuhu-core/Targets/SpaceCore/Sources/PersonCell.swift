@@ -3,7 +3,7 @@
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries

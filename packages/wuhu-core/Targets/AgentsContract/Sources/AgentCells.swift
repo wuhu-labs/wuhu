@@ -1,4 +1,4 @@
-import SessionDomain
+import struct SpaceIDs.SessionID
 import Wuwei
 
 public protocol SessionReading {

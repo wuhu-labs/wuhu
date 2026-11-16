@@ -5,10 +5,10 @@ import Dependencies
   import Foundation
 #endif
 import struct MainHub.EventSources
-import struct SessionDomain.SessionID
 import SessionTools
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 
 extension EventSources {
   /// Streams dialled with a 60-second token naming the subscriber: its

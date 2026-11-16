@@ -7,9 +7,9 @@
 import struct InferenceKit.InferenceMetric
 import struct InferenceKit.InferenceMetricsSink
 import Logging
-import struct SpaceContract.GroupID
 import struct SpaceCore.InferenceRecord
 import class SpaceCore.Space
+import struct SpaceIDs.GroupID
 
 func inferenceMetricsSink(space: Space, writer: InferenceMetricsWriter, logger: Logger) -> InferenceMetricsSink {
   InferenceMetricsSink { metric in

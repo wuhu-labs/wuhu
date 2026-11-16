@@ -9,6 +9,8 @@ import ServeTesting
 import SessionDomain
 import SpaceContract
 import struct SpaceFS.SpacePath
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SessionID
 import SpaceTools
 @_spi(Testing) @testable import SpaceCore
 @testable import SpaceServer

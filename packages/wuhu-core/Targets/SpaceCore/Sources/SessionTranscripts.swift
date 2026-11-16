@@ -1,11 +1,12 @@
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import WuhuAI
 
 /// `/_/session-transcripts/<id>/`: a session's lines as read-only files, rendered from the rows on every read. `current.jsonl` and `current.outline.txt` are the current generation's, `<generation>.jsonl` and `<generation>.outline.txt` any generation's that has lines. A session's folder is in its own group's files; the root lists nothing.

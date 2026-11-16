@@ -5,6 +5,7 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import JSONValue
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

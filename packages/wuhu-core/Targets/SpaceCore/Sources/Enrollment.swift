@@ -1,3 +1,4 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -5,7 +6,7 @@
 #endif
 import enum Assertion.VerifyingKey
 import struct MachineContract.MachineID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 
 public struct JoinToken: Hashable, Sendable {
@@ -34,7 +35,7 @@ extension Space {
   public func addMachineV2(name: String, group: GroupID = .shared, scope: ReachScope = .owner) async throws -> (machine: MachineRecord, token: MintedJoinToken) {
     guard let name = MachineName.normalized(name) else { throw SpaceError.invalidMachineName(name) }
     let id = MachineID(rawValue: "mc_" + randomSuffix(MachineID.suffixLength))
-    let account = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
+    let account = AccountID(suffix: randomSuffix(AccountID.suffixLength))
     let token = JoinToken(rawValue: JoinToken.prefix + randomSuffix(JoinToken.suffixLength))
     let createdAt = dateGen.now
     let expiresAt = createdAt.addingTimeInterval(3600)
@@ -83,7 +84,7 @@ extension Space {
     }
     guard cell.keyRecord(pubkey: pubkey) == nil else { throw SpaceError.alreadyExists(pubkey) }
     let id = MachineID(rawValue: "mc_" + randomSuffix(MachineID.suffixLength))
-    let account = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
+    let account = AccountID(suffix: randomSuffix(AccountID.suffixLength))
     let claim = MachineClaim(
       id: id, account: account, name: name, group: group, scope: .owner, created: SQLiteDateFormat.string(from: now),
     )

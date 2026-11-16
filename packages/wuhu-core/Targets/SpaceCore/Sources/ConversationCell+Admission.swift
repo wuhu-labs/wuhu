@@ -1,12 +1,15 @@
 import AgentsContract
 import struct AgentsContract.SessionSummary
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries
@@ -68,7 +71,7 @@ extension ConversationCell {
   }
 
   func group(ofSession key: String) -> GroupID {
-    GroupID(rawValue: session(key)?.group ?? GroupID.shared.rawValue)
+    session(key)?.group ?? .shared
   }
 
   /// A conversation is there for a poster whose group reads its group, or who is a member; anything else is refused as missing. No dialing in: a DM to a session outside what the poster's group reads is opened or used only when that session has posted in it.
@@ -90,7 +93,7 @@ extension ConversationCell {
       }
       return record
     case .box:
-      guard let owner = session(id.key), readable.contains(GroupID(rawValue: owner.group)) else { throw SessionStoreError.unknownSession(id.key) }
+      guard let owner = session(id.key), readable.contains(owner.group) else { throw SessionStoreError.unknownSession(id.key) }
       guard owner.kind == .agent else {
         throw post.senderSession == nil ? SessionStoreError.taskTakesNoHumanInput(id.key) : SessionStoreError.taskHasNoBox(id.key)
       }
@@ -100,7 +103,7 @@ extension ConversationCell {
       let existing = record()
       let theirs = session(other)
       if let theirs {
-        let reached = existing.map { reaches(other, from: readable, in: $0) } ?? readable.contains(GroupID(rawValue: theirs.group))
+        let reached = existing.map { reaches(other, from: readable, in: $0) } ?? readable.contains(theirs.group)
         guard reached else { throw SessionStoreError.unknownSession(other) }
       }
       if let existing { return existing }

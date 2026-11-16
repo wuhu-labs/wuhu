@@ -7,6 +7,8 @@ import ServeTesting
 import SessionDomain
 import SpaceContract
 @testable import SpaceCore
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import Testing
 

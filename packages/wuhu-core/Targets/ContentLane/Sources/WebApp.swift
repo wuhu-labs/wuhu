@@ -8,8 +8,8 @@ import Fetch
 import HTTPTypes
 import Serve
 import struct SpaceContract.ContentHostPattern
-import struct SpaceContract.GroupID
 import struct SpaceContract.SpaceURL
+import struct SpaceIDs.GroupID
 
 public struct WebApp: Sendable {
   public let files: [String: Data]

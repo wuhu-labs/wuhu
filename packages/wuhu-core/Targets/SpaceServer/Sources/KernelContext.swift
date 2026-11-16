@@ -10,6 +10,7 @@ import SessionTools
 import struct SpaceContract.PromptSession
 import enum SpaceContract.SessionToolExecutor
 import SpaceCore
+import struct SpaceIDs.SessionID
 import SpaceTools
 import SystemFiles
 

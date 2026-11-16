@@ -8,8 +8,8 @@ import Wuwei
 #endif
 import KeelObjectStore
 import Logging
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import SpaceSQL
 
 public actor Space {

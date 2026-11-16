@@ -1,6 +1,7 @@
 import Clocks
 import ControlledTime
 import Dependencies
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -10,9 +11,9 @@ import JSONValue
 import Logging
 import LoopCore
 import SessionTools
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Testing
 
 let fixedDate = Date(timeIntervalSince1970: 1_700_000_000)

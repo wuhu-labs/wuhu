@@ -1,4 +1,5 @@
 import GroupContract
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -108,7 +109,7 @@ private func accountPayload(_ record: AccountRecord, space: Space) -> AccountPay
     id: record.id.rawValue,
     kind: record.kind.rawValue,
     name: record.name,
-    admin: space.cell._context.settings().isSpaceAdmin(account: record.id.rawValue),
+    admin: space.cell._context.settings().isSpaceAdmin(account: record.id),
     createdAt: record.createdAt.timeIntervalSince1970,
     guest: record.guest,
   )

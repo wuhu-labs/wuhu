@@ -1,5 +1,8 @@
 import DeterministicDependencies
 import LoopCore
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,8 +14,8 @@ import enum MachineContract.VFSOp
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 @testable import SpaceServer
 import SystemFiles
 import Testing

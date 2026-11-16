@@ -11,8 +11,8 @@ import enum Credentials.StoredCredential
 import Dependencies
 import JSONValue
 import struct ModelProviders.ModelsDocument
-import struct SpaceContract.GroupID
 import struct SpaceContract.ReadOutput
+import struct SpaceIDs.GroupID
 
 extension Executor {
   func credentialsStore() throws -> CredentialsStore {

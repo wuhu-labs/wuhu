@@ -9,7 +9,7 @@ import struct InferenceKit.ProviderCatalog
 import enum ModelProviders.CatalogError
 import struct ModelProviders.ModelsDocument
 import struct SessionDomain.ModelSpecifier
-import struct SessionDomain.SessionID
+import struct SpaceIDs.SessionID
 import WuhuAI
 
 public enum MinimalAgent {

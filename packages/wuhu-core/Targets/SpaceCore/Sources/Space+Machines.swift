@@ -1,3 +1,4 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -5,11 +6,11 @@
 #endif
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
-import struct SessionDomain.SessionID
 import struct SessionDomain.ToolCallID
-import struct SpaceContract.GroupID
 import func SpaceContract.normalizedLabel
 import SpaceFS
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import StructuredQueries
 
 public struct MachineRecord: Equatable, Sendable {

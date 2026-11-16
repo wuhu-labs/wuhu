@@ -1,6 +1,6 @@
 import Dependencies
-import struct SessionDomain.SessionID
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import Synchronization
 import Tracing
 

@@ -5,7 +5,7 @@
 #endif
 import JSONValue
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 /// A handler slot as its observer cell finds it.
 public struct ObserverSlot: Sendable {

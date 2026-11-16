@@ -8,7 +8,8 @@ import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.StartRequest
 import struct OperationProtocol.WriteReceipt
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
+import struct SpaceIDs.SessionID
 import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials

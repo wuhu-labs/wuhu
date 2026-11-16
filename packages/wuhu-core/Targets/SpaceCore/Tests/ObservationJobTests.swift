@@ -11,9 +11,9 @@ import GRDBSQLite
 import JSONValue
 import Logging
 import Scratch
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import Synchronization
 import Testing
 

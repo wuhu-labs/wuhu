@@ -2,6 +2,7 @@ name: SessionDomain
 kind: library
 sources: Sources
 dependencies:
+  - SpaceIDs
   - WuhuAI
   - Dependencies
   - JSONValue
@@ -12,6 +13,7 @@ swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
   dependencies:
+    - SpaceIDs
     - WuhuAI
     - SpaceContract
     - Dependencies

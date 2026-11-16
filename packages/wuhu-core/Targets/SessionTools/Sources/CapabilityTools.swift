@@ -1,3 +1,4 @@
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -17,7 +18,7 @@ import enum ProviderCapabilities.ImageFormat
 import struct ProviderCapabilities.ImageInfo
 import SessionDomain
 import SpaceClient
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 // The capabilities (search, images, transcription) run on main behind its
 // routes, with main's provider credentials; the worker sends the request and

@@ -8,6 +8,7 @@ import Foundation
 @testable import InferenceKit
 import ModelProviders
 import SessionDomain
+import struct SpaceIDs.SessionID
 import Testing
 import WuhuAI
 

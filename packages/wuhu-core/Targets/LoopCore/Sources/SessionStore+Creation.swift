@@ -1,5 +1,7 @@
 import enum AgentsContract.SessionKind
 import Dependencies
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,8 +9,8 @@ import Dependencies
 #endif
 import MainHub
 import SessionDomain
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 extension SessionStore {
   @discardableResult

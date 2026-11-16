@@ -4,8 +4,8 @@ import Crypto
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
 import SpaceFS
+import struct SpaceIDs.GroupID
 import StructuredQueries
 
 @Table("revision_actors")

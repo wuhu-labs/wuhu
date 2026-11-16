@@ -1,3 +1,4 @@
+import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,8 +15,8 @@ import func MainHub.fetchOrigin
 import NIOCore
 import NIOHTTP1
 import Serve
-import struct SpaceContract.GroupID
 import SpaceCore
+import struct SpaceIDs.GroupID
 
 typealias PageFetchHandler = @Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response
 

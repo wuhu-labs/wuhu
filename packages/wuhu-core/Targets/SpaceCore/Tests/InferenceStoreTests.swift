@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,9 +8,9 @@ import DeterministicDependencies
 @testable import LoopCore
 import Scratch
 import SessionDomain
-import struct SpaceContract.GroupID
 @testable import SpaceCore
 import SpaceFS
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import Testing
 

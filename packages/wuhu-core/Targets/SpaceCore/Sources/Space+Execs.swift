@@ -1,3 +1,4 @@
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -6,7 +7,7 @@
 import MachineContract
 import OperationProtocol
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 extension Space {
   public func machineDescription(_ machine: MachineID) async throws -> MachineDescription? {

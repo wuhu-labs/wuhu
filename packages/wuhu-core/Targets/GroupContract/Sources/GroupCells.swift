@@ -1,7 +1,8 @@
+import struct SpaceIDs.AccountID
 import Wuwei
 
 public protocol SettingsReading {
-  func isSpaceAdmin(account: String) -> Bool
+  func isSpaceAdmin(account: AccountID) -> Bool
 }
 
 public struct GroupCells: Sendable {

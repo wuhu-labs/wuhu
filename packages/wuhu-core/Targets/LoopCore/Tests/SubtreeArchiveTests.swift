@@ -7,6 +7,8 @@ import struct MainHub.SubtreeArchiveBusy
 import SessionDomain
 import SessionTools
 import SpaceCore
+import struct SpaceIDs.MessageID
+import struct SpaceIDs.RequestID
 import Testing
 
 @Suite struct SubtreeArchiveTests {

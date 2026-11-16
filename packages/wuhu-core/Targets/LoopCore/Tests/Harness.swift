@@ -11,6 +11,8 @@ import SessionDomain
 import SessionTools
 import enum SpaceContract.ScriptOutput
 @testable import SpaceCore
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 import Synchronization
 import Testing
 import WuhuAI

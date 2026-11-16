@@ -1,10 +1,12 @@
+import struct SpaceIDs.SessionID
+import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import SessionDomain
-import struct SpaceContract.GroupID
+import struct SpaceIDs.GroupID
 
 public struct ObservationProgress: Hashable, Sendable, Codable {
   public var incarnation: UUID

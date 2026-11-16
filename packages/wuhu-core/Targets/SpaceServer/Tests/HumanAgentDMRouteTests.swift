@@ -2,6 +2,8 @@ import Dependencies
 import DeterministicDependencies
 import class MainHub.Hub
 import struct MainHub.ScriptRun
+import struct SpaceIDs.ConversationID
+import struct SpaceIDs.SessionID
 import Synchronization
 #if canImport(FoundationEssentials)
   import FoundationEssentials

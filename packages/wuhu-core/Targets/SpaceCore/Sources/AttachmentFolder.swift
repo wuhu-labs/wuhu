@@ -1,3 +1,4 @@
+import struct SpaceIDs.ConversationID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -5,10 +6,10 @@
 #endif
 
 import SessionDomain
-import struct SpaceContract.GroupID
 import enum SpaceContract.ImageMedia
 import enum SpaceContract.MediaType
 import SpaceFS
+import struct SpaceIDs.GroupID
 
 // An upload is an image when its name says png, jpeg, gif or webp and its
 // bytes agree; anything else is a file typed by its name, then by what the

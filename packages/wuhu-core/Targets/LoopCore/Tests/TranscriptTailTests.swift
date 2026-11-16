@@ -1,3 +1,4 @@
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -6,9 +7,9 @@
 import JSONValue
 @testable import LoopCore
 import SessionDomain
-import struct SpaceContract.GroupID
 import struct SpaceContract.PromptSession
 import SpaceCore
+import struct SpaceIDs.GroupID
 import Testing
 import struct WuhuAI.ToolCall
 

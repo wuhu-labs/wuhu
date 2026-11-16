@@ -1,5 +1,6 @@
-import struct SpaceContract.GroupID
 import func SpaceContract.normalizedLabel
+import struct SpaceIDs.AccountID
+import struct SpaceIDs.GroupID
 import StructuredQueries
 import StructuredQueriesSQLite
 

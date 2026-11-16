@@ -4,6 +4,7 @@ import DeterministicDependencies
 import struct ExecutionOwner.AttemptLogConfig
 import Fetch
 import FetchURLSession
+import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
