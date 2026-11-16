@@ -1,4 +1,5 @@
 import Crypto
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -30,7 +31,7 @@ extension Space {
         throw DevPersonError.ownerHandleUnavailable(kind: "removed person")
       }
       guard account.kind == .human, !account.guest else { throw DevPersonError.ownerHandleUnavailable(kind: account.guest ? "guest" : account.kind.rawValue) }
-      if !account.isAdmin { _ = try await setAdmin(account.id, admin: true) }
+      if !cell._context.settings().isSpaceAdmin(account: account.id.rawValue) { _ = try await setAdmin(account.id, admin: true) }
       return ResolvedPerson(account: account.id, persona: alias.target)
     }
     let account = try await addAccount(kind: .human, name: "owner", admin: true)

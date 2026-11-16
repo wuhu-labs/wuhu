@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import GroupContract
 import Logging
 import Scratch
 import struct SpaceContract.GroupID
@@ -58,7 +59,7 @@ import Wuwei
     #expect(admins == [Self.boss.rawValue])
     try Wuhu45Migration.apply(to: file)
     let space = try Space.open(file: file)
-    #expect(try await Set(space.accounts().filter(\.isAdmin).map(\.id.rawValue)) == Set(admins))
+    #expect(try await Set(space.accounts().filter { space.cell._context.settings().isSpaceAdmin(account: $0.id.rawValue) }.map(\.id.rawValue)) == Set(admins))
     #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings])
     #expect(try await space.isHumanAdmin(Self.boss, of: .shared))
     #expect(try await !space.isHumanAdmin(Self.carol, of: .shared))
@@ -102,10 +103,9 @@ import Wuwei
       migratedKeys == expectedKeys,
       "migrated only: \(migratedKeys.subtracting(expectedKeys).sorted()); fresh only: \(expectedKeys.subtracting(migratedKeys).sorted())",
     )
-    // `groups`, `accounts`, `machines`, `messages`, `sessions` and `session_queue` are reshaped
-    // by the next migrations; the reopened comparison below pins their columns.
+    // Later migrations reshape these tables; the reopened comparison below pins their columns.
     for (table, fresh) in expected.sorted(by: { $0.key < $1.key })
-      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles", "revisions", "session_queue"].contains(table)
+      where !later.contains(table) && !["groups", "accounts", "machines", "messages", "sessions", "user_profiles", "revisions", "session_queue", "allocations", "push_relay_grants", "web_push_subscriptions"].contains(table)
     {
       var wanted = fresh
       wanted.columns = wanted.columns.filter { Self.keeps($0, for: table, addsOwnership) }

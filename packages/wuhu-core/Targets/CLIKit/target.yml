@@ -46,6 +46,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - GroupContract
     - Wuwei
     - ControlledTime
     - DeterministicDependencies

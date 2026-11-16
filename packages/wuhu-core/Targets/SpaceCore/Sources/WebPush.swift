@@ -72,7 +72,7 @@ extension PersonCell {
       p256dh: registration.p256dh, auth: registration.auth, vapidKeyID: registration.vapidKeyID,
       notificationCursor: sameRecipient ? existing!.notificationCursor : newest,
       consecutiveFailures: 0, retryAt: nil, expiresAt: registration.expiresAt.map(SQLiteDateFormat.string(from:)),
-      createdAt: sameRecipient ? existing!.createdAt : now, updatedAt: now,
+      createdAt: sameRecipient ? existing!.createdAt : now,
     )
     try db.execute(WebPushSubscriptionRow.insert { row } onConflict: { $0.endpoint } doUpdate: {
       $0.ownerAccount = $1.ownerAccount
@@ -86,7 +86,6 @@ extension PersonCell {
       $0.retryAt = $1.retryAt
       $0.expiresAt = $1.expiresAt
       $0.createdAt = $1.createdAt
-      $0.updatedAt = $1.updatedAt
     })
     return true
   }

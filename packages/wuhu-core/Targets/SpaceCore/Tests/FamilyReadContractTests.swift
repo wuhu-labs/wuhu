@@ -3,6 +3,7 @@ import protocol AgentsContract.SessionReading
 import struct AgentsContract.SessionSummary
 import ControlledTime
 import DeterministicDependencies
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -89,9 +90,12 @@ import Wuwei
       #expect(id == SessionID("session"))
       return reading.cell(ReadCaller.ID("caller"))
     }))
+    worker.provide(GroupCells(settings: { reading in reading.cell(ReadCaller.ID("caller")) }))
     try await worker.call(ReadCaller.ID("caller")) { cell in
       try cell.write(7)
       #expect(cell._context.session(SessionID("session")).summary?.group == "fake-7")
+      #expect(cell._context.settings().isSpaceAdmin(account: "fake-7"))
+      #expect(!cell._context.settings().isSpaceAdmin(account: "other"))
     }
     await worker.quiesce()
     worker.release()
@@ -100,7 +104,7 @@ import Wuwei
 }
 
 @Cell
-private struct ReadCaller: SessionReading {
+private struct ReadCaller: SessionReading, SettingsReading {
   static let schema = ["CREATE TABLE read_caller (value INTEGER NOT NULL)"]
 
   mutating func write(_ value: Int64) throws {
@@ -108,6 +112,8 @@ private struct ReadCaller: SessionReading {
   }
 
   private var value: String { "fake-\(db.one("SELECT value FROM read_caller")!.integer!)" }
+
+  func isSpaceAdmin(account: String) -> Bool { account == value }
 
   var summary: SessionSummary? {
     SessionSummary(id: SessionID("session"), group: value, kind: .agent, parent: nil, createdAt: fixedDate, lifecycle: .live, createdBy: "fake")

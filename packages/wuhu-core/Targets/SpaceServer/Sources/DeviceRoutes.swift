@@ -62,7 +62,7 @@ func addDeviceRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPe
     case let .actor(resolved): actor = resolved
     case let .refused(response): return response
     }
-    guard actor.mayManage(record.account) else {
+    guard actor.mayManage(record.account, in: space) else {
       return errorResponse(.forbidden, code: "forbidden", message: "device \(id) belongs to another account")
     }
     var machine: MachineID?

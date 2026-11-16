@@ -58,9 +58,9 @@ public struct NotificationDeliveryJob {
           logger.warning("notification refused", metadata: ["delivery": drain.describe(delivery), "error": "\(error)"])
         }
         switch disposition {
-        case .advance: try drain.commit(&db, delivery, now)
+        case .advance: try drain.commit(&db, delivery)
         case .unsubscribe: try drain.withdraw(&db, delivery)
-        case let .retry(retryAt): try drain.postpone(&db, delivery, retryAt, now)
+        case let .retry(retryAt): try drain.postpone(&db, delivery, retryAt)
         }
       }
     }

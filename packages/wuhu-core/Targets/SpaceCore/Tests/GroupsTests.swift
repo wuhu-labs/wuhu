@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import GroupContract
 import JSONValue
 import LoopCore
 import struct SessionDomain.SessionID
@@ -216,7 +217,7 @@ import Testing
     #expect(try await !space.isHumanAdmin(alice.id, of: .shared))
     #expect(try await space.isHumanAdmin(alice.id, of: alicesGroup))
     #expect(try await space.reads(alicesGroup) == [alicesGroup, .settings, .shared])
-    #expect(try await Dictionary(uniqueKeysWithValues: space.accounts().map { ($0.name, $0.isAdmin) }) == ["morgan": true, "alice": false])
+    #expect(try await Dictionary(uniqueKeysWithValues: space.accounts().map { ($0.name, space.cell._context.settings().isSpaceAdmin(account: $0.id.rawValue)) }) == ["morgan": true, "alice": false])
 
     _ = try await space.setAdmin(alice.id, admin: true)
     #expect(try await space.isHumanAdmin(alice.id, of: .shared))

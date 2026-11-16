@@ -10,6 +10,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - GroupContract
   - AgentsContract
   - ContentLane
   - MainHub
@@ -70,6 +71,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - GroupContract
     - StructuredQueries
     - ContentLane
     - DeterministicDependencies

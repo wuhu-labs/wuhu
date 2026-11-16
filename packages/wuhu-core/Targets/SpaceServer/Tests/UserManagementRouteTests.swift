@@ -3,6 +3,7 @@ import Crypto
 import DeterministicDependencies
 import Fetch
 import Foundation
+import GroupContract
 import JSONValue
 import struct SpaceContract.UserProfileInput
 import SpaceCore
@@ -208,7 +209,7 @@ import Testing
     #expect((try await json(promoted))["admin"] == .bool(true))
     let demoted = try await send(.post, "/v1/accounts/\(carolID)/admin", body: .object(["admin": .bool(false)]), key: root.key)
     #expect(demoted.status == .ok)
-    #expect(try await harness.space.account(AccountID(rawValue: carolID))?.isAdmin == false)
+    #expect(harness.space.cell._context.settings().isSpaceAdmin(account: AccountID(rawValue: carolID).rawValue) == false)
   }
 
   @Test func removingAnAccountKillsItsCredentialsAndKeepsTheHistory() async throws {
@@ -256,7 +257,7 @@ import Testing
       #expect(payload.stringValue(at: "code") == "lastAdmin", "\(method) \(path)")
       #expect(payload.stringValue(at: "hint")?.contains("wuhu user add") == true, "\(method) \(path)")
     }
-    #expect(try await harness.space.account(root.record.id)?.isAdmin == true)
+    #expect(harness.space.cell._context.settings().isSpaceAdmin(account: root.record.id.rawValue) == true)
   }
 
   @Test func machineAndContractorAccountsAreNotRemovableHere() async throws {

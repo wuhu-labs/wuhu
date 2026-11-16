@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -63,9 +64,9 @@ import Testing
     let machine = AccountID(rawValue: "machine-account")
     // The old shared admin and the team's admins carry over; a machine never
     // becomes one.
-    #expect(try await space.account(owner)?.isAdmin == true)
-    #expect(try await space.account(operatorAccount)?.isAdmin == true)
-    #expect(try await space.account(machine)?.isAdmin == false)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: owner.rawValue) == true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: operatorAccount.rawValue) == true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: machine.rawValue) == false)
     let personal = GroupID(rawValue: "personal")
     let ops = GroupID(rawValue: "ops")
     #expect(try await space.group(personal) == nil)

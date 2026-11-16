@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -24,7 +25,7 @@ import Testing
       #expect(lines.count == 2)
       let bob = try #require(try await rig.space.accounts().first { $0.name == "bob" })
       #expect(lines.first == "account \(bob.id.rawValue) (bob)")
-      #expect(!bob.isAdmin)
+      #expect(!rig.space.cell._context.settings().isSpaceAdmin(account: bob.id.rawValue))
       #expect(try await rig.space.memberGroups(of: bob.id).isEmpty)
       #expect(await added.stderrText() == "one-time link; it dies at first use or in 3600 seconds\n")
       let envelope = try #require(EnrollmentEnvelope.parse(lines[1]))
@@ -54,7 +55,7 @@ import Testing
       let adminAdd = CLIIO()
       #expect(await secondDevice.run(["user", "add", "--name", "carol", "--admin", "--ttl", "90"], io: adminAdd) == 0)
       let carol = try #require(try await rig.space.accounts().first { $0.name == "carol" })
-      #expect(carol.isAdmin)
+      #expect(rig.space.cell._context.settings().isSpaceAdmin(account: carol.id.rawValue))
       #expect(await adminAdd.stdoutText().hasPrefix("account \(carol.id.rawValue) (carol) admin\n"))
       #expect(await adminAdd.stderrText() == "one-time link; it dies at first use or in 90 seconds\n")
     }
@@ -81,7 +82,7 @@ import Testing
         #expect(await io.stderrText().contains("requires an admin of shared"))
       }
       #expect(try await rig.space.accounts().count == 2)
-      #expect(try await rig.space.account(bob.id)?.isAdmin == false)
+      #expect(rig.space.cell._context.settings().isSpaceAdmin(account: bob.id.rawValue) == false)
       let own = CLIIO()
       #expect(await rig.run(["user", "invite", alice.id.rawValue], io: own) == 0)
       let envelope = try #require(EnrollmentEnvelope.parse(await own.stdoutText()))
@@ -139,7 +140,7 @@ import Testing
         #expect(!requests.recorded.isEmpty)
       }
       #expect(try await rig.space.accounts().count == 3)
-      #expect(try await rig.space.account(target.id)?.isAdmin == false)
+      #expect(rig.space.cell._context.settings().isSpaceAdmin(account: target.id.rawValue) == false)
     }
   }
 

@@ -1,3 +1,4 @@
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -16,8 +17,11 @@ public struct UserRecoveryError: Error, Equatable, CustomStringConvertible {
 public enum UserRecovery {
   public static func add(folder: URL, name: String?, admin: Bool = false) async throws -> String {
     try requireSpaceFolder(folder)
-    let record = try await withSpace(in: folder) { try await add(space: $0, name: name, admin: admin) }
-    return "account \(record.id.rawValue)\(name.map { " (\($0))" } ?? "")\(record.isAdmin ? " admin" : "")\n"
+    let (record, isAdmin) = try await withSpace(in: folder) { space in
+      let record = try await add(space: space, name: name, admin: admin)
+      return (record, space.cell._context.settings().isSpaceAdmin(account: record.id.rawValue))
+    }
+    return "account \(record.id.rawValue)\(name.map { " (\($0))" } ?? "")\(isAdmin ? " admin" : "")\n"
   }
 
   public static func add(space: Space, name: String?, admin: Bool = false) async throws -> AccountRecord {

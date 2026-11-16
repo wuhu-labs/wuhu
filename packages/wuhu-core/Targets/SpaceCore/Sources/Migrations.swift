@@ -41,9 +41,9 @@ enum Migrations {
 
   /// Every family's chain; a family with nothing to migrate yet stays empty.
   static let chains: [MigrationChain] = [
-    MigrationChain(.tenancy),
+    MigrationChain(.tenancy, migrations: [TenancyMigration001.apply]),
     MigrationChain(.group),
-    MigrationChain(.conversations, migrations: [ConversationsMigration001.apply]),
+    MigrationChain(.conversations, migrations: [ConversationsMigration001.apply, ConversationsMigration002.apply]),
     MigrationChain(.agents),
     MigrationChain(.machines),
   ]

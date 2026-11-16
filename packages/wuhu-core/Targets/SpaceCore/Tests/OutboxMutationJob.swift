@@ -20,9 +20,9 @@ struct OutboxMutationJob {
   nonisolated(nonsending) mutating func start() async throws -> Outcome {
     switch ctx.params {
     case let .commit(endpoint, notification):
-      try db.markWebPushDelivered(endpoint: endpoint, notification: notification, at: fixedDate)
+      try db.markWebPushDelivered(endpoint: endpoint, notification: notification)
     case let .postpone(endpoint, date):
-      try db.deferWebPushDelivery(endpoint: endpoint, until: date, at: fixedDate)
+      try db.deferWebPushDelivery(endpoint: endpoint, until: date)
     }
     try db.execute("INSERT INTO outbox_test_steps DEFAULT VALUES")
     return .done

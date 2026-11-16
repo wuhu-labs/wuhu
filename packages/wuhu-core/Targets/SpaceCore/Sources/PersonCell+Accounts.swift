@@ -1,19 +1,17 @@
 import enum Assertion.VerifyingKey
+import struct SpaceContract.GroupID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import struct SpaceContract.GroupID
 import StructuredQueries
 import Wuwei
 import WuweiQueries
 
 extension PersonCell {
   public func account() -> AccountRecord? {
-    db.rows(PersonAccountRow.where { $0.id.eq(id.key) }.select {
-      PersonAccountRead.Columns(row: $0, admin: #sql("EXISTS(SELECT 1 FROM group_roles WHERE grp = \(bind: GroupID.settings.rawValue) AND account_id = \($0.id) AND role = 'admin')", as: Bool.self))
-    }).first?.record
+    db.rows(PersonAccountRow.where { $0.id.eq(id.key) }).first?.record
   }
 
   mutating func create(kind: AccountKind, name: String?, guest: Bool, at now: Date) throws -> AccountID {
@@ -97,8 +95,8 @@ struct PersonAccountRow {
   @Column("removed_at") var removedAt: String?
   var owner: String
 
-  func record(admin: Bool) -> AccountRecord {
-    AccountRecord(id: AccountID(rawValue: id), kind: AccountKind(rawValue: kind)!, name: name, isAdmin: admin, guest: guest, createdAt: try! SQLiteDateFormat.date(from: createdAt), removedAt: removedAt.map { try! SQLiteDateFormat.date(from: $0) })
+  var record: AccountRecord {
+    AccountRecord(id: AccountID(rawValue: id), kind: AccountKind(rawValue: kind)!, name: name, guest: guest, createdAt: try! SQLiteDateFormat.date(from: createdAt), removedAt: removedAt.map { try! SQLiteDateFormat.date(from: $0) })
   }
 }
 
@@ -125,12 +123,4 @@ struct PersonReadSessionRow {
   @Column("expires_at") var expiresAt: String
   @Column("grp") var group: String?
   var owner: String
-}
-
-@Selection
-struct PersonAccountRead {
-  var row: PersonAccountRow
-  var admin: Bool
-
-  var record: AccountRecord { row.record(admin: admin) }
 }

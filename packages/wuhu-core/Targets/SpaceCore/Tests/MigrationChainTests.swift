@@ -71,7 +71,7 @@ import Testing
       #expect(upgradedShape.tables[table] == lines, "\(table)")
     }
     #expect(freshShape.indexesAndTriggers == upgradedShape.indexesAndTriggers)
-    #expect(try RawDatabase.open(baselineLocation.path, readOnly: true) { try $0.strings("SELECT identifier FROM grdb_migrations ORDER BY rowid") } == Migrations.baseline.map(\.id) + ["conversations/0001"])
+    #expect(try RawDatabase.open(baselineLocation.path, readOnly: true) { try $0.strings("SELECT identifier FROM grdb_migrations ORDER BY rowid") } == Migrations.baseline.map(\.id) + ["tenancy/0001", "conversations/0001", "conversations/0002"])
   }
 
   @Test func anUnknownLedgerIdentifierIsRefusedBeforeAnythingRuns() throws {

@@ -42,12 +42,6 @@ struct StepResult: Sendable, Codable {
   var waitedMs: Int
 }
 
-@Table("inference_attempts")
-struct AttemptRow: Owned {
-  let id: String
-  var failure: String?
-}
-
 /// One step owns its attempts, waits and outcome. It reads the generation's lines before every attempt and answers its session cell. `interrupt` ends it at once; a wait between attempts ends at the earliest `yield(by:)` it was mailed, an attempt never.
 @Job
 struct InferenceJob {
@@ -57,6 +51,7 @@ struct InferenceJob {
       bounded_failures INTEGER NOT NULL, waited_ms INTEGER NOT NULL, retry_at REAL, outcome TEXT, UNIQUE (owner))
     """,
     "CREATE TABLE inference_attempts (id TEXT PRIMARY KEY, \(ownerColumn), failure TEXT)",
+    "DROP TABLE inference_attempts",
   ]
 
   struct Params: Codable {
@@ -132,7 +127,6 @@ struct InferenceJob {
       guard case let .finished(result) = raced else { return try finish(.cancelled, retry) }
       switch result {
       case let .success(reply):
-        try db.execute(AttemptRow.insert { AttemptRow(id: attemptID.uuidString.lowercased(), failure: nil) })
         let entry = AssistantEntry(
           reply.message, id: attemptID, at: client.now(), metadata: reply.metadata, replayBinding: reply.replayBinding,
           mint: { ToolCallID(client.uuid().uuidString.lowercased()) },
@@ -146,7 +140,6 @@ struct InferenceJob {
       case let .failure(error):
         // A draining worker cancels its jobs: that is no outcome, the step goes on where it is hosted next.
         try Task.checkCancellation()
-        try db.execute(AttemptRow.insert { AttemptRow(id: attemptID.uuidString.lowercased(), failure: String(describing: error)) })
         if params.ping {
           Logger(label: "wuhu.loop").notice("cache-warming ping failed", metadata: ["session": "\(params.session.rawValue)", "error": "\(error)"])
           return try finish(.pingFailed, retry)

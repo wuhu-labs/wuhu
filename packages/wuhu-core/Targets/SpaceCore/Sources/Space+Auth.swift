@@ -14,7 +14,7 @@ extension Space {
     let createdAt = dateGen.now
     _ = try await worker.call(PersonCell.ID(id.rawValue)) { try $0.create(kind: kind, name: name, guest: guest, at: createdAt) }
     if admin { return try await setAdmin(id, admin: true) }
-    return AccountRecord(id: id, kind: kind, name: name, isAdmin: false, guest: guest, createdAt: createdAt, removedAt: nil)
+    return AccountRecord(id: id, kind: kind, name: name, guest: guest, createdAt: createdAt, removedAt: nil)
   }
 
   public func account(_ id: AccountID) async throws -> AccountRecord? { cell.account(id) }

@@ -7,7 +7,6 @@ struct AllocationRow {
   @Column(primaryKey: true) var id: Int64
   var kind: String
   @Column("created_by") var createdBy: String
-  @Column("created_at") var createdAt: String
 }
 
 @Table("allocation_freeze")
@@ -20,7 +19,7 @@ struct AllocationFreezeRow {
 extension SpaceCell {
   /// Draws the next name of `kind` for `createdBy`, freezing the space's vocabulary with `candidate` on the first draw.
   mutating func draw(
-    _ kind: AllocationKind, createdBy: String, created: String, candidate: [UInt8],
+    _ kind: AllocationKind, createdBy: String, candidate: [UInt8],
   ) throws -> (id: Int64, name: String) {
     let secret: [UInt8]
     if let frozen = db.rows(AllocationFreezeRow.all).first {
@@ -30,7 +29,7 @@ extension SpaceCell {
       try db.execute(AllocationFreezeRow.insert { AllocationFreezeRow(id: 1, vocabSHA256: AllocationVocabulary.digest, secret: candidate) })
       secret = candidate
     }
-    try db.execute(AllocationRow.insert { AllocationRow.Draft(kind: kind.rawValue, createdBy: createdBy, createdAt: created) })
+    try db.execute(AllocationRow.insert { AllocationRow.Draft(kind: kind.rawValue, createdBy: createdBy) })
     let id = db.one("SELECT last_insert_rowid()")!.integer!
     return (id, AllocationNames.name(for: id, words: AllocationVocabulary.words, secret: secret))
   }
@@ -40,10 +39,9 @@ extension Space {
   @discardableResult
   public func allocate(_ kind: AllocationKind, createdBy: String) async throws -> Allocation {
     let createdAt = dateGen.now
-    let created = SQLiteDateFormat.string(from: createdAt)
     let candidate = Allocations.mintSecretCandidate(rng)
     let drawn = try await worker.call(SpaceCell.ID("space")) {
-      try $0.draw(kind, createdBy: createdBy, created: created, candidate: candidate)
+      try $0.draw(kind, createdBy: createdBy, candidate: candidate)
     }
     return Allocation(id: drawn.id, name: drawn.name, kind: kind, createdBy: createdBy, createdAt: createdAt)
   }

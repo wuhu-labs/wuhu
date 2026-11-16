@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import Foundation
+import GroupContract
 @testable import SpaceCore
 import StructuredQueries
 import Testing
@@ -22,7 +23,7 @@ struct AuthStoreTests {
     let first = try await space.ensureDevPerson()
     #expect(first.persona.split(separator: "-").count == 3)
     #expect(first.persona != "owner")
-    #expect(try await space.account(first.account)?.isAdmin == true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: first.account.rawValue) == true)
     #expect(try await space.keys(account: first.account).isEmpty)
     #expect(try await space.userProfile(handle: "owner")?.principal == first.persona)
     _ = try await space.setUserProfile(principal: first.persona, handle: "renamed", displayName: "Owner")
@@ -31,7 +32,7 @@ struct AuthStoreTests {
     let again = try await space.ensureDevPerson()
     #expect(again.account == first.account)
     #expect(again.persona == first.persona)
-    #expect(try await space.account(first.account)?.isAdmin == true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: first.account.rawValue) == true)
     _ = try await space.removeAccount(first.account)
     await #expect(throws: DevPersonError.ownerHandleUnavailable(kind: "removed person")) { try await space.ensureDevPerson() }
 
@@ -41,7 +42,7 @@ struct AuthStoreTests {
     let existing = try await accountSpace.ensureDevPerson()
     #expect(existing.account == account.id)
     #expect(existing.persona == account.id.rawValue)
-    #expect(try await accountSpace.account(account.id)?.isAdmin == true)
+    #expect(accountSpace.cell._context.settings().isSpaceAdmin(account: account.id.rawValue) == true)
     #expect(try await accountSpace.keys(account: account.id).isEmpty)
   }
 
@@ -172,15 +173,13 @@ struct AuthStoreTests {
     #expect(rows.count == 1)
   }
 
-  @Test func adminIsAnAccountFlagOffByDefault() async throws {
+  @Test func adminIsASettingsRoleOffByDefault() async throws {
     let space = try makeSpace()
     let plain = try await space.addAccount(kind: .human, name: nil)
     let admin = try await space.addAccount(kind: .human, name: nil, admin: true)
-    #expect(plain.isAdmin == false)
-    #expect(admin.isAdmin == true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: plain.id.rawValue) == false)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: admin.id.rawValue) == true)
     #expect(try await space.hasAdminAccount())
-    #expect(try await space.account(plain.id)?.isAdmin == false)
-    #expect(try await space.account(admin.id)?.isAdmin == true)
   }
 
   @Test func setAdminGrantsRevokesAndGuardsTheLastAdmin() async throws {
@@ -191,9 +190,10 @@ struct AuthStoreTests {
     await #expect(throws: SpaceError.lastAdmin(first.id.rawValue)) {
       _ = try await space.setAdmin(first.id, admin: false)
     }
-    #expect(try await space.setAdmin(second.id, admin: true).isAdmin == true)
+    _ = try await space.setAdmin(second.id, admin: true)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: second.id.rawValue))
     _ = try await space.setAdmin(first.id, admin: false)
-    #expect(try await space.account(first.id)?.isAdmin == false)
+    #expect(space.cell._context.settings().isSpaceAdmin(account: first.id.rawValue) == false)
     await #expect(throws: SpaceError.notFound("ac_missing0")) {
       _ = try await space.setAdmin(AccountID(rawValue: "ac_missing0"), admin: true)
     }

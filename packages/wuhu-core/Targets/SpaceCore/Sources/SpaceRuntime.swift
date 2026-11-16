@@ -51,6 +51,7 @@ final class SpaceRuntime: Sendable {
       // A worker retakes a lease held under its own id at once, so two processes on one database never share an id.
       let worker = Worker(id: "space-\(UUID().uuidString.lowercased())", storage: .shared(database), scheduler: scheduler, registrations: [.cell(MachineCell.self), .cell(GroupCell.self), .cell(SpaceCell.self), .cell(PersonCell.self), .cell(ConversationCell.self), .cell(DocumentCell.self), .cell(FilesCell.self), .job(ObservationJob.self)])
       let buffers = MachineBuffers(worker: worker.id)
+      provideGroupCells(in: worker)
       worker.provide(buffers)
       worker.provide(observations)
       worker.provide(fileReads(worker))

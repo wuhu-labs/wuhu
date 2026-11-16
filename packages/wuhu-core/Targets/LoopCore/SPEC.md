@@ -22,7 +22,7 @@ A legacy generation has `session_pointers` but no transcript lines. Its first st
 
 ## Inference
 
-An inference step is an `InferenceJob`. It reads the generation's stored lines (`LoopClient.lines(session, generation)`) before every attempt and owns the attempts, their records, the waits between them and the outcome; a wait is kept as an absolute `retryAt` with its jitter, so a restart waits out the rest of it. Every outcome ends the job, and a step that already ended answers again with that outcome, so a reply is never paid for twice. A resume increments `stepTry`, so the step after it is a fresh job.
+An inference step is an `InferenceJob`. It reads the generation's stored lines (`LoopClient.lines(session, generation)`) before every attempt and owns the attempt count, the waits between attempts and the outcome; a wait is kept as an absolute `retryAt` with its jitter, so a restart waits out the rest of it. Every outcome ends the job, and a step that already ended answers again with that outcome, so a reply is never paid for twice. A resume increments `stepTry`, so the step after it is a fresh job.
 
 A cache-warming ping is an ordinary step with `ping` set, which the cell sets while the latest substantive input was a warming notice (the notice's own step and its tool continuations). It makes one attempt: any failure ends it as `pingFailed`, never a retry, a park or a recorded route failure, and the cell ends warming and leaves the session idle with the notice as an unanswered line. Its reply carries the next warming schedule.
 

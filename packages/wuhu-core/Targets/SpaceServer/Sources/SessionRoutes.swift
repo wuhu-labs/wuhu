@@ -513,7 +513,7 @@ func addSessionRoutes(
     }
   }
 
-  // What the old list answered for one id: a channel the reader reads, or any other conversation that names the reader.
+  // Message-read admission comes first, then the old list rule: a channel, or another conversation that names the reader.
   router.get("/v1/conversation/:id") { request, parameters in
     guard let raw = parameters["id"] else { return unknownConversation(parameters) }
     switch try await readingSeat(ConversationID(raw), request) {

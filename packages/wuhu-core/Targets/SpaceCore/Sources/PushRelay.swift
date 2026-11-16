@@ -76,9 +76,9 @@ extension PersonCell {
     }
     let sameRecipient = existing?.recipient == grant.recipient
     let row = PushRelayGrantRow(
-      grantID: grant.grant, endpoint: grant.endpoint, token: grant.token, platform: "ios", ownerAccount: id.key, recipient: grant.recipient,
+      grantID: grant.grant, endpoint: grant.endpoint, token: grant.token, ownerAccount: id.key, recipient: grant.recipient,
       devicePublicKey: grant.devicePublicKey, notificationCursor: sameRecipient ? existing!.notificationCursor : newest,
-      consecutiveFailures: 0, retryAt: nil, createdAt: sameRecipient ? existing!.createdAt : now, updatedAt: now,
+      consecutiveFailures: 0, retryAt: nil, createdAt: sameRecipient ? existing!.createdAt : now,
     )
     try db.execute(PushRelayGrantRow.insert { row } onConflict: { $0.grantID } doUpdate: {
       $0.endpoint = $1.endpoint
@@ -90,7 +90,6 @@ extension PersonCell {
       $0.consecutiveFailures = $1.consecutiveFailures
       $0.retryAt = $1.retryAt
       $0.createdAt = $1.createdAt
-      $0.updatedAt = $1.updatedAt
     })
     return true
   }

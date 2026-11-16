@@ -48,7 +48,6 @@ public struct AccountRecord: Equatable, Sendable {
   public let id: AccountID
   public let kind: AccountKind
   public let name: String?
-  public let isAdmin: Bool
   /// A person admitted to listed groups only: no open-group reach, no sessions.
   public let guest: Bool
   public let createdAt: Date

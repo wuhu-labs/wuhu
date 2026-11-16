@@ -1,3 +1,4 @@
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -70,9 +71,9 @@ func bearerVerdict(request: Request, space: Space, now: Date) async throws -> Be
 
 struct ManagementActor: Sendable {
   let record: AccountRecord
-  var isAdmin: Bool { record.isAdmin }
+  func isAdmin(in space: Space) -> Bool { space.cell._context.settings().isSpaceAdmin(account: record.id.rawValue) }
   var accountID: AccountID { record.id }
-  func mayManage(_ target: AccountID) -> Bool { record.isAdmin || record.id == target }
+  func mayManage(_ target: AccountID, in space: Space) -> Bool { isAdmin(in: space) || record.id == target }
 }
 
 enum PersonVerdict: Sendable {

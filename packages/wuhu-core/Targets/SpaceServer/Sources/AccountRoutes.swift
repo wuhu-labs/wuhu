@@ -1,3 +1,4 @@
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -19,14 +20,14 @@ func addAccountRoutes(_ router: inout Router, space: Space, devPerson: ResolvedP
     case let .refused(response):
       return response
     case let .actor(actor):
-      guard actor.isAdmin else {
+      guard actor.isAdmin(in: space) else {
         return adminRequired("creating an account")
       }
       let input = try await request.json(AccountCreateInput.self)
       let record = try await space.addAccount(
         kind: .human, name: input.name, admin: input.admin ?? false, guest: input.guest ?? false,
       )
-      return try Response.json(accountPayload(record))
+      return try Response.json(accountPayload(record, space: space))
     }
   }
 
@@ -40,7 +41,7 @@ func addAccountRoutes(_ router: inout Router, space: Space, devPerson: ResolvedP
         return errorResponse(.forbidden, code: "memberRequired", message: "listing accounts requires a space member, not a guest")
       }
       let records = try await space.accounts()
-      return try Response.json(AccountListOutput(accounts: records.map(accountPayload)))
+      return try Response.json(AccountListOutput(accounts: records.map { accountPayload($0, space: space) }))
     }
   }
 
@@ -50,7 +51,7 @@ func addAccountRoutes(_ router: inout Router, space: Space, devPerson: ResolvedP
     case let .refused(response):
       return response
     case let .actor(actor):
-      guard actor.isAdmin else {
+      guard actor.isAdmin(in: space) else {
         return adminRequired("removing an account")
       }
       guard let record = try await space.account(id), record.removedAt == nil else {
@@ -80,13 +81,13 @@ func addAccountRoutes(_ router: inout Router, space: Space, devPerson: ResolvedP
     case let .refused(response):
       return response
     case let .actor(actor):
-      guard actor.isAdmin else {
+      guard actor.isAdmin(in: space) else {
         return adminRequired("granting or revoking admin")
       }
       let input = try await request.json(AccountAdminInput.self)
       do {
         let record = try await space.setAdmin(id, admin: input.admin)
-        return try Response.json(accountPayload(record))
+        return try Response.json(accountPayload(record, space: space))
       } catch SpaceError.notFound {
         return unknownAccount(id)
       } catch SpaceError.lastAdmin {
@@ -102,12 +103,12 @@ func addAccountRoutes(_ router: inout Router, space: Space, devPerson: ResolvedP
   }
 }
 
-private func accountPayload(_ record: AccountRecord) -> AccountPayload {
+private func accountPayload(_ record: AccountRecord, space: Space) -> AccountPayload {
   AccountPayload(
     id: record.id.rawValue,
     kind: record.kind.rawValue,
     name: record.name,
-    admin: record.isAdmin,
+    admin: space.cell._context.settings().isSpaceAdmin(account: record.id.rawValue),
     createdAt: record.createdAt.timeIntervalSince1970,
     guest: record.guest,
   )

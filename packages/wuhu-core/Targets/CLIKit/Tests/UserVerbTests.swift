@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import GroupContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -37,7 +38,7 @@ struct UserVerbTests {
     let accounts = try await space.accounts()
     #expect(Set(accounts.map(\.id.rawValue)) == Set(ids))
     #expect(accounts.allSatisfy { $0.kind == .human && $0.name == "alice" })
-    #expect(accounts.filter(\.isAdmin).count == 1)
+    #expect(accounts.filter { space.cell._context.settings().isSpaceAdmin(account: $0.id.rawValue) }.count == 1)
     try await space.close()
   }
 
@@ -49,7 +50,7 @@ struct UserVerbTests {
     #expect(lines.count == 2)
     #expect(lines.allSatisfy { $0.hasSuffix(" admin") })
     let space = try harness.openSpace()
-    #expect(try await space.accounts().allSatisfy(\.isAdmin))
+    #expect(try await space.accounts().allSatisfy { space.cell._context.settings().isSpaceAdmin(account: $0.id.rawValue) })
     try await space.close()
   }
 

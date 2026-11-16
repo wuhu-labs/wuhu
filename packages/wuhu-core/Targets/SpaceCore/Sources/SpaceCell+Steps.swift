@@ -6,7 +6,7 @@ extension SpaceCell {
   /// Reserves `claim.alias`, draws the group's id and mails the newborn its claim, in one step: a crash after the claim cannot leave an alias naming nothing.
   mutating func claim(_ claim: GroupClaim, candidate: [UInt8]) throws -> GroupID {
     try requireFree(claim.alias, kind: .group, target: nil)
-    let name = try draw(.group, createdBy: claim.owner.rawValue, created: claim.created, candidate: candidate).name
+    let name = try draw(.group, createdBy: claim.owner.rawValue, candidate: candidate).name
     let group = GroupID(rawValue: name)
     try db.execute(AliasRow.insert { AliasRow(name: claim.alias, kind: .group, target: group.rawValue, current: true) })
     ctx.send(GroupCell.ID(group.rawValue)).create(claim)

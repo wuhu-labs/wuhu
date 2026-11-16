@@ -41,7 +41,7 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: date.now) {
     case let .refused(response): return response
     case let .actor(actor):
-      guard actor.isAdmin else { return adminRequired("replacing the directory issuer") }
+      guard actor.isAdmin(in: space) else { return adminRequired("replacing the directory issuer") }
     }
     guard let identity else { return identityUnavailable() }
     do {
@@ -53,7 +53,7 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: date.now) {
     case let .refused(response): return response
     case let .actor(actor):
-      guard actor.isAdmin else { return adminRequired("rotating the server key") }
+      guard actor.isAdmin(in: space) else { return adminRequired("rotating the server key") }
     }
     guard let identity else { return identityUnavailable() }
     do {
@@ -65,7 +65,7 @@ func addIdentityRoutes(_ router: inout Router, space: Space, identity: IdentityC
     switch try await managementVerdict(request: request, space: space, devPerson: devPerson, now: date.now) {
     case let .refused(response): return response
     case let .actor(actor):
-      guard actor.isAdmin else { return adminRequired("changing the server issuer") }
+      guard actor.isAdmin(in: space) else { return adminRequired("changing the server issuer") }
     }
     guard let identity else { return identityUnavailable() }
     let input: IdentitySetInput

@@ -50,7 +50,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
       guard let key = try await space.keyRecord(pubkey: input.pubkey) else {
         return errorResponse(.notFound, code: "notFound", message: "unknown key: \(input.pubkey)")
       }
-      guard actor.mayManage(key.account) else {
+      guard actor.mayManage(key.account, in: space) else {
         return adminRequired("revoking another account's key")
       }
       do {
@@ -72,7 +72,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
         guard AccountID.isValid(raw) else { return errorResponse(.badRequest, code: "invalidArgument", message: "malformed account id: \(raw)") }
         target = AccountID(rawValue: raw)
       } else { target = actor.accountID }
-      guard actor.mayManage(target) else {
+      guard actor.mayManage(target, in: space) else {
         return adminRequired("listing another account's keys")
       }
       let keys = try await space.keys(account: target)
@@ -94,7 +94,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
     guard AccountID.isValid(input.account) else {
       return errorResponse(.badRequest, code: "invalidArgument", message: "malformed account id: \(input.account)")
     }
-    guard actor.mayManage(AccountID(rawValue: input.account)) else {
+    guard actor.mayManage(AccountID(rawValue: input.account), in: space) else {
       return adminRequired("minting an invite for another account")
     }
     guard let capabilities = capabilitySet(input.capabilities) else {
@@ -138,7 +138,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
     do {
       guard try await space.revokeJoinToken(
         JoinToken(rawValue: input.token),
-        revocableBy: { actor.mayManage($0) },
+        revocableBy: { actor.mayManage($0, in: space) },
       ) != nil else {
         return errorResponse(.notFound, code: "notFound", message: "no live invite for that token")
       }
