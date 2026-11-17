@@ -3,8 +3,10 @@ import Foundation
 import GroupContract
 import JSONValue
 import LoopCore
+import MachinesTesting
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
@@ -228,7 +230,7 @@ import Testing
     // Demotion leaves the ordinary group's explicit admin grant intact.
     #expect(try await space.isAdmin(alicePerson, of: alicesGroup, acting: alicesGroup))
     await #expect(throws: SpaceError.lastAdmin(morgan.id.rawValue)) { try await space.setAdmin(morgan.id, admin: false) }
-    await #expect(throws: SpaceError.notAPerson("bot")) { try await space.addAccount(kind: .machine, name: "bot", admin: true) }
+    await #expect(throws: SpaceError.notAPerson("bot")) { try await space.addAccount(kind: .space, name: "bot", admin: true) }
     _ = try await space.removeAccount(alice.id)
     #expect(try await !space.isHumanAdmin(alice.id, of: alicesGroup))
 

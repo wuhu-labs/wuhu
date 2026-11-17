@@ -1,6 +1,7 @@
 import Dependencies
 import Fetch
 import struct MainHub.ScriptError
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

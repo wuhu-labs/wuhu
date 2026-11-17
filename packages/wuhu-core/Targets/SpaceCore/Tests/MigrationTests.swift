@@ -1,10 +1,12 @@
 import DeterministicDependencies
+import SpaceIDs
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
+import MachinesTesting
 import Scratch
 @testable import SpaceCore
 import SpaceFS
@@ -14,10 +16,11 @@ import Testing
 
 @Suite(.deterministicDependencies) struct MigrationTests {
   private func baseline(_ location: URL) async throws -> Space {
-    let space = try Space.open(file: location)
+    let space = try Space.open(file: location).registeringMachines()
     try RawDatabase.open(location.path) { db in
       try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005', '042')")
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005', '042', 'machines/0001')")
+      try db.execute(sql: "ALTER TABLE machines ADD COLUMN account_id TEXT")
       try db.execute(sql: """
       CREATE TABLE schema_compactions (name TEXT NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL);
       INSERT INTO schema_compactions VALUES ('wuhu-45', '2026-01-01T00:00:00Z');
@@ -57,7 +60,7 @@ import Testing
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
       try db.execute(sql: "UPDATE exec_jobs SET spec = '{}'")
     }
-    let space = try Space.open(file: location)
+    let space = try Space.open(file: location).registeringMachines()
     #expect(try await space.accounts().contains { $0.name == "Kept" })
     #expect(try await space.owedExecs().map(\.toolSpec) == ["{}"])
     try await original.close()
@@ -98,7 +101,7 @@ import Testing
       DELETE FROM grdb_migrations WHERE identifier = '046';
       """)
     }
-    let first = try Space.open(file: location)
+    let first = try Space.open(file: location).registeringMachines()
     #expect(try await first.accounts().contains { $0.name == "Kept" })
     #expect(try await first.currentRevision(in: .shared) == 12)
     #expect(try await first.currentRevision(in: .settings) == 12)
@@ -123,7 +126,7 @@ import Testing
       try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
       try db.execute(sql: "INSERT INTO exec_jobs VALUES (?, 'changed')", arguments: [owed.id])
     }
-    let second = try Space.open(file: location)
+    let second = try Space.open(file: location).registeringMachines()
     #expect(try await second.identity() == identity)
     #expect(try await second.accounts().contains { $0.name == "Kept" })
     #expect(try await second.owedExecs() == [owed])
@@ -143,7 +146,7 @@ import Testing
       )
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
-    let upgraded = try Space.open(file: location)
+    let upgraded = try Space.open(file: location).registeringMachines()
     #expect(try await upgraded.accounts().contains { $0.name == "Kept" })
     #expect(try await upgraded.owedExecs().map(\.toolSpec) == ["{}"])
     try await original.close()
@@ -156,7 +159,7 @@ import Testing
     let database = try RawDatabase(path: location.path)
     let original = try await baseline(location)
     try database.access { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
-    #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space.open(file: location) }
+    #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space.open(file: location).registeringMachines() }
     #expect(try database.access { try $0.int("SELECT count(*) FROM grdb_migrations WHERE identifier IN ('001', '002', '005')") } == 0)
     #expect(try database.access { try $0.int("SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
@@ -166,7 +169,7 @@ import Testing
     let folder = try ScratchFolder("migration")
     let location = folder.url.appending(path: "space.sqlite")
     let database = try RawDatabase(path: location.path)
-    let original = try Space.open(file: location)
+    let original = try Space.open(file: location).registeringMachines()
     try database.access { db in
       try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z')")
       try LegacyMachineSchema.create(in: db)
@@ -421,8 +424,9 @@ import Testing
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
     let kept = AccountID(rawValue: "ac_kept00001")
-    let upgraded = try Space.open(file: location)
-    #expect(try await upgraded.accounts().map(\.kind).sorted { $0.rawValue < $1.rawValue } == [.human, .machine])
+    let upgraded = try Space.open(file: location).registeringMachines()
+    #expect(try await upgraded.accounts().map(\.kind) == [.human])
+    #expect(try database.access { db in try db.strings("SELECT id FROM machines") } == ["mc_00000001"])
     #expect(try await upgraded.accounts().contains { $0.id == kept })
     #expect(try database.access { db in try db.strings("SELECT pubkey FROM account_keys") } == ["kept-key"])
     #expect(try database.access { db in try db.int("SELECT count(*) FROM devices") } == 0)
@@ -440,7 +444,7 @@ import Testing
     #expect(try database.access { db in try db.strings("SELECT name FROM sqlite_master WHERE name IN (\(Self.dropped.map { "'" + $0 + "'" }.joined(separator: ","))) ORDER BY 1") } == [])
     let freshFolder = try ScratchFolder("migration-fresh")
     let freshLocation = freshFolder.url.appending(path: "space.sqlite")
-    let freshSpace = try Space.open(file: freshLocation)
+    let freshSpace = try Space.open(file: freshLocation).registeringMachines()
     let fresh = try RawDatabase(path: freshLocation.path)
     _ = freshSpace.worker
     let migrated = try database.access(Self.schemaShape)
@@ -458,7 +462,7 @@ import Testing
     let folder = try ScratchFolder("migration")
     let location = folder.url.appending(path: "space.sqlite")
     let database = try RawDatabase(path: location.path)
-    let original = try Space.open(file: location)
+    let original = try Space.open(file: location).registeringMachines()
     let owner = try await original.addAccount(kind: .human, name: "Morgan").id
     let lab = try await original.createGroup(alias: "lab", owner: owner)
     await original.stopWorker()
@@ -477,7 +481,7 @@ import Testing
       try db.execute(sql: "ALTER TABLE groups DROP COLUMN personal_account")
       try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '043'")
     }
-    let upgraded = try Space.open(file: location)
+    let upgraded = try Space.open(file: location).registeringMachines()
     let names = Dictionary(uniqueKeysWithValues: try await upgraded.groups().map { ($0.id, $0.name) })
     #expect(names == [.shared: "Shared", .settings: "settings", lab: "lab", GroupID(rawValue: "bare"): "bare"])
     try await upgraded.close()
@@ -487,11 +491,11 @@ import Testing
     let folder = try ScratchFolder("migration")
     let location = folder.url.appending(path: "space.sqlite")
     let database = try RawDatabase(path: location.path)
-    let original = try Space.open(file: location)
+    let original = try Space.open(file: location).registeringMachines()
     let applied = { try database.access { try $0.strings("SELECT identifier FROM grdb_migrations ORDER BY identifier") } }
     let known = try applied()
     try database.access { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('998'), ('999')") }
-    #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space.open(file: location) }
+    #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space.open(file: location).registeringMachines() }
     #expect(try applied() == (known + ["998", "999"]).sorted())
     try await original.close()
   }
@@ -500,7 +504,7 @@ import Testing
     let folder = try ScratchFolder("migration")
     let location = folder.url.appending(path: "space.sqlite")
     let database = try RawDatabase(path: location.path)
-    let original = try Space.open(file: location)
+    let original = try Space.open(file: location).registeringMachines()
     try database.access { db in
       try LegacyMachineSchema.create(in: db)
       if existingIndexes { try Migration011.apply(db) }
@@ -542,7 +546,7 @@ import Testing
     let original = try await baseline(location)
     let logs = RecordedLogs()
     let upgraded = try Space.open(file: location, log: logs.logger)
-    #expect(logs.all.map(\.message).filter { $0.hasPrefix("migration ") } == ["001", "002", "005", "042"].flatMap { ["migration \($0): applying", "migration \($0): applied in 0 ms"] })
+    #expect(logs.all.map(\.message).filter { $0.hasPrefix("migration ") } == ["001", "002", "005", "042", "machines/0001"].flatMap { ["migration \($0): applying", "migration \($0): applied in 0 ms"] })
     try await upgraded.close()
     try await original.close()
   }

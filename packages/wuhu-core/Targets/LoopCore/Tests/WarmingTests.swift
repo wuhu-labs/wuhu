@@ -1,3 +1,4 @@
+import AgentsContract
 import ControlledTime
 import Dependencies
 import struct SpaceIDs.SessionID
@@ -8,6 +9,7 @@ import struct SpaceIDs.SessionID
 #endif
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import Scratch
 import SessionDomain
 @testable import SpaceCore

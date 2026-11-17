@@ -50,6 +50,9 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - Machines
+    - MachinesTesting
+    - MachinesContract
     - SpaceIDs
     - DeterministicDependencies
     - LoopCore

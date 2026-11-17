@@ -4,6 +4,7 @@ import Fetch
 import Foundation
 import Logging
 import LoopCore
+import MachinesTesting
 @testable import MainHub
 import SessionDomain
 import SpaceCore

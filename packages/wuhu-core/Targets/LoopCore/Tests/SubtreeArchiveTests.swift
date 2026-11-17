@@ -1,6 +1,7 @@
 import enum AgentsContract.SessionLifecycle
 import Foundation
 @testable import LoopCore
+import MachinesTesting
 import struct MainHub.ArchiveBusySession
 import class MainHub.Hub
 import struct MainHub.SubtreeArchiveBusy

@@ -12,6 +12,7 @@ import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
 
 // createSession and sendMessage as the session gate, a person's routes and a
 // page's `wuhu:space` answer them: one hub call, only the caller differs.

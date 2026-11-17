@@ -4,6 +4,8 @@ import Foundation
 import JSONValue
 import LoopCore
 import MachineContract
+import MachinesContract
+import MachinesTesting
 import struct MainHub.TerminalRun
 import SessionDomain
 import SpaceContract
@@ -84,10 +86,10 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness(spaceURL: "http://space")
       let tokens = harness.runtime.tokens
-      let common = (try await harness.space.addMachineV2(name: "common")).machine.id
+      let common = (try await harness.space.machineFamily.addMachineV2(name: "common")).machine.id
       try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
         let alice = try await harness.space.addAccount(kind: .human, name: "alice")
-        let hers = (try await harness.space.addMachineV2(name: "hers", group: try await harness.space.privateGroup(account: alice.id))).machine.id
+        let hers = (try await harness.space.machineFamily.addMachineV2(name: "hers", group: try await harness.space.privateGroup(account: alice.id))).machine.id
         let firing = tokens.scriptToken(.observer(Observer(group: .shared, name: "nightly", firing: "f1")))
 
         let listed = try await harness.get("/v1/machine", bearer: firing)
@@ -101,7 +103,7 @@ import Testing
         let minted = try await harness.post("/v1/exec", ["machine": .string(common.rawValue), "script": "s1"], bearer: firing)
         #expect(minted.status == .ok)
         let id = try JSONValueDecoder().decode(ExecMintOutput.self, from: try #require(JSONValue.parse(try await minted.text()))).id
-        let record = try #require(try await harness.space.execRecord(id))
+        let record = try #require(try await harness.space.machineFamily.execRecord(id))
         #expect(record.caller == "nightly@shared")
         #expect(record.session == nil)
         #expect(record.group == .shared)
@@ -127,7 +129,7 @@ import Testing
     try await withSessionDeps {
       let harness = try await SessionHarness(spaceURL: "http://space")
       let tokens = harness.runtime.tokens
-      let common = (try await harness.space.addMachineV2(name: "common")).machine.id
+      let common = (try await harness.space.machineFamily.addMachineV2(name: "common")).machine.id
       try await withExecDescription(space: harness.space, hub: harness.hub, machine: common) {
         let alice = try await harness.space.addAccount(kind: .human, name: "alice")
         let run = TerminalRun(
@@ -139,12 +141,12 @@ import Testing
         let minted = try await harness.post("/v1/exec", ["machine": .string(common.rawValue), "script": .string(run.id)], bearer: person)
         #expect(minted.status == .ok)
         let id = try JSONValueDecoder().decode(ExecMintOutput.self, from: try #require(JSONValue.parse(try await minted.text()))).id
-        let record = try #require(try await harness.space.execRecord(id))
+        let record = try #require(try await harness.space.machineFamily.execRecord(id))
         #expect(record.caller == "@\(alice.id.rawValue)")
         #expect(record.session == nil)
         #expect(record.group == .shared)
         #expect(record.terminal == nil)
-        let request = try #require(try await harness.space.execRequest(id))
+        let request = try #require(try await harness.space.machineFamily.execRequest(id))
         #expect(request.argv.isEmpty)
         #expect(await harness.hub.admitsCaller(record, leg: .person(alice.id)))
         #expect(await !harness.hub.admitsCaller(record, leg: .observer("nightly@shared")))

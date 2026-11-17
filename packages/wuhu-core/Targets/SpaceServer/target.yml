@@ -10,8 +10,12 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - SpaceHTTP
   - SpaceIDs
   - GroupContract
+  - TenancyContract
+  - Machines
+  - MachinesContract
   - AgentsContract
   - ContentLane
   - MainHub
@@ -72,6 +76,10 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - SpaceHTTP
+    - Machines
+    - MachinesTesting
+    - MachinesContract
     - SpaceIDs
     - GroupContract
     - StructuredQueries
@@ -139,7 +147,6 @@ tests:
     - Logging
     - WebPush
     - Scratch
-    - ScratchTesting
     - WmdDocument
     - LiveDocument
   exclude:

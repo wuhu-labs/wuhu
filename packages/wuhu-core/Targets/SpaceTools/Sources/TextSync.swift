@@ -3,6 +3,7 @@ import JSONValue
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 
 extension SpaceToolbox {
   static let sync = SpaceTool("sync", schema: SyncInput.jsonSchema) { (context, input: SyncInput) in

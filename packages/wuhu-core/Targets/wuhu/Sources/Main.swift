@@ -21,10 +21,12 @@ import struct Fetch.FetchClient
 import FetchAsyncHTTPClient
 import FetchWebSocket
 import Logging
+import Machines
 import enum PinnedTLS.PinnedTLS
 import enum PinnedTLS.SystemTrust
 import ServeNIO
 import SessionTools
+import SpaceCore
 import enum SpaceCore.UserRecovery
 import SpaceServer
 import TaskLifetime
@@ -156,15 +158,16 @@ enum Main {
       user: { command in
         switch command {
         case let .add(folder, name, admin):
-          (try await UserRecovery.add(folder: URL(fileURLWithPath: folder, isDirectory: true), name: name, admin: admin), nil)
+          (try await UserRecovery.add(folder: URL(fileURLWithPath: folder, isDirectory: true), name: name, admin: admin, prepare: registerMachines), nil)
         case let .reset(folder, account):
-          (try await UserRecovery.reset(folder: URL(fileURLWithPath: folder, isDirectory: true), account: account), nil)
+          (try await UserRecovery.reset(folder: URL(fileURLWithPath: folder, isDirectory: true), account: account, prepare: registerMachines), nil)
         case let .invite(folder, account, server, ttl):
           try await UserRecovery.invite(
             folder: URL(fileURLWithPath: folder, isDirectory: true),
             account: account,
             server: server,
             ttl: ttl.map(TimeInterval.init),
+            prepare: registerMachines,
           )
         }
       },
@@ -220,4 +223,13 @@ enum Main {
     }
     exit(shutdownFailed ? 1 : code)
   }
+}
+
+/// An offline space verb runs the space's worker, so it registers the machine family the server would have: the
+/// worker hosts no machine cells until the family does.
+private func registerMachines(_ space: Space) {
+  Machines(
+    worker: space.worker, tenancy: space.tenancy, groups: space.groupClients, notes: space.groupNotes,
+    sessions: { try? await space.sessions.record($0).summary },
+  ).register()
 }

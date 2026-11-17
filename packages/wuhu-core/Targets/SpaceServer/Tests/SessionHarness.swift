@@ -7,6 +7,9 @@ import Foundation
 import InferenceKit
 import JSONValue
 import LoopCore
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import class MainHub.Hub
 import struct MainHub.SessionEffects
 import Serve
@@ -87,7 +90,7 @@ struct SessionHarness {
       throw InferenceError.other(status: nil, body: "no inference scripted")
     },
   ) async throws {
-    let space = try Space.inMemory()
+    let space = try Space.inMemory().registeringMachines()
     self.credentials = credentials
     self.space = space
     store = space.sessions
@@ -95,7 +98,7 @@ struct SessionHarness {
       _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
     let tokens = try await testTokens(space: space, spaceURL: spaceURL)
-    let hub = MachineHub(space: space, tokens: tokens)
+    let hub = machineHub(space, credentials: tokens.execCredentials)
     self.hub = hub
     let usage = UsageBoard()
     let config = LoopConfig(
@@ -112,7 +115,7 @@ struct SessionHarness {
     } operation: {
       Hub(
         space: space, secrets: secrets,
-        machines: machineSeam(hub: hub),
+        machines: machineSeam(hub: hub), directory: hub.machines.directory,
         resolveModelExecutor: modelExecutorResolver(space: space),
         resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
         prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
@@ -186,11 +189,11 @@ struct SessionHarness {
     credentials = credentialResolver ?? .bound { providerID in
       CredentialBinding(credential: .apiKey(CredentialResolver.environmentAPIKey(providerID) ?? ""), identityEpoch: "assembled-fixture-credential")
     }
-    let space = try Space.inMemory()
+    let space = try Space.inMemory().registeringMachines()
     self.space = space
     store = space.sessions
     _ = try await space.fs(.settings).write("/models.json", Data(models.utf8), ifMatch: nil)
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     self.hub = hub
     runtime = await SessionRuntime.assemble(
       space: space,

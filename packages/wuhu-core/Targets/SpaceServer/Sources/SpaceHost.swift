@@ -12,6 +12,8 @@ import struct Credentials.CredentialsStore
 import Dependencies
 import Fetch
 import Logging
+import Machines
+import MachinesContract
 import Serve
 import ServeRouting
 import struct SpaceContract.AIDisclosure
@@ -74,7 +76,12 @@ public actor SpaceHost {
       }
       let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? fallbackOrigin, identity: serverIdentity)
       let secrets = try configDirectory.map { try secretStores(configDirectory: $0, spaceID: id) }
-      let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets)
+      let machines = Machines(
+        worker: space.worker, tenancy: space.tenancy, groups: space.groupClients, notes: space.groupNotes,
+        sessions: { try? await space.sessions.record($0).summary }, credentials: execTokens.execCredentials, secrets: secrets,
+      )
+      machines.register()
+      let hub = MachineHub(machines: machines)
       let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
       let credentials = configDirectory.map { CredentialResolver.live(store: CredentialsStore(configDirectory: $0, spaceID: id), allowEnvironment: allowEnvironmentCredentials) } ?? (allowEnvironmentCredentials ? .environmentOnly : .unavailable)
       let usage = UsageBoard()
@@ -127,11 +134,11 @@ public actor SpaceHost {
       let keyStreams = KeyStreams()
       @Dependency(\.continuousClock) var releaseClock
       @Dependency(\.date) var date
-      try registerMachineReleases(space: space, version: version, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: releaseClock))
+      try machines.registerReleases(version: version, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: releaseClock))
       var listenerRoutes = Router()
-      let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
-      addMachineV2Routes(&listenerRoutes, space: space, hub: hub, upgrades: upgrades, fingerprint: deployment.pin, log: logger) { request in
-        return try await requestPrincipal(request, space: space, devPerson: devPerson, date: date)
+      let upgrades = MachineV2Upgrades(worker: space.worker, settings: { try? await space.fs(.settings).read(MachineUpgradeFile.path).1 }, serverVersion: version)
+      addMachineV2Routes(&listenerRoutes, machines: machines, hub: hub, upgrades: upgrades, fingerprint: deployment.pin, log: logger) { request in
+        machineCallerVerdict(try await requestPrincipal(request, space: space, devPerson: devPerson, date: date), space: space)
       }
       let handler = SpaceServer.configuredHandler(
         space: space,

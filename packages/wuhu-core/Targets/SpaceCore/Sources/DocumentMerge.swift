@@ -5,6 +5,7 @@
 #endif
 import LiveDocument
 import SpaceFS
+import SpaceIDs
 
 struct DocumentMaterial: Sendable {
   var history: String?

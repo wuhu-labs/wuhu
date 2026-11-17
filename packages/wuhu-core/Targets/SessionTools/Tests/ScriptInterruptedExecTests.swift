@@ -7,6 +7,7 @@ import class MainHub.Hub
 #else
   import Foundation
 #endif
+import MachinesTesting
 import SessionDomain
 import SpaceCore
 import Testing
@@ -17,11 +18,11 @@ import Testing
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
       let session = try await makeSession(space)
-      let machine = try await space.addMachineV2(name: "owner_box").machine.id
+      let machine = try await space.machineFamily.addMachineV2(name: "owner_box").machine.id
       let scripted = ScriptedExecMachine()
-      let record = try await space.reserveExec(machine: machine, caller: session.rawValue, toolCall: .init("interrupted"))
+      let record = try await space.machineFamily.reserveExec(machine: machine, caller: session.rawValue, toolCall: .init("interrupted"))
       let files = FakeMachineFS().seam
-      let owner = loop.hub { Hub(space: space, machines: files) }
+      let owner = loop.hub { Hub(space: space, machines: files, directory: space.machineFamily.directory) }
       let executor = try await scripted.executor(owner: owner, loop: loop)
       #expect(await executor.machineID("owner_box", as: session) == machine)
       await executor.killInterrupted(session: session, callID: .init("missing"))

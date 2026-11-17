@@ -8,6 +8,7 @@ import Dependencies
 import Fetch
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import MainHub
 import Scratch
 import SessionDomain

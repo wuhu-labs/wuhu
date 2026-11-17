@@ -745,7 +745,7 @@ private actor MutableSocketMedia: MediaResolver {
   }
 
   @Test(arguments: ["eof", "io", "close"])
-  func teardownAfterTerminalCannotRetractCompletionOrReuseItsContinuation(ending: String) async throws {
+  func teardownAfterTerminalPreservesCompletionAndDurableContinuation(ending: String) async throws {
     let server = ScriptedResponsesSocket(scripts: [textResponse("resp_1"), textResponse("resp_2")], ending: ending)
     let session = ResponsesWebSocketSession()
     try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
@@ -757,8 +757,8 @@ private actor MutableSocketMedia: MediaResolver {
       _ = try await endpoint().withWebSocket(session: session, attemptID: "two").inference(context: context).collect()
     }
     #expect(await server.handshakes.count == 2)
-    #expect(await server.sent.last?.object?["previous_response_id"] == nil)
-    #expect(await server.sent.last?.object?["input"]?.array?.count == 3)
+    #expect(await server.sent.last?.object?["previous_response_id"] == .string("resp_1"))
+    #expect(await server.sent.last?.object?["input"]?.array?.count == 1)
     await session.invalidate()
   }
 

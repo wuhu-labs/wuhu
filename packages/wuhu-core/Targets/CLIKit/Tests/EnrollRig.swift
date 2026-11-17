@@ -7,7 +7,10 @@
 @testable import CLIKit
 import Dependencies
 import Fetch
+@testable import Machines
+import MachinesTesting
 import Scratch
+import Serve
 import ServeNIO
 import ServeTLS
 import SpaceCore
@@ -114,11 +117,21 @@ struct EnrollRig {
       $0.continuousClock = ContinuousClock()
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 43))
     } operation: {
-      let hub = MachineHub(space: space)
+      let hub = machineHub(space)
       let devPerson = dev ? try await space.ensureDevPerson() : nil
       return SpaceServer.configuredHandler(space: space, hub: hub, origin: origin, fingerprint: fingerprint, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson, fingerprint: fingerprint))
     }
-    let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity, upgrading: handler)
+    // The listener runs in the rig's dependencies: a request's clock is the test's, not the process's.
+    let clock = self.clock
+    let listener: UpgradingHandler = { request in
+      try await withDependencies {
+        $0.date = clock.generator
+        $0.continuousClock = ContinuousClock()
+      } operation: {
+        try await handler(request)
+      }
+    }
+    let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity, upgrading: listener)
     do {
       let spaceID = try await space.identity().rawValue
       try await body(BoundServer(port: try #require(server.boundAddress.port), space: spaceID, fingerprint: fingerprint))

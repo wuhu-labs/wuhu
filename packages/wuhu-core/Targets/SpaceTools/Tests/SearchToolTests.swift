@@ -5,8 +5,9 @@ import DeterministicDependencies
 import Foundation
 import JSONValue
 import SpaceContract
-import enum SpaceCore.SpaceError
 import SpaceFS
+import SpaceIDs
+import enum SpaceIDs.SpaceError
 @testable import SpaceTools
 import Synchronization
 import Testing

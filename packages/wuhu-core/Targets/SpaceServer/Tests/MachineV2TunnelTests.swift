@@ -2,6 +2,8 @@ import Crypto
 import Dependencies
 import DeterministicDependencies
 import Fetch
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,6 +11,7 @@ import Fetch
 #endif
 import enum JSONValue.JSONValue
 import MachineContract
+import MachinesTesting
 import OperationProtocol
 import Serve
 import SpaceContract
@@ -24,8 +27,8 @@ import Testing
     let machine: MachineRecord
     let key: Curve25519.Signing.PrivateKey
     init() async throws {
-      space = try Space.inMemory()
-      hub = MachineHub(space: space)
+      space = try Space.inMemory().registeringMachines()
+      hub = machineHub(space)
       let devPerson = try await space.ensureDevPerson()
       handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
       key = .init()
@@ -37,8 +40,8 @@ import Testing
       }
       let add = try await http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "scratch"))
       let output = try await add.body.json(MachineAddOutput.self)
-      _ = try await http("/v1/enroll/consume", method: .post, input: ["token": output.token, "pubkey": key.pubkeyLabel])
-      machine = try #require(try await space.machine(output.id))
+      _ = try await http("/v1/machine-v2/enroll", method: .post, input: ["token": output.token, "pubkey": key.pubkeyLabel])
+      machine = try #require(try await space.machineFamily.machine(output.id))
     }
 
     func http<T: Encodable & Sendable>(_ path: String, method: Fetch.Method, input: T) async throws -> Response {
@@ -93,7 +96,7 @@ import Testing
     await #expect(throws: OperationError(.machineNotAuthorized)) {
       try await f.hub.authorize(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue, "mc_zzzzzzzz"]))
     }
-    _ = try await f.space.resetCredentials(account: f.machine.account)
+    #expect(try await f.space.machineFamily.revokeMachine(f.machine.id))
     await #expect(throws: OperationError(.machineNotAuthorized)) { try await f.hub.authorize(credential) }
     guard case let .response(refused) = try await f.connect(try await f.challenge(), machines: [f.machine.id.rawValue]) else {
       Issue.record("revoked key connected"); return
@@ -105,7 +108,7 @@ import Testing
 extension MachineV2TunnelTests {
   @Test func aLostEnrollResponseReplaysWithTheSameKeyOnly() async throws {
     let f = try await Fixture()
-    let created = try await f.space.addMachineV2(name: "retry_v2")
+    let created = try await f.space.machineFamily.addMachineV2(name: "retry_v2")
     let key = Curve25519.Signing.PrivateKey()
     let input = ["token": created.token.token.rawValue, "pubkey": key.pubkeyLabel]
     let first = try await f.http("/v1/machine-v2/enroll", method: .post, input: input)
@@ -117,7 +120,7 @@ extension MachineV2TunnelTests {
     #expect(try await replayed.body.json(EnrollConsumeOutput.self) == enrolled)
     let thief = try await f.http("/v1/machine-v2/enroll", method: .post, input: ["token": created.token.token.rawValue, "pubkey": Curve25519.Signing.PrivateKey().pubkeyLabel])
     #expect(thief.status == .unauthorized)
-    #expect(try await f.space.keys(account: created.machine.account).map(\.pubkey) == [key.pubkeyLabel])
+    #expect(try await f.space.machineFamily.machine(pubkey: key.pubkeyLabel) == created.machine.id)
   }
 }
 
@@ -127,11 +130,11 @@ extension MachineV2TunnelTests {
     let person = try await f.space.addAccount(kind: .human, name: "other", admin: false)
     let group = try await f.space.privateGroup(account: person.id)
     let credential = MachineHub.Credential(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])
-    _ = try await f.space.moveMachine(f.machine.id, to: group)
-    #expect(try await f.space.machineV2Members(group: .shared).isEmpty)
-    #expect(try await f.space.machineV2Members(group: group) == [f.machine.id.rawValue])
-    #expect(try await f.space.resolveMachine(f.machine.id.rawValue, usableFrom: .shared) == nil)
-    #expect(try await f.space.resolveMachine(f.machine.id.rawValue, usableFrom: group)?.id == f.machine.id)
+    _ = try await f.space.machineFamily.moveMachine(f.machine.id, to: group)
+    #expect(try await f.space.machineFamily.machineV2Members(group: .shared).isEmpty)
+    #expect(try await f.space.machineFamily.machineV2Members(group: group) == [f.machine.id.rawValue])
+    #expect(try await f.space.machineFamily.resolveMachine(f.machine.id.rawValue, usableFrom: .shared) == nil)
+    #expect(try await f.space.machineFamily.resolveMachine(f.machine.id.rawValue, usableFrom: group)?.id == f.machine.id)
     try await f.hub.authorize(credential)
   }
 }
@@ -163,7 +166,7 @@ extension MachineV2TunnelTests {
 extension MachineV2TunnelTests {
   @Test func statusPreservesKnownSilenceAndRegistrationOrigin() async throws {
     let f = try await Fixture()
-    let registration = try #require(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
+    let registration = try #require(try await f.space.machineFamily.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
     let initial = try await f.http("/v1/machine-v2/" + f.machine.id.rawValue, method: .get, input: [String: String]())
     #expect(initial.status == .ok)
     let initialStatus = try await initial.body.json(JSONValue.self)
@@ -184,13 +187,13 @@ extension MachineV2TunnelTests {
       presence.observed = cell.now
       try cell.save(presence)
     }
-    let answered = try #require(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
+    let answered = try #require(try await f.space.machineFamily.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared))
     try await f.space.worker.call(MachineCell.ID(f.machine.id.rawValue)) { cell in
       var presence = cell.presence
       presence.state = "lost"
       try cell.save(presence)
     }
-    let restarted = MachineHub(space: f.space)
+    let restarted = machineHub(f.space)
     let devPerson = try await f.space.ensureDevPerson()
     let handler = SpaceServer.configuredHandler(space: f.space, hub: restarted, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: f.space, hub: restarted, devPerson: devPerson))
     guard case let .response(response) = try await handler(Request(url: URL(string: "https://space.test/v1/machine-v2/" + f.machine.id.rawValue)!)) else {
@@ -200,7 +203,7 @@ extension MachineV2TunnelTests {
     let status = try await response.body.json(JSONValue.self)
     #expect(status.object?["state"] == .string("lost"))
     #expect(status.object?["attached"] == .bool(false))
-    #expect(try await f.space.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared)?.observedAt == answered.observedAt)
+    #expect(try await f.space.machineFamily.machineV2PresenceEvidence(f.machine.id.rawValue, group: .shared)?.observedAt == answered.observedAt)
   }
 }
 
@@ -225,15 +228,14 @@ extension MachineV2TunnelTests {
     #expect(output.machineName == "laptop")
     #expect(output.capabilities == ["exec-machine"])
     let machine = MachineID(rawValue: try #require(output.machine))
-    #expect(try await f.space.machine(pubkey: key.pubkeyLabel) == machine)
-    #expect(try await f.space.machineV2Members(group: .shared).contains(machine.rawValue))
-    #expect(try await f.space.machine(machine)?.account.rawValue == output.account)
+    #expect(try await f.space.machineFamily.machine(pubkey: key.pubkeyLabel) == machine)
+    #expect(try await f.space.machineFamily.machineV2Members(group: .shared).contains(machine.rawValue))
+    #expect(output.account == machine.rawValue)
     try await f.hub.authorize(.init(pubkey: key.pubkeyLabel, machines: [machine.rawValue]))
 
     let taken = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "laptop", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
     #expect(taken.status == .conflict)
-    let legacy = try await f.space.addMachineV2(name: "old_box").machine
-    _ = try await f.space.addKey(Curve25519.Signing.PrivateKey().pubkeyLabel, account: legacy.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
+    _ = try await f.space.machineFamily.addMachineV2(name: "old_box")
     let takenByV1 = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "old_box", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
     #expect(takenByV1.status == .conflict)
     let reused = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other", pubkey: key.pubkeyLabel))
@@ -244,7 +246,7 @@ extension MachineV2TunnelTests {
     #expect(unknownDevice.status == .notFound)
     let deviceWithoutKey = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other_v2", device: "no-such-device"))
     #expect(deviceWithoutKey.status == .badRequest)
-    #expect(try await f.space.resolveMachine("other") == nil)
+    #expect(try await f.space.machineFamily.resolveMachine("other") == nil)
   }
 
   @Test func aMachineRevokesItsOwnKeyWithOneSignedRequest() async throws {
@@ -255,42 +257,41 @@ extension MachineV2TunnelTests {
     #expect(other.status == .ok)
     guard case let .response(foreign) = try await f.handler(try await signed(f.handler, path, key: stranger, machine: f.machine.id)) else { Issue.record("revoke should be HTTP"); return }
     #expect(foreign.status == .unauthorized)
-    #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
+    #expect(try await f.space.machineFamily.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
 
     let wall = SpaceServer.configuredHandler(space: f.space, hub: f.hub, devPerson: nil, listenerRoutes: machineListenerRoutes(space: f.space, hub: f.hub, devPerson: nil))
     let request = try await signed(wall, path, key: f.key, machine: f.machine.id)
     guard case let .response(revoked) = try await wall(request) else { Issue.record("revoke should be HTTP"); return }
     #expect(revoked.status == .ok)
-    #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == nil)
-    #expect(try await f.space.machine(f.machine.id) != nil)
+    #expect(try await f.space.machineFamily.machine(pubkey: f.key.pubkeyLabel) == nil)
+    #expect(try await f.space.machineFamily.machine(f.machine.id) != nil)
     await #expect(throws: (any Error).self) { try await f.hub.authorize(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])) }
     guard case let .response(again) = try await f.handler(try await signed(f.handler, path, key: f.key, machine: f.machine.id)) else { Issue.record("revoke should be HTTP"); return }
     #expect(again.status == .unauthorized)
-    #expect(try await f.space.machine(pubkey: stranger.pubkeyLabel) != nil)
+    #expect(try await f.space.machineFamily.machine(pubkey: stranger.pubkeyLabel) != nil)
   }
 
   @Test func aRotationCommittingDuringAnAuthenticatedRevokeKeepsTheReplacementKey() async throws {
     let parked = AsyncStream<Void>.makeStream()
     let resume = AsyncStream<Void>.makeStream()
-    let space = try Space.inMemory()
-    let hub = MachineHub(space: space, tokens: nil, revocationGate: { _ in
+    let space = try Space.inMemory().registeringMachines()
+    let hub = machineHub(space, revocationGate: { _ in
       parked.continuation.yield()
       for await _ in resume.stream { return }
     })
     let devPerson = try await space.ensureDevPerson()
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     let key = Curve25519.Signing.PrivateKey()
-    let enrolled = try await space.enrollMachineV2(name: "racer", group: .shared, pubkey: key.pubkeyLabel)
-    let machine = enrolled.machine
+    let machine = try await space.machineFamily.enrollMachineV2(name: "racer", group: .shared, pubkey: key.pubkeyLabel)
     let revoke = try await signed(handler, "/v1/machine-v2/\(machine.id.rawValue)/revoke", key: key, machine: machine.id)
     let inFlight = Task { try await handler(revoke) }
     for await _ in parked.stream { break }
-    _ = try await space.resetCredentials(account: machine.account)
+    let rotation = try await space.machineFamily.rotateMachine(machine.id)
     let replacement = Curve25519.Signing.PrivateKey()
-    _ = try await space.addKey(replacement.pubkeyLabel, account: machine.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
+    _ = try await space.machineFamily.enrollMachineV2(token: rotation.token, pubkey: replacement.pubkeyLabel)
     resume.continuation.yield()
     guard case let .response(stale) = try await inFlight.value else { Issue.record("revoke should be HTTP"); return }
     #expect(stale.status == .unauthorized)
-    #expect(try await space.machine(pubkey: replacement.pubkeyLabel) == machine.id)
+    #expect(try await space.machineFamily.machine(pubkey: replacement.pubkeyLabel) == machine.id)
   }
 }

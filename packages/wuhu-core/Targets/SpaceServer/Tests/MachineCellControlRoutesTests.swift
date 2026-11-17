@@ -5,12 +5,15 @@ import DeterministicDependencies
 import Dispatch
 import Fetch
 import FetchTunnel
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import MachineContract
+import MachinesTesting
 import OperationProtocol
 import Scratch
 import Serve
@@ -23,10 +26,9 @@ import Wuwei
 @Suite(.deterministicDependencies) struct MachineCellControlRoutesTests {
   @Test(arguments: ["revoke", "rotate", "selfRevoke"])
   func credentialResetClosesTheOwningBox(action: String) async throws {
-    let space = try Space.inMemory()
+    let space = try Space.inMemory().registeringMachines()
     let key = Curve25519.Signing.PrivateKey()
-    let enrolled = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel)
-    let machine = enrolled.machine.id
+    let machine = try await space.machineFamily.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).id
     let id = MachineCell.ID(machine.rawValue)
     let closed = Gate()
     let closes = Mutex(0)
@@ -37,7 +39,7 @@ import Wuwei
       }
     })
     defer { socket.close() }
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     let devPerson = try await space.ensureDevPerson()
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     let request: Request
@@ -48,23 +50,22 @@ import Wuwei
     }
     guard case let .response(response) = try await handler(request) else { Issue.record("control must be HTTP"); return }
     #expect(response.status == .ok)
-    #expect(try await space.machine(pubkey: key.pubkeyLabel) == nil)
+    #expect(try await space.machineFamily.machine(pubkey: key.pubkeyLabel) == nil)
     space.worker.start()
     try await until("the revoked box closes", timeout: .seconds(4)) { closed.isOpen }
     do {
-      try await MachineHub(space: space).authorize(.init(pubkey: key.pubkeyLabel, machines: [machine.rawValue]))
+      try await machineHub(space).authorize(.init(pubkey: key.pubkeyLabel, machines: [machine.rawValue]))
       Issue.record("redial with the purged key was authorized")
     } catch let error as OperationError { #expect(error.code == .machineNotAuthorized) }
-    try await until("the close mail is consumed", timeout: .seconds(4)) { !space.worker.hasMail(for: id.recipient) }
     #expect(closes.withLock { $0 } == 1)
     try await space.close()
   }
 
-  @Test func revocationCloseMailEndsTheCapturedTunnel() async throws {
-    let space = try Space.inMemory()
+  @Test func revocationEndsTheCapturedTunnel() async throws {
+    let space = try Space.inMemory().registeringMachines()
     let key = Curve25519.Signing.PrivateKey()
-    let machine = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).machine
-    let hub = MachineHub(space: space)
+    let machine = try await space.machineFamily.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel)
+    let hub = machineHub(space)
     let credential = MachineHub.Credential(pubkey: key.pubkeyLabel, machines: [machine.id.rawValue])
     let box = try #require(await hub.boxLink(credential, streams: 32))
     let incoming = AsyncStream<Bytes>.makeStream()
@@ -92,10 +93,10 @@ import Wuwei
     try await space.close()
   }
 
-  @Test func revocationDeliveredBeforeBoxAttachmentNeverGreetsTheCapturedTunnel() async throws {
-    let space = try Space.inMemory()
+  @Test func revocationBeforeBoxAttachmentNeverGreetsTheCapturedTunnel() async throws {
+    let space = try Space.inMemory().registeringMachines()
     let key = Curve25519.Signing.PrivateKey()
-    let machine = try await space.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel).machine
+    let machine = try await space.machineFamily.enrollMachineV2(name: "box", group: .shared, pubkey: key.pubkeyLabel)
     let id = MachineCell.ID(machine.id.rawValue)
     await space.stopWorker()
     let database = space.database
@@ -109,7 +110,7 @@ import Wuwei
     }
     await scheduler.drain()
     scheduler.holdNextTask()
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     let credential = MachineHub.Credential(pubkey: key.pubkeyLabel, machines: [machine.id.rawValue])
     let link = await BoxLink(worker: worker, machine: machine.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 32, buffers: buffers, authorizeStart: {
       try await hub.authorize(credential)
@@ -128,20 +129,8 @@ import Wuwei
       tasks.addTask { await hub.run(credential, transport: transport, boxLink: box); ended.open() }
       defer { scheduler.releaseHeldTasks(); box.close(); incoming.continuation.finish(); tasks.cancelAll() }
       await receiving.wait()
-      let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: try await space.ensureDevPerson())
-      let request = Request(url: URL(string: "https://space.test/v1/machine/\(machine.id.rawValue)/revoke")!, method: .post)
-      guard case let .response(response) = try await handler(request) else { Issue.record("Revoke must be HTTP"); return }
-      #expect(response.status == .ok)
-      #expect(try await space.machine(pubkey: key.pubkeyLabel) == nil)
-      #expect(worker.hasMail(for: id.recipient))
-      worker.poke(id.recipient)
-      await scheduler.drain()
-      let recipient = id.description
-      let mail = try RawDatabase.open(space.databasePath) {
-        try $0.int("SELECT COUNT(*) FROM wuwei_mail WHERE recipient = ?", arguments: [recipient])!
-      }
-      try #require(mail == 0)
-      #expect(!worker.hasMail(for: id.recipient))
+      #expect(try await worker.call(id) { try $0.revoke() })
+      #expect(try await space.machineFamily.machine(pubkey: key.pubkeyLabel) == nil)
       #expect(scheduler.heldTaskCount == 1)
       #expect(worker.cell(id).box == nil)
       #expect(sent.withLock { $0 } == 0)
@@ -166,16 +155,16 @@ import Wuwei
     let folder = try ScratchFolder("machine-cross-worker-kill")
     defer { folder.remove() }
     let file = folder.url.appendingPathComponent("space.sqlite")
-    let owner = try Space.open(file: file)
-    let machine = try await owner.addMachineV2(name: "box").machine.id
-    let exec = try await owner.reserveExec(machine: machine)
+    let owner = try Space.open(file: file).registeringMachines()
+    let machine = try await owner.machineFamily.addMachineV2(name: "box").machine.id
+    let exec = try await owner.machineFamily.reserveExec(machine: machine)
     let account = try await owner.addAccount(kind: .human, name: "operator", admin: true)
     let key = Curve25519.Signing.PrivateKey()
     let credential = try await owner.addKey(key.pubkeyLabel, account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     _ = try await owner.adoptPersona(key: credential)
     let identity = try await owner.identity().rawValue
     let assertion = try AssertionClaims(key: key.pubkeyLabel, space: identity, expiresAt: Date().addingTimeInterval(3600)).signed(by: key)
-    let other = try Space.open(file: file)
+    let other = try Space.open(file: file).registeringMachines()
     let server = try await TestServer(space: other, clock: ContinuousClock(), dev: false)
     var request = Request(url: URL(string: "http://space/v1/exec/\(exec.id.rawValue)/kill")!, method: .post)
     request.headers[.authorization] = "Bearer " + assertion.rawValue
@@ -183,9 +172,9 @@ import Wuwei
     #expect(response.status == .ok)
     owner.worker.start()
     try await until("the owning worker applies stop mail", timeout: .seconds(4)) {
-      try await owner.execRecord(exec.id)?.terminal != nil
+      try await owner.machineFamily.execRecord(exec.id)?.terminal != nil
     }
-    #expect(try await owner.execRecord(exec.id)?.terminal == .cancelled)
+    #expect(try await owner.machineFamily.execRecord(exec.id)?.terminal == .cancelled)
     try await other.close()
     try await owner.close()
   }

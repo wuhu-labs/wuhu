@@ -92,7 +92,7 @@ import Testing
     validated.insert("attributes.patch")
     let machined = SpaceToolContext(space: context.space, machines: copySeam { _, _ in
       CopyReceipt(bytes: 6, sha256: zeroHash, landing: .machine(token: "1"))
-    }, principal: context.principal)
+    }, directory: anyMachineDirectory(), principal: context.principal)
     let copied = try await run("copy", ["from": "/sync.md", "to": "machines://mc_00000000/sync.md"], machined)
     #expect(schemaIssues(copied, schema: try outputSchema("copy")) == [], "copy")
     validated.insert("copy")

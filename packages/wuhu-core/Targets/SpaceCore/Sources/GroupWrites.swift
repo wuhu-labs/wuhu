@@ -1,4 +1,5 @@
 import struct SpaceFS.SpacePath
+import SpaceIDs
 import struct SpaceIDs.GroupID
 
 enum GroupWrites {

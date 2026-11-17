@@ -1,8 +1,9 @@
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
-@testable import ExecSupervisor
 import Fetch
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -15,8 +16,10 @@ import Fetch
 #elseif canImport(Musl)
   import Musl
 #endif
+@testable import ExecSupervisor
 import JSONValue
 import MachineContract
+import MachinesTesting
 @testable import MainHub
 @testable import OperationRuntime
 import Scratch
@@ -36,10 +39,10 @@ struct ExecDefaultLifetimeTests {
     } operation: {
       let work = try ScratchFolder("exec-default-lifetime-v2")
       defer { work.remove() }
-      let space = try Space.inMemory()
-      let machine = try await space.addMachineV2(name: "lifetime_v2", group: .shared).machine.id
+      let space = try Space.inMemory().registeringMachines()
+      let machine = try await space.machineFamily.addMachineV2(name: "lifetime_v2", group: .shared).machine.id
       let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
-      let hub = MachineHub(space: space)
+      let hub = machineHub(space)
       do {
         try await withThrowingTaskGroup(of: Void.self) { tasks in
           tasks.addTask { await agent.run() }
@@ -77,7 +80,7 @@ struct ExecDefaultLifetimeTests {
                 try #require(second.events.printed.withLock { $0 }, "the explicit exec closed or ended before its readiness output")
                 try await advanceLifetime(space, machine: machine, by: 2)
                 #expect(second.events.end.withLock { $0 == nil })
-                #expect(try await space.execRecord(second.id)?.terminal == nil)
+                #expect(try await space.machineFamily.execRecord(second.id)?.terminal == nil)
                 let fd = open(work.path + "/release", O_WRONLY | O_NONBLOCK)
                 try #require(fd >= 0, "the explicit lifetime ended before its release")
                 let release = Array("go\n".utf8)
@@ -126,9 +129,9 @@ private struct LifetimeExec: Sendable {
 
   init(space: Space, machine: MachineID, plan: ExecToolPlan) async throws {
     @Dependency(\.uuid) var uuid
-    let record = try await space.reserveExec(machine: machine)
+    let record = try await space.machineFamily.reserveExec(machine: machine)
     id = record.id
-    var request = try #require(try await space.execRequest(id))
+    var request = try #require(try await space.machineFamily.execRequest(id))
     operation = request.operation
     request.argv = plan.argv; request.cwd = plan.cwd; request.env = plan.env; request.secrets = plan.secrets
     request.timeout = plan.lifetime; request.maxOutput = plan.maxOutput

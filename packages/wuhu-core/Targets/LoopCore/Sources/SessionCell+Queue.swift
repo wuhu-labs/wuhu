@@ -3,16 +3,17 @@
 #else
   import Foundation
 #endif
+import struct AgentsContract.SessionPut
 import SessionDomain
 import func SpaceCore.isUnreadableSessionData
 import struct SpaceCore.SessionDataRow
-import struct SpaceCore.SessionPut
 import struct SpaceCore.SessionQueueRow
 import enum SpaceCore.SessionRunState
 import struct SpaceCore.SessionRuntimeRow
 import enum SpaceCore.Sessions
 import typealias SpaceCore.SessionWork
-import enum SpaceCore.SQLiteDateFormat
+import SpaceIDs
+import enum SpaceIDs.SQLiteDateFormat
 import StructuredQueries
 import Wuwei
 import WuweiQueries

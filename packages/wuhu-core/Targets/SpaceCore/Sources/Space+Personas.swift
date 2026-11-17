@@ -1,4 +1,6 @@
+import SpaceIDs
 import struct SpaceIDs.AccountID
+import TenancyContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

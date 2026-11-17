@@ -2,6 +2,7 @@ import DeterministicDependencies
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
 import StructuredQueries

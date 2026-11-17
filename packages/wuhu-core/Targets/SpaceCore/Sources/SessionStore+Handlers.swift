@@ -1,4 +1,5 @@
 import Dependencies
+import SpaceIDs
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

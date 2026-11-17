@@ -1480,7 +1480,7 @@ export function partitionBazelDeps(
 }
 
 function swiftPackageRequirement(external: ExternalPackage): string {
-  const traits = external.traits?.length
+  const traits = external.traits
     ? `, traits: [${external.traits.map((t) => `"${t}"`).join(', ')}]`
     : ''
   if (external.path) return `path: "${external.path}"${traits}`

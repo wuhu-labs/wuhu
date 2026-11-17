@@ -1,5 +1,6 @@
 import JSONValue
 import MachineContract
+import MachinesContract
 import SessionDomain
 import SpaceCore
 
@@ -7,7 +8,8 @@ public extension SpaceToolContext {
   func ownExecs() async throws(ToolRunError) -> [ExecStatus] {
     do {
       let caller = try execCaller()
-      return try await space.liveExecs().filter { $0.caller == caller }.map(Self.execStatus)
+      guard let directory else { throw ToolRunError.failed(code: .unavailable, message: "machine backends are not available on this surface", hint: nil) }
+      return try await directory.liveExecs().filter { $0.caller == caller }.map(Self.execStatus)
     } catch { throw Wire.failure(error) }
   }
 
@@ -24,7 +26,8 @@ public extension SpaceToolContext {
   private func ownExec(_ id: String) async throws(ToolRunError) -> ExecRecord {
     do {
       let caller = try execCaller()
-      guard ExecID.isValid(id), let record = try await space.execRecord(ExecID(rawValue: id)), record.caller == caller else {
+      guard let directory else { throw ToolRunError.failed(code: .unavailable, message: "machine backends are not available on this surface", hint: nil) }
+      guard ExecID.isValid(id), let record = try await directory.exec(ExecID(rawValue: id)), record.caller == caller else {
         throw ToolRunError.failed(code: .notFound, message: "unknown exec: \(id)", hint: nil)
       }
       return record

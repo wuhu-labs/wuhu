@@ -1,4 +1,6 @@
 import Fetch
+import GroupContract
+import SpaceHTTP
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

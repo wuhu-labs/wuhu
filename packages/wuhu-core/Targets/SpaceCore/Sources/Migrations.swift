@@ -45,7 +45,7 @@ enum Migrations {
     MigrationChain(.group),
     MigrationChain(.conversations, migrations: [ConversationsMigration001.apply, ConversationsMigration002.apply]),
     MigrationChain(.agents),
-    MigrationChain(.machines),
+    MigrationChain(.machines, migrations: [MachinesMigration001.apply]),
   ]
 
   static func apply(db: MigrationDB, log: Logger, date: DateGenerator) throws {

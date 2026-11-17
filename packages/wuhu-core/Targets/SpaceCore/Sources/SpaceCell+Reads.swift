@@ -1,6 +1,7 @@
 import AgentsContract
 import SessionDomain
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.MessageID

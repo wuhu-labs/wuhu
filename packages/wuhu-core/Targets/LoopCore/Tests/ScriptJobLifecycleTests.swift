@@ -5,6 +5,7 @@
 #endif
 import Dependencies
 @testable import LoopCore
+import MachinesTesting
 import Scratch
 import SessionDomain
 import SessionTools

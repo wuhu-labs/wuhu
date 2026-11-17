@@ -1,3 +1,5 @@
+import enum AgentsContract.SessionMail
+import struct AgentsContract.SessionPut
 import func MainHub.renderedRows
 import struct MainHub.ToolProblem
 import SessionDomain
@@ -13,8 +15,6 @@ import struct SpaceCore.PromptOpening
 import struct SpaceCore.Rows
 import struct SpaceCore.SessionCreation
 import struct SpaceCore.SessionHydration
-import enum SpaceCore.SessionMail
-import struct SpaceCore.SessionPut
 import struct SpaceCore.SessionRecord
 import struct SpaceCore.SessionStore
 import struct SpaceCore.SpaceCell

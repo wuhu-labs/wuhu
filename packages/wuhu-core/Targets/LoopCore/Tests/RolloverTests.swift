@@ -8,6 +8,7 @@ import struct SpaceIDs.SessionID
 #endif
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import Scratch
 import SessionDomain
 @testable import SpaceCore

@@ -60,15 +60,6 @@
         "mac"
       ]
     },
-    "ci-lanes-test": {
-      "platforms": [
-        "linux",
-        "mac"
-      ],
-      "inputs": [
-        ".forgejo/workflows/ci.yml"
-      ]
-    },
     "module-profile-test": {
       "platforms": [
         "linux",
@@ -78,12 +69,6 @@
         ".agents/skills/mac-worker-setup/pin.env",
         "packages/build-pool/src",
         "packages/space-oidc/src"
-      ]
-    },
-    "ci-failure-labels-test": {
-      "platforms": [
-        "linux",
-        "mac"
       ]
     },
     "check-tooling-test": {

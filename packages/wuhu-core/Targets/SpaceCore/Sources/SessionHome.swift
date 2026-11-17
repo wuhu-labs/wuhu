@@ -3,6 +3,7 @@ import Instructions
 import SessionDomain
 import struct SpaceContract.PromptSession
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
 

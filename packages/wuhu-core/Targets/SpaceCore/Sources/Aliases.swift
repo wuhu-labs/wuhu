@@ -1,4 +1,5 @@
 import func SpaceContract.normalizedLabel
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import StructuredQueries

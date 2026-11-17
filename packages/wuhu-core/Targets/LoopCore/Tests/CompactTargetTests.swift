@@ -6,6 +6,7 @@ import Dependencies
 #endif
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import SessionDomain
 import SpaceCore
 import Synchronization

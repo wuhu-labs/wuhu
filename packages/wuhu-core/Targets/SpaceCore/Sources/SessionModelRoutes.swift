@@ -3,6 +3,7 @@ import struct SessionDomain.ModelRouteFailure
 import struct SessionDomain.ModelRouteTransition
 import enum SessionDomain.SessionExecutor
 import struct SessionDomain.SessionModelRoute
+import SpaceIDs
 import StructuredQueries
 import Wuwei
 import WuweiQueries

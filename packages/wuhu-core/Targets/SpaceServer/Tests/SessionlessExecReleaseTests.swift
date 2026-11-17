@@ -5,6 +5,8 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import JSONValue
+@testable import Machines
+import MachinesContract
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -13,6 +15,7 @@ import struct SpaceIDs.AccountID
 #endif
 import MachineChannel
 import MachineContract
+import MachinesTesting
 import MainHub
 import OperationProtocol
 import OperationRuntime
@@ -100,7 +103,7 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
 
     let worker = Spawning { scriptID in
       defer { run.finish() }
-      let record = try await space.reserveExec(machine: machineID, caller: caller, script: scriptID)
+      let record = try await space.machineFamily.reserveExec(machine: machineID, caller: caller, script: scriptID)
       // An observer named after the person's persona is not the exec's holder.
       try #require(await server.hub.admitsCaller(record, leg: leg))
       if case .person = leg { #expect(await !server.hub.admitsCaller(record, leg: .observer("nightly@shared"))) }
@@ -147,12 +150,12 @@ enum SessionlessEnd: Sendable, CustomTestStringConvertible {
         #expect(tokens.script(ofBearer: token) == nil)
         await side.stopped.wait()
         #expect(side.reason.withLock { $0 == "callerGone" })
-        #expect(try await realPollUntil { try await space.execRecord(exec)?.killDelivered == true })
+        #expect(try await realPollUntil { try await space.machineFamily.execRecord(exec)?.killDelivered == true })
 
         #expect(acknowledged.withLock { !$0 })
         side.release.open()
         #expect(try await realPollUntil { acknowledged.withLock { $0 } })
-        #expect(try await space.liveScriptExecs(script: script, caller: caller).isEmpty)
+        #expect(try await space.machineFamily.liveScriptExecs(script: script, caller: caller).isEmpty)
       }
       await agent.shutdown()
     }
@@ -196,9 +199,9 @@ private func proveScriptJobCallerClosure() async throws {
         #expect(resultText(cancelled)?.contains("abort signalled") == true)
         await side.stopped.wait()
         #expect(side.reason.withLock { $0 == "callerGone" })
-        #expect(try await realPollUntil { try await harness.space.execRecord(exec)?.killDelivered == true })
+        #expect(try await realPollUntil { try await harness.space.machineFamily.execRecord(exec)?.killDelivered == true })
         side.release.open()
-        #expect(try await realPollUntil { try await harness.space.liveScriptExecs(script: String(handle.dropFirst(7)), caller: session.rawValue).isEmpty })
+        #expect(try await realPollUntil { try await harness.space.machineFamily.liveScriptExecs(script: String(handle.dropFirst(7)), caller: session.rawValue).isEmpty })
       }
       await agent.shutdown()
     }

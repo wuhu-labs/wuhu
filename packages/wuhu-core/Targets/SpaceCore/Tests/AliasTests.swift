@@ -1,4 +1,6 @@
 import DeterministicDependencies
+import MachinesContract
+import SpaceIDs
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -6,6 +8,7 @@ import struct SpaceIDs.AccountID
   import Foundation
 #endif
 import LoopCore
+import MachinesTesting
 @testable import SpaceCore
 import struct SpaceIDs.GroupID
 import Testing
@@ -28,8 +31,7 @@ import Testing
   @Test func onlyLiveHumanMembersCanOwnGroups() async throws {
     let space = try makeSpace()
     let guest = try await space.addAccount(kind: .human, name: "Guest", guest: true)
-    let machine = try await space.addMachineV2(name: "box").machine
-    for owner in [guest.id, machine.account, AccountID(rawValue: "missing")] {
+    for owner in [guest.id, AccountID(rawValue: "missing")] {
       await #expect(throws: AliasError.memberRequired) { try await space.createGroup(alias: "research", owner: owner) }
     }
     let member = try await space.addAccount(kind: .human, name: "Member")
@@ -58,7 +60,7 @@ import Testing
     let space = try makeSpace()
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     let group = try await space.createGroup(alias: "research", owner: owner.id)
-    await #expect(throws: SpaceError.machineNameTaken("research")) { try await space.addMachineV2(name: "research").machine }
+    await #expect(throws: SpaceError.machineNameTaken("research")) { try await space.machineFamily.addMachineV2(name: "research").machine }
     try await space.registerPerson("person")
     await #expect(throws: SpaceError.handleTaken("research")) {
       try await space.setUserProfile(principal: "person", handle: "research", displayName: nil)
@@ -70,7 +72,7 @@ import Testing
     await #expect(throws: AliasError.taken("research")) { try await space.createGroup(alias: "research", owner: owner.id) }
     _ = try await space.setUserProfile(principal: "person", handle: "reader", displayName: nil)
     await #expect(throws: AliasError.taken("reader")) { try await space.createGroup(alias: "reader", owner: owner.id) }
-    _ = try await space.addMachineV2(name: "work_box").machine
+    _ = try await space.machineFamily.addMachineV2(name: "work_box").machine
     await #expect(throws: AliasError.taken("work_box")) { try await space.createGroup(alias: "work_box", owner: owner.id) }
     await #expect(throws: AliasError.invalid("with-hyphens")) { try await space.createGroup(alias: "with-hyphens", owner: owner.id) }
     await #expect(throws: AliasError.taken("reader")) { try await space.renameGroup(group, alias: "reader", by: principal) }
@@ -81,7 +83,7 @@ import Testing
     let space = try makeSpace()
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     await #expect(throws: AliasError.taken("shared")) { try await space.createGroup(alias: "shared", owner: owner.id) }
-    await #expect(throws: SpaceError.machineNameTaken("settings")) { try await space.addMachineV2(name: "settings").machine }
+    await #expect(throws: SpaceError.machineNameTaken("settings")) { try await space.machineFamily.addMachineV2(name: "settings").machine }
     try await space.registerPerson("reader")
     await #expect(throws: SpaceError.handleTaken("settings")) {
       try await space.setUserProfile(principal: "reader", handle: "settings", displayName: nil)

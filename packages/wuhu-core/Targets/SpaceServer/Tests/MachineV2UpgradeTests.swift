@@ -6,6 +6,9 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import MachineContract
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import OperationProtocol
 import Serve
 import SpaceContract
@@ -79,9 +82,9 @@ private struct Fixture {
   let key: Curve25519.Signing.PrivateKey
 
   init(version: String = "0.1.0-dev.122", host: ReleaseHost, dev: Bool = true, warm: Bool = true, boot: Bool = true) async throws {
-    space = try Space.inMemory()
-    let hub = MachineHub(space: space)
-    try registerMachineReleases(space: space, version: boot ? version : SpaceServer.unstampedVersion, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: host.clock))
+    space = try Space.inMemory().registeringMachines()
+    let hub = machineHub(space)
+    try space.machineFamily.registerReleases(version: boot ? version : SpaceServer.unstampedVersion, client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: host.clock))
     space.worker.start()
     if warm, boot, MachineV2ReleaseVersion.isValid(version) { try await releaseSettled(space, version) }
     let devPerson = try await space.ensureDevPerson()
@@ -98,7 +101,7 @@ private struct Fixture {
     guard case let .response(response) = try await handler(request) else { throw OperationError(.invalidResponse) }
     let output = try await response.body.json(EnrollConsumeOutput.self)
     let id = try #require(output.machine)
-    return try #require(try await space.machine(MachineID(rawValue: id)))
+    return try #require(try await space.machineFamily.machine(MachineID(rawValue: id)))
   }
 
   func setting(_ text: String?) async throws {

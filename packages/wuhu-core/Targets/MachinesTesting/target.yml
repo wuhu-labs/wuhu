@@ -1,0 +1,29 @@
+name: MachinesTesting
+kind: library
+testOnly: true
+sources: Tests
+checks:
+  build: [linux, mac]
+dependencies:
+  - Machines
+  - FileSearch
+  - MachinesContract
+  - MachineContract
+  - SpaceIDs
+  - SpaceCore
+  - AgentsContract
+  - TenancyContract
+  - GroupContract
+  - Credentials
+  - ControlledTime
+  - Dependencies
+  - DeterministicDependencies
+  - Clocks
+  - Crypto
+  - Fetch
+  - Logging
+  - OperationProtocol
+  - SessionDomain
+  - StructuredQueries
+  - Wuwei
+  - WuweiQueries

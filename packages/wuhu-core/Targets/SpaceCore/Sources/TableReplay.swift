@@ -1,5 +1,6 @@
 import JSONValue
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 
 // Replays the schema journal and the row journal interleaved by revision, so a

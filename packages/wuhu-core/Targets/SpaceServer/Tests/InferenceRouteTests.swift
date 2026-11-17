@@ -3,6 +3,7 @@ import Foundation
 import InferenceKit
 import JSONValue
 import LoopCore
+import MachinesTesting
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -21,8 +22,8 @@ private func worker(_ harness: SessionHarness, _ tokens: ExecTokens) async throw
 }
 
 private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session: SessionID) async throws -> String {
-  let machine = (try await harness.space.addMachineV2(name: "box")).machine
-  let exec = try await harness.space.reserveExec(machine: machine.id, caller: session.rawValue)
+  let machine = (try await harness.space.machineFamily.addMachineV2(name: "box")).machine
+  let exec = try await harness.space.machineFamily.reserveExec(machine: machine.id, caller: session.rawValue)
   return try await tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
 }
 

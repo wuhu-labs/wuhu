@@ -5,6 +5,7 @@ import Dependencies
   import Foundation
 #endif
 @testable import LoopCore
+import MachinesTesting
 import SessionDomain
 import SpaceCore
 import Testing

@@ -38,7 +38,7 @@ public actor ResponsesSocketRegistry {
   private let maximumAge: Duration
   private let sweepInterval: Duration
 
-  public init(idleTTL: Duration = .seconds(300), maxIdle: Int = 32, maximumAge: Duration = .seconds(55 * 60), sweepInterval: Duration = .seconds(30)) {
+  public init(idleTTL: Duration = .seconds(3600), maxIdle: Int = 256, maximumAge: Duration = .seconds(55 * 60), sweepInterval: Duration = .seconds(30)) {
     precondition(idleTTL > .zero && maxIdle >= 0 && maximumAge > .zero && sweepInterval > .zero)
     @Dependency(\.continuousClock) var clock
     self.clock = AnyClock(clock)
@@ -56,10 +56,15 @@ public actor ResponsesSocketRegistry {
       throw InferenceError.invalidInput(status: 422, body: "WebSocket inference requires a Responses endpoint")
     }
     var retired: ResponsesWebSocketSession?
-    if let entry = entries[id] {
-      if entry.identity != model.socketIdentity || model.socketIdentity == nil || entry.born.duration(to: clock.now) >= maximumAge {
+    var aged: ResponsesWebSocketSession?
+    if var entry = entries[id] {
+      if entry.identity != model.socketIdentity || model.socketIdentity == nil {
         retired = entry.session
         entries.removeValue(forKey: id)
+      } else if entry.born.duration(to: clock.now) >= maximumAge {
+        aged = entry.session
+        entry.born = clock.now
+        entries[id] = entry
       }
     }
     let lease = UUID()
@@ -68,6 +73,7 @@ public actor ResponsesSocketRegistry {
     entry.idleSince = nil
     entries[id] = entry
     await retired?.invalidate()
+    await aged?.closeSocket()
     guard entries[id]?.lease == lease else { throw CancellationError() }
     return (entry.session, lease)
   }

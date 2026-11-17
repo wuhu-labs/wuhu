@@ -5,6 +5,7 @@ import OrderedCollections
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 
 // The data verbs pages and scripts share: typed reads, named row
 // edits, and frontmatter attributes. Each takes a path by the one rule, a

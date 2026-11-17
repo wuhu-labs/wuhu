@@ -8,9 +8,12 @@ import Dependencies
 #endif
 import JSONValue
 import LoopCore
+import MachineContract
+import MachinesContract
 import SessionTools
 import SpaceContract
 import SpaceCore
+import SpaceIDs
 import SpaceTools
 import Testing
 
@@ -84,4 +87,26 @@ func failure(_ name: String, _ input: JSONValue, _ context: SpaceToolContext) as
 
 func seedFile(_ path: String, _ content: String, _ context: SpaceToolContext) async throws -> WriteOutput {
   try await run("write", .object(["path": .string(path), "content": .string(content)]), context, as: WriteOutput.self)
+}
+
+/// A directory for a suite that drives a fake machine seam: the id the seam names is a machine the actor may use, and
+/// the machine family itself is out of scope.
+struct AnyMachines: Error {}
+
+func anyMachineDirectory(_ machines: MachineID...) -> MachineDirectory {
+  let known = Set(machines.isEmpty ? [copyMachine] : machines)
+  @Sendable func record(_ id: MachineID) -> MachineRecord? {
+    known.contains(id) ? MachineRecord(id: id, name: "box", createdAt: fixedDate, group: .shared, scope: .owner) : nil
+  }
+  return MachineDirectory(
+    machine: { record($0) },
+    usable: { _ in [] },
+    resolve: { _ in nil },
+    resolveUsable: { _, _ in nil },
+    canUse: { _, _ in true },
+    exec: { _ in nil },
+    liveExecs: { [] },
+    liveToolExecs: { _ in [] },
+    reserveExec: { _, _, _, _, _ in throw AnyMachines() },
+  )
 }

@@ -17,7 +17,7 @@ public struct AccountID: RawRepresentable, Hashable, Sendable, Codable {
   }
 }
 
-private func hasPrefixedAlphanumericSuffix(_ candidate: String, prefix: String, count: Int) -> Bool {
+public func hasPrefixedAlphanumericSuffix(_ candidate: String, prefix: String, count: Int) -> Bool {
   guard candidate.hasPrefix(prefix) else { return false }
   let suffix = candidate.dropFirst(prefix.count)
   guard suffix.count == count else { return false }

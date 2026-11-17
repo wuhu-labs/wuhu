@@ -10,6 +10,9 @@ import Foundation
 import JSONValue
 import MachineChannel
 import struct MachineContract.ExecID
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import Serve
 import ServeTesting
 import SessionDomain
@@ -63,13 +66,14 @@ struct Harness {
     } operation: {
       let space = try opening()
       space.worker.provide(AgentCells(session: { _, _ in NoSession() }))
-      let hub = MachineHub(space: space)
+      let machines = space.machines(credentials: nil, secrets: nil)
+      let hub = MachineHub(machines: machines)
       let devPerson = dev ? try await space.ensureDevPerson() : nil
       let handler = SpaceServer.configuredHandler(
         space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern, aiDisclosure: aiDisclosure,
         fingerprint: fingerprint, devPerson: devPerson, publicRead: publicRead, webContent: WebContent(webApp: webApp, views: views, scripts: ["shell.js": Data(), "worker.js": Data(), "space-core.js": Data("export function createSpace() {}".utf8)]),
         webPushApplicationServerKey: webPushApplicationServerKey,
-        credentials: credentials, identityController: identityController, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson, fingerprint: fingerprint), pageFetch: pageFetch,
+        credentials: credentials, identityController: identityController, listenerRoutes: machineListenerRoutes(space: space, machines: machines, hub: hub, devPerson: devPerson, fingerprint: fingerprint), pageFetch: pageFetch,
       )
       return (space, handler)
     }
@@ -124,7 +128,7 @@ func json(_ response: Response) async throws -> JSONValue {
 
 // An exec's in-process caller leg: what the WebSocket route hands a dialing client.
 func connectExecCaller(_ id: ExecID, space: Space, hub: MachineHub) async throws -> any FrameTransport {
-  guard let record = try await space.execRecord(id) else { throw MachineHubError.execNotFound(id) }
+  guard let record = try await space.machines(credentials: nil, secrets: nil).execRecord(id) else { throw MachineHubError.execNotFound(id) }
   let (server, client) = WebSocket.pair()
   let leg: ExecLeg = if let caller = record.caller { .session(SessionID(rawValue: caller)) } else { .person(try await space.ensureDevPerson().account) }
   _ = try? hub.callerScope.run("in-process-exec-caller") {

@@ -1,3 +1,5 @@
+@testable import Machines
+import MachinesContract
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -9,6 +11,7 @@ import Fetch
 import InferenceKit
 import LoopCore
 import MachineContract
+import MachinesTesting
 import class MainHub.Hub
 import SessionDomain
 import SessionTools
@@ -76,8 +79,8 @@ extension SessionRuntime {
 
 extension ExecTokens {
   func credential(session: SpaceIDs.SessionID, exec: MachineContract.ExecID, timeout: Double?, now: Date) async throws -> MachineContract.ExecSessionCredential {
-    let record = try await space.execRecord(exec)!
-    let value = try await credential(session: session, group: record.group, machine: record.machine, exec: exec, timeout: .seconds(timeout ?? Self.longestLife), issuedAt: now)
+    let record = try await space.machineFamily.execRecord(exec)!
+    let value = try await execCredentials.credential(session: session, group: record.group, machine: record.machine, exec: exec, timeout: .seconds(timeout ?? Self.longestLife), issuedAt: now)
     return .init(token: value.object!["token"]!.stringValue!, spaceURL: spaceURL)
   }
 }

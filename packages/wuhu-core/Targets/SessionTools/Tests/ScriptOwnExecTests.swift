@@ -1,6 +1,8 @@
 import Crypto
 import DeterministicDependencies
 import JSONValue
+@testable import Machines
+import MachinesTesting
 @testable import SessionTools
 @testable import SpaceCore
 @testable import SpaceServer
@@ -17,11 +19,11 @@ import Testing
 
   @Test func ownedExecOnAnAbsentMachineIsCancelledThroughTheRoute() async throws {
     let space = try Space.inMemory()
-    let hub = MachineHub(space: space)
+    let hub = MachineHub(machines: space.machineFamily)
     do {
       try await withRig(space: { space }, machineHub: hub) { rig in
-        let machine = try await rig.space.addMachineV2(name: "unavailable").machine.id
-        let own = try await rig.space.reserveExec(machine: machine, caller: rig.session.rawValue)
+        let machine = try await rig.space.machineFamily.addMachineV2(name: "unavailable").machine.id
+        let own = try await rig.space.machineFamily.reserveExec(machine: machine, caller: rig.session.rawValue)
         let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec(\(JSONValue.string(own.id.rawValue).jsonString()));result('allowed')}catch(e){result(e.code)}")
         #expect(result == "allowed")
         let ownID = own.id.rawValue
@@ -33,7 +35,7 @@ import Testing
           if rig.space.worker.cell(MachineCell.ID(machine.rawValue)).operation(ownID)?.terminal != nil { break }
         }
         try Task.checkCancellation()
-        #expect(try await rig.space.execRecord(own.id)?.terminal == .cancelled)
+        #expect(try await rig.space.machineFamily.execRecord(own.id)?.terminal == .cancelled)
       }
       await hub.callerScope.close()
     } catch {
@@ -46,10 +48,10 @@ import Testing
     let world = MachineWorld()
     try await withRig(world: world) { rig in
       try await world.attach("box", in: rig.space)
-      let machine = try #require(try await rig.space.machines().first)
-      let foreign = try await rig.space.reserveExec(machine: machine.id, caller: "stranger", group: .shared)
-      let own = try await rig.space.reserveExec(machine: machine.id, caller: rig.session.rawValue)
-      let context = SpaceToolContext(space: rig.space, principal: try await rig.space.principal(of: rig.session))
+      let machine = try #require(try await rig.space.machineFamily.machines().first)
+      let foreign = try await rig.space.machineFamily.reserveExec(machine: machine.id, caller: "stranger", group: .shared)
+      let own = try await rig.space.machineFamily.reserveExec(machine: machine.id, caller: rig.session.rawValue)
+      let context = SpaceToolContext(space: rig.space, directory: rig.space.machineFamily.directory, principal: try await rig.space.principal(of: rig.session))
       #expect(try await context.ownExecs().map(\.id) == [own.id])
       do { _ = try await context.ownExecStatus(foreign.id.rawValue); Issue.record("foreign exec status allowed") }
       catch { #expect(Wire.failure(error).payload.object?["code"] == "notFound") }

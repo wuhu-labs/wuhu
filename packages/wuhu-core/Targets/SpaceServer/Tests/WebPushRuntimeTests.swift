@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Foundation
 import Logging
 import LoopCore
+import MachinesTesting
 import NIOCore
 import Scratch
 import SessionDomain

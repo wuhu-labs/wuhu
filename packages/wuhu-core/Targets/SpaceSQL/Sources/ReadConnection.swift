@@ -8,6 +8,7 @@ import GRDBSQLite
 import Logging
 import struct SpaceIDs.GroupID
 import StructuredQueriesCore
+import enum Wuwei.SQLiteLibrary
 
 private let multipleStatements =
   "Multiple statements found. To execute multiple statements, use Database.execute(sql:) or Database.allStatements(sql:) instead."
@@ -68,6 +69,7 @@ final class ReadConnection {
     screensText: Bool = true,
   ) throws {
     var handle: OpaquePointer?
+    SQLiteLibrary.memoryStatisticsOff
     let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_URI
     let code = sqlite3_open_v2(":memory:", &handle, flags, nil)
     guard code == SQLITE_OK, let handle else {

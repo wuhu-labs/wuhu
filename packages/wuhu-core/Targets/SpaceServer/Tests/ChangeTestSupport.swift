@@ -1,3 +1,5 @@
+@testable import Machines
+import MachinesTesting
 @testable import SpaceCore
 import Wuwei
 import WuweiQueries
@@ -9,9 +11,10 @@ func watchSpaceTables(_ tables: [String], in space: Space) async -> (changes: As
   return (changes, cancel)
 }
 
-func testFileOperations(in space: Space) -> [(machine: String, row: MachineFileOperation)] {
-  space.worker.read { reader in
-    reader.cell(SpaceCell.ID("space")).machines().flatMap { machine in
+func testFileOperations(in space: Space) async throws -> [(machine: String, row: MachineFileOperation)] {
+  let machines = try await space.machineFamily.machines()
+  return space.worker.read { reader in
+    machines.flatMap { machine in
       reader.cell(MachineCell.ID(machine.id.rawValue)).fileOperationsForTest().map { (machine.id.rawValue, $0) }
     }
   }

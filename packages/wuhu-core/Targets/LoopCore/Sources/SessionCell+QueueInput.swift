@@ -4,8 +4,8 @@ import struct SpaceIDs.SessionID
 #else
   import Foundation
 #endif
+import struct AgentsContract.SessionPut
 import SessionDomain
-import struct SpaceCore.SessionPut
 import StructuredQueries
 import Wuwei
 import WuweiQueries

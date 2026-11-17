@@ -1,6 +1,8 @@
 import InferenceKit
 import Logging
 import LoopCore
+import Machines
+import MachinesContract
 import struct MainHub.EventSources
 import SessionDomain
 import SessionTools
@@ -24,7 +26,7 @@ struct KernelWorker: Sendable {
       archived: { session in
         if let machines {
           do {
-            for record in try await space.liveToolExecs(caller: session.rawValue) {
+            for record in try await machines.machines.directory.liveToolExecs(session.rawValue) {
               do { try await machines.kill(record.id) }
               catch { Logger(label: "wuhu.exec").error("could not kill archived session's exec: \(error)") }
             }

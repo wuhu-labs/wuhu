@@ -1,4 +1,5 @@
 import Dependencies
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

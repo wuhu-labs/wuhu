@@ -4,6 +4,7 @@ import Foundation
 import JSONValue
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 import Testing
 
 @Suite(.deterministicDependencies) struct RowEditTests {

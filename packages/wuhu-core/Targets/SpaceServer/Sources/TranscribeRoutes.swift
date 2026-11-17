@@ -16,6 +16,8 @@ import enum ProviderCapabilities.TranscriptionLimits
 import ServeRouting
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
+import SpaceIDs
 
 func addTranscribeRoutes(_ router: inout Router, space: Space, credentials: CredentialResolver) {
   router.get("/v1/transcribe") { _, _ in

@@ -1,5 +1,6 @@
 import struct SpaceContract.HiddenSidebarAddress
 import struct SpaceContract.UserSettingsPayload
+import SpaceIDs
 import StructuredQueries
 import Wuwei
 import WuweiQueries

@@ -1,5 +1,7 @@
 import DeterministicDependencies
 import Fetch
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,6 +10,7 @@ import Fetch
 import enum JSONValue.JSONValue
 import MachineChannel
 import MachineContract
+import MachinesTesting
 import OperationProtocol
 import OperationRuntime
 import Serve
@@ -19,8 +22,8 @@ import Wuwei
 @Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct ExecStreamAdmissionTests {
   @Test func anAdmittedAdapterCanFinishItsCleanupAfterTheSpaceHasClosed() async throws {
     let space = try makeMachineSpace()
-    let machine = try await space.addMachineV2(name: "late_cleanup", group: .shared).machine.id
-    let record = try await space.reserveExec(machine: machine, group: .shared)
+    let machine = try await space.machineFamily.addMachineV2(name: "late_cleanup", group: .shared).machine.id
+    let record = try await space.machineFamily.reserveExec(machine: machine, group: .shared)
     let cell = MachineCell.ID(machine.rawValue)
     let described = Gate()
     let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
@@ -34,7 +37,7 @@ import Wuwei
     let wire = AdmissionWire()
     defer { wire.finish() }
     try await withThrowingTaskGroup(of: Void.self) { adapters in
-      adapters.addTask { await ExecSocketLink(space: space, record: record, leg: .person(try await space.ensureDevPerson().account)).run(wire.socket(blockAcceptance: true)) }
+      adapters.addTask { await ExecSocketLink(machines: space.machineFamily, record: record, leg: .person(try await space.ensureDevPerson().account)).run(wire.socket(blockAcceptance: true)) }
       defer { wire.releaseAcceptance.open(); adapters.cancelAll() }
       var frames = wire.outgoing.stream.makeAsyncIterator()
       #expect(try #require(await frames.next()).opcode == .control)
@@ -53,12 +56,12 @@ import Wuwei
 
   @Test func aRefusedDuplicateAdapterCannotStopTheAdmittedStreamOrDiscardItsQueuedOutput() async throws {
     let space = try makeMachineSpace()
-    let machine = try await space.addMachineV2(name: "admission", group: .shared).machine.id
-    let record = try await space.reserveExec(machine: machine, group: .shared)
+    let machine = try await space.machineFamily.addMachineV2(name: "admission", group: .shared).machine.id
+    let record = try await space.machineFamily.reserveExec(machine: machine, group: .shared)
     let cell = MachineCell.ID(machine.rawValue)
     let finish = Gate()
     let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(AdmissionProcess(finish: finish))], authorize: { _, _ in })
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     let first = AdmissionWire()
     let duplicate = AdmissionWire()
     defer { first.finish(); duplicate.finish(); finish.open() }
@@ -68,7 +71,7 @@ import Wuwei
       do {
         try await withMachineBox(space: space, hub: hub, machine: machine, client: FetchClient { try await agent.handler($0) }) {
           try await withThrowingTaskGroup(of: Void.self) { adapters in
-            let bridge = ExecSocketLink(space: space, record: record, leg: .person(try await space.ensureDevPerson().account))
+            let bridge = ExecSocketLink(machines: space.machineFamily, record: record, leg: .person(try await space.ensureDevPerson().account))
             adapters.addTask { await bridge.run(first.socket(blockAcceptance: true)) }
             defer { first.releaseAcceptance.open(); adapters.cancelAll() }
             var frames = first.outgoing.stream.makeAsyncIterator()
@@ -123,7 +126,7 @@ import Wuwei
             #expect(ending.timedOut == nil)
             try await adapters.waitForAll()
             #expect(first.closed.isOpen)
-            #expect(try await space.execRecord(record.id)?.terminal == .exited(code: 0))
+            #expect(try await space.machineFamily.execRecord(record.id)?.terminal == .exited(code: 0))
           }
         }
         await agent.shutdown()

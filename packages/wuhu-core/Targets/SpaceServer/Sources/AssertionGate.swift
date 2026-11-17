@@ -1,4 +1,5 @@
 import GroupContract
+import SpaceHTTP
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -11,6 +12,7 @@ import Fetch
 import Serve
 import SpaceCore
 import struct SpaceIDs.SessionID
+import TenancyContract
 
 struct ActingCredential: Sendable {
   var key: KeyRecord

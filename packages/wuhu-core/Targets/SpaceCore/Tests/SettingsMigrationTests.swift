@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import GroupContract
+import SpaceIDs
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

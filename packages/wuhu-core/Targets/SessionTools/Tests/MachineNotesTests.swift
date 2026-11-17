@@ -7,6 +7,7 @@ import DeterministicDependencies
 import struct Instructions.InstructionRenderer
 import struct Instructions.InstructionSourceFailure
 import JSONValue
+import MachinesTesting
 @testable import MainHub
 import class MainHub.Hub
 import SessionDomain
@@ -41,8 +42,9 @@ private func writeNotes(_ space: Space, _ alias: String) async throws {
 }
 
 private func touch(_ world: inout ToolWorld, _ address: String) async throws -> String {
-  guard case .read = try await world.run("read", .object(["path": .string(address)])) else {
-    throw Mismatch("read \(address) failed")
+  let payload = try await world.run("read", .object(["path": .string(address)]))
+  guard case .read = payload else {
+    throw Mismatch("read \(address) failed: \(payload)")
   }
   return world.delivered?.text ?? ""
 }
@@ -52,13 +54,13 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let studio = try await space.addMachineV2(name: "studio", scope: .reachable).machine.id.rawValue
-      let mini = try await space.addMachineV2(name: "mini").machine.id.rawValue
+      let studio = try await space.machineFamily.addMachineV2(name: "studio", scope: .reachable).machine.id.rawValue
+      let mini = try await space.machineFamily.addMachineV2(name: "mini").machine.id.rawValue
       for machine in [studio, mini] {
         _ = try await space.fs(.shared).write("/_/machines/\(machine)/AGENTS.md", Data("repo manual".utf8), ifMatch: nil)
         _ = try await space.fs(.shared).write("/_/machines/\(machine)/.agents/skills/deploy/SKILL.md", Data(deploySkill.utf8), ifMatch: nil)
       }
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
       let first = try await touch(&world, "machines://studio/work/repo/README.md")
       #expect(first.components(separatedBy: "repo manual").count == 2)
       #expect(first.contains("machines://\(studio)/work/repo/AGENTS.md is identical to /_/machines/\(studio)/AGENTS.md (loaded earlier)"))
@@ -105,11 +107,11 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let machine = try await space.addMachineV2(name: "studio").machine.id.rawValue
+      let machine = try await space.machineFamily.addMachineV2(name: "studio").machine.id.rawValue
       try await writeNotes(space, "studio")
       _ = try await space.fs(.shared).write("/_/machines/\(machine)/.agents/skills/unreadable/SKILL.md", Data([0xFF]), ifMatch: nil)
       _ = try await space.fs(.shared).write("/_/machines/\(machine)/.agents/skills/missing/readme.md", Data("not a skill".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
       let notice = try await touch(&world, "machines://studio/work/repo/README.md")
       #expect(notice.contains("- deploy — Ship it to the fleet."))
       #expect(notice.contains("repo manual"))
@@ -121,9 +123,9 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let folder = "/_/machines/\(try await space.addMachineV2(name: "studio").machine.id.rawValue)"
+      let folder = "/_/machines/\(try await space.machineFamily.addMachineV2(name: "studio").machine.id.rawValue)"
       try await writeNotes(space, "studio")
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       let first = try await touch(&world, "machines://studio/work/repo/README.md")
       let notes = try #require(first.range(of: "<AGENTS.md from=\"\(folder)/AGENTS.md\">\nstudio manual\n</AGENTS.md>"))
@@ -144,7 +146,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let folder = "/_/machines/\(try await space.addMachineV2(name: "studio").machine.id.rawValue)"
+      let folder = "/_/machines/\(try await space.machineFamily.addMachineV2(name: "studio").machine.id.rawValue)"
       let notes = "{{#session.agent}}Hello {{session.title}}.{{/session.agent}}\n{{> extra.md}}\n{{> /shared/house.md}}\n{{> nowhere.md}}\n"
       _ = try await space.fs(.shared).write("\(folder)/AGENTS.md", Data(notes.utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("\(folder)/extra.md", Data("notes extra\n".utf8), ifMatch: nil)
@@ -156,7 +158,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
       let machineFS = box()
       machineFS.put("/work/repo/AGENTS.md", "repo for {{session.title}}\n{{> docs/part.md}}\n", mtime: 2)
       machineFS.put("/work/repo/docs/part.md", "repo part\n", mtime: 1)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space, name: "studio hand"))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space, name: "studio hand"))
 
       let notice = try await touch(&world, "machines://studio/work/repo/README.md")
       #expect(notice.contains("<AGENTS.md from=\"\(folder)/AGENTS.md\">\nHello studio hand.\nnotes extra\nhouse rules\n(template error in \(folder)/AGENTS.md: partial nowhere.md: "), "\(notice)")
@@ -172,7 +174,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      _ = try await space.addMachineV2(name: "studio").machine
+      _ = try await space.machineFamily.addMachineV2(name: "studio").machine
       try await writeNotes(space, "studio")
       let machineFS = box()
       machineFS.put("/work/repo/.agents/skills/deploy/SKILL.md", "---\nname: deploy\ndescription: Root deploy.\n---\n", mtime: 1)
@@ -180,7 +182,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
       machineFS.put("/work/repo/app/.agents/skills/deploy/SKILL.md", "---\nname: deploy\ndescription: App deploy.\n---\n", mtime: 1)
       machineFS.put("/work/repo/app/.agents/skills/lint/SKILL.md", "---\nname: lint\ndescription: App lint.\nwuhu_when: {kind: task}\n---\n", mtime: 1)
       machineFS.put("/work/repo/app/main.swift", "app", mtime: 1)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       let notice = try await touch(&world, "machines://studio/work/repo/app/main.swift")
       #expect(notice.contains("- deploy — App deploy. (machines://"), "\(notice)")
@@ -196,14 +198,14 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
       let alice = try await space.createGroup(alias: "alice", owner: (try await space.ensureDevPerson()).account)
-      let studio = try await space.addMachineV2(name: "studio", scope: .reachable).machine.id.rawValue
-      let miniRecord = try await space.addMachineV2(name: "mini").machine
+      let studio = try await space.machineFamily.addMachineV2(name: "studio", scope: .reachable).machine.id.rawValue
+      let miniRecord = try await space.machineFamily.addMachineV2(name: "mini").machine
       let mini = miniRecord.id.rawValue
-      _ = try await space.moveMachine(miniRecord.id, to: alice)
+      _ = try await space.machineFamily.moveMachine(miniRecord.id, to: alice)
       try await writeNotes(space, "studio")
       _ = try await space.fs(alice).write("/_/machines/\(mini)/AGENTS.md", Data("mini manual".utf8), ifMatch: nil)
       let session = try await makeSession(space, group: alice)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: session)
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: session)
 
       let shared = try await touch(&world, "machines://studio/tmp/b.txt")
       #expect(shared.contains("<AGENTS.md from=\"wuhu://shared.localspace/_/machines/\(studio)/AGENTS.md\">\nstudio manual"))
@@ -217,9 +219,9 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let studio = try await space.addMachineV2(name: "studio").machine
+      let studio = try await space.machineFamily.addMachineV2(name: "studio").machine
       try await writeNotes(space, "studio")
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       #expect(try await touch(&world, "machines://\(studio.id.rawValue)/tmp/b.txt").contains("studio manual"))
       #expect(try await touch(&world, "machines://studio/work/loose/a.txt").isEmpty)
@@ -230,11 +232,11 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      _ = try await space.addMachineV2(name: "studio").machine
-      _ = try await space.addMachineV2(name: "mini").machine
+      _ = try await space.machineFamily.addMachineV2(name: "studio").machine
+      _ = try await space.machineFamily.addMachineV2(name: "mini").machine
       try await writeNotes(space, "studio")
       try await writeNotes(space, "mini")
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       let studio = try await touch(&world, "machines://studio/tmp/b.txt")
       #expect(studio.contains("studio manual"))
@@ -249,8 +251,8 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      _ = try await space.addMachineV2(name: "studio").machine
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      _ = try await space.machineFamily.addMachineV2(name: "studio").machine
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       #expect(try await touch(&world, "machines://studio/tmp/b.txt").isEmpty)
       try await writeNotes(space, "studio")
@@ -262,9 +264,9 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      _ = try await space.addMachineV2(name: "studio").machine
+      _ = try await space.machineFamily.addMachineV2(name: "studio").machine
       _ = try await space.fs(.shared).write("/_/machines/studio/.agents/skills/empty/notes.md", Data("x".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       #expect(try await touch(&world, "machines://studio/tmp/b.txt").isEmpty)
     }
@@ -274,9 +276,9 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      _ = try await space.addMachineV2(name: "studio").machine
+      _ = try await space.machineFamily.addMachineV2(name: "studio").machine
       try await writeNotes(space, "studio")
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       #expect(try await touch(&world, "machines://studio/tmp/b.txt").contains("studio manual"))
       _ = try await space.fs(.shared).write("/_/machines/studio/AGENTS.md", Data("edited manual".utf8), ifMatch: nil)
@@ -291,10 +293,10 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let studio = try await space.addMachineV2(name: "studio").machine
+      let studio = try await space.machineFamily.addMachineV2(name: "studio").machine
       try await writeNotes(space, "studio")
-      _ = try await space.renameMachine(studio.id, name: "atelier")
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      _ = try await space.machineFamily.renameMachine(studio.id, name: "atelier")
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       #expect(try await touch(&world, "machines://atelier/tmp/b.txt").contains("studio manual"))
       #expect(try await space.readTextForTest("/_/machines/atelier/AGENTS.md") == "studio manual")
@@ -306,8 +308,8 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let id = try await space.addMachineV2(name: "studio").machine.id.rawValue
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam) }), session: try await makeSession(space))
+      let id = try await space.machineFamily.addMachineV2(name: "studio").machine.id.rawValue
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: box().seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
 
       guard case .write = try await world.run("write", .object(["path": "/_/machines/studio/AGENTS.md", "content": "v1"])) else {
         throw Mismatch("a session writes a machine's notes by its name")

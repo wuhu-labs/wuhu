@@ -1,6 +1,7 @@
 import struct Credentials.SpaceSecretStores
 import Dependencies
 import Fetch
+import SpaceIDs
 import Synchronization
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -12,6 +13,7 @@ import JSONValue
 import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
+import MachinesContract
 import enum ModelProviders.ModelPlacementReason
 import struct ProviderCapabilities.CapabilityError
 import SessionDomain
@@ -24,6 +26,7 @@ public actor Hub {
   nonisolated let sessionEffects: SessionEffects
   nonisolated let secrets: SpaceSecretStores?
   nonisolated public let machines: MachineSeam?
+  nonisolated public let directory: MachineDirectory?
   nonisolated let resolveModelExecutor: (@Sendable (_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor)?
   nonisolated let resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)?
   nonisolated let prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)?
@@ -32,6 +35,7 @@ public actor Hub {
     space: Space,
     secrets: SpaceSecretStores? = nil,
     machines: MachineSeam? = nil,
+    directory: MachineDirectory? = nil,
     resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
     resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
     prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
@@ -41,6 +45,7 @@ public actor Hub {
     self.space = space
     self.secrets = secrets
     self.machines = machines
+    self.directory = directory
     self.resolveModelExecutor = resolveModelExecutor
     self.resolveModelGroup = resolveModelGroup
     self.prepareModelRoute = prepareModelRoute

@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import SpaceIDs
 import StructuredQueries
 import Wuwei
 import WuweiQueries

@@ -4,6 +4,8 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+@testable import Machines
+import MachinesTesting
 import enum SpaceContract.ShareLogin
 import SpaceCore
 import Testing
@@ -81,19 +83,15 @@ struct EnrollRoutesTests {
     #expect(consumed.status == .ok)
   }
 
-  @Test func consumeNamesTheMachineOnlyForAMachineAccountToken() async throws {
+  @Test func consumeTakesNoMachineTokenAndNamesNoMachine() async throws {
     let harness = try await Harness()
-    let machine = (try await harness.space.addMachineV2(name: "box")).machine
-    let minted = try await harness.space.mintJoinToken(
-      account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600,
-    )
-    let consumed = try await postJSON(harness, "/v1/enroll/consume", [
+    let (machine, minted) = try await harness.space.machineFamily.addMachineV2(name: "box")
+    let refused = try await postJSON(harness, "/v1/enroll/consume", [
       "token": .string(minted.token.rawValue), "pubkey": .string(testPubkey("box")),
     ])
-    #expect(consumed.status == .ok)
-    let payload = try await json(consumed)
-    #expect(payload.stringValue(at: "machine") == machine.id.rawValue)
-    #expect(payload.stringValue(at: "machineName") == "box")
+    #expect(refused.status == .unauthorized)
+    #expect((try await json(refused)).stringValue(at: "code") == "tokenInvalid")
+    #expect(try await harness.space.machineFamily.enrollMachineV2(token: minted.token, pubkey: testPubkey("box")).id == machine.id)
 
     let human = try await harness.space.addAccount(kind: .human, name: nil)
     let deviceToken = try await harness.space.mintJoinToken(

@@ -1,4 +1,5 @@
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 
 /// The space path of the doc or page a person had open when sending. It is

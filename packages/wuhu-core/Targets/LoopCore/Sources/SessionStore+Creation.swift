@@ -1,4 +1,5 @@
 import enum AgentsContract.SessionKind
+import struct AgentsContract.SessionPut
 import Dependencies
 import struct SpaceIDs.SessionID
 import struct SpaceIDs.SubscriptionID

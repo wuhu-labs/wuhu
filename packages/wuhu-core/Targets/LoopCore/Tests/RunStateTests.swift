@@ -2,6 +2,7 @@ import Dependencies
 import Foundation
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import SessionDomain
 import SpaceCore
 import struct SpaceIDs.SessionID

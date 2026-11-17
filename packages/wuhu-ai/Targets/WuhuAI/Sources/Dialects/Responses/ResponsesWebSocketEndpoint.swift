@@ -82,7 +82,7 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
       let size = byteLimit
       return ResponsesSocketRequest(
         handshake: WebSocketRequest(url: url, headers: headers, limits: .init(frameBytes: size, messageBytes: size, bufferedReceiveBytes: size, outboundMessageBytes: size)),
-        body: body, replayScope: endpoint.replayScope, routeEpoch: endpoint.routeEpoch,
+        body: body, replayScope: endpoint.replayScope, routeEpoch: endpoint.routeEpoch, durableChain: !endpoint.isCodex,
       )
     }
     return AsyncStream { continuation in
@@ -111,4 +111,5 @@ struct ResponsesSocketRequest: Sendable {
   var body: OrderedDictionary<String, JSONValue>
   var replayScope: String?
   var routeEpoch: String?
+  var durableChain: Bool
 }

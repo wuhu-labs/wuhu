@@ -3,9 +3,9 @@
 #else
   import Foundation
 #endif
+import struct AgentsContract.SessionPut
 import SessionDomain
 import SessionTools
-import struct SpaceCore.SessionPut
 import StructuredQueries
 import struct WuhuAI.ToolCall
 import Wuwei

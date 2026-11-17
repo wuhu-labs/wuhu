@@ -5,6 +5,7 @@
 #endif
 
 import JSONValue
+import SpaceIDs
 import SpaceSQL
 
 extension Space {

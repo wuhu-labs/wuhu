@@ -4,6 +4,7 @@ import Crypto
 import Dependencies
 @testable import ExecSupervisor
 import Fetch
+@testable import Machines
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -12,6 +13,9 @@ import Fetch
 import JSONValue
 import MachineChannel
 import MachineContract
+import Machines
+import MachinesContract
+import MachinesTesting
 import OperationRuntime
 import Serve
 import ServeRouting
@@ -51,6 +55,7 @@ func makeMachineSpace(seed: UInt64 = 7) throws -> Space {
   } operation: {
     let space = try Space.inMemory()
     _ = space.worker
+    _ = space.machines(credentials: nil, secrets: nil)
     return space
   }
 }
@@ -69,14 +74,15 @@ final class TestServer: Sendable {
     secrets: SpaceSecretStores? = nil,
   ) async throws {
     self.space = space
+    let machines = space.machines(credentials: tokens?.execCredentials, secrets: secrets)
     hub = withDependencies {
       $0.continuousClock = clock
       $0.date = DateGenerator { Date() }
     } operation: {
-      MachineHub(space: space, tokens: tokens, secrets: secrets)
+      MachineHub(machines: machines)
     }
     let devPerson = dev ? try await space.ensureDevPerson() : nil
-    handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, secrets: secrets, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
+    handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, secrets: secrets, listenerRoutes: machineListenerRoutes(space: space, machines: machines, hub: hub, devPerson: devPerson))
     api = ServeTesting.client(upgrading: handler)
     (sessions, sessionsContinuation) = AsyncStream.makeStream()
   }
@@ -240,26 +246,27 @@ func withMachineBox<R>(
   _ body: () async throws -> R,
 ) async throws -> R {
   let pubkey = try await seedBoxKey(space: space, machine: machine.rawValue)
-  let link = try #require(await BoxLink(worker: space.worker, machine: machine.rawValue, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
+  let link = try #require(await BoxLink(worker: space.worker, machine: machine.rawValue, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: space.machineFamily.buffers) {
     try await hub.prepare($0, machine: machine.rawValue)
   })
   return try await withThrowingTaskGroup(of: Void.self) { tasks in
     tasks.addTask { await link.run(client: client) }
     defer { link.close(); tasks.cancelAll() }
-    try #require(try await realPollUntil { try await space.machineDescription(machine) != nil })
+    try #require(try await realPollUntil { try await space.machineFamily.machineDescription(machine) != nil })
     return try await body()
   }
 }
 
 func machineListenerRoutes(
-  space: Space, hub: MachineHub, devPerson: ResolvedPerson?, version: String = SpaceServer.unstampedVersion,
+  space: Space, machines: Machines? = nil, hub: MachineHub, devPerson: ResolvedPerson?, version: String = SpaceServer.unstampedVersion,
   fingerprint: String? = nil,
 ) -> Router {
-  let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
+  let machines = machines ?? space.machines(credentials: nil, secrets: nil)
+  let upgrades = MachineV2Upgrades(worker: machines.worker, settings: { try? await space.fs(.settings).read(MachineUpgradeFile.path).1 }, serverVersion: version)
   var router = Router()
-  addMachineV2Routes(&router, space: space, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
+  addMachineV2Routes(&router, machines: machines, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
     @Dependency(\.date) var date
-    return try await requestPrincipal(request, space: space, devPerson: devPerson, date: date)
+    return machineCallerVerdict(try await requestPrincipal(request, space: space, devPerson: devPerson, date: date), space: space)
   }
   return router
 }

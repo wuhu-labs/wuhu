@@ -1,3 +1,5 @@
+import SpaceHTTP
+import SpaceIDs
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -12,6 +14,7 @@ import Serve
 import ServeRouting
 import SpaceContract
 import SpaceCore
+import TenancyContract
 
 func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChallenges, fingerprint: String?, devPerson: ResolvedPerson?, keyStreams: KeyStreams) {
   @Dependency(\.date) var dateGen
@@ -155,21 +158,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
     let input = try await request.json(EnrollConsumeInput.self)
     do {
       let key = try await space.consumeJoinToken(JoinToken(rawValue: input.token), pubkey: input.pubkey)
-      var machine = try await space.machine(account: key.account)
-      // A join names an unnamed box only. A machine that already carries a
-      // name keeps it: renaming is `PUT /v1/machine/:id/name`, never a
-      // side effect of rejoining from a differently-named host.
-      if let joining = machine, joining.name == nil,
-         let preferred = input.name, let normalized = MachineName.normalized(preferred)
-      {
-        machine = try await space.claimMachineName(joining.id, preferred: normalized)
-      }
-      return try Response.json(EnrollConsumeOutput(
-        account: key.account.rawValue,
-        capabilities: key.capabilities.map(\.rawValue).sorted(),
-        machine: machine?.id.rawValue,
-        machineName: machine?.name,
-      ))
+      return try Response.json(EnrollConsumeOutput(account: key.account.rawValue, capabilities: key.capabilities.map(\.rawValue).sorted(), machine: nil, machineName: nil))
     } catch is JoinTokenRejected {
       return errorResponse(.unauthorized, code: "tokenInvalid", message: "join token rejected")
     } catch SpaceError.malformedPubkey(let pubkey) {

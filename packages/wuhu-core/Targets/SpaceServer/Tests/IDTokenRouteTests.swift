@@ -5,6 +5,7 @@ import Foundation
 import JSONValue
 import LoopCore
 import MachineContract
+import MachinesTesting
 import SessionDomain
 import SpaceCore
 import struct SpaceIDs.SessionID
@@ -30,8 +31,8 @@ import Testing
     let tokens = harness.runtime.tokens
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let session = try await harness.store.createSession(group: .shared, title: "coder", kind: .agent, createdBy: "owner", executor: model)
-    let machine = (try await harness.space.addMachineV2(name: "box")).machine
-    let exec = try await harness.space.reserveExec(machine: machine.id, caller: session.rawValue)
+    let machine = (try await harness.space.machineFamily.addMachineV2(name: "box")).machine
+    let exec = try await harness.space.machineFamily.reserveExec(machine: machine.id, caller: session.rawValue)
     let token = try await tokens.credential(session: session, exec: exec.id, timeout: 600, now: Date()).token
     return Rig(harness: harness, tokens: tokens, key: key, session: session, machine: machine.id, exec: exec.id, request: token)
   }

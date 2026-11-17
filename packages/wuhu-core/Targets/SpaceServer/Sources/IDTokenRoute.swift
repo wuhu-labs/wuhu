@@ -4,12 +4,14 @@
   import Foundation
 #endif
 import Dependencies
+import MachinesContract
 import func MainHub.fetchOrigin
 import Serve
 import ServeRouting
 import SpaceCore
+import SpaceHTTP
 
-func addIDTokenRoute(_ router: inout Router, space: Space, tokens: ExecTokens?, identity: IdentityController?) {
+func addIDTokenRoute(_ router: inout Router, space: Space, tokens: ExecTokens?, directory: MachineDirectory, identity: IdentityController?) {
   @Dependency(\.date) var date
   @Dependency(\.uuid) var uuid
   router.get("/v1/id-token") { request, _ in
@@ -17,7 +19,7 @@ func addIDTokenRoute(_ router: inout Router, space: Space, tokens: ExecTokens?, 
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix), let tokens,
           let claims = try await tokens.identity.credential(String(header.dropFirst("Bearer ".count + ExecTokens.prefix.count)))
     else { return errorResponse(.unauthorized, code: "unauthorized", message: "a signed session credential is required") }
-    switch await sessionVerdict(String(header.dropFirst("Bearer ".count)), tokens: tokens, space: space, now: now) {
+    switch await sessionVerdict(String(header.dropFirst("Bearer ".count)), tokens: tokens, space: space, directory: directory, now: now) {
     case let .refused(response): return response
     case .session: break
     case .script: preconditionFailure("a signed exec credential cannot be a script bearer")

@@ -1,3 +1,5 @@
+import AgentsContract
+import SpaceIDs
 import struct SpaceIDs.MessageID
 import struct SpaceIDs.RequestID
 import struct SpaceIDs.SessionID

@@ -83,12 +83,3 @@ struct TableRowRow {
   @Column("deleted_rev") var deletedRev: Int64?
   @Column("payload") var payload: String
 }
-
-@Table("machines")
-struct MachineRow {
-  @Column("id", primaryKey: true) var id: String
-  @Column("account_id") var accountID: String
-  @Column("created_at") var createdAt: String
-  @Column("grp") var grp: String
-  @Column("scope") var scope: String
-}

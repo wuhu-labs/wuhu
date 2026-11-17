@@ -14,6 +14,8 @@ import SpaceCore
 import struct SpaceFS.Entry
 import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
+import SpaceHTTP
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import SpaceTools
 import Wuwei

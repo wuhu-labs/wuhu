@@ -1,3 +1,4 @@
+import SpaceIDs
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -22,8 +23,8 @@ import struct SpaceContract.PixelSize
 import struct SpaceContract.WriteOutput
 import enum SpaceCore.ImageFitting
 import struct SpaceCore.SessionHome
-import enum SpaceCore.SpaceError
 import struct SpaceFS.SpacePath
+import enum SpaceIDs.SpaceError
 import Synchronization
 
 func neverOverwrites(_ path: String) -> ToolProblem {

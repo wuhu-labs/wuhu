@@ -2,6 +2,7 @@ import Dispatch
 import GRDBSQLite
 import SpaceSQL
 import Synchronization
+import enum Wuwei.SQLiteLibrary
 
 final class FixtureWriter: Sendable {
   private let handle: Mutex<OpaquePointer>
@@ -9,6 +10,7 @@ final class FixtureWriter: Sendable {
 
   init(path: String) throws {
     var handle: OpaquePointer?
+    SQLiteLibrary.memoryStatisticsOff
     let code = sqlite3_open_v2(path, &handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX, nil)
     guard let handle else { preconditionFailure("SQLite did not allocate a fixture connection") }
     guard code == SQLITE_OK else {

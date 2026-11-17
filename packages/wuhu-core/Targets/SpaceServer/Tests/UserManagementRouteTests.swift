@@ -5,9 +5,11 @@ import Fetch
 import Foundation
 import GroupContract
 import JSONValue
+import MachinesTesting
 import struct SpaceContract.UserProfileInput
 import SpaceCore
 import struct SpaceIDs.AccountID
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies) struct UserManagementRouteTests {
@@ -265,12 +267,12 @@ import Testing
     #expect(harness.space.cell._context.settings().isSpaceAdmin(account: root.record.id) == true)
   }
 
-  @Test func machineAndContractorAccountsAreNotRemovableHere() async throws {
+  @Test func aNonPersonAccountIsNotRemovableHere() async throws {
     let root = try await user(name: "root", admin: true)
-    let machine = (try await harness.space.addMachineV2(name: "box")).machine
-    let refused = try await send(.delete, "/v1/accounts/\(machine.account.rawValue)", key: root.key)
+    let contractor = try await harness.space.addAccount(kind: .space, name: "contractor")
+    let refused = try await send(.delete, "/v1/accounts/\(contractor.id.rawValue)", key: root.key)
     #expect(refused.status == .conflict)
-    #expect((try await json(refused)).stringValue(at: "hint")?.contains("machine revoke") == true)
+    #expect((try await json(refused)).stringValue(at: "code") == "invalidArgument")
   }
 
   @Test func theDevPersonHasOrdinaryAccountIdentityAndSettings() async throws {

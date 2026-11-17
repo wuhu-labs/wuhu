@@ -20,6 +20,8 @@ import JSONValue
 import Logging
 import LoopCore
 import struct MachineContract.ExecID
+import Machines
+import MachinesContract
 import ModelProviders
 import enum ModelProviders.ModelPlacementReason
 import struct OperationProtocol.OperationError
@@ -164,6 +166,7 @@ extension SessionRuntime {
         space: space,
         secrets: secrets,
         machines: machineSeam(hub: hub),
+        directory: hub.machines.directory,
         resolveModelExecutor: modelExecutorResolver(space: space),
         resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
         prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
@@ -192,8 +195,12 @@ extension SessionRuntime {
     let runtime = SessionRuntime(
       execution: execution, owner: owner, metrics: .recording(in: owner.space), tokens: tokens, connection: connection,
     )
+    let machineHub = hub ?? MachineHub(machines: Machines(
+      worker: owner.space.worker, tenancy: owner.space.tenancy, groups: owner.space.groupClients, notes: owner.space.groupNotes,
+      sessions: { try? await owner.space.sessions.record($0).summary },
+    ))
     return SpaceServer.configuredHandler(
-      space: owner.space, hub: hub ?? MachineHub(space: owner.space), sessions: runtime, origin: origin, contentHostPattern: contentHostPattern,
+      space: owner.space, hub: machineHub, sessions: runtime, origin: origin, contentHostPattern: contentHostPattern,
       devPerson: nil, credentials: credentials, secrets: secrets, identityController: identity, machines: owner.machines,
     )
   }

@@ -2,6 +2,8 @@ import Dependencies
 import DeterministicDependencies
 @testable import ExecSupervisor
 import Fetch
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -10,6 +12,7 @@ import Fetch
 import enum JSONValue.JSONValue
 @testable import LoopCore
 import MachineContract
+import MachinesTesting
 import OperationProtocol
 import OperationRuntime
 import SessionDomain
@@ -30,8 +33,8 @@ import WuweiQueries
         let space = try makeMachineSpace()
         _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
         let tokens = try await testTokens(space: space)
-        let hub = MachineHub(space: space, tokens: tokens)
-        let machine = try await space.addMachineV2(name: "box", group: .shared).machine.id
+        let hub = machineHub(space, credentials: tokens.execCredentials)
+        let machine = try await space.machineFamily.addMachineV2(name: "box", group: .shared).machine.id
         let agent = try OperationAgent(machine: machine.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
         let prepared = Gate()
         let answerMayProceed = Gate()
@@ -92,7 +95,7 @@ import WuweiQueries
               #expect(result.output.isEmpty)
               #expect(result.exitCode == 0)
               #expect(!result.reaped)
-              let record = try #require(try await space.execRecord(caller: session.rawValue, toolCallID: callID))
+              let record = try #require(try await space.machineFamily.execRecord(caller: session.rawValue, toolCallID: callID))
               #expect(record.terminal == .exited(code: 0))
               let row = try #require(space.worker.cell(MachineCell.ID(machine.rawValue)).operation(record.id.rawValue))
               #expect(row.stop == nil && !row.stopSent)

@@ -5,6 +5,7 @@ import Serve
 import ServeRouting
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
 
 let defaultPushRelayHosts: Set<String> = ["notifications.wuhu.ai"]
 

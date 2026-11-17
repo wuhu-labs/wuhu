@@ -3,7 +3,9 @@
 #else
   import Foundation
 #endif
+import MachinesContract
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Wuwei
 
@@ -49,9 +51,10 @@ struct MachineFolders: SpaceVFS {
       return try await base.list(path)
     }
     if p.components == Self.root {
-      let machines = try runtime.worker().cell(SpaceCell.ID("space")).machineFolders(group: group, limit: listingLimit, byteLimit: listingByteLimit)
+      var budget = ListingBudget(limit: listingByteLimit)
       var entries: [Entry] = []
-      for machine in machines {
+      for machine in machines(atRoot: true) {
+        try budget.consume(machine.name ?? machine.id)
         entries.append(try await folder(machine.id, named: machine.name ?? machine.id))
       }
       return (try await storedRoot().token, entries.sorted { $0.name < $1.name })
@@ -80,7 +83,7 @@ struct MachineFolders: SpaceVFS {
 
   static func stored(_ path: SpacePath, mutating: Bool, in runtime: SpaceRuntime) async throws -> SpacePath {
     guard path.components.count >= 3, path.components.starts(with: root) else { return path }
-    guard let machine = runtime.worker().cell(SpaceCell.ID("space")).machineFolder(path.components[2]) else {
+    guard let machine = runtime.worker().read({ $0.machines().machineFolder(path.components[2]) }) else {
       throw mutating ? SpaceError.alreadyExists(path.rawValue) : SpaceError.notFound(path.rawValue)
     }
     return try SpacePath(components: root + [machine] + path.components.dropFirst(3))
@@ -95,6 +98,11 @@ struct MachineFolders: SpaceVFS {
 
   private func stored(_ path: String, mutating: Bool = false) async throws -> String {
     try await Self.stored(path, mutating: mutating, in: runtime)
+  }
+
+  private func machines(atRoot: Bool) -> [MachineFolder] {
+    let folders = runtime.worker().read { $0.machines().machineFolders(group: group) }
+    return Array(folders.prefix(listingLimit ?? Int.max))
   }
 
   private func storedRoot() async throws -> (token: VersionToken, entries: [Entry]) {

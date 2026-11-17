@@ -7,6 +7,7 @@ import struct SpaceIDs.SubscriptionID
   import Foundation
 #endif
 @testable import LoopCore
+import MachinesTesting
 import class MainHub.Hub
 import SessionDomain
 @testable import SpaceCore

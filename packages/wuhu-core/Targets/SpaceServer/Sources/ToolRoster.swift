@@ -7,6 +7,7 @@ import enum SpaceContract.SessionToolExecutor
 import struct SpaceContract.ToolDescriptor
 import struct SpaceContract.ToolRosterDescriptor
 import struct SpaceContract.ToolRostersOutput
+import SpaceHTTP
 import enum WuhuAI.Tool
 
 extension SessionToolExecutor {

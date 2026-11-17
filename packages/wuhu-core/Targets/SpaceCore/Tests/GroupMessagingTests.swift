@@ -4,6 +4,7 @@ import LoopCore
 import SessionDomain
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.MessageID

@@ -1,3 +1,4 @@
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei

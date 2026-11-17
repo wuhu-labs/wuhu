@@ -1,6 +1,9 @@
 import enum Assertion.VerifyingKey
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
+import TenancyContract
+import Wuwei
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -67,9 +70,7 @@ extension PersonCell {
 
   mutating func resetCredentials() throws -> (keys: Int, readSessions: Int) {
     try requireAccount()
-    let purged = try purgeCredentials()
-    for machine in db.rows(MachineRow.where { $0.accountID.eq(id.key) }) { ctx.send(MachineCell.ID(machine.id)).closeBoxes() }
-    return purged
+    return try purgeCredentials()
   }
 
   func requireAccount() throws {

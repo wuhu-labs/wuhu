@@ -1,8 +1,10 @@
 import CLIKit
 import DeterministicDependencies
 import MachineContract
+import MachinesTesting
 import SpaceCore
 import struct SpaceIDs.GroupID
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies) struct MachineVerbFaithfulnessTests {
@@ -79,7 +81,7 @@ import Testing
       let io = CLIIO()
       #expect(await h.run(["machine", "move", machine.id, "--group", team.rawValue], io: io) == 0)
       #expect(await io.stdoutText() == "moved box to group \(team.rawValue)\n")
-      #expect(try await h.space.machine(MachineID(rawValue: machine.id))?.group == team)
+      #expect(try await h.space.machineFamily.machine(MachineID(rawValue: machine.id))?.group == team)
 
       let missing = CLIIO()
       #expect(await h.run(["machine", "move", "box"], io: missing) != 0)

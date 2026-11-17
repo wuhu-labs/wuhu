@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Wuwei
 

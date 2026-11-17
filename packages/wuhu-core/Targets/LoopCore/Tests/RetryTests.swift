@@ -12,6 +12,7 @@ import Fetch
 #endif
 import InferenceKit
 @testable import LoopCore
+import MachinesTesting
 import ModelProviders
 import SessionDomain
 import SpaceCore

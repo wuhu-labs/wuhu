@@ -22,6 +22,9 @@ dependencies:
 tests:
   dependencies:
     - DeterministicDependencies
+    - Machines
+    - MachinesTesting
+    - MachinesContract
     - SpaceServer
     - SpaceCore
     - Fetch

@@ -6,6 +6,7 @@ import struct SpaceIDs.SessionID
   import Foundation
 #endif
 @testable import LoopCore
+import MachinesTesting
 import Scratch
 import SessionDomain
 @testable import SpaceCore

@@ -4,6 +4,7 @@ import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 @testable import SpaceSQL
 import Synchronization
 import Testing

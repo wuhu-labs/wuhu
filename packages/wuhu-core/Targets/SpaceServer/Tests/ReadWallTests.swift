@@ -7,6 +7,9 @@ import FetchSSE
 import Foundation
 import HTTPTypes
 import JSONValue
+import Machines
+import MachinesContract
+import MachinesTesting
 import Serve
 import ServeTesting
 import SpaceCore
@@ -141,7 +144,7 @@ import Testing
       "pubkey": "k", "challenge": "slc_bogus", "signature": "sig",
     ]))
     #expect((try await json(shareLogin)).code == "keyInvalid")
-    let hub = MachineHub(space: harness.space)
+    let hub = machineHub(harness.space)
     let handler = SpaceServer.configuredHandler(space: harness.space, hub: hub, devPerson: nil, listenerRoutes: machineListenerRoutes(space: harness.space, hub: hub, devPerson: nil))
     var headers = RequestHeaders()
     headers.set("connection", "Upgrade")

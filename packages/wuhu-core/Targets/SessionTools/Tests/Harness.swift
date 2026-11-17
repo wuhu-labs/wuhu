@@ -5,6 +5,7 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import Fetch
 import FileSearch
+@testable import Machines
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
@@ -38,6 +39,7 @@ import struct MachineContract.StdinChunk
 import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
+import MachinesTesting
 import struct MainHub.EventSources
 import class MainHub.Hub
 import struct MainHub.SessionEffects
@@ -513,7 +515,7 @@ final class ScriptedExecMachine: Sendable {
       let bearer = String((request.headers["authorization"] ?? "").dropFirst(7))
       @Dependency(\.date) var date
       let session: SessionID
-      switch await sessionVerdict(bearer, tokens: tokens, space: space, now: date.now) {
+      switch await sessionVerdict(bearer, tokens: tokens, space: space, directory: space.machineFamily.directory, now: date.now) {
       case let .refused(response): return response
       case let .session(holder): session = holder.session
       case .script: preconditionFailure("a session exec tool cannot present a sessionless bearer")
@@ -522,16 +524,16 @@ final class ScriptedExecMachine: Sendable {
         if request.method == .post {
           let input = try await request.json(ExecMintInput.self)
           let script = try #require(input.script)
-          let record = try await space.reserveExec(machine: input.machine, caller: session.rawValue, script: script)
+          let record = try await space.machineFamily.reserveExec(machine: input.machine, caller: session.rawValue, script: script)
           owners.withLock { $0[record.id] = input.machine }
           scriptMints.withLock { $0 += 1 }
           return try Response.json(ExecMintOutput(id: record.id))
         }
-        return try Response.json(try await space.liveExecs().filter { $0.caller == session.rawValue }.map { execStatus(of: $0) })
+        return try Response.json(try await space.machineFamily.liveExecs().filter { $0.caller == session.rawValue }.map { execStatus(of: $0) })
       }
       let components = request.url.path.split(separator: "/")
       let id = ExecID(rawValue: String(components[2]))
-      guard let record = try await space.execRecord(id), record.caller == session.rawValue else {
+      guard let record = try await space.machineFamily.execRecord(id), record.caller == session.rawValue else {
         return try Response.json(["code": "notFound", "message": "unknown exec"], status: .notFound)
       }
       if components.last == "kill" {
@@ -568,7 +570,7 @@ final class ScriptedExecMachine: Sendable {
   func lose(_ id: ExecID) async {
     do {
       let store = try #require(space.withLock { $0 })
-      let record = try #require(try await store.execRecord(id))
+      let record = try #require(try await store.machineFamily.execRecord(id))
       try await store.worker.call(MachineCell.ID(record.machine.rawValue)) { cell in
         var row = cell.operation(id.rawValue)!
         row.opened = true
@@ -751,9 +753,9 @@ private struct ExecRecordingTransport: FrameTransport {
   func send(_ bytes: [UInt8]) async throws {
     let frame = try FrameCodec.decode(bytes)
     if frame.opcode == .execExit, let exit = try? frame.payload(ExecExit.self),
-       try await space.execRecord(exit.id)?.terminal == nil
+       try await space.machineFamily.execRecord(exit.id)?.terminal == nil
     {
-      let record = try #require(try await space.execRecord(exit.id))
+      let record = try #require(try await space.machineFamily.execRecord(exit.id))
       try await space.worker.call(MachineCell.ID(record.machine.rawValue)) { cell in
         var row = cell.operation(exit.id.rawValue)!
         let termination: JSONValue = switch exit.status {

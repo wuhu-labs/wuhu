@@ -1,3 +1,5 @@
+import SpaceIDs
+
 enum Migration001 {
   static func apply(_ db: MigrationDB) throws {
     let fresh = try !db.tableExists("fs_heads")

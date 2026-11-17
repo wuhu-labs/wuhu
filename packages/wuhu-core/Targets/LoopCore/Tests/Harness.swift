@@ -6,6 +6,7 @@ import Foundation
 import JSONValue
 import Logging
 @testable import LoopCore
+import MachinesTesting
 import MainHub
 import SessionDomain
 import SessionTools

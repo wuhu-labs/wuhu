@@ -3,6 +3,7 @@ import Fetch
 import Foundation
 import JSONValue
 import LoopCore
+import MachinesTesting
 import ServeTesting
 import SessionDomain
 import SpaceContract
@@ -44,7 +45,7 @@ import Testing
   func sessionToken(_ s: Space, in group: GroupID) async throws -> String {
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let session = try await s.harness.store.createSession(group: group, title: "a", kind: .agent, createdBy: "owner", executor: model)
-    let exec = try await s.harness.space.reserveExec(machine: (try await s.harness.space.addMachineV2(name: "box_\(group.rawValue.replacingOccurrences(of: "-", with: "_"))")).machine.id, caller: session.rawValue)
+    let exec = try await s.harness.space.machineFamily.reserveExec(machine: (try await s.harness.space.machineFamily.addMachineV2(name: "box_\(group.rawValue.replacingOccurrences(of: "-", with: "_"))")).machine.id, caller: session.rawValue)
     return try await s.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
   }
 

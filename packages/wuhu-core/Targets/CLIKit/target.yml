@@ -47,6 +47,9 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - Machines
+    - MachinesTesting
+    - MachinesContract
     - SpaceIDs
     - GroupContract
     - Wuwei
@@ -87,4 +90,3 @@ tests:
     - QRCode
     - Crypto
     - Scratch
-    - ScratchTesting

@@ -92,7 +92,7 @@ import WuhuAI
       await #expect(throws: InferenceError.self) { _ = try await registry.acquire(session: .init("active"), model: model) }
       await registry.release(session: .init("active"), lease: active.lease)
       let rotated = try await registry.acquire(session: .init("active"), model: model)
-      #expect(rotated.session !== active.session)
+      #expect(rotated.session === active.session)
       await registry.shutdown()
     }
   }

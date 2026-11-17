@@ -4,6 +4,8 @@ import ControlledTime
 import Crypto
 import DeterministicDependencies
 import Fetch
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -12,6 +14,7 @@ import Fetch
 import JSONValue
 import MachineChannel
 import MachineContract
+import MachinesTesting
 import OperationRuntime
 import Scratch
 import Serve
@@ -179,10 +182,10 @@ import Testing
       ("/readme.md", "foo four"),
       ("/src/deep/nested.txt", "foo five\nfoo six"),
     ]
-    let (record, _) = try await space.addMachineV2(name: "parity_v2", group: .shared)
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "parity_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
-    let hub = MachineHub(space: space)
-    let context = SpaceToolContext(space: space, machines: machineSeam(hub: hub), principal: .shared(try await space.ensureDevPerson().actor))
+    let hub = machineHub(space)
+    let context = SpaceToolContext(space: space, machines: machineSeam(hub: hub), directory: space.machineFamily.directory, principal: .shared(try await space.ensureDevPerson().actor))
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       defer { tasks.cancelAll() }

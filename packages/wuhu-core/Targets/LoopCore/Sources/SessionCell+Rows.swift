@@ -1,3 +1,4 @@
+import SpaceIDs
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
@@ -19,8 +20,8 @@ import enum SpaceCore.Sessions
 import struct SpaceCore.SessionStore
 import enum SpaceCore.SessionStoreError
 import struct SpaceCore.SpaceCell
-import enum SpaceCore.SQLiteDateFormat
 import struct SpaceCore.StoredTranscriptLine
+import enum SpaceIDs.SQLiteDateFormat
 import StructuredQueries
 import Wuwei
 import WuweiQueries

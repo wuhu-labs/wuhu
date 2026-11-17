@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import GRDBSQLite
+import enum Wuwei.SQLiteLibrary
 
 /// A connection of its own on a database file, beside whatever space holds that file open: it reads and writes rows as they are stored, under no cell and no owner guard. It waits five seconds for a busy database, as the space's own connections do, and enforces foreign keys.
 final class RawDatabase {
@@ -12,6 +13,7 @@ final class RawDatabase {
   /// `path` may be a `file:` URI, as a memory space's is.
   init(path: String, readOnly: Bool = false) throws {
     var opened: OpaquePointer?
+    SQLiteLibrary.memoryStatisticsOff
     let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_URI
     let code = sqlite3_open_v2(path, &opened, flags, nil)
     guard code == SQLITE_OK, let opened else {

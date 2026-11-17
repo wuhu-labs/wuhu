@@ -17,6 +17,8 @@ import JSXCompile
 import Logging
 import MachineChannel
 import MachineContract
+import Machines
+import MachinesContract
 import class MainHub.Hub
 import struct ModelProviders.ModelsDocument
 import NIOCore
@@ -31,6 +33,7 @@ import enum SpaceContract.ErrorCode
 import enum SpaceContract.GroupHeader
 import enum SpaceContract.LiveChannel
 import SpaceCore
+import SpaceHTTP
 import struct SpaceIDs.GroupID
 import SpaceTools
 import WebPush
@@ -96,6 +99,7 @@ public enum SpaceServer {
     machines: MachineSeam? = nil,
   ) -> UpgradingHandler {
     let machines = machines ?? machineSeam(hub: hub)
+    let machineFamily = hub.machines
     // Without --origin, content lives under localhost at the listener's port.
     let localhost = "https://localhost" + (port.map { ":\($0)" } ?? "")
     let contentHost: ContentHost
@@ -108,7 +112,7 @@ public enum SpaceServer {
     @Dependency(\.date) var clock
     let contextOf: @Sendable (Request) async throws -> ToolContextVerdict = { request in
       switch try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock) {
-      case let .principal(principal): .context(SpaceToolContext(space: space, machines: machines, principal: principal))
+      case let .principal(principal): .context(SpaceToolContext(space: space, machines: machines, directory: machineFamily.directory, principal: principal))
       case let .refused(response): .refused(response)
       }
     }
@@ -200,18 +204,18 @@ public enum SpaceServer {
     let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
     addDiscoveryRoutes(&router, space: space, devPerson: devPerson, contentHost: discoveryContentHost)
     addIdentityRoutes(&router, space: space, identity: identityController, devPerson: devPerson)
-    addIDTokenRoute(&router, space: space, tokens: execTokens ?? sessions?.tokens, identity: identityController)
+    addIDTokenRoute(&router, space: space, tokens: execTokens ?? sessions?.tokens, directory: machineFamily.directory, identity: identityController)
     addGroupRoutes(&router, space: space, devPerson: devPerson) { request in
       try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
     }
     addMachineRoutes(
-      &router, space: space, hub: hub, fingerprint: fingerprint,
+      &router, machines: machineFamily, hub: hub, fingerprint: fingerprint,
     ) { request in
-      try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock)
+      machineCallerVerdict(try await requestPrincipal(request, space: space, devPerson: devPerson, date: clock), space: space)
     }
     addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, devPerson: devPerson, keyStreams: keyStreams)
     addAccountRoutes(&router, space: space, devPerson: devPerson, keyStreams: keyStreams)
-    addDeviceRoutes(&router, space: space, devPerson: devPerson)
+    addDeviceRoutes(&router, space: space, machines: machineFamily, devPerson: devPerson)
     addUserRoutes(&router, space: space, devPerson: devPerson)
     addProviderRoutes(&router, space: space, usage: sessions?.usage)
     addTranscribeRoutes(&router, space: space, credentials: credentials)
@@ -248,7 +252,7 @@ public enum SpaceServer {
     let gated: (@escaping UpgradingHandler) -> UpgradingHandler = { walled in
       guard let sessions else { return walled }
       return sessionGate(
-        space: space, hub: hub, machines: machines, owner: sessions.owner, tokens: sessions.tokens, runtime: sessions, credentials: credentials,
+        space: space, hub: hub, machines: machines, directory: machineFamily.directory, owner: sessions.owner, tokens: sessions.tokens, runtime: sessions, credentials: credentials,
         identity: identityController, metrics: sessions.metrics, routed: routed, otherwise: walled,
       )
     }

@@ -14,8 +14,9 @@ import Foundation
 import JSONValue
 import SpaceContract
 import struct SpaceCore.SessionHome
-import enum SpaceCore.SpaceError
 import SpaceFS
+import SpaceIDs
+import enum SpaceIDs.SpaceError
 
 // find and grep are one FileSearch query whoever calls them (the tools,
 // run_script, pages, anonymous public-read included) and whatever they search:

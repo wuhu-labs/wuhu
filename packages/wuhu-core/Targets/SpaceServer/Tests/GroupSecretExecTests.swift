@@ -2,6 +2,8 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import DeterministicDependencies
 import LoopCore
+@testable import Machines
+import MachinesContract
 import struct SpaceIDs.GroupID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -12,6 +14,7 @@ import struct SpaceIDs.GroupID
 import Fetch
 import MachineChannel
 import MachineContract
+import MachinesTesting
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -50,7 +53,7 @@ import Wuwei
       }
       return try await agent.handler(request)
     }
-    let exec = try await space.reserveExec(machine: machine, caller: session.rawValue)
+    let exec = try await space.machineFamily.reserveExec(machine: machine, caller: session.rawValue)
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: exec.id, cwd: "/", command: ["sh", "-c", "printf '%s|%s' \"$TOKEN\" \"$WUHU_TOKEN\""], secrets: ["TOKEN": "API_KEY"]))
     try await withThrowingTaskGroup(of: Void.self) { tasks in
@@ -116,14 +119,14 @@ import Wuwei
       try await rig.stores.group("shared").set("API_KEY", to: "hunter2-value")
       let team = try await rig.addGroup("team")
       let machine = try await rig.addMachine("teambox")
-      _ = try await rig.space.moveMachine(machine.id, to: team)
+      _ = try await rig.space.machineFamily.moveMachine(machine.id, to: team)
       let marker = rig.scratch.url.appendingPathComponent("spawned")
       try await rig.run(machines: [machine]) {
         let collected = try await rig.exec(on: machine, command: ["touch", marker.path])
         #expect(String(decoding: collected.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group \(team.rawValue)\n")
         #expect(collected.exit == .exited(code: 1))
         #expect(!FileManager.default.fileExists(atPath: marker.path))
-        let record = try #require(try await rig.space.execRecord(collected.id))
+        let record = try #require(try await rig.space.machineFamily.execRecord(collected.id))
         #expect(record.terminal == .machineLost)
         let operation = try #require(rig.space.worker.cell(MachineCell.ID(machine.id.rawValue)).operation(collected.id.rawValue))
         #expect(operation.diagnostic?.code == .invalidInput)
@@ -142,7 +145,7 @@ import Wuwei
         let before = try await rig.exec(on: machine, command: echo)
         #expect(String(decoding: before.stdout, as: UTF8.self) == "SHARED-VALUE\n")
 
-        _ = try await rig.space.moveMachine(machine.id, to: team)
+        _ = try await rig.space.machineFamily.moveMachine(machine.id, to: team)
         let missing = try await rig.exec(on: machine, command: echo)
         #expect(String(decoding: missing.stderr, as: UTF8.self) == "invalidInput: Secret API_KEY unavailable in group \(team.rawValue)\n")
         #expect(missing.exit == .exited(code: 1))
@@ -173,13 +176,13 @@ import Wuwei
           let ready = try await mixedExecOutput(&events, atLeast: 6)
           #expect(ready == Array("ready\n".utf8))
 
-          _ = try await rig.space.moveMachine(machine.id, to: team)
+          _ = try await rig.space.machineFamily.moveMachine(machine.id, to: team)
           try await outgoing.sendStdin(Array("go\n".utf8))
           await outgoing.closeStdin()
           let (rest, exit) = try await mixedExecExit(&events)
           #expect(String(decoding: rest, as: UTF8.self) == "go ***\n")
           #expect(exit == .exited(code: 0))
-          let record = try await rig.space.execRecord(exec)
+          let record = try await rig.space.machineFamily.execRecord(exec)
           #expect(record?.terminal == .exited(code: 0))
           group.cancelAll()
         }
@@ -202,7 +205,7 @@ struct SecretRig: Sendable {
   }
 
   func addMachine(_ name: String) async throws -> Machine {
-    let (machine, _) = try await space.addMachineV2(name: name, group: .shared, scope: .reachable)
+    let (machine, _) = try await space.machineFamily.addMachineV2(name: name, group: .shared, scope: .reachable)
     return Machine(id: machine.id)
   }
 
@@ -261,14 +264,14 @@ func withMixedExecAgents(
       for (id, agent) in agents {
         tasks.addTask { await agent.run() }
         let pubkey = try await seedBoxKey(space: server.space, machine: id)
-        let link = try #require(await BoxLink(worker: server.space.worker, machine: id, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: server.space.machineBuffers) {
+        let link = try #require(await BoxLink(worker: server.space.worker, machine: id, pubkey: pubkey, connection: UUID(), streams: 1024, buffers: server.space.machineFamily.buffers) {
           try await server.hub.prepare($0, machine: id)
         })
         links.append(link)
         tasks.addTask { await link.run(client: FetchClient { try await agent.handler($0) }) }
       }
       defer { for link in links { link.close() } }
-      for machine in machines { try #require(try await realPollUntil { try await server.space.machineDescription(machine) != nil }) }
+      for machine in machines { try #require(try await realPollUntil { try await server.space.machineFamily.machineDescription(machine) != nil }) }
       defer { tasks.cancelAll() }
       do {
         try await body()

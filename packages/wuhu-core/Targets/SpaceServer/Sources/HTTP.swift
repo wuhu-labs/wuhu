@@ -9,14 +9,7 @@ import HTTPTypes
 import JSONValue
 import OrderedCollections
 import Serve
-
-func jsonResponse(_ value: JSONValue, status: Status = .ok) -> Response {
-  let data = Data(value.jsonString().utf8)
-  var headers = Headers()
-  headers[.contentType] = "application/json"
-  headers[.contentLength] = String(data.count)
-  return Response(status: status, headers: headers, body: .bytes(data, contentType: "application/json"))
-}
+import SpaceHTTP
 
 // A client signs its bearer assertions by this clock, so no cache may keep an
 // old reading.
@@ -51,13 +44,6 @@ func httpDate(_ date: Date) -> String {
   func two(_ value: Int) -> String { value < 10 ? "0\(value)" : "\(value)" }
   let clock = "\(two(time / 3600)):\(two(time / 60 % 60)):\(two(time % 60))"
   return "\(weekday), \(two(day)) \(months[month - 1]) \(year) \(clock) GMT"
-}
-
-func errorResponse(_ status: Status, code: String, message: String, hint: String? = nil, reason: String? = nil) -> Response {
-  var fields: OrderedDictionary<String, JSONValue> = ["code": .string(code), "message": .string(message)]
-  fields["hint"] = hint.map(JSONValue.string)
-  fields["reason"] = reason.map(JSONValue.string)
-  return jsonResponse(.object(fields), status: status)
 }
 
 func queryValues(of url: URL) -> [String: String] {

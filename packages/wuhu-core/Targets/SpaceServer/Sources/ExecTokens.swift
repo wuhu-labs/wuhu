@@ -8,6 +8,8 @@ import struct SpaceIDs.SessionID
 import Dependencies
 import enum JSONValue.JSONValue
 import MachineContract
+import Machines
+import MachinesContract
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -25,18 +27,19 @@ final class ExecTokens: Sendable {
     self.identity = identity
   }
 
+  /// The exec-credential half another family's machine hub reaches: the same identity, the same space URL.
+  var execCredentials: ExecCredentials {
+    ExecCredentials(spaceURL: spaceURL) { session, group, machine, exec, timeout, issuedAt in
+      let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
+      let life = Int(min(seconds.rounded(.up), ExecCredentials.longestLife))
+      return try await self.identity.credential(session: session, group: group, exec: ExecClaims(machine: machine.rawValue, exec: exec.rawValue), now: issuedAt, lifetime: life)
+    }
+  }
+
   func sessionToken(_ session: SessionID) async throws -> String {
     @Dependency(\.date) var date
     let group = try await space.principal(of: session).group
     return try await Self.prefix + identity.credential(session: session, group: group, exec: nil, now: date.now, lifetime: 300)
-  }
-
-  func credential(session: SessionID, group: GroupID, machine: MachineID, exec: ExecID, timeout: Duration, issuedAt: Date) async throws -> JSONValue {
-    let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
-    precondition(seconds > 0)
-    let life = Int(min(seconds.rounded(.up), Self.longestLife))
-    let token = try await identity.credential(session: session, group: group, exec: ExecClaims(machine: machine.rawValue, exec: exec.rawValue), now: issuedAt, lifetime: life)
-    return ["token": .string(Self.prefix + token), "spaceURL": .string(spaceURL), "expiresAt": .number(Double(Int(issuedAt.timeIntervalSince1970) + life))]
   }
 
   // A sessionless script's token for one run (an observer's firing, a

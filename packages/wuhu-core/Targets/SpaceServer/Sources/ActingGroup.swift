@@ -1,3 +1,4 @@
+import SpaceHTTP
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

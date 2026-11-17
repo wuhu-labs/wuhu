@@ -5,13 +5,16 @@
 #endif
 import enum JSONValue.JSONValue
 import struct MachineContract.ExecID
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.Verdict
 @testable import SpaceCore
 import Testing
 
 func setExecTerminalFixture(space: Space, exec: ExecID, terminal: ExecTerminalState) async throws {
-  let record = try #require(try await space.execRecord(exec))
+  let record = try #require(try await space.machineFamily.execRecord(exec))
   try await space.worker.call(MachineCell.ID(record.machine.rawValue)) { cell in
     var row = try #require(cell.operation(exec.rawValue))
     row.opened = terminal != .reaped
@@ -32,5 +35,5 @@ func setExecTerminalFixture(space: Space, exec: ExecID, terminal: ExecTerminalSt
     }
     try cell.save(row)
   }
-  #expect(try await space.execRecord(exec)?.terminal == terminal)
+  #expect(try await space.machineFamily.execRecord(exec)?.terminal == terminal)
 }

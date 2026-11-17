@@ -1,5 +1,6 @@
 import DeterministicDependencies
-import LoopCore
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,8 +12,10 @@ import Dependencies
 import Fetch
 import FetchTunnel
 import enum JSONValue.JSONValue
+import LoopCore
 import MachineChannel
 import MachineContract
+import MachinesTesting
 import OperationClient
 import OperationProtocol
 @testable import OperationRuntime
@@ -137,7 +140,7 @@ private func eventually(diagnostics: () -> String = { "" }, _ condition: () asyn
 }
 
 private func lifecycleSpace() throws -> Space {
-  let space = try Space.inMemory()
+  let space = try Space.inMemory().registeringMachines()
   _ = space.worker
   return space
 }
@@ -149,7 +152,7 @@ private struct Rig {
   let agent: OperationAgent
   init() async throws {
     space = try lifecycleSpace()
-    machine = try await space.addMachineV2(name: "lifecycle_v2", group: .shared).machine
+    machine = try await space.machineFamily.addMachineV2(name: "lifecycle_v2", group: .shared).machine
     agent = try OperationAgent(machine: machine.id.rawValue, kinds: [.init(ScriptedProcess(side: side))], authorize: { _, _ in })
   }
 
@@ -172,8 +175,8 @@ private struct Rig {
       @Dependency(\.date) var date
       @Dependency(\.timeControl) var time
       let rig = try await Rig()
-      let hub = MachineHub(space: rig.space)
-      let minted = try await rig.space.reserveExec(machine: rig.machine.id, group: .shared)
+      let hub = machineHub(rig.space)
+      let minted = try await rig.space.machineFamily.reserveExec(machine: rig.machine.id, group: .shared)
       let endpoint = ChannelEndpoint()
       let command = ending == "completed" ? ["exit", "out"] : ["hold", ending == "outputLimit" ? "abcdef" : "x"]
       let outgoing = await endpoint.startExec(.init(
@@ -205,8 +208,8 @@ private struct Rig {
             try await followToEnd(following)
             #expect(events.status != nil, "\(rig.diagnostic(minted.id, events: events))")
           }
-          #expect(try await eventually(diagnostics: { rig.diagnostic(minted.id, events: events) }) { try await rig.space.execRecord(minted.id)?.terminal != nil })
-          let terminal = try await rig.space.execRecord(minted.id)?.terminal
+          #expect(try await eventually(diagnostics: { rig.diagnostic(minted.id, events: events) }) { try await rig.space.machineFamily.execRecord(minted.id)?.terminal != nil })
+          let terminal = try await rig.space.machineFamily.execRecord(minted.id)?.terminal
           switch ending {
           case "completed":
             #expect(events.stdout == "out"); #expect(events.status == .exited(code: 3)); #expect(terminal == .exited(code: 3))
@@ -234,9 +237,9 @@ private struct Rig {
 
   @Test func deleteEndsAnOpenExecCallerAndDropsDurableOperationState() async throws {
     let rig = try await Rig()
-    let hub = MachineHub(space: rig.space)
+    let hub = machineHub(rig.space)
     let handler = SpaceServer.configuredHandler(space: rig.space, hub: hub, devPerson: try await rig.space.ensureDevPerson())
-    let minted = try await rig.space.reserveExec(machine: rig.machine.id)
+    let minted = try await rig.space.machineFamily.reserveExec(machine: rig.machine.id)
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["gate", "a", "b"]))
     let events = Events()
@@ -255,7 +258,7 @@ private struct Rig {
         #expect(response.status == .ok)
         try await followToEnd(following)
         #expect(events.status == .exited(code: 1))
-        #expect(try await rig.space.execRecord(minted.id) == nil)
+        #expect(try await rig.space.machineFamily.execRecord(minted.id) == nil)
       }
       await rig.agent.shutdown()
     }
@@ -298,10 +301,10 @@ extension MachineV2ExecLifecycleTests {
   private func runFortyExecs(streams: Int) async throws {
     let space = try lifecycleSpace()
     let signing = Curve25519.Signing.PrivateKey()
-    let machine = try await space.enrollMachineV2(name: "tunnel_v2", group: .shared, pubkey: signing.pubkeyLabel).machine
+    let machine = try await space.machineFamily.enrollMachineV2(name: "tunnel_v2", group: .shared, pubkey: signing.pubkeyLabel)
     let side = MachineSide()
     let agent = try OperationAgent(machine: machine.id.rawValue, kinds: [.init(ScriptedProcess(side: side))], authorize: { _, _ in })
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     let link = Link()
     let count = 40
     let credential = MachineHub.Credential(pubkey: signing.pubkeyLabel, machines: [machine.id.rawValue])
@@ -314,11 +317,11 @@ extension MachineV2ExecLifecycleTests {
         tasks.addTask { await hub.run(.init(pubkey: signing.pubkeyLabel, machines: [machine.id.rawValue]), transport: link.second, boxLink: boxLink, streams: streams) }
         tasks.addTask { try await Tunnel.serve(over: link.first, limits: .init(streams: streams), handler: agent.handler) }
         defer { tasks.cancelAll(); side.release() }
-        #expect(try await eventually { try await space.machineDescription(machine.id) != nil && space.worker.cell(MachineCell.ID(machine.id.rawValue)).box?.opening.streams == streams })
+        #expect(try await eventually { try await space.machineFamily.machineDescription(machine.id) != nil && space.worker.cell(MachineCell.ID(machine.id.rawValue)).box?.opening.streams == streams })
         var execs: [(id: ExecID, endpoint: ChannelEndpoint, events: Events, follow: Task<Void, Never>, caller: Task<Void, Never>)] = []
         for index in 0 ..< count {
           phase.withLock { $0 = "opening exec \(index)" }
-          let minted = try await space.reserveExec(machine: machine.id, group: .shared)
+          let minted = try await space.machineFamily.reserveExec(machine: machine.id, group: .shared)
           let endpoint = ChannelEndpoint()
           let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["gate", "a\(index)", "b\(index)"], timeout: 60))
           let events = Events()

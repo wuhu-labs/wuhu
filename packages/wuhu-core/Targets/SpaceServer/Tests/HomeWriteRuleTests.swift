@@ -5,6 +5,7 @@ import Fetch
 import Foundation
 import JSONValue
 import LoopCore
+import MachinesTesting
 import struct SessionDomain.ModelSpecifier
 import enum SessionDomain.SessionExecutor
 import SpaceCore
@@ -67,7 +68,7 @@ import Testing
   @Test func everySessionAndEveryHumanWritesMachineNotes() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      _ = (try await harness.space.addMachineV2(name: "studio")).machine
+      _ = (try await harness.space.machineFamily.addMachineV2(name: "studio")).machine
       let first = try await harness.createSession().rawValue
       let second = try await harness.createSession().rawValue
       let notes = "/_/machines/studio/AGENTS.md"

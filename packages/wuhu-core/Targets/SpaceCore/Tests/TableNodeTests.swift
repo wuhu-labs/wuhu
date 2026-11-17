@@ -3,6 +3,7 @@ import Foundation
 import JSONValue
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Testing
 

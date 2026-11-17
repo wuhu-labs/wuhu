@@ -5,6 +5,8 @@ import DeterministicDependencies
 import Fetch
 import FetchTunnel
 import LoopCore
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -12,6 +14,7 @@ import LoopCore
 #endif
 import JSONValue
 import MachineContract
+import MachinesTesting
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -60,7 +63,7 @@ import struct WuhuAI.ToolCall
             try await withMachineBox(space: space, hub: server.hub, machine: machine, client: client) {
               try await space.sessions.enqueue(session, input: .notification(.init(id: UUID(), timestamp: Date(), kind: .timer, subscriptionID: .init("exec-wake"), content: .init(text: "run wait"))))
               try await until("the kernel starts its exec operation") { side.startedFlag.withLock { $0 } }
-              let record = try #require(try await space.liveToolExecs(caller: session.rawValue).first)
+              let record = try #require(try await space.machineFamily.liveToolExecs(caller: session.rawValue).first)
               let calls = try await space.sessions.testLines(session).flatMap { line -> [ToolCall] in
                 guard case let .assistant(reply) = line.message else { return [] }
                 return reply.content.compactMap { block in
@@ -71,13 +74,13 @@ import struct WuhuAI.ToolCall
               #expect(calls.map { ToolCallID($0.id) } == [try #require(record.toolCallID)])
               let token = try await runtime.tokens.sessionToken(session)
               @Dependency(\.date) var date
-              guard case .session = await sessionVerdict(token, tokens: runtime.tokens, space: space, now: date.now) else {
+              guard case .session = await sessionVerdict(token, tokens: runtime.tokens, space: space, directory: space.machineFamily.directory, now: date.now) else {
                 Issue.record("the live session's signed credential must act before archive")
                 return
               }
               try await runtime.execution.archive(session, force: true)
               try await until("archived") { try await space.sessions.record(session).lifecycle != .live }
-              if case let .refused(response) = await sessionVerdict(token, tokens: runtime.tokens, space: space, now: date.now) {
+              if case let .refused(response) = await sessionVerdict(token, tokens: runtime.tokens, space: space, directory: space.machineFamily.directory, now: date.now) {
                 #expect(response.status == .forbidden)
               } else { Issue.record("archived token retained authority") }
               try await until("the archived exec receives its stop") { side.stopped.isOpen }

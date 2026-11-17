@@ -1,6 +1,8 @@
 import Crypto
 import DeterministicDependencies
 import Fetch
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,6 +10,7 @@ import Fetch
 #endif
 import struct MachineContract.MachineID
 import struct MachineContract.MachineStatus
+import MachinesTesting
 import struct OperationProtocol.MachineDescription
 import struct SpaceContract.EnrollConsumeOutput
 @testable import SpaceCore
@@ -75,7 +78,7 @@ import Testing
     let space = try makeMachineSpace()
     let server = try await TestServer(space: space, clock: ContinuousClock())
     let id = try await enroll(server, name: "Mini")
-    #expect(try await space.machine(id)?.name == "mini")
+    #expect(try await space.machineFamily.machine(id)?.name == "mini")
 
     let renamed = try await server.http(.put, "/v1/machine/mini/name", json: .object(["name": .string("Studio")]))
     #expect(renamed.status == .ok)
@@ -88,7 +91,7 @@ import Testing
     let second = try await enroll(server, name: "laptop")
     let clash = try await server.http(.put, "/v1/machine/\(second.rawValue)/name", json: .object(["name": .string("STUDIO")]))
     #expect(clash.status == .conflict)
-    #expect(try await space.machine(second)?.name == "laptop")
+    #expect(try await space.machineFamily.machine(second)?.name == "laptop")
 
     let byID = try await server.http(.put, "/v1/machine/\(id.rawValue)/name", json: .object(["name": .string("Desktop")]))
     #expect(byID.status == .ok)
@@ -100,12 +103,12 @@ import Testing
     let space = try makeMachineSpace()
     let server = try await TestServer(space: space, clock: ContinuousClock())
     let (id, key) = try await addMachine(server)
-    #expect(try await space.machine(pubkey: key.pubkeyLabel) == id)
+    #expect(try await space.machineFamily.machine(pubkey: key.pubkeyLabel) == id)
 
     let revoked = try await server.http(.post, "/v1/machine/box/revoke")
     #expect(revoked.status == .ok)
-    #expect(try await space.machine(pubkey: key.pubkeyLabel) == nil)
-    #expect(try await space.machine(id) != nil)
+    #expect(try await space.machineFamily.machine(pubkey: key.pubkeyLabel) == nil)
+    #expect(try await space.machineFamily.machine(id) != nil)
     #expect(try await server.http(.post, "/v1/machine/\(id.rawValue)/revoke").status == .ok)
     #expect(try await server.http(.post, "/v1/machine/unknown/revoke").status == .notFound)
   }
@@ -121,8 +124,8 @@ import Testing
     #expect(try await walled.http(.put, "/v1/machine/box/name", json: .object(["name": .string("changed")])).status == .unauthorized)
     #expect(try await walled.http(.post, "/v1/machine/box/revoke").status == .unauthorized)
     #expect(try await walled.http(.post, "/v1/machine-v2", json: .object(["name": .string("another"), "pubkey": .string(Curve25519.Signing.PrivateKey().pubkeyLabel)])).status == .unauthorized)
-    #expect(try await space.machine(pubkey: key.pubkeyLabel) == id)
-    #expect(try await space.machine(id)?.name == "box")
+    #expect(try await space.machineFamily.machine(pubkey: key.pubkeyLabel) == id)
+    #expect(try await space.machineFamily.machine(id)?.name == "box")
   }
 
   private func enroll(_ server: TestServer, name: String) async throws -> MachineID {

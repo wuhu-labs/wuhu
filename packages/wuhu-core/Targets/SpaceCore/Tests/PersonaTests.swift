@@ -1,7 +1,9 @@
 import DeterministicDependencies
 import Foundation
+import MachinesTesting
 @testable import SpaceCore
 import struct SpaceIDs.AccountID
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies)

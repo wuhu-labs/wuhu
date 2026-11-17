@@ -4,5 +4,6 @@ sources: Sources
 checks:
   build: [linux, mac]
 dependencies:
+  - SessionDomain
   - SpaceIDs
   - Wuwei

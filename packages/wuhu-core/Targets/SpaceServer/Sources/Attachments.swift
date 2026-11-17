@@ -11,6 +11,7 @@ import enum SpaceContract.AttachmentRefusal
 import struct SpaceContract.AttachmentTally
 import struct SpaceContract.ConversationPostInput
 import SpaceCore
+import SpaceHTTP
 import struct SpaceIDs.GroupID
 
 enum PostVerdict {

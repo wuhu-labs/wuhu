@@ -1,0 +1,11 @@
+name: SpaceHTTP
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+dependencies:
+  - Dependencies
+  - Fetch
+  - HTTPTypes
+  - JSONValue
+  - OrderedCollections

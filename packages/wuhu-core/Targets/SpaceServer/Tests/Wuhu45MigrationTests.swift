@@ -4,6 +4,7 @@ import GroupContract
 import Logging
 import Scratch
 @testable import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import Synchronization

@@ -13,6 +13,7 @@ import struct SpaceIDs.SessionID
 import InferenceKit
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import ModelProviders
 import Serve
 import SessionDomain

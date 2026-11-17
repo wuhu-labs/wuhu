@@ -1,6 +1,8 @@
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
+@testable import Machines
+import MachinesContract
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -29,10 +31,10 @@ import Testing
     let b = folder.url.appending(path: "a.txt")
     try Data("needle one\nneedle two\nneedle three".utf8).write(to: a)
     try Data("other".utf8).write(to: b)
-    let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "normal_v2", group: .shared)
+    let space = try Space.inMemory().registeringMachines()
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "normal_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       defer { tasks.cancelAll() }
@@ -74,11 +76,11 @@ import Testing
     let folder = try ScratchFolder("v2-lost-operation")
     let path = folder.url.appending(path: "file.txt")
     try Data("needle".utf8).write(to: path)
-    let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "lost_operation_v2", group: .shared)
+    let space = try Space.inMemory().registeringMachines()
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "lost_operation_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
     let admitted = Mutex<[String]>([])
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     let client = FetchClient { request in
       let response = try await agent.handler(request)
       if request.url.path.contains("/operations/") {
@@ -114,15 +116,16 @@ import Testing
   }
 
   @Test func machineWithoutABoxIsUnavailable() async throws {
-    let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "offline_v2", group: .shared)
-    let hub = MachineHub(space: space)
+    let space = try Space.inMemory().registeringMachines()
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "offline_v2", group: .shared)
+    let hub = machineHub(space)
     do { _ = try await hub.vfs(machine: record.id, op: .stat(path: "/")); Issue.record("missing box admitted a file call") }
     catch let error as OperationError { #expect(error.code == .machineUnavailable) }
   }
 }
 
 import MachineChannel
+import MachinesTesting
 
 private struct LostResponse: Error {}
 
@@ -196,10 +199,10 @@ extension MachineToolV2RoutingTests {
       let acknowledgedAgain = Gate()
       let folder = try ScratchFolder("exec-early-eof")
       let exitGate = folder.url.appending(path: "exit")
-      let space = try Space.inMemory()
-      let (record, _) = try await space.addMachineV2(name: "exec_v2", group: .shared)
+      let space = try Space.inMemory().registeringMachines()
+      let (record, _) = try await space.machineFamily.addMachineV2(name: "exec_v2", group: .shared)
       let agent = try OperationAgent(machine: record.id.rawValue, kinds: [native ? .init(ExecKind()) : .init(RoutedEcho(fastExit: fastExit))], authorize: { _, _ in })
-      let hub = MachineHub(space: space)
+      let hub = machineHub(space)
       let client = FetchClient { request in
         trace.withLock { value in
           value.append("request \(request.method) \(request.url.path) \(request.url.query ?? "")")
@@ -260,7 +263,7 @@ extension MachineToolV2RoutingTests {
         }
         return response
       }
-      let minted = try await space.reserveExec(machine: record.id, group: .shared)
+      let minted = try await space.machineFamily.reserveExec(machine: record.id, group: .shared)
       try await withTaskCancellationHandler {
         let endpoint = ChannelEndpoint()
         let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: native ? ["/bin/sh", "-c", "printf hi; printf stderr >&2; exec 1>&- 2>&-; while [ ! -f '\(exitGate.path)' ]; do sleep .01; done; exit 7"] : ["echo-test"]))
@@ -298,7 +301,7 @@ extension MachineToolV2RoutingTests {
               }
             }
             #expect(stdout == Data((native ? "hi" : fastExit ? "fast" : "input").utf8)); #expect(stderr == Data("stderr".utf8)); #expect(status == .exited(code: 7))
-            #expect(try await space.execRecord(minted.id)?.terminal == .exited(code: 7))
+            #expect(try await space.machineFamily.execRecord(minted.id)?.terminal == .exited(code: 7))
             if native { #expect(earlyEOF.withLock { $0 } == ["stdout", "stderr"]) }
             if lossy {
               phase.withLock { $0 = "waiting for terminal ACK reconciliation" }
@@ -330,7 +333,7 @@ extension MachineToolV2RoutingTests {
         try await space.close()
       } onCancel: {
         let row = space.worker.cell(MachineCell.ID(record.id.rawValue)).operation(minted.id.rawValue)
-        let pendingInput = row.flatMap { space.machineBuffers.input($0.request.operation, accepted: $0.stdin) }
+        let pendingInput = row.flatMap { space.machineFamily.buffers.input($0.request.operation, accepted: $0.stdin) }
         Issue.record("routed exec cancelled: mode=\(mode), phase=\(phase.withLock { $0 }), row=\(String(describing: row)), pendingInput=\(String(describing: pendingInput)), lost=\(lost.withLock { $0 }), retryWaiters=\(retryWaiters.withLock { $0.map { String(describing: $0.key) } }), earlyEOF=\(earlyEOF.withLock { $0 })\n\(trace.withLock { $0.joined(separator: "\n") })")
         if native {
           do { try Data().write(to: exitGate) }
@@ -341,9 +344,9 @@ extension MachineToolV2RoutingTests {
   }
 
   @Test func rosterAndStatusUsePersistedPresenceRatherThanTunnelBinding() async throws {
-    let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "presence_v2", group: .shared)
-    let hub = MachineHub(space: space)
+    let space = try Space.inMemory().registeringMachines()
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "presence_v2", group: .shared)
+    let hub = machineHub(space)
     let devPerson = try await space.ensureDevPerson()
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: devPerson, listenerRoutes: machineListenerRoutes(space: space, hub: hub, devPerson: devPerson))
     for state: MachineV2Presence in [.attached, .lost] {
@@ -375,10 +378,10 @@ extension MachineToolV2RoutingTests {
 
 extension MachineToolV2RoutingTests {
   @Test func missingKindStaysTypedThroughNormalHttpToolsAndExecMint() async throws {
-    let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "missing_kind_v2", group: .shared)
+    let space = try Space.inMemory().registeringMachines()
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "missing_kind_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [], authorize: { _, _ in })
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     try await withMachineBox(space: space, hub: hub, machine: record.id, client: FetchClient { try await agent.handler($0) }) {
       let handler = SpaceServer.configuredHandler(space: space, hub: hub, devPerson: try await space.ensureDevPerson())
       let request = Request(url: URL(string: "https://test.invalid/v1/tools/read")!, method: .post, body: try .json(JSONValue.object(["path": .string("machines://" + record.id.rawValue + "/file")])))
@@ -389,20 +392,20 @@ extension MachineToolV2RoutingTests {
       let mint = Request(url: URL(string: "https://test.invalid/v1/exec")!, method: .post, body: try .json(ExecMintInput(machine: record.id)))
       guard case let .response(refusal) = try await handler(mint) else { Issue.record("mint upgraded"); return }
       #expect(try await refusal.body.json(ErrorEnvelope.self).error.code == .unknownKind)
-      #expect(try await space.liveExecs().isEmpty)
+      #expect(try await space.machineFamily.liveExecs().isEmpty)
     }
   }
 }
 
 extension MachineToolV2RoutingTests {
   @Test func execPreflightDefersKnownUnlinkedKindsToTheMachineGate() async throws {
-    let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "gated_kind_v2", group: .shared)
+    let space = try Space.inMemory().registeringMachines()
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "gated_kind_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [], availability: .init { ["exec.v1": .unavailable(reason: "edition")] }, authorize: { _, _ in })
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     try await withMachineBox(space: space, hub: hub, machine: record.id, client: FetchClient { try await agent.handler($0) }) {
       try await hub.requireExecKind(record.id)
-      #expect(try await space.liveExecs().isEmpty)
+      #expect(try await space.machineFamily.liveExecs().isEmpty)
     }
   }
 }

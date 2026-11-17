@@ -6,6 +6,7 @@
 import JSONValue
 import struct OrderedCollections.OrderedDictionary
 import struct SpaceFS.SpacePath
+import SpaceIDs
 import SpaceSQL
 
 enum Cells {

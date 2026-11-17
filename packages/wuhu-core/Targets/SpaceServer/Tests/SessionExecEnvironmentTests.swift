@@ -3,6 +3,8 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import LoopCore
+@testable import Machines
+import MachinesContract
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -12,6 +14,7 @@ import struct SpaceIDs.SessionID
 import JSONValue
 import MachineChannel
 import MachineContract
+import MachinesTesting
 import Serve
 import SessionDomain
 import SpaceCore
@@ -34,7 +37,7 @@ import Testing
       try await withThrowingTaskGroup(of: Void.self) { tasks in
         let host = ChannelEndpoint()
 
-        let record = try await space.reserveExec(machine: machine, caller: sessionID.rawValue)
+        let record = try await space.machineFamily.reserveExec(machine: machine, caller: sessionID.rawValue)
         let transport = try await connectExecCaller(record.id, space: space, hub: server.hub)
         tasks.addTask { await host.run(transport) }
         defer { tasks.cancelAll() }
@@ -43,7 +46,7 @@ import Testing
         ))
         #expect(String(decoding: session.stdout, as: UTF8.self).hasPrefix("1|https://space.test:5530|***|"))
         #expect(session.exit == .exited(code: 0))
-        #expect(try await space.execRecord(record.id)?.command.contains("wst_") == false)
+        #expect(try await space.machineFamily.execRecord(record.id)?.command.contains("wst_") == false)
 
         let human = try await mintExec(server, machine: machine)
         let other = ChannelEndpoint()
@@ -66,7 +69,7 @@ import Testing
     let sessionID = try await makeEnvironmentSession(space)
 
     try await withMixedExecAgents(server, machines: [machine]) {
-      let record = try await space.reserveExec(machine: machine, caller: sessionID.rawValue)
+      let record = try await space.machineFamily.reserveExec(machine: machine, caller: sessionID.rawValue)
       let caller = ChannelEndpoint()
       let outgoing = await caller.startExec(.init(id: record.id, cwd: "/", command: ["sh", "-c", "echo up; exec sleep 30"], timeout: 600))
       try await withThrowingTaskGroup(of: Void.self) { tasks in
@@ -75,7 +78,7 @@ import Testing
         defer { tasks.cancelAll() }
         var events = outgoing.events.makeAsyncIterator()
         _ = try await mixedExecOutput(&events, atLeast: 3)
-        let request = try #require(try await space.execRequest(record.id))
+        let request = try #require(try await space.machineFamily.execRequest(record.id))
         #expect(request.createdAt == record.startedAt)
         let prepared = try await withDependencies {
           $0.date = DateGenerator { record.startedAt.addingTimeInterval(120) }
@@ -94,7 +97,7 @@ import Testing
         #expect(credential["expiresAt"]?.intValue == claims.exp)
         try await server.hub.kill(record.id)
         _ = try await mixedExecExit(&events)
-        #expect(try await space.execRecord(record.id)?.terminal == .signaled(signal: 15))
+        #expect(try await space.machineFamily.execRecord(record.id)?.terminal == .signaled(signal: 15))
       }
     }
   }

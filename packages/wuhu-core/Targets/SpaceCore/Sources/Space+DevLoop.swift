@@ -6,6 +6,7 @@
 import struct DocIndex.DocumentTemplate
 import JSONValue
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 
 extension Space {

@@ -4,6 +4,9 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import Machines
+import MachinesContract
+import MachinesTesting
 import Scratch
 import ServeTesting
 @testable import SpaceServer
@@ -111,7 +114,7 @@ import enum WuhuAI.InferenceError
     let space = try makeMachineSpace()
     let controller = IdentityController.configure(space: space, origin: origin, keys: fs.identityKeys, fetch: FetchClient { _ in Response(status: .forbidden) })
     try await controller.initialize(identity: identity)
-    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, devPerson: nil, identityController: controller)
+    let handler = SpaceServer.configuredHandler(space: space, hub: machineHub(space), origin: origin, devPerson: nil, identityController: controller)
     let client = ServeTesting.client(upgrading: handler)
     let discovery = try await client(Request(url: URL(string: origin + "/.well-known/openid-configuration")!))
     #expect(discovery.status == .ok)

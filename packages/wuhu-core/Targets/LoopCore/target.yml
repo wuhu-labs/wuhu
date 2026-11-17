@@ -30,6 +30,9 @@ swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
   dependencies:
+    - Machines
+    - MachinesTesting
+    - MachinesContract
     - SpaceIDs
     - DeterministicDependencies
     - Crypto

@@ -1,4 +1,5 @@
 import JSONValue
+import SpaceIDs
 
 public struct MachineID: RawRepresentable, Codable, Equatable, Hashable, Sendable {
   public static let prefix: String = "mc_"
@@ -54,11 +55,4 @@ public struct ExecID: Codable, Equatable, Hashable, Sendable {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
-}
-
-private func hasPrefixedAlphanumericSuffix(_ candidate: String, prefix: String, count: Int) -> Bool {
-  guard candidate.hasPrefix(prefix) else { return false }
-  let suffix = candidate.dropFirst(prefix.count)
-  guard suffix.count == count else { return false }
-  return suffix.allSatisfy { $0.isASCII && (("a" ... "z").contains($0) || ("0" ... "9").contains($0)) }
 }

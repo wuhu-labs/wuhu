@@ -76,7 +76,7 @@ private func png(width: Int, height: Int) throws -> Data {
       let loop = try await ToolFixture(space: space)
       let fs = FakeMachineFS(opaqueTokens: true)
       fs.put("/shot.png", bytes: Array(try png(width: 4, height: 2)), mtime: 100)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: fs.seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: fs.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
       guard case let .read(read) = try await world.run("read", .object(["path": .string("machines://\(machineA.rawValue)/shot.png")])) else { throw Mismatch("opaque image read failed") }
       #expect(read.revision == .machine("opaque:100.0"))
       #expect(read.image?.pixels == PixelSize(width: 4, height: 2))

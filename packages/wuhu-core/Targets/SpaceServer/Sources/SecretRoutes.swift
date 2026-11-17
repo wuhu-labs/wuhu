@@ -6,6 +6,7 @@ import ServeRouting
 import struct SpaceContract.SecretSetInput
 import struct SpaceContract.SecretsOutput
 import SpaceCore
+import SpaceHTTP
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
 

@@ -1,6 +1,8 @@
 import AgentsContract
+import GroupContract
 import struct MachineContract.MachineID
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID

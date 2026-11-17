@@ -12,6 +12,7 @@ import struct SpaceContract.ProviderDescriptor
 import struct SpaceContract.ProviderModel
 import struct SpaceContract.ProvidersOutput
 import SpaceCore
+import SpaceIDs
 
 func addProviderRoutes(_ router: inout Router, space: Space, usage: UsageBoard?) {
   router.get("/v1/providers") { _, _ in

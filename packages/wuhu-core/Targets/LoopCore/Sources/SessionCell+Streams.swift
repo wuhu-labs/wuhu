@@ -5,8 +5,8 @@ import struct SpaceIDs.SubscriptionID
 #else
   import Foundation
 #endif
+import struct AgentsContract.SessionPut
 import SessionDomain
-import struct SpaceCore.SessionPut
 import struct SpaceCore.SessionQueueRow
 import enum SpaceCore.Sessions
 import StructuredQueries

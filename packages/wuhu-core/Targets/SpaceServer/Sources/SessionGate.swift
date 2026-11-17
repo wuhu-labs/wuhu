@@ -1,4 +1,6 @@
 import LoopCore
+import SpaceHTTP
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
 import struct SpaceIDs.SubscriptionID
@@ -16,6 +18,8 @@ import struct InferenceKit.InferenceMetricsSink
 import JSONValue
 import struct LoopCore.SessionExecution
 import MachineContract
+import Machines
+import MachinesContract
 import struct MainHub.CreateSessionArguments
 import func MainHub.fetchOrigin
 import class MainHub.Hub
@@ -65,6 +69,7 @@ func sessionGate(
   space: Space,
   hub: MachineHub,
   machines: MachineSeam,
+  directory: MachineDirectory,
   owner: Hub,
   tokens: ExecTokens,
   runtime: SessionRuntime,
@@ -75,18 +80,18 @@ func sessionGate(
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
   let gated = sessionRouter(
-    space: space, hub: hub, machines: machines, owner: owner, execution: runtime.execution, streams: runtime.streamScope,
+    space: space, hub: hub, machines: machines, directory: directory, owner: owner, execution: runtime.execution, streams: runtime.streamScope,
     credentials: credentials, identity: identity, metrics: metrics, routed: routed,
   ).upgradingHandler
   let sessionlessRoutes = sessionlessRouter(
-    space: space, hub: hub, machines: machines, owner: owner, metrics: metrics, routed: routed,
+    space: space, hub: hub, machines: machines, directory: directory, owner: owner, metrics: metrics, routed: routed,
   ).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer "), isSessionBearer(String(header.dropFirst("Bearer ".count))) else {
       return try await otherwise(request)
     }
-    switch await sessionVerdict(String(header.dropFirst("Bearer ".count)), tokens: tokens, space: space, now: dateGen.now) {
+    switch await sessionVerdict(String(header.dropFirst("Bearer ".count)), tokens: tokens, space: space, directory: directory, now: dateGen.now) {
     case let .refused(response):
       return .response(response)
     case let .script(script):
@@ -116,12 +121,12 @@ enum SessionVerdict {
   case refused(Response)
 }
 
-func execStillRunning(_ id: ExecID, space: Space) async throws -> ExecRecord? {
-  guard let record = try await space.execRecord(id), record.terminal == nil else { return nil }
+func execStillRunning(_ id: ExecID, directory: MachineDirectory) async throws -> ExecRecord? {
+  guard let record = try await directory.exec(id), record.terminal == nil else { return nil }
   return record
 }
 
-func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
+func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, directory: MachineDirectory, now: Date) async -> SessionVerdict {
   if let script = tokens.script(ofBearer: bearer) { return .script(script) }
   guard let claims = try? await tokens.identity.credential(String(bearer.dropFirst(ExecTokens.prefix.count))) else {
     return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "this session token is not valid: invalid signature or claims"))
@@ -130,7 +135,7 @@ func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Dat
     return .refused(errorResponse(.unauthorized, code: "credentialExpired", message: "Session credential expired or not yet valid"))
   }
   if claims.credential == .exec {
-    guard (try? await execStillRunning(claims.exec!, space: space)) != nil
+    guard (try? await execStillRunning(claims.exec!, directory: directory)) != nil
     else { return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "Session exec ended or is unavailable")) }
   }
   guard let record = try? await space.sessions.record(claims.session),
@@ -158,6 +163,7 @@ private func sessionRouter(
   space: Space,
   hub: MachineHub,
   machines: MachineSeam,
+  directory: MachineDirectory,
   owner: Hub,
   execution: SessionExecution,
   streams: TaskScope,
@@ -241,7 +247,7 @@ private func sessionRouter(
   router.put("/v1/secret/:name", use: forward)
   router.delete("/v1/secret/:name", use: forward)
   router.get("/v1/id-token", use: forward)
-  addMachineRoutes(to: &router, space: space, hub: hub, owner: owner, machines: machines, routed: routed) {
+  addMachineRoutes(to: &router, space: space, hub: hub, directory: directory, owner: owner, machines: machines, routed: routed) {
     .session(principal().session, group: principal().group)
   }
   // A machine the byte route reaches sees the session as its caller.
@@ -314,7 +320,7 @@ private func sessionRouter(
     }
     do {
       let context = SpaceToolContext(
-        space: space, machines: machines, principal: Principal(actor: .session(principal().session), group: principal().group),
+        space: space, machines: machines, directory: directory, principal: Principal(actor: .session(principal().session), group: principal().group),
       )
       // A machine the tool reaches sees the session as its caller.
       let output = try await MachineSeam.$caller.withValue(principal().session) { try await spaceTool.run(context, input: input) }

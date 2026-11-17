@@ -1,3 +1,4 @@
+import AgentsContract
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,11 +11,6 @@ import Wuwei
 
 /// The space's wuwei runtime: one worker on the shared backend over the space's own database, hosting the kinds of every module of the space, on the date and clock injected where it is first asked for.
 final class SpaceRuntime: Sendable {
-  var machineBuffers: MachineBuffers {
-    _ = worker()
-    return running.withLock { $0!.buffers }
-  }
-
   private let database: WuweiDatabase
   private let fileReads: @Sendable (Worker) -> FileWatchReads
   private let observations: ObservationSources
@@ -22,7 +18,7 @@ final class SpaceRuntime: Sendable {
   /// Held while a worker is made, which writes — and only there: the writer's commit hooks run inside a write, so no lock they take may be held across one.
   private let hosting = Mutex(())
   /// The worker this space hosts and its scheduler; a commit hook poking a cell takes it for the length of a lock.
-  private let running = Mutex<(worker: Worker, scheduler: DependencyScheduler, buffers: MachineBuffers)?>(nil)
+  private let running = Mutex<(worker: Worker, scheduler: DependencyScheduler)?>(nil)
   /// Whether the space is closing, read and set for the length of a lock only: closing under the same lock a worker is handed out under keeps the two atomic without holding it across the work of making one.
   private let closing = Mutex(false)
 
@@ -50,15 +46,14 @@ final class SpaceRuntime: Sendable {
       guard !closing.withLock({ $0 }) else { return nil }
       let scheduler = DependencyScheduler()
       // A worker retakes a lease held under its own id at once, so two processes on one database never share an id.
-      let worker = Worker(id: "space-\(UUID().uuidString.lowercased())", storage: .shared(database), scheduler: scheduler, registrations: [.cell(MachineCell.self), .cell(GroupCell.self), .cell(SpaceCell.self), .cell(PersonCell.self), .cell(ConversationCell.self), .cell(DocumentCell.self), .cell(FilesCell.self), .job(ObservationJob.self)])
-      let buffers = MachineBuffers(worker: worker.id)
+      let worker = Worker(id: "space-\(UUID().uuidString.lowercased())", storage: .shared(database), scheduler: scheduler, registrations: [.cell(GroupCell.self), .cell(SpaceCell.self), .cell(PersonCell.self), .cell(ConversationCell.self), .cell(DocumentCell.self), .cell(FilesCell.self), .job(ObservationJob.self)])
       provideGroupCells(in: worker)
-      worker.provide(buffers)
+      provideTenancyCells(in: worker)
       worker.provide(observations)
       worker.provide(fileReads(worker))
       worker.provide(documents)
       do { try worker.create(ObservationJob.address, params: ObservationJob.Params()) } catch { preconditionFailure("the observation job was not created: \(error)") }
-      running.withLock { $0 = (worker, scheduler, buffers) }
+      running.withLock { $0 = (worker, scheduler) }
       return worker
     }
   }
@@ -104,8 +99,6 @@ final class SpaceRuntime: Sendable {
 }
 
 extension Space {
-  public nonisolated var machineBuffers: MachineBuffers { runtime.machineBuffers }
-
   /// The space's one worker, which a module gives its kinds and clients before `start`. After `stopWorker` the next one is new, as after a restart of the process.
   public nonisolated var worker: Worker {
     runtime.worker()

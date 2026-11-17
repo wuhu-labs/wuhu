@@ -1,0 +1,9 @@
+name: TenancyContract
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+dependencies:
+  - SpaceIDs
+  - MachineContract
+  - Wuwei

@@ -8,6 +8,9 @@ import Dependencies
 import DeterministicDependencies
 import Fetch
 import enum JSONValue.JSONValue
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import class MainHub.Hub
 import struct MainHub.SessionEffects
 @testable import SessionTools
@@ -37,7 +40,7 @@ import Testing
       body: try .json(input),
     ))
     #expect(response.status == .unauthorized)
-    #expect(try await space.resolveMachine("must_not_enroll") == nil)
+    #expect(try await space.machineFamily.resolveMachine("must_not_enroll") == nil)
     try await space.close()
   }
 }

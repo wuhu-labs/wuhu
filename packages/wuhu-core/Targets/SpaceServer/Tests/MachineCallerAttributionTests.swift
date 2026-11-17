@@ -2,6 +2,8 @@ import ControlledTime
 import Dependencies
 import DeterministicDependencies
 import LoopCore
+@testable import Machines
+import MachinesContract
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
@@ -16,6 +18,7 @@ import FileSearch
 import enum JSONValue.JSONValue
 import MachineChannel
 import MachineContract
+import MachinesTesting
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -45,13 +48,13 @@ private struct SilentExec: OperationKind {
     let folder = try ScratchFolder("v2-caller")
     let file = folder.url.appending(path: "notes.txt")
     try Data("needle".utf8).write(to: file)
-    let space = try Space.inMemory()
+    let space = try Space.inMemory().registeringMachines()
     _ = try await SessionToolFixture(space: space)
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-    let (record, _) = try await space.addMachineV2(name: "caller_v2", group: .shared)
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "caller_v2", group: .shared)
     let seen = Mutex<[AdmittedStart]>([])
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { start in seen.withLock { $0.append(start) } })
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     let expected = StartRequest.Caller(session: session.rawValue, title: "Backend coder", group: "shared")
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
@@ -68,7 +71,7 @@ private struct SilentExec: OperationKind {
         #expect(seen.withLock { $0.map(\.caller) } == [expected, expected, nil, nil])
 
         // Exec: the relay attributes the exec record's caller.
-        let minted = try await space.reserveExec(machine: record.id, caller: session.rawValue, group: .shared)
+        let minted = try await space.machineFamily.reserveExec(machine: record.id, caller: session.rawValue, group: .shared)
         let endpoint = ChannelEndpoint()
         let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["true"]))
         let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
@@ -91,10 +94,10 @@ private struct SilentExec: OperationKind {
     let tokens = harness.runtime.tokens
     let space = harness.space
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-    let (record, _) = try await space.addMachineV2(name: "lane_v2", group: .shared)
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "lane_v2", group: .shared)
     let seen = Starts()
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
-    let exec = try await space.reserveExec(machine: record.id, caller: session.rawValue, group: .shared)
+    let exec = try await space.machineFamily.reserveExec(machine: record.id, caller: session.rawValue, group: .shared)
     @Dependency(\.date) var date
     let bearer = try await tokens.credential(session: session, exec: exec.id, timeout: nil, now: date.now).token
     let expected = StartRequest.Caller(session: session.rawValue, title: "Backend coder", group: "shared")
@@ -196,7 +199,7 @@ private struct SilentExec: OperationKind {
       }
       #expect(stderr == "invalidInput: Exec timeout must be positive and finite\n")
       #expect(status == .exited(code: 1))
-      #expect(try await space.execRecord(minted.id)?.terminal == .reaped)
+      #expect(try await space.machineFamily.execRecord(minted.id)?.terminal == .reaped)
       let row = try #require(space.worker.cell(MachineCell.ID(minted.machine.rawValue)).operation(minted.id.rawValue))
       #expect(row.diagnostic?.code == .invalidInput)
       #expect(row.snapshot?.verdict?.result == nil)
@@ -205,14 +208,14 @@ private struct SilentExec: OperationKind {
   }
 
   private func withExecFixture(caller: Bool = true, _ body: (Space, MachineHub, SessionID, ExecRecord, Starts) async throws -> Void) async throws {
-    let space = try Space.inMemory()
+    let space = try Space.inMemory().registeringMachines()
     _ = try await SessionToolFixture(space: space)
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-    let (record, _) = try await space.addMachineV2(name: "forge_v2", group: .shared)
+    let (record, _) = try await space.machineFamily.addMachineV2(name: "forge_v2", group: .shared)
     let seen = Starts()
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
-    let hub = MachineHub(space: space, tokens: try await testTokens(space: space, spaceURL: "https://test.invalid"))
-    let minted = try await space.reserveExec(machine: record.id, caller: caller ? session.rawValue : nil, group: .shared)
+    let hub = machineHub(space, credentials: try await testTokens(space: space, spaceURL: "https://test.invalid").execCredentials)
+    let minted = try await space.machineFamily.reserveExec(machine: record.id, caller: caller ? session.rawValue : nil, group: .shared)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       defer { tasks.cancelAll() }

@@ -3,7 +3,10 @@
 #else
   import Foundation
 #endif
+import struct MachineContract.MachineID
+import MachinesContract
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei
@@ -41,7 +44,7 @@ struct FilesCell {
 
   mutating func adoptMachineNotes(_ transfer: FileTransfer) throws {
     let path = try SpacePath(validating: transfer.path)
-    guard let current = ctx.cell(MachineCell.ID(path.components[2])).record()?.group else { return }
+    guard let current = ctx.machine(MachineID(rawValue: path.components[2])).group() else { return }
     if current != group {
       var forwarded = transfer
       for i in forwarded.nodes.indices {

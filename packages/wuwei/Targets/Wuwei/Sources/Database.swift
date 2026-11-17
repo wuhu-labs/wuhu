@@ -198,6 +198,7 @@ final class Connection {
 
   init(path: String, flags: Int32, vfs: String? = nil) throws {
     var handle: OpaquePointer?
+    SQLiteLibrary.memoryStatisticsOff
     let code = sqlite3_open_v2(path, &handle, flags, vfs)
     guard code == SQLITE_OK, let handle else {
       defer { sqlite3_close_v2(handle) }

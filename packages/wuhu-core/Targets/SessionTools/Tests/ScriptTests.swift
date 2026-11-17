@@ -11,6 +11,8 @@ import JSONValue
 @testable import LoopCore
 import MachineChannel
 import struct MachineContract.MachineID
+@testable import Machines
+import MachinesTesting
 import class MainHub.Hub
 import func MainHub.resolveScriptModule
 import struct MainHub.ScriptError
@@ -24,6 +26,7 @@ import SessionDomain
 import enum SpaceContract.ScriptOutput
 @testable import SpaceCore
 import struct SpaceFS.SpacePath
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.MessageID
 import struct SpaceIDs.SessionID
@@ -266,7 +269,7 @@ import struct WuhuAI.ToolCall
 
   @Test func importsAMachineModuleThroughTheMachineName() async throws {
     try await withRig { rig in
-      let id = try await rig.space.addMachineV2(name: "studio").machine.id.rawValue
+      let id = try await rig.space.machineFamily.addMachineV2(name: "studio").machine.id.rawValue
       try await rig.write("/_/machines/\(id)/.agents/skills/hello/hello.js", """
       import { name } from "./name.js"
       export const greeting = `hello from ${name}`
@@ -547,7 +550,7 @@ import struct WuhuAI.ToolCall
     let world = MachineWorld()
     try await withRig(world: world) { rig in
       try await world.attach("box", in: rig.space)
-      _ = try await rig.space.addMachineV2(name: "away").machine
+      _ = try await rig.space.machineFamily.addMachineV2(name: "away").machine
       try await rig.run("machine-refusals")
       try await rig.released()
       try rig.expect("machine-refusals")
@@ -874,7 +877,7 @@ final class ScriptRig: Sendable {
   }
 
   func scriptExecRows() async throws -> Int {
-    try await space.machines().reduce(0) { count, machine in
+    try await space.machineFamily.machines().reduce(0) { count, machine in
       count + space.worker.cell(MachineCell.ID(machine.id.rawValue)).pendingScriptExecs()
     }
   }
@@ -922,7 +925,7 @@ final class MachineWorld: Sendable {
   let execs = ScriptedExecMachine()
 
   func attach(_ name: String, in space: Space) async throws {
-    let id = try await space.addMachineV2(name: name).machine.id
+    let id = try await space.machineFamily.addMachineV2(name: name).machine.id
     _ = files.attached.withLock { $0.insert(id) }
   }
 }
@@ -1008,7 +1011,7 @@ private let playbook: @Sendable (ScriptedExec, ScriptedExecMachine) async -> Voi
 }
 
 func withRig(
-  space: () throws -> Space = { try Space.inMemory() },
+  space: () throws -> Space = { try Space.inMemory().registeringMachines() },
   fetch: FetchClient? = nil,
   machineHub: MachineHub? = nil,
   machines: MachineSeam? = nil,
@@ -1050,7 +1053,7 @@ func withRig(
       defer { try? FileManager.default.removeItem(at: folder) }
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
-      let main = loop.hub { Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute) }
+      let main = loop.hub { Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, directory: space.machineFamily.directory, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute) }
       let origin = contentHost.map { _ in "https://space.test" }
       if let world {
         _ = try await world.execs.executor(

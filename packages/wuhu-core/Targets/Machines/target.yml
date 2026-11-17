@@ -1,0 +1,83 @@
+name: Machines
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - SpaceHTTP
+  - MachinesContract
+  - TenancyContract
+  - GroupContract
+  - AgentsContract
+  - SpaceIDs
+  - MachineContract
+  - MachineChannel
+  - OperationProtocol
+  - OperationClient
+  - FetchTunnel
+  - SpaceContract
+  - SpaceFS
+  - Credentials
+  - ServerTelemetry
+  - TaskLifetime
+  - Assertion
+  - Fetch
+  - FileSearch
+  - Serve
+  - ServeRouting
+  - Crypto
+  - JSONValue
+  - OrderedCollections
+  - Dependencies
+  - Logging
+  - Wuwei
+  - WuweiQueries
+  - StructuredQueries
+  - StructuredQueriesSQLite
+tests:
+  dependencies:
+    - FileSearch
+    - ComputerFiles
+    - MainHub
+    - SpaceSQL
+    - MachinesTesting
+    - Scratch
+    - ScratchTesting
+    - GRDBSQLite
+    - SpaceHTTP
+    - MachinesContract
+    - TenancyContract
+    - GroupContract
+    - AgentsContract
+    - SpaceIDs
+    - MachineContract
+    - MachineChannel
+    - OperationProtocol
+    - OperationRuntime
+    - OperationClient
+    - FetchTunnel
+    - SpaceContract
+    - SpaceFS
+    - Credentials
+    - ServerTelemetry
+    - TaskLifetime
+    - Assertion
+    - Fetch
+    - Serve
+    - ServeRouting
+    - ServeTesting
+    - Crypto
+    - JSONValue
+    - OrderedCollections
+    - Dependencies
+    - DependenciesTestSupport
+    - DeterministicDependencies
+    - ControlledTime
+    - Clocks
+    - Logging
+    - Wuwei
+    - WuweiQueries
+    - StructuredQueries
+    - SpaceCore
+    - SessionDomain

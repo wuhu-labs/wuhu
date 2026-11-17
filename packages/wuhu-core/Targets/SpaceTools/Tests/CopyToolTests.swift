@@ -3,6 +3,7 @@ import DeterministicDependencies
 import Foundation
 import JSONValue
 import MachineContract
+import MachinesContract
 import SpaceContract
 import SpaceCore
 import SpaceTools
@@ -32,7 +33,7 @@ let zeroHash = String(repeating: "0", count: 64)
 @Suite(.deterministicDependencies(clock: VirtualClock())) struct CopyToolTests {
   func context(_ seam: MachineSeam) async throws -> SpaceToolContext {
     let plain = try await makeContext()
-    return SpaceToolContext(space: plain.space, machines: seam, principal: plain.principal)
+    return SpaceToolContext(space: plain.space, machines: seam, directory: anyMachineDirectory(), principal: plain.principal)
   }
 
   func code(_ error: ToolRunError?) -> ErrorCode? {
@@ -151,7 +152,7 @@ let zeroHash = String(repeating: "0", count: 64)
       #expect(source == .bytes(Array("new".utf8)))
       return CopyReceipt(bytes: 3, sha256: zeroHash, landing: .machine(token: "new"))
     }
-    let context = SpaceToolContext(space: plain.space, machines: seam, principal: plain.principal)
+    let context = SpaceToolContext(space: plain.space, machines: seam, directory: anyMachineDirectory(), principal: plain.principal)
     _ = try await run("copy", ["from": "/source", "to": "machines://mc_00000000/target", "overwrite": true], context)
     #expect(asked.sources.withLock { $0 } == [.bytes(Array("old".utf8)), .bytes(Array("new".utf8))])
   }

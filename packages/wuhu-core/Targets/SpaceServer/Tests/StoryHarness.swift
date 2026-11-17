@@ -2,6 +2,7 @@ import Crypto
 import Dependencies
 import DeterministicDependencies
 import Fetch
+@testable import Machines
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.MessageID
 import struct SpaceIDs.SessionID
@@ -16,6 +17,9 @@ import InferenceKit
 import JSONValue
 import LoopCore
 import MachineContract
+import Machines
+import MachinesContract
+import MachinesTesting
 import MainHub
 import OperationRuntime
 import Scratch
@@ -81,12 +85,12 @@ final class Story: Sendable {
   private let host: AsyncStream<@Sendable () async -> Void>.Continuation
   private let scratch = Mutex<[ScratchFolder]>([])
   init() async throws {
-    let space = try Space.inMemory()
+    let space = try Space.inMemory().registeringMachines()
     self.space = space
     store = space.sessions
     _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     tokens = try await testTokens(space: space, spaceURL: "http://space")
-    let hub = MachineHub(space: space, tokens: tokens)
+    let hub = machineHub(space, credentials: tokens.execCredentials)
     self.hub = hub
     let usage = UsageBoard()
     let catalog = groupCatalog(space: space, access: InferenceAccess())
@@ -113,7 +117,7 @@ final class Story: Sendable {
       $0[SessionEffects.self] = execution.sessionEffects
     } operation: {
       Hub(
-        space: space, machines: machineSeam(hub: hub),
+        space: space, machines: machineSeam(hub: hub), directory: hub.machines.directory,
         resolveModelExecutor: modelExecutorResolver(space: space),
         resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
         prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
@@ -132,11 +136,11 @@ final class Story: Sendable {
   func machine(seeing: @escaping @Sendable (Request) -> Void = { _ in }) async throws -> (id: MachineID, folder: String) {
     let added: MachineAddOutput = try await call(.post, "/v1/machine-v2", ["name": "box"])
     let key = Curve25519.Signing.PrivateKey()
-    let _: JSONValue = try await call(.post, "/v1/enroll/consume", ["token": .string(added.token), "pubkey": .string(key.pubkeyLabel)])
+    let _: JSONValue = try await call(.post, "/v1/machine-v2/enroll", ["token": .string(added.token), "pubkey": .string(key.pubkeyLabel)])
     let work = try ScratchFolder("story-work")
     scratch.withLock { $0.append(work) }
     let agent = try OperationAgent(machine: added.id.rawValue, kinds: fileOperationKinds() + [.init(ExecKind())], authorize: { _, _ in })
-    let link = try #require(await BoxLink(worker: space.worker, machine: added.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 1024, buffers: space.machineBuffers) {
+    let link = try #require(await BoxLink(worker: space.worker, machine: added.id.rawValue, pubkey: key.pubkeyLabel, connection: UUID(), streams: 1024, buffers: space.machineFamily.buffers) {
       try await self.hub.prepare($0, machine: added.id.rawValue)
     })
     let client = FetchClient { request in seeing(request); return try await agent.handler(request) }

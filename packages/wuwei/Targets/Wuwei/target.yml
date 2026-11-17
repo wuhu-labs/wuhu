@@ -3,6 +3,7 @@ kind: library
 sources: Sources
 dependencies:
   - WuweiMacros
+  - CSQLiteConfig
   - GRDBSQLite
   - DequeModule
   - Logging

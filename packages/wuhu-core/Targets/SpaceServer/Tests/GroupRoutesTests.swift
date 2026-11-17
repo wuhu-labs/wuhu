@@ -11,6 +11,7 @@ import struct SpaceIDs.GroupID
 import struct SpaceIDs.MessageID
 import struct SpaceIDs.SessionID
 @testable import SpaceServer
+import TenancyContract
 import Testing
 
 // Sessions, settings and conversations in ordinary private groups on the API.

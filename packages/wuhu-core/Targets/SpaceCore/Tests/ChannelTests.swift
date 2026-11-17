@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import LoopCore
+import MachinesTesting
 import SessionDomain
 @testable import SpaceCore
 import struct SpaceIDs.AccountID

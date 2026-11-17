@@ -5,12 +5,16 @@ import Dependencies
 import Fetch
 import Foundation
 import MachineContract
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import Scratch
 import Serve
 import ServeRouting
 import ServeTesting
 import SpaceCore
 @testable import SpaceServer
+import TenancyContract
 import Testing
 
 final class MachineCLIHarness: Sendable {
@@ -48,7 +52,7 @@ final class MachineCLIHarness: Sendable {
     } operation: {
       try Space.inMemory()
     }
-    let hub = MachineHub(space: space, tokens: nil, secrets: stores)
+    let hub = machineHub(space, secrets: stores)
     self.space = space
     self.hub = hub
     let devPerson = try await space.ensureDevPerson()
@@ -205,11 +209,12 @@ func machineListenerRoutes(
   space: Space, hub: MachineHub, devPerson: ResolvedPerson?, version: String = SpaceServer.unstampedVersion,
   fingerprint: String? = nil,
 ) -> Router {
-  @Dependency(\.date) var date
-  let upgrades = MachineV2Upgrades(space: space, serverVersion: version)
+  let machines = space.machineFamily
+  let upgrades = MachineV2Upgrades(worker: machines.worker, settings: { try? await space.fs(.settings).read(MachineUpgradeFile.path).1 }, serverVersion: version)
   var router = Router()
-  addMachineV2Routes(&router, space: space, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
-    return try await requestPrincipal(request, space: space, devPerson: devPerson, date: date)
+  addMachineV2Routes(&router, machines: machines, hub: hub, upgrades: upgrades, fingerprint: fingerprint) { request in
+    @Dependency(\.date) var date
+    return machineCallerVerdict(try await requestPrincipal(request, space: space, devPerson: devPerson, date: date), space: space)
   }
   return router
 }

@@ -4,6 +4,9 @@ import Fetch
 import Foundation
 import JSONValue
 import MachineContract
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import OperationProtocol
 import Serve
 @testable import SpaceCore
@@ -33,7 +36,7 @@ extension MachineV2TunnelTests {
 
   @Test func aRevokedKeyIsADefinitiveRefusalOnEveryPath() async throws {
     let f = try await Fixture()
-    _ = try await f.space.resetCredentials(account: f.machine.account)
+    #expect(try await f.space.machineFamily.revokeMachine(f.machine.id))
     for (status, code) in try await probes(f, key: f.key) {
       #expect(status == .unauthorized)
       #expect(code == "machineNotAuthorized")

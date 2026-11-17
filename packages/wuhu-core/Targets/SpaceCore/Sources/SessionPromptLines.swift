@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import struct SessionDomain.TranscriptLine
+import SpaceIDs
 import StructuredQueries
 import WuhuAI
 import Wuwei

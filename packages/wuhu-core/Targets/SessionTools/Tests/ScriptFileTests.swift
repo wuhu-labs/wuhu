@@ -7,6 +7,7 @@ import SessionDomain
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import SpaceTools
 import Testing

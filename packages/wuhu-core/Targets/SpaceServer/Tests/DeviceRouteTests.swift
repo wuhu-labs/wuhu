@@ -4,11 +4,13 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
+import MachinesTesting
 import SessionDomain
 import SpaceContract
 import SpaceCore
 import struct SpaceIDs.AccountID
 import SpaceServer
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies) struct DeviceRouteTests {
@@ -79,10 +81,7 @@ import Testing
 
   @Test func registrationNeedsADeviceCapableKey() async throws {
     let machineKey = Curve25519.Signing.PrivateKey()
-    let account = try await harness.space.addAccount(kind: .machine, name: nil)
-    _ = try await harness.space.addKey(
-      machineKey.pubkeyLabel, account: account.id, capabilities: [.execMachine], createdBy: nil, expiresAt: nil,
-    )
+    _ = try await harness.space.machineFamily.enrollMachineV2(name: "box", group: .shared, pubkey: machineKey.pubkeyLabel)
     let response = try await call(.put, "/v1/device", as: machineKey, body: [
       "installation": "install-1", "kind": "mac", "name": "Box",
     ])
@@ -101,7 +100,7 @@ import Testing
   @Test func annotationNamesTheDeviceAndItsMachine() async throws {
     _ = try await enroll(key)
     let device = try await register(key)
-    let machine = (try await harness.space.addMachineV2(name: "studio")).machine
+    let machine = (try await harness.space.machineFamily.addMachineV2(name: "studio")).machine
     let annotated = try JSONValueDecoder().decode(DevicePayload.self, from: try await json(
       try await call(.patch, "/v1/device/\(device.id)", as: key, body: [
         "name": "Studio Mac", "machine": "studio",

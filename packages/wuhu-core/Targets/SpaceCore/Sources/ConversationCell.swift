@@ -1,3 +1,4 @@
+import SpaceIDs
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.MessageID
 import struct SpaceIDs.RequestID

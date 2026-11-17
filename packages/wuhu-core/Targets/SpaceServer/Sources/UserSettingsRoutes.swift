@@ -11,6 +11,8 @@ import Serve
 import ServeRouting
 import struct SpaceContract.SidebarVisibilityInput
 import SpaceCore
+import SpaceHTTP
+import SpaceIDs
 
 func addUserSettingsRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPerson?) {
   @Dependency(\.date) var dateGen

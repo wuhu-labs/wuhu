@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import MachineChannel
 import MachineContract
+@testable import Machines
 import Testing
 
 /// The outgoing endpoint's wire behaviours: window backpressure, replay ahead of fresh data, and the pending

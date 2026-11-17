@@ -13,6 +13,7 @@ import struct SpaceIDs.SessionID
   import Foundation
 #endif
 import LoopCore
+import MachinesTesting
 import SessionDomain
 @testable import SpaceCore
 import struct SpaceIDs.GroupID
@@ -93,7 +94,10 @@ import Wuwei
       #expect(id == SessionID("session"))
       return reading.cell(ReadCaller.ID("caller"))
     }))
-    worker.provide(GroupCells(settings: { reading in reading.cell(ReadCaller.ID("caller")) }))
+    worker.provide(GroupCells(
+      settings: { reading in reading.cell(ReadCaller.ID("caller")) },
+      group: { reading, _ in reading.cell(ReadCaller.ID("caller")) },
+    ))
     try await worker.call(ReadCaller.ID("caller")) { cell in
       try cell.write(7)
       #expect(cell._context.session(SessionID("session")).summary?.group == GroupID(rawValue: "fake-7"))
@@ -107,7 +111,7 @@ import Wuwei
 }
 
 @Cell
-private struct ReadCaller: SessionReading, SettingsReading {
+private struct ReadCaller: SessionReading, SettingsReading, GroupReading {
   static let schema = ["CREATE TABLE read_caller (value INTEGER NOT NULL)"]
 
   mutating func write(_ value: Int64) throws {
@@ -118,7 +122,14 @@ private struct ReadCaller: SessionReading, SettingsReading {
 
   func isSpaceAdmin(account: AccountID) -> Bool { account.rawValue == value }
 
+  func role(ofSession id: SessionID) -> GroupRole? { nil }
+  func role(ofAccount id: AccountID, acting: GroupID) -> GroupRole? { nil }
+  func role(ofGroup group: GroupID) -> GroupRole? { nil }
+  func isHumanAdmin(_ account: AccountID) -> Bool { false }
+  func writes(from group: GroupID) -> Bool { false }
+  func exists() -> Bool { true }
+
   var summary: SessionSummary? {
-    SessionSummary(id: SessionID("session"), group: GroupID(rawValue: value), kind: .agent, parent: nil, createdAt: fixedDate, lifecycle: .live, createdBy: "fake")
+    SessionSummary(id: SessionID("session"), group: GroupID(rawValue: value), title: "fake", kind: .agent, parent: nil, createdAt: fixedDate, lifecycle: .live, createdBy: "fake")
   }
 }

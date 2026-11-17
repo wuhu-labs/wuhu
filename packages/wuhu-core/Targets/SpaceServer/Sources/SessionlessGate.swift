@@ -3,6 +3,8 @@ import Fetch
 import struct InferenceKit.InferenceMetric
 import struct InferenceKit.InferenceMetricsSink
 import JSONValue
+import Machines
+import MachinesContract
 import class MainHub.Hub
 import struct MainHub.TerminalRun
 import Serve
@@ -10,6 +12,7 @@ import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
 import struct SpaceIDs.GroupID
 import SpaceTools
 
@@ -79,7 +82,7 @@ private func notForSessionlessScripts() -> Response {
 // createSession, request and sendMessage. Session verbs and everything else
 // refuse it.
 func sessionlessRouter(
-  space: Space, hub: MachineHub, machines: MachineSeam, owner: Hub, metrics: InferenceMetricsSink, routed: @escaping UpgradingHandler,
+  space: Space, hub: MachineHub, machines: MachineSeam, directory: MachineDirectory, owner: Hub, metrics: InferenceMetricsSink, routed: @escaping UpgradingHandler,
 ) -> Router {
   @Dependency(\.uuid) var uuid
   let forward: RouteHandler = { request, _ in
@@ -106,7 +109,7 @@ func sessionlessRouter(
   }
   router.get("/v1/f/*", use: forward)
   router.put("/v1/f/*", use: forward)
-  addMachineRoutes(to: &router, space: space, hub: hub, owner: owner, machines: machines, routed: routed) { .script(script()) }
+  addMachineRoutes(to: &router, space: space, hub: hub, directory: directory, owner: owner, machines: machines, routed: routed) { .script(script()) }
   router.get("/v1/observe") { request, _ in
     try await observeResponse(space: space, url: request.url, principal: script().principal)
   }
@@ -119,7 +122,7 @@ func sessionlessRouter(
       return errorResponse(.badRequest, code: "invalidArgument", message: "request body is not valid JSON")
     }
     do {
-      return jsonResponse(try await spaceTool.run(SpaceToolContext(space: space, machines: machines, principal: script().principal), input: input))
+      return jsonResponse(try await spaceTool.run(SpaceToolContext(space: space, machines: machines, directory: directory, principal: script().principal), input: input))
     } catch let error as ToolRunError {
       switch error {
       case .undecodableInput: return jsonResponse(error.payload, status: .badRequest)

@@ -1,6 +1,9 @@
 import ControlledTime
 import Fetch
 import Foundation
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import Scratch
 @testable import SpaceServer
 import Testing

@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import enum SpaceContract.Handle
 @testable import SpaceCore
+import SpaceIDs
 import Testing
 
 @Suite(.deterministicDependencies)

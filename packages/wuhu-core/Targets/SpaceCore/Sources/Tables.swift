@@ -5,6 +5,7 @@
 #endif
 import JSONValue
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Wuwei
 

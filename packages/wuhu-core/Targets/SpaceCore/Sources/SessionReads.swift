@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import SessionDomain
+import SpaceIDs
 import StructuredQueries
 import Wuwei
 import WuweiQueries

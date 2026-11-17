@@ -2,6 +2,7 @@
 import Dependencies
 import DeterministicDependencies
 import Fetch
+@testable import Machines
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.SessionID
 #if canImport(Darwin)
@@ -17,6 +18,7 @@ import struct SpaceIDs.SessionID
 import InferenceKit
 import JSONValue
 import LoopCore
+import MachinesTesting
 import class MainHub.Hub
 import struct MainHub.SessionEffects
 import Scratch
@@ -123,7 +125,7 @@ private final class SessionCLIHarness: Sendable {
     if models {
       _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
-    let hub = MachineHub(space: space)
+    let hub = machineHub(space)
     let tokens = try await testTokens(space: space, spaceURL: "http://space")
     let connection = MainConnection()
     let worker = SessionExecution(

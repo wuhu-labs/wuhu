@@ -1,3 +1,4 @@
+import struct AgentsContract.SessionPut
 import JSONValue
 import func MainHub.handlerInput
 import SessionDomain
@@ -12,15 +13,15 @@ import enum SpaceCore.ObserverRefusal
 import struct SpaceCore.ObserverSlot
 import struct SpaceCore.ObserverTerms
 import struct SpaceCore.Rows
-import struct SpaceCore.SessionPut
 import struct SpaceCore.SessionStore
-import enum SpaceCore.SpaceError
 import enum SpaceCore.SubscriptionOwner
 import struct SpaceCore.SubscriptionRow
 import struct SpaceCore.SubscriptionSlot
 import enum SpaceCore.SubscriptionStatus
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
+import enum SpaceIDs.SpaceError
 import struct SpaceIDs.SubscriptionID
 import StructuredQueries
 import Wuwei

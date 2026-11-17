@@ -167,7 +167,7 @@ private func deliverInferences(_ space: Space, _ group: String) async throws {
   @Test func aSignedInAccountThatIsNoPersonIsRefused() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness(dev: false)
-      let (terminal, _) = try await h.signIn("box", kind: .machine)
+      let (terminal, _) = try await h.signIn("box", kind: .space)
       let refused = await h.run(["script", try script(h, "result(1)\n")], environment: terminal)
       #expect(refused.code == 1)
       #expect(refused.stderr.contains("you may not read group shared"), "\(refused.stderr)")

@@ -7,6 +7,7 @@ import JSONValue
 import struct MainHub.ScriptError
 import SpaceClient
 import SpaceContract
+import SpaceIDs
 import SpaceTools
 
 /// A host call's answer in the `wuhu:space` core's protocol: `{ok: value}` or

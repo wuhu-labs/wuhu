@@ -4,6 +4,7 @@ import JSONValue
 @testable import SessionTools
 import SpaceContract
 @testable import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Testing
 

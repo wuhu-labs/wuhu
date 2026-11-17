@@ -1,4 +1,6 @@
 import GroupContract
+import SpaceHTTP
+import SpaceIDs
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -63,7 +65,6 @@ func addAccountRoutes(_ router: inout Router, space: Space, devPerson: ResolvedP
           .conflict,
           code: "invalidArgument",
           message: "\(id.rawValue) is a \(record.kind.rawValue) account",
-          hint: "a machine is removed through its own verb: wuhu machine revoke",
         )
       }
       do {

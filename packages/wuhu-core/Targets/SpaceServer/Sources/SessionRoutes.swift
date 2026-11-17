@@ -4,6 +4,7 @@ import Fetch
 import Foundation
 import JSONValue
 import LoopCore
+import Machines
 import MainHub
 import enum ModelProviders.CatalogError
 import struct ModelProviders.ModelsDocument
@@ -12,6 +13,8 @@ import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
+import SpaceIDs
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.MessageID

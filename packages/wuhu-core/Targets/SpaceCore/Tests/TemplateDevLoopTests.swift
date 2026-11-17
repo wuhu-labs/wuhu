@@ -4,6 +4,7 @@ import JSONValue
 import Scratch
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 import Testing
 
 @Suite(.deterministicDependencies) struct TemplateTests {

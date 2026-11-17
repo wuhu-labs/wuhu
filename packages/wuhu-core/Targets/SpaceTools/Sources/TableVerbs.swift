@@ -2,6 +2,7 @@ import JSONValue
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 
 extension SpaceToolContext {

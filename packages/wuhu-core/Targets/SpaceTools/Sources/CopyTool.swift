@@ -1,8 +1,10 @@
 import struct Foundation.Data
 import JSONValue
 import MachineContract
+import MachinesContract
 import SpaceContract
 import SpaceCore
+import SpaceIDs
 
 /// The most a copy lands in the space: it is held whole before one write.
 let copySpaceBytes = 64 << 20

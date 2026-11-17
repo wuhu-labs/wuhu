@@ -12,6 +12,7 @@ import Dependencies
 import Fetch
 import Scratch
 import SpaceCore
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies)

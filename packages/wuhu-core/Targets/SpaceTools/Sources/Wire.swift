@@ -2,10 +2,12 @@ import enum DocIndex.FrontmatterError
 import struct DocIndex.PageHead
 import struct Foundation.Data
 import JSONValue
+import MachinesContract
 import OrderedCollections
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct Wuwei.Evicted
 

@@ -1,5 +1,6 @@
 import Dependencies
 import Fetch
+import GroupContract
 import Serve
 import ServeRouting
 import struct SpaceContract.GroupAccessEntry
@@ -9,6 +10,8 @@ import struct SpaceContract.GroupDetail
 import struct SpaceContract.GroupSummary
 import struct SpaceContract.GroupUpdateInput
 import SpaceCore
+import SpaceHTTP
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import SpaceTools

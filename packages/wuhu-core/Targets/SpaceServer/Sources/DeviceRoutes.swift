@@ -7,12 +7,16 @@
 import Dependencies
 import Fetch
 import struct MachineContract.MachineID
+import Machines
 import Serve
 import ServeRouting
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
+import SpaceIDs
+import TenancyContract
 
-func addDeviceRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPerson?) {
+func addDeviceRoutes(_ router: inout Router, space: Space, machines: Machines, devPerson: ResolvedPerson?) {
   @Dependency(\.date) var dateGen
 
   // Registration is the app's every-connect call, authenticated by the device
@@ -67,7 +71,7 @@ func addDeviceRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPe
     }
     var machine: MachineID?
     if let reference = input.machine {
-      guard let resolved = try await space.resolveMachine(reference) else {
+      guard let resolved = try await machines.resolveMachine(reference) else {
         return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(reference)")
       }
       machine = resolved.id

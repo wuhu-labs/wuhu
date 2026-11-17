@@ -90,6 +90,7 @@ private func registerVFS() {
   registered.withLock { registered in
     guard !registered else { return }
     registered = true
+    SQLiteLibrary.memoryStatisticsOff
     let vfs = UnsafeMutablePointer<sqlite3_vfs>.allocate(capacity: 1)
     vfs.initialize(to: sqlite3_vfs_find(nil)!.pointee)
     vfs.pointee.iVersion = 1

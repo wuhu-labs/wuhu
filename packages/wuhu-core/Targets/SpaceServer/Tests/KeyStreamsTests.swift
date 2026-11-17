@@ -4,6 +4,7 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import MachinesTesting
 import Serve
 import SessionDomain
 import SpaceContract

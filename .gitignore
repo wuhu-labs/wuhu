@@ -42,7 +42,6 @@ packages/*/Targets/*/Sources/Generated/
 # VSCode + Swift LSP + Bazel
 # No idea why not in .build
 *.d
-!packages/hosted-deploy/deploy/docker.service.d/
 *.dia
 *.o
 *.swiftdeps

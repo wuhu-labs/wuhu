@@ -6,7 +6,9 @@ import Foundation
 import JSONValue
 import SpaceContract
 import SpaceCore
+import SpaceIDs
 import SpaceServer
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies) struct AssertionGateTests {

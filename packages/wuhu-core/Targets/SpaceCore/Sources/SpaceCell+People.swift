@@ -1,20 +1,14 @@
 import GroupContract
 import struct SpaceIDs.AccountID
 import StructuredQueries
+import TenancyContract
 import Wuwei
 import WuweiQueries
 
 extension SpaceCell {
   func account(_ id: AccountID) -> AccountRecord? { ctx.cell(PersonCell.ID(id.rawValue)).account() }
-  /// Every live account. A machine account's name is its machine's current alias: the account keeps none of its own.
   func accounts() -> [AccountRecord] {
-    let names = Dictionary(uniqueKeysWithValues: db.rows(AliasRow.where { $0.kind.eq(AliasKind.machine) && $0.current }).map { ($0.target, $0.name) })
-    let machineNames = Dictionary(uniqueKeysWithValues: db.rows(MachineRow.all).map { ($0.accountID, names[$0.id]) })
-    return db.rows(PersonAccountRow.where { $0.removedAt.is(nil) }.order { ($0.createdAt, $0.id) }).map { row in
-      let record = row.record
-      guard record.kind == .machine, let name = machineNames[record.id.rawValue] ?? nil else { return record }
-      return AccountRecord(id: record.id, kind: record.kind, name: name, guest: record.guest, createdAt: record.createdAt, removedAt: record.removedAt)
-    }
+    db.rows(PersonAccountRow.where { $0.removedAt.is(nil) }.order { ($0.createdAt, $0.id) }).map(\.record)
   }
 
   func hasAdminAccount() -> Bool { accounts().contains { ctx.settings().isSpaceAdmin(account: $0.id) } }
@@ -32,5 +26,4 @@ extension SpaceCell {
   }
 
   func joinToken(_ hash: String) -> EnrollmentTokenRow? { db.rows(EnrollmentTokenRow.where { $0.tokenHash.eq(hash) }).first }
-  func receipt(_ hash: String) -> PersonReceiptRow? { db.rows(PersonReceiptRow.where { $0.tokenHash.eq(hash) }).first }
 }

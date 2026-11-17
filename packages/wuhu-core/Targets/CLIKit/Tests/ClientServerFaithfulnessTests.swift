@@ -6,6 +6,8 @@ import Fetch
 import FetchSSE
 import Foundation
 import JSONValue
+@testable import Machines
+import MachinesTesting
 import Scratch
 import Serve
 import ServeTesting
@@ -28,13 +30,13 @@ private let onePixelPNG: [UInt8] = [
 struct ClientServerFaithfulnessTests {
   @Test func deleteRemovesAMachineByNameThroughTheRealServer() async throws {
     let harness = try await ServerHarness()
-    let machine = try await harness.space.addMachineV2(name: "retired_box").machine
+    let machine = try await harness.space.machineFamily.addMachineV2(name: "retired_box").machine
     #expect(await harness.run(["machine", "delete", "retired_box"]) == 0)
     #expect(await harness.stdout.text == "deleted retired_box\n")
-    #expect(try await harness.space.machine(machine.id) == nil)
-    #expect(try await harness.space.machines().isEmpty)
+    #expect(try await harness.space.machineFamily.machine(machine.id) == nil)
+    #expect(try await harness.space.machineFamily.machines().isEmpty)
     #expect(await harness.run(["machine", "delete", machine.id.rawValue]) == 1)
-    _ = try await harness.space.addMachineV2(name: "retired_box")
+    _ = try await harness.space.machineFamily.addMachineV2(name: "retired_box")
   }
 
   @Test func modelsListAndUpdateKeepInvalidEntriesAndReportThem() async throws {
@@ -199,7 +201,7 @@ private struct ServerHarness {
       $0.continuousClock = ContinuousClock()
     } operation: {
       let space = try Space.inMemory()
-      return (space, MachineHub(space: space))
+      return (space, machineHub(space))
     }
     self.space = createdSpace
     let handler = SpaceServer.handler(space: createdSpace, hub: hub, devPerson: try await createdSpace.ensureDevPerson())

@@ -1,3 +1,4 @@
+import AgentsContract
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

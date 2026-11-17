@@ -1,8 +1,10 @@
 import DeterministicDependencies
 import Foundation
 import LoopCore
+import MachinesTesting
 import SessionDomain
 @testable import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.MessageID
 import Testing
 
@@ -122,10 +124,7 @@ struct DeviceTests {
 
   @Test func aKeyWithoutTheDeviceCapabilityCannotRegister() async throws {
     let space = try makeSpace()
-    let account = try await space.addAccount(kind: .machine, name: "box")
-    _ = try await space.addKey(
-      testPubkey("box"), account: account.id, capabilities: [.execMachine], createdBy: nil, expiresAt: nil,
-    )
+    _ = try await space.machineFamily.enrollMachineV2(name: "box", group: .shared, pubkey: testPubkey("box"))
     await #expect(throws: SpaceError.unknownDevice(testPubkey("box"))) {
       _ = try await space.upsertDevice(pubkey: testPubkey("box"), installation: "a", kind: "mac", name: "Box")
     }
@@ -135,7 +134,7 @@ struct DeviceTests {
     let space = try makeSpace()
     let pubkey = try await enrolled(space, "mac")
     let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Mac")
-    let machine = try await space.addMachineV2(name: "studio").machine
+    let machine = try await space.machineFamily.addMachineV2(name: "studio").machine
     let persona = try await space.adoptPersona(key: space.credential(pubkey: pubkey)!)
     _ = try await space.setUserProfile(principal: persona.name, handle: "before", displayName: nil)
     let session = try await space.sessions.createSession(group: .shared, title: "names", kind: .agent, createdBy: "morgan", model: .test)

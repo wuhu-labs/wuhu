@@ -6,6 +6,7 @@
 import SpaceContract
 import SpaceCore
 import struct SpaceFS.VersionToken
+import SpaceIDs
 
 public struct FileBytes: Sendable {
   public let token: String

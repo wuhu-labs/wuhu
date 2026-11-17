@@ -6,6 +6,7 @@
 import Dependencies
 import GRDBSQLite
 import Logging
+import SpaceIDs
 import StructuredQueries
 import Wuwei
 

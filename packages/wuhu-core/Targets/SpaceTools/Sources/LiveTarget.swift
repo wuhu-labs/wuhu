@@ -1,6 +1,7 @@
 import enum SpaceContract.LiveAccess
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 
 public struct LiveTarget: Sendable {

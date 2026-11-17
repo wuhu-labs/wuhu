@@ -2,6 +2,7 @@ import CanvasDocument
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,6 +10,7 @@ import DeterministicDependencies
 #endif
 import KeelObjectStore
 import LiveDocument
+import MachinesTesting
 import Scratch
 import enum SpaceContract.LiveAccess
 import enum SpaceContract.LiveErrorCode
@@ -560,7 +562,7 @@ struct DocumentCellTests {
     let space = try makeSpace(clock: VirtualClock())
     let owner = try await space.addAccount(kind: .human, name: "Morgan")
     let alice = try await space.createGroup(alias: "alice", owner: owner.id)
-    let machine = try await space.addMachineV2(name: "studio", group: alice).machine
+    let machine = try await space.machineFamily.addMachineV2(name: "studio", group: alice).machine
     let notes = "/_/machines/studio/notes.wmd"
     let hers = await space.fs(alice)
     _ = try await hers.write(notes, bytes("One\n\nTwo\n"), ifMatch: nil)
@@ -568,7 +570,7 @@ struct DocumentCellTests {
     try client.edit("One\n\nTwo!\n")
     #expect(await client.next() == .control(.ack(count: 1)))
 
-    _ = try await space.moveMachine(machine.id, to: .shared)
+    _ = try await space.machineFamily.moveMachine(machine.id, to: .shared)
     let settled = await client.next()
     guard case .control(.checkpoint)? = settled else { Issue.record("the move did not settle the document: \(String(describing: settled))"); return }
     guard case .control(.error(code: .notFound, _)) = await client.next() else { Issue.record("the document stayed in the old group"); return }
@@ -709,8 +711,8 @@ struct DocumentCellTests {
   @Test func aFolderReachesItsDocumentsAndNoSibling() async throws {
     let space = try space(clock: VirtualClock())
     let fs = await space.fs(.shared)
-    let studio = try await space.addMachineV2(name: "studio", group: .shared).machine
-    let other = try await space.addMachineV2(name: "other", group: .shared).machine
+    let studio = try await space.machineFamily.addMachineV2(name: "studio", group: .shared).machine
+    let other = try await space.machineFamily.addMachineV2(name: "other", group: .shared).machine
     let notes = "/_/machines/\(studio.id.rawValue)/notes.wmd"
     let theirs = "/_/machines/\(other.id.rawValue)/notes.wmd"
     let paths = ["/notes/plan.wmd", "/notes/a/b.wmd", "/notes-old.wmd", "/notes0.wmd", notes, theirs]

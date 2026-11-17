@@ -4,6 +4,7 @@ import DeterministicDependencies
 #else
   import Foundation
 #endif
+import MachinesTesting
 import Scratch
 @testable import SpaceCore
 import Testing
@@ -11,6 +12,7 @@ import Testing
 @Suite(.deterministicDependencies) struct LegacyMachineDropMigrationTests {
   @Test func freshSpaceHasNoEncryptedMachineStore() async throws {
     let space = try Space.inMemory()
+    await space.registeringMachines()
     #expect(try RawDatabase.open(space.databasePath) { db in
       try LegacyMachineSchema.tables.filter { try db.tableExists($0) }.isEmpty
     })

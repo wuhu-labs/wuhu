@@ -5,6 +5,7 @@ import SpaceCore
 import struct SpaceIDs.AccountID
 import Synchronization
 import TaskLifetime
+import TenancyContract
 
 /// The streamed responses and sockets a person key opened through the wall,
 /// so removing the key or its account ends them at once instead of at the

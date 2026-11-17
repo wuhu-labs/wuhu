@@ -1,9 +1,11 @@
 import struct MachineContract.MachineID
+import MachinesContract
 import struct MainHub.ToolProblem
 import enum MainHub.WaitCut
 import SessionDomain
 import SessionTools
 import SpaceCore
+import SpaceIDs
 import StructuredQueries
 import Wuwei
 #if canImport(FoundationEssentials)
@@ -35,7 +37,8 @@ extension ToolCallJob {
       } else {
         let (machine, request, preparedContext) = try await ctx.effect {
           let session = try await client.space.sessions.record(params.session)
-          guard let machine = try await client.space.resolveMachine(plan.machine, usableFrom: session.group) else {
+          let directory = ctx.dependency(MachineDirectory.self)
+          guard let machine = try await directory.resolveUsable(plan.machine, session.group) else {
             throw ToolProblem("unknown machine: \(plan.machine)")
           }
           let operation = UUID.deterministic("machine-exec", params.session.rawValue, params.call.id)
@@ -64,24 +67,24 @@ extension ToolCallJob {
         }
         exec = ToolExecTarget(machine: machine.rawValue, id: request.id, waitUntil: client.now().addingTimeInterval(plan.wait), yieldBy: params.yieldBy)
         context = preparedContext
-        ctx.send(MachineCell.ID(exec.machine)).start(request, finished: id.recipient.retyped())
+        ctx.send(MachineMail.start(request, finished: id.recipient.retyped()), to: Recipient(kind: MachineMail.kind, key: exec.machine))
         try db.execute(CallRow.update { $0.started = true; $0.exec = #bind(exec) })
       }
       while true {
         let until = min(exec.waitUntil, exec.yieldBy ?? exec.waitUntil)
         let left = max(0, until.timeIntervalSince(client.now()))
         guard let message = try await ctx.receive(within: .seconds(left)) else {
-          let tail = ctx.cell(MachineCell.ID(exec.machine)).tail(exec.id)
-          ctx.send(MachineCell.ID(exec.machine)).detach(exec.id)
+          let tail = ctx.machine(MachineID(rawValue: exec.machine)).tail(exec.id)
+          ctx.send(MachineMail.detach(exec.id), to: Recipient(kind: MachineMail.kind, key: exec.machine))
           return try answer(.result(plan.running(exec.id, tail: tail, cut: until < exec.waitUntil ? .arrival : .waited(plan.wait)), context: context))
         }
         switch message {
         case let .finished(end):
           precondition(end.id == exec.id)
-          ctx.send(MachineCell.ID(exec.machine)).taken(exec.id)
+          ctx.send(MachineMail.taken(exec.id), to: Recipient(kind: MachineMail.kind, key: exec.machine))
           return try answer(.result(plan.finished(end), context: context))
         case .interrupt:
-          ctx.send(MachineCell.ID(exec.machine)).abandon(exec.id)
+          ctx.send(MachineMail.abandon(exec.id), to: Recipient(kind: MachineMail.kind, key: exec.machine))
           return try answer(.interrupted)
         case let .yield(by):
           exec.yieldBy = min(exec.yieldBy ?? by, by)

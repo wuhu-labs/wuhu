@@ -1,4 +1,5 @@
 import SessionDomain
+import SpaceIDs
 import struct SpaceIDs.SessionID
 
 extension Sessions {

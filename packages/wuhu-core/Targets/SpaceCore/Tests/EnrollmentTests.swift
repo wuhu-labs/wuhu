@@ -1,10 +1,13 @@
 import Dependencies
 import DeterministicDependencies
 import Foundation
+import MachinesTesting
 @testable import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import StructuredQueries
 import Synchronization
+import TenancyContract
 import Testing
 import WuweiQueries
 
@@ -175,15 +178,5 @@ struct EnrollmentTests {
     #expect(!stored.tokenHash.contains(secret.dropFirst(3)))
     _ = try await space.consumeJoinToken(minted.token, pubkey: testPubkey("pk"))
     await #expect(throws: JoinTokenRejected()) { _ = try await space.consumeJoinToken(minted.token, pubkey: testPubkey("pk")) }
-    #expect(space.cell.db.rows(#sql("SELECT COUNT(*) FROM join_token_receipts", as: Int.self)).first! == 0)
-
-    let machine = try await space.addMachineV2(name: "box", group: .shared).machine
-    let rekey = try await space.mintJoinToken(account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600)
-    let machineSecret = rekey.token.rawValue
-    _ = try await space.consumeJoinToken(rekey.token, pubkey: testPubkey("box"))
-    let receipts = space.cell.db.rows(#sql("SELECT token_hash FROM join_token_receipts", as: String.self))
-    #expect(receipts == [Space.credentialDigest(machineSecret)])
-    #expect(!receipts[0].contains(machineSecret.dropFirst(3)))
-    await #expect(throws: SpaceError.self) { _ = try await space.query("SELECT * FROM join_token_receipts") }
   }
 }

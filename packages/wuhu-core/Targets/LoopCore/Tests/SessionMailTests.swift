@@ -1,3 +1,4 @@
+import AgentsContract
 import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -5,6 +6,7 @@ import Dependencies
   import Foundation
 #endif
 @testable import LoopCore
+import MachinesTesting
 import Scratch
 import SessionDomain
 import SpaceCore

@@ -6,6 +6,7 @@
 import GRDBSQLite
 import Scratch
 import Testing
+import enum Wuwei.SQLiteLibrary
 
 // The accessor alone cannot carry the gate: a flattened view whose columns
 // go unread leaves only a columnless read of the base table, named and
@@ -151,6 +152,7 @@ final class Probe {
 
   init(path: String) throws {
     var handle: OpaquePointer?
+    SQLiteLibrary.memoryStatisticsOff
     guard sqlite3_open_v2(path, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK, let handle else {
       throw Failure(message: "open \(path)")
     }

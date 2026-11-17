@@ -6,6 +6,7 @@ import SessionDomain
 import struct SpaceContract.PromptSession
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.SessionID
 import Testing
 import WuhuAI

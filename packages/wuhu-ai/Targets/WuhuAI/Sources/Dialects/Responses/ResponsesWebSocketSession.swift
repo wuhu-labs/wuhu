@@ -26,17 +26,26 @@ public actor ResponsesWebSocketSession {
   public init() {}
 
   public func invalidate() {
+    closeSocket()
+    socketIdentity = nil
+    lastAttempt = nil
+    candidate = nil
+    memo = nil
+  }
+
+  public func closeSocket() {
     quotaReceiver = nil
     generation += 1
     socket?.abort()
     socket = nil
-    socketIdentity = nil
     pump?.cancel()
     pump = nil
     active?.events.finish(throwing: WebSocketError.connectionClosed)
     active = nil
-    candidate = nil
-    memo = nil
+    if socketIdentity?.durableChain != true {
+      candidate = nil
+      memo = nil
+    }
   }
 
   public func acknowledge(
@@ -46,7 +55,7 @@ public actor ResponsesWebSocketSession {
     renderedContext: Context,
   ) async {
     guard inFlight == nil, let candidate, candidate.attemptID == attemptID,
-          candidate.generation == generation else { return }
+          lastAttempt == candidate.token, candidate.generation == generation || socketIdentity?.durableChain == true else { return }
     self.candidate = nil
     var projected = candidate.message
     var expectedIDs: Set<String> = []
@@ -66,7 +75,7 @@ public actor ResponsesWebSocketSession {
     else { memo = nil; return }
     do {
       let baseline = try await candidate.build(renderedContext)
-      guard generation == candidate.generation, lastAttempt == candidate.token, inFlight == nil else { return }
+      guard lastAttempt == candidate.token, inFlight == nil, generation == candidate.generation || socketIdentity?.durableChain == true else { return }
       guard let originalInput = candidate.body["input"]?.array, let baselineInput = baseline.body["input"]?.array,
             Array(baselineInput.prefix(originalInput.count)) == originalInput,
             properties(baseline.body) == properties(candidate.body)
@@ -148,6 +157,7 @@ public actor ResponsesWebSocketSession {
     guard inFlight == token, generation == startingGeneration else { throw WebSocketError.connectionClosed }
     let identity = SocketIdentity(request: request, providerID: providerID, model: model)
     if let socketIdentity, socketIdentity != identity { invalidate() }
+    lastAttempt = token
     let chain = continuationBody(request.body, context: context)
     memo = nil
     var body = chain.body
@@ -184,7 +194,8 @@ public actor ResponsesWebSocketSession {
         guard let terminal, case let .done(completed, _) = terminal, let completion = events.completion else {
           throw ResponsesWebSocketEvents.invalid("Missing terminal response identity")
         }
-        let continuable = request.replayScope != nil && completion.continuable && generation == currentGeneration && socket != nil
+        let continuable = request.replayScope != nil && completion.continuable && lastAttempt == token
+          && (request.durableChain || (generation == currentGeneration && socket != nil))
         if active?.events === events { active = nil }
         candidate = continuable ? Candidate(
           attemptID: attemptID, token: token, generation: currentGeneration, responseID: completion.responseID,
@@ -193,7 +204,7 @@ public actor ResponsesWebSocketSession {
         return terminal
       } catch let recovery as ResponsesRecovery {
         guard subattempt == 1, recovery == .connectionExpired || body["previous_response_id"] != nil else { throw recovery }
-        if recovery == .connectionExpired { invalidate() }
+        if recovery == .connectionExpired { closeSocket() }
         active = nil
         body = request.body
         aliases = [:]
@@ -286,11 +297,11 @@ public actor ResponsesWebSocketSession {
     guard generation == receivedGeneration else { return }
     lastFailure = (receivedGeneration, error)
     active?.events.finish(throwing: error)
-    invalidate()
+    closeSocket()
   }
 
   private func continuationBody(_ full: OrderedDictionary<String, JSONValue>, context: Context) -> (body: OrderedDictionary<String, JSONValue>, aliases: [String: String]) {
-    guard let memo, socket != nil,
+    guard let memo, socket != nil || socketIdentity?.durableChain == true,
           context.systemPrompt == memo.context.systemPrompt, context.tools == memo.context.tools,
           Array(context.messages.prefix(memo.context.messages.count)) == memo.context.messages,
           let baseline = memo.body["input"]?.array, let input = full["input"]?.array,
@@ -363,11 +374,13 @@ private struct SocketIdentity: Equatable, Sendable {
   var credentials: [String: String]
   var replayScope: String?
   var routeEpoch: String?
+  var durableChain: Bool
   var limits: WebSocketLimits
 
   init(request: ResponsesSocketRequest, providerID: String, model: String) {
     self.providerID = providerID
     self.model = model
+    durableChain = request.durableChain
     replayScope = request.replayScope
     routeEpoch = request.routeEpoch
     url = request.handshake.url

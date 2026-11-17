@@ -3,6 +3,7 @@ import Credentials
 import Dependencies
 import DeterministicDependencies
 import Fetch
+@testable import Machines
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
@@ -13,6 +14,7 @@ import struct SpaceIDs.SessionID
 import InferenceKit
 import LoopCore
 import MachineContract
+import MachinesTesting
 import class MainHub.Hub
 import struct MainHub.SessionEffects
 import Scratch
@@ -108,7 +110,7 @@ final class IdentityHarness: Sendable {
     self.store = space.sessions
     _ = try await space.fs(.settings).write("/models.json", Data(identityModelsJSON.utf8), ifMatch: nil)
     let tokens = try await testTokens(space: space, spaceURL: Self.sessionSpace)
-    let hub = MachineHub(space: space, tokens: tokens)
+    let hub = machineHub(space, credentials: tokens.execCredentials)
     let connection = MainConnection()
     let access = InferenceAccess(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "identity-fixture") })
     let worker = SessionExecution(
@@ -166,9 +168,9 @@ final class IdentityHarness: Sendable {
       title: "coder", kind: .task, parent: self.parent, createdBy: self.parent.rawValue, executor: model,
     )
     self.stranger = try await self.store.createSession(group: .shared, title: "stranger", kind: .agent, createdBy: "owner", executor: model)
-    let machine = try await space.addMachineV2(name: "box").machine
-    let exec = try await space.reserveExec(machine: machine.id, caller: self.parent.rawValue)
-    let credential = try await tokens.credential(session: self.parent, group: .shared, machine: machine.id, exec: exec.id, timeout: .seconds(60), issuedAt: Date())
+    let machine = try await space.machineFamily.addMachineV2(name: "box").machine
+    let exec = try await space.machineFamily.reserveExec(machine: machine.id, caller: self.parent.rawValue)
+    let credential = try await tokens.execCredentials.credential(session: self.parent, group: .shared, machine: machine.id, exec: exec.id, timeout: .seconds(60), issuedAt: Date())
     self.token = try #require(credential.object?["token"]?.stringValue)
     self.expiresAt = v2 ? try #require(credential.object?["expiresAt"]).jsonString() : nil
   }

@@ -1,6 +1,7 @@
 import ControlledTime
 import Dependencies
 import DeterministicDependencies
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

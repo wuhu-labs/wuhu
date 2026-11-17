@@ -7,6 +7,7 @@ import struct SpaceIDs.SessionID
 import Dependencies
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import SessionDomain
 import SessionTools
 @testable import SpaceCore

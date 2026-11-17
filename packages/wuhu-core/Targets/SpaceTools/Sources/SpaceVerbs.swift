@@ -2,6 +2,7 @@ import JSONValue
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 
 /// The most a `query` answers with, whoever asks.
 let queryResultBytes = 64 << 20

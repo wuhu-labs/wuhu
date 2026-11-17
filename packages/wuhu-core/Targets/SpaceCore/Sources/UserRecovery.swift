@@ -16,9 +16,9 @@ public struct UserRecoveryError: Error, Equatable, CustomStringConvertible {
 // operate directly on <folder>/space.sqlite with the server stopped instead
 // of trusting a localhost side channel.
 public enum UserRecovery {
-  public static func add(folder: URL, name: String?, admin: Bool = false) async throws -> String {
+  public static func add(folder: URL, name: String?, admin: Bool = false, prepare: @escaping @Sendable (Space) -> Void = { _ in }) async throws -> String {
     try requireSpaceFolder(folder)
-    let (record, isAdmin) = try await withSpace(in: folder) { space in
+    let (record, isAdmin) = try await withSpace(in: folder, prepare: prepare) { space in
       let record = try await add(space: space, name: name, admin: admin)
       return (record, space.cell._context.settings().isSpaceAdmin(account: record.id))
     }
@@ -32,13 +32,13 @@ public enum UserRecovery {
     return try await space.addAccount(kind: .human, name: name, admin: isAdmin)
   }
 
-  public static func reset(folder: URL, account: String) async throws -> String {
+  public static func reset(folder: URL, account: String, prepare: @escaping @Sendable (Space) -> Void = { _ in }) async throws -> String {
     try requireSpaceFolder(folder)
     guard AccountID.isValid(account) else {
       throw UserRecoveryError(message: "malformed account id: \(account)")
     }
     let id = AccountID(rawValue: account)
-    let removed = try await withSpace(in: folder) { space in
+    let removed = try await withSpace(in: folder, prepare: prepare) { space in
       guard try await space.account(id) != nil else {
         throw UserRecoveryError(message: "no account \(account) in \(folder.path)")
       }
@@ -47,12 +47,12 @@ public enum UserRecovery {
     return "reset \(account) keys \(removed.keys) read-sessions \(removed.readSessions)\n"
   }
 
-  public static func invite(folder: URL, account: String, server: String?, ttl: TimeInterval?) async throws -> (output: String, note: String?) {
+  public static func invite(folder: URL, account: String, server: String?, ttl: TimeInterval?, prepare: @escaping @Sendable (Space) -> Void = { _ in }) async throws -> (output: String, note: String?) {
     try requireSpaceFolder(folder)
     guard AccountID.isValid(account) else {
       throw UserRecoveryError(message: "malformed account id: \(account)")
     }
-    return try await withSpace(in: folder) { try await makeInvite(space: $0, account: account, server: server, ttl: ttl, location: folder.path) }
+    return try await withSpace(in: folder, prepare: prepare) { try await makeInvite(space: $0, account: account, server: server, ttl: ttl, location: folder.path) }
   }
 
   public static func invite(space: Space, account: String, server: String?, ttl: TimeInterval?) async throws -> (output: String, note: String?) {
@@ -109,8 +109,10 @@ public enum UserRecovery {
     }
   }
 
-  private static func withSpace<R>(in folder: URL, _ body: (Space) async throws -> R) async throws -> R {
+  /// `prepare` registers the families the server would have before the space's worker runs anything.
+  private static func withSpace<R>(in folder: URL, prepare: @Sendable (Space) -> Void, _ body: (Space) async throws -> R) async throws -> R {
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
+    prepare(space)
     let result: R
     do { result = try await body(space) } catch {
       try? await space.close()

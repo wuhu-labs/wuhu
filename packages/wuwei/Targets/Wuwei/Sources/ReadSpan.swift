@@ -112,6 +112,11 @@ public struct Reader {
   public func exists<J: Job>(_ id: J.ID) -> Bool {
     worker.exists(id, reading: .span(span))
   }
+
+  /// A client the worker was given, for a read that runs outside any addressable.
+  public func dependency<Client: Sendable>(_ type: Client.Type) -> Client {
+    worker.dependency(type)
+  }
 }
 
 enum Reading {

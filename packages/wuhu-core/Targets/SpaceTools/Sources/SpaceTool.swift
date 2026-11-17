@@ -3,20 +3,40 @@ import struct FileSearch.SearchQuery
 import struct Foundation.Data
 import JSONValue
 import MachineContract
+import MachinesContract
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import SystemFiles
 
 public struct SpaceToolContext: Sendable {
   public let space: Space
   let machines: MachineSeam?
+  let directory: MachineDirectory?
   public let principal: Principal
 
-  public init(space: Space, machines: MachineSeam? = nil, principal: Principal) {
+  public init(space: Space, principal: Principal) {
     self.space = space
-    self.machines = machines.map { Self.gated($0, space: space, acting: principal.group) }
+    self.machines = nil
+    self.directory = nil
+    self.principal = principal
+  }
+
+  /// The machine seam always comes with the directory that says who may use a machine: a seam alone would refuse every
+  /// machine.
+  public init(space: Space, machines: MachineSeam, directory: MachineDirectory, principal: Principal) {
+    self.space = space
+    self.machines = Self.gated(machines, directory: directory, acting: principal.group)
+    self.directory = directory
+    self.principal = principal
+  }
+
+  public init(space: Space, directory: MachineDirectory, principal: Principal) {
+    self.space = space
+    self.machines = nil
+    self.directory = directory
     self.principal = principal
   }
 
@@ -55,9 +75,9 @@ public struct SpaceToolContext: Sendable {
   /// The seam as `acting` may use it: a machine it may not use is no machine at
   /// all, on every route that builds a context. (An id with no row names
   /// nothing the hub could reach either.)
-  static func gated(_ seam: MachineSeam, space: Space, acting: GroupID) -> MachineSeam {
+  static func gated(_ seam: MachineSeam, directory: MachineDirectory, acting: GroupID) -> MachineSeam {
     @Sendable func requireUsable(_ machine: MachineID) async throws {
-      guard let record = try await space.machine(machine), try await !space.canUse(record, from: acting) else { return }
+      guard let record = try await directory.machine(machine), try await !directory.canUse(record, acting) else { return }
       throw ToolRunError.failed(code: .notFound, message: "unknown machine: \(machine.rawValue)", hint: nil)
     }
     return MachineSeam(
@@ -159,7 +179,7 @@ public struct SpaceToolContext: Sendable {
     let rest = address.dropFirst(scheme.count)
     let host = String(rest.prefix { $0 != "/" })
     guard !host.isEmpty, !MachineID.isValid(host) else { return address }
-    guard let record = try await space.resolveMachine(host, usableFrom: principal.group) else {
+    guard let directory, let record = try await directory.resolveUsable(host, principal.group) else {
       throw ToolRunError.failed(code: .notFound, message: "unknown machine: \(host)", hint: nil)
     }
     return scheme + record.id.rawValue + rest.dropFirst(host.count)

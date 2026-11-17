@@ -1,0 +1,14 @@
+name: MachinesContract
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+dependencies:
+  - SpaceIDs
+  - GroupContract
+  - MachineContract
+  - SessionDomain
+  - OperationProtocol
+  - SpaceContract
+  - JSONValue
+  - Wuwei

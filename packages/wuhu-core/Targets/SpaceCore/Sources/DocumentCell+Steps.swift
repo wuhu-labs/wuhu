@@ -5,6 +5,7 @@
 #endif
 import LiveDocument
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei

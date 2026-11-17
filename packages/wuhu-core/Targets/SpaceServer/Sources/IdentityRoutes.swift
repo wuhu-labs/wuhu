@@ -9,6 +9,7 @@ import func MainHub.fetchOrigin
 import Serve
 import ServeRouting
 import SpaceCore
+import SpaceHTTP
 import Wuwei
 
 private struct IdentitySetInput: Decodable {

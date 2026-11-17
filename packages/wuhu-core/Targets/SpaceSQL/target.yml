@@ -9,9 +9,11 @@ dependencies:
   - StructuredQueriesCore
   - GRDBSQLite
   - Logging
+  - Wuwei
 tests:
   dependencies:
     - StructuredQueries
     - SpaceContract
     - GRDBSQLite
     - Scratch
+    - Wuwei

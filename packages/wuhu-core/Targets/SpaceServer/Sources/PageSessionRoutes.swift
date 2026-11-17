@@ -9,6 +9,7 @@ import Serve
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
 
 /// `/_/space/session` and `/_/space/message`: a page's `createSession` and
 /// `sendMessage`, as the person viewing it; the hub holds the page's bound.

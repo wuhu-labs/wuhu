@@ -6,6 +6,7 @@ import struct SpaceIDs.SessionID
 #endif
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import SessionDomain
 import struct SpaceContract.PromptSession
 import SpaceCore

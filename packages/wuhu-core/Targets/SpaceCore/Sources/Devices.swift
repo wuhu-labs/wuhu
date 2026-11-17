@@ -1,3 +1,4 @@
+import SpaceIDs
 import struct SpaceIDs.AccountID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -5,8 +6,10 @@ import struct SpaceIDs.AccountID
   import Foundation
 #endif
 import struct MachineContract.MachineID
+import MachinesContract
 import SessionDomain
 import StructuredQueries
+import TenancyContract
 import Wuwei
 import WuweiQueries
 
@@ -38,26 +41,6 @@ struct DeviceCommandRow {
 struct MessageDeviceRow {
   @Column("message_id", primaryKey: true) var messageID: String
   @Column("device_id") var deviceID: String
-}
-
-public enum DeviceKind: String, Hashable, Sendable, CaseIterable {
-  case phone
-  case pad
-  case mac
-  case vision
-  case web
-}
-
-public struct DeviceRecord: Equatable, Sendable {
-  public let id: String
-  public let account: AccountID
-  public let pubkey: String
-  public let installation: String
-  public let kind: DeviceKind
-  public let name: String
-  public let machine: MachineID?
-  public let createdAt: Date
-  public let lastSeenAt: Date
 }
 
 extension Space {
@@ -118,6 +101,11 @@ extension SpaceCell {
 }
 
 extension PersonCell {
+  /// A device that named the machine no longer does; `machine` is the caller's fact, never this cell's.
+  mutating func detachMachine(_ machine: MachineID) throws {
+    try db.execute(DeviceRow.where { $0.accountID.eq(id.key) && $0.machineID.eq(machine.rawValue) }.update { $0.machineID = #bind(nil) })
+  }
+
   func device(installation: String) -> DeviceRecord? { db.rows(DeviceRow.where { $0.accountID.eq(id.key) && $0.installation.eq(installation) }).first?.record }
 
   mutating func upsertDevice(id allocated: String, pubkey: String, installation: String, kind: DeviceKind, name: String, at now: Date) throws -> DeviceRecord {
@@ -138,7 +126,7 @@ extension PersonCell {
     guard var row = db.rows(DeviceRow.where { $0.accountID.eq(id.key) && $0.id.eq(device) }).first else { throw SpaceError.unknownDevice(device) }
     if let name { row.name = name }
     if let machine {
-      guard !db.rows(MachineRow.where { $0.id.eq(machine.rawValue) }).isEmpty else { throw SpaceError.notFound(machine.rawValue) }
+      guard ctx.machine(machine).group() != nil else { throw SpaceError.notFound(machine.rawValue) }
       row.machineID = machine.rawValue
     }
     try db.execute(DeviceRow.upsert { row })

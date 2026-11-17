@@ -6,6 +6,7 @@
 import enum SpaceContract.LiveAccess
 import enum SpaceContract.LiveErrorCode
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Synchronization
 import Wuwei

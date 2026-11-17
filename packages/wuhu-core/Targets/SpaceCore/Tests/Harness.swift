@@ -10,6 +10,7 @@ import struct SpaceIDs.AccountID
 import JSONValue
 import Logging
 import LoopCore
+import MachinesTesting
 import SessionTools
 @testable import SpaceCore
 import SpaceFS
@@ -32,10 +33,10 @@ func makeSpace(
     $0.date = .constant(date)
     if let clock { $0.continuousClock = clock }
   } operation: {
-    guard log != nil || regions != nil else { return registerSessionExecution(try Space.inMemory(), clock: clock) }
-    return registerSessionExecution(try Space.inMemory(
+    guard log != nil || regions != nil else { return registerMachines(registerSessionExecution(try Space.inMemory(), clock: clock)) }
+    return registerMachines(registerSessionExecution(try Space.inMemory(
       log: log ?? Logger(label: "wuhu.space"), regions: regions,
-    ), clock: clock)
+    ), clock: clock))
   }
 }
 
@@ -197,4 +198,11 @@ extension Space {
     try await worker.call(GroupCell.ID(group.rawValue)) { try $0.create(claim) }
     try await setVisibility(.private, of: group, by: .person(persona: account.rawValue, account: account), acting: group)
   }
+}
+
+/// The machine family registered on the space's worker, for a suite that drives machines.
+@discardableResult
+func registerMachines(_ space: Space) -> Space {
+  space.machineFamily.register()
+  return space
 }

@@ -1,4 +1,5 @@
 import struct SpaceFS.SpacePath
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
@@ -79,7 +80,7 @@ public struct Observer: Hashable, Sendable, Codable {
   /// Whether a recorded caller (an exec's, a script's) is a sessionless
   /// script's, an observer's member or a person's `Person.execCaller`, rather
   /// than a session's id.
-  public static func isMember(_ caller: String) -> Bool { caller.contains("@") }
+  public static func isMember(_ caller: String) -> Bool { ExecCallerSpelling.isMember(caller) }
 }
 
 /// A page on its group's host, writing for its viewer (a Person in that
@@ -111,10 +112,10 @@ public struct Person: Hashable, Sendable {
 
   /// Whom a person's execs are recorded as: `@<account>`, which no observer
   /// member (`<name>@<group>`) or session id takes.
-  public static func execCaller(_ account: AccountID) -> String { "@" + account.rawValue }
+  public static func execCaller(_ account: AccountID) -> String { ExecCallerSpelling.person(account) }
 
   public static func account(ofExecCaller caller: String) -> AccountID? {
-    caller.first == "@" ? AccountID(rawValue: String(caller.dropFirst())) : nil
+    ExecCallerSpelling.personAccount(caller)
   }
 
   public var principal: Principal {

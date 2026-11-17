@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import socketserver
 import sys
 import threading
 import time
@@ -255,12 +256,21 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+class Server(ThreadingHTTPServer):
+    # HTTPServer names itself by a reverse lookup of its address, and a slow
+    # resolver then holds up startup past every test's timeout.
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "127.0.0.1"
+        self.server_port = self.server_address[1]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port-file", required=True)
     args = parser.parse_args()
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = Server(("127.0.0.1", 0), Handler)
     with open(args.port_file, "w", encoding="utf-8") as file:
         file.write(str(server.server_port))
         file.flush()

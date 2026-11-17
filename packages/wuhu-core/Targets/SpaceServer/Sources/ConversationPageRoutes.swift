@@ -1,3 +1,4 @@
+import SpaceHTTP
 import struct SpaceIDs.ConversationID
 import struct SpaceIDs.MessageID
 import struct SpaceIDs.SessionID

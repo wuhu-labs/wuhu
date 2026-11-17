@@ -1,4 +1,5 @@
 import enum SpaceContract.Handle
+import SpaceIDs
 import StructuredQueries
 import Wuwei
 import WuweiQueries

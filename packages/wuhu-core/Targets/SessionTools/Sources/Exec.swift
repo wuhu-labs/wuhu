@@ -1,4 +1,5 @@
 import struct MachineContract.MachineID
+import MachinesContract
 import enum MainHub.Address
 import enum MainHub.Addressing
 import struct MainHub.ExecArguments

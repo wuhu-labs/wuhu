@@ -90,7 +90,7 @@ import struct WuhuAI.ToolArguments
       let machineFS = FakeMachineFS()
       machineFS.put("/home/dev/notes.txt", "hello", mtime: 100)
       var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }),
         session: try await makeSession(space),
       )
 
@@ -121,9 +121,10 @@ import struct WuhuAI.ToolArguments
       let loop = try await ToolFixture(space: space)
       let fs = FakeMachineFS(opaqueTokens: true)
       fs.put("/notes.txt", "hello", mtime: 100)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: fs.seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: fs.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
       let path = JSONValue.string("machines://\(machineA.rawValue)/notes.txt")
-      guard case let .read(read) = try await world.run("read", .object(["path": path])) else { throw Mismatch("opaque read failed") }
+      let readPayload = try await world.run("read", .object(["path": path]))
+      guard case let .read(read) = readPayload else { throw Mismatch("opaque read failed: \(readPayload)") }
       #expect(read.revision == .machine("opaque:100.0"))
       guard case let .write(written) = try await world.run("write", .object(["path": path, "content": "updated"])) else { throw Mismatch("opaque write failed") }
       #expect(written.revision == .machine("opaque:1001.0"))
@@ -142,9 +143,10 @@ import struct WuhuAI.ToolArguments
       let loop = try await ToolFixture(space: space)
       let fs = FakeMachineFS()
       fs.put("/big.log", bytes: Array(repeating: UInt8(ascii: "x"), count: VFSDefaults.maxReadBytes + 1), mtime: 1)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: fs.seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: fs.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
       let refused = try await world.run("read", .object(["path": .string("machines://\(machineA.rawValue)/big.log")]))
-      #expect(try failureMessage(refused).contains("is \(VFSDefaults.maxReadBytes + 1) bytes; a machine file is read whole up to \(VFSDefaults.maxReadBytes) bytes"))
+      let bigMessage = try failureMessage(refused)
+      #expect(bigMessage.contains("is \(VFSDefaults.maxReadBytes + 1) bytes; a machine file is read whole up to \(VFSDefaults.maxReadBytes) bytes"), "\(bigMessage)")
       #expect(fs.reads.withLock { $0 } == [.read(path: "/big.log")], "one frame asked, no ranges")
     }
   }
@@ -163,9 +165,10 @@ import struct WuhuAI.ToolArguments
         },
         search: fs.seam.search, copy: fs.seam.copy, attached: fs.seam.attached,
       )
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: seam) }), session: try await makeSession(space))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: seam, directory: space.machineFamily.directory) }), session: try await makeSession(space))
       let refused = try await world.run("write", .object(["path": .string("machines://\(machineA.rawValue)/new.txt"), "content": "x"]))
-      #expect(try failureMessage(refused).contains("disk on fire"))
+      let diskMessage = try failureMessage(refused)
+      #expect(diskMessage.contains("disk on fire"), "\(diskMessage)")
       #expect(fs.writes.withLock { $0 }.isEmpty)
     }
   }

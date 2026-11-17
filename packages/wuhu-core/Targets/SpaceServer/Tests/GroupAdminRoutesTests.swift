@@ -3,6 +3,7 @@ import Fetch
 import Foundation
 import JSONValue
 import LoopCore
+import MachinesTesting
 import ServeTesting
 import SessionDomain
 import SpaceContract
@@ -93,8 +94,8 @@ import Testing
     try await withSessionDeps {
       let w = try await world()
       let session = try await w.harness.store.createSession(group: .shared, title: "Creator", kind: .agent, createdBy: "person", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-      let machine = (try await w.harness.space.addMachineV2(name: "box")).machine
-      let exec = try await w.harness.space.reserveExec(machine: machine.id, caller: session.rawValue)
+      let machine = (try await w.harness.space.machineFamily.addMachineV2(name: "box")).machine
+      let exec = try await w.harness.space.machineFamily.reserveExec(machine: machine.id, caller: session.rawValue)
       let bearer = try await w.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
       var request = Request(url: URL(string: "https://space.test/v1/groups")!, method: .post, body: try .json(["alias": "research_notes", "owner": w.account.rawValue]))
       request.headers[.authorization] = "Bearer " + bearer

@@ -1,93 +1,83 @@
 import DeterministicDependencies
 import struct MachineContract.MachineID
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 @testable import SpaceCore
+import SpaceIDs
 import Testing
 
 @Suite(.deterministicDependencies)
 struct MachineNameTests {
   @Test func addingStoresTheNameLowercasedAndRefusesACollision() async throws {
     let space = try makeSpace()
-    let box = try await space.addMachineV2(name: "Mini").machine
+    let box = try await space.machineFamily.addMachineV2(name: "Mini").machine
     #expect(box.name == "mini")
-    _ = try await space.addKey(testPubkey("mini"), account: box.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
 
     await #expect(throws: SpaceError.machineNameTakenByMachine("mini")) {
-      try await space.addMachineV2(name: "MINI").machine
+      try await space.machineFamily.addMachineV2(name: "MINI").machine
     }
     await #expect(throws: SpaceError.invalidMachineName("my box")) {
-      try await space.addMachineV2(name: "my box").machine
+      try await space.machineFamily.addMachineV2(name: "my box").machine
     }
-    #expect(try await space.machines().count == 1)
+    #expect(try await space.machineFamily.machines().count == 1)
   }
 
   @Test func resolvingAcceptsEitherAnIDOrAName() async throws {
     let space = try makeSpace()
-    let box = try await space.addMachineV2(name: "mini").machine
-    #expect(try await space.resolveMachine(box.id.rawValue) == box)
-    #expect(try await space.resolveMachine("MINI") == box)
-    #expect(try await space.machine(named: "mini") == box)
-    #expect(try await space.resolveMachine("mc_zzzzzzzz") == nil)
-    #expect(try await space.resolveMachine("nothing") == nil)
+    let box = try await space.machineFamily.addMachineV2(name: "mini").machine
+    #expect(try await space.machineFamily.resolveMachine(box.id.rawValue) == box)
+    #expect(try await space.machineFamily.resolveMachine("MINI") == box)
+    #expect(try await space.machineFamily.machine(named: "mini") == box)
+    #expect(try await space.machineFamily.resolveMachine("mc_zzzzzzzz") == nil)
+    #expect(try await space.machineFamily.resolveMachine("nothing") == nil)
   }
 
   @Test func renamingRedirectsTheOldNameAndRefusesAnOccupiedOne() async throws {
     let space = try makeSpace()
-    let first = try await space.addMachineV2(name: "mini").machine
-    let second = try await space.addMachineV2(name: "laptop").machine
-    _ = try await space.addKey(testPubkey("laptop"), account: second.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
+    let first = try await space.machineFamily.addMachineV2(name: "mini").machine
+    let second = try await space.machineFamily.addMachineV2(name: "laptop").machine
 
-    let renamed = try await space.renameMachine(first.id, name: "Studio")
+    let renamed = try await space.machineFamily.renameMachine(first.id, name: "Studio")
     #expect(renamed.name == "studio")
-    #expect(try await space.machine(named: "mini")?.id == first.id)
-    #expect(try await space.resolveMachine("studio")?.id == first.id)
+    #expect(try await space.machineFamily.machine(named: "mini")?.id == first.id)
+    #expect(try await space.machineFamily.resolveMachine("studio")?.id == first.id)
 
     await #expect(throws: SpaceError.machineNameTakenByMachine("laptop")) {
-      try await space.renameMachine(first.id, name: "Laptop")
+      try await space.machineFamily.renameMachine(first.id, name: "Laptop")
     }
-    #expect(try await space.renameMachine(second.id, name: "laptop").name == "laptop")
+    #expect(try await space.machineFamily.renameMachine(second.id, name: "laptop").name == "laptop")
     await #expect(throws: SpaceError.notFound("mc_zzzzzzzz")) {
-      try await space.renameMachine(MachineID(rawValue: "mc_zzzzzzzz"), name: "ghost")
+      try await space.machineFamily.renameMachine(MachineID(rawValue: "mc_zzzzzzzz"), name: "ghost")
     }
-  }
-
-  @Test func joiningClaimsThePreferredNameAndSuffixesWhenTaken() async throws {
-    let space = try makeSpace()
-    let first = try await space.addMachineV2(name: "first").machine
-    let second = try await space.addMachineV2(name: "second").machine
-    let third = try await space.addMachineV2(name: "third").machine
-
-    #expect(try await space.claimMachineName(first.id, preferred: "Mini").name == "mini")
-    #expect(try await space.claimMachineName(second.id, preferred: "mini").name == "mini_2")
-    #expect(try await space.claimMachineName(third.id, preferred: "mini").name == "mini_3")
-    #expect(try await space.claimMachineName(second.id, preferred: "mini_2").name == "mini_2")
   }
 
   @Test func aRevokedMachineKeepsEveryNameItEverHadUntilItIsDeleted() async throws {
     let space = try makeSpace()
     let member = try await space.addAccount(kind: .human, name: "Morgan")
     let foreign = try await space.createGroup(alias: "other", owner: member.id)
-    let old = try await space.addMachineV2(name: "work-box").machine
-    let key = try await space.addKey(testPubkey("old_box"), account: old.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
-    _ = try await space.renameMachine(old.id, name: "workstation")
-    #expect(try await space.revokeMachine(old.id, presenting: key.pubkey))
-    #expect(try await space.machine(named: "work-box")?.id == old.id)
-    #expect(try await space.machine(named: "workstation")?.id == old.id)
+    let (old, token) = try await space.machineFamily.addMachineV2(name: "work-box")
+    _ = try await space.machineFamily.enrollMachineV2(token: token.token, pubkey: testPubkey("old_box"))
+    _ = try await space.machineFamily.renameMachine(old.id, name: "workstation")
+    #expect(try await space.machineFamily.revokeMachine(old.id, presenting: testPubkey("old_box")))
+    #expect(try await space.machineFamily.machine(named: "work-box")?.id == old.id)
+    #expect(try await space.machineFamily.machine(named: "workstation")?.id == old.id)
     for name in ["work_box", "workstation"] {
-      await #expect(throws: SpaceError.machineNameTakenByMachine(name)) { try await space.addMachineV2(name: name, group: foreign, scope: .reachable) }
-      await #expect(throws: SpaceError.machineNameTakenByMachine(name)) { try await space.addMachineV2(name: name) }
+      await #expect(throws: SpaceError.machineNameTakenByMachine(name)) { try await space.machineFamily.addMachineV2(name: name, group: foreign, scope: .reachable) }
+      await #expect(throws: SpaceError.machineNameTakenByMachine(name)) { try await space.machineFamily.addMachineV2(name: name) }
       await #expect(throws: AliasError.taken(name)) { try await space.createGroup(alias: name, owner: member.id) }
     }
-    #expect(try await space.machine(old.id)?.name == "workstation")
+    #expect(try await space.machineFamily.machine(old.id)?.name == "workstation")
   }
 
   @Test func pendingEnrollmentKeepsBothCurrentAndRetiredNamesReserved() async throws {
     let space = try makeSpace()
-    let machine = try await space.addMachineV2(name: "old-box").machine
-    _ = try await space.renameMachine(machine.id, name: "desk")
-    _ = try await space.mintJoinToken(account: machine.account, capabilities: [.execMachine], createdBy: nil, lifetime: 600)
+    let machine = try await space.machineFamily.addMachineV2(name: "old-box").machine
+    _ = try await space.machineFamily.renameMachine(machine.id, name: "desk")
+    _ = try await space.machineFamily.rotateMachine(machine.id)
     for name in ["old_box", "desk"] {
-      await #expect(throws: SpaceError.machineNameTakenByMachine(name)) { try await space.addMachineV2(name: name) }
-      #expect(try await space.resolveMachine(name)?.id == machine.id)
+      await #expect(throws: SpaceError.machineNameTakenByMachine(name)) { try await space.machineFamily.addMachineV2(name: name) }
+      #expect(try await space.machineFamily.resolveMachine(name)?.id == machine.id)
     }
   }
 

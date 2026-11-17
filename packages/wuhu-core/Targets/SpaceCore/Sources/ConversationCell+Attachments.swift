@@ -1,3 +1,4 @@
+import SpaceIDs
 import struct SpaceIDs.ConversationID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

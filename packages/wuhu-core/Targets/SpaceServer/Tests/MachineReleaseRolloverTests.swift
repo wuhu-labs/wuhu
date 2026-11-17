@@ -3,6 +3,9 @@ import Dependencies
 import DeterministicDependencies
 import Foundation
 import MachineContract
+@testable import Machines
+import MachinesContract
+import MachinesTesting
 import Scratch
 @testable import SpaceCore
 @testable import SpaceServer
@@ -54,7 +57,7 @@ import Wuwei
   }
 
   private func install(_ space: Space, _ host: ReleaseHost) throws {
-    try registerMachineReleases(space: space, version: "1.2.3", client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: host.clock))
+    try space.machineFamily.registerReleases(version: "1.2.3", client: MachineReleaseClient(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: host.clock))
   }
 
   private func assertRow(_ space: Space, requested: Bool, lookedUp: Bool) async throws {
@@ -80,8 +83,8 @@ import Wuwei
       @Dependency(\.timeControl) var time
       let folder = try ScratchFolder("machine-release-rollover")
       let file = folder.url.appending(path: "space.sqlite")
-      let old = try Space.open(file: file)
-      let new = try Space.open(file: file)
+      let old = try Space.open(file: file).registeringMachines()
+      let new = try Space.open(file: file).registeringMachines()
       do {
         try await body(old, new, time)
       } catch {

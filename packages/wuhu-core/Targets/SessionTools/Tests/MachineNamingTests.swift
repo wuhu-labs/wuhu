@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import JSONValue
+import MachinesTesting
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
@@ -12,11 +13,11 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachineV2(name: "mac_mini").machine
+      let mini = try await space.machineFamily.addMachineV2(name: "mac_mini").machine
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }),
         session: try await makeSession(space),
       )
 
@@ -30,16 +31,16 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachineV2(name: "mac_mini").machine
+      let mini = try await space.machineFamily.addMachineV2(name: "mac_mini").machine
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }),
         session: try await makeSession(space),
       )
 
       _ = try await world.run("read", .object(["path": "machines://mac_mini/work/main.swift"]))
-      _ = try await space.renameMachine(mini.id, name: "studio")
+      _ = try await space.machineFamily.renameMachine(mini.id, name: "studio")
 
       guard case let .read(read) = try await world.run("read", .object(["path": "machines://studio/work/main.swift"]))
       else { throw Mismatch("read after rename failed") }
@@ -56,7 +57,7 @@ import Testing
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam, directory: space.machineFamily.directory) }),
         session: try await makeSession(space),
       )
 
@@ -72,10 +73,10 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachineV2(name: "mac_mini").machine
-      let builder = try await space.addMachineV2(name: "ci_box").machine
+      let mini = try await space.machineFamily.addMachineV2(name: "mac_mini").machine
+      let builder = try await space.machineFamily.addMachineV2(name: "ci_box").machine
       var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam, directory: space.machineFamily.directory) }),
         session: try await makeSession(space),
       )
 

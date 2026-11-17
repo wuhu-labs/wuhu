@@ -2,6 +2,7 @@ import struct Credentials.CredentialResolver
 import Dependencies
 import LoopCore
 import SessionTools
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

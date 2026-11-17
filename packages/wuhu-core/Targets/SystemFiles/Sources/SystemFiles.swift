@@ -6,6 +6,7 @@
 import protocol FileSearch.SearchSource
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 
 /// The files compiled into this binary and addressed as `wuhu://system/…`:
 /// the system AGENTS.md and the system skills. They are identical for every

@@ -1,3 +1,4 @@
+import SpaceIDs
 import struct SpaceIDs.SessionID
 import struct SpaceIDs.SubscriptionID
 #if canImport(FoundationEssentials)
@@ -5,6 +6,7 @@ import struct SpaceIDs.SubscriptionID
 #else
   import Foundation
 #endif
+import struct AgentsContract.SessionPut
 import SessionDomain
 import struct SpaceCore.ArmedSubscription
 import struct SpaceCore.Arming
@@ -12,7 +14,6 @@ import enum SpaceCore.ObservationMail
 import func SpaceCore.observationProgress
 import func SpaceCore.observationToken
 import enum SpaceCore.Observed
-import struct SpaceCore.SessionPut
 import enum SpaceCore.Sessions
 import struct SpaceCore.SessionStore
 import struct SpaceCore.SubscriptionRow

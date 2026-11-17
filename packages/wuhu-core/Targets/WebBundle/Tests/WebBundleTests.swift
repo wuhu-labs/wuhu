@@ -2,6 +2,9 @@ import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
+import Machines
+import MachinesContract
+import MachinesTesting
 import ServeTesting
 import SpaceCore
 import SpaceServer
@@ -12,7 +15,7 @@ import WebBundle
   private func client() async throws -> FetchClient {
     let space = try Space.inMemory()
     return ServeTesting.client(upgrading: SpaceServer.handler(
-      space: space, hub: MachineHub(space: space), devPerson: try await space.ensureDevPerson(), webContent: try WebBundle.load(),
+      space: space, hub: machineHub(space), devPerson: try await space.ensureDevPerson(), webContent: try WebBundle.load(),
     ))
   }
 

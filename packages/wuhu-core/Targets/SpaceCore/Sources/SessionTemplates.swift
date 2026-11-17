@@ -3,6 +3,7 @@ import Foundation
 import JSONValue
 import SessionDomain
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
 

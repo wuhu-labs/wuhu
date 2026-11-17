@@ -5,6 +5,7 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import MachinesTesting
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -360,7 +361,7 @@ import Testing
 
   @Test func machineNotesServeUnderTheNameAndTheId() async throws {
     let harness = try await Harness()
-    let id = (try await harness.space.addMachineV2(name: "studio")).machine.id.rawValue
+    let id = (try await harness.space.machineFamily.addMachineV2(name: "studio")).machine.id.rawValue
     _ = try await harness.direct("write", .object(["path": "/_/machines/studio/AGENTS.md", "content": "studio manual"]))
 
     for path in ["/_/machines/studio/AGENTS.md", "/_/machines/\(id)/AGENTS.md"] {

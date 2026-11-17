@@ -10,6 +10,8 @@ import Serve
 import ServeRouting
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
+import SpaceIDs
 
 func addUserRoutes(_ router: inout Router, space: Space, devPerson: ResolvedPerson?) {
   addUserSettingsRoutes(&router, space: space, devPerson: devPerson)

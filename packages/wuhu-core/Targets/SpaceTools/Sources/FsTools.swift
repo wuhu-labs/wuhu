@@ -4,6 +4,7 @@ import JSONValue
 import SpaceContract
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 
 extension SpaceToolbox {
   static let read = SpaceTool("read", schema: ReadInput.jsonSchema) { (context, input: ReadInput) in

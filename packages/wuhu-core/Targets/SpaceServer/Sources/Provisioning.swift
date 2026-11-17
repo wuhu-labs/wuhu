@@ -5,6 +5,7 @@
 #endif
 import SpaceCore
 import struct SpaceFS.SpacePath
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Wuwei
 

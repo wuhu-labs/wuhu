@@ -1,3 +1,4 @@
+import MachinesContract
 import SessionDomain
 import SessionTools
 import SpaceCore

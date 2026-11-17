@@ -11,6 +11,8 @@ import LoopCore
   import Foundation
 #endif
 import MachineContract
+@testable import Machines
+import MachinesTesting
 import Scratch
 import ServeTesting
 import SessionDomain
@@ -26,8 +28,8 @@ import Testing
     try await withSessionDeps {
       let folder = try ScratchFolder("credential-rollover")
       let file = folder.url.appendingPathComponent("space.sqlite")
-      let old = try Space.open(file: file)
-      let new = try Space.open(file: file)
+      let old = try Space.open(file: file).registeringMachines()
+      let new = try Space.open(file: file).registeringMachines()
       do {
         let keys = MemoryFiles().identityKeys
         let fetch = FetchClient { _ in Response(status: .forbidden) }
@@ -39,8 +41,8 @@ import Testing
         old.worker.start()
         let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
         let session = try await old.sessions.createSession(group: .shared, title: "rollover", kind: .agent, createdBy: "owner", executor: model)
-        let machine = try await old.addMachineV2(name: "box").machine
-        let exec = try await old.reserveExec(machine: machine.id, caller: session.rawValue)
+        let machine = try await old.machineFamily.addMachineV2(name: "box").machine
+        let exec = try await old.machineFamily.reserveExec(machine: machine.id, caller: session.rawValue)
         let before = ExecTokens(spaceURL: "http://lan", identity: first)
         let token = try await before.credential(session: session, exec: exec.id, timeout: 600, now: Date()).token
         let sessionToken = try await before.sessionToken(session)
@@ -49,12 +51,12 @@ import Testing
         old.worker.release()
         let after = ExecTokens(spaceURL: "http://lan", identity: second)
         for bearer in [token, sessionToken] {
-          guard case let .session(principal) = await sessionVerdict(bearer, tokens: after, space: new, now: Date()) else { Issue.record("credential did not survive rollover"); continue }
+          guard case let .session(principal) = await sessionVerdict(bearer, tokens: after, space: new, directory: new.machineFamily.directory, now: Date()) else { Issue.record("credential did not survive rollover"); continue }
           #expect(principal.session == session)
           #expect(principal.exec == (bearer == token))
         }
         try await setExecTerminalFixture(space: new, exec: exec.id, terminal: .exited(code: 0))
-        guard case .refused = await sessionVerdict(token, tokens: after, space: new, now: Date()) else { throw InvalidCredentialTestState() }
+        guard case .refused = await sessionVerdict(token, tokens: after, space: new, directory: new.machineFamily.directory, now: Date()) else { throw InvalidCredentialTestState() }
       } catch {
         try await old.close()
         try await new.close()
@@ -84,7 +86,7 @@ import Testing
     try await withSessionDeps {
       let t = try await SessionGateTests().tree(dev: false)
       let gate = sessionGate(
-        space: t.harness.space, hub: t.harness.hub, machines: machineSeam(hub: t.harness.hub), owner: t.harness.runtime.owner,
+        space: t.harness.space, hub: t.harness.hub, machines: machineSeam(hub: t.harness.hub), directory: t.harness.space.machineFamily.directory, owner: t.harness.runtime.owner,
         tokens: t.tokens, runtime: t.harness.runtime, credentials: .unavailable, identity: nil, metrics: .noop,
         routed: { _ in .response(Response(status: .notImplemented)) }, otherwise: { _ in .response(Response(status: .accepted)) },
       )
@@ -123,7 +125,7 @@ import Testing
         let signer = try P256.Signing.PrivateKey(rawRepresentation: key.rawKey)
         return ExecTokens.prefix + input + "." + credentialTestBase64(try signer.signature(for: Data(input.utf8)).rawRepresentation)
       }
-      let machine = try #require(try await t.harness.space.execRecord(t.exec)).machine.rawValue
+      let machine = try #require(try await t.harness.space.machineFamily.execRecord(t.exec)).machine.rawValue
       let invalid = try [
         token(issuer: "wuhu:space:other", machine: machine),
         token(audience: "https://external.test", machine: machine),
@@ -132,12 +134,12 @@ import Testing
         token(machine: machine, exec: "ex_missing"),
       ]
       for bearer in invalid {
-        guard case .refused = await sessionVerdict(bearer, tokens: t.tokens, space: t.harness.space, now: now) else { Issue.record("invalid claims accepted"); continue }
+        guard case .refused = await sessionVerdict(bearer, tokens: t.tokens, space: t.harness.space, directory: t.harness.space.machineFamily.directory, now: now) else { Issue.record("invalid claims accepted"); continue }
       }
       var parts = t.token.split(separator: ".").map(String.init)
       parts[2] = String(repeating: "A", count: parts[2].count)
-      guard case .refused = await sessionVerdict(parts.joined(separator: "."), tokens: t.tokens, space: t.harness.space, now: now) else { Issue.record("forged signature accepted"); return }
-      guard case .refused = await sessionVerdict(t.token, tokens: t.tokens, space: t.harness.space, now: now.addingTimeInterval(86401)) else { Issue.record("expired token accepted"); return }
+      guard case .refused = await sessionVerdict(parts.joined(separator: "."), tokens: t.tokens, space: t.harness.space, directory: t.harness.space.machineFamily.directory, now: now) else { Issue.record("forged signature accepted"); return }
+      guard case .refused = await sessionVerdict(t.token, tokens: t.tokens, space: t.harness.space, directory: t.harness.space.machineFamily.directory, now: now.addingTimeInterval(86401)) else { Issue.record("expired token accepted"); return }
       let own = try await t.tokens.sessionToken(t.parent)
       let ownClaims = try #require(try await identity.credential(String(own.dropFirst(ExecTokens.prefix.count))))
       #expect(ownClaims.exp - ownClaims.iat == 300)
@@ -146,7 +148,7 @@ import Testing
       let cappedClaims = try #require(try await identity.credential(String(capped.dropFirst(ExecTokens.prefix.count))))
       #expect(cappedClaims.exp - cappedClaims.iat == 86400)
       let mismatch = try await identity.credential(session: t.parent, group: .init(rawValue: "other"), exec: nil, now: now, lifetime: 60)
-      guard case let .refused(groupResponse) = await sessionVerdict(ExecTokens.prefix + mismatch, tokens: t.tokens, space: t.harness.space, now: now) else { throw InvalidCredentialTestState() }
+      guard case let .refused(groupResponse) = await sessionVerdict(ExecTokens.prefix + mismatch, tokens: t.tokens, space: t.harness.space, directory: t.harness.space.machineFamily.directory, now: now) else { throw InvalidCredentialTestState() }
       #expect(groupResponse.status == .forbidden)
       let reminted = try await t.tokens.credential(session: t.parent, exec: t.exec, timeout: 7 * 86400, now: now).token
       #expect(try await identity.credential(String(reminted.dropFirst(ExecTokens.prefix.count)))?.exp == cappedClaims.exp)

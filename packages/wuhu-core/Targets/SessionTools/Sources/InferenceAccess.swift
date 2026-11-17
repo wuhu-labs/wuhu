@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import SpaceIDs
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

@@ -9,6 +9,7 @@ import enum SpaceContract.LiveFrame
 import struct SpaceContract.LivePeer
 import enum SpaceContract.LiveServerControl
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import StructuredQueries
 import Wuwei

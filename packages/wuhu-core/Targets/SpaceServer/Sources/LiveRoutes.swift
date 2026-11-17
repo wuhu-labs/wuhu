@@ -1,5 +1,6 @@
 import Dependencies
 import Fetch
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -17,6 +18,7 @@ import enum SpaceContract.LiveErrorCode
 import enum SpaceContract.LiveServerControl
 import SpaceCore
 import SpaceTools
+import TenancyContract
 
 /// `GET /v1/live/<path>`: the live channel of a `.wmd` or `.canvas` document. The wall lets
 /// the upgrade through bare; the `hello` frame carries the credential and must

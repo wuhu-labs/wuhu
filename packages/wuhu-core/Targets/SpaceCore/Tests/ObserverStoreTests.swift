@@ -1,6 +1,7 @@
 import Dependencies
 import DeterministicDependencies
 import LoopCore
+import SpaceIDs
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

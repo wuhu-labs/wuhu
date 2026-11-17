@@ -1,6 +1,7 @@
 import enum JSONValue.JSONValue
 import SessionDomain
 import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.SessionID
 
 public struct ManipulateUIArguments: Decodable, Sendable {

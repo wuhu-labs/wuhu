@@ -7,6 +7,7 @@ import struct SpaceIDs.SessionID
   import Foundation
 #endif
 import JSONValue
+import MachinesTesting
 import class MainHub.Hub
 import struct MainHub.ToolProblem
 import SessionDomain
@@ -45,7 +46,7 @@ import struct WuhuAI.ToolArguments
     return Rig(
       space: space,
       loop: loop,
-      executor: try await loop.executor(owner: loop.hub { Hub(space: space) }),
+      executor: try await loop.executor(owner: loop.hub { Hub(space: space, directory: space.machineFamily.directory) }),
       p: try await makeSession(space, name: "P", group: Self.alice),
       s: try await makeSession(space, name: "S"),
       b: try await makeSession(space, name: "B", group: Self.bob),
@@ -161,12 +162,12 @@ import struct WuhuAI.ToolArguments
   @Test func aMachineIsUsableOnlyFromAGroupThatReadsItsGroup() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
-      let hers = try await rig.space.addMachineV2(name: "hers", group: Self.alice).machine
-      _ = try await rig.space.addMachineV2(name: "common").machine
+      let hers = try await rig.space.machineFamily.addMachineV2(name: "hers", group: Self.alice).machine
+      _ = try await rig.space.machineFamily.addMachineV2(name: "common").machine
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [hers.id] }
       machineFS.put("/x.txt", "hi", mtime: 1)
-      let executor = try await rig.loop.executor(owner: rig.loop.hub { Hub(space: rig.space, machines: machineFS.seam) })
+      let executor = try await rig.loop.executor(owner: rig.loop.hub { Hub(space: rig.space, machines: machineFS.seam, directory: rig.space.machineFamily.directory) })
 
       func roster(_ session: SessionID) async throws -> [String] {
         var world = ToolWorld(executor: executor, session: session)

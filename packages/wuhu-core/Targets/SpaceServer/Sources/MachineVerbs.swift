@@ -1,6 +1,8 @@
 import Fetch
 import JSONValue
 import MachineContract
+import Machines
+import MachinesContract
 import class MainHub.Hub
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
@@ -9,6 +11,8 @@ import ServeRouting
 import SessionDomain
 import SpaceContract
 import SpaceCore
+import SpaceHTTP
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import struct SpaceIDs.SessionID
 import SpaceTools
@@ -60,6 +64,7 @@ func addMachineRoutes(
   to router: inout Router,
   space: Space,
   hub: MachineHub,
+  directory: MachineDirectory,
   owner: Hub,
   machines: MachineSeam,
   routed: @escaping UpgradingHandler,
@@ -76,7 +81,7 @@ func addMachineRoutes(
   }
   @Sendable func ownsExec(_ parameters: RouteParameters) async -> Bool {
     guard let raw = parameters["id"], ExecID.isValid(raw) else { return false }
-    return (try? await SpaceToolContext(space: space, principal: user().principal).ownExecStatus(raw)) != nil
+    return (try? await SpaceToolContext(space: space, directory: directory, principal: user().principal).ownExecStatus(raw)) != nil
   }
 
   // The roster is the hub's (its refusal when the server has no machine
@@ -84,13 +89,13 @@ func addMachineRoutes(
   router.get("/v1/machine") { _, _ in
     let payload = try await roster()
     guard case let .machines(listed) = payload else { return hubRefusal(payload) }
-    let groups = Dictionary(uniqueKeysWithValues: try await space.machines(usableFrom: user().group).map { ($0.id.rawValue, $0.group.rawValue) })
+    let groups = Dictionary(uniqueKeysWithValues: try await directory.usable(user().group).map { ($0.id.rawValue, $0.group.rawValue) })
     return try Response.json(listed.machines.compactMap { listing in
       groups[listing.id].map { MachineStatus(id: MachineID(rawValue: listing.id), name: listing.name, group: $0, attached: listing.attached) }
     })
   }
   router.get("/v1/machine/:id/status") { _, parameters in
-    guard let raw = parameters["id"], let record = try await space.resolveMachine(raw, usableFrom: user().group) else {
+    guard let raw = parameters["id"], let record = try await directory.resolveUsable(raw, user().group) else {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine")
     }
     let payload = try await roster()
@@ -105,7 +110,7 @@ func addMachineRoutes(
     guard case let .object(fields)? = JSONValue.parse(try await request.body?.text() ?? ""),
           case let .string(path)? = fields["path"], path.hasPrefix("/")
     else { return errorResponse(.badRequest, code: "invalidArgument", message: "mkdir takes an absolute path on the machine") }
-    guard try await space.resolveMachine(id.rawValue, usableFrom: user().group) != nil else {
+    guard try await directory.resolveUsable(id.rawValue, user().group) != nil else {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(id.rawValue)")
     }
     let result = try await MachineSeam.$caller.withValue(user().session) { try await machines.vfs(id, .mkdir(path: path)) }
@@ -120,14 +125,14 @@ func addMachineRoutes(
     let input = try await request.json(ExecMintInput.self)
     let acting = user()
     do {
-      guard try await space.resolveMachine(input.machine.rawValue, usableFrom: acting.group) != nil else {
+      guard try await directory.resolveUsable(input.machine.rawValue, acting.group) != nil else {
         return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
       }
       try await hub.requireExecKind(input.machine)
       guard input.script != nil || acting.session != nil else {
         return errorResponse(.forbidden, code: "forbidden", message: "a script without a session mints execs only for that script")
       }
-      let record = try await space.reserveExec(machine: input.machine, caller: acting.member, group: acting.group, script: input.script)
+      let record = try await directory.reserveExec(input.machine, acting.member, acting.group, input.script, nil)
       return try Response.json(ExecMintOutput(id: record.id))
     } catch let error as OperationError {
       return try Response.json(ErrorEnvelope(error), status: .unprocessableContent)
@@ -136,7 +141,7 @@ func addMachineRoutes(
     }
   }
   router.get("/v1/exec") { _, _ in
-    try Response.json(try await SpaceToolContext(space: space, principal: user().principal).ownExecs())
+    try Response.json(try await SpaceToolContext(space: space, directory: directory, principal: user().principal).ownExecs())
   }
   router.get("/v1/exec/:id") { request, parameters in
     guard await ownsExec(parameters) else { return unknownExec(parameters) }
@@ -144,7 +149,7 @@ func addMachineRoutes(
   }
   router.post("/v1/exec/:id/kill") { request, parameters in
     guard await ownsExec(parameters) else { return unknownExec(parameters) }
-    if let id = parameters["id"], let record = try await space.execRecord(ExecID(rawValue: id)), record.terminal != nil {
+    if let id = parameters["id"], let record = try await directory.exec(ExecID(rawValue: id)), record.terminal != nil {
       return errorResponse(.unprocessableContent, code: "alreadyEnded", message: "exec has already ended")
     }
     return try await forward(request, parameters)
@@ -153,4 +158,8 @@ func addMachineRoutes(
     guard await ownsExec(parameters) else { return .response(unknownExec(parameters)) }
     return try await routed(request)
   }
+}
+
+private func unknownExec(_ parameters: RouteParameters) -> Response {
+  errorResponse(.notFound, code: "notFound", message: "unknown exec: \(parameters["id"] ?? "")")
 }

@@ -10,6 +10,7 @@ import SpaceContract
 import SpaceCore
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.SessionID
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies) struct SessionRoutesTests {

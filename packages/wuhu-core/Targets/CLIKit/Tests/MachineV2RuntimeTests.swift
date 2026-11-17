@@ -20,7 +20,6 @@ import enum JSONValue.JSONValue
 import enum MachineContract.MachineV2Connect
 import struct OperationProtocol.OperationClock
 import Scratch
-import ScratchTesting
 import Synchronization
 import Testing
 

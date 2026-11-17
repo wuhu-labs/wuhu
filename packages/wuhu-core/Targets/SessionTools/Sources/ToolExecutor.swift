@@ -12,6 +12,7 @@ import struct MainHub.SendMessageArguments
 import struct MainHub.SetTitleArguments
 import struct MainHub.TimerArguments
 import struct MainHub.ToolProblem
+import SpaceIDs
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

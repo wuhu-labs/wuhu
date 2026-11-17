@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -71,7 +72,7 @@ import Testing
       #expect(upgradedShape.tables[table] == lines, "\(table)")
     }
     #expect(freshShape.indexesAndTriggers == upgradedShape.indexesAndTriggers)
-    #expect(try RawDatabase.open(baselineLocation.path, readOnly: true) { try $0.strings("SELECT identifier FROM grdb_migrations ORDER BY rowid") } == Migrations.baseline.map(\.id) + ["tenancy/0001", "conversations/0001", "conversations/0002"])
+    #expect(try RawDatabase.open(baselineLocation.path, readOnly: true) { try $0.strings("SELECT identifier FROM grdb_migrations ORDER BY rowid") } == Migrations.baseline.map(\.id) + ["tenancy/0001", "conversations/0001", "conversations/0002", "machines/0001"])
   }
 
   @Test func anUnknownLedgerIdentifierIsRefusedBeforeAnythingRuns() throws {

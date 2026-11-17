@@ -7,6 +7,8 @@ checks:
 dependencies:
   - SpaceIDs
   - GroupContract
+  - TenancyContract
+  - MachinesContract
   - AgentsContract
   - TaskLifetime
   - name: CImageCodec
@@ -49,6 +51,10 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - Machines
+    - MachinesTesting
+    - MachinesContract
+    - TenancyContract
     - SpaceIDs
     - GroupContract
     - SessionTools

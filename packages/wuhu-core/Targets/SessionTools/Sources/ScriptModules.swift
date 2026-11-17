@@ -5,6 +5,7 @@ import let MainHub.scriptModuleBytes
 import func MainHub.scriptModuleFailure
 import let MainHub.scriptModuleScheme
 import func MainHub.systemModulePath
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

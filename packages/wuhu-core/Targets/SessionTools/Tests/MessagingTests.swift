@@ -121,7 +121,7 @@ struct MessagingTests {
       machineFS.put("/clips/demo.mp4", "not really a video", mtime: 1)
       let png: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
       _ = try await space.fs(.shared).write("/shots/shot.png", Data(png), ifMatch: nil)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space, name: "a"))
 
       let sent = try await world.run("send_message", .object([
         "message": .string("look"),
@@ -176,7 +176,7 @@ struct MessagingTests {
       let frame = VFSDefaults.maxReadBytes
       let clip = (0 ..< 2 * frame + 3).map { UInt8(truncatingIfNeeded: $0) }
       machineFS.put("/clips/long.mp4", bytes: clip, mtime: 1)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space, name: "a"))
 
       let sent = try await world.run("send_message", .object([
         "message": .string("the long take"),
@@ -205,7 +205,7 @@ struct MessagingTests {
       let machineFS = FakeMachineFS(ranges: false)
       machineFS.put("/clips/long.mp4", bytes: Array(repeating: 1, count: VFSDefaults.maxReadBytes + 1), mtime: 1)
       machineFS.put("/clips/short.mp4", bytes: Array(repeating: 2, count: VFSDefaults.maxReadBytes), mtime: 1)
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space, name: "a"))
 
       let long = try await world.run("send_message", .object([
         "message": .string("x"), "attachments": .array([.string("machines://\(machineA.rawValue)/clips/long.mp4")]),
@@ -230,7 +230,7 @@ struct MessagingTests {
       let machineFS = FakeMachineFS()
       machineFS.put("/clips/a.bin", bytes: Array(repeating: 1, count: 10), mtime: 1)
       machineFS.replacedAfterStat.withLock { $0["/clips/a.bin"] = .init(mtime: 1, content: Array(repeating: 2, count: 20)) }
-      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }), session: try await makeSession(space, name: "a"))
+      var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }), session: try await makeSession(space, name: "a"))
 
       let refused = try await world.run("send_message", .object([
         "message": .string("x"), "attachments": .array([.string("machines://\(machineA.rawValue)/clips/a.bin")]),

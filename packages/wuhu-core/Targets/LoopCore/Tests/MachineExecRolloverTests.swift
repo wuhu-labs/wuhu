@@ -1,3 +1,5 @@
+@testable import Machines
+import MachinesContract
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -7,6 +9,7 @@ import struct SpaceIDs.SessionID
 import Dependencies
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import OperationProtocol
 import Scratch
 import SessionDomain
@@ -67,7 +70,7 @@ import struct Wuwei.Database
   func output(_ text: String, _ exec: MachineExec, peer: Peer<BoxSocket>, space: Space, from: UInt64, ended: Bool, exitCode: Int = 0) throws {
     let bytes = Data(text.utf8)
     let through = from + UInt64(bytes.count)
-    let pointer = try #require(space.machineBuffers.put(bytes, operation: exec.operation, channel: "stdout", from: from))
+    let pointer = try #require(space.machineFamily.buffers.put(bytes, operation: exec.operation, channel: "stdout", from: from))
     let snapshot = OperationSnapshot(
       operation: exec.operation,
       verdict: ended ? .init(.completed, result: ["termination": ["tag": "exit", "code": .number(Double(exitCode))]]) : nil,
@@ -85,11 +88,12 @@ import struct Wuwei.Database
     try await withKernelDeps { time in
       let folder = try ScratchFolder("stranded-exec-roll")
       let file = folder.url.appending(path: "space.sqlite")
-      let old = try Space.open(file: file)
-      let new = try Space.open(file: file)
+      let old = try Space.open(file: file).registeringMachines()
+      let new = try Space.open(file: file).registeringMachines()
       let seeding = SessionExecution(space: old, loopConfig: makeConfig())
       let session = try await old.sessions.createSession(group: .shared, title: "stranded", kind: .agent, createdBy: "owner", model: .test)
       await seeding.shutdown()
+      old.registeringMachines()
       let machine = "stranded-box"
       let cell = MachineCell.ID(machine)
       old.worker.register(.job(StrandedExec.self))
@@ -168,14 +172,14 @@ import struct Wuwei.Database
     try await withKernelDeps { time in
       let folder = try ScratchFolder("exec-roll")
       let file = folder.url.appending(path: "space.sqlite")
-      let old = try Space.open(file: file)
-      let new = try Space.open(file: file)
+      let old = try Space.open(file: file).registeringMachines()
+      let new = try Space.open(file: file).registeringMachines()
       let call = ToolCall(id: "call", name: "exec", arguments: .object(["machine": .string("rollbox"), "cwd": .string("/tmp"), "command": .string("echo tail")]))
       let script = InferenceScript([Fix.replying("running", calls: [call]), Fix.replying("resumed"), Fix.replying("noted")])
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
       let session = try await old.sessions.createSession(group: .shared, title: "exec", kind: .agent, createdBy: "owner", model: .test)
-      let machine = try await old.addMachineV2(name: "rollbox").machine
+      let machine = try await old.machineFamily.addMachineV2(name: "rollbox").machine
       let second = SessionExecution(space: new, loopConfig: config)
       first.start()
       let requests = Box<[BoxSocket.Outgoing]>([])
@@ -244,8 +248,8 @@ extension MachineExecRolloverTests {
     try await withKernelDeps { time in
       let folder = try ScratchFolder("exec-deadline-roll")
       let file = folder.url.appending(path: "space.sqlite")
-      let old = try Space.open(file: file)
-      let new = try Space.open(file: file)
+      let old = try Space.open(file: file).registeringMachines()
+      let new = try Space.open(file: file).registeringMachines()
       let wait: Double = yielding ? 12 : 8
       let deadline = anchor.addingTimeInterval(yielding ? 6 : wait)
       let call = ToolCall(id: "call", name: "exec", arguments: .object(["machine": "deadlinebox", "cwd": "/tmp", "command": "echo tail", "wait_seconds": .number(wait)]))
@@ -253,7 +257,7 @@ extension MachineExecRolloverTests {
       let config = makeConfig(inference: { try await script($0) })
       let first = SessionExecution(space: old, loopConfig: config)
       let session = try await old.sessions.createSession(group: .shared, title: "deadline", kind: .agent, createdBy: "owner", model: .test)
-      let machine = try await old.addMachineV2(name: "deadlinebox").machine
+      let machine = try await old.machineFamily.addMachineV2(name: "deadlinebox").machine
       let second = SessionExecution(space: new, loopConfig: config)
       first.start()
       let requests = Box<[BoxSocket.Outgoing]>([])
@@ -331,12 +335,12 @@ extension MachineExecRolloverTests {
   @Test(arguments: Ending.allCases)
   func `a real exec job takes its finish or detaches on wait but never notifies after interrupt`(_ ending: Ending) async throws {
     try await withKernelDeps { time in
-      let space = try Space.inMemory()
+      let space = try Space.inMemory().registeringMachines()
       let call = ToolCall(id: "call", name: "exec", arguments: .object(["machine": "jobbox", "cwd": "/tmp", "command": "echo tail", "wait_seconds": 1]))
       let script = InferenceScript([Fix.replying("running", calls: [call]), Fix.replying("noted"), Fix.replying("ended")])
       let service = SessionExecution(space: space, loopConfig: makeConfig(inference: { try await script($0) }))
       let session = try await space.sessions.createSession(group: .shared, title: "exec", kind: .agent, createdBy: "owner", model: .test)
-      let machine = try await space.addMachineV2(name: "jobbox").machine
+      let machine = try await space.machineFamily.addMachineV2(name: "jobbox").machine
       service.start()
       let requests = Box<[BoxSocket.Outgoing]>([])
       let peer = try await attach(space, machine: machine.id.rawValue, requests: requests)
@@ -395,18 +399,19 @@ extension MachineExecRolloverTests {
     try await withKernelDeps { time in
       let folder = try ScratchFolder("script-exec-stream")
       let file = folder.url.appending(path: "space.sqlite")
-      let old = try Space.open(file: file)
-      let new = try Space.open(file: file)
+      let old = try Space.open(file: file).registeringMachines()
+      let new = try Space.open(file: file).registeringMachines()
       let seeding = SessionExecution(space: old, loopConfig: makeConfig())
       let session = try await old.sessions.createSession(group: .shared, title: "script", kind: .agent, createdBy: "owner", model: .test)
       await seeding.shutdown()
+      old.registeringMachines()
       old.worker.start()
-      let machine = try await old.addMachineV2(name: "scriptbox").machine
+      let machine = try await old.machineFamily.addMachineV2(name: "scriptbox").machine
       let cell = MachineCell.ID(machine.id.rawValue)
       let requests = Box<[BoxSocket.Outgoing]>([])
       let peer = try await attach(old, machine: machine.id.rawValue, requests: requests)
       try await describe(peer, old, machine.id.rawValue)
-      let reserved = try await old.reserveExec(machine: machine.id, caller: session.rawValue, script: "12345678")
+      let reserved = try await old.machineFamily.reserveExec(machine: machine.id, caller: session.rawValue, script: "12345678")
       var reservedRequest = old.worker.cell(cell).operation(reserved.id.rawValue)!.request
       reservedRequest.argv = ["sh", "-c", "sleep 1000"]
       reservedRequest.window = 1 << 20

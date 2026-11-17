@@ -1,8 +1,10 @@
 import DeterministicDependencies
 import Foundation
 import LoopCore
+import MachinesTesting
 @testable import SpaceCore
 import struct SpaceFS.SpacePath
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Testing
 
@@ -129,20 +131,20 @@ import Testing
 
   @Test func aMachineOpensToItsOwnerGroupOrToEveryGroupThatWritesIt() async throws {
     let space = try await space()
-    let machine = try await space.addMachineV2(name: "box", group: Self.team).machine
+    let machine = try await space.machineFamily.addMachineV2(name: "box", group: Self.team).machine
     #expect(machine.scope == .owner)
     // studio reads team's list but writes nothing there.
     try await space.setGrant(.group, Self.studio.rawValue, role: .read, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
-    #expect(try await space.resolveMachine("box", usableFrom: Self.studio) == nil)
-    #expect(try await space.resolveMachine("box", usableFrom: Self.team) != nil)
-    _ = try await space.setMachineScope(machine.id, scope: .reachable)
+    #expect(try await space.machineFamily.resolveMachine("box", usableFrom: Self.studio) == nil)
+    #expect(try await space.machineFamily.resolveMachine("box", usableFrom: Self.team) != nil)
+    _ = try await space.machineFamily.setMachineScope(machine.id, scope: .reachable)
     // Reading the owner group is still not using its machines.
-    #expect(try await space.resolveMachine("box", usableFrom: Self.studio) == nil)
+    #expect(try await space.machineFamily.resolveMachine("box", usableFrom: Self.studio) == nil)
     try await space.setGrant(.group, Self.studio.rawValue, role: .write, in: Self.team, by: (try await space.ensureDevPerson()).actor, acting: Self.team)
-    #expect(try await space.resolveMachine("box", usableFrom: Self.studio) != nil)
-    #expect(try await space.resolveMachine("box", usableFrom: .shared) == nil)
-    #expect(try await space.machines(usableFrom: Self.studio).map(\.id) == [machine.id])
-    #expect(try await space.machines(usableFrom: .shared).isEmpty)
+    #expect(try await space.machineFamily.resolveMachine("box", usableFrom: Self.studio) != nil)
+    #expect(try await space.machineFamily.resolveMachine("box", usableFrom: .shared) == nil)
+    #expect(try await space.machineFamily.machines(usableFrom: Self.studio).map(\.id) == [machine.id])
+    #expect(try await space.machineFamily.machines(usableFrom: .shared).isEmpty)
   }
 
   @Test func aSecretsSwitchOpensTheStoreToEveryGroupThatWritesIt() async throws {

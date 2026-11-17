@@ -3,6 +3,7 @@ import Foundation
 import LoopCore
 import SessionDomain
 @testable import SpaceCore
+import SpaceIDs
 import Testing
 
 @Suite(.deterministicDependencies) struct SessionTemplateTests {

@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import MachineChannel
+@testable import Machines
 import Serve
 import SpaceServer
 import Testing

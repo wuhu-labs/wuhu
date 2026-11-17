@@ -3,6 +3,7 @@ import SpaceCore
 import struct SpaceFS.Entry
 import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
+import SpaceIDs
 import struct SpaceIDs.GroupID
 
 // A glob watches the acting group, or with a `wuhu://<group>.localspace`

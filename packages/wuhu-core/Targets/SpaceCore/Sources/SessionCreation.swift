@@ -1,5 +1,6 @@
 import enum AgentsContract.SessionKind
 import enum AgentsContract.SessionLifecycle
+import SpaceIDs
 import struct SpaceIDs.SessionID
 #if canImport(FoundationEssentials)
   import FoundationEssentials

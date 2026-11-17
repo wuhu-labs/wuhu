@@ -9,6 +9,7 @@ import FetchWebSocket
 import InferenceKit
 import JSONValue
 @testable import LoopCore
+import MachinesTesting
 import SessionDomain
 import SpaceCore
 import Testing

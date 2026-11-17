@@ -1,3 +1,5 @@
+import GroupContract
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import struct SpaceIDs.GroupID
 import StructuredQueries

@@ -1,6 +1,8 @@
 import Dependencies
 import Foundation
+import SpaceIDs
 import struct SpaceIDs.AccountID
+import TenancyContract
 
 public struct ReadSessionToken: Hashable, Sendable {
   static let prefix: String = "rs_"
@@ -20,14 +22,6 @@ public struct ReadSessionToken: Hashable, Sendable {
 public enum AccountKind: String, Hashable, Sendable, CaseIterable {
   case human
   case space
-  case machine
-}
-
-public enum KeyCapability: String, Hashable, Sendable, CaseIterable {
-  case device
-  case seat
-  case execMachine = "exec-machine"
-  case space
 }
 
 public struct AccountRecord: Equatable, Sendable {
@@ -40,28 +34,12 @@ public struct AccountRecord: Equatable, Sendable {
   public let removedAt: Date?
 }
 
-public struct KeyRecord: Equatable, Sendable {
-  public let pubkey: String
-  public let account: AccountID
-  public let capabilities: Set<KeyCapability>
-  public let createdBy: AccountID?
-  public let createdAt: Date
-  public let expiresAt: Date?
-}
-
-func hasPrefixedAlphanumericSuffix(_ candidate: String, prefix: String, count: Int) -> Bool {
-  guard candidate.hasPrefix(prefix) else { return false }
-  let suffix = candidate.dropFirst(prefix.count)
-  guard suffix.count == count else { return false }
-  return suffix.allSatisfy { $0.isASCII && (("a" ... "z").contains($0) || ("0" ... "9").contains($0)) }
-}
-
-private let alphanumericAlphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789")
-
 func randomAlphanumericSuffix(_ count: Int, rng: WithRandomNumberGenerator) -> String {
   rng { generator in randomAlphanumericSuffix(count, using: &generator) }
 }
 
-func randomAlphanumericSuffix(_ count: Int, using generator: inout some RandomNumberGenerator) -> String {
-  String((0 ..< count).map { _ in alphanumericAlphabet.randomElement(using: &generator)! })
+extension Space {
+  func randomSuffix(_ count: Int) -> String {
+    rng { randomAlphanumericSuffix(count, using: &$0) }
+  }
 }

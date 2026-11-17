@@ -1,4 +1,5 @@
 import struct DocIndex.DocumentTemplate
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

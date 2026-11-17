@@ -3,6 +3,7 @@ import DeterministicDependencies
 import JSONValue
 import SpaceContract
 @testable import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import SpaceTools
 import Testing

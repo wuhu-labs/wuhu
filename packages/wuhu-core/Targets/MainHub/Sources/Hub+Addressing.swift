@@ -3,6 +3,7 @@ import SessionDomain
 import SpaceCore
 import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import SystemFiles
 
@@ -92,8 +93,8 @@ extension Hub {
     }
     // A machine the session may not use is no machine.
     // (An id with no row names nothing the hub could reach either.)
-    if case let .machine(id, _) = address, let record = try await space.machine(id),
-       try await !space.canUse(record, from: acting)
+    if case let .machine(id, _) = address, let directory, let record = try await directory.machine(id),
+       try await !directory.canUse(record, acting)
     {
       throw ToolProblem("unknown machine: \(Addressing.machineHost(raw) ?? id.rawValue)")
     }
@@ -102,7 +103,7 @@ extension Hub {
 
   nonisolated private func naming(_ raw: String) async throws -> String {
     guard let host = Addressing.machineHost(raw), !host.isEmpty, !MachineID.isValid(host) else { return raw }
-    guard let record = try await space.resolveMachine(host) else {
+    guard let directory, let record = try await directory.resolve(host) else {
       throw ToolProblem("unknown machine: \(host)")
     }
     return "machines://" + record.id.rawValue + String(raw.dropFirst("machines://".count + host.count))

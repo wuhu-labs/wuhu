@@ -6,6 +6,7 @@ import struct SpaceIDs.SessionID
 #endif
 import Fetch
 import MachineContract
+import MachinesTesting
 import SessionDomain
 import SpaceCore
 @testable import SpaceServer
@@ -25,8 +26,8 @@ func testTokens(space: Space, spaceURL: String = "http://main") async throws -> 
 
 extension ExecTokens {
   func credential(session: SpaceIDs.SessionID, exec: MachineContract.ExecID, timeout: Double?, now: Date) async throws -> MachineContract.ExecSessionCredential {
-    let record = try await space.execRecord(exec)!
-    let value = try await credential(session: session, group: record.group, machine: record.machine, exec: exec, timeout: .seconds(timeout ?? Self.longestLife), issuedAt: now)
+    let record = try await space.machineFamily.execRecord(exec)!
+    let value = try await execCredentials.credential(session: session, group: record.group, machine: record.machine, exec: exec, timeout: .seconds(timeout ?? Self.longestLife), issuedAt: now)
     return .init(token: value.object!["token"]!.stringValue!, spaceURL: spaceURL)
   }
 }

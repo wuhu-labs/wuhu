@@ -1,4 +1,5 @@
 import Dependencies
+import SpaceIDs
 import TaskLifetime
 import Wuwei
 #if canImport(FoundationEssentials)

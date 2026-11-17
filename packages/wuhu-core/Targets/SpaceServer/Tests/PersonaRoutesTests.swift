@@ -6,6 +6,7 @@ import Foundation
 import JSONValue
 import SpaceContract
 import SpaceCore
+import TenancyContract
 import Testing
 
 @Suite(.deterministicDependencies) struct PersonaRoutesTests {

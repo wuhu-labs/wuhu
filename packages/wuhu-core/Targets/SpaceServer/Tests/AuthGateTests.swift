@@ -5,6 +5,7 @@ import Fetch
 import FetchAsyncHTTPClient
 import Foundation
 import JSONValue
+import MachinesTesting
 import ServeNIO
 import SpaceServer
 import Testing
@@ -18,7 +19,7 @@ import Testing
     let hub = withDependencies {
       $0.continuousClock = ContinuousClock()
     } operation: {
-      MachineHub(space: space)
+      machineHub(space)
     }
     let server = try await ServeNIOServer.bind(
       port: 0,

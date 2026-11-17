@@ -1,4 +1,5 @@
 import DeterministicDependencies
+import MachinesTesting
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
@@ -11,12 +12,12 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      let mini = try await space.addMachineV2(name: "mac_mini").machine
-      let builder = try await space.addMachineV2(name: "ci_box").machine
+      let mini = try await space.machineFamily.addMachineV2(name: "mac_mini").machine
+      let builder = try await space.machineFamily.addMachineV2(name: "ci_box").machine
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [mini.id] }
       var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam) }),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: machineFS.seam, directory: space.machineFamily.directory) }),
         session: try await makeSession(space),
       )
 
@@ -39,7 +40,7 @@ import Testing
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
       var world = ToolWorld(
-        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam) }),
+        executor: try await loop.executor(owner: loop.hub { Hub(space: space, machines: FakeMachineFS().seam, directory: space.machineFamily.directory) }),
         session: try await makeSession(space),
       )
 
@@ -55,7 +56,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let loop = try await ToolFixture(space: space)
-      _ = try await space.addMachineV2(name: "mac_mini").machine
+      _ = try await space.machineFamily.addMachineV2(name: "mac_mini").machine
       var world = ToolWorld(executor: try await loop.executor(owner: loop.hub { Hub(space: space) }), session: try await makeSession(space))
 
       let message = try failureMessage(try await world.run("machines", .object([:])))

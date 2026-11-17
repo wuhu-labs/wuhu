@@ -1,5 +1,6 @@
 import DeterministicDependencies
 @testable import LoopCore
+import SpaceIDs
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

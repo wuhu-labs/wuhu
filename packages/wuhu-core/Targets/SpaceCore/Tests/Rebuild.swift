@@ -5,6 +5,7 @@
 #endif
 @testable import SpaceCore
 import SpaceFS
+import SpaceIDs
 import struct SpaceIDs.GroupID
 import Wuwei
 

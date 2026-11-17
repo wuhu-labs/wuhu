@@ -1,4 +1,5 @@
 import struct MainHub.ScriptError
+import SpaceIDs
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials

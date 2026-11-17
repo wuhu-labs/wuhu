@@ -3,6 +3,7 @@ import Foundation
 import Scratch
 import SpaceCore
 import SpaceFS
+import SpaceIDs
 import Testing
 
 @Suite(.deterministicDependencies) struct SpaceMemoryTests {

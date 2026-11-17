@@ -1,4 +1,5 @@
 import Fetch
+import SpaceHTTP
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,6 +8,7 @@ import Fetch
 import Serve
 import SpaceContract
 import SpaceCore
+import TenancyContract
 
 enum PersonaCredentialVerdict: Sendable {
   case missing

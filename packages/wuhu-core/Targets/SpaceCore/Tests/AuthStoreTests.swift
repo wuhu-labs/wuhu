@@ -1,9 +1,12 @@
 import DeterministicDependencies
 import Foundation
 import GroupContract
+import MachinesTesting
 @testable import SpaceCore
+import SpaceIDs
 import struct SpaceIDs.AccountID
 import StructuredQueries
+import TenancyContract
 import Testing
 import WuweiQueries
 

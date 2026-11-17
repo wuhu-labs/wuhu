@@ -15,6 +15,7 @@ import struct MachineContract.ExecID
 import struct MachineContract.ExecStart
 import struct MachineContract.ExecStatus
 import struct MachineContract.MachineID
+import MachinesContract
 import Scratch
 import Serve
 import ServeNIO
